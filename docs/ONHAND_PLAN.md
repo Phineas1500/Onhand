@@ -456,6 +456,7 @@ Completed so far:
 - visible-context helpers:
   - `browser_get_visible_text` captures the text currently visible in the viewport so Onhand can answer questions about what the user is looking at right now
   - `browser_get_selection` captures the user's current text selection so Onhand can explain exactly what the user highlighted
+  - `browser_get_viewport_headings` captures the current and nearby headings so Onhand can understand the user's section context on the page
 - repeated end-to-end testing in the connected live browser, including:
   - highlight target text on the page
   - show an anchored note near the highlighted content
@@ -467,13 +468,14 @@ Completed so far:
   - restore a saved artifact back onto the live page and verify the highlight + note reappear
   - verify visible viewport text capture against the live page around the highlighted section
   - verify selection capture against a live selection on the page
+  - verify viewport heading capture against the live section surrounding the highlighted content
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- add the next visible-context helpers (starting with viewport headings / scroll state) and a small Onhand artifact index/loader on top of the new capture/restore loop.
+- add the next visible-context helper (`browser_get_scroll_state`) and a small Onhand artifact index/loader on top of the new capture/restore loop.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -599,9 +601,9 @@ Remaining:
 Started:
 - [x] visible text via `browser_get_visible_text`
 - [x] current selection via `browser_get_selection`
+- [x] viewport headings via `browser_get_viewport_headings`
 
 Remaining:
-- [ ] viewport headings
 - [ ] scroll state
 
 These tasks are enough to start the actual product, not just the tooling prototype.

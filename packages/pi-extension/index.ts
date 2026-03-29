@@ -129,6 +129,11 @@ const SELECTION_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 });
 
+const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	maxHeadings: Type.Optional(Type.Number({ description: "Maximum headings to return (default 8)" })),
+});
+
 const RESTORE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	artifactPath: Type.String({ description: "Path to a saved Onhand browser artifact state.json file or artifact directory" }),
@@ -454,6 +459,34 @@ function formatSelection(selection: any) {
 	if (selection.container) lines.push(`Container: ${describeElement(selection.container)}`);
 	if (selection.start) lines.push(`Start: ${describeElement(selection.start)}`);
 	if (selection.end) lines.push(`End: ${describeElement(selection.end)}`);
+	return stringifyValue(lines.join("\n"), 12000);
+}
+
+function formatViewportHeadings(headings: any) {
+	const currentHeading = headings?.currentHeading;
+	const visibleHeadings = Array.isArray(headings?.visibleHeadings) ? headings.visibleHeadings : [];
+	const nearbyHeadings = Array.isArray(headings?.headings) ? headings.headings : [];
+	const lines = [
+		`URL: ${headings?.url || ""}`,
+		headings?.title ? `Title: ${headings.title}` : null,
+		headings?.viewport ? `Viewport: ${headings.viewport.width}x${headings.viewport.height}` : null,
+		typeof headings?.scrollY === "number" ? `Scroll: x=${headings.scrollX || 0}, y=${headings.scrollY}` : null,
+		currentHeading ? `Current heading: ${currentHeading.text} (${currentHeading.selector})` : "Current heading: none",
+		`Visible headings: ${visibleHeadings.length}`,
+		"",
+	].filter(Boolean) as string[];
+
+	if (nearbyHeadings.length === 0) {
+		lines.push("No headings were found near the current viewport.");
+		return stringifyValue(lines.join("\n"), 12000);
+	}
+
+	nearbyHeadings.forEach((heading: any, index: number) => {
+		const flags = [heading === currentHeading ? "current" : null, heading.isVisible ? "visible" : null, heading.tag ? `tag=${heading.tag}` : null]
+			.filter(Boolean)
+			.join(", ");
+		lines.push(`${index + 1}. ${flags ? `[${flags}] ` : ""}${heading.text} — ${heading.selector}`);
+	});
 	return stringifyValue(lines.join("\n"), 12000);
 }
 
@@ -1059,6 +1092,38 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 				details: {
 					tab: result.tab,
 					selection: result.selection,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_get_viewport_headings",
+		label: "Browser Get Viewport Headings",
+		description: "Capture the current heading context around the browser viewport",
+		promptSnippet: "Get the current heading and nearby headings so Onhand understands what section of the page the user is in",
+		promptGuidelines: [
+			"Use this with browser_get_visible_text when the section structure of the page matters.",
+		],
+		parameters: VIEWPORT_HEADINGS_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand(
+				"get_viewport_headings",
+				{ tabId: tab.id, maxHeadings: params.maxHeadings },
+				15000,
+			);
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatViewportHeadings(result.headings),
+					},
+				],
+				details: {
+					tab: result.tab,
+					headings: result.headings,
 				},
 			};
 		},

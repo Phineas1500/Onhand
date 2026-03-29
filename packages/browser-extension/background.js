@@ -1121,6 +1121,68 @@ const createPageToolkit = () => {
 		};
 	};
 
+	const getViewportHeadings = (options = {}) => {
+		const maxHeadings = Math.max(1, Math.min(20, Number(options.maxHeadings || 8) || 8));
+		const viewportHeight = window.innerHeight;
+		const activationThreshold = Math.max(80, Math.round(viewportHeight * 0.35));
+		const headings = [];
+
+		for (const element of document.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+			if (!(element instanceof Element)) continue;
+			if (!isVisible(element)) continue;
+			const text = getElementText(element);
+			if (!text) continue;
+			const selector = buildSelector(element);
+			if (!selector) continue;
+			const rect = element.getBoundingClientRect();
+			headings.push({
+				level: Number(element.tagName.slice(1)) || undefined,
+				tag: element.tagName.toLowerCase(),
+				selector,
+				text: text.slice(0, 300),
+				top: rect.top,
+				bottom: rect.bottom,
+				isVisible: rect.bottom > 0 && rect.top < viewportHeight,
+			});
+		}
+
+		let currentHeading = null;
+		for (const heading of headings) {
+			if (heading.top <= activationThreshold) {
+				currentHeading = heading;
+			} else {
+				break;
+			}
+		}
+
+		const visibleHeadings = headings.filter((heading) => heading.isVisible).slice(0, maxHeadings);
+		const upcomingHeadings = headings.filter((heading) => heading.top > 0).slice(0, maxHeadings);
+		const uniqueNearby = [];
+		const seen = new Set();
+		for (const heading of [currentHeading, ...visibleHeadings, ...upcomingHeadings]) {
+				if (!heading) continue;
+				if (seen.has(heading.selector)) continue;
+				seen.add(heading.selector);
+				uniqueNearby.push(heading);
+				if (uniqueNearby.length >= maxHeadings) break;
+		}
+
+		return {
+			url: location.href,
+			title: document.title,
+			scrollX: window.scrollX,
+			scrollY: window.scrollY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			currentHeading,
+			visibleHeadings,
+			upcomingHeadings,
+			headings: uniqueNearby,
+		};
+	};
+
 	const scrollToAnnotation = async (annotationId, options = {}) => {
 		const rawAnnotationId = String(annotationId ?? "").trim();
 		if (!rawAnnotationId) throw new Error("scrollToAnnotation requires a non-empty annotationId");
@@ -1338,6 +1400,7 @@ const createPageToolkit = () => {
 		highlightText,
 		getVisibleText,
 		getSelectionInfo,
+		getViewportHeadings,
 		scrollToAnnotation,
 		showNote,
 		captureState,
@@ -1984,6 +2047,16 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				selection,
+			};
+		}
+		case "get_viewport_headings": {
+			const tab = await resolveTargetTab(args);
+			const headings = await runPageToolkitMethod(tab.id, "getViewportHeadings", {
+				maxHeadings: args.maxHeadings,
+			});
+			return {
+				tab: simplifyTab(tab),
+				headings,
 			};
 		}
 		case "clear_annotations": {
