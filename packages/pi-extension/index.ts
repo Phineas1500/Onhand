@@ -4,7 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { homedir, tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 
@@ -116,6 +116,13 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 	persist: Type.Optional(Type.Boolean({ description: "Write the captured page state to a local Onhand artifact directory" })),
 	includeHtml: Type.Optional(Type.Boolean({ description: "When persisting, also save a full HTML snapshot (default true)" })),
 	label: Type.Optional(Type.String({ description: "Optional label to store with the persisted artifact" })),
+});
+
+const RESTORE_STATE_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	artifactPath: Type.String({ description: "Path to a saved Onhand browser artifact state.json file or artifact directory" }),
+	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand annotations in the target tab before restoring (default true)" })),
+	openIfNeeded: Type.Optional(Type.Boolean({ description: "Open the artifact URL in a new tab if no matching tab is already open (default true)" })),
 });
 
 const CLEAR_ANNOTATIONS_SCHEMA = Type.Object({
@@ -452,6 +459,64 @@ async function persistBrowserCaptureArtifact(options: {
 		htmlPath: htmlPath ? relative(options.cwd, htmlPath) : undefined,
 		manifest,
 	};
+}
+
+async function loadBrowserCaptureArtifact(cwd: string, artifactPath: string) {
+	const rawPath = String(artifactPath || "").trim();
+	if (!rawPath) throw new Error("artifactPath is required");
+	const absoluteInputPath = resolve(cwd, rawPath);
+	const statePath = absoluteInputPath.endsWith(".json") ? absoluteInputPath : join(absoluteInputPath, "state.json");
+	const raw = await readFile(statePath, "utf8");
+	const manifest = JSON.parse(raw);
+	if (manifest?.type !== "browser_capture") {
+		throw new Error(`Artifact at ${statePath} is not an Onhand browser capture`);
+	}
+	return {
+		statePath,
+		artifactDir: resolve(statePath, ".."),
+		manifest,
+	};
+}
+
+function chooseBestMatchingTab(tabs: any[], url: string, title: string) {
+	const exactUrlMatches = tabs.filter((tab: any) => (tab.url || "") === url);
+	if (exactUrlMatches.length > 0) {
+		return exactUrlMatches.find((tab: any) => tab.active) || exactUrlMatches[0];
+	}
+	const exactTitleMatches = tabs.filter((tab: any) => (tab.title || "") === title);
+	if (exactTitleMatches.length > 0) {
+		return exactTitleMatches.find((tab: any) => tab.active) || exactTitleMatches[0];
+	}
+	return undefined;
+}
+
+function formatRestoreSummary(options: {
+	artifactPath: string;
+	artifact: any;
+	tab: any;
+	restored: any[];
+	failed: any[];
+}) {
+	const lines = [
+		`Restored browser artifact ${options.artifact?.artifactId || options.artifactPath}`,
+		`Target tab: ${describeTab(options.tab)}`,
+		`Restored annotations: ${options.restored.length}`,
+		`Failed annotations: ${options.failed.length}`,
+	];
+	if (options.restored.length > 0) {
+		lines.push("");
+		for (const item of options.restored) {
+			lines.push(`- ${item.originalAnnotationId} -> ${item.annotationId}${item.noteRestored ? " (note restored)" : ""}`);
+		}
+	}
+	if (options.failed.length > 0) {
+		lines.push("");
+		lines.push("Failures:");
+		for (const item of options.failed.slice(0, 10)) {
+			lines.push(`- ${item.originalAnnotationId || "(unknown)"}: ${item.error}`);
+		}
+	}
+	return stringifyValue(lines.join("\n"), 16000);
 }
 
 function htmlToMarkdown(html: string) {
@@ -920,6 +985,146 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 					tab: result.tab,
 					page: result.page,
 					persistedArtifact,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_restore_state",
+		label: "Browser Restore State",
+		description: "Restore saved Onhand browser annotations from a persisted artifact onto a live page",
+		promptSnippet: "Restore a previously captured browser state by recreating its highlights and notes on a live page",
+		promptGuidelines: [
+			"Use this with a previously saved browser_capture_state artifact.",
+			"This is a best-effort restore and may fail if the page content has changed significantly.",
+		],
+		parameters: RESTORE_STATE_SCHEMA,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const cwd = ctx?.cwd || process.cwd();
+			const { statePath, manifest } = await loadBrowserCaptureArtifact(cwd, params.artifactPath);
+			const client = await getBridgeState();
+			const tabs = flattenTabs(client.state);
+			const artifactUrl = manifest?.page?.url || manifest?.tab?.url || "";
+			const artifactTitle = manifest?.page?.title || manifest?.tab?.title || "";
+
+			let tab: any;
+			if (params.tabId || params.titleContains || params.urlContains) {
+				tab = resolveTabFromState(client.state, params);
+				if (artifactUrl && tab.url !== artifactUrl) {
+					const navigated = await sendBridgeCommand(
+						"navigate",
+						{ tabId: tab.id, url: artifactUrl, waitForLoad: true },
+						20000,
+					);
+					tab = navigated.tab;
+				}
+			} else {
+				tab = chooseBestMatchingTab(tabs, artifactUrl, artifactTitle);
+				if (!tab) {
+					if (params.openIfNeeded === false || !artifactUrl) {
+						throw new Error(`No matching tab is open for artifact ${params.artifactPath}`);
+					}
+					const navigated = await sendBridgeCommand(
+						"navigate",
+						{ url: artifactUrl, newTab: true, waitForLoad: true },
+						20000,
+					);
+					tab = navigated.tab;
+				}
+			}
+
+			if (params.clearExisting !== false) {
+				await sendBridgeCommand("clear_annotations", { tabId: tab.id }, 15000);
+			}
+
+			const restored: any[] = [];
+			const failed: any[] = [];
+			const annotations = Array.isArray(manifest?.page?.annotations) ? manifest.page.annotations : [];
+
+			for (const annotation of annotations) {
+				try {
+					const highlighted = await sendBridgeCommand(
+						"highlight_text",
+						{
+							tabId: tab.id,
+							text: annotation.matchedText,
+							clearExisting: false,
+							scrollIntoView: false,
+						},
+						20000,
+					);
+					const restoredAnnotationId = highlighted.annotation?.annotationId;
+					let noteRestored = false;
+					if (restoredAnnotationId && annotation.note?.text) {
+						await sendBridgeCommand(
+							"show_note",
+							{
+								tabId: tab.id,
+								annotationId: restoredAnnotationId,
+								note: annotation.note.text,
+								label: annotation.note.label,
+								scrollIntoView: false,
+							},
+							20000,
+						);
+						noteRestored = true;
+					}
+					restored.push({
+						originalAnnotationId: annotation.annotationId,
+						annotationId: restoredAnnotationId,
+						noteRestored,
+					});
+				} catch (error: any) {
+					failed.push({
+						originalAnnotationId: annotation?.annotationId,
+						error: error?.message || String(error),
+					});
+				}
+			}
+
+			let finalViewport: any;
+			if (restored.length > 0 && restored[restored.length - 1]?.annotationId) {
+				const scrolled = await sendBridgeCommand(
+					"scroll_to_annotation",
+					{ tabId: tab.id, annotationId: restored[restored.length - 1].annotationId },
+					15000,
+				);
+				finalViewport = scrolled.annotation;
+			} else if (typeof manifest?.page?.scrollY === "number") {
+				const x = Number(manifest.page.scrollX || 0);
+				const y = Number(manifest.page.scrollY || 0);
+				const scrollResult = await sendBridgeCommand(
+					"run_js",
+					{
+						tabId: tab.id,
+						expression: `(() => { window.scrollTo(${JSON.stringify(x)}, ${JSON.stringify(y)}); return { scrollX: window.scrollX, scrollY: window.scrollY, viewport: { width: window.innerWidth, height: window.innerHeight } }; })()`,
+					},
+					15000,
+				);
+				finalViewport = scrollResult.result;
+			}
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatRestoreSummary({
+							artifactPath: statePath,
+							artifact: manifest,
+							tab,
+							restored,
+							failed,
+						}),
+					},
+				],
+				details: {
+					tab,
+					artifactPath: statePath,
+					artifact: manifest,
+					restored,
+					failed,
+					finalViewport,
 				},
 			};
 		},

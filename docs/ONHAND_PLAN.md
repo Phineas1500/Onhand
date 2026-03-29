@@ -448,6 +448,10 @@ Completed so far:
   - writes captured browser state to `.onhand/artifacts/browser/<artifact-id>/state.json`
   - writes HTML snapshots to `.onhand/artifacts/browser/<artifact-id>/page.html`
   - appends a session-linked pi custom entry of type `onhand/browser-capture`
+- first-pass browser restore support:
+  - restores persisted annotations from a saved browser artifact via `browser_restore_state`
+  - re-applies highlights/notes to a live page using best-effort text-based matching
+  - scrolls the restored annotation back into view
 - repeated end-to-end testing in the connected live browser, including:
   - highlight target text on the page
   - show an anchored note near the highlighted content
@@ -456,13 +460,14 @@ Completed so far:
   - persist captured state + HTML snapshot to disk
   - verify session-link metadata is produced for persistence
   - clear injected annotations and verify they are gone
+  - restore a saved artifact back onto the live page and verify the highlight + note reappear
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- add the next replay primitives on top of persisted artifacts: screenshot capture, restore hooks, and a small Onhand artifact index/loader.
+- strengthen replay fidelity by adding screenshot capture and a small Onhand artifact index/loader on top of the new capture/restore loop.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -564,11 +569,12 @@ Started:
 - [x] define a first-pass artifact schema in `state.json`
 - [x] save HTML snapshots alongside captured state
 - [x] save session-linked metadata via custom entry type `onhand/browser-capture`
+- [x] add a first-pass restore hook with `browser_restore_state`
 
 Remaining:
 - [ ] add screenshot capture alongside the saved state/HTML snapshot
 - [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout
-- [ ] add restore-side hooks so captured state can be replayed later
+- [ ] improve restore fidelity beyond best-effort text-based matching
 - [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts
 
 ### 14.3 Build minimal Onhand app shell

@@ -139,6 +139,12 @@ pi install .
 - `browser_get_dom`
 - `browser_extract_content`
 - `browser_capture_screenshot`
+- `browser_highlight_text`
+- `browser_show_note`
+- `browser_scroll_to_annotation`
+- `browser_clear_annotations`
+- `browser_capture_state`
+- `browser_restore_state`
 
 Also includes the command:
 
@@ -154,8 +160,8 @@ Also includes the command:
 
 ## Likely next steps
 
-- first-class annotations/highlights/anchored notes
-- browser snapshot + replay support
+- screenshot capture as part of persisted browser artifacts
+- stronger replay/restore fidelity beyond best-effort text matching
 - better visible-context helpers
 - Electron app shell for Onhand
 - PDF/document support after the browser-grounded MVP is solid
