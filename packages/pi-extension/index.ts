@@ -87,6 +87,35 @@ const SCREENSHOT_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 });
 
+const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	text: Type.String({ description: "Visible text to highlight on the page" }),
+	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the match to highlight (default 1)" })),
+	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first (default true)" })),
+	scrollIntoView: Type.Optional(Type.Boolean({ description: "Scroll the highlighted match into view (default true)" })),
+});
+
+const SHOW_NOTE_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	annotationId: Type.String({ description: "Annotation ID returned by browser_highlight_text" }),
+	note: Type.String({ description: "Short explanatory note to display near the highlighted content" }),
+	label: Type.Optional(Type.String({ description: "Optional short label shown above the note (default Onhand)" })),
+	scrollIntoView: Type.Optional(Type.Boolean({ description: "Keep the anchored content in view when showing the note (default true)" })),
+});
+
+const SCROLL_TO_ANNOTATION_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	annotationId: Type.String({ description: "Annotation ID returned by browser_highlight_text" }),
+});
+
+const CAPTURE_STATE_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+});
+
+const CLEAR_ANNOTATIONS_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+});
+
 const CLICK_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	selector: Type.String({ description: "CSS selector for the element to click" }),
@@ -311,6 +340,38 @@ function formatElementMatches(matches: any[]) {
 		return `${index + 1}. ${describeElement(match)}${bits.length ? ` [${bits.join(", ")}]` : ""}`;
 	});
 	return stringifyValue(lines.join("\n"), 12000);
+}
+
+function formatCapturedState(page: any) {
+	const annotations = Array.isArray(page?.annotations) ? page.annotations : [];
+	const lines = [
+		`URL: ${page?.url || ""}`,
+		page?.title ? `Title: ${page.title}` : null,
+		page?.viewport ? `Viewport: ${page.viewport.width}x${page.viewport.height}` : null,
+		typeof page?.scrollY === "number" ? `Scroll: x=${page.scrollX || 0}, y=${page.scrollY}` : null,
+		`Annotations: ${annotations.length}`,
+		"",
+	].filter(Boolean) as string[];
+
+	if (annotations.length === 0) {
+		lines.push("No Onhand annotations are currently on the page.");
+		return stringifyValue(lines.join("\n"), 16000);
+	}
+
+	annotations.forEach((annotation: any, index: number) => {
+		lines.push(`${index + 1}. ${annotation.annotationId || "(no id)"} [${annotation.kind || "unknown"}]`);
+		if (annotation.matchedText) {
+			lines.push(`   Highlight: ${JSON.stringify(String(annotation.matchedText).slice(0, 200))}`);
+		}
+		if (annotation.container) {
+			lines.push(`   Target: ${describeElement(annotation.container)}`);
+		}
+		if (annotation.note?.text) {
+			const label = annotation.note.label ? `${annotation.note.label}: ` : "";
+			lines.push(`   Note: ${label}${String(annotation.note.text).slice(0, 240)}`);
+		}
+	});
+	return stringifyValue(lines.join("\n"), 16000);
 }
 
 function htmlToMarkdown(html: string) {
@@ -592,6 +653,178 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text", text: `Found ${(result.matches || []).length} element matches in ${describeTab(result.tab)}\n\n${formatElementMatches(result.matches || [])}` }],
 				details: { tab: result.tab, matchCount: Array.isArray(result.matches) ? result.matches.length : 0 },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_highlight_text",
+		label: "Browser Highlight Text",
+		description: "Highlight visible text in a browser tab and scroll it into view",
+		promptSnippet: "Highlight the exact text on a live page that matters for the answer",
+		promptGuidelines: [
+			"Prefer this tool when you want to point the user to a specific phrase or sentence on the page.",
+			"Use occurrence when the same text appears multiple times on the page.",
+		],
+		parameters: HIGHLIGHT_TEXT_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand(
+				"highlight_text",
+				{
+					tabId: tab.id,
+					text: params.text,
+					occurrence: params.occurrence,
+					clearExisting: params.clearExisting,
+					scrollIntoView: params.scrollIntoView,
+				},
+				20000,
+			);
+			const annotation = result.annotation || {};
+			const targetDescription = describeElement(annotation.container);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Highlighted "${String(annotation.matchedText || params.text).replace(/\s+/g, " ").trim()}" in ${describeTab(result.tab)}${targetDescription ? `\n\nTarget: ${targetDescription}` : ""}`,
+					},
+				],
+				details: {
+					tab: result.tab,
+					annotation,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_show_note",
+		label: "Browser Show Note",
+		description: "Show a lightweight explanatory note near an existing Onhand highlight",
+		promptSnippet: "Show a short contextual note next to a previously highlighted part of the page",
+		promptGuidelines: [
+			"Use browser_highlight_text first, then pass its returned annotationId into this tool.",
+			"Keep notes short and explanatory so they do not overwhelm the page.",
+		],
+		parameters: SHOW_NOTE_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand(
+				"show_note",
+				{
+					tabId: tab.id,
+					annotationId: params.annotationId,
+					note: params.note,
+					label: params.label,
+					scrollIntoView: params.scrollIntoView,
+				},
+				20000,
+			);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Displayed an Onhand note near annotation ${params.annotationId} in ${describeTab(result.tab)}`,
+					},
+				],
+				details: {
+					tab: result.tab,
+					note: result.note,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_scroll_to_annotation",
+		label: "Browser Scroll To Annotation",
+		description: "Scroll an existing Onhand annotation back into view",
+		promptSnippet: "Scroll the page to a previously highlighted annotation so the user can see it again",
+		promptGuidelines: [
+			"Use this after browser_highlight_text or browser_show_note when you want the user to visually see the anchored explanation.",
+		],
+		parameters: SCROLL_TO_ANNOTATION_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand(
+				"scroll_to_annotation",
+				{
+					tabId: tab.id,
+					annotationId: params.annotationId,
+				},
+				15000,
+			);
+			const annotation = result.annotation || {};
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Scrolled to annotation ${params.annotationId} in ${describeTab(result.tab)}`,
+					},
+				],
+				details: {
+					tab: result.tab,
+					annotation,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_capture_state",
+		label: "Browser Capture State",
+		description: "Capture lightweight page state for Onhand replay, including scroll position and current annotations",
+		promptSnippet: "Capture the current page state and any Onhand annotations for persistence or replay",
+		promptGuidelines: [
+			"Use this after highlighting or showing notes when you want to persist the user-visible state.",
+		],
+		parameters: CAPTURE_STATE_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand("capture_state", { tabId: tab.id }, 20000);
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatCapturedState(result.page),
+					},
+				],
+				details: {
+					tab: result.tab,
+					page: result.page,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_clear_annotations",
+		label: "Browser Clear Annotations",
+		description: "Remove Onhand highlights and notes from a browser tab",
+		promptSnippet: "Clear Onhand-created highlights or annotations from a live page",
+		parameters: CLEAR_ANNOTATIONS_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand("clear_annotations", { tabId: tab.id }, 15000);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Cleared ${result.clearedTotal || 0} Onhand annotation(s) from ${describeTab(result.tab)}`,
+					},
+				],
+				details: {
+					tab: result.tab,
+					clearedTotal: result.clearedTotal || 0,
+					clearedNotes: result.clearedNotes || 0,
+					clearedInline: result.clearedInline || 0,
+					clearedBlock: result.clearedBlock || 0,
+				},
 			};
 		},
 	});

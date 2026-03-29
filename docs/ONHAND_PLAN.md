@@ -434,6 +434,30 @@ The first true product milestone should satisfy all of these:
 
 ## 13. Implementation Phases
 
+### 13.1 Current implementation checkpoint (2026-03-29)
+
+Completed so far:
+- repo refactor to an Onhand-centered layout under `packages/`
+- first-class browser annotation tools:
+  - `browser_highlight_text`
+  - `browser_show_note`
+  - `browser_scroll_to_annotation`
+  - `browser_clear_annotations`
+- lightweight browser state capture with `browser_capture_state`
+- repeated end-to-end testing in the connected live browser, including:
+  - highlight target text on the page
+  - show an anchored note near the highlighted content
+  - scroll back to the annotation so the user can see it
+  - capture current page state including scroll position, highlight metadata, and note metadata
+  - clear injected annotations and verify they are gone
+
+Current status:
+- Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
+- Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
+
+Most important next step:
+- persist captured browser state as actual Onhand artifacts and session-linked records instead of only returning it from tools.
+
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
 
@@ -518,17 +542,25 @@ Exit criteria:
 
 These are the next tasks to implement, in order.
 
-### 14.1 Convert browser highlights into first-class tools
-Add:
-- `browser_highlight_text`
-- `browser_clear_annotations`
-- `browser_show_note`
-- `browser_scroll_to_annotation`
+### 14.1 Convert browser highlights into first-class tools — completed
+Completed:
+- [x] `browser_highlight_text`
+- [x] `browser_clear_annotations`
+- [x] `browser_show_note`
+- [x] `browser_scroll_to_annotation`
 
-### 14.2 Persist browser annotations and snapshots
-- define artifact schema
-- save DOM snapshot/HTML snapshot + screenshot + scroll position
-- save annotation records as custom session entries + artifact files
+Also added:
+- [x] `browser_capture_state` as the first lightweight persistence/replay primitive
+
+### 14.2 Persist browser annotations and snapshots — in progress
+Started:
+- [x] capture current page state, scroll position, viewport, highlight metadata, and note metadata via `browser_capture_state`
+
+Remaining:
+- [ ] define artifact schema
+- [ ] save DOM snapshot/HTML snapshot and screenshot alongside captured state
+- [ ] save annotation records as custom session entries + artifact files
+- [ ] add restore-side hooks so captured state can be replayed later
 
 ### 14.3 Build minimal Onhand app shell
 - create Electron app

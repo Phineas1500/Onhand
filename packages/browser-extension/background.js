@@ -797,6 +797,33 @@ const createPageToolkit = () => {
 				scroll-margin-top: 20vh !important;
 				scroll-margin-bottom: 20vh !important;
 			}
+			[data-onhand-note-kind="card"] {
+				background: #fff7c2 !important;
+				color: #111827 !important;
+				border: 2px solid #f59e0b !important;
+				border-left-width: 6px !important;
+				border-radius: 10px !important;
+				box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18) !important;
+				margin: 12px 0 16px !important;
+				padding: 12px 14px !important;
+				max-width: min(46rem, calc(100vw - 48px)) !important;
+				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+				position: relative !important;
+				z-index: 2147483645 !important;
+				scroll-margin-top: 20vh !important;
+				scroll-margin-bottom: 20vh !important;
+			}
+			[data-onhand-note-part="label"] {
+				color: #92400e !important;
+				font-size: 12px !important;
+				font-weight: 700 !important;
+				letter-spacing: 0.04em !important;
+				margin-bottom: 6px !important;
+				text-transform: uppercase !important;
+			}
+			[data-onhand-note-part="body"] {
+				white-space: pre-wrap !important;
+			}
 		`;
 		(document.head || document.documentElement).appendChild(style);
 	};
@@ -812,7 +839,47 @@ const createPageToolkit = () => {
 		right: rect.right,
 	});
 
+	const annotationSelector = (annotationId) => `[data-onhand-annotation-id="${attrEscape(annotationId)}"]`;
+
+	const findAnnotationElement = (annotationId) => {
+		const element = document.querySelector(annotationSelector(annotationId));
+		if (!(element instanceof Element)) {
+			throw new Error(`No annotation found with id: ${annotationId}`);
+		}
+		return element;
+	};
+
+	const findAnnotationContainer = (annotationElement) => {
+		if (!(annotationElement instanceof Element)) {
+			throw new Error("Annotation element not found");
+		}
+		if (annotationElement.getAttribute("data-onhand-highlight-kind") === "block") {
+			return annotationElement;
+		}
+		return annotationElement.parentElement || annotationElement;
+	};
+
+	const findNoteForAnnotation = (annotationId) => {
+		const note = document.querySelector(`[data-onhand-note-for="${attrEscape(annotationId)}"]`);
+		return note instanceof Element ? note : null;
+	};
+
+	const removeNotesForAnnotation = (annotationId) => {
+		let removed = 0;
+		for (const note of Array.from(document.querySelectorAll(`[data-onhand-note-for="${attrEscape(annotationId)}"]`))) {
+			note.remove();
+			removed += 1;
+		}
+		return removed;
+	};
+
 	const clearAnnotations = () => {
+		let clearedNotes = 0;
+		for (const note of Array.from(document.querySelectorAll('[data-onhand-note-kind="card"]'))) {
+			note.remove();
+			clearedNotes += 1;
+		}
+
 		let clearedInline = 0;
 		for (const highlight of Array.from(document.querySelectorAll('span[data-onhand-highlight-kind="inline"]'))) {
 			const parent = highlight.parentNode;
@@ -833,9 +900,10 @@ const createPageToolkit = () => {
 		}
 
 		return {
+			clearedNotes,
 			clearedInline,
 			clearedBlock,
-			clearedTotal: clearedInline + clearedBlock,
+			clearedTotal: clearedNotes + clearedInline + clearedBlock,
 		};
 	};
 
@@ -941,6 +1009,120 @@ const createPageToolkit = () => {
 		throw new Error(`No visible text matched: ${query}`);
 	};
 
+	const scrollToAnnotation = async (annotationId, options = {}) => {
+		const rawAnnotationId = String(annotationId ?? "").trim();
+		if (!rawAnnotationId) throw new Error("scrollToAnnotation requires a non-empty annotationId");
+		const annotationElement = findAnnotationElement(rawAnnotationId);
+		const container = findAnnotationContainer(annotationElement);
+		const note = findNoteForAnnotation(rawAnnotationId);
+		const block = ["start", "center", "end", "nearest"].includes(String(options.block))
+			? String(options.block)
+			: "center";
+		const target = note || container;
+		target.scrollIntoView({ behavior: "auto", block, inline: "nearest" });
+		await waitForLayout();
+		return {
+			annotationId: rawAnnotationId,
+			targetKind: note ? "note" : "annotation",
+			container: summarizeElement(container),
+			anchorRect: rectToObject(annotationElement.getBoundingClientRect()),
+			noteRect: note ? rectToObject(note.getBoundingClientRect()) : null,
+			targetRect: rectToObject(target.getBoundingClientRect()),
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			scrollY: window.scrollY,
+		};
+	};
+
+	const showNote = async (annotationId, noteText, options = {}) => {
+		const rawAnnotationId = String(annotationId ?? "").trim();
+		const rawNoteText = String(noteText ?? "").trim();
+		if (!rawAnnotationId) throw new Error("showNote requires a non-empty annotationId");
+		if (!rawNoteText) throw new Error("showNote requires non-empty note text");
+
+		ensureAnnotationStyles();
+		const annotationElement = findAnnotationElement(rawAnnotationId);
+		const container = findAnnotationContainer(annotationElement);
+		const replacedCount = removeNotesForAnnotation(rawAnnotationId);
+		const noteId = nextAnnotationId();
+		const note = document.createElement("div");
+		note.setAttribute("data-onhand-note-kind", "card");
+		note.setAttribute("data-onhand-note-id", noteId);
+		note.setAttribute("data-onhand-note-for", rawAnnotationId);
+
+		const label = document.createElement("div");
+		label.setAttribute("data-onhand-note-part", "label");
+		label.textContent = String(options.label || "Onhand");
+
+		const body = document.createElement("div");
+		body.setAttribute("data-onhand-note-part", "body");
+		body.textContent = rawNoteText;
+
+		note.append(label, body);
+		container.insertAdjacentElement("afterend", note);
+		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(rawAnnotationId, { block: options.block });
+		if (!scrolled) {
+			await waitForLayout();
+		}
+		return {
+			noteId,
+			annotationId: rawAnnotationId,
+			text: rawNoteText.slice(0, 500),
+			container: summarizeElement(container),
+			anchorRect: rectToObject(annotationElement.getBoundingClientRect()),
+			rect: rectToObject(note.getBoundingClientRect()),
+			scrollY: window.scrollY,
+			replacedCount,
+			scrolled,
+		};
+	};
+
+	const captureState = async () => {
+		await waitForLayout();
+		const annotations = Array.from(document.querySelectorAll('[data-onhand-highlight-kind]'))
+			.map((annotationElement) => {
+				if (!(annotationElement instanceof Element)) return null;
+				const annotationId = String(annotationElement.getAttribute("data-onhand-annotation-id") || "");
+				const kind = String(annotationElement.getAttribute("data-onhand-highlight-kind") || "unknown");
+				const container = findAnnotationContainer(annotationElement);
+				const note = annotationId ? findNoteForAnnotation(annotationId) : null;
+				const label = note?.querySelector?.('[data-onhand-note-part="label"]');
+				const body = note?.querySelector?.('[data-onhand-note-part="body"]');
+				return {
+					annotationId,
+					kind,
+					matchedText: normalizeText(annotationElement.textContent || "").slice(0, 500),
+					container: summarizeElement(container),
+					rect: rectToObject(annotationElement.getBoundingClientRect()),
+					note: note
+						? {
+							noteId: note.getAttribute("data-onhand-note-id") || null,
+							label: normalizeText(label?.textContent || "") || null,
+							text: normalizeText(body?.textContent || note.textContent || "").slice(0, 1000),
+							rect: rectToObject(note.getBoundingClientRect()),
+						}
+						: null,
+				};
+			})
+			.filter(Boolean);
+
+		return {
+			url: location.href,
+			title: document.title,
+			capturedAt: Date.now(),
+			scrollX: window.scrollX,
+			scrollY: window.scrollY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			annotationCount: annotations.length,
+			annotations,
+		};
+	};
+
 	const pickElements = async (message) => {
 		if (!message) throw new Error("pickElements requires a message");
 		return await new Promise((resolve) => {
@@ -1042,6 +1224,9 @@ const createPageToolkit = () => {
 		clickByText,
 		typeByLabel,
 		highlightText,
+		scrollToAnnotation,
+		showNote,
+		captureState,
 		clearAnnotations,
 		pickElements,
 	};
@@ -1581,6 +1766,45 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				annotation,
+			};
+		}
+		case "show_note": {
+			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {
+				throw new Error("show_note requires a non-empty 'annotationId'");
+			}
+			if (typeof args.note !== "string" || !args.note.trim()) {
+				throw new Error("show_note requires a non-empty 'note'");
+			}
+			const tab = await resolveTargetTab(args);
+			const note = await runPageToolkitMethod(tab.id, "showNote", args.annotationId, args.note, {
+				label: args.label,
+				scrollIntoView: args.scrollIntoView,
+				block: args.block,
+			});
+			return {
+				tab: simplifyTab(tab),
+				note,
+			};
+		}
+		case "scroll_to_annotation": {
+			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {
+				throw new Error("scroll_to_annotation requires a non-empty 'annotationId'");
+			}
+			const tab = await resolveTargetTab(args);
+			const annotation = await runPageToolkitMethod(tab.id, "scrollToAnnotation", args.annotationId, {
+				block: args.block,
+			});
+			return {
+				tab: simplifyTab(tab),
+				annotation,
+			};
+		}
+		case "capture_state": {
+			const tab = await resolveTargetTab(args);
+			const page = await runPageToolkitMethod(tab.id, "captureState");
+			return {
+				tab: simplifyTab(tab),
+				page,
 			};
 		}
 		case "clear_annotations": {
