@@ -1,16 +1,16 @@
 {
-  "name": "pi-browser-bridge",
+  "name": "onhand",
   "version": "0.1.0",
-  "description": "Local browser bridge for pi using a Chromium extension + chrome.debugger",
+  "description": "Onhand: contextual AI assistant for learning and research, currently focused on a local browser bridge for pi",
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": ["pi-package", "onhand", "browser-automation", "learning", "research"],
   "pi": {
-    "extensions": ["./pi-extension"]
+    "extensions": ["./packages/pi-extension"]
   },
   "scripts": {
-    "bridge": "node ./bridge/server.mjs",
-    "bridge:token": "node ./bridge/server.mjs token",
-    "bridge:config": "node ./bridge/server.mjs config"
+    "bridge": "node ./packages/browser-bridge/server.mjs",
+    "bridge:token": "node ./packages/browser-bridge/server.mjs token",
+    "bridge:config": "node ./packages/browser-bridge/server.mjs config"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

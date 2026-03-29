@@ -449,7 +449,7 @@ async function saveDataUrlToFile(dataUrl: string, tabId: number | undefined) {
 	const mediaType = match[1];
 	const base64 = match[2];
 	const extension = mediaType.includes("jpeg") ? "jpg" : "png";
-	const dir = join(tmpdir(), "pi-browser-bridge");
+	const dir = join(tmpdir(), "onhand-browser-bridge");
 	await mkdir(dir, { recursive: true });
 	const path = join(dir, `browser-shot-${Date.now()}-${tabId || "tab"}.${extension}`);
 	await writeFile(path, Buffer.from(base64, "base64"));

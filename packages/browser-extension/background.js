@@ -14,7 +14,7 @@ let stateTimer = null;
 let settingsCache = null;
 
 function log(...args) {
-	console.log("[pi-browser-bridge]", ...args);
+	console.log("[onhand-browser-bridge]", ...args);
 }
 
 function delay(ms) {
@@ -770,6 +770,177 @@ const createPageToolkit = () => {
 		};
 	};
 
+	const waitForLayout = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+	const ensureAnnotationStyles = () => {
+		const styleId = "onhand-browser-annotation-style";
+		if (document.getElementById(styleId)) return;
+		const style = document.createElement("style");
+		style.id = styleId;
+		style.textContent = `
+			span[data-onhand-highlight-kind="inline"] {
+				background: #fde047 !important;
+				color: #111827 !important;
+				outline: 2px solid #ef4444 !important;
+				outline-offset: 1px !important;
+				border-radius: 3px !important;
+				padding: 0 0.08em !important;
+				box-decoration-break: clone !important;
+				-webkit-box-decoration-break: clone !important;
+			}
+			[data-onhand-highlight-kind="block"] {
+				background: rgba(253, 224, 71, 0.85) !important;
+				color: inherit !important;
+				outline: 2px solid #ef4444 !important;
+				outline-offset: 3px !important;
+				border-radius: 6px !important;
+				scroll-margin-top: 20vh !important;
+				scroll-margin-bottom: 20vh !important;
+			}
+		`;
+		(document.head || document.documentElement).appendChild(style);
+	};
+
+	const nextAnnotationId = () => `onhand-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+	const rectToObject = (rect) => ({
+		top: rect.top,
+		left: rect.left,
+		width: rect.width,
+		height: rect.height,
+		bottom: rect.bottom,
+		right: rect.right,
+	});
+
+	const clearAnnotations = () => {
+		let clearedInline = 0;
+		for (const highlight of Array.from(document.querySelectorAll('span[data-onhand-highlight-kind="inline"]'))) {
+			const parent = highlight.parentNode;
+			if (!parent) continue;
+			while (highlight.firstChild) {
+				parent.insertBefore(highlight.firstChild, highlight);
+			}
+			parent.removeChild(highlight);
+			parent.normalize?.();
+			clearedInline += 1;
+		}
+
+		let clearedBlock = 0;
+		for (const element of Array.from(document.querySelectorAll('[data-onhand-highlight-kind="block"]'))) {
+			element.removeAttribute("data-onhand-highlight-kind");
+			element.removeAttribute("data-onhand-annotation-id");
+			clearedBlock += 1;
+		}
+
+		return {
+			clearedInline,
+			clearedBlock,
+			clearedTotal: clearedInline + clearedBlock,
+		};
+	};
+
+	const highlightText = async (query, options = {}) => {
+		const rawQuery = String(query ?? "").trim();
+		const normalizedQuery = lowerText(rawQuery);
+		if (!normalizedQuery) throw new Error("highlightText requires a non-empty query");
+
+		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
+		const clearExisting = options.clearExisting !== false;
+		const scrollIntoView = options.scrollIntoView !== false;
+		ensureAnnotationStyles();
+		if (clearExisting) clearAnnotations();
+
+		const rawNeedle = rawQuery.toLowerCase();
+		let matchIndex = 0;
+		const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, {
+			acceptNode(node) {
+				if (!(node instanceof Text)) return NodeFilter.FILTER_REJECT;
+				const value = String(node.nodeValue || "");
+				if (!value.trim()) return NodeFilter.FILTER_REJECT;
+				const parent = node.parentElement;
+				if (!parent) return NodeFilter.FILTER_REJECT;
+				const tag = parent.tagName.toLowerCase();
+				if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
+				if (parent.closest('[data-onhand-highlight-kind]')) return NodeFilter.FILTER_REJECT;
+				if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
+				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
+				return NodeFilter.FILTER_ACCEPT;
+			},
+		});
+
+		let currentNode;
+		while ((currentNode = walker.nextNode())) {
+			const node = currentNode;
+			const value = String(node.nodeValue || "");
+			const lowerValue = value.toLowerCase();
+			let searchFrom = 0;
+			while (searchFrom <= lowerValue.length) {
+				const foundAt = lowerValue.indexOf(rawNeedle, searchFrom);
+				if (foundAt === -1) break;
+				matchIndex += 1;
+				if (matchIndex === occurrence) {
+					const range = document.createRange();
+					range.setStart(node, foundAt);
+					range.setEnd(node, foundAt + rawQuery.length);
+					const highlight = document.createElement("span");
+					const annotationId = nextAnnotationId();
+					highlight.setAttribute("data-onhand-highlight-kind", "inline");
+					highlight.setAttribute("data-onhand-annotation-id", annotationId);
+					try {
+						range.surroundContents(highlight);
+					} catch {
+						const fragment = range.extractContents();
+						highlight.appendChild(fragment);
+						range.insertNode(highlight);
+					}
+					if (scrollIntoView) {
+						highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+					}
+					await waitForLayout();
+					const anchorElement = highlight.parentElement || highlight;
+					return {
+						annotationId,
+						kind: "inline",
+						matchedText: highlight.textContent || rawQuery,
+						container: summarizeElement(anchorElement),
+						rect: rectToObject(highlight.getBoundingClientRect()),
+						scrollY: window.scrollY,
+					};
+				}
+				searchFrom = foundAt + Math.max(rawQuery.length, 1);
+			}
+		}
+
+		matchIndex = 0;
+		for (const element of document.querySelectorAll("p, li, blockquote, pre, code, td, th, figcaption, caption, h1, h2, h3, h4, h5, h6, summary")) {
+			if (!(element instanceof Element)) continue;
+			if (!isVisible(element)) continue;
+			if (element.closest('[data-onhand-highlight-kind]')) continue;
+			const text = getElementText(element);
+			if (!text) continue;
+			if (!lowerText(text).includes(normalizedQuery)) continue;
+			matchIndex += 1;
+			if (matchIndex !== occurrence) continue;
+			const annotationId = nextAnnotationId();
+			element.setAttribute("data-onhand-highlight-kind", "block");
+			element.setAttribute("data-onhand-annotation-id", annotationId);
+			if (scrollIntoView) {
+				element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+			}
+			await waitForLayout();
+			return {
+				annotationId,
+				kind: "block",
+				matchedText: text.slice(0, 300),
+				container: summarizeElement(element),
+				rect: rectToObject(element.getBoundingClientRect()),
+				scrollY: window.scrollY,
+			};
+		}
+
+		throw new Error(`No visible text matched: ${query}`);
+	};
+
 	const pickElements = async (message) => {
 		if (!message) throw new Error("pickElements requires a message");
 		return await new Promise((resolve) => {
@@ -870,6 +1041,8 @@ const createPageToolkit = () => {
 		findElementsByText,
 		clickByText,
 		typeByLabel,
+		highlightText,
+		clearAnnotations,
 		pickElements,
 	};
 };
@@ -1393,6 +1566,29 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				outerHTML,
+			};
+		}
+		case "highlight_text": {
+			if (typeof args.text !== "string" || !args.text.trim()) {
+				throw new Error("highlight_text requires a non-empty 'text'");
+			}
+			const tab = await resolveTargetTab(args);
+			const annotation = await runPageToolkitMethod(tab.id, "highlightText", args.text, {
+				occurrence: args.occurrence,
+				clearExisting: args.clearExisting,
+				scrollIntoView: args.scrollIntoView,
+			});
+			return {
+				tab: simplifyTab(tab),
+				annotation,
+			};
+		}
+		case "clear_annotations": {
+			const tab = await resolveTargetTab(args);
+			const cleared = await runPageToolkitMethod(tab.id, "clearAnnotations");
+			return {
+				tab: simplifyTab(tab),
+				...cleared,
 			};
 		}
 		case "find_elements": {

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Pi Browser Bridge",
+  "name": "Onhand Browser Bridge",
   "version": "0.1.0",
-  "description": "Connects a Chromium browser to pi through a localhost bridge using chrome.debugger.",
+  "description": "Connects a Chromium browser to Onhand through a localhost bridge using chrome.debugger.",
   "permissions": ["tabs", "storage", "debugger"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": {
@@ -11,6 +11,6 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Pi Browser Bridge"
+    "default_title": "Onhand Browser Bridge"
   }
 }

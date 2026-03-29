@@ -53,7 +53,7 @@ async function ensureConfig() {
 }
 
 function printUsage() {
-	console.log("Usage: node bridge/server.mjs [token|config]");
+	console.log("Usage: node packages/browser-bridge/server.mjs [token|config]");
 }
 
 const config = await ensureConfig();

@@ -1,18 +1,35 @@
-# pi-browser-bridge
+# Onhand
 
-A local browser bridge for pi built from three pieces:
+Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
+
+The intended experience is:
+- invoke Onhand from a global shortcut
+- ask a question about the page, PDF, file, or material already in front of you
+- have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
+- save the session so it can be replayed later with the relevant artifacts restored
+
+## Current status
+
+This repository is now organized around **Onhand**, but the main implemented subsystem today is still the **browser grounding layer**:
 
 1. a Chromium extension that uses `chrome.debugger`
 2. a localhost bridge server
 3. a pi extension that exposes browser tools inside pi
 
-## Why this exists
+That stack already lets pi inspect and act on the user's current Chromium/Helium browser session without requiring `--remote-debugging-port`.
 
-This avoids `--remote-debugging-port=9222`.
+The broader product plan lives in:
 
-Instead of relaunching the browser in DevTools mode, the browser extension attaches to tabs with the `chrome.debugger` API and talks to a local bridge over WebSocket. The pi extension talks to that bridge over HTTP.
+- `docs/ONHAND_PLAN.md`
 
-## Current MVP
+## Current repository layout
+
+- `docs/ONHAND_PLAN.md` - product and implementation plan
+- `packages/browser-bridge/` - local HTTP + WebSocket bridge server
+- `packages/browser-extension/` - unpacked Chromium extension
+- `packages/pi-extension/` - pi extension tools for the browser bridge
+
+## Browser bridge MVP
 
 Implemented right now:
 
@@ -32,20 +49,22 @@ Implemented right now:
 - fetch outer HTML via `DOM.getDocument` + `DOM.getOuterHTML`
 - extract readable page content as markdown
 - capture screenshots of a visible tab
-- pi tools for the above
-
-## Project layout
-
-- `bridge/server.mjs` - local HTTP + WebSocket bridge
-- `browser-extension/` - unpacked Chromium extension
-- `pi-extension/index.ts` - pi extension tools
+- expose pi tools for the above
 
 ## Security model
 
 - bridge binds to `127.0.0.1`
-- bridge uses a bearer token stored in `~/.config/pi-browser-bridge/config.json`
+- bridge uses a bearer token stored in a local config file
 - browser extension connects with that token over WebSocket
 - pi extension reads the same config file by default
+
+**Compatibility note:** the browser bridge currently still uses the legacy config path:
+
+```text
+~/.config/pi-browser-bridge/config.json
+```
+
+That keeps the current setup working while the repo structure and product direction shift toward Onhand.
 
 ## Setup
 
@@ -78,7 +97,7 @@ npm run bridge:config
 
 - Open your Chromium-based browser's extensions page
 - Enable developer mode
-- Load unpacked extension from `browser-extension/`
+- Load unpacked extension from `packages/browser-extension/`
 - Open the extension options page
 - Set:
   - Bridge URL: `ws://127.0.0.1:3210/ws`
@@ -92,10 +111,10 @@ If Helium supports Chromium extensions and the `chrome.debugger` API, it should 
 For local development:
 
 ```bash
-pi -e ./pi-extension/index.ts
+pi -e ./packages/pi-extension/index.ts
 ```
 
-Or install this folder as a pi package:
+Or install this repository as a pi package:
 
 ```bash
 pi install .
@@ -127,6 +146,7 @@ Also includes the command:
 
 ## Notes
 
+- If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached.
 - Some pages cannot be debugged, such as privileged browser pages.
 - Screenshots currently activate the target tab before capture.
@@ -134,8 +154,8 @@ Also includes the command:
 
 ## Likely next steps
 
-- browser/client selection when multiple browsers are connected
-- richer content extraction and page-structure helpers
-- smarter action tools (click nearest matching button, submit forms, wait for navigation)
-- richer network features like targeted response-body capture for specific requests
-- release hardening and browser-store packaging
+- first-class annotations/highlights/anchored notes
+- browser snapshot + replay support
+- better visible-context helpers
+- Electron app shell for Onhand
+- PDF/document support after the browser-grounded MVP is solid
