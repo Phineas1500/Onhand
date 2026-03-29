@@ -1009,6 +1009,63 @@ const createPageToolkit = () => {
 		throw new Error(`No visible text matched: ${query}`);
 	};
 
+	const getVisibleText = (options = {}) => {
+		const maxBlocks = Math.max(1, Math.min(80, Number(options.maxBlocks || 25) || 25));
+		const maxChars = Math.max(200, Math.min(20000, Number(options.maxChars || 6000) || 6000));
+		const blocks = [];
+		const seen = new Set();
+		const viewportTop = 0;
+		const viewportBottom = window.innerHeight;
+		let totalChars = 0;
+
+		for (const element of document.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, code, figcaption, caption, summary, td, th")) {
+			if (!(element instanceof Element)) continue;
+			if (!isVisible(element)) continue;
+			const rect = element.getBoundingClientRect();
+			if (rect.bottom <= viewportTop || rect.top >= viewportBottom) continue;
+			const text = getElementText(element);
+			if (!text) continue;
+			const selector = buildSelector(element);
+			if (!selector || seen.has(selector)) continue;
+			seen.add(selector);
+			const block = {
+				tag: element.tagName.toLowerCase(),
+				selector,
+				text: text.slice(0, 500),
+				top: rect.top,
+				bottom: rect.bottom,
+				isHeading: /^h[1-6]$/.test(element.tagName.toLowerCase()),
+			};
+			blocks.push(block);
+			totalChars += block.text.length;
+			if (blocks.length >= maxBlocks || totalChars >= maxChars) break;
+		}
+
+		const visibleText = [];
+		let usedChars = 0;
+		for (const block of blocks) {
+			if (usedChars >= maxChars) break;
+			const remaining = maxChars - usedChars;
+			const text = block.text.length > remaining ? `${block.text.slice(0, remaining)}…` : block.text;
+			visibleText.push(text);
+			usedChars += text.length;
+		}
+
+		return {
+			url: location.href,
+			title: document.title,
+			scrollX: window.scrollX,
+			scrollY: window.scrollY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			blockCount: blocks.length,
+			blocks,
+			text: visibleText.join("\n\n"),
+		};
+	};
+
 	const scrollToAnnotation = async (annotationId, options = {}) => {
 		const rawAnnotationId = String(annotationId ?? "").trim();
 		if (!rawAnnotationId) throw new Error("scrollToAnnotation requires a non-empty annotationId");
@@ -1224,6 +1281,7 @@ const createPageToolkit = () => {
 		clickByText,
 		typeByLabel,
 		highlightText,
+		getVisibleText,
 		scrollToAnnotation,
 		showNote,
 		captureState,
@@ -1851,6 +1909,17 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				page,
+			};
+		}
+		case "get_visible_text": {
+			const tab = await resolveTargetTab(args);
+			const visible = await runPageToolkitMethod(tab.id, "getVisibleText", {
+				maxChars: args.maxChars,
+				maxBlocks: args.maxBlocks,
+			});
+			return {
+				tab: simplifyTab(tab),
+				visible,
 			};
 		}
 		case "clear_annotations": {

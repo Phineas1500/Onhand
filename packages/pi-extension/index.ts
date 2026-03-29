@@ -119,6 +119,12 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 	label: Type.Optional(Type.String({ description: "Optional label to store with the persisted artifact" })),
 });
 
+const VISIBLE_TEXT_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of visible text to return (default 6000)" })),
+	maxBlocks: Type.Optional(Type.Number({ description: "Maximum visible text blocks to return (default 25)" })),
+});
+
 const RESTORE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	artifactPath: Type.String({ description: "Path to a saved Onhand browser artifact state.json file or artifact directory" }),
@@ -394,6 +400,31 @@ function formatCapturedState(page: any, persistedArtifact?: any) {
 			lines.push(`   Note: ${label}${String(annotation.note.text).slice(0, 240)}`);
 		}
 	});
+	return stringifyValue(lines.join("\n"), 16000);
+}
+
+function formatVisibleText(visible: any) {
+	const blocks = Array.isArray(visible?.blocks) ? visible.blocks : [];
+	const lines = [
+		`URL: ${visible?.url || ""}`,
+		visible?.title ? `Title: ${visible.title}` : null,
+		visible?.viewport ? `Viewport: ${visible.viewport.width}x${visible.viewport.height}` : null,
+		typeof visible?.scrollY === "number" ? `Scroll: x=${visible.scrollX || 0}, y=${visible.scrollY}` : null,
+		`Visible blocks: ${blocks.length}`,
+		"",
+	].filter(Boolean) as string[];
+
+	if (blocks.length === 0) {
+		lines.push("No visible text blocks were found in the current viewport.");
+		return stringifyValue(lines.join("\n"), 16000);
+	}
+
+	blocks.forEach((block: any, index: number) => {
+		const flags = [block.isHeading ? "heading" : null, block.tag ? `tag=${block.tag}` : null].filter(Boolean).join(", ");
+		lines.push(`${index + 1}. ${flags ? `[${flags}] ` : ""}${block.selector || "(no selector)"}`);
+		lines.push(`   ${String(block.text || "").replace(/\s+/g, " ").trim()}`);
+	});
+
 	return stringifyValue(lines.join("\n"), 16000);
 }
 
@@ -935,6 +966,42 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 				details: {
 					tab: result.tab,
 					annotation,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_get_visible_text",
+		label: "Browser Get Visible Text",
+		description: "Capture the text currently visible in the browser viewport",
+		promptSnippet: "Get the text currently visible on the page so Onhand can answer questions about what the user is looking at right now",
+		promptGuidelines: [
+			"Use this before giving an explanation about the user's current viewport when the relevant text is not yet known.",
+		],
+		parameters: VISIBLE_TEXT_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand(
+				"get_visible_text",
+				{
+					tabId: tab.id,
+					maxChars: params.maxChars,
+					maxBlocks: params.maxBlocks,
+				},
+				20000,
+			);
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatVisibleText(result.visible),
+					},
+				],
+				details: {
+					tab: result.tab,
+					visible: result.visible,
 				},
 			};
 		},

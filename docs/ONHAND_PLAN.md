@@ -453,6 +453,8 @@ Completed so far:
   - restores persisted annotations from a saved browser artifact via `browser_restore_state`
   - re-applies highlights/notes to a live page using best-effort text-based matching
   - scrolls the restored annotation back into view
+- first visible-context helper:
+  - `browser_get_visible_text` captures the text currently visible in the viewport so Onhand can answer questions about what the user is looking at right now
 - repeated end-to-end testing in the connected live browser, including:
   - highlight target text on the page
   - show an anchored note near the highlighted content
@@ -462,13 +464,14 @@ Completed so far:
   - verify session-link metadata is produced for persistence
   - clear injected annotations and verify they are gone
   - restore a saved artifact back onto the live page and verify the highlight + note reappear
+  - verify visible viewport text capture against the live page around the highlighted section
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- add visible-context helpers and a small Onhand artifact index/loader on top of the new capture/restore loop.
+- add the next visible-context helpers (starting with current selection) and a small Onhand artifact index/loader on top of the new capture/restore loop.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -590,11 +593,14 @@ Remaining:
 - replay saved browser state from artifacts
 - render chat + annotations together
 
-### 14.5 Add visible-context tools
-- current selection
-- visible text
-- viewport headings
-- scroll state
+### 14.5 Add visible-context tools — in progress
+Started:
+- [x] visible text via `browser_get_visible_text`
+
+Remaining:
+- [ ] current selection
+- [ ] viewport headings
+- [ ] scroll state
 
 These tasks are enough to start the actual product, not just the tooling prototype.
 
