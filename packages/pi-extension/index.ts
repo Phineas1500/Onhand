@@ -134,6 +134,10 @@ const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
 	maxHeadings: Type.Optional(Type.Number({ description: "Maximum headings to return (default 8)" })),
 });
 
+const SCROLL_STATE_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+});
+
 const RESTORE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	artifactPath: Type.String({ description: "Path to a saved Onhand browser artifact state.json file or artifact directory" }),
@@ -487,6 +491,22 @@ function formatViewportHeadings(headings: any) {
 			.join(", ");
 		lines.push(`${index + 1}. ${flags ? `[${flags}] ` : ""}${heading.text} — ${heading.selector}`);
 	});
+	return stringifyValue(lines.join("\n"), 12000);
+}
+
+function formatScrollState(scroll: any) {
+	const lines = [
+		`URL: ${scroll?.url || ""}`,
+		scroll?.title ? `Title: ${scroll.title}` : null,
+		scroll?.viewport ? `Viewport: ${scroll.viewport.width}x${scroll.viewport.height}` : null,
+		typeof scroll?.scrollY === "number" ? `Scroll position: x=${scroll.scrollX || 0}, y=${scroll.scrollY}` : null,
+		typeof scroll?.maxScrollY === "number" ? `Max scroll: x=${scroll.maxScrollX || 0}, y=${scroll.maxScrollY}` : null,
+		typeof scroll?.progressY === "number" ? `Progress: x=${Math.round((scroll.progressX || 0) * 100)}%, y=${Math.round(scroll.progressY * 100)}%` : null,
+		`At top: ${scroll?.atTop ? "yes" : "no"}`,
+		`At bottom: ${scroll?.atBottom ? "yes" : "no"}`,
+		`At left: ${scroll?.atLeft ? "yes" : "no"}`,
+		`At right: ${scroll?.atRight ? "yes" : "no"}`,
+	].filter(Boolean) as string[];
 	return stringifyValue(lines.join("\n"), 12000);
 }
 
@@ -1124,6 +1144,34 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 				details: {
 					tab: result.tab,
 					headings: result.headings,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_get_scroll_state",
+		label: "Browser Get Scroll State",
+		description: "Capture the current browser scroll position and page scroll bounds",
+		promptSnippet: "Get the current scroll position so Onhand understands where in the page the user is",
+		promptGuidelines: [
+			"Use this when relative page position matters, such as top/middle/bottom or progress through a long page.",
+		],
+		parameters: SCROLL_STATE_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand("get_scroll_state", { tabId: tab.id }, 15000);
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatScrollState(result.scroll),
+					},
+				],
+				details: {
+					tab: result.tab,
+					scroll: result.scroll,
 				},
 			};
 		},

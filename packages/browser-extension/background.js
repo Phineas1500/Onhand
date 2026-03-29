@@ -1183,6 +1183,40 @@ const createPageToolkit = () => {
 		};
 	};
 
+	const getScrollState = () => {
+		const doc = document.documentElement;
+		const body = document.body;
+		const scrollHeight = Math.max(doc?.scrollHeight || 0, body?.scrollHeight || 0);
+		const scrollWidth = Math.max(doc?.scrollWidth || 0, body?.scrollWidth || 0);
+		const maxScrollY = Math.max(0, scrollHeight - window.innerHeight);
+		const maxScrollX = Math.max(0, scrollWidth - window.innerWidth);
+		const scrollY = window.scrollY;
+		const scrollX = window.scrollX;
+		const progressY = maxScrollY > 0 ? scrollY / maxScrollY : 0;
+		const progressX = maxScrollX > 0 ? scrollX / maxScrollX : 0;
+
+		return {
+			url: location.href,
+			title: document.title,
+			scrollX,
+			scrollY,
+			maxScrollX,
+			maxScrollY,
+			scrollWidth,
+			scrollHeight,
+			progressX,
+			progressY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			atTop: scrollY <= 2,
+			atBottom: scrollY >= maxScrollY - 2,
+			atLeft: scrollX <= 2,
+			atRight: scrollX >= maxScrollX - 2,
+		};
+	};
+
 	const scrollToAnnotation = async (annotationId, options = {}) => {
 		const rawAnnotationId = String(annotationId ?? "").trim();
 		if (!rawAnnotationId) throw new Error("scrollToAnnotation requires a non-empty annotationId");
@@ -1401,6 +1435,7 @@ const createPageToolkit = () => {
 		getVisibleText,
 		getSelectionInfo,
 		getViewportHeadings,
+		getScrollState,
 		scrollToAnnotation,
 		showNote,
 		captureState,
@@ -2057,6 +2092,14 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				headings,
+			};
+		}
+		case "get_scroll_state": {
+			const tab = await resolveTargetTab(args);
+			const scroll = await runPageToolkitMethod(tab.id, "getScrollState");
+			return {
+				tab: simplifyTab(tab),
+				scroll,
 			};
 		}
 		case "clear_annotations": {

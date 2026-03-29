@@ -148,6 +148,7 @@ pi install .
 - `browser_get_visible_text`
 - `browser_get_selection`
 - `browser_get_viewport_headings`
+- `browser_get_scroll_state`
 
 Also includes the command:
 
@@ -164,7 +165,7 @@ Also includes the command:
 ## Likely next steps
 
 - stronger replay/restore fidelity beyond best-effort text matching
-- more visible-context helpers (scroll state and richer viewport structure)
 - a small artifact index/loader on top of `.onhand/artifacts/browser/`
+- more visible-context helpers for richer viewport structure
 - Electron app shell for Onhand
 - PDF/document support after the browser-grounded MVP is solid
