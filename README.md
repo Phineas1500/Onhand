@@ -24,6 +24,7 @@ The broader product plan lives in:
 
 ## Current repository layout
 
+- `apps/desktop/` - early Electron desktop shell for Onhand
 - `docs/ONHAND_PLAN.md` - product and implementation plan
 - `packages/browser-bridge/` - local HTTP + WebSocket bridge server
 - `packages/browser-extension/` - unpacked Chromium extension
@@ -120,6 +121,19 @@ Or install this repository as a pi package:
 pi install .
 ```
 
+### 5. Run the desktop shell (early)
+
+```bash
+npm run desktop
+```
+
+Current desktop-shell status:
+- minimal Electron app under `apps/desktop/`
+- temporary global shortcut: `CommandOrControl+Shift+Space`
+- prompt palette UI and session area
+- live browser-context preview via the local bridge
+- prompt submission is still a shell stub; pi SDK session wiring is the next step
+
 ## Tools exposed in pi
 
 - `browser_list_tabs`
@@ -165,8 +179,8 @@ Also includes the command:
 
 ## Likely next steps
 
+- route desktop-shell prompt submission into a real pi SDK session
 - stronger replay/restore fidelity beyond best-effort text matching
 - richer artifact browsing/selection UX on top of `.onhand/artifacts/browser/index.json`
 - more visible-context helpers for richer viewport structure when needed
-- Electron app shell for Onhand
 - PDF/document support after the browser-grounded MVP is solid

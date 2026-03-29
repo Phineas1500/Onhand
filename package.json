@@ -3,14 +3,23 @@
   "version": "0.1.0",
   "description": "Onhand: contextual AI assistant for learning and research, currently focused on a local browser bridge for pi",
   "type": "module",
-  "keywords": ["pi-package", "onhand", "browser-automation", "learning", "research"],
+  "keywords": [
+    "pi-package",
+    "onhand",
+    "browser-automation",
+    "learning",
+    "research"
+  ],
   "pi": {
-    "extensions": ["./packages/pi-extension"]
+    "extensions": [
+      "./packages/pi-extension"
+    ]
   },
   "scripts": {
     "bridge": "node ./packages/browser-bridge/server.mjs",
     "bridge:token": "node ./packages/browser-bridge/server.mjs token",
-    "bridge:config": "node ./packages/browser-bridge/server.mjs config"
+    "bridge:config": "node ./packages/browser-bridge/server.mjs config",
+    "desktop": "electron ./apps/desktop/main.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -25,5 +34,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^41.1.0"
   }
 }

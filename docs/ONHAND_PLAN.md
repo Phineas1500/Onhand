@@ -438,6 +438,11 @@ The first true product milestone should satisfy all of these:
 
 Completed so far:
 - repo refactor to an Onhand-centered layout under `packages/`
+- minimal Electron desktop shell under `apps/desktop/`:
+  - windowed app shell with a command-palette-style input
+  - temporary global shortcut (`CommandOrControl+Shift+Space`)
+  - live browser-context preview via the local browser bridge
+  - prompt submission stubbed in the shell while pi SDK session wiring is still pending
 - first-class browser annotation tools:
   - `browser_highlight_text`
   - `browser_show_note`
@@ -477,10 +482,11 @@ Completed so far:
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
-- Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
+- Phase 14.3 has started with a minimal desktop shell, but prompt routing still needs to be wired into a real pi SDK session.
+- There is still no session browser or replay UI.
 
 Most important next step:
-- improve artifact browsing/selection UX and, if needed, strengthen restore fidelity beyond best-effort text matching.
+- connect the desktop-shell prompt flow to a real pi SDK session while reusing the existing browser tools.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -591,11 +597,16 @@ Remaining:
 - [ ] improve restore fidelity beyond best-effort text-based matching
 - [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts
 
-### 14.3 Build minimal Onhand app shell
-- create Electron app
-- add global shortcut
-- add Raycast-like command palette
-- route command to pi SDK session
+### 14.3 Build minimal Onhand app shell — in progress
+Started:
+- [x] create Electron app under `apps/desktop/`
+- [x] add temporary global shortcut (`CommandOrControl+Shift+Space`)
+- [x] add command-palette-style input + session area
+- [x] show live browser-context preview from the bridge inside the shell
+
+Remaining:
+- [ ] route shell prompt submission to a real pi SDK session
+- [ ] decide how the shell should manage session/project selection before the full replay UI exists
 
 ### 14.4 Add replay MVP
 - session list
@@ -622,6 +633,7 @@ These tasks are enough to start the actual product, not just the tooling prototy
 The repo now uses a minimal Onhand-centered layout without over-scaffolding too early.
 
 Current relevant pieces:
+- `apps/desktop/`
 - `packages/browser-bridge/`
 - `packages/browser-extension/`
 - `packages/pi-extension/`
