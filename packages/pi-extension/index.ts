@@ -115,6 +115,7 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	persist: Type.Optional(Type.Boolean({ description: "Write the captured page state to a local Onhand artifact directory" })),
 	includeHtml: Type.Optional(Type.Boolean({ description: "When persisting, also save a full HTML snapshot (default true)" })),
+	includeScreenshot: Type.Optional(Type.Boolean({ description: "When persisting, also save a screenshot snapshot (default true)" })),
 	label: Type.Optional(Type.String({ description: "Optional label to store with the persisted artifact" })),
 });
 
@@ -370,6 +371,7 @@ function formatCapturedState(page: any, persistedArtifact?: any) {
 		lines.push(`Artifact dir: ${persistedArtifact.relativeArtifactDir || persistedArtifact.artifactDir}`);
 		if (persistedArtifact.statePath) lines.push(`State file: ${persistedArtifact.statePath}`);
 		if (persistedArtifact.htmlPath) lines.push(`HTML snapshot: ${persistedArtifact.htmlPath}`);
+		if (persistedArtifact.screenshotPath) lines.push(`Screenshot: ${persistedArtifact.screenshotPath}`);
 	}
 
 	lines.push("");
@@ -409,6 +411,7 @@ async function persistBrowserCaptureArtifact(options: {
 	tab: any;
 	page: any;
 	outerHTML?: string;
+	screenshotDataUrl?: string;
 	label?: string;
 	sessionFile?: string;
 	sessionLeafId?: string | null;
@@ -421,8 +424,11 @@ async function persistBrowserCaptureArtifact(options: {
 
 	const stateFileName = "state.json";
 	const htmlFileName = options.outerHTML ? "page.html" : undefined;
+	const screenshotInfo = options.screenshotDataUrl ? parseImageDataUrl(options.screenshotDataUrl) : undefined;
+	const screenshotFileName = screenshotInfo ? `screenshot.${screenshotInfo.extension}` : undefined;
 	const statePath = join(artifactDir, stateFileName);
 	const htmlPath = htmlFileName ? join(artifactDir, htmlFileName) : undefined;
+	const screenshotPath = screenshotFileName ? join(artifactDir, screenshotFileName) : undefined;
 
 	const manifest = {
 		version: ONHAND_BROWSER_CAPTURE_VERSION,
@@ -443,12 +449,16 @@ async function persistBrowserCaptureArtifact(options: {
 		files: {
 			state: stateFileName,
 			html: htmlFileName || null,
+			screenshot: screenshotFileName || null,
 		},
 	};
 
 	await writeFile(statePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 	if (htmlPath && typeof options.outerHTML === "string") {
 		await writeFile(htmlPath, options.outerHTML, "utf8");
+	}
+	if (screenshotPath && options.screenshotDataUrl) {
+		await writeImageDataUrlToPath(options.screenshotDataUrl, screenshotPath);
 	}
 
 	return {
@@ -457,6 +467,7 @@ async function persistBrowserCaptureArtifact(options: {
 		relativeArtifactDir: relative(options.cwd, artifactDir),
 		statePath: relative(options.cwd, statePath),
 		htmlPath: htmlPath ? relative(options.cwd, htmlPath) : undefined,
+		screenshotPath: screenshotPath ? relative(options.cwd, screenshotPath) : undefined,
 		manifest,
 	};
 }
@@ -649,16 +660,27 @@ function stringifyValue(value: any, maxChars = 12000) {
 	return `${text.slice(0, maxChars)}\n\n[Truncated at ${maxChars} characters]`;
 }
 
-async function saveDataUrlToFile(dataUrl: string, tabId: number | undefined) {
+function parseImageDataUrl(dataUrl: string) {
 	const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
 	if (!match) throw new Error("Bridge returned an invalid screenshot payload");
 	const mediaType = match[1];
 	const base64 = match[2];
 	const extension = mediaType.includes("jpeg") ? "jpg" : "png";
+	return { mediaType, base64, extension };
+}
+
+async function writeImageDataUrlToPath(dataUrl: string, path: string) {
+	const { base64 } = parseImageDataUrl(dataUrl);
+	await writeFile(path, Buffer.from(base64, "base64"));
+	return path;
+}
+
+async function saveDataUrlToFile(dataUrl: string, tabId: number | undefined) {
+	const { extension } = parseImageDataUrl(dataUrl);
 	const dir = join(tmpdir(), "onhand-browser-bridge");
 	await mkdir(dir, { recursive: true });
 	const path = join(dir, `browser-shot-${Date.now()}-${tabId || "tab"}.${extension}`);
-	await writeFile(path, Buffer.from(base64, "base64"));
+	await writeImageDataUrlToPath(dataUrl, path);
 	return path;
 }
 
@@ -936,14 +958,19 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 			let persistedArtifact: any;
 			if (params.persist) {
 				const includeHtml = params.includeHtml !== false;
+				const includeScreenshot = params.includeScreenshot !== false;
 				const outerHTML = includeHtml
 					? (await sendBridgeCommand("get_dom", { tabId: tab.id }, 30000)).outerHTML || ""
+					: undefined;
+				const screenshotDataUrl = includeScreenshot
+					? (await sendBridgeCommand("capture_screenshot", { tabId: tab.id }, 30000)).dataUrl
 					: undefined;
 				persistedArtifact = await persistBrowserCaptureArtifact({
 					cwd: ctx?.cwd || process.cwd(),
 					tab: result.tab,
 					page: result.page,
 					outerHTML,
+					screenshotDataUrl,
 					label: params.label,
 					sessionFile: ctx?.sessionManager?.getSessionFile?.(),
 					sessionLeafId: ctx?.sessionManager?.getLeafId?.() || null,
@@ -957,6 +984,7 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 					relativeArtifactDir: persistedArtifact.relativeArtifactDir,
 					statePath: persistedArtifact.statePath,
 					htmlPath: persistedArtifact.htmlPath || null,
+					screenshotPath: persistedArtifact.screenshotPath || null,
 					tab: {
 						id: result.tab?.id,
 						windowId: result.tab?.windowId,

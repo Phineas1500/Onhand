@@ -1354,6 +1354,52 @@ async function getDomOuterHtml(tabId) {
 	});
 }
 
+async function captureTabScreenshot(tabId, options = {}) {
+	const focusedTab = await focusTab(tabId);
+	await delay(typeof options.delayMs === "number" ? options.delayMs : SCREENSHOT_DELAY_MS);
+	const format = options.format === "jpeg" ? "jpeg" : "png";
+	const quality =
+		format === "jpeg" && typeof options.quality === "number"
+			? clampNumber(options.quality, 80, { min: 0, max: 100 })
+			: undefined;
+
+		try {
+			const base64 = await withDebugger(focusedTab.id, async ({ send }) => {
+				await send("Page.enable");
+				const response = await send("Page.captureScreenshot", {
+					format,
+					quality,
+					fromSurface: true,
+				});
+				if (!response?.data) {
+					throw new Error("Page.captureScreenshot returned no image data");
+				}
+				return response.data;
+			});
+			return {
+				tab: focusedTab,
+				dataUrl: `data:image/${format};base64,${base64}`,
+				method: "debugger",
+			};
+		} catch (debuggerError) {
+			try {
+				const dataUrl = await chrome.tabs.captureVisibleTab(focusedTab.windowId, {
+					format,
+					quality,
+				});
+				return {
+					tab: focusedTab,
+					dataUrl,
+					method: "tabs.captureVisibleTab",
+				};
+			} catch (tabsError) {
+				const debuggerMessage = debuggerError?.message || String(debuggerError);
+				const tabsMessage = tabsError?.message || String(tabsError);
+				throw new Error(`Could not capture screenshot via debugger (${debuggerMessage}) or tabs.captureVisibleTab (${tabsMessage})`);
+			}
+		}
+}
+
 async function collectConsoleEvents(tabId, options = {}) {
 	const durationMs = clampNumber(options.durationMs, 3000, { min: 0, max: 60000 });
 	const maxEntries = clampNumber(options.maxEntries, 50, { min: 1, max: 500 });
@@ -1948,15 +1994,11 @@ async function handleCommand(name, args = {}) {
 		}
 		case "capture_screenshot": {
 			const tab = await resolveTargetTab(args);
-			const focusedTab = await focusTab(tab.id);
-			await delay(typeof args.delayMs === "number" ? args.delayMs : SCREENSHOT_DELAY_MS);
-			const dataUrl = await chrome.tabs.captureVisibleTab(focusedTab.windowId, {
-				format: args.format === "jpeg" ? "jpeg" : "png",
-				quality: typeof args.quality === "number" ? args.quality : undefined,
-			});
+			const screenshot = await captureTabScreenshot(tab.id, args);
 			return {
-				tab: simplifyTab(focusedTab),
-				dataUrl,
+				tab: simplifyTab(screenshot.tab),
+				dataUrl: screenshot.dataUrl,
+				method: screenshot.method,
 			};
 		}
 		default:

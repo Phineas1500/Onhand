@@ -447,6 +447,7 @@ Completed so far:
 - first-pass browser artifact persistence:
   - writes captured browser state to `.onhand/artifacts/browser/<artifact-id>/state.json`
   - writes HTML snapshots to `.onhand/artifacts/browser/<artifact-id>/page.html`
+  - writes screenshots to `.onhand/artifacts/browser/<artifact-id>/screenshot.png`
   - appends a session-linked pi custom entry of type `onhand/browser-capture`
 - first-pass browser restore support:
   - restores persisted annotations from a saved browser artifact via `browser_restore_state`
@@ -457,7 +458,7 @@ Completed so far:
   - show an anchored note near the highlighted content
   - scroll back to the annotation so the user can see it
   - capture current page state including scroll position, highlight metadata, and note metadata
-  - persist captured state + HTML snapshot to disk
+  - persist captured state + HTML snapshot + screenshot to disk
   - verify session-link metadata is produced for persistence
   - clear injected annotations and verify they are gone
   - restore a saved artifact back onto the live page and verify the highlight + note reappear
@@ -467,7 +468,7 @@ Current status:
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- strengthen replay fidelity by adding screenshot capture and a small Onhand artifact index/loader on top of the new capture/restore loop.
+- add visible-context helpers and a small Onhand artifact index/loader on top of the new capture/restore loop.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -570,9 +571,9 @@ Started:
 - [x] save HTML snapshots alongside captured state
 - [x] save session-linked metadata via custom entry type `onhand/browser-capture`
 - [x] add a first-pass restore hook with `browser_restore_state`
+- [x] add screenshot capture alongside the saved state/HTML snapshot
 
 Remaining:
-- [ ] add screenshot capture alongside the saved state/HTML snapshot
 - [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout
 - [ ] improve restore fidelity beyond best-effort text-based matching
 - [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts

@@ -143,7 +143,7 @@ pi install .
 - `browser_show_note`
 - `browser_scroll_to_annotation`
 - `browser_clear_annotations`
-- `browser_capture_state`
+- `browser_capture_state` (can persist `state.json`, `page.html`, and `screenshot.png` into `.onhand/artifacts/browser/`)
 - `browser_restore_state`
 
 Also includes the command:
@@ -160,8 +160,8 @@ Also includes the command:
 
 ## Likely next steps
 
-- screenshot capture as part of persisted browser artifacts
 - stronger replay/restore fidelity beyond best-effort text matching
 - better visible-context helpers
+- a small artifact index/loader on top of `.onhand/artifacts/browser/`
 - Electron app shell for Onhand
 - PDF/document support after the browser-grounded MVP is solid
