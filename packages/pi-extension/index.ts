@@ -4,13 +4,16 @@ import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const DEFAULT_TIMEOUT_MS = 15000;
+const ONHAND_ARTIFACTS_DIR = join(".onhand", "artifacts", "browser");
+const ONHAND_BROWSER_CAPTURE_ENTRY = "onhand/browser-capture";
+const ONHAND_BROWSER_CAPTURE_VERSION = 1;
 
 const TAB_SELECTOR_PROPS = {
 	tabId: Type.Optional(Type.Number({ description: "Exact tab ID to target" })),
@@ -110,6 +113,9 @@ const SCROLL_TO_ANNOTATION_SCHEMA = Type.Object({
 
 const CAPTURE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
+	persist: Type.Optional(Type.Boolean({ description: "Write the captured page state to a local Onhand artifact directory" })),
+	includeHtml: Type.Optional(Type.Boolean({ description: "When persisting, also save a full HTML snapshot (default true)" })),
+	label: Type.Optional(Type.String({ description: "Optional label to store with the persisted artifact" })),
 });
 
 const CLEAR_ANNOTATIONS_SCHEMA = Type.Object({
@@ -342,7 +348,7 @@ function formatElementMatches(matches: any[]) {
 	return stringifyValue(lines.join("\n"), 12000);
 }
 
-function formatCapturedState(page: any) {
+function formatCapturedState(page: any, persistedArtifact?: any) {
 	const annotations = Array.isArray(page?.annotations) ? page.annotations : [];
 	const lines = [
 		`URL: ${page?.url || ""}`,
@@ -350,8 +356,16 @@ function formatCapturedState(page: any) {
 		page?.viewport ? `Viewport: ${page.viewport.width}x${page.viewport.height}` : null,
 		typeof page?.scrollY === "number" ? `Scroll: x=${page.scrollX || 0}, y=${page.scrollY}` : null,
 		`Annotations: ${annotations.length}`,
-		"",
 	].filter(Boolean) as string[];
+
+	if (persistedArtifact) {
+		lines.push(`Artifact ID: ${persistedArtifact.artifactId}`);
+		lines.push(`Artifact dir: ${persistedArtifact.relativeArtifactDir || persistedArtifact.artifactDir}`);
+		if (persistedArtifact.statePath) lines.push(`State file: ${persistedArtifact.statePath}`);
+		if (persistedArtifact.htmlPath) lines.push(`HTML snapshot: ${persistedArtifact.htmlPath}`);
+	}
+
+	lines.push("");
 
 	if (annotations.length === 0) {
 		lines.push("No Onhand annotations are currently on the page.");
@@ -372,6 +386,72 @@ function formatCapturedState(page: any) {
 		}
 	});
 	return stringifyValue(lines.join("\n"), 16000);
+}
+
+function slugifySegment(value: any, fallback = "page") {
+	const text = String(value ?? "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 48);
+	return text || fallback;
+}
+
+async function persistBrowserCaptureArtifact(options: {
+	cwd: string;
+	tab: any;
+	page: any;
+	outerHTML?: string;
+	label?: string;
+	sessionFile?: string;
+	sessionLeafId?: string | null;
+}) {
+	const timestamp = new Date().toISOString();
+	const stamp = timestamp.replace(/[-:TZ.]/g, "").slice(0, 17);
+	const artifactId = `${stamp}-${slugifySegment(options.tab?.title || options.page?.title || "page")}-${Math.random().toString(16).slice(2, 8)}`;
+	const artifactDir = join(options.cwd, ONHAND_ARTIFACTS_DIR, artifactId);
+	await mkdir(artifactDir, { recursive: true });
+
+	const stateFileName = "state.json";
+	const htmlFileName = options.outerHTML ? "page.html" : undefined;
+	const statePath = join(artifactDir, stateFileName);
+	const htmlPath = htmlFileName ? join(artifactDir, htmlFileName) : undefined;
+
+	const manifest = {
+		version: ONHAND_BROWSER_CAPTURE_VERSION,
+		type: "browser_capture",
+		artifactId,
+		createdAt: timestamp,
+		label: options.label || null,
+		cwd: options.cwd,
+		sessionFile: options.sessionFile || null,
+		sessionLeafId: options.sessionLeafId || null,
+		tab: {
+			id: options.tab?.id,
+			windowId: options.tab?.windowId,
+			title: options.tab?.title || options.page?.title || "",
+			url: options.tab?.url || options.page?.url || "",
+		},
+		page: options.page,
+		files: {
+			state: stateFileName,
+			html: htmlFileName || null,
+		},
+	};
+
+	await writeFile(statePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+	if (htmlPath && typeof options.outerHTML === "string") {
+		await writeFile(htmlPath, options.outerHTML, "utf8");
+	}
+
+	return {
+		artifactId,
+		artifactDir,
+		relativeArtifactDir: relative(options.cwd, artifactDir),
+		statePath: relative(options.cwd, statePath),
+		htmlPath: htmlPath ? relative(options.cwd, htmlPath) : undefined,
+		manifest,
+	};
 }
 
 function htmlToMarkdown(html: string) {
@@ -776,26 +856,70 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "browser_capture_state",
 		label: "Browser Capture State",
-		description: "Capture lightweight page state for Onhand replay, including scroll position and current annotations",
+		description: "Capture lightweight page state for Onhand replay, optionally persisting it as an Onhand artifact",
 		promptSnippet: "Capture the current page state and any Onhand annotations for persistence or replay",
 		promptGuidelines: [
 			"Use this after highlighting or showing notes when you want to persist the user-visible state.",
+			"Set persist=true when the state should be saved to disk and linked to the current session.",
 		],
 		parameters: CAPTURE_STATE_SCHEMA,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const client = await getBridgeState();
 			const tab = resolveTabFromState(client.state, params);
 			const result = await sendBridgeCommand("capture_state", { tabId: tab.id }, 20000);
+
+			let persistedArtifact: any;
+			if (params.persist) {
+				const includeHtml = params.includeHtml !== false;
+				const outerHTML = includeHtml
+					? (await sendBridgeCommand("get_dom", { tabId: tab.id }, 30000)).outerHTML || ""
+					: undefined;
+				persistedArtifact = await persistBrowserCaptureArtifact({
+					cwd: ctx?.cwd || process.cwd(),
+					tab: result.tab,
+					page: result.page,
+					outerHTML,
+					label: params.label,
+					sessionFile: ctx?.sessionManager?.getSessionFile?.(),
+					sessionLeafId: ctx?.sessionManager?.getLeafId?.() || null,
+				});
+				pi.appendEntry(ONHAND_BROWSER_CAPTURE_ENTRY, {
+					version: ONHAND_BROWSER_CAPTURE_VERSION,
+					artifactId: persistedArtifact.artifactId,
+					createdAt: persistedArtifact.manifest.createdAt,
+					label: params.label || null,
+					cwd: ctx?.cwd || process.cwd(),
+					relativeArtifactDir: persistedArtifact.relativeArtifactDir,
+					statePath: persistedArtifact.statePath,
+					htmlPath: persistedArtifact.htmlPath || null,
+					tab: {
+						id: result.tab?.id,
+						windowId: result.tab?.windowId,
+						title: result.tab?.title,
+						url: result.tab?.url,
+					},
+					page: {
+						url: result.page?.url,
+						title: result.page?.title,
+						scrollX: result.page?.scrollX,
+						scrollY: result.page?.scrollY,
+						viewport: result.page?.viewport,
+						annotationCount: result.page?.annotationCount,
+					},
+				});
+			}
+
 			return {
 				content: [
 					{
 						type: "text",
-						text: formatCapturedState(result.page),
+						text: formatCapturedState(result.page, persistedArtifact),
 					},
 				],
 				details: {
 					tab: result.tab,
 					page: result.page,
+					persistedArtifact,
 				},
 			};
 		},

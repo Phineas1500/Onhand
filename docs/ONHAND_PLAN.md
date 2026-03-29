@@ -444,11 +444,17 @@ Completed so far:
   - `browser_scroll_to_annotation`
   - `browser_clear_annotations`
 - lightweight browser state capture with `browser_capture_state`
+- first-pass browser artifact persistence:
+  - writes captured browser state to `.onhand/artifacts/browser/<artifact-id>/state.json`
+  - writes HTML snapshots to `.onhand/artifacts/browser/<artifact-id>/page.html`
+  - appends a session-linked pi custom entry of type `onhand/browser-capture`
 - repeated end-to-end testing in the connected live browser, including:
   - highlight target text on the page
   - show an anchored note near the highlighted content
   - scroll back to the annotation so the user can see it
   - capture current page state including scroll position, highlight metadata, and note metadata
+  - persist captured state + HTML snapshot to disk
+  - verify session-link metadata is produced for persistence
   - clear injected annotations and verify they are gone
 
 Current status:
@@ -456,7 +462,7 @@ Current status:
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- persist captured browser state as actual Onhand artifacts and session-linked records instead of only returning it from tools.
+- add the next replay primitives on top of persisted artifacts: screenshot capture, restore hooks, and a small Onhand artifact index/loader.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -555,12 +561,15 @@ Also added:
 ### 14.2 Persist browser annotations and snapshots — in progress
 Started:
 - [x] capture current page state, scroll position, viewport, highlight metadata, and note metadata via `browser_capture_state`
+- [x] define a first-pass artifact schema in `state.json`
+- [x] save HTML snapshots alongside captured state
+- [x] save session-linked metadata via custom entry type `onhand/browser-capture`
 
 Remaining:
-- [ ] define artifact schema
-- [ ] save DOM snapshot/HTML snapshot and screenshot alongside captured state
-- [ ] save annotation records as custom session entries + artifact files
+- [ ] add screenshot capture alongside the saved state/HTML snapshot
+- [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout
 - [ ] add restore-side hooks so captured state can be replayed later
+- [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts
 
 ### 14.3 Build minimal Onhand app shell
 - create Electron app
