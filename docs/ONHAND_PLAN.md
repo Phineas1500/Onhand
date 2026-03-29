@@ -449,10 +449,12 @@ Completed so far:
   - writes HTML snapshots to `.onhand/artifacts/browser/<artifact-id>/page.html`
   - writes screenshots to `.onhand/artifacts/browser/<artifact-id>/screenshot.png`
   - appends a session-linked pi custom entry of type `onhand/browser-capture`
+  - maintains a lightweight artifact index at `.onhand/artifacts/browser/index.json`
 - first-pass browser restore support:
   - restores persisted annotations from a saved browser artifact via `browser_restore_state`
   - re-applies highlights/notes to a live page using best-effort text-based matching
   - scrolls the restored annotation back into view
+  - can resolve artifacts by saved path or artifact id through the artifact index/loader
 - visible-context helpers:
   - `browser_get_visible_text` captures the text currently visible in the viewport so Onhand can answer questions about what the user is looking at right now
   - `browser_get_selection` captures the user's current text selection so Onhand can explain exactly what the user highlighted
@@ -471,13 +473,14 @@ Completed so far:
   - verify selection capture against a live selection on the page
   - verify viewport heading capture against the live section surrounding the highlighted content
   - verify scroll-state capture against the live page's current scroll position/progress
+  - verify indexed artifact listing and restore-by-artifact-id using the local artifact index/loader
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
 - Phase 1 has not started yet; there is still no app shell, session browser, or replay UI.
 
 Most important next step:
-- add a small Onhand artifact index/loader on top of the new capture/restore loop.
+- improve artifact browsing/selection UX and, if needed, strengthen restore fidelity beyond best-effort text matching.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -581,6 +584,7 @@ Started:
 - [x] save session-linked metadata via custom entry type `onhand/browser-capture`
 - [x] add a first-pass restore hook with `browser_restore_state`
 - [x] add screenshot capture alongside the saved state/HTML snapshot
+- [x] add a lightweight artifact index/loader and `browser_list_artifacts`
 
 Remaining:
 - [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout

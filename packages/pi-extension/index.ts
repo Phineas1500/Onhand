@@ -1,7 +1,7 @@
 import { Readability } from "@mozilla/readability";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
 import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -12,8 +12,10 @@ const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const DEFAULT_TIMEOUT_MS = 15000;
 const ONHAND_ARTIFACTS_DIR = join(".onhand", "artifacts", "browser");
+const ONHAND_BROWSER_INDEX_FILE = join(ONHAND_ARTIFACTS_DIR, "index.json");
 const ONHAND_BROWSER_CAPTURE_ENTRY = "onhand/browser-capture";
 const ONHAND_BROWSER_CAPTURE_VERSION = 1;
+const ONHAND_BROWSER_INDEX_VERSION = 1;
 
 const TAB_SELECTOR_PROPS = {
 	tabId: Type.Optional(Type.Number({ description: "Exact tab ID to target" })),
@@ -136,6 +138,11 @@ const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
 
 const SCROLL_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
+});
+
+const LIST_ARTIFACTS_SCHEMA = Type.Object({
+	query: Type.Optional(Type.String({ description: "Optional case-insensitive search across artifact id, label, title, and URL" })),
+	limit: Type.Optional(Type.Number({ description: "Maximum number of artifacts to return (default 20)" })),
 });
 
 const RESTORE_STATE_SCHEMA = Type.Object({
@@ -510,6 +517,28 @@ function formatScrollState(scroll: any) {
 	return stringifyValue(lines.join("\n"), 12000);
 }
 
+function formatBrowserArtifacts(artifacts: any[]) {
+	if (!Array.isArray(artifacts) || artifacts.length === 0) {
+		return "No saved Onhand browser artifacts were found.";
+	}
+	const lines = artifacts.map((artifact, index) => {
+		const bits = [
+			artifact.label ? `label=${JSON.stringify(artifact.label)}` : null,
+			artifact.annotationCount ? `annotations=${artifact.annotationCount}` : "annotations=0",
+			artifact.createdAt ? `createdAt=${artifact.createdAt}` : null,
+		].filter(Boolean);
+		const lines = [
+			`${index + 1}. ${artifact.artifactId}${bits.length ? ` [${bits.join(", ")}]` : ""}`,
+			`   ${artifact.title || "(untitled)"}`,
+			artifact.url ? `   ${artifact.url}` : null,
+			artifact.statePath ? `   state: ${artifact.statePath}` : null,
+			artifact.screenshotPath ? `   screenshot: ${artifact.screenshotPath}` : null,
+		].filter(Boolean);
+		return lines.join("\n");
+	});
+	return stringifyValue(lines.join("\n\n"), 16000);
+}
+
 function slugifySegment(value: any, fallback = "page") {
 	const text = String(value ?? "")
 		.toLowerCase()
@@ -517,6 +546,132 @@ function slugifySegment(value: any, fallback = "page") {
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 48);
 	return text || fallback;
+}
+
+function buildBrowserArtifactSummary(cwd: string, manifest: any, paths: {
+	relativeArtifactDir: string;
+	statePath: string;
+	htmlPath?: string;
+	screenshotPath?: string;
+}) {
+	return {
+		version: ONHAND_BROWSER_CAPTURE_VERSION,
+		artifactId: manifest.artifactId,
+		createdAt: manifest.createdAt,
+		label: manifest.label || null,
+		cwd,
+		relativeArtifactDir: paths.relativeArtifactDir,
+		statePath: paths.statePath,
+		htmlPath: paths.htmlPath || null,
+		screenshotPath: paths.screenshotPath || null,
+		title: manifest?.tab?.title || manifest?.page?.title || "",
+		url: manifest?.tab?.url || manifest?.page?.url || "",
+		annotationCount: manifest?.page?.annotationCount ?? (Array.isArray(manifest?.page?.annotations) ? manifest.page.annotations.length : 0),
+		sessionFile: manifest?.sessionFile || null,
+		sessionLeafId: manifest?.sessionLeafId || null,
+	};
+}
+
+async function readBrowserArtifactIndex(cwd: string) {
+	const indexPath = join(cwd, ONHAND_BROWSER_INDEX_FILE);
+	try {
+		const raw = await readFile(indexPath, "utf8");
+		const parsed = JSON.parse(raw);
+		if (parsed?.version === ONHAND_BROWSER_INDEX_VERSION && Array.isArray(parsed.artifacts)) {
+			return { indexPath, index: parsed };
+		}
+	} catch {}
+	return {
+		indexPath,
+		index: {
+			version: ONHAND_BROWSER_INDEX_VERSION,
+			updatedAt: null,
+			artifacts: [],
+		},
+	};
+}
+
+async function scanBrowserArtifacts(cwd: string) {
+	const artifactRoot = join(cwd, ONHAND_ARTIFACTS_DIR);
+	let entries: any[] = [];
+	try {
+		entries = await readdir(artifactRoot, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+
+	const artifacts = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const statePath = join(artifactRoot, entry.name, "state.json");
+		try {
+			const raw = await readFile(statePath, "utf8");
+			const manifest = JSON.parse(raw);
+			if (manifest?.type !== "browser_capture") continue;
+			artifacts.push(
+				buildBrowserArtifactSummary(cwd, manifest, {
+					relativeArtifactDir: relative(cwd, join(artifactRoot, entry.name)),
+					statePath: relative(cwd, statePath),
+					htmlPath: manifest?.files?.html ? relative(cwd, join(artifactRoot, entry.name, manifest.files.html)) : undefined,
+					screenshotPath: manifest?.files?.screenshot ? relative(cwd, join(artifactRoot, entry.name, manifest.files.screenshot)) : undefined,
+				}),
+			);
+		} catch {}
+	}
+
+	artifacts.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+	return artifacts;
+}
+
+async function listBrowserArtifacts(cwd: string, options: { query?: string; limit?: number } = {}) {
+	const { indexPath, index } = await readBrowserArtifactIndex(cwd);
+	let artifacts = Array.isArray(index.artifacts) ? [...index.artifacts] : [];
+	if (artifacts.length === 0) {
+		artifacts = await scanBrowserArtifacts(cwd);
+		if (artifacts.length > 0) {
+			await mkdir(join(cwd, ONHAND_ARTIFACTS_DIR), { recursive: true });
+			await writeFile(
+				indexPath,
+				`${JSON.stringify({ version: ONHAND_BROWSER_INDEX_VERSION, updatedAt: new Date().toISOString(), artifacts }, null, 2)}\n`,
+				"utf8",
+			);
+		}
+	}
+
+	if (options.query) {
+		const needle = options.query.toLowerCase();
+		artifacts = artifacts.filter((artifact) =>
+			[
+				artifact.artifactId,
+				artifact.label,
+				artifact.title,
+				artifact.url,
+				artifact.statePath,
+				artifact.relativeArtifactDir,
+			]
+				.filter(Boolean)
+				.some((value) => String(value).toLowerCase().includes(needle)),
+		);
+	}
+
+	const limit = Math.max(1, Math.min(200, Number(options.limit || 20) || 20));
+	return artifacts.slice(0, limit);
+}
+
+async function updateBrowserArtifactIndex(cwd: string, artifactSummary: any) {
+	const { indexPath, index } = await readBrowserArtifactIndex(cwd);
+	const artifacts = Array.isArray(index.artifacts) ? [...index.artifacts] : [];
+	const filtered = artifacts.filter((artifact) => artifact.artifactId !== artifactSummary.artifactId);
+	filtered.unshift(artifactSummary);
+	filtered.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+	const next = {
+		version: ONHAND_BROWSER_INDEX_VERSION,
+		updatedAt: new Date().toISOString(),
+		artifacts: filtered.slice(0, 500),
+	};
+	await mkdir(join(cwd, ONHAND_ARTIFACTS_DIR), { recursive: true });
+	await writeFile(indexPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+	return { indexPath: relative(cwd, indexPath), index: next };
 }
 
 async function persistBrowserCaptureArtifact(options: {
@@ -574,7 +729,7 @@ async function persistBrowserCaptureArtifact(options: {
 		await writeImageDataUrlToPath(options.screenshotDataUrl, screenshotPath);
 	}
 
-	return {
+	const persistedArtifact = {
 		artifactId,
 		artifactDir,
 		relativeArtifactDir: relative(options.cwd, artifactDir),
@@ -583,23 +738,56 @@ async function persistBrowserCaptureArtifact(options: {
 		screenshotPath: screenshotPath ? relative(options.cwd, screenshotPath) : undefined,
 		manifest,
 	};
+	persistedArtifact.index = await updateBrowserArtifactIndex(
+		options.cwd,
+		buildBrowserArtifactSummary(options.cwd, manifest, {
+			relativeArtifactDir: persistedArtifact.relativeArtifactDir,
+			statePath: persistedArtifact.statePath,
+			htmlPath: persistedArtifact.htmlPath,
+			screenshotPath: persistedArtifact.screenshotPath,
+		}),
+	);
+	return persistedArtifact;
 }
 
 async function loadBrowserCaptureArtifact(cwd: string, artifactPath: string) {
 	const rawPath = String(artifactPath || "").trim();
 	if (!rawPath) throw new Error("artifactPath is required");
-	const absoluteInputPath = resolve(cwd, rawPath);
-	const statePath = absoluteInputPath.endsWith(".json") ? absoluteInputPath : join(absoluteInputPath, "state.json");
-	const raw = await readFile(statePath, "utf8");
-	const manifest = JSON.parse(raw);
-	if (manifest?.type !== "browser_capture") {
-		throw new Error(`Artifact at ${statePath} is not an Onhand browser capture`);
+
+	const candidates = [resolve(cwd, rawPath), resolve(cwd, ONHAND_ARTIFACTS_DIR, rawPath)];
+	for (const candidate of candidates) {
+		const statePath = candidate.endsWith(".json") ? candidate : join(candidate, "state.json");
+		try {
+			const raw = await readFile(statePath, "utf8");
+			const manifest = JSON.parse(raw);
+			if (manifest?.type !== "browser_capture") continue;
+			return {
+				statePath,
+				artifactDir: resolve(statePath, ".."),
+				manifest,
+			};
+		} catch {}
 	}
-	return {
-		statePath,
-		artifactDir: resolve(statePath, ".."),
-		manifest,
-	};
+
+	const artifacts = await listBrowserArtifacts(cwd, { query: rawPath, limit: 500 });
+	const exactMatch = artifacts.find((artifact) =>
+		[artifact.artifactId, artifact.statePath, artifact.relativeArtifactDir].some((value) => String(value || "") === rawPath),
+	);
+	if (exactMatch?.statePath) {
+		const statePath = resolve(cwd, exactMatch.statePath);
+		const raw = await readFile(statePath, "utf8");
+		const manifest = JSON.parse(raw);
+		if (manifest?.type !== "browser_capture") {
+			throw new Error(`Artifact at ${statePath} is not an Onhand browser capture`);
+		}
+		return {
+			statePath,
+			artifactDir: resolve(statePath, ".."),
+			manifest,
+		};
+	}
+
+	throw new Error(`Could not find browser artifact: ${artifactPath}`);
 }
 
 function chooseBestMatchingTab(tabs: any[], url: string, title: string) {
@@ -1250,6 +1438,37 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 					tab: result.tab,
 					page: result.page,
 					persistedArtifact,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_list_artifacts",
+		label: "Browser List Artifacts",
+		description: "List saved Onhand browser artifacts from the local artifact index",
+		promptSnippet: "List saved browser artifacts so Onhand can resume or restore a previous captured page state",
+		promptGuidelines: [
+			"Use this before browser_restore_state when you need to find a previously saved artifact.",
+		],
+		parameters: LIST_ARTIFACTS_SCHEMA,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const cwd = ctx?.cwd || process.cwd();
+			const artifacts = await listBrowserArtifacts(cwd, {
+				query: params.query,
+				limit: params.limit,
+			});
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatBrowserArtifacts(artifacts),
+					},
+				],
+				details: {
+					cwd,
+					artifactCount: artifacts.length,
+					artifacts,
 				},
 			};
 		},
