@@ -1,0 +1,29 @@
+{
+  "name": "pi-browser-bridge",
+  "version": "0.1.0",
+  "description": "Local browser bridge for pi using a Chromium extension + chrome.debugger",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./pi-extension"]
+  },
+  "scripts": {
+    "bridge": "node ./bridge/server.mjs",
+    "bridge:token": "node ./bridge/server.mjs token",
+    "bridge:config": "node ./bridge/server.mjs config"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^26.1.0",
+    "turndown": "^7.2.0",
+    "turndown-plugin-gfm": "^1.0.2",
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
