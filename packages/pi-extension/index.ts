@@ -125,6 +125,10 @@ const VISIBLE_TEXT_SCHEMA = Type.Object({
 	maxBlocks: Type.Optional(Type.Number({ description: "Maximum visible text blocks to return (default 25)" })),
 });
 
+const SELECTION_SCHEMA = Type.Object({
+	...TAB_SELECTOR_PROPS,
+});
+
 const RESTORE_STATE_SCHEMA = Type.Object({
 	...TAB_SELECTOR_PROPS,
 	artifactPath: Type.String({ description: "Path to a saved Onhand browser artifact state.json file or artifact directory" }),
@@ -426,6 +430,31 @@ function formatVisibleText(visible: any) {
 	});
 
 	return stringifyValue(lines.join("\n"), 16000);
+}
+
+function formatSelection(selection: any) {
+	const lines = [
+		`URL: ${selection?.url || ""}`,
+		selection?.title ? `Title: ${selection.title}` : null,
+		selection?.viewport ? `Viewport: ${selection.viewport.width}x${selection.viewport.height}` : null,
+		typeof selection?.scrollY === "number" ? `Scroll: x=${selection.scrollX || 0}, y=${selection.scrollY}` : null,
+		`Has selection: ${selection?.hasSelection ? "yes" : "no"}`,
+		`Collapsed: ${selection?.isCollapsed ? "yes" : "no"}`,
+		`Range count: ${selection?.rangeCount ?? 0}`,
+		selection?.activeElement ? `Active element: ${describeElement(selection.activeElement)}` : null,
+		"",
+	].filter(Boolean) as string[];
+
+	if (!selection?.hasSelection || !selection?.text) {
+		lines.push("No non-empty text selection is currently active.");
+		return stringifyValue(lines.join("\n"), 12000);
+	}
+
+	lines.push(`Selected text: ${JSON.stringify(String(selection.text).slice(0, 1500))}`);
+	if (selection.container) lines.push(`Container: ${describeElement(selection.container)}`);
+	if (selection.start) lines.push(`Start: ${describeElement(selection.start)}`);
+	if (selection.end) lines.push(`End: ${describeElement(selection.end)}`);
+	return stringifyValue(lines.join("\n"), 12000);
 }
 
 function slugifySegment(value: any, fallback = "page") {
@@ -1002,6 +1031,34 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 				details: {
 					tab: result.tab,
 					visible: result.visible,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "browser_get_selection",
+		label: "Browser Get Selection",
+		description: "Read the user's current text selection from the browser page",
+		promptSnippet: "Get the user's current selection so Onhand can explain the exact text they highlighted",
+		promptGuidelines: [
+			"Use this when the user refers to selected text or says 'this' after highlighting something on the page.",
+		],
+		parameters: SELECTION_SCHEMA,
+		async execute(_toolCallId, params) {
+			const client = await getBridgeState();
+			const tab = resolveTabFromState(client.state, params);
+			const result = await sendBridgeCommand("get_selection", { tabId: tab.id }, 15000);
+			return {
+				content: [
+					{
+						type: "text",
+						text: formatSelection(result.selection),
+					},
+				],
+				details: {
+					tab: result.tab,
+					selection: result.selection,
 				},
 			};
 		},

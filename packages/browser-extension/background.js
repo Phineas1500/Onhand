@@ -1066,6 +1066,61 @@ const createPageToolkit = () => {
 		};
 	};
 
+	const getSelectionInfo = () => {
+		const selection = window.getSelection();
+		const activeElement = document.activeElement instanceof Element ? document.activeElement : null;
+		const base = {
+			url: location.href,
+			title: document.title,
+			scrollX: window.scrollX,
+			scrollY: window.scrollY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+			activeElement: activeElement ? summarizeElement(activeElement) : null,
+		};
+
+		if (!selection || selection.rangeCount === 0) {
+			return {
+				...base,
+				hasSelection: false,
+				isCollapsed: true,
+				text: "",
+				rangeCount: 0,
+				rect: null,
+				container: null,
+			};
+		}
+
+		const range = selection.getRangeAt(0);
+		const text = String(selection.toString() || "").replace(/\s+/g, " ").trim();
+		const rect = range.getBoundingClientRect();
+		const startElement = range.startContainer instanceof Element
+			? range.startContainer
+			: range.startContainer?.parentElement || null;
+		const endElement = range.endContainer instanceof Element
+			? range.endContainer
+			: range.endContainer?.parentElement || null;
+		const containerElement = range.commonAncestorContainer instanceof Element
+			? range.commonAncestorContainer
+			: range.commonAncestorContainer?.parentElement || startElement || endElement || null;
+
+		return {
+			...base,
+			hasSelection: Boolean(text),
+			isCollapsed: selection.isCollapsed,
+			text,
+			rangeCount: selection.rangeCount,
+			rect: rect.width || rect.height ? rectToObject(rect) : null,
+			container: containerElement ? summarizeElement(containerElement) : null,
+			start: startElement ? summarizeElement(startElement) : null,
+			end: endElement ? summarizeElement(endElement) : null,
+			anchorOffset: selection.anchorOffset,
+			focusOffset: selection.focusOffset,
+		};
+	};
+
 	const scrollToAnnotation = async (annotationId, options = {}) => {
 		const rawAnnotationId = String(annotationId ?? "").trim();
 		if (!rawAnnotationId) throw new Error("scrollToAnnotation requires a non-empty annotationId");
@@ -1282,6 +1337,7 @@ const createPageToolkit = () => {
 		typeByLabel,
 		highlightText,
 		getVisibleText,
+		getSelectionInfo,
 		scrollToAnnotation,
 		showNote,
 		captureState,
@@ -1920,6 +1976,14 @@ async function handleCommand(name, args = {}) {
 			return {
 				tab: simplifyTab(tab),
 				visible,
+			};
+		}
+		case "get_selection": {
+			const tab = await resolveTargetTab(args);
+			const selection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
+			return {
+				tab: simplifyTab(tab),
+				selection,
 			};
 		}
 		case "clear_annotations": {
