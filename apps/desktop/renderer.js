@@ -14,38 +14,9 @@ const idleHint = document.getElementById("idleHint");
 const statusText = document.getElementById("statusText");
 const hotkeyHint = document.getElementById("hotkeyHint");
 
-function setUnavailableState(message) {
-	contextChip.textContent = "Unavailable";
-	contextChip.className = "context-chip error";
-	pageTitle.textContent = "Onhand desktop bridge unavailable";
-	pageSubtitle.textContent = message;
-	setStatus("Unavailable", "error");
-	selectionItem.classList.add("hidden");
-}
-
-if (!onhandApp) {
-	setUnavailableState("The preload bridge did not initialize.");
-	throw new Error("window.onhandApp is unavailable");
-}
-
-const startupState = await onhandApp.getStartupState();
-
-function formatHotkey(accelerator, platform) {
-	const value = String(accelerator || "");
-	if (platform === "darwin") {
-		return value
-			.replace(/CommandOrControl/g, "⌘")
-			.replace(/Command/g, "⌘")
-			.replace(/Control/g, "⌃")
-			.replace(/Shift/g, "⇧")
-			.replace(/Alt|Option/g, "⌥")
-			.replace(/Enter/g, "↩")
-			.replace(/\+/g, "");
-	}
-	return value.replace(/CommandOrControl/g, "Ctrl");
-}
-
-hotkeyHint.textContent = formatHotkey(startupState.hotkey, startupState.platform);
+let activeRequestId = null;
+let activePromptLabel = "";
+let activeReplyText = "";
 
 function truncate(text, maxChars = 180) {
 	const value = String(text || "").replace(/\s+/g, " ").trim();
@@ -78,14 +49,55 @@ function hideReply() {
 	idleHint.classList.remove("hidden");
 }
 
-function renderContext(context) {
+function focusInputIfAvailable() {
+	if (promptInput.disabled) return;
+	promptInput.focus();
+	promptInput.select();
+}
+
+function setUnavailableState(message) {
+	contextChip.textContent = "Unavailable";
+	contextChip.className = "context-chip error";
+	pageTitle.textContent = "Onhand desktop bridge unavailable";
+	pageSubtitle.textContent = message;
+	selectionItem.classList.add("hidden");
+	setStatus("Unavailable", "error");
+}
+
+if (!onhandApp) {
+	setUnavailableState("The preload bridge did not initialize.");
+	throw new Error("window.onhandApp is unavailable");
+}
+
+const startupState = await onhandApp.getStartupState();
+
+function formatHotkey(accelerator, platform) {
+	const value = String(accelerator || "");
+	if (platform === "darwin") {
+		return value
+			.replace(/CommandOrControl/g, "⌘")
+			.replace(/Command/g, "⌘")
+			.replace(/Control/g, "⌃")
+			.replace(/Shift/g, "⇧")
+			.replace(/Alt|Option/g, "⌥")
+			.replace(/Enter/g, "↩")
+			.replace(/\+/g, "");
+	}
+	return value.replace(/CommandOrControl/g, "Ctrl");
+}
+
+hotkeyHint.textContent = formatHotkey(startupState.hotkey, startupState.platform);
+
+function renderContext(context, options = {}) {
+	const preserveStatus = Boolean(options.preserveStatus);
+
 	if (!context?.ok) {
-		setStatus("Bridge unavailable", "error");
 		contextChip.textContent = "No browser";
 		contextChip.className = "context-chip error";
 		pageTitle.textContent = "Could not reach the browser bridge";
 		pageSubtitle.textContent = context?.error || "Start the bridge and reconnect the browser extension.";
 		selectionItem.classList.add("hidden");
+		if (!preserveStatus) setStatus("Bridge unavailable", "error");
 		return;
 	}
 
@@ -98,13 +110,19 @@ function renderContext(context) {
 	if (hostname) subtitleParts.push(hostname);
 	if (context.warning) subtitleParts.push(truncate(context.warning, 120));
 	if (!hostname && tab?.url) subtitleParts.push(truncate(tab.url, 120));
-	if (!subtitleParts.length) subtitleParts.push(connectionCount > 0 ? "Ready to ask about the current browser page." : "Waiting for a connected browser tab.");
+	if (!subtitleParts.length) {
+		subtitleParts.push(
+			connectionCount > 0 ? "Ready to ask about the current browser page." : "Waiting for a connected browser tab.",
+		);
+	}
 
 	contextChip.textContent = hostname || (tab ? "Current tab" : "No active tab");
 	contextChip.className = "context-chip";
 	pageTitle.textContent = tab?.title || "No active browser tab";
 	pageSubtitle.textContent = subtitleParts.join(" · ");
-	setStatus(connectionCount > 0 ? "Ready" : "Waiting for browser connection", connectionCount > 0 ? "ok" : "");
+	if (!preserveStatus) {
+		setStatus(connectionCount > 0 ? "Ready" : "Waiting for browser connection", connectionCount > 0 ? "ok" : "");
+	}
 
 	if (hasSelection) {
 		selectionPreview.textContent = truncate(context.selection.text, 220);
@@ -115,34 +133,90 @@ function renderContext(context) {
 }
 
 async function refreshContext() {
-	setStatus("Refreshing context…");
+	if (!activeRequestId) setStatus("Refreshing context…");
 	const context = await onhandApp.refreshContext();
-	renderContext(context);
+	renderContext(context, { preserveStatus: Boolean(activeRequestId) });
 	return context;
+}
+
+function beginPromptUi(prompt, requestId) {
+	activeRequestId = requestId;
+	activePromptLabel = `Asked: ${truncate(prompt, 80)}`;
+	activeReplyText = "";
+	promptInput.disabled = true;
+	showReply(activePromptLabel, "");
+	setStatus("Starting Onhand…");
+}
+
+function finishPromptUi() {
+	activeRequestId = null;
+	promptInput.disabled = false;
+	promptInput.value = "";
+	focusInputIfAvailable();
+}
+
+function handlePromptEvent(event) {
+	if (!event?.requestId) return;
+	if (activeRequestId && event.requestId !== activeRequestId) return;
+
+	switch (event.type) {
+		case "start": {
+			beginPromptUi(event.prompt || activePromptLabel || "Onhand question", event.requestId);
+			break;
+		}
+		case "context": {
+			renderContext(event.context, { preserveStatus: true });
+			break;
+		}
+		case "status": {
+			setStatus(event.status || "Working…");
+			break;
+		}
+		case "reply_delta": {
+			activeReplyText = typeof event.reply === "string" ? event.reply : `${activeReplyText}${event.delta || ""}`;
+			showReply(activePromptLabel || "Onhand", activeReplyText || "Thinking…");
+			break;
+		}
+		case "complete": {
+			activeReplyText = String(event.reply || activeReplyText || "(No reply generated.)");
+			showReply(activePromptLabel || "Onhand", activeReplyText);
+			setStatus("Reply ready", "ok");
+			finishPromptUi();
+			break;
+		}
+		case "error": {
+			showReply(activePromptLabel || "Onhand", `Error: ${event.message || "Unknown error"}`);
+			setStatus("Prompt failed", "error");
+			finishPromptUi();
+			break;
+		}
+		default:
+			break;
+	}
 }
 
 promptForm.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const prompt = promptInput.value.trim();
 	if (!prompt) return;
+	if (activeRequestId) return;
 
+	activePromptLabel = `Asked: ${truncate(prompt, 80)}`;
+	activeReplyText = "";
 	promptInput.disabled = true;
-	setStatus("Collecting context…");
-	showReply(`Asked: ${truncate(prompt, 80)}`, "Collecting current page context…");
+	showReply(activePromptLabel, "");
+	setStatus("Starting Onhand…");
 
 	try {
 		const result = await onhandApp.submitPrompt(prompt);
-		showReply(`Asked: ${truncate(prompt, 80)}`, result.reply);
-		renderContext(result.context);
-		setStatus("Reply ready", "ok");
-		promptInput.value = "";
+		activeRequestId = result.requestId;
 	} catch (error) {
 		const message = error?.message || String(error);
-		showReply(`Asked: ${truncate(prompt, 80)}`, `Error: ${message}`);
+		showReply(activePromptLabel || "Onhand", `Error: ${message}`);
 		setStatus("Prompt failed", "error");
-	} finally {
+		activeRequestId = null;
 		promptInput.disabled = false;
-		promptInput.focus();
+		focusInputIfAvailable();
 	}
 });
 
@@ -152,14 +226,12 @@ document.addEventListener("keydown", (event) => {
 	}
 	if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
 		event.preventDefault();
-		promptInput.focus();
-		promptInput.select();
+		focusInputIfAvailable();
 	}
 });
 
 onhandApp.onFocusInput(() => {
-	promptInput.focus();
-	promptInput.select();
+	focusInputIfAvailable();
 });
 
 onhandApp.onPaletteOpened(() => {
@@ -169,8 +241,11 @@ onhandApp.onPaletteOpened(() => {
 		pageSubtitle.textContent = error?.message || String(error);
 		selectionItem.classList.add("hidden");
 	});
-	promptInput.focus();
-	promptInput.select();
+	focusInputIfAvailable();
+});
+
+onhandApp.onPromptEvent((event) => {
+	handlePromptEvent(event);
 });
 
 hideReply();

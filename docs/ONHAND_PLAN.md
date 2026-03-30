@@ -438,11 +438,12 @@ The first true product milestone should satisfy all of these:
 
 Completed so far:
 - repo refactor to an Onhand-centered layout under `packages/`
-- minimal Electron desktop shell under `apps/desktop/`:
-  - windowed app shell with a command-palette-style input
-  - temporary global shortcut (`CommandOrControl+Shift+Space`)
+- compact Electron desktop launcher under `apps/desktop/`:
+  - launcher-style command palette with a temporary global shortcut (`CommandOrControl+Shift+Space`)
   - live browser-context preview via the local browser bridge
-  - prompt submission stubbed in the shell while pi SDK session wiring is still pending
+  - real pi SDK session wired into the launcher with streaming replies
+  - browser context gathered lazily on send so opening the launcher does not immediately attach `chrome.debugger`
+  - launcher sessions persisted locally under `.onhand/sessions/desktop/` and continued by default
 - first-class browser annotation tools:
   - `browser_highlight_text`
   - `browser_show_note`
@@ -482,11 +483,11 @@ Completed so far:
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
-- Phase 14.3 has started with a minimal desktop shell, but prompt routing still needs to be wired into a real pi SDK session.
+- Phase 14.3 now has a usable desktop launcher with real pi SDK prompt routing and streaming replies.
 - There is still no session browser or replay UI.
 
 Most important next step:
-- connect the desktop-shell prompt flow to a real pi SDK session while reusing the existing browser tools.
+- make launcher sessions first-class by organizing and browsing the persisted sessions on top of `.onhand/sessions/desktop/`.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -512,6 +513,9 @@ Tasks:
 - highlight + scroll + note workflow
 - save browser snapshot + annotation records
 - replay simple browser sessions in-app
+
+Status note:
+- the command palette prototype and embedded pi SDK session runtime now exist; the next gap is organizing and replaying those saved sessions/artifacts.
 
 Exit criteria:
 - complete end-to-end browser tutoring demo works reliably
@@ -601,18 +605,22 @@ Remaining:
 Started:
 - [x] create Electron app under `apps/desktop/`
 - [x] add temporary global shortcut (`CommandOrControl+Shift+Space`)
-- [x] add command-palette-style input + session area
+- [x] add compact command-palette-style launcher UI
 - [x] show live browser-context preview from the bridge inside the shell
+- [x] route shell prompt submission to a real pi SDK session
+- [x] stream replies into the launcher UI
+- [x] persist launcher sessions locally under `.onhand/sessions/desktop/`
 
 Remaining:
-- [ ] route shell prompt submission to a real pi SDK session
 - [ ] decide how the shell should manage session/project selection before the full replay UI exists
+- [ ] decide how much past-session context should be surfaced directly in the launcher vs. the standalone app
 
 ### 14.4 Add replay MVP
 - session list
 - open session
 - replay saved browser state from artifacts
 - render chat + annotations together
+- connect persisted launcher sessions to the replay/session browser
 
 ### 14.5 Add visible-context tools — in progress
 Started:

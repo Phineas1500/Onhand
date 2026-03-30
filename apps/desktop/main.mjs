@@ -1,16 +1,18 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { disposeOnhandAgent, submitOnhandPrompt } from "./onhand-agent.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOTKEY = process.env.ONHAND_HOTKEY || "CommandOrControl+Shift+Space";
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
-const DEFAULT_TIMEOUT_MS = 15000;
 const FAST_TIMEOUT_MS = 2500;
 const BLUR_HIDE_DELAY_MS = 120;
 const HOTKEY_DEBOUNCE_MS = 300;
@@ -179,16 +181,31 @@ async function getBrowserContext(options = {}) {
 	}
 }
 
-async function submitPrompt(prompt) {
-	const context = await getBrowserContext({ includeSelection: true, includeVisibleText: true });
-	return {
-		ok: true,
-		prompt,
-		timestamp: new Date().toISOString(),
-		reply:
-			"This is the first Onhand desktop shell. It can already inspect the current browser context, but prompt routing to the pi SDK and the full Onhand agent is the next step.",
-		context,
-	};
+function sendPromptEvent(payload) {
+	mainWindow?.webContents.send("onhand:prompt-event", payload);
+}
+
+async function runPromptRequest(requestId, prompt) {
+	sendPromptEvent({ type: "start", requestId, prompt });
+	sendPromptEvent({ type: "status", requestId, status: "Collecting browser context…" });
+
+	try {
+		const browserContext = await getBrowserContext({ includeSelection: true, includeVisibleText: true });
+		sendPromptEvent({ type: "context", requestId, context: browserContext });
+
+		await submitOnhandPrompt({
+			requestId,
+			prompt,
+			browserContext,
+			onEvent: (event) => sendPromptEvent({ requestId, ...event }),
+		});
+	} catch (error) {
+		sendPromptEvent({
+			type: "error",
+			requestId,
+			message: error?.message || String(error),
+		});
+	}
 }
 
 function sendFocusInput() {
@@ -303,7 +320,7 @@ async function handleHotkeyToggle() {
 	if (hotkeyToggleInFlight) return;
 	if (now - lastHotkeyToggleAt < HOTKEY_DEBOUNCE_MS) return;
 	lastHotkeyToggleAt = now;
-		hotkeyToggleInFlight = true;
+	hotkeyToggleInFlight = true;
 	try {
 		await toggleWindow();
 	} finally {
@@ -313,7 +330,7 @@ async function handleHotkeyToggle() {
 
 function createWindow() {
 	mainWindow = new BrowserWindow({
-			width: 840,
+		width: 840,
 		height: 340,
 		minWidth: 840,
 		minHeight: 340,
@@ -381,7 +398,15 @@ ipcMain.handle("onhand:refresh-context", async () => {
 });
 
 ipcMain.handle("onhand:submit-prompt", async (_event, prompt) => {
-	return await submitPrompt(String(prompt || "").trim());
+	const normalizedPrompt = String(prompt || "").trim();
+	if (!normalizedPrompt) {
+		throw new Error("Prompt cannot be empty.");
+	}
+	const requestId = randomUUID();
+	setTimeout(() => {
+		void runPromptRequest(requestId, normalizedPrompt);
+	}, 0);
+	return { ok: true, requestId };
 });
 
 ipcMain.handle("onhand:hide-window", async (_event, options = {}) => {
@@ -418,4 +443,5 @@ if (process.platform === "darwin") {
 
 app.on("will-quit", () => {
 	globalShortcut.unregisterAll();
+	void disposeOnhandAgent();
 });

@@ -127,12 +127,14 @@ pi install .
 npm run desktop
 ```
 
-Current desktop-shell status:
-- minimal Electron app under `apps/desktop/`
+Current desktop-launcher status:
+- compact Electron launcher under `apps/desktop/`
 - temporary global shortcut: `CommandOrControl+Shift+Space`
-- prompt palette UI and session area
-- live browser-context preview via the local bridge
-- prompt submission is still a shell stub; pi SDK session wiring is the next step
+- launcher-style prompt palette with current-page context preview
+- real pi SDK session wired into the launcher
+- streaming replies inside the popup
+- browser context is gathered lazily on send, so opening the launcher does not immediately attach `chrome.debugger`
+- launcher sessions persist locally under `.onhand/sessions/desktop/` and continue the most recent session by default
 
 ## Tools exposed in pi
 
@@ -172,15 +174,15 @@ Also includes the command:
 ## Notes
 
 - If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
-- `chrome.debugger` is a powerful permission and may show a browser warning while attached.
+- `chrome.debugger` is a powerful permission and may show a browser warning while attached. The desktop launcher now avoids attaching it on open and only requests richer live page context when the user actually sends a message.
 - Some pages cannot be debugged, such as privileged browser pages.
 - Screenshots currently activate the target tab before capture.
 - The bridge currently sends commands to the first connected browser client unless a specific client is added later.
 
 ## Likely next steps
 
-- route desktop-shell prompt submission into a real pi SDK session
+- organize and browse past launcher sessions on top of `.onhand/sessions/desktop/`
 - stronger replay/restore fidelity beyond best-effort text matching
 - richer artifact browsing/selection UX on top of `.onhand/artifacts/browser/index.json`
-- more visible-context helpers for richer viewport structure when needed
+- connect launcher replies to richer page actions when appropriate (highlight / note / scroll)
 - PDF/document support after the browser-grounded MVP is solid

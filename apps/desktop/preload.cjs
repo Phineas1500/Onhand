@@ -15,4 +15,9 @@ contextBridge.exposeInMainWorld("onhandApp", {
 		ipcRenderer.on("onhand:palette-opened", listener);
 		return () => ipcRenderer.removeListener("onhand:palette-opened", listener);
 	},
+	onPromptEvent: (callback) => {
+		const listener = (_event, payload) => callback(payload);
+		ipcRenderer.on("onhand:prompt-event", listener);
+		return () => ipcRenderer.removeListener("onhand:prompt-event", listener);
+	},
 });
