@@ -22,11 +22,17 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const FAST_TIMEOUT_MS = 2500;
 const BLUR_HIDE_DELAY_MS = 120;
 const HOTKEY_DEBOUNCE_MS = 300;
+const WORKSPACE_VISIBILITY_SETTLE_MS = 60;
 const execFileAsync = promisify(execFile);
+const MACOS_WORKSPACE_VISIBILITY_OPTIONS = {
+	visibleOnFullScreen: true,
+	skipTransformProcessType: true,
+};
 
 let mainWindow = null;
 let previousFrontmostAppId = null;
 let pendingBlurHideTimeout = null;
+let pendingWorkspaceDetachTimeout = null;
 let hotkeyToggleInFlight = false;
 let lastHotkeyToggleAt = 0;
 
@@ -271,13 +277,66 @@ function cancelPendingBlurHide() {
 	}
 }
 
+function cancelPendingWorkspaceDetach() {
+	if (pendingWorkspaceDetachTimeout) {
+		clearTimeout(pendingWorkspaceDetachTimeout);
+		pendingWorkspaceDetachTimeout = null;
+	}
+}
+
+function setMacWorkspaceVisibility(visible) {
+	if (process.platform !== "darwin" || !mainWindow) return;
+	mainWindow.setVisibleOnAllWorkspaces(visible, MACOS_WORKSPACE_VISIBILITY_OPTIONS);
+}
+
+function restoreVisibleWindowAppearance() {
+	if (!mainWindow) return;
+	if (process.platform === "darwin") {
+		mainWindow.setHasShadow(true);
+	}
+	mainWindow.setOpacity(1);
+}
+
+function scheduleWorkspaceDetach() {
+	if (process.platform !== "darwin" || !mainWindow?.isVisible()) return;
+	cancelPendingWorkspaceDetach();
+	pendingWorkspaceDetachTimeout = setTimeout(() => {
+		pendingWorkspaceDetachTimeout = null;
+		if (!mainWindow?.isVisible() || !mainWindow.isFocused()) return;
+		setMacWorkspaceVisibility(false);
+	}, WORKSPACE_VISIBILITY_SETTLE_MS);
+	pendingWorkspaceDetachTimeout.unref?.();
+}
+
+function prepareWindowForShow() {
+	if (!mainWindow) return;
+	if (process.platform === "darwin") {
+		setMacWorkspaceVisibility(true);
+	}
+	restoreVisibleWindowAppearance();
+}
+
+function beginWindowDismiss() {
+	if (!mainWindow) return;
+	cancelPendingWorkspaceDetach();
+	mainWindow.setOpacity(0);
+	if (process.platform === "darwin") {
+		mainWindow.setHasShadow(false);
+		setMacWorkspaceVisibility(false);
+	}
+}
+
 function scheduleBlurHide() {
 	if (!mainWindow?.isVisible()) return;
 	cancelPendingBlurHide();
+	beginWindowDismiss();
 	pendingBlurHideTimeout = setTimeout(() => {
 		pendingBlurHideTimeout = null;
 		if (!mainWindow?.isVisible()) return;
-		if (mainWindow.isFocused()) return;
+		if (mainWindow.isFocused()) {
+			prepareWindowForShow();
+			return;
+		}
 		void hideWindow();
 	}, BLUR_HIDE_DELAY_MS);
 	pendingBlurHideTimeout.unref?.();
@@ -287,11 +346,13 @@ async function showWindow() {
 	if (!mainWindow) createWindow();
 	if (!mainWindow) return;
 	cancelPendingBlurHide();
+	cancelPendingWorkspaceDetach();
 	previousFrontmostAppId = await getFrontmostApplicationId();
-	mainWindow.setOpacity(1);
+	prepareWindowForShow();
 	positionWindowLikePalette();
 	mainWindow.show();
 	mainWindow.focus();
+	scheduleWorkspaceDetach();
 	sendFocusInput();
 	notifyPaletteOpened();
 }
@@ -302,7 +363,7 @@ async function hideWindow(options = {}) {
 	const restorePreviousApp = Boolean(options.restorePreviousApp);
 	const appToRestore = restorePreviousApp ? previousFrontmostAppId : null;
 	previousFrontmostAppId = null;
-	mainWindow.setOpacity(0);
+	beginWindowDismiss();
 	mainWindow.hide();
 	if (appToRestore) {
 		await activateApplicationById(appToRestore);
@@ -366,15 +427,23 @@ function createWindow() {
 	});
 
 	mainWindow.setAlwaysOnTop(true, "floating");
+	if (process.platform === "darwin") {
+		mainWindow.setHiddenInMissionControl(true);
+	}
 	mainWindow.setOpacity(0);
 	positionWindowLikePalette();
 	mainWindow.loadFile(join(__dirname, "index.html"));
 	mainWindow.on("closed", () => {
 		cancelPendingBlurHide();
+		cancelPendingWorkspaceDetach();
 		mainWindow = null;
 	});
 	mainWindow.on("focus", () => {
 		cancelPendingBlurHide();
+		if (mainWindow?.isVisible()) {
+			restoreVisibleWindowAppearance();
+			scheduleWorkspaceDetach();
+		}
 	});
 	mainWindow.on("blur", () => {
 		scheduleBlurHide();
@@ -437,9 +506,7 @@ ipcMain.handle("onhand:hide-window", async (_event, options = {}) => {
 
 app.whenReady().then(() => {
 	if (process.platform === "darwin") {
-		try {
-			app.dock.hide();
-		} catch {}
+		app.setActivationPolicy("accessory");
 	}
 	createWindow();
 	const registered = globalShortcut.register(HOTKEY, () => {
@@ -459,6 +526,10 @@ if (process.platform === "darwin") {
 	});
 	app.on("did-become-active", () => {
 		cancelPendingBlurHide();
+		if (mainWindow?.isVisible()) {
+			restoreVisibleWindowAppearance();
+			scheduleWorkspaceDetach();
+		}
 	});
 }
 
