@@ -18,7 +18,16 @@ const ONHAND_APPEND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor and rese
 
 Prefer helping with the material already open in the user's browser. Stay grounded in the captured browser context supplied with each prompt. If you need more detail or the user asks you to point to something, use the available browser tools to inspect the live page.
 
-Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default.`;
+When the user asks about content that is already open, do not stop at a detached answer when you can ground it visually. If you can identify the exact supporting passage on an existing page or tab, prefer this flow:
+- switch to the most relevant already-open tab if needed
+- highlight the exact supporting text
+- add a short note near it
+- scroll it into view
+- save a browser artifact when the result is worth revisiting later
+
+Prefer the clearest answer-bearing text in the main content or page header. Avoid grounding on footer boilerplate, legal copy, or generic navigation text when a better passage is available.
+
+Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, and keep on-page notes short and explanatory.`;
 
 let runtimePromise = null;
 let activeRequest = null;
@@ -126,7 +135,9 @@ function buildLauncherPrompt(prompt, browserContext) {
 		"Captured browser context right before the question:",
 		renderBrowserContextForPrompt(browserContext),
 		"",
-		"Use this captured context as your starting point. If needed, call browser tools to inspect or act on the current page without navigating away unless the user explicitly asks.",
+		"Use this captured context as your starting point. Prefer already-open tabs and pages over navigation.",
+		"When it would help the user understand the answer, point to it on the live page by switching tabs, highlighting exact text, adding a short note, scrolling it into view, and saving a browser artifact.",
+		"Prefer the most informative visible passage or heading that answers the question; avoid footer/legal boilerplate when a better passage exists.",
 	].join("\n");
 }
 
@@ -146,6 +157,98 @@ function extractAssistantText(messages) {
 
 function emitRequestEvent(payload) {
 	activeRequest?.onEvent(payload);
+}
+
+function getToolStatusMessage(toolName) {
+	switch (toolName) {
+		case "browser_list_tabs":
+			return "Checking open tabs…";
+		case "browser_activate_tab":
+			return "Switching to the relevant tab…";
+		case "browser_get_selection":
+			return "Reading your current selection…";
+		case "browser_get_visible_text":
+			return "Reading the visible part of the page…";
+		case "browser_get_viewport_headings":
+			return "Checking the current section heading…";
+		case "browser_get_scroll_state":
+			return "Checking where you are on the page…";
+		case "browser_find_elements":
+			return "Looking for the relevant part of the page…";
+		case "browser_highlight_text":
+			return "Highlighting the relevant passage…";
+		case "browser_show_note":
+			return "Adding a note on the page…";
+		case "browser_scroll_to_annotation":
+			return "Moving the page to the relevant section…";
+		case "browser_capture_state":
+			return "Saving an Onhand artifact…";
+		case "browser_restore_state":
+			return "Restoring a saved Onhand view…";
+		case "browser_clear_annotations":
+			return "Clearing previous Onhand annotations…";
+		default:
+			return toolName?.startsWith("browser_") ? "Inspecting the current page…" : `Using ${toolName}…`;
+	}
+}
+
+function buildPageAction(toolName, result) {
+	const details = result?.details || {};
+	switch (toolName) {
+		case "browser_activate_tab": {
+			const detail = truncate(details.tab?.title || details.tab?.url || "Relevant page", 72);
+			return { key: `tab:${details.tab?.id || detail}`, label: "Switched tab", detail };
+		}
+		case "browser_highlight_text": {
+			const matchedText = truncate(details.annotation?.matchedText || "Relevant passage", 72);
+			return {
+				key: `highlight:${details.annotation?.annotationId || matchedText}`,
+				label: "Highlighted text",
+				detail: matchedText,
+			};
+		}
+		case "browser_show_note": {
+			const noteText = truncate(details.note?.note || details.note?.text || details.note?.label || "Short explanation", 72);
+			return {
+				key: `note:${details.note?.annotationId || noteText}`,
+				label: "Added note",
+				detail: noteText,
+			};
+		}
+		case "browser_scroll_to_annotation": {
+			return {
+				key: `scroll:${details.annotation?.annotationId || result?.toolCallId || Date.now()}`,
+				label: "Moved to section",
+				detail: "Brought the relevant part of the page into view",
+			};
+		}
+		case "browser_capture_state": {
+			if (details.persistedArtifact?.artifactId) {
+				return {
+					key: `artifact:${details.persistedArtifact.artifactId}`,
+					label: "Saved artifact",
+					detail: truncate(details.persistedArtifact.artifactId, 72),
+				};
+			}
+			return null;
+		}
+		case "browser_restore_state": {
+			const detail = truncate(details.artifact?.page?.title || details.artifactPath || "Saved browser state", 72);
+			return { key: `restore:${detail}`, label: "Restored view", detail };
+		}
+		default:
+			return null;
+	}
+}
+
+function pushPageAction(action) {
+	if (!activeRequest || !action) return;
+	if (activeRequest.pageActions.some((existing) => existing.key === action.key)) return;
+	activeRequest.pageActions.push(action);
+	emitRequestEvent({
+		type: "page_actions",
+		actions: [...activeRequest.pageActions],
+	});
 }
 
 function handleSessionEvent(session, event) {
@@ -173,11 +276,14 @@ function handleSessionEvent(session, event) {
 		case "tool_execution_start": {
 			emitRequestEvent({
 				type: "status",
-				status: event.toolName?.startsWith("browser_") ? "Inspecting the current page…" : `Using ${event.toolName}…`,
+				status: getToolStatusMessage(event.toolName),
 			});
 			break;
 		}
 		case "tool_execution_end": {
+			if (!event.isError) {
+				pushPageAction(buildPageAction(event.toolName, event.result));
+			}
 			emitRequestEvent({ type: "status", status: "Writing answer…" });
 			break;
 		}
@@ -197,6 +303,7 @@ function handleSessionEvent(session, event) {
 			emitRequestEvent({
 				type: "complete",
 				reply,
+				actions: [...activeRequest.pageActions],
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 				sessionName: session.sessionName || null,
@@ -308,6 +415,7 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 		id: requestId,
 		onEvent,
 		reply: "",
+		pageActions: [],
 	};
 
 	onEvent({
@@ -325,6 +433,7 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 			onEvent({
 				type: "complete",
 				reply,
+				actions: [...activeRequest.pageActions],
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 				sessionName: session.sessionName || null,
@@ -339,6 +448,9 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 		};
 	} catch (error) {
 		if (activeRequest?.id === requestId) {
+			if (error && typeof error === "object") {
+				error.pageActions = [...activeRequest.pageActions];
+			}
 			activeRequest = null;
 		}
 		throw error;

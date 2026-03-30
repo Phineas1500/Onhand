@@ -133,12 +133,19 @@ Current desktop-launcher status:
 - launcher-style prompt palette with current-page context preview
 - real pi SDK session wired into the launcher
 - streaming replies inside the popup
+- a richer answer card in the popup for page-grounded replies
 - browser context is gathered lazily on send, so opening the launcher does not immediately attach `chrome.debugger`
+- launcher now surfaces page actions taken by the agent, such as tab switches, highlights, notes, and saved artifacts
 - launcher sessions persist locally under `.onhand/sessions/desktop/` and continue the most recent session by default
 - lightweight session management in the launcher:
   - recent-session list
   - `Cmd/Ctrl+N` starts a fresh launcher session
   - auto-names new sessions from the first launcher prompt
+- launcher ask-flow now explicitly encourages using the existing browser grounding tools to:
+  - switch to relevant already-open tabs
+  - highlight exact supporting text
+  - add short notes near it
+  - persist replay artifacts when useful
 
 ## Tools exposed in pi
 

@@ -35,6 +35,7 @@ let pendingBlurHideTimeout = null;
 let pendingWorkspaceDetachTimeout = null;
 let hotkeyToggleInFlight = false;
 let lastHotkeyToggleAt = 0;
+let appIsQuitting = false;
 
 function log(...args) {
 	console.log("[onhand-desktop]", ...args);
@@ -216,6 +217,7 @@ async function runPromptRequest(requestId, prompt) {
 			type: "error",
 			requestId,
 			message: error?.message || String(error),
+			actions: Array.isArray(error?.pageActions) ? error.pageActions : [],
 		});
 	}
 }
@@ -433,6 +435,11 @@ function createWindow() {
 	mainWindow.setOpacity(0);
 	positionWindowLikePalette();
 	mainWindow.loadFile(join(__dirname, "index.html"));
+	mainWindow.on("close", (event) => {
+		if (appIsQuitting) return;
+		event.preventDefault();
+		void hideWindow({ restorePreviousApp: true });
+	});
 	mainWindow.on("closed", () => {
 		cancelPendingBlurHide();
 		cancelPendingWorkspaceDetach();
@@ -449,7 +456,13 @@ function createWindow() {
 		scheduleBlurHide();
 	});
 	mainWindow.webContents.on("before-input-event", (event, input) => {
-		if (input.type === "keyDown" && input.key === "Escape") {
+		if (input.type !== "keyDown") return;
+		if (input.key === "Escape") {
+			event.preventDefault();
+			void hideWindow({ restorePreviousApp: true });
+			return;
+		}
+		if ((input.meta || input.control) && String(input.key || "").toLowerCase() === "w") {
 			event.preventDefault();
 			void hideWindow({ restorePreviousApp: true });
 		}
@@ -532,6 +545,10 @@ if (process.platform === "darwin") {
 		}
 	});
 }
+
+app.on("before-quit", () => {
+	appIsQuitting = true;
+});
 
 app.on("will-quit", () => {
 	globalShortcut.unregisterAll();

@@ -10,6 +10,8 @@ const selectionPreview = document.getElementById("selectionPreview");
 const replyItem = document.getElementById("replyItem");
 const replyTitle = document.getElementById("replyTitle");
 const replyBody = document.getElementById("replyBody");
+const replyActionsWrap = document.getElementById("replyActionsWrap");
+const replyActions = document.getElementById("replyActions");
 const sessionList = document.getElementById("sessionList");
 const newSessionButton = document.getElementById("newSessionButton");
 const idleHint = document.getElementById("idleHint");
@@ -18,9 +20,11 @@ const hotkeyHint = document.getElementById("hotkeyHint");
 const newSessionHint = document.getElementById("newSessionHint");
 
 let activeRequestId = null;
-let activePromptLabel = "";
+let activePromptText = "";
 let activeReplyText = "";
+let activePageActions = [];
 let currentSessionFile = null;
+let currentSessionCount = 0;
 
 function truncate(text, maxChars = 180) {
 	const value = String(text || "").replace(/\s+/g, " ").trim();
@@ -36,19 +40,144 @@ function getHostname(url) {
 	}
 }
 
+function escapeHtml(value) {
+	return String(value || "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(text) {
+	let html = escapeHtml(text);
+	html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+	html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+	html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+	return html;
+}
+
+function renderReplyMarkdown(text) {
+	const source = String(text || "").replace(/\r\n?/g, "\n");
+	if (!source.trim()) {
+		return '<p class="answer-placeholder">Thinking…</p>';
+	}
+
+	const lines = source.split("\n");
+	const parts = [];
+	let paragraphLines = [];
+	let listItems = [];
+
+	function flushParagraph() {
+		if (!paragraphLines.length) return;
+		parts.push(`<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`);
+		paragraphLines = [];
+	}
+
+	function flushList() {
+		if (!listItems.length) return;
+		parts.push(`<ul>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+		listItems = [];
+	}
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			flushParagraph();
+			flushList();
+			continue;
+		}
+
+		const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+		if (headingMatch) {
+			flushParagraph();
+			flushList();
+			const level = Math.min(4, headingMatch[1].length + 1);
+			parts.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+			continue;
+		}
+
+		const unorderedListMatch = trimmed.match(/^[-*]\s+(.*)$/);
+		if (unorderedListMatch) {
+			flushParagraph();
+			listItems.push(unorderedListMatch[1]);
+			continue;
+		}
+
+		const orderedListMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+		if (orderedListMatch) {
+			flushParagraph();
+			listItems.push(orderedListMatch[1]);
+			continue;
+		}
+
+		paragraphLines.push(trimmed);
+	}
+
+	flushParagraph();
+	flushList();
+
+	return parts.join("") || `<p>${renderInlineMarkdown(source)}</p>`;
+}
+
 function setStatus(text, kind = "") {
 	statusText.textContent = text;
 	statusText.className = `status-text${kind ? ` ${kind}` : ""}`;
 }
 
-function showReply(title, body) {
-	replyTitle.textContent = title;
-	replyBody.textContent = body;
+function normalizePageActions(actions) {
+	const items = Array.isArray(actions) ? actions : [];
+	const seen = new Set();
+	const normalized = [];
+	for (const action of items) {
+		if (!action || typeof action !== "object") continue;
+		const label = truncate(action.label || action.title || "Action", 50);
+		const detail = action.detail ? truncate(action.detail, 72) : "";
+		const key = action.key || `${label}:${detail}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		normalized.push({ key, label, detail });
+	}
+	return normalized;
+}
+
+function renderReplyActions() {
+	replyActions.replaceChildren();
+	if (!activePageActions.length) {
+		replyActionsWrap.classList.add("hidden");
+		return;
+	}
+
+	for (const action of activePageActions) {
+		const pill = document.createElement("div");
+		pill.className = "answer-action-pill";
+		pill.textContent = action.detail ? `${action.label} · ${action.detail}` : action.label;
+		if (action.detail) pill.title = action.detail;
+		replyActions.append(pill);
+	}
+
+	replyActionsWrap.classList.remove("hidden");
+}
+
+function syncIdleHint() {
+	idleHint.classList.toggle("hidden", currentSessionCount > 0 || !replyItem.classList.contains("hidden"));
+}
+
+function showReply(question, body) {
+	replyTitle.textContent = question || "Latest reply";
+	replyBody.innerHTML = renderReplyMarkdown(body);
 	replyItem.classList.remove("hidden");
+	renderReplyActions();
+	syncIdleHint();
 }
 
 function hideReply() {
 	replyItem.classList.add("hidden");
+	replyTitle.textContent = "Latest reply";
+	replyBody.innerHTML = "";
+	activePageActions = [];
+	renderReplyActions();
+	syncIdleHint();
 }
 
 function focusInputIfAvailable() {
@@ -155,17 +284,16 @@ function renderSessions(overview) {
 	sessionList.replaceChildren();
 	currentSessionFile = overview?.currentSession?.sessionFile || overview?.sessions?.find((session) => session.isCurrent)?.path || null;
 	const sessions = Array.isArray(overview?.sessions) ? overview.sessions : [];
+	currentSessionCount = sessions.length;
 
 	if (sessions.length === 0) {
-		idleHint.classList.remove("hidden");
 		const empty = document.createElement("div");
 		empty.className = "empty-state";
 		empty.textContent = "No saved sessions yet. Your first launcher conversation will appear here.";
 		sessionList.append(empty);
+		syncIdleHint();
 		return;
 	}
-
-	idleHint.classList.add("hidden");
 
 	for (const session of sessions) {
 		const item = document.createElement("div");
@@ -204,7 +332,7 @@ function renderSessions(overview) {
 				const result = await onhandApp.switchSession(session.path);
 				if (result?.switched) {
 					hideReply();
-					activePromptLabel = "";
+					activePromptText = "";
 					activeReplyText = "";
 					promptInput.value = "";
 					setStatus(`Switched to ${session.title}`, "ok");
@@ -231,6 +359,8 @@ function renderSessions(overview) {
 
 		sessionList.append(item);
 	}
+
+	syncIdleHint();
 }
 
 async function refreshSessions() {
@@ -247,12 +377,22 @@ async function refreshContext() {
 	return context;
 }
 
+function primePromptUi(prompt) {
+	activePromptText = truncate(prompt, 160);
+	activeReplyText = "";
+	activePageActions = [];
+	promptInput.disabled = true;
+	showReply(activePromptText, "");
+	setStatus("Starting Onhand…");
+	updateSessionControls();
+}
+
 function beginPromptUi(prompt, requestId) {
 	activeRequestId = requestId;
-	activePromptLabel = `Asked: ${truncate(prompt, 80)}`;
-	activeReplyText = "";
-	promptInput.disabled = true;
-	showReply(activePromptLabel, "");
+	if (!activePromptText) {
+		activePromptText = truncate(prompt, 160);
+	}
+	showReply(activePromptText || "Onhand question", activeReplyText);
 	setStatus("Starting Onhand…");
 	updateSessionControls();
 }
@@ -266,13 +406,18 @@ async function finishPromptUi(options = {}) {
 	if (options.focus !== false) focusInputIfAvailable();
 }
 
+function setPageActions(actions) {
+	activePageActions = normalizePageActions(actions);
+	renderReplyActions();
+}
+
 function handlePromptEvent(event) {
 	if (!event?.requestId) return;
 	if (activeRequestId && event.requestId !== activeRequestId) return;
 
 	switch (event.type) {
 		case "start": {
-			beginPromptUi(event.prompt || activePromptLabel || "Onhand question", event.requestId);
+			beginPromptUi(event.prompt || activePromptText || "Onhand question", event.requestId);
 			break;
 		}
 		case "context": {
@@ -283,20 +428,30 @@ function handlePromptEvent(event) {
 			setStatus(event.status || "Working…");
 			break;
 		}
+		case "page_actions": {
+			setPageActions(event.actions || []);
+			break;
+		}
 		case "reply_delta": {
 			activeReplyText = typeof event.reply === "string" ? event.reply : `${activeReplyText}${event.delta || ""}`;
-			showReply(activePromptLabel || "Onhand", activeReplyText || "Thinking…");
+			showReply(activePromptText || "Onhand", activeReplyText);
 			break;
 		}
 		case "complete": {
+			if (Array.isArray(event.actions)) {
+				setPageActions(event.actions);
+			}
 			activeReplyText = String(event.reply || activeReplyText || "(No reply generated.)");
-			showReply(activePromptLabel || "Onhand", activeReplyText);
+			showReply(activePromptText || "Onhand", activeReplyText);
 			setStatus("Reply ready", "ok");
 			void finishPromptUi();
 			break;
 		}
 		case "error": {
-			showReply(activePromptLabel || "Onhand", `Error: ${event.message || "Unknown error"}`);
+			if (Array.isArray(event.actions)) {
+				setPageActions(event.actions);
+			}
+			showReply(activePromptText || "Onhand", `Error: ${event.message || "Unknown error"}`);
 			setStatus("Prompt failed", "error");
 			void finishPromptUi();
 			break;
@@ -311,12 +466,7 @@ promptForm.addEventListener("submit", async (event) => {
 	const prompt = promptInput.value.trim();
 	if (!prompt || activeRequestId) return;
 
-	activePromptLabel = `Asked: ${truncate(prompt, 80)}`;
-	activeReplyText = "";
-	promptInput.disabled = true;
-	showReply(activePromptLabel, "");
-	setStatus("Starting Onhand…");
-	updateSessionControls();
+	primePromptUi(prompt);
 
 	try {
 		const result = await onhandApp.submitPrompt(prompt);
@@ -324,7 +474,7 @@ promptForm.addEventListener("submit", async (event) => {
 		updateSessionControls();
 	} catch (error) {
 		const message = error?.message || String(error);
-		showReply(activePromptLabel || "Onhand", `Error: ${message}`);
+		showReply(activePromptText || "Onhand", `Error: ${message}`);
 		setStatus("Prompt failed", "error");
 		activeRequestId = null;
 		promptInput.disabled = false;
@@ -343,7 +493,7 @@ newSessionButton.addEventListener("click", () => {
 		.then(async (result) => {
 			if (result?.created) {
 				hideReply();
-				activePromptLabel = "";
+				activePromptText = "";
 				activeReplyText = "";
 				promptInput.value = "";
 				setStatus("New session ready", "ok");

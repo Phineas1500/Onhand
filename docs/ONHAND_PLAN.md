@@ -442,7 +442,9 @@ Completed so far:
   - launcher-style command palette with a temporary global shortcut (`CommandOrControl+Shift+Space`)
   - live browser-context preview via the local browser bridge
   - real pi SDK session wired into the launcher with streaming replies
+  - richer in-launcher answer UI for grounded replies
   - browser context gathered lazily on send so opening the launcher does not immediately attach `chrome.debugger`
+  - launcher now surfaces page actions taken by the agent (tab switch, highlight, note, saved artifact)
   - launcher sessions persisted locally under `.onhand/sessions/desktop/` and continued by default
   - lightweight launcher-side session management:
     - recent sessions listed directly in the launcher
@@ -615,6 +617,8 @@ Started:
 - [x] stream replies into the launcher UI
 - [x] persist launcher sessions locally under `.onhand/sessions/desktop/`
 - [x] add lightweight launcher session management (recent sessions + fresh-session shortcut)
+- [x] improve launcher reply UI and surface page actions taken by the agent
+- [x] wire launcher ask-flow to encourage existing browser grounding actions (tab switch, highlight, note, artifact capture)
 
 Remaining:
 - [ ] decide how the shell should manage session/project selection before the full replay UI exists

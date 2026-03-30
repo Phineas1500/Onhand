@@ -50,13 +50,19 @@
             <div class="item-meta">Selection</div>
           </div>
 
-          <div id="replyItem" class="list-item hidden">
-            <div class="item-icon" aria-hidden="true">⟡</div>
-            <div class="item-content">
-              <div id="replyTitle" class="item-title">Latest reply</div>
-              <div id="replyBody" class="item-subtitle multiline"></div>
+          <div id="replyItem" class="answer-card hidden">
+            <div class="answer-header">
+              <div class="answer-meta-row">
+                <div class="answer-eyebrow">Latest answer</div>
+                <div class="item-meta">Reply</div>
+              </div>
+              <div id="replyTitle" class="answer-question">Latest reply</div>
             </div>
-            <div class="item-meta">Reply</div>
+            <div id="replyBody" class="answer-body"></div>
+            <div id="replyActionsWrap" class="answer-actions-wrap hidden">
+              <div class="answer-actions-title">On page</div>
+              <div id="replyActions" class="answer-actions"></div>
+            </div>
           </div>
 
           <div class="section-header">
