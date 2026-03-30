@@ -1,7 +1,9 @@
-import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -9,8 +11,16 @@ const HOTKEY = process.env.ONHAND_HOTKEY || "CommandOrControl+Shift+Space";
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const DEFAULT_TIMEOUT_MS = 15000;
+const FAST_TIMEOUT_MS = 2500;
+const BLUR_HIDE_DELAY_MS = 120;
+const HOTKEY_DEBOUNCE_MS = 300;
+const execFileAsync = promisify(execFile);
 
 let mainWindow = null;
+let previousFrontmostAppId = null;
+let pendingBlurHideTimeout = null;
+let hotkeyToggleInFlight = false;
+let lastHotkeyToggleAt = 0;
 
 function log(...args) {
 	console.log("[onhand-desktop]", ...args);
@@ -29,7 +39,7 @@ async function loadBridgeConnection() {
 	};
 }
 
-async function bridgeRequest(path, init = {}) {
+async function bridgeRequest(path, init = {}, timeoutMs = FAST_TIMEOUT_MS) {
 	const connection = await loadBridgeConnection();
 	const headers = new Headers(init.headers || {});
 	headers.set("Authorization", `Bearer ${connection.token}`);
@@ -37,15 +47,28 @@ async function bridgeRequest(path, init = {}) {
 		headers.set("Content-Type", "application/json");
 	}
 
-	const response = await fetch(`${connection.baseUrl}${path}`, {
-		...init,
-		headers,
-	});
-	const data = await response.json();
-	if (!response.ok || data?.ok === false) {
-		throw new Error(data?.error || `Bridge request failed: ${response.status}`);
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), timeoutMs).unref();
+
+	try {
+		const response = await fetch(`${connection.baseUrl}${path}`, {
+			...init,
+			headers,
+			signal: controller.signal,
+		});
+		const data = await response.json();
+		if (!response.ok || data?.ok === false) {
+			throw new Error(data?.error || `Bridge request failed: ${response.status}`);
+		}
+		return data;
+	} catch (error) {
+		if (error?.name === "AbortError") {
+			throw new Error(`Bridge request timed out for ${path}`);
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeoutId);
 	}
-	return data;
 }
 
 function flattenTabs(state) {
@@ -71,31 +94,66 @@ function isPrivilegedUrl(url) {
 	return /^(?:chrome|edge|brave|about):\/\//i.test(String(url || ""));
 }
 
-async function getBrowserContext() {
+async function getBrowserContext(options = {}) {
+	const includeVisibleText = Boolean(options.includeVisibleText);
+	const includeSelection = Boolean(options.includeSelection);
+
 	try {
-		const health = await bridgeRequest("/health");
-		const stateData = await bridgeRequest("/state");
+		const [health, stateData] = await Promise.all([
+			bridgeRequest("/health", {}, FAST_TIMEOUT_MS),
+			bridgeRequest("/state", {}, FAST_TIMEOUT_MS),
+		]);
 		const client = stateData.client;
 		const activeTab = pickActiveTab(client?.state);
+		const connectedClients = Array.isArray(health.connectedClients) ? health.connectedClients.length : 0;
 		let visible = null;
+		let selection = null;
 		let warning = null;
 
-		if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
-			try {
-				const visibleData = await bridgeRequest("/command", {
-					method: "POST",
-					body: JSON.stringify({
-						name: "get_visible_text",
-						args: { tabId: activeTab.id, maxChars: 3000, maxBlocks: 12 },
-						timeoutMs: DEFAULT_TIMEOUT_MS,
-					}),
-				});
-				visible = visibleData.result?.visible || null;
-			} catch (error) {
-				warning = error?.message || String(error);
+		if (!connectedClients) {
+			warning = "No connected browser clients.";
+		} else if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
+			if (includeSelection) {
+				try {
+					const selectionData = await bridgeRequest(
+						"/command",
+						{
+							method: "POST",
+							body: JSON.stringify({
+								name: "get_selection",
+								args: { tabId: activeTab.id },
+								timeoutMs: 1500,
+							}),
+						},
+						2200,
+					);
+					selection = selectionData.result?.selection || null;
+				} catch (error) {
+					warning = error?.message || String(error);
+				}
+			}
+
+			if (includeVisibleText) {
+				try {
+					const visibleData = await bridgeRequest(
+						"/command",
+						{
+							method: "POST",
+							body: JSON.stringify({
+								name: "get_visible_text",
+								args: { tabId: activeTab.id, maxChars: 3000, maxBlocks: 12 },
+								timeoutMs: 3000,
+							}),
+						},
+						4000,
+					);
+					visible = visibleData.result?.visible || null;
+				} catch (error) {
+					warning ||= error?.message || String(error);
+				}
 			}
 		} else if (activeTab?.url) {
-			warning = `Visible context is unavailable on privileged pages like ${activeTab.url}`;
+			warning = `Interactive page context is unavailable on privileged pages like ${activeTab.url}`;
 		}
 
 		return {
@@ -104,10 +162,11 @@ async function getBrowserContext() {
 			bridge: {
 				host: health.host,
 				port: health.port,
-				connectedClients: Array.isArray(health.connectedClients) ? health.connectedClients.length : 0,
+				connectedClients,
 			},
 			clientId: client?.clientId,
 			activeTab,
+			selection,
 			visible,
 			warning,
 		};
@@ -121,7 +180,7 @@ async function getBrowserContext() {
 }
 
 async function submitPrompt(prompt) {
-	const context = await getBrowserContext();
+	const context = await getBrowserContext({ includeSelection: true, includeVisibleText: true });
 	return {
 		ok: true,
 		prompt,
@@ -136,56 +195,184 @@ function sendFocusInput() {
 	mainWindow?.webContents.send("onhand:focus-input");
 }
 
-function showWindow() {
+function notifyPaletteOpened() {
+	mainWindow?.webContents.send("onhand:palette-opened");
+}
+
+async function getFrontmostApplicationId() {
+	if (process.platform !== "darwin") return null;
+	try {
+		const { stdout } = await execFileAsync("osascript", [
+			"-e",
+			'tell application "System Events" to get bundle identifier of first application process whose frontmost is true',
+		]);
+		const bundleId = String(stdout || "").trim();
+		const ownBundleId = typeof app.getBundleID === "function" ? app.getBundleID() : null;
+		if (!bundleId || (ownBundleId && bundleId === ownBundleId)) {
+			return null;
+		}
+		return bundleId;
+	} catch (error) {
+		log("Could not determine frontmost application", error?.message || String(error));
+		return null;
+	}
+}
+
+function quoteAppleScriptString(value) {
+	return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+async function activateApplicationById(bundleId) {
+	if (process.platform !== "darwin" || !bundleId) return;
+	try {
+		await execFileAsync("osascript", ["-e", `tell application id ${quoteAppleScriptString(bundleId)} to activate`]);
+	} catch (error) {
+		log(`Could not reactivate previous application ${bundleId}`, error?.message || String(error));
+	}
+}
+
+function positionWindowLikePalette() {
 	if (!mainWindow) return;
+	const cursorPoint = screen.getCursorScreenPoint();
+	const display = screen.getDisplayNearestPoint(cursorPoint);
+	const bounds = mainWindow.getBounds();
+	const x = Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2);
+	const y = Math.round(display.workArea.y + Math.max(48, Math.min(120, display.workArea.height * 0.12)));
+	mainWindow.setPosition(x, y);
+}
+
+function cancelPendingBlurHide() {
+	if (pendingBlurHideTimeout) {
+		clearTimeout(pendingBlurHideTimeout);
+		pendingBlurHideTimeout = null;
+	}
+}
+
+function scheduleBlurHide() {
+	if (!mainWindow?.isVisible()) return;
+	cancelPendingBlurHide();
+	pendingBlurHideTimeout = setTimeout(() => {
+		pendingBlurHideTimeout = null;
+		if (!mainWindow?.isVisible()) return;
+		if (mainWindow.isFocused()) return;
+		void hideWindow();
+	}, BLUR_HIDE_DELAY_MS);
+	pendingBlurHideTimeout.unref?.();
+}
+
+async function showWindow() {
+	if (!mainWindow) createWindow();
+	if (!mainWindow) return;
+	cancelPendingBlurHide();
+	previousFrontmostAppId = await getFrontmostApplicationId();
+	mainWindow.setOpacity(1);
+	positionWindowLikePalette();
 	mainWindow.show();
 	mainWindow.focus();
 	sendFocusInput();
+	notifyPaletteOpened();
 }
 
-function hideWindow() {
+async function hideWindow(options = {}) {
 	if (!mainWindow) return;
+	cancelPendingBlurHide();
+	const restorePreviousApp = Boolean(options.restorePreviousApp);
+	const appToRestore = restorePreviousApp ? previousFrontmostAppId : null;
+	previousFrontmostAppId = null;
+	mainWindow.setOpacity(0);
 	mainWindow.hide();
+	if (appToRestore) {
+		await activateApplicationById(appToRestore);
+	}
 }
 
-function toggleWindow() {
-	if (!mainWindow) return;
+async function toggleWindow() {
+	if (!mainWindow) {
+		await showWindow();
+		return;
+	}
 	if (mainWindow.isVisible()) {
-		hideWindow();
+		await hideWindow({ restorePreviousApp: true });
 	} else {
-		showWindow();
+		await showWindow();
+	}
+}
+
+async function handleHotkeyToggle() {
+	const now = Date.now();
+	if (hotkeyToggleInFlight) return;
+	if (now - lastHotkeyToggleAt < HOTKEY_DEBOUNCE_MS) return;
+	lastHotkeyToggleAt = now;
+		hotkeyToggleInFlight = true;
+	try {
+		await toggleWindow();
+	} finally {
+		hotkeyToggleInFlight = false;
 	}
 }
 
 function createWindow() {
 	mainWindow = new BrowserWindow({
-		width: 920,
-		height: 640,
-		minWidth: 760,
-		minHeight: 420,
-		show: true,
+			width: 840,
+		height: 340,
+		minWidth: 840,
+		minHeight: 340,
+		maxWidth: 840,
+		maxHeight: 340,
+		show: false,
+		frame: false,
+		transparent: true,
+		hasShadow: true,
+		resizable: false,
+		movable: false,
+		fullscreenable: false,
+		maximizable: false,
+		minimizable: false,
+		skipTaskbar: true,
+		alwaysOnTop: true,
 		title: "Onhand",
-		autoHideMenuBar: true,
-		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-		backgroundColor: "#0f172a",
+		backgroundColor: "#00000000",
+		vibrancy: process.platform === "darwin" ? "under-window" : undefined,
+		visualEffectState: process.platform === "darwin" ? "active" : undefined,
 		webPreferences: {
-			preload: join(__dirname, "preload.mjs"),
+			preload: join(__dirname, "preload.cjs"),
 			contextIsolation: true,
 			nodeIntegration: false,
+			sandbox: false,
 		},
 	});
 
+	mainWindow.setAlwaysOnTop(true, "floating");
+	mainWindow.setOpacity(0);
+	positionWindowLikePalette();
 	mainWindow.loadFile(join(__dirname, "index.html"));
 	mainWindow.on("closed", () => {
+		cancelPendingBlurHide();
 		mainWindow = null;
 	});
+	mainWindow.on("focus", () => {
+		cancelPendingBlurHide();
+	});
+	mainWindow.on("blur", () => {
+		scheduleBlurHide();
+	});
+	mainWindow.webContents.on("before-input-event", (event, input) => {
+		if (input.type === "keyDown" && input.key === "Escape") {
+			event.preventDefault();
+			void hideWindow({ restorePreviousApp: true });
+		}
+	});
 	mainWindow.webContents.on("did-finish-load", () => {
-		sendFocusInput();
+		if (mainWindow?.isVisible()) {
+			sendFocusInput();
+			notifyPaletteOpened();
+		}
 	});
 }
 
 ipcMain.handle("onhand:get-startup-state", async () => ({
 	hotkey: HOTKEY,
+	platform: process.platform,
 	version: app.getVersion(),
 }));
 
@@ -197,15 +384,20 @@ ipcMain.handle("onhand:submit-prompt", async (_event, prompt) => {
 	return await submitPrompt(String(prompt || "").trim());
 });
 
-ipcMain.handle("onhand:hide-window", async () => {
-	hideWindow();
+ipcMain.handle("onhand:hide-window", async (_event, options = {}) => {
+	await hideWindow(options);
 	return { ok: true };
 });
 
 app.whenReady().then(() => {
+	if (process.platform === "darwin") {
+		try {
+			app.dock.hide();
+		} catch {}
+	}
 	createWindow();
 	const registered = globalShortcut.register(HOTKEY, () => {
-		toggleWindow();
+		void handleHotkeyToggle();
 	});
 	if (!registered) {
 		log(`Could not register global shortcut: ${HOTKEY}`);
@@ -213,12 +405,16 @@ app.whenReady().then(() => {
 		log(`Registered global shortcut: ${HOTKEY}`);
 	}
 	log("Desktop shell ready");
-
-	app.on("activate", () => {
-		if (!mainWindow) createWindow();
-		showWindow();
-	});
 });
+
+if (process.platform === "darwin") {
+	app.on("did-resign-active", () => {
+		scheduleBlurHide();
+	});
+	app.on("did-become-active", () => {
+		cancelPendingBlurHide();
+	});
+}
 
 app.on("will-quit", () => {
 	globalShortcut.unregisterAll();

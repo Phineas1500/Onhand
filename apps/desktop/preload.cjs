@@ -1,13 +1,18 @@
-import { contextBridge, ipcRenderer } from "electron";
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("onhandApp", {
 	getStartupState: () => ipcRenderer.invoke("onhand:get-startup-state"),
 	refreshContext: () => ipcRenderer.invoke("onhand:refresh-context"),
 	submitPrompt: (prompt) => ipcRenderer.invoke("onhand:submit-prompt", prompt),
-	hideWindow: () => ipcRenderer.invoke("onhand:hide-window"),
+	hideWindow: (options) => ipcRenderer.invoke("onhand:hide-window", options),
 	onFocusInput: (callback) => {
 		const listener = () => callback();
 		ipcRenderer.on("onhand:focus-input", listener);
 		return () => ipcRenderer.removeListener("onhand:focus-input", listener);
+	},
+	onPaletteOpened: (callback) => {
+		const listener = () => callback();
+		ipcRenderer.on("onhand:palette-opened", listener);
+		return () => ipcRenderer.removeListener("onhand:palette-opened", listener);
 	},
 });

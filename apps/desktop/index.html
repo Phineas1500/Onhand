@@ -8,50 +8,72 @@
   </head>
   <body>
     <div class="shell">
-      <header class="header">
-        <div>
-          <div class="eyebrow">Onhand desktop shell</div>
-          <h1>Ask about what’s already on your screen.</h1>
-          <p class="subhead">
-            This first shell already talks to the browser bridge and shows the current page context.
-            Prompt routing to the full Onhand agent is the next step.
-          </p>
-        </div>
-        <div class="header-actions">
-          <div id="statusPill" class="status-pill">Loading…</div>
-          <button id="refreshButton" class="secondary-button">Refresh context</button>
-        </div>
-      </header>
-
       <section class="palette-card">
         <form id="promptForm" class="prompt-form">
+          <div class="search-icon" aria-hidden="true">⌕</div>
           <input
             id="promptInput"
             class="prompt-input"
-            placeholder="Ask Onhand about the page you’re looking at…"
+            placeholder="Ask Onhand about this page…"
             autocomplete="off"
             spellcheck="false"
           />
-          <button type="submit" class="primary-button">Send</button>
+          <div class="prompt-actions">
+            <span id="contextChip" class="context-chip">Loading context…</span>
+            <span class="key-hint">
+              <span class="keycap">↩</span>
+              <span>Ask</span>
+            </span>
+          </div>
         </form>
-        <div id="hotkeyHint" class="hotkey-hint"></div>
+
+        <div class="divider"></div>
+
+        <section class="results">
+          <div class="section-title">Current context</div>
+
+          <div class="list-item">
+            <div class="item-icon" aria-hidden="true">↗</div>
+            <div class="item-content">
+              <div id="pageTitle" class="item-title">Loading current page…</div>
+              <div id="pageSubtitle" class="item-subtitle">Waiting for browser context.</div>
+            </div>
+            <div class="item-meta">Page</div>
+          </div>
+
+          <div id="selectionItem" class="list-item hidden">
+            <div class="item-icon" aria-hidden="true">✦</div>
+            <div class="item-content">
+              <div class="item-title">Current selection</div>
+              <div id="selectionPreview" class="item-subtitle"></div>
+            </div>
+            <div class="item-meta">Selection</div>
+          </div>
+
+          <div id="replyItem" class="list-item hidden">
+            <div class="item-icon" aria-hidden="true">⟡</div>
+            <div class="item-content">
+              <div id="replyTitle" class="item-title">Latest reply</div>
+              <div id="replyBody" class="item-subtitle multiline"></div>
+            </div>
+            <div class="item-meta">Reply</div>
+          </div>
+
+          <div id="idleHint" class="empty-state">
+            Ask about the current page or your selection. Full history and past sessions can live in the standalone Onhand app.
+          </div>
+        </section>
+
+        <footer class="footer">
+          <span id="statusText" class="status-text">Loading browser context…</span>
+          <span class="footer-dot"></span>
+          <span id="hotkeyHint"></span>
+          <span class="footer-spacer"></span>
+          <span>Enter to ask</span>
+          <span class="footer-dot"></span>
+          <span>Esc to dismiss</span>
+        </footer>
       </section>
-
-      <main class="content-grid">
-        <section class="panel transcript-panel">
-          <div class="panel-header">
-            <h2>Session</h2>
-          </div>
-          <div id="transcript" class="transcript"></div>
-        </section>
-
-        <section class="panel context-panel">
-          <div class="panel-header">
-            <h2>Current browser context</h2>
-          </div>
-          <div id="contextSummary" class="context-summary">Loading browser context…</div>
-        </section>
-      </main>
     </div>
 
     <script type="module" src="./renderer.js"></script>
