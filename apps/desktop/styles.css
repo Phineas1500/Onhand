@@ -153,11 +153,37 @@ body {
   padding: 12px;
 }
 
-.section-title {
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 0 6px;
+}
+
+.section-title {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.action-button {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted-strong);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.action-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.action-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .list-item {
@@ -168,6 +194,55 @@ body {
   border-radius: 16px;
   border: 1px solid var(--row-border);
   background: var(--row-bg);
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-item {
+  cursor: pointer;
+  padding: 10px;
+  gap: 8px;
+  border-radius: 14px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.session-item .item-icon {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.session-item .item-title {
+  font-size: 13px;
+}
+
+.session-item .item-subtitle {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.session-item .item-meta {
+  font-size: 10px;
+  padding: 6px 8px;
+}
+
+.session-item:hover {
+  border-color: rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.session-item:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.session-item.current {
+  border-color: rgba(196, 241, 208, 0.18);
+  background: rgba(196, 241, 208, 0.05);
 }
 
 .item-icon {
@@ -218,6 +293,10 @@ body {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.session-list .empty-state {
+  padding-top: 0;
 }
 
 .footer {

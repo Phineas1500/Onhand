@@ -135,6 +135,10 @@ Current desktop-launcher status:
 - streaming replies inside the popup
 - browser context is gathered lazily on send, so opening the launcher does not immediately attach `chrome.debugger`
 - launcher sessions persist locally under `.onhand/sessions/desktop/` and continue the most recent session by default
+- lightweight session management in the launcher:
+  - recent-session list
+  - `Cmd/Ctrl+N` starts a fresh launcher session
+  - auto-names new sessions from the first launcher prompt
 
 ## Tools exposed in pi
 
@@ -181,7 +185,7 @@ Also includes the command:
 
 ## Likely next steps
 
-- organize and browse past launcher sessions on top of `.onhand/sessions/desktop/`
+- richer session browsing and organization on top of `.onhand/sessions/desktop/`
 - stronger replay/restore fidelity beyond best-effort text matching
 - richer artifact browsing/selection UX on top of `.onhand/artifacts/browser/index.json`
 - connect launcher replies to richer page actions when appropriate (highlight / note / scroll)

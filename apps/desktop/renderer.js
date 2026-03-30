@@ -10,13 +10,17 @@ const selectionPreview = document.getElementById("selectionPreview");
 const replyItem = document.getElementById("replyItem");
 const replyTitle = document.getElementById("replyTitle");
 const replyBody = document.getElementById("replyBody");
+const sessionList = document.getElementById("sessionList");
+const newSessionButton = document.getElementById("newSessionButton");
 const idleHint = document.getElementById("idleHint");
 const statusText = document.getElementById("statusText");
 const hotkeyHint = document.getElementById("hotkeyHint");
+const newSessionHint = document.getElementById("newSessionHint");
 
 let activeRequestId = null;
 let activePromptLabel = "";
 let activeReplyText = "";
+let currentSessionFile = null;
 
 function truncate(text, maxChars = 180) {
 	const value = String(text || "").replace(/\s+/g, " ").trim();
@@ -41,12 +45,10 @@ function showReply(title, body) {
 	replyTitle.textContent = title;
 	replyBody.textContent = body;
 	replyItem.classList.remove("hidden");
-	idleHint.classList.add("hidden");
 }
 
 function hideReply() {
 	replyItem.classList.add("hidden");
-	idleHint.classList.remove("hidden");
 }
 
 function focusInputIfAvailable() {
@@ -86,7 +88,24 @@ function formatHotkey(accelerator, platform) {
 	return value.replace(/CommandOrControl/g, "Ctrl");
 }
 
+function formatRelativeTime(timestamp) {
+	if (!timestamp) return "Recent";
+	const deltaSeconds = Math.round((new Date(timestamp).getTime() - Date.now()) / 1000);
+	const absSeconds = Math.abs(deltaSeconds);
+	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+	if (absSeconds < 60) return rtf.format(Math.round(deltaSeconds), "second");
+	if (absSeconds < 3600) return rtf.format(Math.round(deltaSeconds / 60), "minute");
+	if (absSeconds < 86400) return rtf.format(Math.round(deltaSeconds / 3600), "hour");
+	if (absSeconds < 604800) return rtf.format(Math.round(deltaSeconds / 86400), "day");
+	return rtf.format(Math.round(deltaSeconds / 604800), "week");
+}
+
 hotkeyHint.textContent = formatHotkey(startupState.hotkey, startupState.platform);
+newSessionHint.textContent = startupState.platform === "darwin" ? "⌘N new" : "Ctrl+N new";
+
+function updateSessionControls() {
+	newSessionButton.disabled = Boolean(activeRequestId);
+}
 
 function renderContext(context, options = {}) {
 	const preserveStatus = Boolean(options.preserveStatus);
@@ -132,6 +151,95 @@ function renderContext(context, options = {}) {
 	}
 }
 
+function renderSessions(overview) {
+	sessionList.replaceChildren();
+	currentSessionFile = overview?.currentSession?.sessionFile || overview?.sessions?.find((session) => session.isCurrent)?.path || null;
+	const sessions = Array.isArray(overview?.sessions) ? overview.sessions : [];
+
+	if (sessions.length === 0) {
+		idleHint.classList.remove("hidden");
+		const empty = document.createElement("div");
+		empty.className = "empty-state";
+		empty.textContent = "No saved sessions yet. Your first launcher conversation will appear here.";
+		sessionList.append(empty);
+		return;
+	}
+
+	idleHint.classList.add("hidden");
+
+	for (const session of sessions) {
+		const item = document.createElement("div");
+		item.className = `list-item session-item${session.isCurrent ? " current" : ""}`;
+		item.tabIndex = 0;
+		item.setAttribute("role", "button");
+		item.dataset.path = session.path;
+
+		const icon = document.createElement("div");
+		icon.className = "item-icon";
+		icon.textContent = session.isCurrent ? "●" : "◦";
+
+		const content = document.createElement("div");
+		content.className = "item-content";
+
+		const title = document.createElement("div");
+		title.className = "item-title";
+		title.textContent = session.title;
+
+		const subtitle = document.createElement("div");
+		subtitle.className = "item-subtitle";
+		subtitle.textContent = session.preview;
+
+		const meta = document.createElement("div");
+		meta.className = "item-meta";
+		meta.textContent = session.isCurrent ? "Current" : formatRelativeTime(session.modifiedAt);
+
+		content.append(title, subtitle);
+		item.append(icon, content, meta);
+
+		const activate = async () => {
+			if (activeRequestId || session.isCurrent) return;
+			setStatus("Switching session…");
+			promptInput.disabled = true;
+			try {
+				const result = await onhandApp.switchSession(session.path);
+				if (result?.switched) {
+					hideReply();
+					activePromptLabel = "";
+					activeReplyText = "";
+					promptInput.value = "";
+					setStatus(`Switched to ${session.title}`, "ok");
+					await refreshSessions();
+				}
+			} catch (error) {
+				setStatus(error?.message || String(error), "error");
+			} finally {
+				promptInput.disabled = Boolean(activeRequestId);
+				updateSessionControls();
+				focusInputIfAvailable();
+			}
+		};
+
+		item.addEventListener("click", () => {
+			void activate();
+		});
+		item.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" || event.key === " ") {
+				event.preventDefault();
+				void activate();
+			}
+		});
+
+		sessionList.append(item);
+	}
+}
+
+async function refreshSessions() {
+	const overview = await onhandApp.listSessions(2);
+	renderSessions(overview);
+	updateSessionControls();
+	return overview;
+}
+
 async function refreshContext() {
 	if (!activeRequestId) setStatus("Refreshing context…");
 	const context = await onhandApp.refreshContext();
@@ -146,13 +254,16 @@ function beginPromptUi(prompt, requestId) {
 	promptInput.disabled = true;
 	showReply(activePromptLabel, "");
 	setStatus("Starting Onhand…");
+	updateSessionControls();
 }
 
-function finishPromptUi() {
+async function finishPromptUi(options = {}) {
 	activeRequestId = null;
 	promptInput.disabled = false;
 	promptInput.value = "";
-	focusInputIfAvailable();
+	updateSessionControls();
+	await refreshSessions().catch(() => {});
+	if (options.focus !== false) focusInputIfAvailable();
 }
 
 function handlePromptEvent(event) {
@@ -181,13 +292,13 @@ function handlePromptEvent(event) {
 			activeReplyText = String(event.reply || activeReplyText || "(No reply generated.)");
 			showReply(activePromptLabel || "Onhand", activeReplyText);
 			setStatus("Reply ready", "ok");
-			finishPromptUi();
+			void finishPromptUi();
 			break;
 		}
 		case "error": {
 			showReply(activePromptLabel || "Onhand", `Error: ${event.message || "Unknown error"}`);
 			setStatus("Prompt failed", "error");
-			finishPromptUi();
+			void finishPromptUi();
 			break;
 		}
 		default:
@@ -198,26 +309,55 @@ function handlePromptEvent(event) {
 promptForm.addEventListener("submit", async (event) => {
 	event.preventDefault();
 	const prompt = promptInput.value.trim();
-	if (!prompt) return;
-	if (activeRequestId) return;
+	if (!prompt || activeRequestId) return;
 
 	activePromptLabel = `Asked: ${truncate(prompt, 80)}`;
 	activeReplyText = "";
 	promptInput.disabled = true;
 	showReply(activePromptLabel, "");
 	setStatus("Starting Onhand…");
+	updateSessionControls();
 
 	try {
 		const result = await onhandApp.submitPrompt(prompt);
 		activeRequestId = result.requestId;
+		updateSessionControls();
 	} catch (error) {
 		const message = error?.message || String(error);
 		showReply(activePromptLabel || "Onhand", `Error: ${message}`);
 		setStatus("Prompt failed", "error");
 		activeRequestId = null;
 		promptInput.disabled = false;
+		updateSessionControls();
 		focusInputIfAvailable();
 	}
+});
+
+newSessionButton.addEventListener("click", () => {
+	if (activeRequestId) return;
+	promptInput.disabled = true;
+	updateSessionControls();
+	setStatus("Starting new session…");
+	void onhandApp
+		.newSession()
+		.then(async (result) => {
+			if (result?.created) {
+				hideReply();
+				activePromptLabel = "";
+				activeReplyText = "";
+				promptInput.value = "";
+				setStatus("New session ready", "ok");
+				await refreshSessions();
+			}
+		})
+		.catch((error) => {
+			setStatus(error?.message || String(error), "error");
+		})
+		.finally(() => {
+			promptInput.disabled = Boolean(activeRequestId);
+			updateSessionControls();
+			focusInputIfAvailable();
+		});
 });
 
 document.addEventListener("keydown", (event) => {
@@ -228,6 +368,10 @@ document.addEventListener("keydown", (event) => {
 		event.preventDefault();
 		focusInputIfAvailable();
 	}
+	if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+		event.preventDefault();
+		newSessionButton.click();
+	}
 });
 
 onhandApp.onFocusInput(() => {
@@ -235,9 +379,9 @@ onhandApp.onFocusInput(() => {
 });
 
 onhandApp.onPaletteOpened(() => {
-	refreshContext().catch((error) => {
+	Promise.all([refreshContext(), refreshSessions()]).catch((error) => {
 		setStatus("Refresh failed", "error");
-		pageTitle.textContent = "Could not refresh browser context";
+		pageTitle.textContent = "Could not refresh launcher state";
 		pageSubtitle.textContent = error?.message || String(error);
 		selectionItem.classList.add("hidden");
 	});
@@ -250,7 +394,7 @@ onhandApp.onPromptEvent((event) => {
 
 hideReply();
 try {
-	await refreshContext();
+	await Promise.all([refreshContext(), refreshSessions()]);
 } catch (error) {
 	setUnavailableState(error?.message || String(error));
 }

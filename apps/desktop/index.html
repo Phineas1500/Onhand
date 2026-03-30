@@ -59,8 +59,14 @@
             <div class="item-meta">Reply</div>
           </div>
 
+          <div class="section-header">
+            <div class="section-title">Recent sessions</div>
+            <button id="newSessionButton" class="action-button" type="button">New</button>
+          </div>
+          <div id="sessionList" class="session-list"></div>
+
           <div id="idleHint" class="empty-state">
-            Ask about the current page or your selection. Full history and past sessions can live in the standalone Onhand app.
+            Ask about the current page or your selection. Sessions are saved locally and can be resumed from this launcher.
           </div>
         </section>
 
@@ -68,6 +74,8 @@
           <span id="statusText" class="status-text">Loading browser context…</span>
           <span class="footer-dot"></span>
           <span id="hotkeyHint"></span>
+          <span class="footer-dot"></span>
+          <span id="newSessionHint"></span>
           <span class="footer-spacer"></span>
           <span>Enter to ask</span>
           <span class="footer-dot"></span>

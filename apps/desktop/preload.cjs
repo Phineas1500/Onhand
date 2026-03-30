@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("onhandApp", {
 	getStartupState: () => ipcRenderer.invoke("onhand:get-startup-state"),
 	refreshContext: () => ipcRenderer.invoke("onhand:refresh-context"),
+	listSessions: (limit) => ipcRenderer.invoke("onhand:list-sessions", limit),
+	newSession: () => ipcRenderer.invoke("onhand:new-session"),
+	switchSession: (sessionPath) => ipcRenderer.invoke("onhand:switch-session", sessionPath),
 	submitPrompt: (prompt) => ipcRenderer.invoke("onhand:submit-prompt", prompt),
 	hideWindow: (options) => ipcRenderer.invoke("onhand:hide-window", options),
 	onFocusInput: (callback) => {

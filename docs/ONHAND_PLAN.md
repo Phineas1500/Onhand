@@ -444,6 +444,10 @@ Completed so far:
   - real pi SDK session wired into the launcher with streaming replies
   - browser context gathered lazily on send so opening the launcher does not immediately attach `chrome.debugger`
   - launcher sessions persisted locally under `.onhand/sessions/desktop/` and continued by default
+  - lightweight launcher-side session management:
+    - recent sessions listed directly in the launcher
+    - `Cmd/Ctrl+N` starts a fresh launcher session
+    - new launcher sessions are auto-named from the first prompt
 - first-class browser annotation tools:
   - `browser_highlight_text`
   - `browser_show_note`
@@ -483,11 +487,11 @@ Completed so far:
 
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
-- Phase 14.3 now has a usable desktop launcher with real pi SDK prompt routing and streaming replies.
+- Phase 14.3 now has a usable desktop launcher with real pi SDK prompt routing, streaming replies, and lightweight recent-session management.
 - There is still no session browser or replay UI.
 
 Most important next step:
-- make launcher sessions first-class by organizing and browsing the persisted sessions on top of `.onhand/sessions/desktop/`.
+- build a richer session browser / replay flow on top of the persisted launcher and browser artifacts.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -610,6 +614,7 @@ Started:
 - [x] route shell prompt submission to a real pi SDK session
 - [x] stream replies into the launcher UI
 - [x] persist launcher sessions locally under `.onhand/sessions/desktop/`
+- [x] add lightweight launcher session management (recent sessions + fresh-session shortcut)
 
 Remaining:
 - [ ] decide how the shell should manage session/project selection before the full replay UI exists

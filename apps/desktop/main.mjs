@@ -7,7 +7,13 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { disposeOnhandAgent, submitOnhandPrompt } from "./onhand-agent.mjs";
+import {
+	disposeOnhandAgent,
+	getSessionOverview,
+	startNewOnhandSession,
+	submitOnhandPrompt,
+	switchOnhandSession,
+} from "./onhand-agent.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOTKEY = process.env.ONHAND_HOTKEY || "CommandOrControl+Shift+Space";
@@ -395,6 +401,21 @@ ipcMain.handle("onhand:get-startup-state", async () => ({
 
 ipcMain.handle("onhand:refresh-context", async () => {
 	return await getBrowserContext();
+});
+
+ipcMain.handle("onhand:list-sessions", async (_event, limit = 3) => {
+	return await getSessionOverview(Number(limit) || 3);
+});
+
+ipcMain.handle("onhand:new-session", async () => {
+	return await startNewOnhandSession();
+});
+
+ipcMain.handle("onhand:switch-session", async (_event, sessionPath) => {
+	if (!sessionPath || typeof sessionPath !== "string") {
+		throw new Error("sessionPath is required");
+	}
+	return await switchOnhandSession(sessionPath);
 });
 
 ipcMain.handle("onhand:submit-prompt", async (_event, prompt) => {
