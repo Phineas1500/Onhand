@@ -3,9 +3,11 @@ const DEFAULT_SETTINGS = {
 	token: "",
 };
 
+const DEFAULT_ONHAND_API_PORT = 3211;
 const STATE_DEBOUNCE_MS = 200;
 const RECONNECT_DELAY_MS = 2000;
 const SCREENSHOT_DELAY_MS = 150;
+const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 
 let ws = null;
 let socketGeneration = 0;
@@ -78,6 +80,158 @@ function sendToBridge(message) {
 	if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 	ws.send(JSON.stringify(message));
 	return true;
+}
+
+function bridgeWsToHttp(url) {
+	const parsed = new URL(String(url || DEFAULT_SETTINGS.bridgeUrl));
+	parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+	return parsed;
+}
+
+function getOnhandApiBaseUrl(bridgeUrl) {
+	const parsed = bridgeWsToHttp(bridgeUrl);
+	parsed.port = String(DEFAULT_ONHAND_API_PORT);
+	parsed.pathname = "";
+	parsed.search = "";
+	parsed.hash = "";
+	return parsed.toString().replace(/\/$/, "");
+}
+
+function getBridgeHealthUrl(bridgeUrl) {
+	const parsed = bridgeWsToHttp(bridgeUrl);
+	parsed.pathname = "/health";
+	parsed.search = "";
+	parsed.hash = "";
+	return parsed.toString();
+}
+
+async function probeBridgeAvailability(settings) {
+	const response = await fetch(getBridgeHealthUrl(settings.bridgeUrl), {
+		headers: {
+			Authorization: `Bearer ${settings.token}`,
+		},
+	});
+
+	let data;
+	try {
+		data = await response.json();
+	} catch {
+		throw new Error("Bridge health check returned a non-JSON response.");
+	}
+
+	if (!response.ok || data?.ok === false) {
+		throw new Error(data?.error || `Bridge health check failed: ${response.status}`);
+	}
+
+	return data;
+}
+
+async function callOnhandApi(path, init = {}) {
+	const settings = await getSettings();
+	if (!settings.token) {
+		throw new Error("Set the bridge token in the extension options.");
+	}
+
+	const headers = new Headers(init.headers || {});
+	headers.set("Authorization", `Bearer ${settings.token}`);
+	if (init.body && !headers.has("Content-Type")) {
+		headers.set("Content-Type", "application/json");
+	}
+
+	const response = await fetch(`${getOnhandApiBaseUrl(settings.bridgeUrl)}${path}`, {
+		...init,
+		headers,
+	});
+
+	let data;
+	try {
+		data = await response.json();
+	} catch {
+		throw new Error(`Onhand UI API returned a non-JSON response for ${path}`);
+	}
+
+	if (!response.ok || data?.ok === false) {
+		throw new Error(data?.error || `Onhand UI API request failed: ${response.status}`);
+	}
+
+	return data;
+}
+
+async function getSidebarWindowStates() {
+	const stored = await chrome.storage.local.get({ [SIDEBAR_WINDOW_STATES_KEY]: {} });
+	return stored[SIDEBAR_WINDOW_STATES_KEY] || {};
+}
+
+async function setSidebarWindowOpen(windowId, open) {
+	if (typeof windowId !== "number") return;
+	const states = await getSidebarWindowStates();
+	if (open) {
+		states[String(windowId)] = true;
+	} else {
+		delete states[String(windowId)];
+	}
+	await chrome.storage.local.set({ [SIDEBAR_WINDOW_STATES_KEY]: states });
+}
+
+async function isSidebarOpenForWindow(windowId) {
+	if (typeof windowId !== "number") return false;
+	const states = await getSidebarWindowStates();
+	return Boolean(states[String(windowId)]);
+}
+
+async function ensureSidebarInjected(tabId) {
+	if (typeof tabId !== "number") return false;
+	try {
+		await chrome.scripting.executeScript({
+			target: { tabId },
+			files: ["sidebar.js"],
+		});
+		return true;
+	} catch (error) {
+		log(`Could not inject sidebar into tab ${tabId}`, error?.message || String(error));
+		return false;
+	}
+}
+
+async function broadcastSidebarVisibility(windowId, open) {
+	if (typeof windowId !== "number") return;
+	const tabs = await chrome.tabs.query({ windowId });
+	for (const tab of tabs) {
+		if (!tab?.id) continue;
+		if (open) {
+			await ensureSidebarInjected(tab.id);
+		}
+		try {
+			await chrome.tabs.sendMessage(tab.id, {
+				type: "onhand:sidebar-visibility",
+				open,
+			});
+		} catch {}
+	}
+}
+
+async function resolveSidebarWindowId(args = {}) {
+	if (typeof args.windowId === "number") return args.windowId;
+	const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+	if (typeof activeTab?.windowId === "number") return activeTab.windowId;
+	const windowInfo = await chrome.windows.getLastFocused();
+	return windowInfo?.id ?? null;
+}
+
+async function openSidebarForWindow(windowId) {
+	if (typeof windowId !== "number") {
+		throw new Error("No browser window is available for the Onhand sidebar.");
+	}
+	await setSidebarWindowOpen(windowId, true);
+	await broadcastSidebarVisibility(windowId, true);
+	return { windowId, open: true };
+}
+
+async function closeSidebarForWindow(windowId) {
+	if (typeof windowId !== "number") return { windowId, open: false };
+	await setSidebarWindowOpen(windowId, false);
+	await broadcastSidebarVisibility(windowId, false);
+	return { windowId, open: false };
 }
 
 function simplifyTab(tab) {
@@ -2250,6 +2404,14 @@ async function handleCommand(name, args = {}) {
 				method: screenshot.method,
 			};
 		}
+		case "open_onhand_sidebar": {
+			const windowId = await resolveSidebarWindowId(args);
+			return await openSidebarForWindow(windowId);
+		}
+		case "close_onhand_sidebar": {
+			const windowId = await resolveSidebarWindowId(args);
+			return await closeSidebarForWindow(windowId);
+		}
 		default:
 			throw new Error(`Unknown command: ${name}`);
 	}
@@ -2313,6 +2475,17 @@ async function connectBridge(force = false) {
 		connectionStatus: "connecting",
 		lastError: "",
 	});
+
+	try {
+		await probeBridgeAvailability(settings);
+	} catch (error) {
+		await updateStatus({
+			connectionStatus: "disconnected",
+			lastError: error?.message || "Bridge is not reachable yet.",
+		});
+		scheduleReconnect();
+		return;
+	}
 
 	ws = new WebSocket(bridgeUrl.toString());
 
@@ -2401,6 +2574,60 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:get-window-state") {
+			sendResponse({
+				ok: true,
+				open: await isSidebarOpenForWindow(_sender?.tab?.windowId),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:fetch-state") {
+			const response = await callOnhandApi("/state");
+			sendResponse({
+				ok: true,
+				state: response.state,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:submit-prompt") {
+			const response = await callOnhandApi("/prompt", {
+				method: "POST",
+				body: JSON.stringify({
+					prompt: message.prompt,
+				}),
+			});
+			sendResponse({
+				ok: true,
+				requestId: response.requestId,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:activate-action") {
+			const response = await callOnhandApi("/action", {
+				method: "POST",
+				body: JSON.stringify({
+					key: message.key,
+				}),
+			});
+			sendResponse({
+				ok: true,
+				result: response.result,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:close") {
+			const result = await closeSidebarForWindow(_sender?.tab?.windowId);
+			sendResponse({
+				ok: true,
+				...result,
+			});
+			return;
+		}
+
 		sendResponse({ ok: false, error: "Unknown message" });
 	})().catch((error) => {
 		sendResponse({ ok: false, error: error?.message || String(error) });
@@ -2427,6 +2654,23 @@ for (const eventName of [
 
 chrome.tabs.onUpdated.addListener(() => {
 	scheduleStatePush("tabs.onUpdated");
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+	if (changeInfo.status !== "complete") return;
+	if (!(await isSidebarOpenForWindow(tab?.windowId))) return;
+	const injected = await ensureSidebarInjected(tabId);
+	if (!injected) return;
+	try {
+		await chrome.tabs.sendMessage(tabId, {
+			type: "onhand:sidebar-visibility",
+			open: true,
+		});
+	} catch {}
+});
+
+chrome.windows.onRemoved.addListener(async (windowId) => {
+	await setSidebarWindowOpen(windowId, false);
 });
 
 connectBridge().catch((error) => {

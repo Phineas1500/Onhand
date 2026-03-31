@@ -9,17 +9,21 @@ import { fileURLToPath } from "node:url";
 
 import {
 	disposeOnhandAgent,
+	getOnhandPageAction,
+	getOnhandUiState,
 	getSessionOverview,
 	startNewOnhandSession,
 	submitOnhandPrompt,
 	switchOnhandSession,
 } from "./onhand-agent.mjs";
+import { createOnhandUiServer } from "./onhand-ui-server.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOTKEY = process.env.ONHAND_HOTKEY || "CommandOrControl+Shift+Space";
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const FAST_TIMEOUT_MS = 2500;
+const ONHAND_UI_PORT = Number(process.env.ONHAND_UI_PORT || 3211);
 const BLUR_HIDE_DELAY_MS = 120;
 const HOTKEY_DEBOUNCE_MS = 300;
 const WORKSPACE_VISIBILITY_SETTLE_MS = 60;
@@ -36,6 +40,7 @@ let pendingWorkspaceDetachTimeout = null;
 let hotkeyToggleInFlight = false;
 let lastHotkeyToggleAt = 0;
 let appIsQuitting = false;
+let onhandUiServer = null;
 
 function log(...args) {
 	console.log("[onhand-desktop]", ...args);
@@ -84,6 +89,22 @@ async function bridgeRequest(path, init = {}, timeoutMs = FAST_TIMEOUT_MS) {
 	} finally {
 		clearTimeout(timeoutId);
 	}
+}
+
+async function runBridgeCommand(name, args = {}, timeoutMs = FAST_TIMEOUT_MS) {
+	const response = await bridgeRequest(
+		"/command",
+		{
+			method: "POST",
+			body: JSON.stringify({
+				name,
+				args,
+				timeoutMs,
+			}),
+		},
+		timeoutMs + 500,
+	);
+	return response.result;
 }
 
 function flattenTabs(state) {
@@ -199,6 +220,7 @@ function sendPromptEvent(payload) {
 }
 
 async function runPromptRequest(requestId, prompt) {
+	void runBridgeCommand("open_onhand_sidebar", {}, 1500).catch(() => {});
 	sendPromptEvent({ type: "start", requestId, prompt });
 	sendPromptEvent({ type: "status", requestId, status: "Collecting browser context…" });
 
@@ -220,6 +242,57 @@ async function runPromptRequest(requestId, prompt) {
 			actions: Array.isArray(error?.pageActions) ? error.pageActions : [],
 		});
 	}
+}
+
+function queuePromptRequest(prompt) {
+	const normalizedPrompt = String(prompt || "").trim();
+	if (!normalizedPrompt) {
+		throw new Error("Prompt cannot be empty.");
+	}
+	const requestId = randomUUID();
+	setTimeout(() => {
+		void runPromptRequest(requestId, normalizedPrompt);
+	}, 0);
+	return { ok: true, requestId };
+}
+
+async function activateOnhandPageAction(actionKey) {
+	const action = getOnhandPageAction(actionKey);
+	if (!action) {
+		throw new Error("Could not find that Onhand page action.");
+	}
+
+	if (typeof action.tabId === "number") {
+		await runBridgeCommand("activate_tab", { tabId: action.tabId }, 2500);
+	}
+
+	if (action.annotationId) {
+		await runBridgeCommand(
+			"scroll_to_annotation",
+			{
+				tabId: typeof action.tabId === "number" ? action.tabId : undefined,
+				annotationId: action.annotationId,
+			},
+			2500,
+		);
+	}
+
+	return action;
+}
+
+async function startOnhandUiRuntimeServer() {
+	const connection = await loadBridgeConnection();
+	const bridgeUrl = new URL(connection.baseUrl);
+	onhandUiServer = createOnhandUiServer({
+		host: bridgeUrl.hostname || "127.0.0.1",
+		port: ONHAND_UI_PORT,
+		token: connection.token,
+		getState: async () => getOnhandUiState(),
+		submitPrompt: async (prompt) => queuePromptRequest(prompt),
+		activateAction: async (actionKey) => activateOnhandPageAction(actionKey),
+	});
+	await onhandUiServer.listen();
+	log(`Onhand UI API listening on ${onhandUiServer.getInfo().baseUrl}`);
 }
 
 function sendFocusInput() {
@@ -501,15 +574,7 @@ ipcMain.handle("onhand:switch-session", async (_event, sessionPath) => {
 });
 
 ipcMain.handle("onhand:submit-prompt", async (_event, prompt) => {
-	const normalizedPrompt = String(prompt || "").trim();
-	if (!normalizedPrompt) {
-		throw new Error("Prompt cannot be empty.");
-	}
-	const requestId = randomUUID();
-	setTimeout(() => {
-		void runPromptRequest(requestId, normalizedPrompt);
-	}, 0);
-	return { ok: true, requestId };
+	return queuePromptRequest(prompt);
 });
 
 ipcMain.handle("onhand:hide-window", async (_event, options = {}) => {
@@ -521,6 +586,9 @@ app.whenReady().then(() => {
 	if (process.platform === "darwin") {
 		app.setActivationPolicy("accessory");
 	}
+	startOnhandUiRuntimeServer().catch((error) => {
+		log("Could not start Onhand UI API", error?.message || String(error));
+	});
 	createWindow();
 	const registered = globalShortcut.register(HOTKEY, () => {
 		void handleHotkeyToggle();
@@ -552,5 +620,6 @@ app.on("before-quit", () => {
 
 app.on("will-quit", () => {
 	globalShortcut.unregisterAll();
+	void onhandUiServer?.close?.().catch?.(() => {});
 	void disposeOnhandAgent();
 });

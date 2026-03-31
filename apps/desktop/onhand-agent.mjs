@@ -32,6 +32,8 @@ Avoid navigating away from the current page unless the user explicitly asks. Kee
 let runtimePromise = null;
 let activeRequest = null;
 let sessionEventUnsubscribe = null;
+let uiState = createEmptyUiState();
+const uiStateListeners = new Set();
 
 function truncate(value, maxChars = 1200) {
 	const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -93,6 +95,47 @@ function buildCurrentSessionPlaceholder(currentSession) {
 	};
 }
 
+function createEmptyUiState(currentSession = null) {
+	return {
+		currentSession,
+		messages: [],
+		activities: [],
+		pageActions: [],
+		status: "Ready",
+		activeRequestId: null,
+		updatedAt: Date.now(),
+	};
+}
+
+function cloneUiState() {
+	return JSON.parse(JSON.stringify(uiState));
+}
+
+function emitUiState() {
+	const snapshot = cloneUiState();
+	for (const listener of uiStateListeners) {
+		try {
+			listener(snapshot);
+		} catch {
+			// Ignore UI subscriber failures.
+		}
+	}
+}
+
+function mutateUiState(mutator) {
+	mutator(uiState);
+	uiState.updatedAt = Date.now();
+	emitUiState();
+}
+
+function replaceUiState(nextState) {
+	uiState = {
+		...nextState,
+		updatedAt: Date.now(),
+	};
+	emitUiState();
+}
+
 async function getCurrentRuntimeSessionState() {
 	if (!runtimePromise) return null;
 	try {
@@ -141,22 +184,125 @@ function buildLauncherPrompt(prompt, browserContext) {
 	].join("\n");
 }
 
+function extractTextFromContent(content) {
+	if (typeof content === "string") {
+		return content.trim();
+	}
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((block) => block?.type === "text")
+		.map((block) => block.text || "")
+		.join("")
+		.trim();
+}
+
+function extractUserFacingUserText(message) {
+	const text = extractTextFromContent(message?.content);
+	return extractUserQuestionFromSessionText(text) || truncate(text, 240);
+}
+
+function buildConversationMessagesFromAgent(agentMessages = []) {
+	const messages = [];
+	for (let index = 0; index < agentMessages.length; index += 1) {
+		const message = agentMessages[index];
+		if (!message || typeof message !== "object" || !message.role) continue;
+		if (message.role === "toolResult") continue;
+
+		let text = "";
+		if (message.role === "user") {
+			text = extractUserFacingUserText(message);
+		} else if (message.role === "assistant") {
+			text = extractTextFromContent(message.content);
+		}
+
+		if (!text) continue;
+		messages.push({
+			id: `${message.role}:${index}`,
+			role: message.role,
+			text,
+		});
+	}
+	return messages;
+}
+
 function extractAssistantText(messages) {
 	if (!Array.isArray(messages)) return "";
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const message = messages[index];
-		if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-		return message.content
-			.filter((block) => block?.type === "text")
-			.map((block) => block.text || "")
-			.join("")
-			.trim();
+		if (message?.role !== "assistant") continue;
+		return extractTextFromContent(message.content);
 	}
 	return "";
 }
 
 function emitRequestEvent(payload) {
 	activeRequest?.onEvent(payload);
+}
+
+function syncUiStateFromSession(session, overrides = {}) {
+	replaceUiState({
+		...createEmptyUiState(buildSessionState(session)),
+		messages: buildConversationMessagesFromAgent(session.agent.state.messages),
+		...overrides,
+	});
+}
+
+function beginUiRequest(session, requestId, prompt) {
+	const currentSession = buildSessionState(session);
+	const previousMessages = buildConversationMessagesFromAgent(session.agent.state.messages);
+	const now = new Date().toISOString();
+	replaceUiState({
+		currentSession,
+		messages: [
+			...previousMessages,
+			{
+				id: `user:${requestId}`,
+				role: "user",
+				text: prompt.trim(),
+				createdAt: now,
+			},
+			{
+				id: `assistant:${requestId}`,
+				role: "assistant",
+				text: "",
+				createdAt: now,
+				pending: true,
+			},
+		],
+		activities: [],
+		pageActions: [],
+		status: "Starting Onhand…",
+		activeRequestId: requestId,
+	});
+}
+
+function updateAssistantDraft(requestId, text, extra = {}) {
+	mutateUiState((state) => {
+		const message = state.messages.find((entry) => entry.id === `assistant:${requestId}`);
+		if (!message) return;
+		message.text = text;
+		Object.assign(message, extra);
+	});
+}
+
+function appendUiActivity(activity) {
+	mutateUiState((state) => {
+		const existingIndex = state.activities.findIndex((entry) => entry.id === activity.id);
+		if (existingIndex >= 0) {
+			state.activities[existingIndex] = {
+				...state.activities[existingIndex],
+				...activity,
+			};
+		} else {
+			state.activities.push(activity);
+		}
+	});
+}
+
+function setUiStatus(status) {
+	mutateUiState((state) => {
+		state.status = status;
+	});
 }
 
 function getToolStatusMessage(toolName) {
@@ -194,15 +340,27 @@ function getToolStatusMessage(toolName) {
 
 function buildPageAction(toolName, result) {
 	const details = result?.details || {};
+	const tab = details.tab || null;
 	switch (toolName) {
 		case "browser_activate_tab": {
 			const detail = truncate(details.tab?.title || details.tab?.url || "Relevant page", 72);
-			return { key: `tab:${details.tab?.id || detail}`, label: "Switched tab", detail };
+			return {
+				key: `tab:${details.tab?.id || detail}`,
+				type: "tab",
+				tabId: details.tab?.id || null,
+				windowId: details.tab?.windowId || null,
+				label: "Switched tab",
+				detail,
+			};
 		}
 		case "browser_highlight_text": {
 			const matchedText = truncate(details.annotation?.matchedText || "Relevant passage", 72);
 			return {
 				key: `highlight:${details.annotation?.annotationId || matchedText}`,
+				type: "annotation",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				annotationId: details.annotation?.annotationId || null,
 				label: "Highlighted text",
 				detail: matchedText,
 			};
@@ -211,6 +369,10 @@ function buildPageAction(toolName, result) {
 			const noteText = truncate(details.note?.note || details.note?.text || details.note?.label || "Short explanation", 72);
 			return {
 				key: `note:${details.note?.annotationId || noteText}`,
+				type: "note",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				annotationId: details.note?.annotationId || null,
 				label: "Added note",
 				detail: noteText,
 			};
@@ -218,6 +380,10 @@ function buildPageAction(toolName, result) {
 		case "browser_scroll_to_annotation": {
 			return {
 				key: `scroll:${details.annotation?.annotationId || result?.toolCallId || Date.now()}`,
+				type: "annotation",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				annotationId: details.annotation?.annotationId || null,
 				label: "Moved to section",
 				detail: "Brought the relevant part of the page into view",
 			};
@@ -249,6 +415,9 @@ function pushPageAction(action) {
 		type: "page_actions",
 		actions: [...activeRequest.pageActions],
 	});
+	mutateUiState((state) => {
+		state.pageActions = [...activeRequest.pageActions];
+	});
 }
 
 function handleSessionEvent(session, event) {
@@ -257,34 +426,62 @@ function handleSessionEvent(session, event) {
 	switch (event.type) {
 		case "agent_start": {
 			emitRequestEvent({ type: "status", status: "Thinking…" });
+			setUiStatus("Thinking…");
 			break;
 		}
 		case "message_update": {
 			if (event.assistantMessageEvent.type === "text_delta") {
 				activeRequest.reply += event.assistantMessageEvent.delta;
+				updateAssistantDraft(activeRequest.id, activeRequest.reply, { pending: true });
 				emitRequestEvent({
 					type: "reply_delta",
 					delta: event.assistantMessageEvent.delta,
 					reply: activeRequest.reply,
 				});
 				emitRequestEvent({ type: "status", status: "Responding…" });
+				setUiStatus("Responding…");
 			} else if (event.assistantMessageEvent.type === "thinking_delta" && !activeRequest.reply.trim()) {
 				emitRequestEvent({ type: "status", status: "Thinking…" });
+				activeRequest.reasoning = `${activeRequest.reasoning || ""}${event.assistantMessageEvent.delta || ""}`.trim();
+				appendUiActivity({
+					id: `reasoning:${activeRequest.id}`,
+					kind: "reasoning",
+					label: "Reasoning",
+					text: truncate(activeRequest.reasoning, 5000),
+				});
+				setUiStatus("Thinking…");
 			}
 			break;
 		}
 		case "tool_execution_start": {
+			activeRequest.toolExecutionCount = (activeRequest.toolExecutionCount || 0) + 1;
+			appendUiActivity({
+				id: `tool:${event.toolCallId || `${event.toolName}:${activeRequest.toolExecutionCount}`}`,
+				kind: "tool",
+				label: getToolStatusMessage(event.toolName),
+				toolName: event.toolName,
+				state: "running",
+			});
 			emitRequestEvent({
 				type: "status",
 				status: getToolStatusMessage(event.toolName),
 			});
+			setUiStatus(getToolStatusMessage(event.toolName));
 			break;
 		}
 		case "tool_execution_end": {
+			appendUiActivity({
+				id: `tool:${event.toolCallId || event.toolName}`,
+				kind: "tool",
+				label: event.isError ? `Failed ${event.toolName}` : getToolStatusMessage(event.toolName),
+				toolName: event.toolName,
+				state: event.isError ? "error" : "complete",
+			});
 			if (!event.isError) {
 				pushPageAction(buildPageAction(event.toolName, event.result));
 			}
 			emitRequestEvent({ type: "status", status: "Writing answer…" });
+			setUiStatus("Writing answer…");
 			break;
 		}
 		case "auto_retry_start": {
@@ -292,14 +489,22 @@ function handleSessionEvent(session, event) {
 				type: "status",
 				status: `Retrying after an error (${event.attempt}/${event.maxAttempts})…`,
 			});
+			setUiStatus(`Retrying after an error (${event.attempt}/${event.maxAttempts})…`);
 			break;
 		}
 		case "compaction_start": {
 			emitRequestEvent({ type: "status", status: "Compacting conversation context…" });
+			setUiStatus("Compacting conversation context…");
 			break;
 		}
 		case "agent_end": {
 			const reply = activeRequest.reply.trim() || extractAssistantText(event.messages) || "(No reply generated.)";
+			syncUiStateFromSession(session, {
+				activities: [...uiState.activities],
+				pageActions: [...activeRequest.pageActions],
+				status: "Reply ready",
+				activeRequestId: null,
+			});
 			emitRequestEvent({
 				type: "complete",
 				reply,
@@ -348,6 +553,7 @@ async function createRuntime() {
 	sessionEventUnsubscribe = result.session.subscribe((event) => {
 		handleSessionEvent(result.session, event);
 	});
+	syncUiStateFromSession(result.session);
 
 	return result;
 }
@@ -384,6 +590,7 @@ export async function startNewOnhandSession() {
 	}
 	const previousSessionFile = session.sessionFile;
 	const created = await session.newSession({ parentSession: previousSessionFile || undefined });
+	syncUiStateFromSession(session);
 	return {
 		created,
 		currentSession: buildSessionState(session),
@@ -396,6 +603,7 @@ export async function switchOnhandSession(sessionPath) {
 		throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
 	}
 	const switched = await session.switchSession(sessionPath);
+	syncUiStateFromSession(session);
 	return {
 		switched,
 		currentSession: buildSessionState(session),
@@ -415,8 +623,11 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 		id: requestId,
 		onEvent,
 		reply: "",
+		reasoning: "",
 		pageActions: [],
+		toolExecutionCount: 0,
 	};
+	beginUiRequest(session, requestId, prompt);
 
 	onEvent({
 		type: "status",
@@ -430,6 +641,12 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 		await session.prompt(buildLauncherPrompt(prompt, browserContext));
 		if (activeRequest?.id === requestId) {
 			const reply = activeRequest.reply.trim() || "(No reply generated.)";
+			syncUiStateFromSession(session, {
+				activities: [...uiState.activities],
+				pageActions: [...activeRequest.pageActions],
+				status: "Reply ready",
+				activeRequestId: null,
+			});
 			onEvent({
 				type: "complete",
 				reply,
@@ -451,14 +668,38 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 			if (error && typeof error === "object") {
 				error.pageActions = [...activeRequest.pageActions];
 			}
+			updateAssistantDraft(requestId, `Error: ${error?.message || String(error)}`, { pending: false, error: true });
+			mutateUiState((state) => {
+				state.pageActions = [...activeRequest.pageActions];
+				state.status = "Prompt failed";
+				state.activeRequestId = null;
+			});
 			activeRequest = null;
 		}
 		throw error;
 	}
 }
 
+export function getOnhandUiState() {
+	return cloneUiState();
+}
+
+export function subscribeOnhandUiState(listener) {
+	uiStateListeners.add(listener);
+	listener(cloneUiState());
+	return () => {
+		uiStateListeners.delete(listener);
+	};
+}
+
+export function getOnhandPageAction(actionKey) {
+	if (!actionKey) return null;
+	return uiState.pageActions.find((action) => action.key === actionKey) || null;
+}
+
 export async function disposeOnhandAgent() {
 	activeRequest = null;
+	replaceUiState(createEmptyUiState());
 	if (!runtimePromise) return;
 	try {
 		const { session } = await runtimePromise;
