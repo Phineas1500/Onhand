@@ -193,21 +193,43 @@ async function ensureSidebarInjected(tabId) {
 	}
 }
 
-async function broadcastSidebarVisibility(windowId, open) {
-	if (typeof windowId !== "number") return;
-	const tabs = await chrome.tabs.query({ windowId });
-	for (const tab of tabs) {
-		if (!tab?.id) continue;
-		if (open) {
-			await ensureSidebarInjected(tab.id);
-		}
+async function setSidebarVisibilityInTab(tabId, open) {
+	if (typeof tabId !== "number") return false;
+	if (open) {
+		const injected = await ensureSidebarInjected(tabId);
+		if (!injected) return false;
+	}
+	try {
+		await chrome.tabs.sendMessage(tabId, {
+			type: "onhand:sidebar-visibility",
+			open,
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function getPreferredSidebarTab(windowId, preferredTabId) {
+	if (typeof preferredTabId === "number") {
 		try {
-			await chrome.tabs.sendMessage(tab.id, {
-				type: "onhand:sidebar-visibility",
-				open,
-			});
+			const tab = await chrome.tabs.get(preferredTabId);
+			if (tab?.id && tab.windowId === windowId) return tab;
 		} catch {}
 	}
+
+	const [activeTab] = await chrome.tabs.query({ windowId, active: true });
+	return activeTab?.id ? activeTab : null;
+}
+
+async function broadcastSidebarVisibility(windowId, open, options = {}) {
+	if (typeof windowId !== "number") return;
+	const excludeTabId = typeof options.excludeTabId === "number" ? options.excludeTabId : null;
+	const tabs = await chrome.tabs.query({ windowId });
+	const tasks = tabs
+		.filter((tab) => tab?.id && tab.id !== excludeTabId)
+		.map((tab) => setSidebarVisibilityInTab(tab.id, open));
+	await Promise.allSettled(tasks);
 }
 
 async function resolveSidebarWindowId(args = {}) {
@@ -223,14 +245,26 @@ async function openSidebarForWindow(windowId) {
 		throw new Error("No browser window is available for the Onhand sidebar.");
 	}
 	await setSidebarWindowOpen(windowId, true);
-	await broadcastSidebarVisibility(windowId, true);
+	const primaryTab = await getPreferredSidebarTab(windowId);
+	if (primaryTab?.id) {
+		await setSidebarVisibilityInTab(primaryTab.id, true);
+		void broadcastSidebarVisibility(windowId, true, { excludeTabId: primaryTab.id });
+	} else {
+		void broadcastSidebarVisibility(windowId, true);
+	}
 	return { windowId, open: true };
 }
 
 async function closeSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") return { windowId, open: false };
 	await setSidebarWindowOpen(windowId, false);
-	await broadcastSidebarVisibility(windowId, false);
+	const primaryTab = await getPreferredSidebarTab(windowId);
+	if (primaryTab?.id) {
+		await setSidebarVisibilityInTab(primaryTab.id, false);
+		void broadcastSidebarVisibility(windowId, false, { excludeTabId: primaryTab.id });
+	} else {
+		void broadcastSidebarVisibility(windowId, false);
+	}
 	return { windowId, open: false };
 }
 
@@ -960,12 +994,17 @@ const createPageToolkit = () => {
 				box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18) !important;
 				margin: 12px 0 16px !important;
 				padding: 12px 14px !important;
-				max-width: min(46rem, calc(100vw - 48px)) !important;
+				display: inline-block !important;
+				inline-size: fit-content !important;
+				max-width: min(26rem, calc(100% - 24px)) !important;
 				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
 				position: relative !important;
 				z-index: 2147483645 !important;
 				scroll-margin-top: 20vh !important;
 				scroll-margin-bottom: 20vh !important;
+				white-space: normal !important;
+				overflow-wrap: anywhere !important;
+				vertical-align: top !important;
 			}
 			[data-onhand-note-part="label"] {
 				color: #92400e !important;
@@ -983,6 +1022,39 @@ const createPageToolkit = () => {
 	};
 
 	const nextAnnotationId = () => `onhand-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+	const ANNOTATION_CONTAINER_SELECTOR = [
+		"p",
+		"li",
+		"blockquote",
+		"pre",
+		"code",
+		"td",
+		"th",
+		"figcaption",
+		"caption",
+		"h1",
+		"h2",
+		"h3",
+		"h4",
+		"h5",
+		"h6",
+		"summary",
+	].join(", ");
+
+	const EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR = [
+		"nav",
+		"header",
+		"footer",
+		"aside",
+		'[role="navigation"]',
+		"#toc",
+		".toc",
+		".vector-toc",
+		".navbox",
+		".mw-portlet",
+		".mw-jump-link",
+	].join(", ");
 
 	const rectToObject = (rect) => ({
 		top: rect.top,
@@ -1010,7 +1082,83 @@ const createPageToolkit = () => {
 		if (annotationElement.getAttribute("data-onhand-highlight-kind") === "block") {
 			return annotationElement;
 		}
-		return annotationElement.parentElement || annotationElement;
+		return annotationElement.closest(ANNOTATION_CONTAINER_SELECTOR) || annotationElement.parentElement || annotationElement;
+	};
+
+	const collectHighlightTextNodes = (root) => {
+		const accepted = [];
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+			acceptNode(node) {
+				if (!(node instanceof Text)) return NodeFilter.FILTER_REJECT;
+				const value = String(node.nodeValue || "");
+				if (!value.trim()) return NodeFilter.FILTER_REJECT;
+				const parent = node.parentElement;
+				if (!parent) return NodeFilter.FILTER_REJECT;
+					const tag = parent.tagName.toLowerCase();
+					if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
+					if (parent.closest('[data-onhand-highlight-kind]')) return NodeFilter.FILTER_REJECT;
+					if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
+					if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+					if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
+					return NodeFilter.FILTER_ACCEPT;
+				},
+			});
+
+		let currentNode;
+		while ((currentNode = walker.nextNode())) {
+			if (currentNode instanceof Text) accepted.push(currentNode);
+		}
+		return accepted;
+	};
+
+	const buildNormalizedTextMap = (textNodes) => {
+		const positions = [];
+		let text = "";
+		let pendingSpace = null;
+		let hasContent = false;
+
+		for (const node of textNodes) {
+			const value = String(node.nodeValue || "");
+			for (let offset = 0; offset < value.length; offset += 1) {
+				const character = value[offset];
+				if (/\s/.test(character)) {
+					if (hasContent && !pendingSpace) {
+						pendingSpace = { node, offset };
+					}
+					continue;
+				}
+
+				if (pendingSpace) {
+					text += " ";
+					positions.push(pendingSpace);
+					pendingSpace = null;
+				}
+
+				text += character;
+				positions.push({ node, offset });
+				hasContent = true;
+			}
+		}
+
+		return {
+			text,
+			lowerText: text.toLowerCase(),
+			positions,
+		};
+	};
+
+	const wrapRangeInHighlight = (range, annotationId) => {
+		const highlight = document.createElement("span");
+		highlight.setAttribute("data-onhand-highlight-kind", "inline");
+		highlight.setAttribute("data-onhand-annotation-id", annotationId);
+		try {
+			range.surroundContents(highlight);
+		} catch {
+			const fragment = range.extractContents();
+			highlight.appendChild(fragment);
+			range.insertNode(highlight);
+		}
+		return highlight;
 	};
 
 	const findNoteForAnnotation = (annotationId) => {
@@ -1072,92 +1220,54 @@ const createPageToolkit = () => {
 		ensureAnnotationStyles();
 		if (clearExisting) clearAnnotations();
 
-		const rawNeedle = rawQuery.toLowerCase();
 		let matchIndex = 0;
-		const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, {
-			acceptNode(node) {
-				if (!(node instanceof Text)) return NodeFilter.FILTER_REJECT;
-				const value = String(node.nodeValue || "");
-				if (!value.trim()) return NodeFilter.FILTER_REJECT;
-				const parent = node.parentElement;
-				if (!parent) return NodeFilter.FILTER_REJECT;
-				const tag = parent.tagName.toLowerCase();
-				if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
-				if (parent.closest('[data-onhand-highlight-kind]')) return NodeFilter.FILTER_REJECT;
-				if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
-				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
-				return NodeFilter.FILTER_ACCEPT;
-			},
-		});
+		const groupedNodes = new Map();
+		for (const node of collectHighlightTextNodes(document.body || document.documentElement)) {
+			const container = node.parentElement?.closest(ANNOTATION_CONTAINER_SELECTOR);
+			if (!(container instanceof Element)) continue;
+			const existing = groupedNodes.get(container);
+			if (existing) {
+				existing.push(node);
+			} else {
+				groupedNodes.set(container, [node]);
+			}
+		}
 
-		let currentNode;
-		while ((currentNode = walker.nextNode())) {
-			const node = currentNode;
-			const value = String(node.nodeValue || "");
-			const lowerValue = value.toLowerCase();
+		for (const [container, textNodes] of groupedNodes.entries()) {
+			if (!(container instanceof Element)) continue;
+			const mappedText = buildNormalizedTextMap(textNodes);
+			if (!mappedText.lowerText.includes(normalizedQuery)) continue;
+
 			let searchFrom = 0;
-			while (searchFrom <= lowerValue.length) {
-				const foundAt = lowerValue.indexOf(rawNeedle, searchFrom);
+			while (searchFrom <= mappedText.lowerText.length) {
+				const foundAt = mappedText.lowerText.indexOf(normalizedQuery, searchFrom);
 				if (foundAt === -1) break;
 				matchIndex += 1;
 				if (matchIndex === occurrence) {
+					const start = mappedText.positions[foundAt];
+					const end = mappedText.positions[foundAt + normalizedQuery.length - 1];
+					if (!start || !end) break;
+
 					const range = document.createRange();
-					range.setStart(node, foundAt);
-					range.setEnd(node, foundAt + rawQuery.length);
-					const highlight = document.createElement("span");
+					range.setStart(start.node, start.offset);
+					range.setEnd(end.node, end.offset + 1);
 					const annotationId = nextAnnotationId();
-					highlight.setAttribute("data-onhand-highlight-kind", "inline");
-					highlight.setAttribute("data-onhand-annotation-id", annotationId);
-					try {
-						range.surroundContents(highlight);
-					} catch {
-						const fragment = range.extractContents();
-						highlight.appendChild(fragment);
-						range.insertNode(highlight);
-					}
+					const highlight = wrapRangeInHighlight(range, annotationId);
 					if (scrollIntoView) {
 						highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
 					}
 					await waitForLayout();
-					const anchorElement = highlight.parentElement || highlight;
 					return {
 						annotationId,
 						kind: "inline",
-						matchedText: highlight.textContent || rawQuery,
-						container: summarizeElement(anchorElement),
+						matchedText: normalizeText(highlight.textContent || rawQuery),
+						container: summarizeElement(findAnnotationContainer(highlight)),
 						rect: rectToObject(highlight.getBoundingClientRect()),
 						scrollY: window.scrollY,
 					};
 				}
-				searchFrom = foundAt + Math.max(rawQuery.length, 1);
+				searchFrom = foundAt + Math.max(normalizedQuery.length, 1);
 			}
-		}
-
-		matchIndex = 0;
-		for (const element of document.querySelectorAll("p, li, blockquote, pre, code, td, th, figcaption, caption, h1, h2, h3, h4, h5, h6, summary")) {
-			if (!(element instanceof Element)) continue;
-			if (!isVisible(element)) continue;
-			if (element.closest('[data-onhand-highlight-kind]')) continue;
-			const text = getElementText(element);
-			if (!text) continue;
-			if (!lowerText(text).includes(normalizedQuery)) continue;
-			matchIndex += 1;
-			if (matchIndex !== occurrence) continue;
-			const annotationId = nextAnnotationId();
-			element.setAttribute("data-onhand-highlight-kind", "block");
-			element.setAttribute("data-onhand-annotation-id", annotationId);
-			if (scrollIntoView) {
-				element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-			}
-			await waitForLayout();
-			return {
-				annotationId,
-				kind: "block",
-				matchedText: text.slice(0, 300),
-				container: summarizeElement(element),
-				rect: rectToObject(element.getBoundingClientRect()),
-				scrollY: window.scrollY,
-			};
 		}
 
 		throw new Error(`No visible text matched: ${query}`);
@@ -1380,12 +1490,13 @@ const createPageToolkit = () => {
 		const block = ["start", "center", "end", "nearest"].includes(String(options.block))
 			? String(options.block)
 			: "center";
-		const target = note || container;
+		const preferredTarget = options.target === "note" ? "note" : "annotation";
+		const target = preferredTarget === "note" && note ? note : container;
 		target.scrollIntoView({ behavior: "auto", block, inline: "nearest" });
 		await waitForLayout();
 		return {
 			annotationId: rawAnnotationId,
-			targetKind: note ? "note" : "annotation",
+			targetKind: target === note ? "note" : "annotation",
 			container: summarizeElement(container),
 			anchorRect: rectToObject(annotationElement.getBoundingClientRect()),
 			noteRect: note ? rectToObject(note.getBoundingClientRect()) : null,
@@ -1424,6 +1535,7 @@ const createPageToolkit = () => {
 
 		note.append(label, body);
 		container.insertAdjacentElement("afterend", note);
+		note.style.boxSizing = "border-box";
 		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(rawAnnotationId, { block: options.block });
 		if (!scrolled) {
 			await waitForLayout();
@@ -2205,6 +2317,7 @@ async function handleCommand(name, args = {}) {
 			const tab = await resolveTargetTab(args);
 			const annotation = await runPageToolkitMethod(tab.id, "scrollToAnnotation", args.annotationId, {
 				block: args.block,
+				target: args.target,
 			});
 			return {
 				tab: simplifyTab(tab),
@@ -2636,8 +2749,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	return true;
 });
 
-chrome.action.onClicked.addListener(() => {
-	chrome.runtime.openOptionsPage();
+chrome.action.onClicked.addListener((tab) => {
+	(async () => {
+		const windowId =
+			typeof tab?.windowId === "number" ? tab.windowId : await resolveSidebarWindowId({ windowId: tab?.windowId });
+		if (typeof windowId !== "number") {
+			chrome.runtime.openOptionsPage();
+			return;
+		}
+		if (await isSidebarOpenForWindow(windowId)) {
+			await closeSidebarForWindow(windowId);
+			return;
+		}
+		await openSidebarForWindow(windowId);
+	})().catch((error) => log("Could not toggle Onhand sidebar from toolbar action", error?.message || String(error)));
 });
 
 for (const eventName of [

@@ -1009,6 +1009,7 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		promptSnippet: "Inspect open browser windows and tabs from the connected browser bridge",
 		promptGuidelines: [
 			"Use this tool before targeting a browser tab when the correct tab is unclear.",
+			"Use this when a deeper answer may require synthesizing across multiple already-open tabs rather than only the current page.",
 		],
 		parameters: LIST_TABS_SCHEMA,
 		async execute(_toolCallId, params) {
@@ -1133,6 +1134,7 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Prefer this tool when you want to point the user to a specific phrase or sentence on the page.",
 			"Use occurrence when the same text appears multiple times on the page.",
+			"If you want to keep multiple highlights on the page, set clearExisting=false after the first highlight.",
 		],
 		parameters: HIGHLIGHT_TEXT_SCHEMA,
 		async execute(_toolCallId, params) {
@@ -1155,12 +1157,13 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Highlighted "${String(annotation.matchedText || params.text).replace(/\s+/g, " ").trim()}" in ${describeTab(result.tab)}${targetDescription ? `\n\nTarget: ${targetDescription}` : ""}`,
+						text: `Highlighted "${String(annotation.matchedText || params.text).replace(/\s+/g, " ").trim()}" in ${describeTab(result.tab)}${targetDescription ? `\n\nTarget: ${targetDescription}` : ""}${annotation.annotationId ? `\n\nAnnotation ID: ${annotation.annotationId}` : ""}`,
 					},
 				],
 				details: {
 					tab: result.tab,
 					annotation,
+					clearExisting: params.clearExisting !== false,
 				},
 			};
 		},
@@ -1369,10 +1372,11 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		name: "browser_capture_state",
 		label: "Browser Capture State",
 		description: "Capture lightweight page state for Onhand replay, optionally persisting it as an Onhand artifact",
-		promptSnippet: "Capture the current page state and any Onhand annotations for persistence or replay",
+		promptSnippet: "Capture the current page state and any Onhand annotations; persist only when replay or later revisit is actually useful",
 		promptGuidelines: [
-			"Use this after highlighting or showing notes when you want to persist the user-visible state.",
-			"Set persist=true when the state should be saved to disk and linked to the current session.",
+			"Use this after highlighting or showing notes when you want to inspect or preserve the current visible page state.",
+			"For ordinary explanatory answers, prefer persist=false or skip this tool entirely.",
+			"Set persist=true only when the user is likely to revisit the grounded state later, and do it at most once after the final highlight/note state is in place.",
 		],
 		parameters: CAPTURE_STATE_SCHEMA,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

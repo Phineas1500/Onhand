@@ -472,6 +472,7 @@ promptForm.addEventListener("submit", async (event) => {
 		const result = await onhandApp.submitPrompt(prompt);
 		activeRequestId = result.requestId;
 		updateSessionControls();
+		void onhandApp.hideWindow({ restorePreviousApp: true }).catch(() => {});
 	} catch (error) {
 		const message = error?.message || String(error);
 		showReply(activePromptText || "Onhand", `Error: ${message}`);

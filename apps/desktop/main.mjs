@@ -12,6 +12,7 @@ import {
 	getOnhandPageAction,
 	getOnhandUiState,
 	getSessionOverview,
+	primeOnhandUiRequest,
 	startNewOnhandSession,
 	submitOnhandPrompt,
 	switchOnhandSession,
@@ -126,6 +127,28 @@ function pickActiveTab(state) {
 	return tabs[0];
 }
 
+function summarizeOpenTabs(state, activeTab, limit = 8) {
+	const tabs = flattenTabs(state);
+	if (!tabs.length) return [];
+
+	const targetWindowId = activeTab?.windowId;
+	return tabs
+		.filter((tab) => {
+			if (!tab?.id || isPrivilegedUrl(tab.url)) return false;
+			if (targetWindowId == null) return true;
+			return tab.windowId === targetWindowId;
+		})
+		.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)) || Number(Boolean(b.windowFocused)) - Number(Boolean(a.windowFocused)))
+		.slice(0, limit)
+		.map((tab) => ({
+			id: tab.id,
+			windowId: tab.windowId,
+			active: Boolean(tab.active),
+			title: tab.title || "(untitled)",
+			url: tab.url || "",
+		}));
+}
+
 function isPrivilegedUrl(url) {
 	return /^(?:chrome|edge|brave|about):\/\//i.test(String(url || ""));
 }
@@ -141,6 +164,7 @@ async function getBrowserContext(options = {}) {
 		]);
 		const client = stateData.client;
 		const activeTab = pickActiveTab(client?.state);
+		const openTabs = summarizeOpenTabs(client?.state, activeTab);
 		const connectedClients = Array.isArray(health.connectedClients) ? health.connectedClients.length : 0;
 		let visible = null;
 		let selection = null;
@@ -202,6 +226,7 @@ async function getBrowserContext(options = {}) {
 			},
 			clientId: client?.clientId,
 			activeTab,
+			openTabs,
 			selection,
 			visible,
 			warning,
@@ -220,7 +245,10 @@ function sendPromptEvent(payload) {
 }
 
 async function runPromptRequest(requestId, prompt) {
-	void runBridgeCommand("open_onhand_sidebar", {}, 1500).catch(() => {});
+	try {
+		await runBridgeCommand("open_onhand_sidebar", {}, 2500);
+	} catch {}
+	await primeOnhandUiRequest(requestId, prompt, "Collecting browser context…");
 	sendPromptEvent({ type: "start", requestId, prompt });
 	sendPromptEvent({ type: "status", requestId, status: "Collecting browser context…" });
 
@@ -272,6 +300,7 @@ async function activateOnhandPageAction(actionKey) {
 			{
 				tabId: typeof action.tabId === "number" ? action.tabId : undefined,
 				annotationId: action.annotationId,
+				target: action.type === "note" ? "note" : "annotation",
 			},
 			2500,
 		);

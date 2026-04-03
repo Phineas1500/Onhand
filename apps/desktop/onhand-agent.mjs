@@ -18,14 +18,24 @@ const ONHAND_APPEND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor and rese
 
 Prefer helping with the material already open in the user's browser. Stay grounded in the captured browser context supplied with each prompt. If you need more detail or the user asks you to point to something, use the available browser tools to inspect the live page.
 
+For questions about the current page or already-open tabs, use browser tools first. Do not use bash, read, write, or edit to fetch, parse, or inspect the current page unless the browser tools have already failed or the user explicitly asks for filesystem or code help.
+
+When the user asks for explanation, analysis, comparison, interpretation, proof sketch, significance, tradeoffs, or change over time, do not stop at the most literal surface reading of the page. Distinguish between the directly stated fact and the deeper explanation the user is actually asking for, such as causes, mechanisms, assumptions, structure, evidence, consequences, or why one case differs from another.
+
+If the current page alone is too thin for that deeper answer, inspect other already-open tabs first. Use multiple tabs when that materially improves the explanation, especially when the user is asking "why", "how", "what explains the difference", "what does this imply", "how do these compare", or similar questions.
+
+For grounded answers, each major explanatory claim should be supported by something the user can actually see on one of their open pages. Find the supporting passage first, then explain what it shows. Prefer quotes or very close paraphrases of the highlighted text when introducing the supporting evidence.
+
+Do not use the current page merely as a jumping-off point for unsupported general knowledge. If the page does not support an important part of the answer, inspect another already-open tab. If the open tabs still do not support it, either leave that claim out or clearly mark it as a limited inference rather than presenting it as if the page said it.
+
 When the user asks about content that is already open, do not stop at a detached answer when you can ground it visually. If you can identify the exact supporting passage on an existing page or tab, prefer this flow:
 - switch to the most relevant already-open tab if needed
 - highlight the exact supporting text
-- add a short note near it
+- add a short note near it that explains what the quoted passage supports
 - scroll it into view
-- save a browser artifact when the result is worth revisiting later
+- save at most one browser artifact, after the final highlight/note state is in place, and only when replay or revisit value is genuinely useful. Most ordinary explanatory answers should not persist an artifact at all.
 
-Prefer the clearest answer-bearing text in the main content or page header. Avoid grounding on footer boilerplate, legal copy, or generic navigation text when a better passage is available.
+Prefer the clearest answer-bearing text in the main content or page header. Avoid grounding on footer boilerplate, legal copy, or generic navigation text when a better passage is available. When you ground an answer on the page, leave at least one short explanatory note on the main supporting passage unless the page would clearly become cluttered. If you use multiple highlighted passages to support distinct major claims, prefer leaving a short note on each of those highlighted passages unless doing so would clearly overburden the page. Use multiple highlights/notes only when each one adds distinct explanatory value.
 
 Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, and keep on-page notes short and explanatory.`;
 
@@ -157,6 +167,14 @@ function renderBrowserContextForPrompt(context) {
 		lines.push(`Active tab title: ${tab.title || "(untitled)"}`);
 		lines.push(`Active tab URL: ${tab.url || "(unknown)"}`);
 	}
+	const openTabs = Array.isArray(context.openTabs) ? context.openTabs : [];
+	if (openTabs.length > 0) {
+		lines.push("Open tabs in the current browser window:");
+		for (const candidateTab of openTabs) {
+			const prefix = candidateTab.active ? "* " : "- ";
+			lines.push(`${prefix}${candidateTab.title || "(untitled)"}${candidateTab.url ? ` — ${candidateTab.url}` : ""}`);
+		}
+	}
 	lines.push(`Connected browser clients: ${Number(context?.bridge?.connectedClients || 0)}`);
 	if (context.warning) lines.push(`Warning: ${context.warning}`);
 	if (context.selection?.hasSelection && context.selection?.text) {
@@ -179,6 +197,10 @@ function buildLauncherPrompt(prompt, browserContext) {
 		renderBrowserContextForPrompt(browserContext),
 		"",
 		"Use this captured context as your starting point. Prefer already-open tabs and pages over navigation.",
+		"If the user is asking for causes, changes over time, or a comparison between outcomes, look for enough evidence to answer the deeper question instead of restating the immediate page at face value.",
+		"If another already-open tab would materially improve the answer, inspect it and synthesize across tabs before replying.",
+		"Support each major claim with visible evidence from the user's open pages. Highlight the supporting passage first, then explain what it shows.",
+		"If a claim is not supported by the open pages, inspect another open tab or clearly treat it as a limited inference rather than presenting it as page-backed fact.",
 		"When it would help the user understand the answer, point to it on the live page by switching tabs, highlighting exact text, adding a short note, scrolling it into view, and saving a browser artifact.",
 		"Prefer the most informative visible passage or heading that answers the question; avoid footer/legal boilerplate when a better passage exists.",
 	].join("\n");
@@ -276,6 +298,38 @@ function beginUiRequest(session, requestId, prompt) {
 	});
 }
 
+export async function primeOnhandUiRequest(requestId, prompt, status = "Collecting browser context…") {
+	const currentSession = (await getCurrentRuntimeSessionState()) || uiState.currentSession || null;
+	const previousMessages = Array.isArray(uiState.messages)
+		? uiState.messages.filter((message) => message.id !== `user:${requestId}` && message.id !== `assistant:${requestId}`)
+		: [];
+	const now = new Date().toISOString();
+
+	replaceUiState({
+		currentSession,
+		messages: [
+			...previousMessages,
+			{
+				id: `user:${requestId}`,
+				role: "user",
+				text: prompt.trim(),
+				createdAt: now,
+			},
+			{
+				id: `assistant:${requestId}`,
+				role: "assistant",
+				text: "",
+				createdAt: now,
+				pending: true,
+			},
+		],
+		activities: [],
+		pageActions: [],
+		status,
+		activeRequestId: requestId,
+	});
+}
+
 function updateAssistantDraft(requestId, text, extra = {}) {
 	mutateUiState((state) => {
 		const message = state.messages.find((entry) => entry.id === `assistant:${requestId}`);
@@ -299,10 +353,20 @@ function appendUiActivity(activity) {
 	});
 }
 
+function removeUiActivity(activityId) {
+	mutateUiState((state) => {
+		state.activities = state.activities.filter((entry) => entry.id !== activityId);
+	});
+}
+
 function setUiStatus(status) {
 	mutateUiState((state) => {
 		state.status = status;
 	});
+}
+
+function getToolActivityId(event) {
+	return `tool:${event.toolCallId || event.toolName}`;
 }
 
 function getToolStatusMessage(toolName) {
@@ -420,6 +484,20 @@ function pushPageAction(action) {
 	});
 }
 
+function removePageActions(predicate) {
+	if (!activeRequest) return;
+	const nextActions = activeRequest.pageActions.filter((action) => !predicate(action));
+	if (nextActions.length === activeRequest.pageActions.length) return;
+	activeRequest.pageActions = nextActions;
+	emitRequestEvent({
+		type: "page_actions",
+		actions: [...activeRequest.pageActions],
+	});
+	mutateUiState((state) => {
+		state.pageActions = [...activeRequest.pageActions];
+	});
+}
+
 function handleSessionEvent(session, event) {
 	if (!activeRequest) return;
 
@@ -456,7 +534,7 @@ function handleSessionEvent(session, event) {
 		case "tool_execution_start": {
 			activeRequest.toolExecutionCount = (activeRequest.toolExecutionCount || 0) + 1;
 			appendUiActivity({
-				id: `tool:${event.toolCallId || `${event.toolName}:${activeRequest.toolExecutionCount}`}`,
+				id: getToolActivityId(event),
 				kind: "tool",
 				label: getToolStatusMessage(event.toolName),
 				toolName: event.toolName,
@@ -470,18 +548,34 @@ function handleSessionEvent(session, event) {
 			break;
 		}
 		case "tool_execution_end": {
-			appendUiActivity({
-				id: `tool:${event.toolCallId || event.toolName}`,
-				kind: "tool",
-				label: event.isError ? `Failed ${event.toolName}` : getToolStatusMessage(event.toolName),
-				toolName: event.toolName,
-				state: event.isError ? "error" : "complete",
-			});
-			if (!event.isError) {
+			const activityId = getToolActivityId(event);
+			if (event.isError) {
+				removeUiActivity(activityId);
+				emitRequestEvent({ type: "status", status: "Trying a different approach…" });
+				setUiStatus("Trying a different approach…");
+			} else {
+				const resultDetails = event.result?.details || {};
+				const resultTabId = resultDetails.tab?.id ?? null;
+				if (
+					(event.toolName === "browser_highlight_text" && resultDetails.clearExisting !== false && resultTabId != null) ||
+					(event.toolName === "browser_clear_annotations" && resultTabId != null)
+				) {
+					removePageActions(
+						(action) =>
+							action?.tabId === resultTabId && (action.type === "annotation" || action.type === "note"),
+					);
+				}
+				appendUiActivity({
+					id: activityId,
+					kind: "tool",
+					label: getToolStatusMessage(event.toolName),
+					toolName: event.toolName,
+					state: "complete",
+				});
 				pushPageAction(buildPageAction(event.toolName, event.result));
+				emitRequestEvent({ type: "status", status: "Writing answer…" });
+				setUiStatus("Writing answer…");
 			}
-			emitRequestEvent({ type: "status", status: "Writing answer…" });
-			setUiStatus("Writing answer…");
 			break;
 		}
 		case "auto_retry_start": {

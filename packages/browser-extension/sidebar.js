@@ -10,6 +10,8 @@
 	let currentState = null;
 	let pollingTimer = null;
 	let sending = false;
+	let reasoningExpanded = null;
+	let lastActiveRequestId = null;
 
 	const host = document.createElement("div");
 	host.id = "onhand-extension-sidebar-host";
@@ -30,18 +32,24 @@
 		style.id = PAGE_STYLE_ID;
 		style.textContent = `
 			html.${PAGE_OPEN_CLASS} {
-				width: calc(100% - var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px)) !important;
-				max-width: calc(100% - var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px)) !important;
-				margin-right: var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px) !important;
 				overflow-x: clip !important;
+			}
+			html.${PAGE_OPEN_CLASS} body {
+				position: relative !important;
+				width: calc(100vw - var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px)) !important;
+				max-width: calc(100vw - var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px)) !important;
+				margin-right: var(--onhand-sidebar-width, ${SIDEBAR_WIDTH}px) !important;
+				min-width: 0 !important;
+				overflow-x: clip !important;
+				transform: translateZ(0) !important;
+				transform-origin: top left !important;
 				transition:
 					width 160ms ease,
 					max-width 160ms ease,
 					margin-right 160ms ease !important;
 			}
-			html.${PAGE_OPEN_CLASS} body {
+			html.${PAGE_OPEN_CLASS} body > * {
 				max-width: 100% !important;
-				transition: max-width 160ms ease !important;
 			}
 		`;
 
@@ -195,6 +203,15 @@
 				line-height: 1.55;
 				white-space: pre-wrap;
 			}
+			.reply-card {
+				padding: 14px 15px;
+				border-radius: 18px;
+				background: rgba(255, 255, 255, 0.05);
+				border: 1px solid rgba(255, 255, 255, 0.08);
+			}
+			.reply-card.pending {
+				opacity: 0.9;
+			}
 			.empty-card,
 			.activity-card,
 			.reasoning-card {
@@ -335,6 +352,10 @@
 					<div class="section-title">On Page</div>
 					<div id="actions" class="action-list"></div>
 				</section>
+				<section id="replySection" class="section">
+					<div class="section-title">Latest Reply</div>
+					<div id="reply"></div>
+				</section>
 			</div>
 			<form id="composer" class="composer">
 				<textarea id="input" class="input" placeholder="Send another message to Onhand…"></textarea>
@@ -350,8 +371,11 @@
 
 	const closeButton = shadow.getElementById("closeButton");
 	const meta = shadow.getElementById("meta");
+	const body = shadow.querySelector(".body");
 	const messagesEl = shadow.getElementById("messages");
 	const activityEl = shadow.getElementById("activity");
+	const replySectionEl = shadow.getElementById("replySection");
+	const replyEl = shadow.getElementById("reply");
 	const actionsEl = shadow.getElementById("actions");
 	const composer = shadow.getElementById("composer");
 	const input = shadow.getElementById("input");
@@ -405,8 +429,29 @@
 		`;
 	}
 
-	function renderMessages(state) {
+	function deriveMessageView(state) {
 		const messages = Array.isArray(state?.messages) ? state.messages : [];
+		const visibleMessages = messages.filter((message) => {
+			if (!message || typeof message !== "object") return false;
+			if (message.role === "assistant") {
+				return Boolean(String(message.text || "").trim());
+			}
+			return true;
+		});
+		let latestAssistantIndex = -1;
+		for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+			if (visibleMessages[index]?.role === "assistant") {
+				latestAssistantIndex = index;
+				break;
+			}
+		}
+		return {
+			conversationMessages: visibleMessages.filter((_, index) => index !== latestAssistantIndex),
+			latestAssistant: latestAssistantIndex >= 0 ? visibleMessages[latestAssistantIndex] : null,
+		};
+	}
+
+	function renderMessages(messages) {
 		if (!messages.length) {
 			messagesEl.innerHTML = `<div class="empty-card">Ask from the popup or here in the sidebar. Onhand will keep this conversation live while you browse.</div>`;
 			return;
@@ -425,19 +470,24 @@
 			.join("");
 	}
 
-	function renderActivity(state) {
+	function renderActivity(state, options = {}) {
 		const activities = Array.isArray(state?.activities) ? state.activities : [];
 		if (!activities.length) {
 			activityEl.innerHTML = `<div class="empty-card">Tool runs and reasoning traces will show up here while Onhand is answering.</div>`;
 			return;
 		}
 
-		activityEl.innerHTML = activities
-			.slice(-8)
+		const reasoningOpen =
+			reasoningExpanded == null ? Boolean(options.activeRequest) || !options.hasLatestReply : reasoningExpanded;
+		const reasoningActivities = activities.filter((activity) => activity.kind === "reasoning");
+		const nonReasoningActivities = activities.filter((activity) => activity.kind !== "reasoning");
+		const visibleActivities = [...reasoningActivities.slice(-1), ...nonReasoningActivities.slice(-7)];
+
+		activityEl.innerHTML = visibleActivities
 			.map((activity) => {
 				if (activity.kind === "reasoning") {
 					return `
-						<details class="reasoning-card" open>
+						<details class="reasoning-card" ${reasoningOpen ? "open" : ""}>
 							<summary>${escapeHtml(activity.label || "Reasoning")}</summary>
 							<div class="reasoning-body">${escapeHtml(activity.text || "")}</div>
 						</details>
@@ -452,6 +502,29 @@
 				`;
 			})
 			.join("");
+
+		activityEl.querySelectorAll(".reasoning-card").forEach((detailsEl) => {
+			detailsEl.addEventListener("toggle", () => {
+				reasoningExpanded = detailsEl.open;
+			});
+		});
+	}
+
+	function renderLatestReply(state, latestAssistant) {
+		const replyText = String(latestAssistant?.text || "").trim();
+		const hasReply = Boolean(replyText);
+		replySectionEl.style.display = hasReply ? "flex" : "none";
+		if (!hasReply) {
+			replyEl.innerHTML = "";
+			return;
+		}
+
+		replyEl.innerHTML = `
+			<div class="reply-card ${state?.activeRequestId ? "pending" : ""}">
+				<div class="message-role">Onhand</div>
+				<div class="message-body">${escapeHtml(replyText)}</div>
+			</div>
+		`;
 	}
 
 	function renderActions(state) {
@@ -473,10 +546,23 @@
 	}
 
 	function renderState(state) {
+		const wasNearBottom =
+			body instanceof HTMLElement
+				? body.scrollHeight - body.scrollTop - body.clientHeight < 96
+				: false;
+		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
+			reasoningExpanded = null;
+		}
+		lastActiveRequestId = state?.activeRequestId || null;
+		const messageView = deriveMessageView(state);
 		currentState = state;
 		renderMeta(state);
-		renderMessages(state);
-		renderActivity(state);
+		renderMessages(messageView.conversationMessages);
+		renderActivity(state, {
+			hasLatestReply: Boolean(messageView.latestAssistant?.text?.trim()),
+			activeRequest: Boolean(state?.activeRequestId),
+		});
+		renderLatestReply(state, messageView.latestAssistant);
 		renderActions(state);
 
 		const activeRequest = Boolean(state?.activeRequestId);
@@ -485,6 +571,9 @@
 		helper.textContent = activeRequest
 			? "Onhand is currently responding. Wait for this turn to finish before sending another message."
 			: "Messages here continue the current Onhand session.";
+		if (body instanceof HTMLElement && (activeRequest || wasNearBottom)) {
+			body.scrollTop = body.scrollHeight;
+		}
 	}
 
 	async function requestState() {
@@ -534,7 +623,8 @@
 	}
 
 	closeButton.addEventListener("click", () => {
-		void chrome.runtime.sendMessage({ type: "sidebar:close" });
+		setOpen(false);
+		void chrome.runtime.sendMessage({ type: "sidebar:close" }).catch(() => {});
 	});
 
 	composer.addEventListener("submit", (event) => {
