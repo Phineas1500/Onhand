@@ -28,6 +28,8 @@ For grounded answers, each major explanatory claim should be supported by someth
 
 Do not use the current page merely as a jumping-off point for unsupported general knowledge. If the page does not support an important part of the answer, inspect another already-open tab. If the open tabs still do not support it, either leave that claim out or clearly mark it as a limited inference rather than presenting it as if the page said it.
 
+Use introductions, abstracts, summaries, and headers to orient yourself, but do not stop there when the user is asking for a deeper answer. For "why", "how", "how much", "compare", "prove", "derive", "significance", "tradeoffs", or any detail-sensitive question, inspect the body sections, examples, methods, results, tables, side notes, or later discussion that actually carry the specifics. Prefer the more detailed supporting passage when it materially sharpens the answer.
+
 When the user asks about content that is already open, do not stop at a detached answer when you can ground it visually. If you can identify the exact supporting passage on an existing page or tab, prefer this flow:
 - switch to the most relevant already-open tab if needed
 - highlight the exact supporting text
@@ -37,7 +39,7 @@ When the user asks about content that is already open, do not stop at a detached
 
 Prefer the clearest answer-bearing text in the main content or page header. Avoid grounding on footer boilerplate, legal copy, or generic navigation text when a better passage is available. When you ground an answer on the page, leave at least one short explanatory note on the main supporting passage unless the page would clearly become cluttered. If you use multiple highlighted passages to support distinct major claims, prefer leaving a short note on each of those highlighted passages unless doing so would clearly overburden the page. Use multiple highlights/notes only when each one adds distinct explanatory value.
 
-Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, and keep on-page notes short and explanatory.`;
+Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, keep on-page notes short and explanatory, and use markdown emphasis sparingly. Bold only short phrases that truly need emphasis; do not bold whole bullets, sentences, or most of the answer.`;
 
 let runtimePromise = null;
 let activeRequest = null;
@@ -201,8 +203,10 @@ function buildLauncherPrompt(prompt, browserContext) {
 		"If another already-open tab would materially improve the answer, inspect it and synthesize across tabs before replying.",
 		"Support each major claim with visible evidence from the user's open pages. Highlight the supporting passage first, then explain what it shows.",
 		"If a claim is not supported by the open pages, inspect another open tab or clearly treat it as a limited inference rather than presenting it as page-backed fact.",
+		"Use the intro, summary, or visible overview to orient yourself, but inspect the detailed sections that actually support the answer when the user needs specifics or explanation.",
 		"When it would help the user understand the answer, point to it on the live page by switching tabs, highlighting exact text, adding a short note, scrolling it into view, and saving a browser artifact.",
 		"Prefer the most informative visible passage or heading that answers the question; avoid footer/legal boilerplate when a better passage exists.",
+		"Use markdown emphasis sparingly and only for short phrases that really matter.",
 	].join("\n");
 }
 
@@ -418,7 +422,8 @@ function buildPageAction(toolName, result) {
 			};
 		}
 		case "browser_highlight_text": {
-			const matchedText = truncate(details.annotation?.matchedText || "Relevant passage", 72);
+			const matchedTextFull = String(details.annotation?.matchedText || "").trim();
+			const matchedText = truncate(matchedTextFull || "Relevant passage", 72);
 			return {
 				key: `highlight:${details.annotation?.annotationId || matchedText}`,
 				type: "annotation",
@@ -427,10 +432,12 @@ function buildPageAction(toolName, result) {
 				annotationId: details.annotation?.annotationId || null,
 				label: "Highlighted text",
 				detail: matchedText,
+				citationText: matchedTextFull || matchedText,
 			};
 		}
 		case "browser_show_note": {
-			const noteText = truncate(details.note?.note || details.note?.text || details.note?.label || "Short explanation", 72);
+			const noteTextFull = String(details.note?.note || details.note?.text || details.note?.label || "").trim();
+			const noteText = truncate(noteTextFull || "Short explanation", 72);
 			return {
 				key: `note:${details.note?.annotationId || noteText}`,
 				type: "note",
@@ -439,6 +446,7 @@ function buildPageAction(toolName, result) {
 				annotationId: details.note?.annotationId || null,
 				label: "Added note",
 				detail: noteText,
+				citationText: noteTextFull || noteText,
 			};
 		}
 		case "browser_scroll_to_annotation": {

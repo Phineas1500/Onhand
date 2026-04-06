@@ -12,5 +12,11 @@
   "options_page": "options.html",
   "action": {
     "default_title": "Onhand Browser Bridge"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["vendor/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

@@ -6,15 +6,423 @@
 	const POLL_INTERVAL_MS = 900;
 	const PAGE_OPEN_CLASS = "onhand-extension-sidebar-open";
 	const PAGE_STYLE_ID = "onhand-extension-sidebar-layout";
+	const HOST_ID = "onhand-extension-sidebar-host";
+	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
+	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
+	const CITATION_STOP_WORDS = new Set([
+		"a",
+		"an",
+		"and",
+		"are",
+		"as",
+		"at",
+		"be",
+		"been",
+		"but",
+		"by",
+		"did",
+		"does",
+		"for",
+		"from",
+		"had",
+		"has",
+		"have",
+		"he",
+		"her",
+		"his",
+		"if",
+		"in",
+		"into",
+		"is",
+		"it",
+		"its",
+		"many",
+		"more",
+		"not",
+		"of",
+		"on",
+		"or",
+		"said",
+		"says",
+		"she",
+		"so",
+		"than",
+		"that",
+		"the",
+		"their",
+		"them",
+		"there",
+		"they",
+		"this",
+		"those",
+		"through",
+		"to",
+		"was",
+		"were",
+		"what",
+		"when",
+		"which",
+		"while",
+		"who",
+		"with",
+		"won",
+		"would",
+		"you",
+		"your",
+	]);
 	let open = false;
 	let currentState = null;
 	let pollingTimer = null;
 	let sending = false;
 	let reasoningExpanded = null;
 	let lastActiveRequestId = null;
+	let katexModule = null;
+	let katexLoadPromise = null;
+
+	function removeStaleSidebarDom() {
+		for (const existingHost of Array.from(document.querySelectorAll(HOST_SELECTOR))) {
+			existingHost.remove();
+		}
+		for (const existingStyle of Array.from(document.querySelectorAll(`[id="${PAGE_STYLE_ID}"]`))) {
+			existingStyle.remove();
+		}
+		document.documentElement.classList.remove(PAGE_OPEN_CLASS);
+		document.documentElement.style.removeProperty("--onhand-sidebar-width");
+	}
+
+	removeStaleSidebarDom();
+
+	function escapeHtml(value) {
+		return String(value || "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#39;");
+	}
+
+	function escapeAttribute(value) {
+		return escapeHtml(value).replace(/`/g, "&#96;");
+	}
+
+	function createTokenStore() {
+		const tokens = [];
+		return {
+			replace(html) {
+				const token = `${TOKEN_PREFIX}${tokens.length}@@`;
+				tokens.push(html);
+				return token;
+			},
+			restore(text) {
+				let restored = String(text || "");
+				for (let index = 0; index < tokens.length; index += 1) {
+					restored = restored.split(`${TOKEN_PREFIX}${index}@@`).join(tokens[index]);
+				}
+				return restored;
+			},
+		};
+	}
+
+	function renderMathExpression(source, displayMode = false) {
+		const expression = String(source || "").trim();
+		if (!expression) return "";
+		try {
+			if (katexModule?.renderToString) {
+				return katexModule.renderToString(expression, {
+					displayMode,
+					throwOnError: false,
+					output: "mathml",
+					strict: "ignore",
+				});
+			}
+		} catch {}
+		const tag = displayMode ? "div" : "span";
+		const className = displayMode ? "reply-math-block" : "reply-math-inline";
+		return `<${tag} class="${className} reply-math-fallback">${escapeHtml(expression)}</${tag}>`;
+	}
+
+	function renderInlineRichText(text) {
+		const store = createTokenStore();
+		let working = String(text || "");
+
+		working = working.replace(/`([^`]+)`/g, (_match, code) =>
+			store.replace(`<code class="reply-inline-code">${escapeHtml(code)}</code>`),
+		);
+		working = working.replace(/\\\(([\s\S]+?)\\\)/g, (_match, math) => store.replace(renderMathExpression(math, false)));
+		working = working.replace(/\$(?!\$)([^$\n]+?)\$/g, (_match, math) => store.replace(renderMathExpression(math, false)));
+
+		let html = escapeHtml(working);
+		html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, href) => {
+			const safeHref = escapeAttribute(href);
+			return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+		});
+		html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+		html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+		return store.restore(html);
+	}
+
+	function normalizeCitationText(value) {
+		return String(value || "")
+			.toLowerCase()
+			.replace(/[`*_~>#()[\]{}]/g, " ")
+			.replace(/[^a-z0-9]+/gi, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+	}
+
+	function tokenizeCitationText(value) {
+		return normalizeCitationText(value)
+			.split(" ")
+			.filter((token) => {
+				if (!token) return false;
+				if (CITATION_STOP_WORDS.has(token)) return false;
+				if (/^\d+$/.test(token)) return token.length >= 3;
+				return token.length >= 3;
+			});
+	}
+
+	function buildCitationSnippets(value) {
+		const tokens = tokenizeCitationText(value);
+		const normalized = normalizeCitationText(value);
+		const snippets = [];
+		if (normalized.length >= 18) {
+			snippets.push(normalized);
+		}
+		if (tokens.length >= 4) {
+			snippets.push(tokens.slice(0, Math.min(8, tokens.length)).join(" "));
+		}
+		return [...new Set(snippets)];
+	}
+
+	function buildCitationGroups(actions) {
+		const groups = [];
+		const groupMap = new Map();
+		for (const action of Array.isArray(actions) ? actions : []) {
+			if (!action || typeof action !== "object") continue;
+			if (action.type !== "annotation" && action.type !== "note") continue;
+
+			const groupId = action.annotationId || action.key;
+			let group = groupMap.get(groupId);
+			if (!group) {
+				group = {
+					groupId,
+					number: groups.length + 1,
+					actionKey: action.key,
+					noteKey: null,
+					highlightKey: null,
+					matchTokens: new Set(),
+					snippets: new Set(),
+					titles: [],
+				};
+				groupMap.set(groupId, group);
+				groups.push(group);
+			}
+
+			const citationText = String(action.citationText || action.detail || "").trim();
+			for (const token of tokenizeCitationText(citationText)) {
+				group.matchTokens.add(token);
+			}
+			for (const snippet of buildCitationSnippets(citationText)) {
+				group.snippets.add(snippet);
+			}
+			if (action.type === "annotation") {
+				group.highlightKey = action.key;
+			}
+			if (action.type === "note") {
+				group.noteKey = action.key;
+			}
+			group.actionKey = group.noteKey || group.highlightKey || group.actionKey || action.key;
+			group.titles.push(action.detail ? `${action.label}: ${action.detail}` : action.label || "Open page evidence");
+		}
+
+		return groups.map((group) => ({
+			number: group.number,
+			actionKey: group.noteKey || group.highlightKey || group.actionKey,
+			matchTokens: [...group.matchTokens],
+			snippets: [...group.snippets],
+			title: group.titles[0] || "Open page evidence",
+		}));
+	}
+
+	function findCitationsForBlock(text, citationGroups) {
+		const blockText = String(text || "").trim();
+		if (!blockText || !citationGroups.length) return [];
+
+		const blockNormalized = normalizeCitationText(blockText);
+		if (!blockNormalized) return [];
+
+		const blockTokens = new Set(tokenizeCitationText(blockText));
+		const matches = [];
+
+		for (const group of citationGroups) {
+			let overlap = 0;
+			let numericOverlap = 0;
+			for (const token of group.matchTokens) {
+				if (!blockTokens.has(token)) continue;
+				overlap += 1;
+				if (/^\d+$/.test(token)) numericOverlap += 1;
+			}
+
+			let phraseBonus = 0;
+			for (const snippet of group.snippets) {
+				if (!snippet) continue;
+				if (blockNormalized.includes(snippet) || snippet.includes(blockNormalized)) {
+					phraseBonus = Math.max(phraseBonus, snippet.split(" ").length >= 5 ? 4 : 2.5);
+				}
+			}
+
+			const score = overlap + numericOverlap * 1.5 + phraseBonus;
+			const minimumOverlap = numericOverlap > 0 ? 1 : 2;
+			const minimumScore = numericOverlap > 0 ? 2.5 : 3;
+			if (phraseBonus >= 4 || (overlap >= minimumOverlap && score >= minimumScore)) {
+				matches.push({
+					number: group.number,
+					actionKey: group.actionKey,
+					title: group.title,
+					score,
+				});
+			}
+		}
+
+		return matches
+			.sort((left, right) => right.score - left.score || left.number - right.number)
+			.slice(0, 2);
+	}
+
+	function renderReplyCitations(citations) {
+		if (!citations.length) return "";
+		return `
+			<span class="reply-citations">
+				${citations
+					.map(
+						(citation) => `
+							<button
+								class="reply-citation"
+								data-action-key="${escapeAttribute(citation.actionKey)}"
+								title="${escapeAttribute(citation.title || "Open page evidence")}"
+								type="button"
+							>[${citation.number}]</button>
+						`,
+					)
+					.join("")}
+			</span>
+		`;
+	}
+
+	function renderCitedBlock(tag, text, citationGroups) {
+		const citations = findCitationsForBlock(text, citationGroups);
+		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations)}</${tag}>`;
+	}
+
+	function renderReplyMarkdown(text, citationGroups = []) {
+		const source = String(text || "").replace(/\r\n?/g, "\n");
+		if (!source.trim()) {
+			return '<p class="reply-placeholder">Thinking…</p>';
+		}
+
+		const blockStore = createTokenStore();
+		let prepared = source;
+
+		prepared = prepared.replace(/```([^\n`]*)\n([\s\S]*?)```/g, (_match, language, code) => {
+			const className = language ? ` language-${escapeAttribute(String(language).trim())}` : "";
+			return `\n${blockStore.replace(`<pre class="reply-code-block"><code class="${className}">${escapeHtml(String(code || "").replace(/\n$/, ""))}</code></pre>`)}\n`;
+		});
+		prepared = prepared.replace(/\\\[([\s\S]+?)\\\]/g, (_match, math) => `\n${blockStore.replace(renderMathExpression(math, true))}\n`);
+		prepared = prepared.replace(/\$\$([\s\S]+?)\$\$/g, (_match, math) => `\n${blockStore.replace(renderMathExpression(math, true))}\n`);
+
+		const lines = prepared.split("\n");
+		const parts = [];
+		let paragraphLines = [];
+		let listItems = [];
+		let listKind = null;
+
+		function flushParagraph() {
+			if (!paragraphLines.length) return;
+			parts.push(renderCitedBlock("p", paragraphLines.join(" "), citationGroups));
+			paragraphLines = [];
+		}
+
+		function flushList() {
+			if (!listItems.length) return;
+			const tag = listKind === "ordered" ? "ol" : "ul";
+			parts.push(`<${tag}>${listItems.map((item) => renderCitedBlock("li", item, citationGroups)).join("")}</${tag}>`);
+			listItems = [];
+			listKind = null;
+		}
+
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed) {
+				flushParagraph();
+				flushList();
+				continue;
+			}
+
+			if (trimmed.startsWith(TOKEN_PREFIX)) {
+				flushParagraph();
+				flushList();
+				parts.push(trimmed);
+				continue;
+			}
+
+			const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
+			if (headingMatch) {
+				flushParagraph();
+				flushList();
+				const level = Math.min(4, Math.max(1, headingMatch[1].length));
+				parts.push(`<h${level}>${renderInlineRichText(headingMatch[2])}</h${level}>`);
+				continue;
+			}
+
+			const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+			if (quoteMatch) {
+				flushParagraph();
+				flushList();
+				parts.push(renderCitedBlock("blockquote", quoteMatch[1], citationGroups));
+				continue;
+			}
+
+			const unorderedListMatch = trimmed.match(/^[-*]\s+(.*)$/);
+			if (unorderedListMatch) {
+				flushParagraph();
+				if (listKind && listKind !== "unordered") flushList();
+				listKind = "unordered";
+				listItems.push(unorderedListMatch[1]);
+				continue;
+			}
+
+			const orderedListMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+			if (orderedListMatch) {
+				flushParagraph();
+				if (listKind && listKind !== "ordered") flushList();
+				listKind = "ordered";
+				listItems.push(orderedListMatch[1]);
+				continue;
+			}
+
+			paragraphLines.push(trimmed);
+		}
+
+		flushParagraph();
+		flushList();
+
+		return blockStore.restore(parts.join("")) || renderCitedBlock("p", source, citationGroups);
+	}
+
+	function ensureKatexLoaded() {
+		if (katexLoadPromise) return katexLoadPromise;
+		katexLoadPromise = import(chrome.runtime.getURL("vendor/katex.mjs"))
+			.then((module) => {
+				katexModule = module.default || module;
+				if (currentState) renderState(currentState);
+				return katexModule;
+			})
+			.catch(() => null);
+		return katexLoadPromise;
+	}
 
 	const host = document.createElement("div");
-	host.id = "onhand-extension-sidebar-host";
+	host.id = HOST_ID;
 	host.style.position = "fixed";
 	host.style.top = "0";
 	host.style.right = "0";
@@ -203,14 +611,150 @@
 				line-height: 1.55;
 				white-space: pre-wrap;
 			}
-			.reply-card {
-				padding: 14px 15px;
-				border-radius: 18px;
+			.reply-rich {
+				color: #f7f1e8;
+				font-size: 16px;
+				line-height: 1.72;
+				letter-spacing: -0.01em;
+			}
+			.reply-rich.pending {
+				opacity: 0.9;
+			}
+			.reply-rich .message-role {
+				margin-bottom: 12px;
+			}
+			.reply-rich .message-body {
+				color: inherit;
+				font-size: inherit;
+				line-height: inherit;
+				white-space: normal;
+			}
+			.reply-rich .message-body > * {
+				overflow-wrap: anywhere;
+			}
+			.reply-rich > :first-child {
+				margin-top: 0;
+			}
+			.reply-rich > :last-child {
+				margin-bottom: 0;
+			}
+			.reply-rich p,
+			.reply-rich ul,
+			.reply-rich ol,
+			.reply-rich pre,
+			.reply-rich blockquote,
+			.reply-rich h1,
+			.reply-rich h2,
+			.reply-rich h3,
+			.reply-rich h4,
+			.reply-rich .katex-display,
+			.reply-rich .reply-math-block {
+				margin: 0 0 14px;
+			}
+			.reply-rich h1,
+			.reply-rich h2,
+			.reply-rich h3,
+			.reply-rich h4 {
+				color: #fff8ef;
+				line-height: 1.3;
+				font-weight: 700;
+			}
+			.reply-rich h1 {
+				font-size: 24px;
+			}
+			.reply-rich h2 {
+				font-size: 21px;
+			}
+			.reply-rich h3 {
+				font-size: 18px;
+			}
+			.reply-rich h4 {
+				font-size: 16px;
+			}
+			.reply-rich ul,
+			.reply-rich ol {
+				padding-left: 22px;
+			}
+			.reply-rich li + li {
+				margin-top: 6px;
+			}
+			.reply-rich strong {
+				color: #fff3e5;
+				font-weight: 620;
+			}
+			.reply-rich em {
+				color: #f1dcc5;
+			}
+			.reply-rich a {
+				color: #ffb590;
+				text-decoration: underline;
+				text-decoration-color: rgba(255, 181, 144, 0.45);
+			}
+			.reply-rich .reply-citations {
+				display: inline-flex;
+				gap: 4px;
+				margin-left: 6px;
+				vertical-align: super;
+			}
+			.reply-rich .reply-citation {
+				border: none;
+				background: rgba(246, 125, 80, 0.16);
+				color: #ffd4ba;
+				border-radius: 999px;
+				padding: 0 6px;
+				min-height: 18px;
+				font-size: 11px;
+				font-weight: 700;
+				line-height: 18px;
+				cursor: pointer;
+			}
+			.reply-rich .reply-citation:hover {
+				background: rgba(246, 125, 80, 0.28);
+			}
+			.reply-inline-code,
+			.reply-code-block code {
+				font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+			}
+			.reply-inline-code {
+				background: rgba(255, 255, 255, 0.08);
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				border-radius: 7px;
+				padding: 0.14em 0.42em;
+				font-size: 0.88em;
+			}
+			.reply-code-block {
 				background: rgba(255, 255, 255, 0.05);
 				border: 1px solid rgba(255, 255, 255, 0.08);
+				border-radius: 14px;
+				padding: 14px 15px;
+				overflow-x: auto;
 			}
-			.reply-card.pending {
-				opacity: 0.9;
+			.reply-code-block code {
+				display: block;
+				color: #f5ede2;
+				font-size: 13px;
+				line-height: 1.6;
+				white-space: pre;
+			}
+			.reply-rich blockquote {
+				border-left: 3px solid rgba(246, 125, 80, 0.55);
+				padding-left: 14px;
+				color: #e2d8ca;
+			}
+			.reply-placeholder {
+				color: #a99d90;
+			}
+			.reply-math-block,
+			.reply-math-inline {
+				color: #fff8ef;
+			}
+			.reply-math-block {
+				display: block;
+				overflow-x: auto;
+			}
+			.reply-math-fallback {
+				font-family: "Times New Roman", serif;
+				font-style: italic;
 			}
 			.empty-card,
 			.activity-card,
@@ -382,18 +926,12 @@
 	const helper = shadow.getElementById("helper");
 	const sendButton = shadow.getElementById("sendButton");
 
-	function escapeHtml(value) {
-		return String(value || "")
-			.replace(/&/g, "&amp;")
-			.replace(/</g, "&lt;")
-			.replace(/>/g, "&gt;")
-			.replace(/"/g, "&quot;")
-			.replace(/'/g, "&#39;");
-	}
-
 	function setOpen(nextOpen) {
 		open = Boolean(nextOpen);
-		host.style.display = open ? "block" : "none";
+		for (const existingHost of Array.from(document.querySelectorAll(HOST_SELECTOR))) {
+			if (!(existingHost instanceof HTMLElement)) continue;
+			existingHost.style.display = existingHost === host && open ? "block" : "none";
+		}
 		syncPageLayout(open);
 		if (open) {
 			startPolling();
@@ -518,11 +1056,12 @@
 			replyEl.innerHTML = "";
 			return;
 		}
+		const citationGroups = buildCitationGroups(state?.pageActions);
 
 		replyEl.innerHTML = `
-			<div class="reply-card ${state?.activeRequestId ? "pending" : ""}">
+			<div class="reply-rich ${state?.activeRequestId ? "pending" : ""}">
 				<div class="message-role">Onhand</div>
-				<div class="message-body">${escapeHtml(replyText)}</div>
+				<div class="message-body">${renderReplyMarkdown(replyText, citationGroups)}</div>
 			</div>
 		`;
 	}
@@ -649,6 +1188,18 @@
 		});
 	});
 
+	replyEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-action-key]");
+		if (!(button instanceof HTMLElement)) return;
+		void activateAction(button.dataset.actionKey || "").catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
 	chrome.runtime.onMessage.addListener((message) => {
 		if (message?.type === "onhand:sidebar-visibility") {
 			setOpen(Boolean(message.open));
@@ -656,6 +1207,7 @@
 	});
 
 	try {
+		void ensureKatexLoaded();
 		const response = await chrome.runtime.sendMessage({ type: "sidebar:get-window-state" });
 		setOpen(Boolean(response?.open));
 	} catch {
