@@ -9,6 +9,8 @@
 	const HOST_ID = "onhand-extension-sidebar-host";
 	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
+	const IS_NATIVE_SIDE_PANEL =
+		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
 	const CITATION_STOP_WORDS = new Set([
 		"a",
 		"an",
@@ -78,6 +80,45 @@
 	let lastActiveRequestId = null;
 	let katexModule = null;
 	let katexLoadPromise = null;
+	let currentWindowId = null;
+	let sessionOverview = null;
+	let sessionLoading = false;
+	let sessionSwitching = false;
+	let creatingSession = false;
+	let restoringSession = false;
+	let stoppingRequest = false;
+	let attachmentDrafts = [];
+
+	const TEXT_ATTACHMENT_EXTENSIONS = new Set([
+		"c",
+		"cc",
+		"cpp",
+		"cs",
+		"css",
+		"csv",
+		"go",
+		"h",
+		"html",
+		"java",
+		"js",
+		"json",
+		"jsx",
+		"md",
+		"py",
+		"rb",
+		"rs",
+		"sh",
+		"sql",
+		"svg",
+		"tex",
+		"toml",
+		"ts",
+		"tsx",
+		"txt",
+		"xml",
+		"yaml",
+		"yml",
+	]);
 
 	function removeStaleSidebarDom() {
 		for (const existingHost of Array.from(document.querySelectorAll(HOST_SELECTOR))) {
@@ -90,7 +131,20 @@
 		document.documentElement.style.removeProperty("--onhand-sidebar-width");
 	}
 
-	removeStaleSidebarDom();
+	if (!IS_NATIVE_SIDE_PANEL) {
+		removeStaleSidebarDom();
+	}
+
+	async function ensureCurrentWindowId() {
+		if (typeof currentWindowId === "number") return currentWindowId;
+		try {
+			const windowInfo = await chrome.windows.getCurrent();
+			currentWindowId = windowInfo?.id ?? null;
+		} catch {
+			currentWindowId = null;
+		}
+		return currentWindowId;
+	}
 
 	function escapeHtml(value) {
 		return String(value || "")
@@ -103,6 +157,27 @@
 
 	function escapeAttribute(value) {
 		return escapeHtml(value).replace(/`/g, "&#96;");
+	}
+
+	function isTextAttachment(file) {
+		const mimeType = String(file?.type || "").toLowerCase();
+		if (mimeType.startsWith("text/")) return true;
+		if (
+			[
+				"application/json",
+				"application/ld+json",
+				"application/xml",
+				"application/javascript",
+				"application/x-javascript",
+				"application/typescript",
+				"application/x-typescript",
+				"image/svg+xml",
+			].includes(mimeType)
+		) {
+			return true;
+		}
+		const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+		return extension ? TEXT_ATTACHMENT_EXTENSIONS.has(extension) : false;
 	}
 
 	function createTokenStore() {
@@ -423,16 +498,29 @@
 
 	const host = document.createElement("div");
 	host.id = HOST_ID;
-	host.style.position = "fixed";
-	host.style.top = "0";
-	host.style.right = "0";
-	host.style.height = "100vh";
-	host.style.width = `${SIDEBAR_WIDTH}px`;
-	host.style.zIndex = "2147483647";
-	host.style.pointerEvents = "none";
-	host.style.display = "none";
+	if (IS_NATIVE_SIDE_PANEL) {
+		document.documentElement.style.height = "100%";
+		if (document.body) {
+			document.body.style.margin = "0";
+			document.body.style.height = "100%";
+			document.body.style.background = "transparent";
+		}
+		host.style.height = "100%";
+		host.style.width = "100%";
+		host.style.display = "block";
+	} else {
+		host.style.position = "fixed";
+		host.style.top = "0";
+		host.style.right = "0";
+		host.style.height = "100vh";
+		host.style.width = `${SIDEBAR_WIDTH}px`;
+		host.style.zIndex = "2147483647";
+		host.style.pointerEvents = "none";
+		host.style.display = "none";
+	}
 
 	function ensurePageLayoutStyle() {
+		if (IS_NATIVE_SIDE_PANEL) return null;
 		let style = document.getElementById(PAGE_STYLE_ID);
 		if (style) return style;
 
@@ -466,6 +554,7 @@
 	}
 
 	function syncPageLayout(nextOpen) {
+		if (IS_NATIVE_SIDE_PANEL) return;
 		ensurePageLayoutStyle();
 		document.documentElement.style.setProperty("--onhand-sidebar-width", `${SIDEBAR_WIDTH}px`);
 		document.documentElement.classList.toggle(PAGE_OPEN_CLASS, Boolean(nextOpen));
@@ -570,6 +659,56 @@
 				display: flex;
 				flex-direction: column;
 				gap: 18px;
+			}
+			.session-toolbar {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			.session-actions {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				flex-wrap: wrap;
+			}
+			.session-select {
+				flex: 1;
+				min-width: 0;
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				background: rgba(255, 255, 255, 0.05);
+				color: #f6f1e8;
+				border-radius: 12px;
+				padding: 10px 12px;
+				font-size: 12px;
+			}
+			.session-select:disabled {
+				opacity: 0.6;
+			}
+			.session-button {
+				border: 1px solid rgba(255, 255, 255, 0.1);
+				background: rgba(255, 255, 255, 0.05);
+				color: #f2e6d8;
+				border-radius: 12px;
+				padding: 9px 12px;
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+				white-space: nowrap;
+			}
+			.session-button:hover {
+				background: rgba(255, 255, 255, 0.08);
+			}
+			.session-button:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
+			.stop-button {
+				color: #ffd2cb;
+				border-color: rgba(255, 142, 134, 0.24);
+				background: rgba(255, 142, 134, 0.08);
+			}
+			.stop-button:hover {
+				background: rgba(255, 142, 134, 0.14);
 			}
 			.section {
 				display: flex;
@@ -833,6 +972,61 @@
 				flex-direction: column;
 				gap: 10px;
 			}
+			.composer-top {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+			}
+			.attach-button {
+				border: 1px solid rgba(255, 255, 255, 0.1);
+				background: rgba(255, 255, 255, 0.05);
+				color: #f2e6d8;
+				border-radius: 999px;
+				padding: 8px 12px;
+				font-size: 12px;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			.attach-button:hover {
+				background: rgba(255, 255, 255, 0.08);
+			}
+			.attach-button:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
+			.attachment-list {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+			}
+			.attachment-chip {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				max-width: 100%;
+				padding: 8px 10px;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.06);
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				color: #e7ddd1;
+				font-size: 12px;
+			}
+			.attachment-chip span {
+				max-width: 240px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.attachment-remove {
+				border: none;
+				background: transparent;
+				color: #d8cec1;
+				font-size: 14px;
+				line-height: 1;
+				cursor: pointer;
+				padding: 0;
+			}
 			.input {
 				width: 100%;
 				min-height: 92px;
@@ -885,6 +1079,17 @@
 			<div id="meta" class="meta">Connecting to Onhand…</div>
 			<div class="body">
 				<section class="section">
+					<div class="section-title">Session</div>
+					<div class="session-toolbar">
+						<select id="sessionSelect" class="session-select"></select>
+					</div>
+					<div class="session-actions">
+						<button id="newSessionButton" class="session-button" type="button">New</button>
+						<button id="restoreSessionButton" class="session-button" type="button">Restore Pages</button>
+						<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
+					</div>
+				</section>
+				<section class="section">
 					<div class="section-title">Conversation</div>
 					<div id="messages" class="message-list"></div>
 				</section>
@@ -902,6 +1107,11 @@
 				</section>
 			</div>
 			<form id="composer" class="composer">
+				<div class="composer-top">
+					<button id="attachButton" class="attach-button" type="button">Attach</button>
+					<input id="fileInput" type="file" multiple hidden />
+				</div>
+				<div id="attachmentList" class="attachment-list"></div>
 				<textarea id="input" class="input" placeholder="Send another message to Onhand…"></textarea>
 				<div class="actions-row">
 					<div id="helper" class="helper">Messages here continue the current Onhand session.</div>
@@ -911,31 +1121,43 @@
 		</div>
 	`;
 
-	document.documentElement.appendChild(host);
+	(document.body || document.documentElement).appendChild(host);
 
 	const closeButton = shadow.getElementById("closeButton");
 	const meta = shadow.getElementById("meta");
 	const body = shadow.querySelector(".body");
+	const sessionSelect = shadow.getElementById("sessionSelect");
+	const newSessionButton = shadow.getElementById("newSessionButton");
+	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
+	const stopButton = shadow.getElementById("stopButton");
 	const messagesEl = shadow.getElementById("messages");
 	const activityEl = shadow.getElementById("activity");
 	const replySectionEl = shadow.getElementById("replySection");
 	const replyEl = shadow.getElementById("reply");
 	const actionsEl = shadow.getElementById("actions");
 	const composer = shadow.getElementById("composer");
+	const attachButton = shadow.getElementById("attachButton");
+	const fileInput = shadow.getElementById("fileInput");
+	const attachmentList = shadow.getElementById("attachmentList");
 	const input = shadow.getElementById("input");
 	const helper = shadow.getElementById("helper");
 	const sendButton = shadow.getElementById("sendButton");
 
 	function setOpen(nextOpen) {
 		open = Boolean(nextOpen);
-		for (const existingHost of Array.from(document.querySelectorAll(HOST_SELECTOR))) {
-			if (!(existingHost instanceof HTMLElement)) continue;
-			existingHost.style.display = existingHost === host && open ? "block" : "none";
+		if (IS_NATIVE_SIDE_PANEL) {
+			host.style.display = open ? "block" : "none";
+		} else {
+			for (const existingHost of Array.from(document.querySelectorAll(HOST_SELECTOR))) {
+				if (!(existingHost instanceof HTMLElement)) continue;
+				existingHost.style.display = existingHost === host && open ? "block" : "none";
+			}
 		}
 		syncPageLayout(open);
 		if (open) {
 			startPolling();
 			void requestState();
+			void requestSessions().catch(() => {});
 		} else {
 			stopPolling();
 		}
@@ -965,6 +1187,193 @@
 				<span>${escapeHtml(status)}</span>
 			</div>
 		`;
+	}
+
+	function renderSessionControls(state) {
+		const currentPath = state?.currentSession?.sessionFile || sessionOverview?.currentSession?.sessionFile || "";
+		const sessions = Array.isArray(sessionOverview?.sessions) ? sessionOverview.sessions : [];
+		if (!sessions.length) {
+			sessionSelect.innerHTML = `<option value="">${sessionLoading ? "Loading sessions…" : "Current session"}</option>`;
+		} else {
+			sessionSelect.innerHTML = sessions
+				.map((session) => {
+					const title = session?.title || session?.name || "Session";
+					return `<option value="${escapeAttribute(session.path || "")}" ${session.path === currentPath ? "selected" : ""}>${escapeHtml(title)}</option>`;
+				})
+				.join("");
+		}
+
+		const activeRequest = Boolean(state?.activeRequestId);
+		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || activeRequest;
+		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
+		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
+		stopButton.disabled = !activeRequest || stoppingRequest;
+		stopButton.textContent = stoppingRequest ? "Stopping…" : "Stop";
+		newSessionButton.textContent = creatingSession ? "Creating…" : "New";
+		restoreSessionButton.textContent = restoringSession ? "Restoring…" : "Restore Pages";
+	}
+
+	function renderAttachmentDrafts() {
+		if (!attachmentDrafts.length) {
+			attachmentList.innerHTML = "";
+			return;
+		}
+		attachmentList.innerHTML = attachmentDrafts
+			.map(
+				(attachment) => `
+					<div class="attachment-chip">
+						<span>${escapeHtml(attachment.name || "attachment")}</span>
+						<button class="attachment-remove" data-attachment-id="${escapeAttribute(attachment.id || "")}" type="button" aria-label="Remove attachment">×</button>
+					</div>
+				`,
+			)
+			.join("");
+	}
+
+	function removeAttachmentDraft(attachmentId) {
+		attachmentDrafts = attachmentDrafts.filter((attachment) => attachment.id !== attachmentId);
+		renderAttachmentDrafts();
+	}
+
+	function buildDisplayPrompt(prompt, attachments) {
+		const trimmedPrompt = String(prompt || "").trim();
+		const attachmentNames = Array.isArray(attachments)
+			? attachments.map((attachment) => String(attachment?.name || "attachment")).filter(Boolean)
+			: [];
+		const attachmentLine = attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "";
+		return [trimmedPrompt, attachmentLine].filter(Boolean).join("\n\n") || attachmentLine;
+	}
+
+	async function requestSessions(limit = 20) {
+		sessionLoading = true;
+		renderSessionControls(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:list-sessions", limit });
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not load sessions.");
+			}
+			sessionOverview = {
+				currentSession: response.currentSession || null,
+				sessions: Array.isArray(response.sessions) ? response.sessions : [],
+			};
+			renderSessionControls(currentState || {});
+		} finally {
+			sessionLoading = false;
+			renderSessionControls(currentState || {});
+		}
+	}
+
+	async function createNewSession() {
+		creatingSession = true;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:new-session" });
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not create a new session.");
+			}
+			await Promise.all([requestState(), requestSessions()]);
+		} finally {
+			creatingSession = false;
+			renderState(currentState || {});
+		}
+	}
+
+	async function switchSession(sessionPath) {
+		if (!sessionPath) return;
+		sessionSwitching = true;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:switch-session",
+				sessionPath,
+			});
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not switch sessions.");
+			}
+			await Promise.all([requestState(), requestSessions()]);
+		} finally {
+			sessionSwitching = false;
+			renderState(currentState || {});
+		}
+	}
+
+	async function restoreSessionPages() {
+		const sessionPath =
+			sessionSelect.value ||
+			currentState?.currentSession?.sessionFile ||
+			sessionOverview?.currentSession?.sessionFile ||
+			"";
+		if (!sessionPath) {
+			throw new Error("Choose a session to restore first.");
+		}
+		restoringSession = true;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:restore-session",
+				sessionPath,
+			});
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not restore pages for that session.");
+			}
+			renderState({
+				...(currentState || {}),
+				status:
+					response.restoredCount > 0
+						? `Restored ${response.restoredCount} page${response.restoredCount === 1 ? "" : "s"} for this session.`
+						: "No saved pages were restored for this session.",
+			});
+		} finally {
+			restoringSession = false;
+			renderState(currentState || {});
+		}
+	}
+
+	async function stopActiveRun() {
+		stoppingRequest = true;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:stop" });
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not stop the current run.");
+			}
+			await Promise.all([requestState(), requestSessions()]);
+		} finally {
+			stoppingRequest = false;
+			renderState(currentState || {});
+		}
+	}
+
+	async function fileToAttachment(file) {
+		const fileId = `${file.name}:${file.size}:${file.lastModified}:${crypto.randomUUID()}`;
+		if (String(file.type || "").startsWith("image/")) {
+			const dataUrl = await new Promise((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(String(reader.result || ""));
+				reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`));
+				reader.readAsDataURL(file);
+			});
+			const data = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+			return {
+				id: fileId,
+				kind: "image",
+				name: file.name,
+				mimeType: file.type || "image/png",
+				data,
+			};
+		}
+
+		if (isTextAttachment(file)) {
+			return {
+				id: fileId,
+				kind: "text",
+				name: file.name,
+				mimeType: file.type || "text/plain",
+				text: await file.text(),
+			};
+		}
+
+		throw new Error("Only image and text-based attachments are supported in the sidebar right now.");
 	}
 
 	function deriveMessageView(state) {
@@ -1096,6 +1505,8 @@
 		const messageView = deriveMessageView(state);
 		currentState = state;
 		renderMeta(state);
+		renderSessionControls(state);
+		renderAttachmentDrafts();
 		renderMessages(messageView.conversationMessages);
 		renderActivity(state, {
 			hasLatestReply: Boolean(messageView.latestAssistant?.text?.trim()),
@@ -1107,9 +1518,13 @@
 		const activeRequest = Boolean(state?.activeRequestId);
 		input.disabled = activeRequest || sending;
 		sendButton.disabled = activeRequest || sending;
+		attachButton.disabled = activeRequest || sending;
+		fileInput.disabled = activeRequest || sending;
 		helper.textContent = activeRequest
-			? "Onhand is currently responding. Wait for this turn to finish before sending another message."
-			: "Messages here continue the current Onhand session.";
+			? "Onhand is currently responding. You can stop this run or wait for it to finish."
+			: attachmentDrafts.length
+				? "Messages and attachments will continue the current Onhand session."
+				: "Messages here continue the current Onhand session.";
 		if (body instanceof HTMLElement && (activeRequest || wasNearBottom)) {
 			body.scrollTop = body.scrollHeight;
 		}
@@ -1132,19 +1547,26 @@
 	}
 
 	async function submitPrompt(prompt) {
-		if (!prompt.trim()) return;
+		const trimmedPrompt = String(prompt || "").trim();
+		if (!trimmedPrompt && !attachmentDrafts.length) return;
+		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
+		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
 		sending = true;
 		renderState(currentState || {});
 		try {
 			const response = await chrome.runtime.sendMessage({
 				type: "sidebar:submit-prompt",
-				prompt,
+				prompt: trimmedPrompt,
+				displayPrompt,
+				attachments,
+				source: "sidebar",
 			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not submit prompt.");
 			}
 			input.value = "";
-			await requestState();
+			attachmentDrafts = [];
+			await Promise.all([requestState(), requestSessions()]);
 		} finally {
 			sending = false;
 			renderState(currentState || {});
@@ -1163,7 +1585,77 @@
 
 	closeButton.addEventListener("click", () => {
 		setOpen(false);
-		void chrome.runtime.sendMessage({ type: "sidebar:close" }).catch(() => {});
+		void ensureCurrentWindowId()
+			.then((windowId) => chrome.runtime.sendMessage({ type: "sidebar:close", windowId }))
+			.catch(() => {});
+	});
+
+	sessionSelect.addEventListener("change", () => {
+		const nextSessionPath = sessionSelect.value;
+		if (!nextSessionPath) return;
+		void switchSession(nextSessionPath).catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	newSessionButton.addEventListener("click", () => {
+		void createNewSession().catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	restoreSessionButton.addEventListener("click", () => {
+		void restoreSessionPages().catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	stopButton.addEventListener("click", () => {
+		void stopActiveRun().catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	attachButton.addEventListener("click", () => {
+		fileInput.click();
+	});
+
+	fileInput.addEventListener("change", () => {
+		const files = Array.from(fileInput.files || []);
+		if (!files.length) return;
+		void Promise.all(files.map((file) => fileToAttachment(file)))
+			.then((attachments) => {
+				attachmentDrafts = [...attachmentDrafts, ...attachments];
+				fileInput.value = "";
+				renderState(currentState || {});
+			})
+			.catch((error) => {
+				fileInput.value = "";
+				renderState({
+					...(currentState || {}),
+					status: error?.message || String(error),
+				});
+			});
+	});
+
+	attachmentList.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-attachment-id]");
+		if (!(button instanceof HTMLElement)) return;
+		removeAttachmentDraft(button.dataset.attachmentId || "");
+		renderState(currentState || {});
 	});
 
 	composer.addEventListener("submit", (event) => {
@@ -1200,16 +1692,26 @@
 		});
 	});
 
-	chrome.runtime.onMessage.addListener((message) => {
-		if (message?.type === "onhand:sidebar-visibility") {
-			setOpen(Boolean(message.open));
-		}
-	});
+	if (!IS_NATIVE_SIDE_PANEL) {
+		chrome.runtime.onMessage.addListener((message) => {
+			if (message?.type === "onhand:sidebar-visibility") {
+				setOpen(Boolean(message.open));
+			}
+		});
+	}
 
 	try {
 		void ensureKatexLoaded();
-		const response = await chrome.runtime.sendMessage({ type: "sidebar:get-window-state" });
-		setOpen(Boolean(response?.open));
+		if (IS_NATIVE_SIDE_PANEL) {
+			await ensureCurrentWindowId();
+			setOpen(true);
+		} else {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:get-window-state",
+				windowId: await ensureCurrentWindowId(),
+			});
+			setOpen(Boolean(response?.open));
+		}
 	} catch {
 		setOpen(false);
 	}

@@ -20,7 +20,7 @@ async function readJsonBody(req) {
 	let body = "";
 	for await (const chunk of req) {
 		body += chunk;
-		if (body.length > 1024 * 1024) {
+		if (body.length > 20 * 1024 * 1024) {
 			throw new Error("Request body too large");
 		}
 	}
@@ -50,6 +50,11 @@ export function createOnhandUiServer({
 	port = 3211,
 	token,
 	getState,
+	listSessions,
+	startNewSession,
+	switchSession,
+	restoreSession,
+	stopPrompt,
 	submitPrompt,
 	activateAction,
 }) {
@@ -83,17 +88,72 @@ export function createOnhandUiServer({
 				return;
 			}
 
-			if (req.method === "POST" && pathname === "/prompt") {
+			if (req.method === "GET" && pathname === "/sessions") {
+				const limit = Math.max(1, Number.parseInt(url.searchParams.get("limit") || "12", 10) || 12);
+				sendJson(res, 200, {
+					ok: true,
+					...(await listSessions(limit)),
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/sessions/new") {
+				sendJson(res, 200, {
+					ok: true,
+					...(await startNewSession()),
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/sessions/switch") {
 				const body = await readJsonBody(req);
-				if (typeof body.prompt !== "string" || !body.prompt.trim()) {
-					const error = new Error("Prompt cannot be empty.");
+				if (typeof body.sessionPath !== "string" || !body.sessionPath.trim()) {
+					const error = new Error("Session path is required.");
 					error.statusCode = 400;
 					throw error;
 				}
-				const result = await submitPrompt(body.prompt);
+				sendJson(res, 200, {
+					ok: true,
+					...(await switchSession(body.sessionPath)),
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/sessions/restore") {
+				const body = await readJsonBody(req);
+				if (typeof body.sessionPath !== "string" || !body.sessionPath.trim()) {
+					const error = new Error("Session path is required.");
+					error.statusCode = 400;
+					throw error;
+				}
+				sendJson(res, 200, {
+					ok: true,
+					...(await restoreSession(body.sessionPath)),
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/prompt") {
+				const body = await readJsonBody(req);
+				const hasPrompt = typeof body.prompt === "string" && body.prompt.trim();
+				const hasAttachments = Array.isArray(body.attachments) && body.attachments.length > 0;
+				if (!hasPrompt && !hasAttachments) {
+					const error = new Error("Prompt or attachments are required.");
+					error.statusCode = 400;
+					throw error;
+				}
+				const result = await submitPrompt(body);
 				sendJson(res, 200, {
 					ok: true,
 					...result,
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/stop") {
+				sendJson(res, 200, {
+					ok: true,
+					...(await stopPrompt()),
 				});
 				return;
 			}

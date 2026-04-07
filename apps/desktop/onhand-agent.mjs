@@ -189,11 +189,48 @@ function renderBrowserContextForPrompt(context) {
 	return lines.join("\n");
 }
 
-function buildLauncherPrompt(prompt, browserContext) {
+function normalizePromptAttachments(attachments) {
+	if (!Array.isArray(attachments)) return [];
+	return attachments.filter((attachment) => attachment && typeof attachment === "object");
+}
+
+function buildAttachmentContext(attachments) {
+	const normalizedAttachments = normalizePromptAttachments(attachments);
+	if (!normalizedAttachments.length) return "";
+
+	return normalizedAttachments
+		.map((attachment) => {
+			const safeName = String(attachment.name || "attachment").replace(/"/g, "&quot;");
+			if (attachment.kind === "text" && typeof attachment.text === "string") {
+				return `<file name="${safeName}">\n${attachment.text}\n</file>`;
+			}
+			if (attachment.kind === "image") {
+				return `<file name="${safeName}"></file>`;
+			}
+			return "";
+		})
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+function buildPromptImages(attachments) {
+	return normalizePromptAttachments(attachments)
+		.filter((attachment) => attachment.kind === "image" && typeof attachment.data === "string" && attachment.data.trim())
+		.map((attachment) => ({
+			type: "image",
+			data: attachment.data,
+			mimeType: attachment.mimeType || "image/png",
+		}));
+}
+
+function buildLauncherPrompt(prompt, browserContext, attachments = []) {
+	const trimmedPrompt = String(prompt || "").trim();
+	const attachmentContext = buildAttachmentContext(attachments);
 	return [
 		"The user invoked Onhand from the desktop launcher.",
 		"",
-		`User question:\n${prompt.trim()}`,
+		`User question:\n${trimmedPrompt || "(See attached files.)"}`,
+		...(attachmentContext ? ["", "Attached files:", attachmentContext] : []),
 		"",
 		"Captured browser context right before the question:",
 		renderBrowserContextForPrompt(browserContext),
@@ -601,16 +638,18 @@ function handleSessionEvent(session, event) {
 		}
 		case "agent_end": {
 			const reply = activeRequest.reply.trim() || extractAssistantText(event.messages) || "(No reply generated.)";
+			const finalStatus = activeRequest.aborted ? "Stopped" : "Reply ready";
 			syncUiStateFromSession(session, {
 				activities: [...uiState.activities],
 				pageActions: [...activeRequest.pageActions],
-				status: "Reply ready",
+				status: finalStatus,
 				activeRequestId: null,
 			});
 			emitRequestEvent({
 				type: "complete",
 				reply,
 				actions: [...activeRequest.pageActions],
+				aborted: activeRequest.aborted,
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 				sessionName: session.sessionName || null,
@@ -712,13 +751,28 @@ export async function switchOnhandSession(sessionPath) {
 	};
 }
 
-export async function submitOnhandPrompt({ requestId, prompt, browserContext, onEvent }) {
+export async function stopOnhandRun() {
+	const { session } = await ensureRuntime();
+	if (!activeRequest) {
+		throw new Error("Onhand is not currently responding.");
+	}
+	activeRequest.aborted = true;
+	setUiStatus("Stopping…");
+	await session.abort();
+	return {
+		stopped: true,
+		currentSession: buildSessionState(session),
+	};
+}
+
+export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, attachments = [], browserContext, onEvent }) {
 	const { session } = await ensureRuntime();
 	if (activeRequest) {
 		throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
 	}
+	const promptLabel = String(displayPrompt || prompt || "").trim() || "Attached files";
 	if (!session.sessionName && session.messages.length === 0) {
-		session.setSessionName(buildSessionTitleFromPrompt(prompt));
+		session.setSessionName(buildSessionTitleFromPrompt(promptLabel));
 	}
 
 	activeRequest = {
@@ -728,8 +782,9 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 		reasoning: "",
 		pageActions: [],
 		toolExecutionCount: 0,
+		aborted: false,
 	};
-	beginUiRequest(session, requestId, prompt);
+	beginUiRequest(session, requestId, promptLabel);
 
 	onEvent({
 		type: "status",
@@ -740,19 +795,23 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 	});
 
 	try {
-		await session.prompt(buildLauncherPrompt(prompt, browserContext));
+		await session.prompt(buildLauncherPrompt(prompt, browserContext, attachments), {
+			images: buildPromptImages(attachments),
+		});
 		if (activeRequest?.id === requestId) {
 			const reply = activeRequest.reply.trim() || "(No reply generated.)";
+			const finalStatus = activeRequest.aborted ? "Stopped" : "Reply ready";
 			syncUiStateFromSession(session, {
 				activities: [...uiState.activities],
 				pageActions: [...activeRequest.pageActions],
-				status: "Reply ready",
+				status: finalStatus,
 				activeRequestId: null,
 			});
 			onEvent({
 				type: "complete",
 				reply,
 				actions: [...activeRequest.pageActions],
+				aborted: activeRequest.aborted,
 				sessionId: session.sessionId,
 				sessionFile: session.sessionFile,
 				sessionName: session.sessionName || null,
@@ -766,6 +825,34 @@ export async function submitOnhandPrompt({ requestId, prompt, browserContext, on
 			sessionName: session.sessionName || null,
 		};
 	} catch (error) {
+		const isAbortError =
+			Boolean(activeRequest?.id === requestId && activeRequest?.aborted) ||
+			/abort|cancel/i.test(String(error?.message || ""));
+		if (activeRequest?.id === requestId && isAbortError) {
+			const reply = activeRequest.reply.trim() || "(Run stopped.)";
+			syncUiStateFromSession(session, {
+				activities: [...uiState.activities],
+				pageActions: [...activeRequest.pageActions],
+				status: "Stopped",
+				activeRequestId: null,
+			});
+			onEvent({
+				type: "complete",
+				reply,
+				actions: [...activeRequest.pageActions],
+				aborted: true,
+				sessionId: session.sessionId,
+				sessionFile: session.sessionFile,
+				sessionName: session.sessionName || null,
+			});
+			activeRequest = null;
+			return {
+				requestId,
+				sessionId: session.sessionId,
+				sessionFile: session.sessionFile,
+				sessionName: session.sessionName || null,
+			};
+		}
 		if (activeRequest?.id === requestId) {
 			if (error && typeof error === "object") {
 				error.pageActions = [...activeRequest.pageActions];

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,7 @@ import {
 	getSessionOverview,
 	primeOnhandUiRequest,
 	startNewOnhandSession,
+	stopOnhandRun,
 	submitOnhandPrompt,
 	switchOnhandSession,
 } from "./onhand-agent.mjs";
@@ -25,6 +26,7 @@ const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const FAST_TIMEOUT_MS = 2500;
 const ONHAND_UI_PORT = Number(process.env.ONHAND_UI_PORT || 3211);
+const BROWSER_ARTIFACT_INDEX_PATH = join(__dirname, "..", "..", ".onhand", "artifacts", "browser", "index.json");
 const BLUR_HIDE_DELAY_MS = 120;
 const HOTKEY_DEBOUNCE_MS = 300;
 const WORKSPACE_VISIBILITY_SETTLE_MS = 60;
@@ -244,13 +246,84 @@ function sendPromptEvent(payload) {
 	mainWindow?.webContents.send("onhand:prompt-event", payload);
 }
 
-async function runPromptRequest(requestId, prompt) {
-	try {
-		await runBridgeCommand("open_onhand_sidebar", {}, 2500);
-	} catch {}
-	await primeOnhandUiRequest(requestId, prompt, "Collecting browser context…");
-	sendPromptEvent({ type: "start", requestId, prompt });
-	sendPromptEvent({ type: "status", requestId, status: "Collecting browser context…" });
+function normalizePromptRequest(input) {
+	if (typeof input === "string") {
+		const prompt = input.trim();
+		if (!prompt) {
+			throw new Error("Prompt cannot be empty.");
+		}
+		return {
+			promptText: prompt,
+			displayPrompt: prompt,
+			attachments: [],
+		};
+	}
+
+	if (input && typeof input === "object" && ("promptText" in input || "displayPrompt" in input)) {
+		let promptText = String(input.promptText || "").trim();
+		const attachments = Array.isArray(input.attachments) ? input.attachments.filter((attachment) => attachment && typeof attachment === "object") : [];
+		const displayPrompt =
+			String(input.displayPrompt || "").trim() ||
+			[promptText].filter(Boolean).join("\n\n");
+		if (!promptText && !attachments.length && displayPrompt) {
+			promptText = displayPrompt;
+		}
+		if (!promptText && !attachments.length) {
+			throw new Error("Prompt cannot be empty.");
+		}
+		const attachmentNames = attachments.map((attachment) => String(attachment.name || "attachment")).filter(Boolean);
+		const attachmentLine = attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "";
+		const finalDisplayPrompt = displayPrompt || [promptText, attachmentLine].filter(Boolean).join("\n\n") || attachmentLine;
+		return {
+			promptText,
+			displayPrompt: finalDisplayPrompt,
+			attachments,
+			source: input.source === "sidebar" ? "sidebar" : "desktop",
+		};
+	}
+
+	let promptText = String(input?.prompt || "").trim();
+	const attachments = Array.isArray(input?.attachments) ? input.attachments.filter((attachment) => attachment && typeof attachment === "object") : [];
+	const requestedDisplayPrompt = String(input?.displayPrompt || "").trim();
+	if (!promptText && !attachments.length && requestedDisplayPrompt) {
+		promptText = requestedDisplayPrompt;
+	}
+	if (!promptText && !attachments.length) {
+		throw new Error("Prompt cannot be empty.");
+	}
+	const attachmentNames = attachments.map((attachment) => String(attachment.name || "attachment")).filter(Boolean);
+	const attachmentLine = attachmentNames.length ? `Attached: ${attachmentNames.join(", ")}` : "";
+	const displayPrompt =
+		requestedDisplayPrompt ||
+		[promptText, attachmentLine].filter(Boolean).join("\n\n") ||
+		attachmentLine;
+
+	return {
+		promptText,
+		displayPrompt,
+		attachments,
+		source: input?.source === "sidebar" ? "sidebar" : "desktop",
+	};
+}
+
+async function runPromptRequest(requestId, request) {
+	const { promptText, displayPrompt, attachments, source } = normalizePromptRequest(request);
+	let initialStatus = "Collecting browser context…";
+	await primeOnhandUiRequest(requestId, displayPrompt, initialStatus);
+	sendPromptEvent({ type: "start", requestId, prompt: displayPrompt });
+	sendPromptEvent({ type: "status", requestId, status: initialStatus });
+
+	if (source !== "sidebar") {
+		try {
+			await runBridgeCommand("open_onhand_sidebar", {}, 2500);
+		} catch (error) {
+			const detail = error?.message || String(error);
+			if (detail) {
+				initialStatus = `Collecting browser context… ${detail}`;
+				sendPromptEvent({ type: "status", requestId, status: initialStatus });
+			}
+		}
+	}
 
 	try {
 		const browserContext = await getBrowserContext({ includeSelection: true, includeVisibleText: true });
@@ -258,7 +331,9 @@ async function runPromptRequest(requestId, prompt) {
 
 		await submitOnhandPrompt({
 			requestId,
-			prompt,
+			prompt: promptText,
+			displayPrompt,
+			attachments,
 			browserContext,
 			onEvent: (event) => sendPromptEvent({ requestId, ...event }),
 		});
@@ -272,16 +347,196 @@ async function runPromptRequest(requestId, prompt) {
 	}
 }
 
-function queuePromptRequest(prompt) {
-	const normalizedPrompt = String(prompt || "").trim();
-	if (!normalizedPrompt) {
-		throw new Error("Prompt cannot be empty.");
-	}
+function queuePromptRequest(request) {
+	const normalizedRequest = normalizePromptRequest(request);
 	const requestId = randomUUID();
 	setTimeout(() => {
-		void runPromptRequest(requestId, normalizedPrompt);
+		void runPromptRequest(requestId, normalizedRequest).catch((error) => {
+			log("Prompt request failed", error?.message || String(error));
+		});
 	}, 0);
 	return { ok: true, requestId };
+}
+
+async function readBrowserArtifactIndex() {
+	try {
+		const raw = await readFile(BROWSER_ARTIFACT_INDEX_PATH, "utf8");
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed?.artifacts) ? parsed.artifacts : [];
+	} catch {
+		return [];
+	}
+}
+
+function chooseBestMatchingTab(tabs, url, title) {
+	const exactUrlMatches = tabs.filter((tab) => (tab?.url || "") === url);
+	if (exactUrlMatches.length > 0) {
+		return exactUrlMatches.find((tab) => tab.active) || exactUrlMatches[0];
+	}
+	const exactTitleMatches = tabs.filter((tab) => (tab?.title || "") === title);
+	if (exactTitleMatches.length > 0) {
+		return exactTitleMatches.find((tab) => tab.active) || exactTitleMatches[0];
+	}
+	return null;
+}
+
+async function getOpenBrowserTabs() {
+	const stateData = await bridgeRequest("/state", {}, FAST_TIMEOUT_MS);
+	return flattenTabs(stateData.client?.state);
+}
+
+async function resolveTargetTabForArtifact(manifest) {
+	const artifactUrl = manifest?.page?.url || manifest?.tab?.url || "";
+	const artifactTitle = manifest?.page?.title || manifest?.tab?.title || "";
+	const tabs = await getOpenBrowserTabs();
+	const existingTab = chooseBestMatchingTab(tabs, artifactUrl, artifactTitle);
+	if (existingTab?.id) {
+		const focused = await runBridgeCommand("activate_tab", { tabId: existingTab.id }, 2500);
+		return focused.tab || existingTab;
+	}
+	if (!artifactUrl) {
+		throw new Error("Artifact does not include a restorable page URL.");
+	}
+	const navigated = await runBridgeCommand(
+		"navigate",
+		{
+			url: artifactUrl,
+			newTab: true,
+			waitForLoad: true,
+		},
+		20000,
+	);
+	return navigated.tab;
+}
+
+async function restoreArtifactSummary(artifactSummary) {
+	if (!artifactSummary?.statePath) {
+		throw new Error("Artifact is missing its saved state path.");
+	}
+	const statePath = resolve(join(__dirname, "..", ".."), artifactSummary.statePath);
+	const raw = await readFile(statePath, "utf8");
+	const manifest = JSON.parse(raw);
+	if (manifest?.type !== "browser_capture") {
+		throw new Error(`Artifact ${artifactSummary.artifactId || statePath} is not a browser capture.`);
+	}
+
+	const tab = await resolveTargetTabForArtifact(manifest);
+	await runBridgeCommand("clear_annotations", { tabId: tab.id }, 15000);
+
+	const annotations = Array.isArray(manifest?.page?.annotations) ? manifest.page.annotations : [];
+	const restored = [];
+	const failed = [];
+
+	for (const annotation of annotations) {
+		try {
+			const highlighted = await runBridgeCommand(
+				"highlight_text",
+				{
+					tabId: tab.id,
+					text: annotation.matchedText,
+					clearExisting: false,
+					scrollIntoView: false,
+				},
+				20000,
+			);
+			const restoredAnnotationId = highlighted.annotation?.annotationId;
+			let noteRestored = false;
+			if (restoredAnnotationId && annotation.note?.text) {
+				await runBridgeCommand(
+					"show_note",
+					{
+						tabId: tab.id,
+						annotationId: restoredAnnotationId,
+						note: annotation.note.text,
+						label: annotation.note.label,
+						scrollIntoView: false,
+					},
+					20000,
+				);
+				noteRestored = true;
+			}
+			restored.push({
+				annotationId: restoredAnnotationId,
+				noteRestored,
+			});
+		} catch (error) {
+			failed.push({
+				annotationId: annotation?.annotationId || null,
+				error: error?.message || String(error),
+			});
+		}
+	}
+
+	const lastRestored = restored[restored.length - 1];
+	if (lastRestored?.annotationId) {
+		await runBridgeCommand(
+			"scroll_to_annotation",
+			{
+				tabId: tab.id,
+				annotationId: lastRestored.annotationId,
+				target: lastRestored.noteRestored ? "note" : "annotation",
+			},
+			15000,
+		);
+	} else if (typeof manifest?.page?.scrollY === "number") {
+		await runBridgeCommand(
+			"run_js",
+			{
+				tabId: tab.id,
+				expression: `(() => { window.scrollTo(${JSON.stringify(Number(manifest.page.scrollX || 0))}, ${JSON.stringify(Number(manifest.page.scrollY || 0))}); return { scrollX: window.scrollX, scrollY: window.scrollY }; })()`,
+			},
+			15000,
+		);
+	}
+
+	return {
+		artifactId: artifactSummary.artifactId,
+		title: artifactSummary.title || manifest?.page?.title || manifest?.tab?.title || "(untitled)",
+		url: artifactSummary.url || manifest?.page?.url || manifest?.tab?.url || "",
+		tabId: tab?.id || null,
+		restoredCount: restored.length,
+		failedCount: failed.length,
+	};
+}
+
+async function restoreSessionPages(sessionPath) {
+	if (!sessionPath || typeof sessionPath !== "string") {
+		throw new Error("Session path is required.");
+	}
+	const normalizedSessionPath = resolve(sessionPath);
+	const artifacts = await readBrowserArtifactIndex();
+	const sessionArtifacts = artifacts
+		.filter(
+			(artifact) =>
+				artifact &&
+				resolve(String(artifact.sessionFile || "")) === normalizedSessionPath &&
+				typeof artifact.statePath === "string" &&
+				String(artifact.url || "").trim(),
+		)
+		.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+
+	if (!sessionArtifacts.length) {
+		throw new Error("No saved browser artifacts were found for that session.");
+	}
+
+	const latestArtifactsByUrl = new Map();
+	for (const artifact of sessionArtifacts) {
+		const key = String(artifact.url || artifact.title || artifact.artifactId);
+		if (!latestArtifactsByUrl.has(key)) {
+			latestArtifactsByUrl.set(key, artifact);
+		}
+	}
+
+	const restoredPages = [];
+	for (const artifact of latestArtifactsByUrl.values()) {
+		restoredPages.push(await restoreArtifactSummary(artifact));
+	}
+
+	return {
+		sessionPath: normalizedSessionPath,
+		restoredPages,
+		restoredCount: restoredPages.length,
+	};
 }
 
 async function activateOnhandPageAction(actionKey) {
@@ -317,7 +572,12 @@ async function startOnhandUiRuntimeServer() {
 		port: ONHAND_UI_PORT,
 		token: connection.token,
 		getState: async () => getOnhandUiState(),
-		submitPrompt: async (prompt) => queuePromptRequest(prompt),
+		listSessions: async (limit) => getSessionOverview(limit),
+		startNewSession: async () => startNewOnhandSession(),
+		switchSession: async (sessionPath) => switchOnhandSession(sessionPath),
+		restoreSession: async (sessionPath) => restoreSessionPages(sessionPath),
+		stopPrompt: async () => stopOnhandRun(),
+		submitPrompt: async (request) => queuePromptRequest(request),
 		activateAction: async (actionKey) => activateOnhandPageAction(actionKey),
 	});
 	await onhandUiServer.listen();

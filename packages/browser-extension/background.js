@@ -19,6 +19,13 @@ function log(...args) {
 	console.log("[onhand-browser-bridge]", ...args);
 }
 
+function configureSidePanelActionClick() {
+	if (!chrome.sidePanel?.setPanelBehavior) return;
+	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+		log("Could not configure side panel action behavior", error?.message || String(error));
+	});
+}
+
 function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -179,59 +186,6 @@ async function isSidebarOpenForWindow(windowId) {
 	return Boolean(states[String(windowId)]);
 }
 
-async function ensureSidebarInjected(tabId) {
-	if (typeof tabId !== "number") return false;
-	try {
-		await chrome.scripting.executeScript({
-			target: { tabId },
-			files: ["sidebar.js"],
-		});
-		return true;
-	} catch (error) {
-		log(`Could not inject sidebar into tab ${tabId}`, error?.message || String(error));
-		return false;
-	}
-}
-
-async function setSidebarVisibilityInTab(tabId, open) {
-	if (typeof tabId !== "number") return false;
-	if (open) {
-		const injected = await ensureSidebarInjected(tabId);
-		if (!injected) return false;
-	}
-	try {
-		await chrome.tabs.sendMessage(tabId, {
-			type: "onhand:sidebar-visibility",
-			open,
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function getPreferredSidebarTab(windowId, preferredTabId) {
-	if (typeof preferredTabId === "number") {
-		try {
-			const tab = await chrome.tabs.get(preferredTabId);
-			if (tab?.id && tab.windowId === windowId) return tab;
-		} catch {}
-	}
-
-	const [activeTab] = await chrome.tabs.query({ windowId, active: true });
-	return activeTab?.id ? activeTab : null;
-}
-
-async function broadcastSidebarVisibility(windowId, open, options = {}) {
-	if (typeof windowId !== "number") return;
-	const excludeTabId = typeof options.excludeTabId === "number" ? options.excludeTabId : null;
-	const tabs = await chrome.tabs.query({ windowId });
-	const tasks = tabs
-		.filter((tab) => tab?.id && tab.id !== excludeTabId)
-		.map((tab) => setSidebarVisibilityInTab(tab.id, open));
-	await Promise.allSettled(tasks);
-}
-
 async function resolveSidebarWindowId(args = {}) {
 	if (typeof args.windowId === "number") return args.windowId;
 	const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -244,27 +198,25 @@ async function openSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") {
 		throw new Error("No browser window is available for the Onhand sidebar.");
 	}
-	await setSidebarWindowOpen(windowId, true);
-	const primaryTab = await getPreferredSidebarTab(windowId);
-	if (primaryTab?.id) {
-		await setSidebarVisibilityInTab(primaryTab.id, true);
-		void broadcastSidebarVisibility(windowId, true, { excludeTabId: primaryTab.id });
-	} else {
-		void broadcastSidebarVisibility(windowId, true);
+	try {
+		await chrome.sidePanel.open({ windowId });
+	} catch (error) {
+		const message = error?.message || String(error);
+		if (/user gesture|may only be called/i.test(message)) {
+			throw new Error("Chrome blocked auto-opening the side panel. Click the Onhand extension icon once.");
+		}
+		throw error;
 	}
+	await setSidebarWindowOpen(windowId, true);
 	return { windowId, open: true };
 }
 
 async function closeSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") return { windowId, open: false };
-	await setSidebarWindowOpen(windowId, false);
-	const primaryTab = await getPreferredSidebarTab(windowId);
-	if (primaryTab?.id) {
-		await setSidebarVisibilityInTab(primaryTab.id, false);
-		void broadcastSidebarVisibility(windowId, false, { excludeTabId: primaryTab.id });
-	} else {
-		void broadcastSidebarVisibility(windowId, false);
+	if (chrome.sidePanel?.close) {
+		await chrome.sidePanel.close({ windowId });
 	}
+	await setSidebarWindowOpen(windowId, false);
 	return { windowId, open: false };
 }
 
@@ -2656,12 +2608,30 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
+	configureSidePanelActionClick();
 	loadSettings().then(() => connectBridge()).catch((error) => log("Install init failed", error));
 });
 
 chrome.runtime.onStartup.addListener(() => {
+	configureSidePanelActionClick();
 	connectBridge().catch((error) => log("Startup connect failed", error));
 });
+
+if (chrome.sidePanel?.onOpened?.addListener) {
+	chrome.sidePanel.onOpened.addListener(async (info) => {
+		if (typeof info?.windowId === "number") {
+			await setSidebarWindowOpen(info.windowId, true);
+		}
+	});
+}
+
+if (chrome.sidePanel?.onClosed?.addListener) {
+	chrome.sidePanel.onClosed.addListener(async (info) => {
+		if (typeof info?.windowId === "number") {
+			await setSidebarWindowOpen(info.windowId, false);
+		}
+	});
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	(async () => {
@@ -2688,9 +2658,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:get-window-state") {
+			const windowId =
+				typeof message.windowId === "number" ? message.windowId : typeof _sender?.tab?.windowId === "number" ? _sender.tab.windowId : null;
 			sendResponse({
 				ok: true,
-				open: await isSidebarOpenForWindow(_sender?.tab?.windowId),
+				open: await isSidebarOpenForWindow(windowId),
 			});
 			return;
 		}
@@ -2704,11 +2676,70 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:list-sessions") {
+			const params = new URLSearchParams();
+			if (typeof message.limit === "number" && Number.isFinite(message.limit)) {
+				params.set("limit", String(message.limit));
+			}
+			const response = await callOnhandApi(`/sessions${params.size ? `?${params.toString()}` : ""}`);
+			sendResponse({
+				ok: true,
+				currentSession: response.currentSession,
+				sessions: response.sessions,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:new-session") {
+			const response = await callOnhandApi("/sessions/new", {
+				method: "POST",
+			});
+			sendResponse({
+				ok: true,
+				created: response.created,
+				currentSession: response.currentSession,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:switch-session") {
+			const response = await callOnhandApi("/sessions/switch", {
+				method: "POST",
+				body: JSON.stringify({
+					sessionPath: message.sessionPath,
+				}),
+			});
+			sendResponse({
+				ok: true,
+				switched: response.switched,
+				currentSession: response.currentSession,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:restore-session") {
+			const response = await callOnhandApi("/sessions/restore", {
+				method: "POST",
+				body: JSON.stringify({
+					sessionPath: message.sessionPath,
+				}),
+			});
+			sendResponse({
+				ok: true,
+				restoredPages: response.restoredPages,
+				restoredCount: response.restoredCount,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:submit-prompt") {
 			const response = await callOnhandApi("/prompt", {
 				method: "POST",
 				body: JSON.stringify({
 					prompt: message.prompt,
+					displayPrompt: message.displayPrompt,
+					attachments: Array.isArray(message.attachments) ? message.attachments : [],
+					source: message.source === "sidebar" ? "sidebar" : "desktop",
 				}),
 			});
 			sendResponse({
@@ -2732,8 +2763,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:stop") {
+			const response = await callOnhandApi("/stop", {
+				method: "POST",
+			});
+			sendResponse({
+				ok: true,
+				stopped: response.stopped,
+				currentSession: response.currentSession,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:close") {
-			const result = await closeSidebarForWindow(_sender?.tab?.windowId);
+			const windowId =
+				typeof message.windowId === "number" ? message.windowId : typeof _sender?.tab?.windowId === "number" ? _sender.tab.windowId : null;
+			const result = await closeSidebarForWindow(windowId);
 			sendResponse({
 				ok: true,
 				...result,
@@ -2781,19 +2826,6 @@ chrome.tabs.onUpdated.addListener(() => {
 	scheduleStatePush("tabs.onUpdated");
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-	if (changeInfo.status !== "complete") return;
-	if (!(await isSidebarOpenForWindow(tab?.windowId))) return;
-	const injected = await ensureSidebarInjected(tabId);
-	if (!injected) return;
-	try {
-		await chrome.tabs.sendMessage(tabId, {
-			type: "onhand:sidebar-visibility",
-			open: true,
-		});
-	} catch {}
-});
-
 chrome.windows.onRemoved.addListener(async (windowId) => {
 	await setSidebarWindowOpen(windowId, false);
 });
@@ -2801,3 +2833,5 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 connectBridge().catch((error) => {
 	log("Initial connect failed", error);
 });
+
+configureSidePanelActionClick();
