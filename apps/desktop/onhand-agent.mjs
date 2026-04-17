@@ -41,6 +41,19 @@ Prefer the clearest answer-bearing text in the main content or page header. Avoi
 
 Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, keep on-page notes short and explanatory, and use markdown emphasis sparingly. Bold only short phrases that truly need emphasis; do not bold whole bullets, sentences, or most of the answer.`;
 
+const ONHAND_LEARNING_MODE_APPEND = `Learning mode is enabled for this request.
+
+Your job is not only to answer, but to help the user learn from the material already on their screen.
+
+When it fits the question:
+- identify the prerequisite concept the question depends on; if the page contains a useful definition or setup passage, highlight that first and add a short "read this first" note before giving the main explanation
+- for "why", "how", "what does this mean", "prove", "derive", or similarly explanatory questions, ask the user for one short prediction before revealing the full explanation when that would materially help understanding
+- after a substantive explanation, add one short retrieval-check note such as "In your own words, what does this passage claim?" when the page can support that naturally
+- name the likely misconception or wrong mental model implicit in the question and correct it explicitly
+- prefer fewer, better-placed annotations; learning mode should feel more deliberate, not more cluttered
+
+Do not force Socratic behavior on every prompt. If the user clearly wants a quick answer, already shows they know the prerequisite, or the question is simple and transactional, collapse back to a direct explanation.`;
+
 let runtimePromise = null;
 let activeRequest = null;
 let sessionEventUnsubscribe = null;
@@ -110,6 +123,8 @@ function buildCurrentSessionPlaceholder(currentSession) {
 function createEmptyUiState(currentSession = null) {
 	return {
 		currentSession,
+		turns: [],
+		currentTurnId: null,
 		messages: [],
 		activities: [],
 		pageActions: [],
@@ -223,9 +238,10 @@ function buildPromptImages(attachments) {
 		}));
 }
 
-function buildLauncherPrompt(prompt, browserContext, attachments = []) {
+function buildLauncherPrompt(prompt, browserContext, attachments = [], options = {}) {
 	const trimmedPrompt = String(prompt || "").trim();
 	const attachmentContext = buildAttachmentContext(attachments);
+	const learningMode = Boolean(options.learningMode);
 	return [
 		"The user invoked Onhand from the desktop launcher.",
 		"",
@@ -244,6 +260,7 @@ function buildLauncherPrompt(prompt, browserContext, attachments = []) {
 		"When it would help the user understand the answer, point to it on the live page by switching tabs, highlighting exact text, adding a short note, scrolling it into view, and saving a browser artifact.",
 		"Prefer the most informative visible passage or heading that answers the question; avoid footer/legal boilerplate when a better passage exists.",
 		"Use markdown emphasis sparingly and only for short phrases that really matter.",
+		...(learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []),
 	].join("\n");
 }
 
@@ -298,14 +315,139 @@ function extractAssistantText(messages) {
 	return "";
 }
 
+function buildTurnsFromMessages(messages = []) {
+	const turns = [];
+	let pendingUser = null;
+
+	for (const message of Array.isArray(messages) ? messages : []) {
+		if (!message || typeof message !== "object") continue;
+		if (message.role === "user") {
+			pendingUser = message;
+			continue;
+		}
+		if (message.role !== "assistant") continue;
+
+		const reply = String(message.text || "").trim();
+		if (pendingUser) {
+			turns.push({
+				id: pendingUser.id?.startsWith("user:") ? pendingUser.id.slice("user:".length) : `${turns.length + 1}`,
+				userPrompt: pendingUser.text || "",
+				reply,
+				activities: [],
+				pageActions: [],
+				pending: Boolean(message.pending),
+				error: Boolean(message.error),
+				createdAt: pendingUser.createdAt || message.createdAt || new Date().toISOString(),
+			});
+			pendingUser = null;
+			continue;
+		}
+
+		if (reply) {
+			turns.push({
+				id: message.id?.startsWith("assistant:") ? message.id.slice("assistant:".length) : `${turns.length + 1}`,
+				userPrompt: "",
+				reply,
+				activities: [],
+				pageActions: [],
+				pending: Boolean(message.pending),
+				error: Boolean(message.error),
+				createdAt: message.createdAt || new Date().toISOString(),
+			});
+		}
+	}
+
+	return turns;
+}
+
+function archiveCurrentTurnIntoHistory(state = uiState) {
+	const turnId = state?.currentTurnId;
+	if (!turnId || state?.activeRequestId === turnId) {
+		return Array.isArray(state?.turns) ? [...state.turns] : [];
+	}
+	const existingTurns = Array.isArray(state?.turns) ? [...state.turns] : [];
+	if (existingTurns.some((turn) => turn?.id === turnId)) {
+		return existingTurns;
+	}
+
+	const userMessage = Array.isArray(state?.messages)
+		? state.messages.find((message) => message?.id === `user:${turnId}`)
+		: null;
+	const assistantMessage = Array.isArray(state?.messages)
+		? state.messages.find((message) => message?.id === `assistant:${turnId}`)
+		: null;
+	const reply = String(assistantMessage?.text || "").trim();
+	const userPrompt = String(userMessage?.text || "").trim();
+	const hasVisuals = Array.isArray(state?.activities) && state.activities.length > 0 || Array.isArray(state?.pageActions) && state.pageActions.length > 0;
+	if (!reply && !userPrompt && !hasVisuals) {
+		return existingTurns;
+	}
+
+	existingTurns.push({
+		id: turnId,
+		userPrompt,
+		reply,
+		activities: Array.isArray(state?.activities) ? [...state.activities] : [],
+		pageActions: Array.isArray(state?.pageActions) ? [...state.pageActions] : [],
+		pending: false,
+		error: Boolean(assistantMessage?.error),
+		createdAt: userMessage?.createdAt || assistantMessage?.createdAt || new Date().toISOString(),
+	});
+	return existingTurns;
+}
+
 function emitRequestEvent(payload) {
 	activeRequest?.onEvent(payload);
 }
 
+function preserveCurrentTurnMessageIds(messages, currentTurnId, previousMessages = []) {
+	if (!currentTurnId || !Array.isArray(messages) || !messages.length) {
+		return Array.isArray(messages) ? messages : [];
+	}
+
+	const nextMessages = messages.map((message) => ({ ...message }));
+	const lastAssistantIndex = nextMessages.findLastIndex((message) => message?.role === "assistant");
+	if (lastAssistantIndex < 0) return nextMessages;
+
+	const lastUserIndex = nextMessages.findLastIndex(
+		(message, index) => index < lastAssistantIndex && message?.role === "user",
+	);
+	if (lastUserIndex < 0) return nextMessages;
+
+	const previousUserMessage = Array.isArray(previousMessages)
+		? previousMessages.find((message) => message?.id === `user:${currentTurnId}`)
+		: null;
+	const previousAssistantMessage = Array.isArray(previousMessages)
+		? previousMessages.find((message) => message?.id === `assistant:${currentTurnId}`)
+		: null;
+
+	nextMessages[lastUserIndex] = {
+		...nextMessages[lastUserIndex],
+		id: `user:${currentTurnId}`,
+		createdAt: nextMessages[lastUserIndex].createdAt || previousUserMessage?.createdAt,
+	};
+	nextMessages[lastAssistantIndex] = {
+		...nextMessages[lastAssistantIndex],
+		id: `assistant:${currentTurnId}`,
+		createdAt: nextMessages[lastAssistantIndex].createdAt || previousAssistantMessage?.createdAt,
+	};
+
+	return nextMessages;
+}
+
 function syncUiStateFromSession(session, overrides = {}) {
+	const currentSession = buildSessionState(session);
+	const sessionMessages = buildConversationMessagesFromAgent(session.agent.state.messages);
+	const sameSession = uiState.currentSession?.sessionFile && currentSession.sessionFile && uiState.currentSession.sessionFile === currentSession.sessionFile;
+	const messages =
+		sameSession && uiState.currentTurnId
+			? preserveCurrentTurnMessageIds(sessionMessages, uiState.currentTurnId, uiState.messages)
+			: sessionMessages;
 	replaceUiState({
-		...createEmptyUiState(buildSessionState(session)),
-		messages: buildConversationMessagesFromAgent(session.agent.state.messages),
+		...createEmptyUiState(currentSession),
+		turns: sameSession ? [...(uiState.turns || [])] : buildTurnsFromMessages(messages),
+		currentTurnId: sameSession ? uiState.currentTurnId : null,
+		messages,
 		...overrides,
 	});
 }
@@ -313,9 +455,12 @@ function syncUiStateFromSession(session, overrides = {}) {
 function beginUiRequest(session, requestId, prompt) {
 	const currentSession = buildSessionState(session);
 	const previousMessages = buildConversationMessagesFromAgent(session.agent.state.messages);
+	const previousTurns = archiveCurrentTurnIntoHistory();
 	const now = new Date().toISOString();
 	replaceUiState({
 		currentSession,
+		turns: previousTurns,
+		currentTurnId: requestId,
 		messages: [
 			...previousMessages,
 			{
@@ -344,10 +489,13 @@ export async function primeOnhandUiRequest(requestId, prompt, status = "Collecti
 	const previousMessages = Array.isArray(uiState.messages)
 		? uiState.messages.filter((message) => message.id !== `user:${requestId}` && message.id !== `assistant:${requestId}`)
 		: [];
+	const previousTurns = archiveCurrentTurnIntoHistory();
 	const now = new Date().toISOString();
 
 	replaceUiState({
 		currentSession,
+		turns: previousTurns,
+		currentTurnId: requestId,
 		messages: [
 			...previousMessages,
 			{
@@ -765,7 +913,7 @@ export async function stopOnhandRun() {
 	};
 }
 
-export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, attachments = [], browserContext, onEvent }) {
+export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, attachments = [], browserContext, learningMode = false, onEvent }) {
 	const { session } = await ensureRuntime();
 	if (activeRequest) {
 		throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
@@ -795,7 +943,7 @@ export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, att
 	});
 
 	try {
-		await session.prompt(buildLauncherPrompt(prompt, browserContext, attachments), {
+		await session.prompt(buildLauncherPrompt(prompt, browserContext, attachments, { learningMode }), {
 			images: buildPromptImages(attachments),
 		});
 		if (activeRequest?.id === requestId) {

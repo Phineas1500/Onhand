@@ -671,6 +671,29 @@
 				gap: 8px;
 				flex-wrap: wrap;
 			}
+			.mode-toggle {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				padding: 7px 10px;
+				border-radius: 999px;
+				border: 1px solid rgba(255, 255, 255, 0.08);
+				background: rgba(255, 255, 255, 0.035);
+				color: #b9ad9d;
+				font-size: 12px;
+				font-weight: 600;
+				white-space: nowrap;
+				user-select: none;
+			}
+			.mode-toggle.active {
+				color: #c9f0d1;
+				border-color: rgba(201, 240, 209, 0.18);
+				background: rgba(201, 240, 209, 0.08);
+			}
+			.mode-toggle input {
+				margin: 0;
+				accent-color: #c9f0d1;
+			}
 			.session-select {
 				flex: 1;
 				min-width: 0;
@@ -725,7 +748,25 @@
 			.message-list {
 				display: flex;
 				flex-direction: column;
+				gap: 18px;
+			}
+			.turn-card {
+				display: flex;
+				flex-direction: column;
 				gap: 12px;
+				padding-bottom: 18px;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+			}
+			.turn-card:last-child {
+				padding-bottom: 0;
+				border-bottom: none;
+			}
+			.turn-subtitle {
+				color: #b9ad9d;
+				font-size: 11px;
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
 			}
 			.message-card {
 				padding: 12px 14px;
@@ -902,6 +943,11 @@
 				border-radius: 16px;
 				background: rgba(255, 255, 255, 0.03);
 				border: 1px solid rgba(255, 255, 255, 0.06);
+			}
+			.turn-actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
 			}
 			.empty-card {
 				color: #b9ad9d;
@@ -1082,6 +1128,10 @@
 					<div class="section-title">Session</div>
 					<div class="session-toolbar">
 						<select id="sessionSelect" class="session-select"></select>
+						<label id="learningModeLabel" class="mode-toggle" title="Learning Mode slows down the first answer and pushes Onhand to scaffold and check understanding.">
+							<input id="learningModeToggle" type="checkbox" />
+							<span>Learning</span>
+						</label>
 					</div>
 					<div class="session-actions">
 						<button id="newSessionButton" class="session-button" type="button">New</button>
@@ -1127,6 +1177,8 @@
 	const meta = shadow.getElementById("meta");
 	const body = shadow.querySelector(".body");
 	const sessionSelect = shadow.getElementById("sessionSelect");
+	const learningModeLabel = shadow.getElementById("learningModeLabel");
+	const learningModeToggle = shadow.getElementById("learningModeToggle");
 	const newSessionButton = shadow.getElementById("newSessionButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
 	const stopButton = shadow.getElementById("stopButton");
@@ -1192,6 +1244,7 @@
 	function renderSessionControls(state) {
 		const currentPath = state?.currentSession?.sessionFile || sessionOverview?.currentSession?.sessionFile || "";
 		const sessions = Array.isArray(sessionOverview?.sessions) ? sessionOverview.sessions : [];
+		const learningMode = Boolean(state?.preferences?.learningMode);
 		if (!sessions.length) {
 			sessionSelect.innerHTML = `<option value="">${sessionLoading ? "Loading sessions…" : "Current session"}</option>`;
 		} else {
@@ -1205,6 +1258,9 @@
 
 		const activeRequest = Boolean(state?.activeRequestId);
 		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || activeRequest;
+		learningModeToggle.checked = learningMode;
+		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
+		learningModeLabel.classList.toggle("active", learningMode);
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
@@ -1376,61 +1432,60 @@
 		throw new Error("Only image and text-based attachments are supported in the sidebar right now.");
 	}
 
-	function deriveMessageView(state) {
+	function deriveCurrentTurn(state) {
+		const currentTurnId = state?.currentTurnId || state?.activeRequestId;
+		if (!currentTurnId) return null;
 		const messages = Array.isArray(state?.messages) ? state.messages : [];
-		const visibleMessages = messages.filter((message) => {
-			if (!message || typeof message !== "object") return false;
-			if (message.role === "assistant") {
-				return Boolean(String(message.text || "").trim());
-			}
-			return true;
-		});
-		let latestAssistantIndex = -1;
-		for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
-			if (visibleMessages[index]?.role === "assistant") {
-				latestAssistantIndex = index;
-				break;
-			}
-		}
+		const userMessage = messages.find((message) => message?.id === `user:${currentTurnId}`);
+		const assistantMessage = messages.find((message) => message?.id === `assistant:${currentTurnId}`);
+		const userPrompt = String(userMessage?.text || "").trim();
+		const reply = String(assistantMessage?.text || "").trim();
+		const activities = Array.isArray(state?.activities) ? state.activities : [];
+		const pageActions = Array.isArray(state?.pageActions) ? state.pageActions : [];
+		if (!userPrompt && !reply && !activities.length && !pageActions.length) return null;
 		return {
-			conversationMessages: visibleMessages.filter((_, index) => index !== latestAssistantIndex),
-			latestAssistant: latestAssistantIndex >= 0 ? visibleMessages[latestAssistantIndex] : null,
+			id: currentTurnId,
+			userPrompt,
+			reply,
+			activities,
+			pageActions,
+			pending: Boolean(state?.activeRequestId === currentTurnId || assistantMessage?.pending),
+			error: Boolean(assistantMessage?.error),
 		};
 	}
 
-	function renderMessages(messages) {
-		if (!messages.length) {
-			messagesEl.innerHTML = `<div class="empty-card">Ask from the popup or here in the sidebar. Onhand will keep this conversation live while you browse.</div>`;
-			return;
-		}
-
-		messagesEl.innerHTML = messages
-			.map((message) => {
-				const roleLabel = message.role === "user" ? "You" : "Onhand";
-				return `
-					<div class="message-card ${message.role === "user" ? "user" : "assistant"}">
-						<div class="message-role">${escapeHtml(roleLabel)}</div>
-						<div class="message-body">${escapeHtml(message.text || "")}</div>
-					</div>
-				`;
-			})
-			.join("");
+	function renderActionButtons(actions, className = "action-list") {
+		const items = Array.isArray(actions) ? actions : [];
+		if (!items.length) return "";
+		return `
+			<div class="${className}">
+				${items
+					.map(
+						(action) => `
+							<button class="action-button" data-action-key="${escapeHtml(action.key)}" type="button">
+								${escapeHtml(action.detail ? `${action.label} · ${action.detail}` : action.label || "Open")}
+							</button>
+						`,
+					)
+					.join("")}
+			</div>
+		`;
 	}
 
-	function renderActivity(state, options = {}) {
-		const activities = Array.isArray(state?.activities) ? state.activities : [];
-		if (!activities.length) {
-			activityEl.innerHTML = `<div class="empty-card">Tool runs and reasoning traces will show up here while Onhand is answering.</div>`;
-			return;
+	function buildActivityMarkup(activities, options = {}) {
+		const allActivities = Array.isArray(activities) ? activities : [];
+		if (!allActivities.length) {
+			return `<div class="empty-card">Tool runs and reasoning traces will show up here while Onhand is answering.</div>`;
 		}
 
-		const reasoningOpen =
-			reasoningExpanded == null ? Boolean(options.activeRequest) || !options.hasLatestReply : reasoningExpanded;
-		const reasoningActivities = activities.filter((activity) => activity.kind === "reasoning");
-		const nonReasoningActivities = activities.filter((activity) => activity.kind !== "reasoning");
-		const visibleActivities = [...reasoningActivities.slice(-1), ...nonReasoningActivities.slice(-7)];
+		const reasoningOpen = Boolean(options.reasoningOpen);
+		const reasoningActivities = allActivities.filter((activity) => activity.kind === "reasoning");
+		const nonReasoningActivities = allActivities.filter((activity) => activity.kind !== "reasoning");
+		const visibleActivities = options.limitToRecent === false
+			? [...reasoningActivities.slice(-1), ...nonReasoningActivities]
+			: [...reasoningActivities.slice(-1), ...nonReasoningActivities.slice(-7)];
 
-		activityEl.innerHTML = visibleActivities
+		return visibleActivities
 			.map((activity) => {
 				if (activity.kind === "reasoning") {
 					return `
@@ -1449,6 +1504,62 @@
 				`;
 			})
 			.join("");
+	}
+
+	function renderMessages(turns) {
+		const items = Array.isArray(turns) ? turns : [];
+		if (!items.length) {
+			messagesEl.innerHTML = `<div class="empty-card">Ask from the popup or here in the sidebar. Onhand will keep this conversation live while you browse.</div>`;
+			return;
+		}
+
+		messagesEl.innerHTML = items
+			.map((turn) => {
+				const citationGroups = buildCitationGroups(turn?.pageActions);
+				return `
+					<div class="turn-card">
+						${turn?.userPrompt
+							? `
+								<div class="message-card user">
+									<div class="message-role">You</div>
+									<div class="message-body">${escapeHtml(turn.userPrompt)}</div>
+								</div>
+							`
+							: ""}
+						${Array.isArray(turn?.activities) && turn.activities.length
+							? `
+								<div class="turn-subtitle">Live Activity</div>
+								<div>${buildActivityMarkup(turn.activities, { reasoningOpen: false, limitToRecent: false })}</div>
+							`
+							: ""}
+						${Array.isArray(turn?.pageActions) && turn.pageActions.length
+							? `
+								<div class="turn-subtitle">On Page</div>
+								${renderActionButtons(turn.pageActions, "turn-actions")}
+							`
+							: ""}
+						${String(turn?.reply || "").trim()
+							? `
+								<div class="reply-rich ${turn.pending ? "pending" : ""}">
+									<div class="message-role">Onhand</div>
+									<div class="message-body">${renderReplyMarkdown(turn.reply, citationGroups)}</div>
+								</div>
+							`
+							: `<div class="empty-card">Thinking…</div>`}
+					</div>
+				`;
+			})
+			.join("");
+	}
+
+	function renderActivity(state, options = {}) {
+		const activities = Array.isArray(state?.activities) ? state.activities : [];
+		const reasoningOpen =
+			reasoningExpanded == null ? Boolean(options.activeRequest) || !options.hasLatestReply : reasoningExpanded;
+		activityEl.innerHTML = buildActivityMarkup(activities, {
+			reasoningOpen,
+			limitToRecent: true,
+		});
 
 		activityEl.querySelectorAll(".reasoning-card").forEach((detailsEl) => {
 			detailsEl.addEventListener("toggle", () => {
@@ -1458,17 +1569,17 @@
 	}
 
 	function renderLatestReply(state, latestAssistant) {
-		const replyText = String(latestAssistant?.text || "").trim();
+		const replyText = String(latestAssistant?.reply || latestAssistant?.text || "").trim();
 		const hasReply = Boolean(replyText);
 		replySectionEl.style.display = hasReply ? "flex" : "none";
 		if (!hasReply) {
 			replyEl.innerHTML = "";
 			return;
 		}
-		const citationGroups = buildCitationGroups(state?.pageActions);
+		const citationGroups = buildCitationGroups(latestAssistant?.pageActions || state?.pageActions);
 
 		replyEl.innerHTML = `
-			<div class="reply-rich ${state?.activeRequestId ? "pending" : ""}">
+			<div class="reply-rich ${latestAssistant?.pending || state?.activeRequestId ? "pending" : ""}">
 				<div class="message-role">Onhand</div>
 				<div class="message-body">${renderReplyMarkdown(replyText, citationGroups)}</div>
 			</div>
@@ -1482,15 +1593,7 @@
 			return;
 		}
 
-		actionsEl.innerHTML = actions
-			.map(
-				(action) => `
-					<button class="action-button" data-action-key="${escapeHtml(action.key)}" type="button">
-						${escapeHtml(action.detail ? `${action.label} · ${action.detail}` : action.label || "Open")}
-					</button>
-				`,
-			)
-			.join("");
+		actionsEl.innerHTML = renderActionButtons(actions);
 	}
 
 	function renderState(state) {
@@ -1502,17 +1605,18 @@
 			reasoningExpanded = null;
 		}
 		lastActiveRequestId = state?.activeRequestId || null;
-		const messageView = deriveMessageView(state);
+		const archivedTurns = Array.isArray(state?.turns) ? state.turns : [];
+		const currentTurn = deriveCurrentTurn(state);
 		currentState = state;
 		renderMeta(state);
 		renderSessionControls(state);
 		renderAttachmentDrafts();
-		renderMessages(messageView.conversationMessages);
+		renderMessages(archivedTurns);
 		renderActivity(state, {
-			hasLatestReply: Boolean(messageView.latestAssistant?.text?.trim()),
+			hasLatestReply: Boolean(currentTurn?.reply?.trim()),
 			activeRequest: Boolean(state?.activeRequestId),
 		});
-		renderLatestReply(state, messageView.latestAssistant);
+		renderLatestReply(state, currentTurn);
 		renderActions(state);
 
 		const activeRequest = Boolean(state?.activeRequestId);
@@ -1551,6 +1655,7 @@
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
+		const learningMode = Boolean(currentState?.preferences?.learningMode);
 		sending = true;
 		renderState(currentState || {});
 		try {
@@ -1559,6 +1664,7 @@
 				prompt: trimmedPrompt,
 				displayPrompt,
 				attachments,
+				learningMode,
 				source: "sidebar",
 			});
 			if (!response?.ok) {
@@ -1583,6 +1689,24 @@
 		}
 	}
 
+	async function updateLearningMode(learningMode) {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:set-learning-mode",
+			learningMode,
+		});
+		if (!response?.ok) {
+			throw new Error(response?.error || "Could not update Learning Mode.");
+		}
+		renderState({
+			...(currentState || {}),
+			preferences: {
+				...(currentState?.preferences || {}),
+				...(response.settings || {}),
+				learningMode: Boolean(response.settings?.learningMode),
+			},
+		});
+	}
+
 	closeButton.addEventListener("click", () => {
 		setOpen(false);
 		void ensureCurrentWindowId()
@@ -1594,6 +1718,18 @@
 		const nextSessionPath = sessionSelect.value;
 		if (!nextSessionPath) return;
 		void switchSession(nextSessionPath).catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	learningModeToggle.addEventListener("change", () => {
+		const nextValue = Boolean(learningModeToggle.checked);
+		void updateLearningMode(nextValue).catch((error) => {
+			learningModeToggle.checked = !nextValue;
+			learningModeLabel.classList.toggle("active", !nextValue);
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
@@ -1669,6 +1805,18 @@
 	});
 
 	actionsEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-action-key]");
+		if (!(button instanceof HTMLElement)) return;
+		void activateAction(button.dataset.actionKey || "").catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	messagesEl.addEventListener("click", (event) => {
 		const target = event.target instanceof Element ? event.target : null;
 		const button = target?.closest("[data-action-key]");
 		if (!(button instanceof HTMLElement)) return;

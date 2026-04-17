@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("onhandApp", {
 	getStartupState: () => ipcRenderer.invoke("onhand:get-startup-state"),
+	setLearningMode: (learningMode) => ipcRenderer.invoke("onhand:set-learning-mode", learningMode),
 	refreshContext: () => ipcRenderer.invoke("onhand:refresh-context"),
 	listSessions: (limit) => ipcRenderer.invoke("onhand:list-sessions", limit),
 	newSession: () => ipcRenderer.invoke("onhand:new-session"),

@@ -2676,6 +2676,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:set-learning-mode") {
+			const response = await callOnhandApi("/settings", {
+				method: "POST",
+				body: JSON.stringify({
+					learningMode: Boolean(message.learningMode),
+				}),
+			});
+			sendResponse({
+				ok: true,
+				settings: response.settings,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:list-sessions") {
 			const params = new URLSearchParams();
 			if (typeof message.limit === "number" && Number.isFinite(message.limit)) {
@@ -2740,6 +2754,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					displayPrompt: message.displayPrompt,
 					attachments: Array.isArray(message.attachments) ? message.attachments : [],
 					source: message.source === "sidebar" ? "sidebar" : "desktop",
+					learningMode: Boolean(message.learningMode),
 				}),
 			});
 			sendResponse({

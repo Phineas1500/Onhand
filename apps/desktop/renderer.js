@@ -3,6 +3,7 @@ const onhandApp = window.onhandApp;
 const promptForm = document.getElementById("promptForm");
 const promptInput = document.getElementById("promptInput");
 const contextChip = document.getElementById("contextChip");
+const learningModeToggle = document.getElementById("learningModeToggle");
 const pageTitle = document.getElementById("pageTitle");
 const pageSubtitle = document.getElementById("pageSubtitle");
 const selectionItem = document.getElementById("selectionItem");
@@ -25,6 +26,7 @@ let activeReplyText = "";
 let activePageActions = [];
 let currentSessionFile = null;
 let currentSessionCount = 0;
+let learningModeEnabled = false;
 
 function truncate(text, maxChars = 180) {
 	const value = String(text || "").replace(/\s+/g, " ").trim();
@@ -125,6 +127,13 @@ function setStatus(text, kind = "") {
 	statusText.className = `status-text${kind ? ` ${kind}` : ""}`;
 }
 
+function renderLearningModeToggle() {
+	if (!(learningModeToggle instanceof HTMLInputElement)) return;
+	learningModeToggle.checked = learningModeEnabled;
+	learningModeToggle.closest(".mode-toggle")?.classList.toggle("active", learningModeEnabled);
+	learningModeToggle.disabled = Boolean(activeRequestId);
+}
+
 function normalizePageActions(actions) {
 	const items = Array.isArray(actions) ? actions : [];
 	const seen = new Set();
@@ -201,6 +210,8 @@ if (!onhandApp) {
 }
 
 const startupState = await onhandApp.getStartupState();
+learningModeEnabled = Boolean(startupState?.learningMode);
+renderLearningModeToggle();
 
 function formatHotkey(accelerator, platform) {
 	const value = String(accelerator || "");
@@ -234,6 +245,7 @@ newSessionHint.textContent = startupState.platform === "darwin" ? "⌘N new" : "
 
 function updateSessionControls() {
 	newSessionButton.disabled = Boolean(activeRequestId);
+	renderLearningModeToggle();
 }
 
 function renderContext(context, options = {}) {
@@ -469,7 +481,12 @@ promptForm.addEventListener("submit", async (event) => {
 	primePromptUi(prompt);
 
 	try {
-		const result = await onhandApp.submitPrompt(prompt);
+		const result = await onhandApp.submitPrompt({
+			prompt,
+			displayPrompt: prompt,
+			learningMode: learningModeEnabled,
+			source: "desktop",
+		});
 		activeRequestId = result.requestId;
 		updateSessionControls();
 		void onhandApp.hideWindow({ restorePreviousApp: true }).catch(() => {});
@@ -482,6 +499,17 @@ promptForm.addEventListener("submit", async (event) => {
 		updateSessionControls();
 		focusInputIfAvailable();
 	}
+});
+
+learningModeToggle?.addEventListener("change", () => {
+	const nextValue = Boolean(learningModeToggle.checked);
+	learningModeEnabled = nextValue;
+	renderLearningModeToggle();
+	void onhandApp.setLearningMode(nextValue).catch((error) => {
+		learningModeEnabled = !nextValue;
+		renderLearningModeToggle();
+		setStatus(error?.message || String(error), "error");
+	});
 });
 
 newSessionButton.addEventListener("click", () => {

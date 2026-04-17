@@ -113,6 +113,7 @@ body {
 }
 
 .context-chip,
+.mode-toggle,
 .key-hint,
 .item-meta,
 .keycap {
@@ -121,6 +122,7 @@ body {
 }
 
 .context-chip,
+.mode-toggle,
 .key-hint,
 .item-meta {
   display: inline-flex;
@@ -131,6 +133,22 @@ body {
   font-size: 11px;
   padding: 7px 10px;
   white-space: nowrap;
+}
+
+.mode-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.mode-toggle input {
+  margin: 0;
+  accent-color: #c4f1d0;
+}
+
+.mode-toggle.active {
+  color: var(--ok);
+  border-color: rgba(196, 241, 208, 0.22);
+  background: rgba(196, 241, 208, 0.08);
 }
 
 .context-chip.error {

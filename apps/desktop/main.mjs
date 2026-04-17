@@ -1,7 +1,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen } from "electron";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -26,10 +26,14 @@ const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const FAST_TIMEOUT_MS = 2500;
 const ONHAND_UI_PORT = Number(process.env.ONHAND_UI_PORT || 3211);
+const ONHAND_SETTINGS_PATH = join(__dirname, "..", "..", ".onhand", "settings.json");
 const BROWSER_ARTIFACT_INDEX_PATH = join(__dirname, "..", "..", ".onhand", "artifacts", "browser", "index.json");
 const BLUR_HIDE_DELAY_MS = 120;
 const HOTKEY_DEBOUNCE_MS = 300;
 const WORKSPACE_VISIBILITY_SETTLE_MS = 60;
+const DEFAULT_ONHAND_SETTINGS = {
+	learningMode: false,
+};
 const execFileAsync = promisify(execFile);
 const MACOS_WORKSPACE_VISIBILITY_OPTIONS = {
 	visibleOnFullScreen: true,
@@ -44,9 +48,51 @@ let hotkeyToggleInFlight = false;
 let lastHotkeyToggleAt = 0;
 let appIsQuitting = false;
 let onhandUiServer = null;
+let onhandSettingsCache = null;
 
 function log(...args) {
 	console.log("[onhand-desktop]", ...args);
+}
+
+async function loadOnhandSettings() {
+	if (onhandSettingsCache) {
+		return { ...onhandSettingsCache };
+	}
+	try {
+		const raw = await readFile(ONHAND_SETTINGS_PATH, "utf8");
+		const parsed = JSON.parse(raw);
+		onhandSettingsCache = {
+			...DEFAULT_ONHAND_SETTINGS,
+			...(parsed && typeof parsed === "object" ? parsed : {}),
+			learningMode: Boolean(parsed?.learningMode),
+		};
+	} catch {
+		onhandSettingsCache = { ...DEFAULT_ONHAND_SETTINGS };
+	}
+	return { ...onhandSettingsCache };
+}
+
+async function saveOnhandSettings(partial = {}) {
+	const nextSettings = {
+		...(await loadOnhandSettings()),
+		...(partial && typeof partial === "object" ? partial : {}),
+	};
+	nextSettings.learningMode = Boolean(nextSettings.learningMode);
+	await mkdir(dirname(ONHAND_SETTINGS_PATH), { recursive: true });
+	await writeFile(ONHAND_SETTINGS_PATH, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+	onhandSettingsCache = nextSettings;
+	return { ...nextSettings };
+}
+
+async function getOnhandSettings() {
+	return await loadOnhandSettings();
+}
+
+async function buildOnhandUiState() {
+	return {
+		...getOnhandUiState(),
+		preferences: await getOnhandSettings(),
+	};
 }
 
 function normalizeBaseUrl(url) {
@@ -279,6 +325,7 @@ function normalizePromptRequest(input) {
 			displayPrompt: finalDisplayPrompt,
 			attachments,
 			source: input.source === "sidebar" ? "sidebar" : "desktop",
+			learningMode: Boolean(input.learningMode),
 		};
 	}
 
@@ -303,11 +350,12 @@ function normalizePromptRequest(input) {
 		displayPrompt,
 		attachments,
 		source: input?.source === "sidebar" ? "sidebar" : "desktop",
+		learningMode: Boolean(input?.learningMode),
 	};
 }
 
 async function runPromptRequest(requestId, request) {
-	const { promptText, displayPrompt, attachments, source } = normalizePromptRequest(request);
+	const { promptText, displayPrompt, attachments, source, learningMode } = normalizePromptRequest(request);
 	let initialStatus = "Collecting browser context…";
 	await primeOnhandUiRequest(requestId, displayPrompt, initialStatus);
 	sendPromptEvent({ type: "start", requestId, prompt: displayPrompt });
@@ -335,6 +383,7 @@ async function runPromptRequest(requestId, request) {
 			displayPrompt,
 			attachments,
 			browserContext,
+			learningMode,
 			onEvent: (event) => sendPromptEvent({ requestId, ...event }),
 		});
 	} catch (error) {
@@ -571,7 +620,9 @@ async function startOnhandUiRuntimeServer() {
 		host: bridgeUrl.hostname || "127.0.0.1",
 		port: ONHAND_UI_PORT,
 		token: connection.token,
-		getState: async () => getOnhandUiState(),
+		getState: async () => buildOnhandUiState(),
+		getSettings: async () => getOnhandSettings(),
+		updateSettings: async (partial) => saveOnhandSettings(partial),
 		listSessions: async (limit) => getSessionOverview(limit),
 		startNewSession: async () => startNewOnhandSession(),
 		switchSession: async (sessionPath) => switchOnhandSession(sessionPath),
@@ -841,7 +892,12 @@ ipcMain.handle("onhand:get-startup-state", async () => ({
 	hotkey: HOTKEY,
 	platform: process.platform,
 	version: app.getVersion(),
+	learningMode: Boolean((await getOnhandSettings()).learningMode),
 }));
+
+ipcMain.handle("onhand:set-learning-mode", async (_event, learningMode) => {
+	return await saveOnhandSettings({ learningMode: Boolean(learningMode) });
+});
 
 ipcMain.handle("onhand:refresh-context", async () => {
 	return await getBrowserContext();

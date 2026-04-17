@@ -50,6 +50,8 @@ export function createOnhandUiServer({
 	port = 3211,
 	token,
 	getState,
+	getSettings,
+	updateSettings,
 	listSessions,
 	startNewSession,
 	switchSession,
@@ -84,6 +86,28 @@ export function createOnhandUiServer({
 				sendJson(res, 200, {
 					ok: true,
 					state: await getState(),
+				});
+				return;
+			}
+
+			if (req.method === "GET" && pathname === "/settings") {
+				sendJson(res, 200, {
+					ok: true,
+					settings: (await getSettings?.()) || {},
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/settings") {
+				if (!updateSettings) {
+					const error = new Error("Settings updates are unavailable.");
+					error.statusCode = 501;
+					throw error;
+				}
+				const body = await readJsonBody(req);
+				sendJson(res, 200, {
+					ok: true,
+					settings: await updateSettings(body),
 				});
 				return;
 			}
