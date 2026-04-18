@@ -8,11 +8,28 @@ function parseArgs(argv) {
 	const args = {
 		json: false,
 		sessionRef: "",
+		wait: false,
+		timeoutMs: 20000,
+		intervalMs: 500,
 	};
 
 	for (const value of argv) {
 		if (value === "--json") {
 			args.json = true;
+			continue;
+		}
+		if (value === "--wait") {
+			args.wait = true;
+			continue;
+		}
+		if (value.startsWith("--timeout-ms=")) {
+			const parsed = Number.parseInt(value.slice("--timeout-ms=".length), 10);
+			if (Number.isFinite(parsed) && parsed > 0) args.timeoutMs = parsed;
+			continue;
+		}
+		if (value.startsWith("--interval-ms=")) {
+			const parsed = Number.parseInt(value.slice("--interval-ms=".length), 10);
+			if (Number.isFinite(parsed) && parsed > 0) args.intervalMs = parsed;
 			continue;
 		}
 		if (!args.sessionRef) {
@@ -209,6 +226,7 @@ function inspectLatestTurn(entries, sessionPath) {
 	const finalAssistantEntry = [...assistantEntries]
 		.reverse()
 		.find((entry) => extractFinalAnswer(entry?.message?.content));
+	const lastAssistantEntry = assistantEntries.at(-1) || null;
 	const finalReply = extractFinalAnswer(finalAssistantEntry?.message?.content);
 	const reasoningSummaries = dedupe(assistantEntries.flatMap((entry) => extractReasoningSummaries(entry?.message?.content)));
 	const pageActionItems = toolResultEntries.map((entry) => summarizeToolResult(entry.message)).filter(Boolean);
@@ -217,6 +235,14 @@ function inspectLatestTurn(entries, sessionPath) {
 		.map((item) => item.artifactId);
 	const errors = pageActionItems.filter((item) => item.kind === "error");
 	const pageActions = pageActionItems.filter((item) => item.kind === "pageAction" || item.kind === "artifact");
+	const hasInFlightOutput = assistantEntries.length > 0 || toolResultEntries.length > 0;
+	const terminalWithoutReply =
+		!finalReply &&
+		Boolean(
+			lastAssistantEntry?.message?.stopReason === "aborted" ||
+				lastAssistantEntry?.message?.stopReason === "cancelled" ||
+				lastAssistantEntry?.message?.errorMessage,
+		);
 
 	return {
 		sessionPath,
@@ -232,8 +258,34 @@ function inspectLatestTurn(entries, sessionPath) {
 			entryCount: turnEntries.length,
 			startedAt: latestUserEntry?.timestamp || null,
 			endedAt: turnEntries.at(-1)?.timestamp || null,
+			isComplete: Boolean(finalReply),
+			isPossiblyRunning: !finalReply && hasInFlightOutput && !terminalWithoutReply,
+			isStopped: terminalWithoutReply,
+			stopReason:
+				lastAssistantEntry?.message?.stopReason ||
+				(lastAssistantEntry?.message?.errorMessage ? "error" : null),
 		},
 	};
+}
+
+async function sleep(ms) {
+	await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForLatestTurnCompletion(sessionPath, { timeoutMs, intervalMs }) {
+	const startedAt = Date.now();
+	let latestReport = null;
+	while (true) {
+		const entries = await loadSessionEntries(sessionPath);
+		latestReport = inspectLatestTurn(entries, sessionPath);
+		if (!latestReport.latestTurn || latestReport.latestTurn.isComplete || latestReport.latestTurn.isStopped) {
+			return latestReport;
+		}
+		if (Date.now() - startedAt >= timeoutMs) {
+			return latestReport;
+		}
+		await sleep(intervalMs);
+	}
 }
 
 function printHumanReadable(report) {
@@ -250,6 +302,12 @@ function printHumanReadable(report) {
 	const turn = report.latestTurn;
 	console.log(`\nLatest user prompt:\n${turn.userPrompt || "(none)"}`);
 	console.log(`\nLatest assistant reply:\n${turn.finalReply || "(none)"}`);
+	if (!turn.finalReply && turn.isPossiblyRunning) {
+		console.log("\nNote: latest turn has page/tool activity but no final reply yet. Rerun with --wait to poll for completion.");
+	}
+	if (!turn.finalReply && turn.isStopped) {
+		console.log(`\nNote: latest turn ended without a final reply (${turn.stopReason || "stopped"}).`);
+	}
 
 	console.log("\nReasoning summaries:");
 	if (!turn.reasoningSummaries.length) {
@@ -292,8 +350,12 @@ function printHumanReadable(report) {
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const sessionPath = await resolveSessionPath(args.sessionRef);
-	const entries = await loadSessionEntries(sessionPath);
-	const report = inspectLatestTurn(entries, sessionPath);
+	const report = args.wait
+		? await waitForLatestTurnCompletion(sessionPath, {
+				timeoutMs: args.timeoutMs,
+				intervalMs: args.intervalMs,
+			})
+		: inspectLatestTurn(await loadSessionEntries(sessionPath), sessionPath);
 
 	if (args.json) {
 		console.log(JSON.stringify(report, null, 2));

@@ -21,6 +21,10 @@
     "bridge:config": "node ./packages/browser-bridge/server.mjs config",
     "desktop": "electron ./apps/desktop/main.mjs",
     "inspect:latest-session": "node ./scripts/inspect-latest-session.mjs",
+    "tmux:start": "./scripts/onhand-tmux.sh start",
+    "tmux:stop": "./scripts/onhand-tmux.sh stop",
+    "tmux:attach": "./scripts/onhand-tmux.sh attach",
+    "tmux:status": "./scripts/onhand-tmux.sh status",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs"
   },
