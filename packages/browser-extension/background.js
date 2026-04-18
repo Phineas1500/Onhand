@@ -695,7 +695,30 @@ const createPageToolkit = () => {
 		return element.isContentEditable;
 	};
 
-	const getElementText = (element) => normalizeText(element?.innerText || element?.textContent || "");
+	const READABLE_TEXT_EXCLUDED_SELECTOR = [
+		"script",
+		"style",
+		"noscript",
+		".MathJax_Preview",
+		".MJX_Assistive_MathML",
+		"mjx-assistive-mml",
+		".katex-mathml",
+		"annotation",
+		"annotation-xml",
+		"semantics",
+	].join(", ");
+
+	const getElementText = (element) => {
+		if (!(element instanceof Element)) return normalizeText(element?.textContent || "");
+		const clone = element.cloneNode(true);
+		if (clone instanceof Element) {
+			for (const node of Array.from(clone.querySelectorAll(READABLE_TEXT_EXCLUDED_SELECTOR))) {
+				node.remove();
+			}
+			return normalizeText(clone.textContent || "");
+		}
+		return normalizeText(element.innerText || element.textContent || "");
+	};
 
 	const getLabelTextForControl = (element) => {
 		if (!(element instanceof Element)) return "";
@@ -1087,6 +1110,16 @@ const createPageToolkit = () => {
 		".mw-jump-link",
 	].join(", ");
 
+	const EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR = [
+		".MathJax_Preview",
+		".MJX_Assistive_MathML",
+		"mjx-assistive-mml",
+		".katex-mathml",
+		"annotation",
+		"annotation-xml",
+		"semantics",
+	].join(", ");
+
 	const rectToObject = (rect) => ({
 		top: rect.top,
 		left: rect.left,
@@ -1125,15 +1158,16 @@ const createPageToolkit = () => {
 				if (!value.trim()) return NodeFilter.FILTER_REJECT;
 				const parent = node.parentElement;
 				if (!parent) return NodeFilter.FILTER_REJECT;
-					const tag = parent.tagName.toLowerCase();
-					if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
-					if (parent.closest('[data-onhand-highlight-kind]')) return NodeFilter.FILTER_REJECT;
-					if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
-					if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
-					if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
-					return NodeFilter.FILTER_ACCEPT;
-				},
-			});
+				const tag = parent.tagName.toLowerCase();
+				if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
+				if (parent.closest('[data-onhand-highlight-kind]')) return NodeFilter.FILTER_REJECT;
+				if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
+				if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+				if (parent.closest(EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
+				return NodeFilter.FILTER_ACCEPT;
+			},
+		});
 
 		let currentNode;
 		while ((currentNode = walker.nextNode())) {
@@ -1408,7 +1442,7 @@ const createPageToolkit = () => {
 					return {
 						annotationId,
 						kind: "inline",
-						matchedText: normalizeText(highlight.textContent || rawQuery),
+						matchedText: getElementText(highlight).slice(0, 500) || normalizeText(rawQuery),
 						container: summarizeElement(findAnnotationContainer(highlight)),
 						rect: rectToObject(highlight.getBoundingClientRect()),
 						scrollY: window.scrollY,
@@ -1434,7 +1468,7 @@ const createPageToolkit = () => {
 				return {
 					annotationId,
 					kind: "inline",
-					matchedText: normalizeText(highlight.textContent || bestApproximateMatch.text || rawQuery),
+					matchedText: getElementText(highlight).slice(0, 500) || normalizeText(bestApproximateMatch.text || rawQuery),
 					container: summarizeElement(findAnnotationContainer(highlight)),
 					rect: rectToObject(highlight.getBoundingClientRect()),
 					scrollY: window.scrollY,
@@ -1740,7 +1774,7 @@ const createPageToolkit = () => {
 				return {
 					annotationId,
 					kind,
-					matchedText: normalizeText(annotationElement.textContent || "").slice(0, 500),
+					matchedText: getElementText(annotationElement).slice(0, 500),
 					container: summarizeElement(container),
 					rect: rectToObject(annotationElement.getBoundingClientRect()),
 					note: note
