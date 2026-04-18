@@ -1142,16 +1142,74 @@ const createPageToolkit = () => {
 		return accepted;
 	};
 
-	const collectHighlightContainers = (queryLower) => {
+	const APPROXIMATE_HIGHLIGHT_STOP_WORDS = new Set([
+		"a",
+		"an",
+		"and",
+		"are",
+		"as",
+		"at",
+		"be",
+		"by",
+		"for",
+		"from",
+		"how",
+		"in",
+		"is",
+		"it",
+		"of",
+		"on",
+		"or",
+		"that",
+		"the",
+		"their",
+		"this",
+		"to",
+		"was",
+		"we",
+		"what",
+		"when",
+		"where",
+		"which",
+		"with",
+	]);
+
+	const tokenizeNormalizedText = (value) =>
+		String(value ?? "")
+			.toLowerCase()
+			.split(/[^a-z0-9]+/i)
+			.map((part) => part.trim())
+			.filter((part) => part.length >= 2);
+
+	const tokenizeApproximateQuery = (value) =>
+		tokenizeNormalizedText(value).filter((part) => part.length >= 3 && !APPROXIMATE_HIGHLIGHT_STOP_WORDS.has(part));
+
+	const countTokenOverlap = (tokens, otherTokenSet) => {
+		let overlap = 0;
+		for (const token of tokens) {
+			if (otherTokenSet.has(token)) overlap += 1;
+		}
+		return overlap;
+	};
+
+	const collectHighlightContainers = (queryLower, rawQuery) => {
 		const root = document.body || document.documentElement;
 		const candidates = [];
+		const queryTokens = tokenizeApproximateQuery(rawQuery);
+		const minimumOverlap = Math.min(2, queryTokens.length);
 		for (const container of root.querySelectorAll(ANNOTATION_CONTAINER_SELECTOR)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
 			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const text = lowerText(getElementText(container));
-			if (!text || !text.includes(queryLower)) continue;
+			if (!text) continue;
+			if (!text.includes(queryLower)) {
+				if (!queryTokens.length) continue;
+				const containerTokens = new Set(tokenizeApproximateQuery(text));
+				const overlap = countTokenOverlap(queryTokens, containerTokens);
+				if (overlap < minimumOverlap) continue;
+			}
 			candidates.push(container);
 		}
 		return candidates;
@@ -1191,6 +1249,52 @@ const createPageToolkit = () => {
 			lowerText: text.toLowerCase(),
 			positions,
 		};
+	};
+
+	const buildSegmentRanges = (mappedText) => {
+		const ranges = [];
+		const text = String(mappedText?.text || "");
+		let start = 0;
+		for (let index = 0; index < text.length; index += 1) {
+			const character = text[index];
+			if (![".", "!", "?", ";", ":"].includes(character)) continue;
+			const end = index + 1;
+			if (end > start) ranges.push([start, end]);
+			start = end;
+			while (start < text.length && /\s/.test(text[start])) start += 1;
+		}
+		if (start < text.length) ranges.push([start, text.length]);
+		return ranges.filter(([segmentStart, segmentEnd]) => segmentEnd - segmentStart >= 12);
+	};
+
+	const findBestApproximateHighlightRange = (mappedText, query) => {
+		const queryTokens = tokenizeApproximateQuery(query);
+		if (queryTokens.length < 2) return null;
+		const tokenSet = new Set(queryTokens);
+		let best = null;
+		const primaryToken = queryTokens[0] || null;
+
+		for (const [startIndex, endIndex] of buildSegmentRanges(mappedText)) {
+			const segmentText = mappedText.text.slice(startIndex, endIndex).trim();
+			if (!segmentText) continue;
+			const segmentTokens = tokenizeApproximateQuery(segmentText);
+			if (!segmentTokens.length) continue;
+			const segmentTokenSet = new Set(segmentTokens);
+			if (primaryToken && !segmentTokenSet.has(primaryToken)) continue;
+			const overlap = countTokenOverlap(queryTokens, segmentTokenSet);
+			if (overlap === 0) continue;
+			const coverage = overlap / queryTokens.length;
+			const density = overlap / Math.max(segmentTokens.length, 1);
+			const score = overlap * 120 + coverage * 40 + density * 15 - segmentText.length * 0.02;
+			if (!best || score > best.score) {
+				best = { startIndex, endIndex, overlap, coverage, score, text: segmentText };
+			}
+		}
+
+		if (!best) return null;
+		const minimumOverlap = Math.min(3, queryTokens.length);
+		if (best.overlap < minimumOverlap && best.coverage < 0.6) return null;
+		return best;
 	};
 
 	const wrapRangeInHighlight = (range, annotationId) => {
@@ -1267,11 +1371,20 @@ const createPageToolkit = () => {
 		if (clearExisting) clearAnnotations();
 
 		let matchIndex = 0;
-		for (const container of collectHighlightContainers(normalizedQuery)) {
+		let bestApproximateMatch = null;
+		for (const container of collectHighlightContainers(normalizedQuery, rawQuery)) {
 			const textNodes = collectHighlightTextNodes(container);
 			if (!textNodes.length) continue;
 			const mappedText = buildNormalizedTextMap(textNodes);
-			if (!mappedText.lowerText.includes(normalizedQuery)) continue;
+			const hasExactMatch = mappedText.lowerText.includes(normalizedQuery);
+			if (!hasExactMatch) {
+				const approximate = findBestApproximateHighlightRange(mappedText, rawQuery);
+				if (!approximate) continue;
+				if (!bestApproximateMatch || approximate.score > bestApproximateMatch.score) {
+					bestApproximateMatch = { ...approximate, mappedText, container };
+				}
+				continue;
+			}
 
 			let searchFrom = 0;
 			while (searchFrom <= mappedText.lowerText.length) {
@@ -1302,6 +1415,31 @@ const createPageToolkit = () => {
 					};
 				}
 				searchFrom = foundAt + Math.max(normalizedQuery.length, 1);
+			}
+		}
+
+		if (bestApproximateMatch && occurrence === 1) {
+			const start = bestApproximateMatch.mappedText.positions[bestApproximateMatch.startIndex];
+			const end = bestApproximateMatch.mappedText.positions[bestApproximateMatch.endIndex - 1];
+			if (start && end) {
+				const range = document.createRange();
+				range.setStart(start.node, start.offset);
+				range.setEnd(end.node, end.offset + 1);
+				const annotationId = nextAnnotationId();
+				const highlight = wrapRangeInHighlight(range, annotationId);
+				if (scrollIntoView) {
+					highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+				}
+				await waitForLayout();
+				return {
+					annotationId,
+					kind: "inline",
+					matchedText: normalizeText(highlight.textContent || bestApproximateMatch.text || rawQuery),
+					container: summarizeElement(findAnnotationContainer(highlight)),
+					rect: rectToObject(highlight.getBoundingClientRect()),
+					scrollY: window.scrollY,
+					approximate: true,
+				};
 			}
 		}
 
