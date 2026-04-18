@@ -1220,6 +1220,8 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Prefer this tool when you want to point the user to a specific phrase or sentence on the page.",
 			"Prefer short, distinctive visible phrases over long exact paragraphs or brittle full-sentence matches.",
+			"Choose a self-contained phrase or clause, not a dangling fragment or a few words that only make sense when attached to the equation right after them.",
+			"When the key evidence is mathematical, prefer the nearby natural-language sentence or a fuller clause that states what the formula means.",
 			"If a long quote fails or is likely to be fragile, retry with a shorter unique subphrase from the same passage.",
 			"Do not launch multiple browser_highlight_text calls in parallel on the same tab; add highlights one at a time.",
 			"Use occurrence when the same text appears multiple times on the page.",
