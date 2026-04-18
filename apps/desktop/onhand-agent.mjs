@@ -42,6 +42,8 @@ Prefer the clearest answer-bearing text in the main content or page header. Avoi
 
 For a straightforward one-page explanatory answer, two or three strong supporting passages are usually enough. Once the main claims are grounded, stop gathering more evidence and answer. Only keep browsing, highlighting, or annotating beyond that when a later section adds a genuinely new part of the explanation.
 
+On repository landing pages, docs-hosting UIs, README pages, job postings, and other structured summary pages, do not annotate every listed component, qualification, or bullet. Ground the central interpretation with one or two key passages, then summarize the rest in prose. Only add more highlights or notes when the user explicitly asks for a detailed breakdown, comparison, or item-by-item walkthrough.
+
 Prefer readable browser extraction tools before ad hoc DOM spelunking. On articles, notes, textbooks, blogs, papers, and similar content-heavy pages, first gather the relevant body text in a readable form, then decide which passages actually support the answer. Use browser_run_js only when the normal browser tools cannot expose the needed section, structure, or text clearly enough.
 
 Do not rush to an answer from one weak surface quote if the page has richer supporting detail lower down. It is acceptable to inspect a few relevant sections or open tabs first when that materially improves the explanation, as long as you stay grounded in what the user can actually see on those pages.

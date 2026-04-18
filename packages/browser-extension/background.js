@@ -9,6 +9,7 @@ const STATE_DEBOUNCE_MS = 200;
 const RECONNECT_DELAY_MS = 2000;
 const WEBSOCKET_KEEPALIVE_MS = 20_000;
 const SCREENSHOT_DELAY_MS = 150;
+const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -391,6 +392,43 @@ async function withDebugger(tabId, fn) {
 
 	debuggerTaskChains.set(tabId, trackedTask);
 	return await trackedTask;
+}
+
+function normalizeExecuteScriptValue(value) {
+	if (value == null) return value;
+	if (["string", "number", "boolean"].includes(typeof value)) return value;
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return String(value);
+	}
+}
+
+async function withOperationTimeout(promise, timeoutMs, timeoutMessage) {
+	let timeoutId = null;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise((_, reject) => {
+				timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+			}),
+		]);
+	} finally {
+		if (timeoutId) clearTimeout(timeoutId);
+	}
+}
+
+async function executeScriptInTab(tabId, func, args = []) {
+	const results = await chrome.scripting.executeScript({
+		target: { tabId },
+		world: "ISOLATED",
+		func,
+		args,
+	});
+	if (!Array.isArray(results) || results.length === 0) {
+		throw new Error("No script result returned");
+	}
+	return results[0].result;
 }
 
 function normalizeRemoteObject(remoteObject) {
@@ -1917,7 +1955,64 @@ const createPageToolkit = () => {
 	};
 };
 
-async function evaluateInTab(tabId, expression) {
+async function evaluateInTab(tabId, expression, options = {}) {
+	if (!options.skipScripting) {
+		try {
+		const payload = await executeScriptInTab(
+			tabId,
+			async (source) => {
+				try {
+					const value = await (0, eval)(source);
+					return {
+						ok: true,
+						value: (() => {
+							if (value == null) return value;
+							if (["string", "number", "boolean"].includes(typeof value)) return value;
+							try {
+								return JSON.parse(JSON.stringify(value));
+							} catch {
+								return String(value);
+							}
+						})(),
+					};
+				} catch (error) {
+					return {
+						ok: false,
+						error: error?.message || String(error),
+					};
+				}
+			},
+			[expression],
+		);
+		const settledPayload = await withOperationTimeout(
+			Promise.resolve(payload),
+			SCRIPT_EXECUTION_TIMEOUT_MS,
+			"Script evaluation timed out",
+		);
+		if (!settledPayload?.ok) {
+			throw new Error(settledPayload?.error || "Script evaluation failed");
+		}
+		return normalizeExecuteScriptValue(settledPayload.value);
+		} catch (scriptError) {
+			return await withDebugger(tabId, async ({ send }) => {
+				const response = await send("Runtime.evaluate", {
+					expression,
+					awaitPromise: true,
+					returnByValue: true,
+					userGesture: true,
+				});
+				if (response.exceptionDetails) {
+					throw new Error(
+						response.exceptionDetails.exception?.description ||
+							response.exceptionDetails.text ||
+							scriptError?.message ||
+							"Runtime.evaluate failed",
+					);
+				}
+				return normalizeRemoteObject(response.result);
+			});
+		}
+	}
 	return await withDebugger(tabId, async ({ send }) => {
 		const response = await send("Runtime.evaluate", {
 			expression,
@@ -1937,11 +2032,42 @@ async function evaluateInTab(tabId, expression) {
 }
 
 async function runPageToolkitMethod(tabId, methodName, ...args) {
-	const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
-	return await evaluateInTab(
-		tabId,
-		`(async () => { const toolkit = (${createPageToolkit.toString()})(); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
-	);
+	try {
+		const payload = await withOperationTimeout(
+			executeScriptInTab(
+				tabId,
+				async (toolkitSource, targetMethodName, targetArgs) => {
+					try {
+						const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+						const toolkit = toolkitFactory();
+						return {
+							ok: true,
+							value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
+						};
+					} catch (error) {
+						return {
+							ok: false,
+							error: error?.message || String(error),
+						};
+					}
+				},
+				[createPageToolkit.toString(), methodName, args],
+			),
+			SCRIPT_EXECUTION_TIMEOUT_MS,
+			`Page toolkit scripting timed out: ${methodName}`,
+		);
+		if (!payload?.ok) {
+			throw new Error(payload?.error || `Page toolkit method failed: ${methodName}`);
+		}
+		return payload.value;
+	} catch (scriptError) {
+		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
+		return await evaluateInTab(
+			tabId,
+			`(async () => { const toolkit = (${createPageToolkit.toString()})(); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
+			{ skipScripting: true },
+		);
+	}
 }
 
 async function waitForTabComplete(tabId, timeoutMs = 15000) {
@@ -2031,12 +2157,16 @@ async function getCookiesForTab(tabId) {
 }
 
 async function getDomOuterHtml(tabId) {
-	return await withDebugger(tabId, async ({ send }) => {
-		await send("DOM.enable");
-		const { root } = await send("DOM.getDocument", { depth: -1, pierce: true });
-		const { outerHTML } = await send("DOM.getOuterHTML", { nodeId: root.nodeId });
-		return outerHTML;
-	});
+	try {
+		return await executeScriptInTab(tabId, () => document.documentElement?.outerHTML || "");
+	} catch {
+		return await withDebugger(tabId, async ({ send }) => {
+			await send("DOM.enable");
+			const { root } = await send("DOM.getDocument", { depth: -1, pierce: true });
+			const { outerHTML } = await send("DOM.getOuterHTML", { nodeId: root.nodeId });
+			return outerHTML;
+		});
+	}
 }
 
 async function captureTabScreenshot(tabId, options = {}) {
