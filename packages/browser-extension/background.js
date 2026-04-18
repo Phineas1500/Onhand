@@ -20,6 +20,7 @@ let stateTimer = null;
 let settingsCache = null;
 let creatingOffscreenDocument = null;
 let connectBridgePromise = null;
+const debuggerTaskChains = new Map();
 
 function log(...args) {
 	console.log("[onhand-browser-bridge]", ...args);
@@ -365,19 +366,31 @@ async function resolveTargetTab(args = {}) {
 }
 
 async function withDebugger(tabId, fn) {
-	const target = { tabId };
-	await chrome.debugger.attach(target, "1.3");
-	try {
-		return await fn({
-			send: async (method, params = {}) => {
-				return await chrome.debugger.sendCommand(target, method, params);
-			},
-		});
-	} finally {
+	const previousTask = debuggerTaskChains.get(tabId) || Promise.resolve();
+	const scheduledTask = previousTask.catch(() => {}).then(async () => {
+		const target = { tabId };
+		await chrome.debugger.attach(target, "1.3");
 		try {
-			await chrome.debugger.detach(target);
-		} catch {}
-	}
+			return await fn({
+				send: async (method, params = {}) => {
+					return await chrome.debugger.sendCommand(target, method, params);
+				},
+			});
+		} finally {
+			try {
+				await chrome.debugger.detach(target);
+			} catch {}
+		}
+	});
+
+	const trackedTask = scheduledTask.finally(() => {
+		if (debuggerTaskChains.get(tabId) === trackedTask) {
+			debuggerTaskChains.delete(tabId);
+		}
+	});
+
+	debuggerTaskChains.set(tabId, trackedTask);
+	return await trackedTask;
 }
 
 function normalizeRemoteObject(remoteObject) {

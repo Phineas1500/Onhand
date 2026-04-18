@@ -19,7 +19,12 @@ const ONHAND_BROWSER_CAPTURE_VERSION = 1;
 const ONHAND_BROWSER_INDEX_VERSION = 1;
 
 const TAB_SELECTOR_PROPS = {
-	tabId: Type.Optional(Type.Number({ description: "Exact tab ID to target" })),
+	tabId: Type.Optional(
+		Type.Number({
+			description:
+				"Exact browser tab ID to target, as returned by browser_list_tabs. Omit this to use the active tab. Do not use a tab index like 0 or 1.",
+		}),
+	),
 	titleContains: Type.Optional(Type.String({ description: "Case-insensitive substring to match in the tab title" })),
 	urlContains: Type.Optional(Type.String({ description: "Case-insensitive substring to match in the tab URL" })),
 };
@@ -862,17 +867,84 @@ function htmlToMarkdown(html: string) {
 		.trim();
 }
 
+function stripOnhandInjectedNodes(document: Document) {
+	document
+		.querySelectorAll(
+			[
+				"#onhand-extension-sidebar-host",
+				"#onhand-extension-sidebar-layout",
+				"[data-onhand-highlight-kind]",
+				"[data-onhand-note-kind]",
+				"[data-onhand-note-part]",
+				"[data-onhand-note-for]",
+				"[data-onhand-note-id]",
+				"[data-onhand-annotation-id]",
+				"style#onhand-browser-annotation-style",
+			].join(", "),
+		)
+		.forEach((node) => node.remove());
+
+	document.documentElement.classList.remove("onhand-extension-sidebar-open");
+	document.documentElement.style.removeProperty("--onhand-sidebar-width");
+}
+
+function cloneContentRoot(root: Element) {
+	const clone = root.cloneNode(true) as Element;
+	clone
+		.querySelectorAll(
+			[
+				"script",
+				"style",
+				"noscript",
+				".anchor-link",
+				"a.headerlink",
+				".jp-InputPrompt",
+				".jp-OutputPrompt",
+				".jp-Collapser",
+				".jp-Cell-inputCollapser",
+				".jp-Cell-outputCollapser",
+				"img[src^='data:']",
+			].join(", "),
+		)
+		.forEach((node) => node.remove());
+	return clone;
+}
+
+function looksLikeNotebookContent(document: Document) {
+	return (
+		document.querySelectorAll(".jp-RenderedMarkdown.jp-MarkdownOutput, .jp-Cell.jp-MarkdownCell").length >= 3 ||
+		document.querySelector("body[data-jp-theme-light], body[data-jp-theme-name], .jp-Notebook, .jp-NotebookPanel") !== null
+	);
+}
+
+function extractPreferredMainMarkdown(document: Document) {
+	const main =
+		document.querySelector("main") ||
+		document.querySelector("article") ||
+		document.querySelector("[role='main']") ||
+		document.querySelector(".bd-content, #main-content, #jb-print-docs-body");
+	if (!main) return "";
+	const cleaned = cloneContentRoot(main);
+	return htmlToMarkdown(cleaned.innerHTML || "");
+}
+
 function extractReadableContentFromHtml(html: string, url: string, maxChars = 20000) {
 	const doc = new JSDOM(html, { url });
-	const reader = new Readability(doc.window.document);
-	const article = reader.parse();
+	stripOnhandInjectedNodes(doc.window.document);
+	const preferredMainMarkdown = extractPreferredMainMarkdown(doc.window.document);
+	const preferNotebookMain = looksLikeNotebookContent(doc.window.document) && preferredMainMarkdown.length > 0;
+	const reader = preferNotebookMain ? null : new Readability(doc.window.document);
+	const article = reader ? reader.parse() : null;
 
 	let markdown: string;
-	if (article?.content) {
+	if (preferNotebookMain) {
+		markdown = preferredMainMarkdown;
+	} else if (article?.content) {
 		markdown = htmlToMarkdown(article.content);
 	} else {
 		const fallbackDoc = new JSDOM(html, { url });
 		const fallbackBody = fallbackDoc.window.document;
+		stripOnhandInjectedNodes(fallbackBody);
 		fallbackBody.querySelectorAll("script, style, noscript, nav, header, footer, aside").forEach((el) => el.remove());
 		const main = fallbackBody.querySelector("main, article, [role='main'], .content, #content") || fallbackBody.body;
 		markdown = htmlToMarkdown(main?.innerHTML || "");
@@ -902,8 +974,8 @@ function resolveTabFromState(state: any, params: any) {
 
 	if (typeof params.tabId === "number") {
 		const tab = tabs.find((candidate: any) => candidate.id === params.tabId);
-		if (!tab) throw new Error(`No tab with id ${params.tabId} found in bridge state`);
-		return tab;
+		if (tab) return tab;
+		if (params.tabId !== 0) throw new Error(`No tab with id ${params.tabId} found in bridge state`);
 	}
 
 	let matches = tabs;
@@ -1147,6 +1219,9 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		promptSnippet: "Highlight the exact text on a live page that matters for the answer",
 		promptGuidelines: [
 			"Prefer this tool when you want to point the user to a specific phrase or sentence on the page.",
+			"Prefer short, distinctive visible phrases over long exact paragraphs or brittle full-sentence matches.",
+			"If a long quote fails or is likely to be fragile, retry with a shorter unique subphrase from the same passage.",
+			"Do not launch multiple browser_highlight_text calls in parallel on the same tab; add highlights one at a time.",
 			"Use occurrence when the same text appears multiple times on the page.",
 			"If you want to keep multiple highlights on the page, set clearExisting=false after the first highlight.",
 		],
@@ -1953,7 +2028,9 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		description: "Evaluate JavaScript in a browser tab via chrome.debugger",
 		promptSnippet: "Run JavaScript in a browser tab and return the result",
 		promptGuidelines: [
-			"Use this tool for targeted DOM inspection or extraction from a live page.",
+			"Use this tool for targeted DOM inspection only when the normal browser tools cannot expose the needed section, structure, or live state clearly enough.",
+			"Prefer browser_extract_content, browser_get_visible_text, browser_find_elements, or direct highlighting before resorting to custom DOM spelunking on ordinary content pages.",
+			"Keep JavaScript probes narrow and purposeful; avoid repeated exploratory DOM debugging when a readable extraction already gives the needed evidence.",
 		],
 		parameters: RUN_JS_SCHEMA,
 		async execute(_toolCallId, params) {
@@ -2014,7 +2091,9 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 		description: "Extract readable article/page content as markdown from a browser tab",
 		promptSnippet: "Extract readable content from a live browser tab as markdown",
 		promptGuidelines: [
-			"Use this tool when the user wants a readable summary of a page instead of raw HTML.",
+			"Use this as the default tool for gathering readable body text from articles, notes, textbooks, blogs, papers, and other content-heavy pages.",
+			"Prefer this tool before browser_run_js when you need supporting passages, section detail, or broader page context rather than raw DOM structure.",
+			"Use the extracted text to choose the strongest supporting passages before highlighting or annotating the live page.",
 		],
 		parameters: EXTRACT_CONTENT_SCHEMA,
 		async execute(_toolCallId, params) {
