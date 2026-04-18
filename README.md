@@ -75,7 +75,36 @@ That keeps the current setup working while the repo structure and product direct
 npm install
 ```
 
-### 2. Start the bridge
+### 2. Recommended local runtime for development and testing
+
+For normal local work, prefer the managed tmux runtime instead of starting the bridge and desktop shell in separate terminals.
+
+```bash
+npm run tmux:start
+npm run tmux:status
+npm run tmux:attach
+npm run tmux:stop
+```
+
+What this does:
+
+- starts the bridge and desktop shell in one tmux session
+- uses a dedicated tmux socket and session by default, both named `onhand`
+- gives you a stable place to inspect logs during Tier 2 / Tier 3 testing
+
+Environment overrides:
+
+```bash
+ONHAND_TMUX_SESSION=my-session ONHAND_TMUX_SOCKET=my-socket npm run tmux:start
+```
+
+If you only want to check whether the local test surfaces are up after starting tmux:
+
+```bash
+npm run test:preflight
+```
+
+### 3. Start the bridge manually (fallback)
 
 ```bash
 npm run bridge
@@ -94,7 +123,7 @@ npm run bridge:token
 npm run bridge:config
 ```
 
-### 3. Load the browser extension
+### 4. Load the browser extension
 
 - Open your Chromium-based browser's extensions page
 - Enable developer mode
@@ -107,7 +136,7 @@ npm run bridge:config
 
 If Helium supports Chromium extensions and the `chrome.debugger` API, it should work there too.
 
-### 4. Load the pi extension
+### 5. Load the pi extension
 
 For local development:
 
@@ -121,11 +150,13 @@ Or install this repository as a pi package:
 pi install .
 ```
 
-### 5. Run the desktop shell (early)
+### 6. Run the desktop shell manually (fallback)
 
 ```bash
 npm run desktop
 ```
+
+Use this only if you are not already running the managed tmux session above.
 
 Current desktop-launcher status:
 - compact Electron launcher under `apps/desktop/`
@@ -184,6 +215,8 @@ Also includes the command:
 
 ## Notes
 
+- For testing, the preferred runtime path is `npm run tmux:start` plus `npm run test:preflight`.
+- The tmux helper uses its own socket and session by default, both named `onhand`, so it should not interfere with unrelated tmux usage.
 - If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached. The desktop launcher now avoids attaching it on open and only requests richer live page context when the user actually sends a message.
 - Some pages cannot be debugged, such as privileged browser pages.

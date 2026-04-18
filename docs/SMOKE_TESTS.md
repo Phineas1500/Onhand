@@ -9,10 +9,19 @@ These are intentionally small and repeatable. They are not exhaustive QA plans.
 - Prefer `Chrome Test` for authoritative GUI checks.
 - Prefer `sidebar submit` for end-to-end UX validation.
 - Use `desktop/API submit` only when the goal is a quick runtime check.
+- Prefer the managed local runtime:
+  - `npm run tmux:start`
+  - `npm run tmux:status`
+  - `npm run tmux:attach`
+  - `npm run tmux:stop`
 - Start with `npm run test:preflight`.
 - If browser-extension code changed, reload the unpacked extension in Chrome before the run.
-- If desktop code changed, restart `npm run desktop` before the run.
-- If bridge code changed, restart `npm run bridge` before the run.
+- If desktop or bridge code changed and you are using the managed runtime, prefer:
+  - `npm run tmux:stop`
+  - `npm run tmux:start`
+- If you are not using the managed runtime:
+  - desktop code changed: restart `npm run desktop`
+  - bridge code changed: restart `npm run bridge`
 
 ## Smoke A: Article Grounding
 

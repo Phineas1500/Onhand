@@ -71,6 +71,11 @@ For any non-trivial change:
    - `packages/browser-extension/*` changed: reload the unpacked extension
    - `packages/browser-bridge/*` changed: restart `npm run bridge`
    - before Tier 2 or Tier 3 runs, use `npm run test:preflight` to confirm the local test surfaces are up
+   - if you want a durable local runtime you can start/stop yourself, prefer tmux:
+     - `npm run tmux:start`
+     - `npm run tmux:status`
+     - `npm run tmux:attach`
+     - `npm run tmux:stop`
 
 5. Run structured non-GUI checks if they can prove behavior.
    - inspect saved session JSONL
@@ -112,6 +117,7 @@ Examples:
 - inspect whether a final reply was written to session JSONL
 - confirm a restore operation produced the expected saved records
 - run `npm run inspect:latest-session` to summarize the newest desktop session turn
+- if a run may still be in progress, use `npm run inspect:latest-session -- --wait`
 - run `npm run test:fixtures` to pull the standard fixture URLs and prompts for the scenario you are checking
 
 This tier is sufficient for:
@@ -236,6 +242,14 @@ After edits, apply the smallest necessary restart/reload:
 
 If the test depends on all three surfaces, restart/reload all three before the GUI test.
 
+If you are using the managed tmux runtime instead of separate terminals, the simplest equivalent is:
+
+- `npm run tmux:stop`
+- `npm run tmux:start`
+- `npm run test:preflight`
+
+Use that path when both the bridge and desktop process need a clean restart.
+
 ## Computer Use Operating Rules
 
 When using Computer Use:
@@ -318,12 +332,50 @@ Default fast regression check:
 After this run, inspect with:
 
 - `npm run inspect:latest-session`
+- or `npm run inspect:latest-session -- --wait` if the turn may still be finishing
 
 ## Preflight
 
 Before Tier 2 or Tier 3 validation, run:
 
 - `npm run test:preflight`
+
+## Managed Local Runtime With tmux
+
+The preferred local test runtime is the tmux helper, not separate ad hoc terminals.
+
+Commands:
+
+- `npm run tmux:start`
+- `npm run tmux:status`
+- `npm run tmux:attach`
+- `npm run tmux:stop`
+
+What it does:
+
+- starts the browser bridge and desktop shell in one tmux session
+- uses a dedicated tmux socket by default so it does not collide with unrelated tmux use
+- gives both the user and Codex a stable place to inspect logs during testing
+
+Defaults:
+
+- session name: `onhand`
+- socket name: `onhand`
+
+Optional overrides:
+
+- `ONHAND_TMUX_SESSION`
+- `ONHAND_TMUX_SOCKET`
+
+Recommended tmux pattern:
+
+- `npm run tmux:start`
+- `npm run tmux:status`
+- `npm run test:preflight`
+- `npm run tmux:attach` when you want to inspect logs
+- `npm run tmux:stop` when you want a clean shutdown
+
+If `tmux:status` does not show both windows, do not continue to Tier 2 or Tier 3 testing yet.
 
 This checks:
 
