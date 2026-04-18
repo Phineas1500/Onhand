@@ -2,6 +2,8 @@
 
 This document defines the preferred fixture set for manual and Computer Use smoke tests.
 
+For the default named smoke flows, see `docs/SMOKE_TESTS.md`.
+
 Use:
 
 - `npm run test:fixtures` for the full bundle

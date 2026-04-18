@@ -24,6 +24,26 @@ The second class often requires **Computer Use** because the real behavior only 
 
 This document defines the default testing procedure for code changes and when to use Computer Use.
 
+## Canonical Test Environments
+
+Use the environments deliberately instead of treating every connected browser the same.
+
+- `Chrome Test` is the canonical **Tier 3** browser.
+  - Use it for authoritative GUI validation with Computer Use.
+  - Use it for side panel behavior, annotation placement, rendered markdown/LaTeX, PDF behavior, and real user-flow checks.
+
+- `Helium` is a secondary / personal browser surface.
+  - It is useful for quick sanity checks and multi-browser routing checks.
+  - It is **not** the default authoritative GUI test surface.
+
+- `Desktop popup/API submit` and `browser side panel submit` are two intentional paths, not interchangeable ones.
+  - `desktop/API submit` is the fast path for Tier 2 runtime checks.
+  - `side panel submit` in `Chrome Test` is the authoritative path for end-to-end UX checks.
+
+- Do not treat desktop-triggered native side-panel auto-open as the authoritative expectation.
+  - Chrome does not reliably allow an external desktop app to open the native extension side panel.
+  - If the behavior under test is the real side-panel UX, open and submit from the extension UI itself.
+
 ## Testing Principles
 
 - Test the cheapest reliable thing first.
@@ -226,6 +246,79 @@ When using Computer Use:
 - reproduce the smallest real user journey that proves the fix
 - stop if the next step would send sensitive data or perform a risky action
 
+## Default Submission Paths
+
+### Desktop / API Submit
+
+Use this path for:
+
+- prompt and mode regressions
+- session switching / stop / restore payload checks
+- browser action generation checks
+- quick routing validation against a chosen browser client
+
+This path is the programmatic equivalent of sending from the desktop popup. It is faster and better for Tier 2 checks, but it is not the authoritative way to validate native side-panel UX.
+
+### Sidebar Submit
+
+Use this path for:
+
+- reply rendering and readability
+- live reasoning visibility
+- page-action placement and clickthrough
+- follow-up turn behavior
+- PDF behavior
+- attachment flows
+
+This path is the authoritative Tier 3 check because it matches how the browser-first product is supposed to work.
+
+## Standard Smoke Sequences
+
+Use the same named flows repeatedly instead of improvising.
+
+See `docs/SMOKE_TESTS.md` for the exact fixtures, prompts, and expected checks.
+
+### Smoke A: Article Grounding
+
+Default authoritative GUI smoke:
+
+- environment: `Chrome Test`
+- submission path: `sidebar submit`
+- fixture: `Donald_Trump`
+- purpose:
+  - side panel reply behavior
+  - reasoning visibility during a longer run
+  - highlights / notes / citations / page actions
+  - follow-up behavior in the same session
+
+### Smoke B: Learning Mode
+
+Default pedagogy smoke:
+
+- environment: `Chrome Test`
+- submission path: `sidebar submit`
+- fixture: `sets` or `BayesianDL`
+- purpose:
+  - Learning Mode behavior
+  - reply preservation
+  - tutoring-style grounding on technical material
+
+### Smoke C: Quick Runtime Check
+
+Default fast regression check:
+
+- environment: targeted browser client, usually `Chrome Test`
+- submission path: `desktop/API submit`
+- fixture: depends on the change
+- purpose:
+  - verify the run completes
+  - inspect the saved session quickly
+  - confirm page actions / artifacts / session state
+
+After this run, inspect with:
+
+- `npm run inspect:latest-session`
+
 ## Preflight
 
 Before Tier 2 or Tier 3 validation, run:
@@ -240,6 +333,13 @@ This checks:
 - whether desktop session files are present
 
 It does not verify extension reload state. That still requires a manual reload when browser-extension files changed.
+
+The expected healthy setup for authoritative GUI testing is:
+
+- bridge is up
+- desktop UI API is up
+- `Chrome Test` is connected
+- the unpacked extension in Chrome has been reloaded if extension code changed
 
 ## Recommended Fixture Set
 
@@ -257,6 +357,17 @@ Maintain a small set of repeatable test scenarios:
 The goal is not exhaustive automation. The goal is reproducible smoke tests for the product’s core flows.
 
 Preferred fixture URLs and prompt suggestions are documented in `docs/TEST_FIXTURES.md`.
+
+## Reporting Expectations
+
+When reporting a test result, include:
+
+- which tier(s) were used
+- which environment was used (`Chrome Test`, `Helium`, desktop/API only)
+- which submission path was used (`desktop/API` or `sidebar`)
+- which fixture and prompt were used
+- what passed
+- what remains unverified
 
 ## Suggested End-to-End Smoke Test Template
 
