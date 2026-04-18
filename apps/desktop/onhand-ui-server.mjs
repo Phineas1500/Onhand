@@ -152,7 +152,7 @@ export function createOnhandUiServer({
 				}
 				sendJson(res, 200, {
 					ok: true,
-					...(await restoreSession(body.sessionPath)),
+					...(await restoreSession(body.sessionPath, body.browserClientId)),
 				});
 				return;
 			}
@@ -189,7 +189,7 @@ export function createOnhandUiServer({
 					error.statusCode = 400;
 					throw error;
 				}
-				const result = await activateAction(body.key);
+				const result = await activateAction(body.key, body.browserClientId);
 				sendJson(res, 200, {
 					ok: true,
 					result,

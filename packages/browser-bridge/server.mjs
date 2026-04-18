@@ -323,6 +323,10 @@ wss.on("connection", (ws, req) => {
 	);
 
 	ws.on("message", (buffer) => {
+		const currentClient = clients.get(clientId);
+		if (currentClient?.ws !== ws) {
+			return;
+		}
 		client.lastSeen = Date.now();
 		let message;
 		try {
@@ -358,6 +362,10 @@ wss.on("connection", (ws, req) => {
 	});
 
 	ws.on("close", () => {
+		const currentClient = clients.get(clientId);
+		if (currentClient?.ws !== ws) {
+			return;
+		}
 		clients.delete(clientId);
 		rejectPendingForClient(clientId, `Browser client disconnected: ${clientId}`);
 		log(`Browser client disconnected: ${clientId}`);

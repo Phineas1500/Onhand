@@ -19,7 +19,10 @@
     "bridge": "node ./packages/browser-bridge/server.mjs",
     "bridge:token": "node ./packages/browser-bridge/server.mjs token",
     "bridge:config": "node ./packages/browser-bridge/server.mjs config",
-    "desktop": "electron ./apps/desktop/main.mjs"
+    "desktop": "electron ./apps/desktop/main.mjs",
+    "inspect:latest-session": "node ./scripts/inspect-latest-session.mjs",
+    "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
+    "test:preflight": "node ./scripts/test-preflight.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

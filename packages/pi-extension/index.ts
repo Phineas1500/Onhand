@@ -11,6 +11,7 @@ import { gfm } from "turndown-plugin-gfm";
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const DEFAULT_TIMEOUT_MS = 15000;
+const HIGHLIGHT_TIMEOUT_MS = Number(process.env.PI_BROWSER_BRIDGE_HIGHLIGHT_TIMEOUT_MS || 35000);
 const ONHAND_ARTIFACTS_DIR = join(".onhand", "artifacts", "browser");
 const ONHAND_BROWSER_INDEX_FILE = join(ONHAND_ARTIFACTS_DIR, "index.json");
 const ONHAND_BROWSER_CAPTURE_ENTRY = "onhand/browser-capture";
@@ -263,15 +264,28 @@ async function bridgeRequest(path: string, init: RequestInit = {}) {
 	return data;
 }
 
+function loadPreferredBridgeClientId() {
+	const raw = String(process.env.PI_BROWSER_BRIDGE_CLIENT_ID || "").trim();
+	return raw || null;
+}
+
 async function getBridgeState() {
-	const data = await bridgeRequest("/state");
+	const clientId = loadPreferredBridgeClientId();
+	const path = clientId ? `/state?clientId=${encodeURIComponent(clientId)}` : "/state";
+	const data = await bridgeRequest(path);
 	return data.client;
 }
 
 async function sendBridgeCommand(name: string, args: Record<string, any> = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+	const clientId = loadPreferredBridgeClientId();
 	const data = await bridgeRequest("/command", {
 		method: "POST",
-		body: JSON.stringify({ name, args, timeoutMs }),
+		body: JSON.stringify({
+			name,
+			args,
+			timeoutMs,
+			clientId,
+		}),
 	});
 	return data.result;
 }
@@ -1149,7 +1163,7 @@ export default function browserBridgeExtension(pi: ExtensionAPI) {
 					clearExisting: params.clearExisting,
 					scrollIntoView: params.scrollIntoView,
 				},
-				20000,
+				HIGHLIGHT_TIMEOUT_MS,
 			);
 			const annotation = result.annotation || {};
 			const targetDescription = describeElement(annotation.container);

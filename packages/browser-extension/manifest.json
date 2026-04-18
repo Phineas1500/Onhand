@@ -3,7 +3,8 @@
   "name": "Onhand Browser Bridge",
   "version": "0.1.0",
   "description": "Connects a Chromium browser to Onhand through a localhost bridge using chrome.debugger.",
-  "permissions": ["tabs", "storage", "debugger", "sidePanel"],
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "storage", "debugger", "sidePanel", "offscreen"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background.js",

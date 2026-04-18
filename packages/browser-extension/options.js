@@ -1,5 +1,6 @@
 const bridgeUrlInput = document.getElementById("bridgeUrl");
 const tokenInput = document.getElementById("token");
+const clientLabelInput = document.getElementById("clientLabel");
 const statusEl = document.getElementById("status");
 
 function wsToHttp(url) {
@@ -18,9 +19,11 @@ async function loadForm() {
 	const stored = await chrome.storage.local.get({
 		bridgeUrl: "ws://127.0.0.1:3210/ws",
 		token: "",
+		clientLabel: "",
 	});
 	bridgeUrlInput.value = stored.bridgeUrl;
 	tokenInput.value = stored.token;
+	clientLabelInput.value = stored.clientLabel;
 }
 
 async function refreshStatus() {
@@ -36,6 +39,7 @@ async function save() {
 	await chrome.storage.local.set({
 		bridgeUrl: bridgeUrlInput.value.trim(),
 		token: tokenInput.value.trim(),
+		clientLabel: clientLabelInput.value.trim(),
 	});
 	await chrome.runtime.sendMessage({ type: "reconnect" });
 	await refreshStatus();

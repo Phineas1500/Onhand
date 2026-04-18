@@ -25,6 +25,7 @@ const HOTKEY = process.env.ONHAND_HOTKEY || "CommandOrControl+Shift+Space";
 const CONFIG_FILE = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const DEFAULT_BASE_URL = "http://127.0.0.1:3210";
 const FAST_TIMEOUT_MS = 2500;
+const HIGHLIGHT_TIMEOUT_MS = Number(process.env.PI_BROWSER_BRIDGE_HIGHLIGHT_TIMEOUT_MS || 35000);
 const ONHAND_UI_PORT = Number(process.env.ONHAND_UI_PORT || 3211);
 const ONHAND_SETTINGS_PATH = join(__dirname, "..", "..", ".onhand", "settings.json");
 const BROWSER_ARTIFACT_INDEX_PATH = join(__dirname, "..", "..", ".onhand", "artifacts", "browser", "index.json");
@@ -33,6 +34,8 @@ const HOTKEY_DEBOUNCE_MS = 300;
 const WORKSPACE_VISIBILITY_SETTLE_MS = 60;
 const DEFAULT_ONHAND_SETTINGS = {
 	learningMode: false,
+	preferredBrowserClientId: null,
+	sessionBrowserClientIds: {},
 };
 const execFileAsync = promisify(execFile);
 const MACOS_WORKSPACE_VISIBILITY_OPTIONS = {
@@ -65,6 +68,8 @@ async function loadOnhandSettings() {
 			...DEFAULT_ONHAND_SETTINGS,
 			...(parsed && typeof parsed === "object" ? parsed : {}),
 			learningMode: Boolean(parsed?.learningMode),
+			preferredBrowserClientId: normalizeBrowserClientId(parsed?.preferredBrowserClientId),
+			sessionBrowserClientIds: normalizeSessionBrowserClientIds(parsed?.sessionBrowserClientIds),
 		};
 	} catch {
 		onhandSettingsCache = { ...DEFAULT_ONHAND_SETTINGS };
@@ -78,6 +83,8 @@ async function saveOnhandSettings(partial = {}) {
 		...(partial && typeof partial === "object" ? partial : {}),
 	};
 	nextSettings.learningMode = Boolean(nextSettings.learningMode);
+	nextSettings.preferredBrowserClientId = normalizeBrowserClientId(nextSettings.preferredBrowserClientId);
+	nextSettings.sessionBrowserClientIds = normalizeSessionBrowserClientIds(nextSettings.sessionBrowserClientIds);
 	await mkdir(dirname(ONHAND_SETTINGS_PATH), { recursive: true });
 	await writeFile(ONHAND_SETTINGS_PATH, `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
 	onhandSettingsCache = nextSettings;
@@ -86,6 +93,48 @@ async function saveOnhandSettings(partial = {}) {
 
 async function getOnhandSettings() {
 	return await loadOnhandSettings();
+}
+
+function normalizeBrowserClientId(value) {
+	const clientId = String(value || "").trim();
+	return clientId || null;
+}
+
+function normalizeSessionBrowserClientIds(value) {
+	if (!value || typeof value !== "object") return {};
+	const entries = Object.entries(value)
+		.map(([sessionFile, clientId]) => {
+			const normalizedSessionFile = String(sessionFile || "").trim();
+			const normalizedClientId = normalizeBrowserClientId(clientId);
+			if (!normalizedSessionFile || !normalizedClientId) return null;
+			return [resolve(normalizedSessionFile), normalizedClientId];
+		})
+		.filter(Boolean);
+	return Object.fromEntries(entries);
+}
+
+function getSessionBrowserClientId(sessionFile, settings = onhandSettingsCache) {
+	if (!sessionFile) return null;
+	const normalizedSessionFile = resolve(String(sessionFile));
+	return normalizeBrowserClientId(settings?.sessionBrowserClientIds?.[normalizedSessionFile]);
+}
+
+async function setSessionBrowserClientId(sessionFile, clientId) {
+	if (!sessionFile) return await getOnhandSettings();
+	const normalizedSessionFile = resolve(String(sessionFile));
+	const normalizedClientId = normalizeBrowserClientId(clientId);
+	const settings = await getOnhandSettings();
+	const nextSessionBrowserClientIds = {
+		...(settings.sessionBrowserClientIds || {}),
+	};
+	if (normalizedClientId) {
+		nextSessionBrowserClientIds[normalizedSessionFile] = normalizedClientId;
+	} else {
+		delete nextSessionBrowserClientIds[normalizedSessionFile];
+	}
+	return await saveOnhandSettings({
+		sessionBrowserClientIds: nextSessionBrowserClientIds,
+	});
 }
 
 async function buildOnhandUiState() {
@@ -140,7 +189,85 @@ async function bridgeRequest(path, init = {}, timeoutMs = FAST_TIMEOUT_MS) {
 	}
 }
 
-async function runBridgeCommand(name, args = {}, timeoutMs = FAST_TIMEOUT_MS) {
+async function listBridgeClients() {
+	const response = await bridgeRequest("/clients", {}, FAST_TIMEOUT_MS);
+	return Array.isArray(response.clients) ? response.clients : [];
+}
+
+function inferBrowserLabel(client) {
+	const userAgent = String(client?.hello?.browserName || "");
+	if (/Helium/i.test(userAgent)) return "Helium";
+	if (/Chrome\//i.test(userAgent) && !/Edg\//i.test(userAgent)) return "Chrome";
+	if (/Edg\//i.test(userAgent)) return "Edge";
+	if (/Brave/i.test(userAgent)) return "Brave";
+	if (/Firefox\//i.test(userAgent)) return "Firefox";
+	if (/Safari\//i.test(userAgent) && !/Chrome\//i.test(userAgent)) return "Safari";
+	return "Browser";
+}
+
+function summarizeBridgeClient(client, preferredBrowserClientId = null) {
+	const stateSummary = client?.stateSummary || {};
+	const clientId = normalizeBrowserClientId(client?.clientId);
+	const inferredBrowserLabel = inferBrowserLabel(client);
+	const explicitClientLabel = String(client?.hello?.clientLabel || "").trim();
+	const label = explicitClientLabel || inferredBrowserLabel;
+	const descriptionParts = [];
+	if (explicitClientLabel && inferredBrowserLabel && inferredBrowserLabel !== explicitClientLabel) {
+		descriptionParts.push(inferredBrowserLabel);
+	}
+	descriptionParts.push(`${Number(stateSummary.tabCount || 0)} tab${Number(stateSummary.tabCount || 0) === 1 ? "" : "s"}`);
+	return {
+		clientId,
+		label,
+		description: descriptionParts.join(" • "),
+		tabCount: Number(stateSummary.tabCount || 0),
+		windowCount: Number(stateSummary.windowCount || 0),
+		lastSeen: client?.lastSeen || null,
+		isPreferred: Boolean(clientId && preferredBrowserClientId && clientId === preferredBrowserClientId),
+	};
+}
+
+function pickBridgeClientById(clients, clientId) {
+	const normalizedClientId = normalizeBrowserClientId(clientId);
+	if (!normalizedClientId) return null;
+	return (Array.isArray(clients) ? clients : []).find((client) => client?.clientId === normalizedClientId) || null;
+}
+
+function resolveBrowserClientFromCandidates(clients, candidates = []) {
+	for (const candidate of candidates) {
+		const matchedClient = pickBridgeClientById(clients, candidate);
+		if (matchedClient) return matchedClient;
+	}
+	return Array.isArray(clients) && clients.length > 0 ? clients[0] : null;
+}
+
+async function resolveBrowserClientSelection({ requestedClientId = null, sessionFile = null } = {}) {
+	const settings = await getOnhandSettings();
+	const clients = await listBridgeClients();
+	const sessionBrowserClientId = getSessionBrowserClientId(sessionFile, settings);
+	const selectedClient = resolveBrowserClientFromCandidates(clients, [
+		requestedClientId,
+		sessionBrowserClientId,
+		settings.preferredBrowserClientId,
+	]);
+	return {
+		settings,
+		clients,
+		selectedClient,
+		selectedClientId: normalizeBrowserClientId(selectedClient?.clientId),
+		sessionBrowserClientId,
+	};
+}
+
+function appendClientIdToBridgePath(path, clientId) {
+	const normalizedClientId = normalizeBrowserClientId(clientId);
+	if (!normalizedClientId) return path;
+	const base = new URL(path, "http://bridge.local");
+	base.searchParams.set("clientId", normalizedClientId);
+	return `${base.pathname}${base.search}`;
+}
+
+async function runBridgeCommand(name, args = {}, timeoutMs = FAST_TIMEOUT_MS, clientId = null) {
 	const response = await bridgeRequest(
 		"/command",
 		{
@@ -148,6 +275,7 @@ async function runBridgeCommand(name, args = {}, timeoutMs = FAST_TIMEOUT_MS) {
 			body: JSON.stringify({
 				name,
 				args,
+				clientId: normalizeBrowserClientId(clientId),
 				timeoutMs,
 			}),
 		},
@@ -206,20 +334,28 @@ async function getBrowserContext(options = {}) {
 	const includeSelection = Boolean(options.includeSelection);
 
 	try {
-		const [health, stateData] = await Promise.all([
+		const [health, selection] = await Promise.all([
 			bridgeRequest("/health", {}, FAST_TIMEOUT_MS),
-			bridgeRequest("/state", {}, FAST_TIMEOUT_MS),
+			resolveBrowserClientSelection({
+				requestedClientId: options.clientId,
+				sessionFile: options.sessionFile,
+			}),
 		]);
-		const client = stateData.client;
+		const client = selection.selectedClient;
 		const activeTab = pickActiveTab(client?.state);
 		const openTabs = summarizeOpenTabs(client?.state, activeTab);
 		const connectedClients = Array.isArray(health.connectedClients) ? health.connectedClients.length : 0;
+		const browserClients = selection.clients.map((candidateClient) =>
+			summarizeBridgeClient(candidateClient, selection.settings?.preferredBrowserClientId),
+		);
 		let visible = null;
-		let selection = null;
+		let selectedText = null;
 		let warning = null;
 
 		if (!connectedClients) {
 			warning = "No connected browser clients.";
+		} else if (!client?.clientId) {
+			warning = "No matching browser client is currently connected.";
 		} else if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
 			if (includeSelection) {
 				try {
@@ -230,12 +366,13 @@ async function getBrowserContext(options = {}) {
 							body: JSON.stringify({
 								name: "get_selection",
 								args: { tabId: activeTab.id },
+								clientId: client.clientId,
 								timeoutMs: 1500,
 							}),
 						},
 						2200,
 					);
-					selection = selectionData.result?.selection || null;
+					selectedText = selectionData.result?.selection || null;
 				} catch (error) {
 					warning = error?.message || String(error);
 				}
@@ -250,6 +387,7 @@ async function getBrowserContext(options = {}) {
 							body: JSON.stringify({
 								name: "get_visible_text",
 								args: { tabId: activeTab.id, maxChars: 3000, maxBlocks: 12 },
+								clientId: client.clientId,
 								timeoutMs: 3000,
 							}),
 						},
@@ -273,9 +411,10 @@ async function getBrowserContext(options = {}) {
 				connectedClients,
 			},
 			clientId: client?.clientId,
+			browserClients,
 			activeTab,
 			openTabs,
-			selection,
+			selection: selectedText,
 			visible,
 			warning,
 		};
@@ -302,6 +441,7 @@ function normalizePromptRequest(input) {
 			promptText: prompt,
 			displayPrompt: prompt,
 			attachments: [],
+			browserClientId: null,
 		};
 	}
 
@@ -326,6 +466,7 @@ function normalizePromptRequest(input) {
 			attachments,
 			source: input.source === "sidebar" ? "sidebar" : "desktop",
 			learningMode: Boolean(input.learningMode),
+			browserClientId: normalizeBrowserClientId(input.browserClientId),
 		};
 	}
 
@@ -351,41 +492,57 @@ function normalizePromptRequest(input) {
 		attachments,
 		source: input?.source === "sidebar" ? "sidebar" : "desktop",
 		learningMode: Boolean(input?.learningMode),
+		browserClientId: normalizeBrowserClientId(input?.browserClientId),
 	};
 }
 
 async function runPromptRequest(requestId, request) {
-	const { promptText, displayPrompt, attachments, source, learningMode } = normalizePromptRequest(request);
+	const { promptText, displayPrompt, attachments, source, learningMode, browserClientId } = normalizePromptRequest(request);
 	let initialStatus = "Collecting browser context…";
 	await primeOnhandUiRequest(requestId, displayPrompt, initialStatus);
 	sendPromptEvent({ type: "start", requestId, prompt: displayPrompt });
 	sendPromptEvent({ type: "status", requestId, status: initialStatus });
-
-	if (source !== "sidebar") {
-		try {
-			await runBridgeCommand("open_onhand_sidebar", {}, 2500);
-		} catch (error) {
-			const detail = error?.message || String(error);
-			if (detail) {
-				initialStatus = `Collecting browser context… ${detail}`;
-				sendPromptEvent({ type: "status", requestId, status: initialStatus });
-			}
-		}
-	}
+	const currentSessionFile = getOnhandUiState().currentSession?.sessionFile || null;
 
 	try {
-		const browserContext = await getBrowserContext({ includeSelection: true, includeVisibleText: true });
+		const selection = await resolveBrowserClientSelection({
+			requestedClientId: browserClientId,
+			sessionFile: currentSessionFile,
+		});
+		const resolvedBrowserClientId = selection.selectedClientId;
+		if (source !== "sidebar") {
+			try {
+				await runBridgeCommand("open_onhand_sidebar", {}, 2500, resolvedBrowserClientId);
+			} catch (error) {
+				const detail = error?.message || String(error);
+				if (detail) {
+					initialStatus = `Collecting browser context… ${detail}`;
+					sendPromptEvent({ type: "status", requestId, status: initialStatus });
+				}
+			}
+		}
+
+		const browserContext = await getBrowserContext({
+			includeSelection: true,
+			includeVisibleText: true,
+			clientId: resolvedBrowserClientId,
+			sessionFile: currentSessionFile,
+		});
 		sendPromptEvent({ type: "context", requestId, context: browserContext });
 
-		await submitOnhandPrompt({
+		const result = await submitOnhandPrompt({
 			requestId,
 			prompt: promptText,
 			displayPrompt,
 			attachments,
 			browserContext,
+			browserClientId: browserContext.clientId || resolvedBrowserClientId,
 			learningMode,
 			onEvent: (event) => sendPromptEvent({ requestId, ...event }),
 		});
+		if (result?.sessionFile && (browserContext.clientId || resolvedBrowserClientId)) {
+			await setSessionBrowserClientId(result.sessionFile, browserContext.clientId || resolvedBrowserClientId);
+		}
 	} catch (error) {
 		sendPromptEvent({
 			type: "error",
@@ -429,18 +586,18 @@ function chooseBestMatchingTab(tabs, url, title) {
 	return null;
 }
 
-async function getOpenBrowserTabs() {
-	const stateData = await bridgeRequest("/state", {}, FAST_TIMEOUT_MS);
+async function getOpenBrowserTabs(clientId = null) {
+	const stateData = await bridgeRequest(appendClientIdToBridgePath("/state", clientId), {}, FAST_TIMEOUT_MS);
 	return flattenTabs(stateData.client?.state);
 }
 
-async function resolveTargetTabForArtifact(manifest) {
+async function resolveTargetTabForArtifact(manifest, clientId = null) {
 	const artifactUrl = manifest?.page?.url || manifest?.tab?.url || "";
 	const artifactTitle = manifest?.page?.title || manifest?.tab?.title || "";
-	const tabs = await getOpenBrowserTabs();
+	const tabs = await getOpenBrowserTabs(clientId);
 	const existingTab = chooseBestMatchingTab(tabs, artifactUrl, artifactTitle);
 	if (existingTab?.id) {
-		const focused = await runBridgeCommand("activate_tab", { tabId: existingTab.id }, 2500);
+		const focused = await runBridgeCommand("activate_tab", { tabId: existingTab.id }, 2500, clientId);
 		return focused.tab || existingTab;
 	}
 	if (!artifactUrl) {
@@ -454,11 +611,12 @@ async function resolveTargetTabForArtifact(manifest) {
 			waitForLoad: true,
 		},
 		20000,
+		clientId,
 	);
 	return navigated.tab;
 }
 
-async function restoreArtifactSummary(artifactSummary) {
+async function restoreArtifactSummary(artifactSummary, clientId = null) {
 	if (!artifactSummary?.statePath) {
 		throw new Error("Artifact is missing its saved state path.");
 	}
@@ -469,8 +627,8 @@ async function restoreArtifactSummary(artifactSummary) {
 		throw new Error(`Artifact ${artifactSummary.artifactId || statePath} is not a browser capture.`);
 	}
 
-	const tab = await resolveTargetTabForArtifact(manifest);
-	await runBridgeCommand("clear_annotations", { tabId: tab.id }, 15000);
+	const tab = await resolveTargetTabForArtifact(manifest, clientId);
+	await runBridgeCommand("clear_annotations", { tabId: tab.id }, 15000, clientId);
 
 	const annotations = Array.isArray(manifest?.page?.annotations) ? manifest.page.annotations : [];
 	const restored = [];
@@ -486,7 +644,8 @@ async function restoreArtifactSummary(artifactSummary) {
 					clearExisting: false,
 					scrollIntoView: false,
 				},
-				20000,
+				HIGHLIGHT_TIMEOUT_MS,
+				clientId,
 			);
 			const restoredAnnotationId = highlighted.annotation?.annotationId;
 			let noteRestored = false;
@@ -501,6 +660,7 @@ async function restoreArtifactSummary(artifactSummary) {
 						scrollIntoView: false,
 					},
 					20000,
+					clientId,
 				);
 				noteRestored = true;
 			}
@@ -526,6 +686,7 @@ async function restoreArtifactSummary(artifactSummary) {
 				target: lastRestored.noteRestored ? "note" : "annotation",
 			},
 			15000,
+			clientId,
 		);
 	} else if (typeof manifest?.page?.scrollY === "number") {
 		await runBridgeCommand(
@@ -535,6 +696,7 @@ async function restoreArtifactSummary(artifactSummary) {
 				expression: `(() => { window.scrollTo(${JSON.stringify(Number(manifest.page.scrollX || 0))}, ${JSON.stringify(Number(manifest.page.scrollY || 0))}); return { scrollX: window.scrollX, scrollY: window.scrollY }; })()`,
 			},
 			15000,
+			clientId,
 		);
 	}
 
@@ -548,11 +710,14 @@ async function restoreArtifactSummary(artifactSummary) {
 	};
 }
 
-async function restoreSessionPages(sessionPath) {
+async function restoreSessionPages(sessionPath, browserClientId = null) {
 	if (!sessionPath || typeof sessionPath !== "string") {
 		throw new Error("Session path is required.");
 	}
 	const normalizedSessionPath = resolve(sessionPath);
+	const resolvedBrowserClientId =
+		normalizeBrowserClientId(browserClientId) ||
+		getSessionBrowserClientId(normalizedSessionPath, await getOnhandSettings());
 	const artifacts = await readBrowserArtifactIndex();
 	const sessionArtifacts = artifacts
 		.filter(
@@ -578,7 +743,7 @@ async function restoreSessionPages(sessionPath) {
 
 	const restoredPages = [];
 	for (const artifact of latestArtifactsByUrl.values()) {
-		restoredPages.push(await restoreArtifactSummary(artifact));
+		restoredPages.push(await restoreArtifactSummary(artifact, resolvedBrowserClientId));
 	}
 
 	return {
@@ -588,14 +753,15 @@ async function restoreSessionPages(sessionPath) {
 	};
 }
 
-async function activateOnhandPageAction(actionKey) {
+async function activateOnhandPageAction(actionKey, browserClientId = null) {
 	const action = getOnhandPageAction(actionKey);
 	if (!action) {
 		throw new Error("Could not find that Onhand page action.");
 	}
+	const targetClientId = normalizeBrowserClientId(action.clientId) || normalizeBrowserClientId(browserClientId);
 
 	if (typeof action.tabId === "number") {
-		await runBridgeCommand("activate_tab", { tabId: action.tabId }, 2500);
+		await runBridgeCommand("activate_tab", { tabId: action.tabId }, 2500, targetClientId);
 	}
 
 	if (action.annotationId) {
@@ -607,6 +773,7 @@ async function activateOnhandPageAction(actionKey) {
 				target: action.type === "note" ? "note" : "annotation",
 			},
 			2500,
+			targetClientId,
 		);
 	}
 
@@ -626,10 +793,10 @@ async function startOnhandUiRuntimeServer() {
 		listSessions: async (limit) => getSessionOverview(limit),
 		startNewSession: async () => startNewOnhandSession(),
 		switchSession: async (sessionPath) => switchOnhandSession(sessionPath),
-		restoreSession: async (sessionPath) => restoreSessionPages(sessionPath),
+		restoreSession: async (sessionPath, browserClientId) => restoreSessionPages(sessionPath, browserClientId),
 		stopPrompt: async () => stopOnhandRun(),
 		submitPrompt: async (request) => queuePromptRequest(request),
-		activateAction: async (actionKey) => activateOnhandPageAction(actionKey),
+		activateAction: async (actionKey, browserClientId) => activateOnhandPageAction(actionKey, browserClientId),
 	});
 	await onhandUiServer.listen();
 	log(`Onhand UI API listening on ${onhandUiServer.getInfo().baseUrl}`);
@@ -893,14 +1060,24 @@ ipcMain.handle("onhand:get-startup-state", async () => ({
 	platform: process.platform,
 	version: app.getVersion(),
 	learningMode: Boolean((await getOnhandSettings()).learningMode),
+	preferredBrowserClientId: normalizeBrowserClientId((await getOnhandSettings()).preferredBrowserClientId),
 }));
 
 ipcMain.handle("onhand:set-learning-mode", async (_event, learningMode) => {
 	return await saveOnhandSettings({ learningMode: Boolean(learningMode) });
 });
 
-ipcMain.handle("onhand:refresh-context", async () => {
-	return await getBrowserContext();
+ipcMain.handle("onhand:refresh-context", async (_event, browserClientId) => {
+	return await getBrowserContext({
+		clientId: normalizeBrowserClientId(browserClientId),
+		sessionFile: getOnhandUiState().currentSession?.sessionFile || null,
+	});
+});
+
+ipcMain.handle("onhand:set-browser-client", async (_event, browserClientId) => {
+	return await saveOnhandSettings({
+		preferredBrowserClientId: normalizeBrowserClientId(browserClientId),
+	});
 });
 
 ipcMain.handle("onhand:list-sessions", async (_event, limit = 3) => {

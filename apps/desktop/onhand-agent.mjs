@@ -400,37 +400,60 @@ function emitRequestEvent(payload) {
 	activeRequest?.onEvent(payload);
 }
 
+function normalizeComparableText(value) {
+	return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function preserveCurrentTurnMessageIds(messages, currentTurnId, previousMessages = []) {
 	if (!currentTurnId || !Array.isArray(messages) || !messages.length) {
 		return Array.isArray(messages) ? messages : [];
 	}
 
 	const nextMessages = messages.map((message) => ({ ...message }));
-	const lastAssistantIndex = nextMessages.findLastIndex((message) => message?.role === "assistant");
-	if (lastAssistantIndex < 0) return nextMessages;
-
-	const lastUserIndex = nextMessages.findLastIndex(
-		(message, index) => index < lastAssistantIndex && message?.role === "user",
-	);
-	if (lastUserIndex < 0) return nextMessages;
-
 	const previousUserMessage = Array.isArray(previousMessages)
 		? previousMessages.find((message) => message?.id === `user:${currentTurnId}`)
 		: null;
 	const previousAssistantMessage = Array.isArray(previousMessages)
 		? previousMessages.find((message) => message?.id === `assistant:${currentTurnId}`)
 		: null;
+	const targetUserText = normalizeComparableText(previousUserMessage?.text);
+	if (!targetUserText) return nextMessages;
 
-	nextMessages[lastUserIndex] = {
-		...nextMessages[lastUserIndex],
+	const matchingUserIndex = nextMessages.findLastIndex(
+		(message) => message?.role === "user" && normalizeComparableText(message?.text) === targetUserText,
+	);
+	if (matchingUserIndex < 0) return nextMessages;
+
+	nextMessages[matchingUserIndex] = {
+		...nextMessages[matchingUserIndex],
 		id: `user:${currentTurnId}`,
-		createdAt: nextMessages[lastUserIndex].createdAt || previousUserMessage?.createdAt,
+		createdAt: nextMessages[matchingUserIndex].createdAt || previousUserMessage?.createdAt,
 	};
-	nextMessages[lastAssistantIndex] = {
-		...nextMessages[lastAssistantIndex],
-		id: `assistant:${currentTurnId}`,
-		createdAt: nextMessages[lastAssistantIndex].createdAt || previousAssistantMessage?.createdAt,
-	};
+
+	const matchingAssistantIndex = nextMessages.findIndex((message, index) => {
+		if (index <= matchingUserIndex) return false;
+		if (message?.role === "user") return false;
+		return message?.role === "assistant";
+	});
+	const userBeforeAssistantIndex =
+		matchingAssistantIndex >= 0
+			? nextMessages.findIndex(
+					(message, index) => index > matchingUserIndex && index < matchingAssistantIndex && message?.role === "user",
+				)
+			: -1;
+	if (matchingAssistantIndex >= 0 && userBeforeAssistantIndex < 0) {
+		nextMessages[matchingAssistantIndex] = {
+			...nextMessages[matchingAssistantIndex],
+			id: `assistant:${currentTurnId}`,
+			createdAt: nextMessages[matchingAssistantIndex].createdAt || previousAssistantMessage?.createdAt,
+		};
+	} else if (previousAssistantMessage) {
+		nextMessages.push({
+			...previousAssistantMessage,
+			id: `assistant:${currentTurnId}`,
+			pending: false,
+		});
+	}
 
 	return nextMessages;
 }
@@ -594,12 +617,14 @@ function getToolStatusMessage(toolName) {
 function buildPageAction(toolName, result) {
 	const details = result?.details || {};
 	const tab = details.tab || null;
+	const browserClientId = activeRequest?.browserClientId || null;
 	switch (toolName) {
 		case "browser_activate_tab": {
 			const detail = truncate(details.tab?.title || details.tab?.url || "Relevant page", 72);
 			return {
 				key: `tab:${details.tab?.id || detail}`,
 				type: "tab",
+				clientId: browserClientId,
 				tabId: details.tab?.id || null,
 				windowId: details.tab?.windowId || null,
 				label: "Switched tab",
@@ -612,6 +637,7 @@ function buildPageAction(toolName, result) {
 			return {
 				key: `highlight:${details.annotation?.annotationId || matchedText}`,
 				type: "annotation",
+				clientId: browserClientId,
 				tabId: tab?.id || null,
 				windowId: tab?.windowId || null,
 				annotationId: details.annotation?.annotationId || null,
@@ -626,6 +652,7 @@ function buildPageAction(toolName, result) {
 			return {
 				key: `note:${details.note?.annotationId || noteText}`,
 				type: "note",
+				clientId: browserClientId,
 				tabId: tab?.id || null,
 				windowId: tab?.windowId || null,
 				annotationId: details.note?.annotationId || null,
@@ -638,6 +665,7 @@ function buildPageAction(toolName, result) {
 			return {
 				key: `scroll:${details.annotation?.annotationId || result?.toolCallId || Date.now()}`,
 				type: "annotation",
+				clientId: browserClientId,
 				tabId: tab?.id || null,
 				windowId: tab?.windowId || null,
 				annotationId: details.annotation?.annotationId || null,
@@ -913,7 +941,16 @@ export async function stopOnhandRun() {
 	};
 }
 
-export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, attachments = [], browserContext, learningMode = false, onEvent }) {
+export async function submitOnhandPrompt({
+	requestId,
+	prompt,
+	displayPrompt,
+	attachments = [],
+	browserContext,
+	browserClientId = null,
+	learningMode = false,
+	onEvent,
+}) {
 	const { session } = await ensureRuntime();
 	if (activeRequest) {
 		throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
@@ -931,6 +968,7 @@ export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, att
 		pageActions: [],
 		toolExecutionCount: 0,
 		aborted: false,
+		browserClientId,
 	};
 	beginUiRequest(session, requestId, promptLabel);
 
@@ -941,6 +979,13 @@ export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, att
 		sessionFile: session.sessionFile,
 		sessionName: session.sessionName || null,
 	});
+
+	const previousBridgeClientId = process.env.PI_BROWSER_BRIDGE_CLIENT_ID;
+	if (browserClientId) {
+		process.env.PI_BROWSER_BRIDGE_CLIENT_ID = browserClientId;
+	} else {
+		delete process.env.PI_BROWSER_BRIDGE_CLIENT_ID;
+	}
 
 	try {
 		await session.prompt(buildLauncherPrompt(prompt, browserContext, attachments, { learningMode }), {
@@ -978,6 +1023,7 @@ export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, att
 			/abort|cancel/i.test(String(error?.message || ""));
 		if (activeRequest?.id === requestId && isAbortError) {
 			const reply = activeRequest.reply.trim() || "(Run stopped.)";
+			updateAssistantDraft(requestId, reply, { pending: false });
 			syncUiStateFromSession(session, {
 				activities: [...uiState.activities],
 				pageActions: [...activeRequest.pageActions],
@@ -1014,6 +1060,12 @@ export async function submitOnhandPrompt({ requestId, prompt, displayPrompt, att
 			activeRequest = null;
 		}
 		throw error;
+	} finally {
+		if (previousBridgeClientId) {
+			process.env.PI_BROWSER_BRIDGE_CLIENT_ID = previousBridgeClientId;
+		} else {
+			delete process.env.PI_BROWSER_BRIDGE_CLIENT_ID;
+		}
 	}
 }
 

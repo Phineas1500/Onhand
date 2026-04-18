@@ -3,7 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("onhandApp", {
 	getStartupState: () => ipcRenderer.invoke("onhand:get-startup-state"),
 	setLearningMode: (learningMode) => ipcRenderer.invoke("onhand:set-learning-mode", learningMode),
-	refreshContext: () => ipcRenderer.invoke("onhand:refresh-context"),
+	setBrowserClient: (browserClientId) => ipcRenderer.invoke("onhand:set-browser-client", browserClientId),
+	refreshContext: (browserClientId) => ipcRenderer.invoke("onhand:refresh-context", browserClientId),
 	listSessions: (limit) => ipcRenderer.invoke("onhand:list-sessions", limit),
 	newSession: () => ipcRenderer.invoke("onhand:new-session"),
 	switchSession: (sessionPath) => ipcRenderer.invoke("onhand:switch-session", sessionPath),

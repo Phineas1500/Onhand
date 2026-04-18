@@ -487,6 +487,9 @@ Completed so far:
   - verify scroll-state capture against the live page's current scroll position/progress
   - verify indexed artifact listing and restore-by-artifact-id using the local artifact index/loader
 
+Testing workflow reference:
+- see `docs/TESTING_WORKFLOW.md` for the default validation tiers, service reload procedure, and when Computer Use should or should not be used
+
 Current status:
 - Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
 - Phase 14.3 now has a usable desktop launcher with real pi SDK prompt routing, streaming replies, and lightweight recent-session management.

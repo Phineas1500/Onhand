@@ -196,6 +196,32 @@ body {
   font-weight: 600;
 }
 
+.browser-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.browser-target-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.browser-target-select {
+  min-width: 118px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted-strong);
+  padding: 6px 10px;
+  font-size: 11px;
+  outline: none;
+}
+
+.browser-target-select:disabled {
+  opacity: 0.55;
+}
+
 .action-button {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);

@@ -4,6 +4,7 @@ const promptForm = document.getElementById("promptForm");
 const promptInput = document.getElementById("promptInput");
 const contextChip = document.getElementById("contextChip");
 const learningModeToggle = document.getElementById("learningModeToggle");
+const browserTargetSelect = document.getElementById("browserTargetSelect");
 const pageTitle = document.getElementById("pageTitle");
 const pageSubtitle = document.getElementById("pageSubtitle");
 const selectionItem = document.getElementById("selectionItem");
@@ -27,11 +28,17 @@ let activePageActions = [];
 let currentSessionFile = null;
 let currentSessionCount = 0;
 let learningModeEnabled = false;
+let selectedBrowserClientId = null;
 
 function truncate(text, maxChars = 180) {
 	const value = String(text || "").replace(/\s+/g, " ").trim();
 	if (value.length <= maxChars) return value;
 	return `${value.slice(0, maxChars - 1)}…`;
+}
+
+function normalizeBrowserClientId(value) {
+	const clientId = String(value || "").trim();
+	return clientId || null;
 }
 
 function getHostname(url) {
@@ -196,6 +203,7 @@ function focusInputIfAvailable() {
 }
 
 function setUnavailableState(message) {
+	renderBrowserTargets(null);
 	contextChip.textContent = "Unavailable";
 	contextChip.className = "context-chip error";
 	pageTitle.textContent = "Onhand desktop bridge unavailable";
@@ -211,6 +219,7 @@ if (!onhandApp) {
 
 const startupState = await onhandApp.getStartupState();
 learningModeEnabled = Boolean(startupState?.learningMode);
+selectedBrowserClientId = normalizeBrowserClientId(startupState?.preferredBrowserClientId);
 renderLearningModeToggle();
 
 function formatHotkey(accelerator, platform) {
@@ -245,11 +254,39 @@ newSessionHint.textContent = startupState.platform === "darwin" ? "⌘N new" : "
 
 function updateSessionControls() {
 	newSessionButton.disabled = Boolean(activeRequestId);
+	if (browserTargetSelect instanceof HTMLSelectElement) {
+		browserTargetSelect.disabled = Boolean(activeRequestId);
+	}
 	renderLearningModeToggle();
+}
+
+function renderBrowserTargets(context) {
+	if (!(browserTargetSelect instanceof HTMLSelectElement)) return;
+	const clients = Array.isArray(context?.browserClients) ? context.browserClients : [];
+	if (selectedBrowserClientId && !clients.some((client) => client?.clientId === selectedBrowserClientId)) {
+		selectedBrowserClientId = null;
+	}
+
+	browserTargetSelect.innerHTML = [
+		`<option value="">Auto</option>`,
+		...clients.map((client) => {
+			const label = [client?.label || "Browser", client?.description || ""].filter(Boolean).join(" • ");
+			return `<option value="${escapeHtml(client?.clientId || "")}">${escapeHtml(label)}</option>`;
+		}),
+	].join("");
+	browserTargetSelect.value = selectedBrowserClientId || "";
+	browserTargetSelect.disabled = Boolean(activeRequestId) || clients.length === 0;
+}
+
+function getBrowserClientLabel(context) {
+	const clients = Array.isArray(context?.browserClients) ? context.browserClients : [];
+	const clientId = normalizeBrowserClientId(context?.clientId);
+	return clients.find((client) => client?.clientId === clientId)?.label || "";
 }
 
 function renderContext(context, options = {}) {
 	const preserveStatus = Boolean(options.preserveStatus);
+	renderBrowserTargets(context);
 
 	if (!context?.ok) {
 		contextChip.textContent = "No browser";
@@ -263,10 +300,12 @@ function renderContext(context, options = {}) {
 
 	const tab = context.activeTab;
 	const hostname = getHostname(tab?.url);
+	const browserLabel = getBrowserClientLabel(context);
 	const connectionCount = Number(context?.bridge?.connectedClients || 0);
 	const hasSelection = Boolean(context?.selection?.hasSelection && context?.selection?.text);
 	const subtitleParts = [];
 
+	if (browserLabel) subtitleParts.push(browserLabel);
 	if (hostname) subtitleParts.push(hostname);
 	if (context.warning) subtitleParts.push(truncate(context.warning, 120));
 	if (!hostname && tab?.url) subtitleParts.push(truncate(tab.url, 120));
@@ -348,7 +387,7 @@ function renderSessions(overview) {
 					activeReplyText = "";
 					promptInput.value = "";
 					setStatus(`Switched to ${session.title}`, "ok");
-					await refreshSessions();
+					await Promise.all([refreshSessions(), refreshContext()]);
 				}
 			} catch (error) {
 				setStatus(error?.message || String(error), "error");
@@ -384,7 +423,7 @@ async function refreshSessions() {
 
 async function refreshContext() {
 	if (!activeRequestId) setStatus("Refreshing context…");
-	const context = await onhandApp.refreshContext();
+	const context = await onhandApp.refreshContext(selectedBrowserClientId);
 	renderContext(context, { preserveStatus: Boolean(activeRequestId) });
 	return context;
 }
@@ -486,6 +525,7 @@ promptForm.addEventListener("submit", async (event) => {
 			displayPrompt: prompt,
 			learningMode: learningModeEnabled,
 			source: "desktop",
+			browserClientId: selectedBrowserClientId,
 		});
 		activeRequestId = result.requestId;
 		updateSessionControls();
@@ -512,6 +552,17 @@ learningModeToggle?.addEventListener("change", () => {
 	});
 });
 
+browserTargetSelect?.addEventListener("change", () => {
+	const nextClientId = normalizeBrowserClientId(browserTargetSelect.value);
+	selectedBrowserClientId = nextClientId;
+	void onhandApp
+		.setBrowserClient(nextClientId)
+		.then(() => refreshContext())
+		.catch((error) => {
+			setStatus(error?.message || String(error), "error");
+		});
+});
+
 newSessionButton.addEventListener("click", () => {
 	if (activeRequestId) return;
 	promptInput.disabled = true;
@@ -526,7 +577,7 @@ newSessionButton.addEventListener("click", () => {
 				activeReplyText = "";
 				promptInput.value = "";
 				setStatus("New session ready", "ok");
-				await refreshSessions();
+				await Promise.all([refreshSessions(), refreshContext()]);
 			}
 		})
 		.catch((error) => {

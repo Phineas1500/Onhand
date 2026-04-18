@@ -1,19 +1,25 @@
 const DEFAULT_SETTINGS = {
 	bridgeUrl: "ws://127.0.0.1:3210/ws",
 	token: "",
+	clientLabel: "",
 };
 
 const DEFAULT_ONHAND_API_PORT = 3211;
 const STATE_DEBOUNCE_MS = 200;
 const RECONNECT_DELAY_MS = 2000;
+const WEBSOCKET_KEEPALIVE_MS = 20_000;
 const SCREENSHOT_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
+const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
 let ws = null;
 let socketGeneration = 0;
 let reconnectTimer = null;
+let keepAliveTimer = null;
 let stateTimer = null;
 let settingsCache = null;
+let creatingOffscreenDocument = null;
+let connectBridgePromise = null;
 
 function log(...args) {
 	console.log("[onhand-browser-bridge]", ...args);
@@ -23,6 +29,13 @@ function configureSidePanelActionClick() {
 	if (!chrome.sidePanel?.setPanelBehavior) return;
 	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
 		log("Could not configure side panel action behavior", error?.message || String(error));
+	});
+}
+
+function initializeExtensionSurface() {
+	configureSidePanelActionClick();
+	ensureOffscreenDocument().catch((error) => {
+		log("Could not initialize offscreen heartbeat document", error?.message || String(error));
 	});
 }
 
@@ -62,6 +75,58 @@ function clearReconnectTimer() {
 	reconnectTimer = null;
 }
 
+async function ensureOffscreenDocument() {
+	if (!chrome.offscreen?.createDocument) return;
+
+	const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
+	const existingContexts = await chrome.runtime.getContexts({
+		contextTypes: ["OFFSCREEN_DOCUMENT"],
+		documentUrls: [offscreenUrl],
+	});
+
+	if (existingContexts.length > 0) {
+		return;
+	}
+
+	if (creatingOffscreenDocument) {
+		await creatingOffscreenDocument;
+		return;
+	}
+
+	creatingOffscreenDocument = chrome.offscreen
+		.createDocument({
+			url: OFFSCREEN_DOCUMENT_PATH,
+			reasons: ["WORKERS"],
+			justification: "Maintain the browser bridge heartbeat in Chrome MV3.",
+		})
+		.finally(() => {
+			creatingOffscreenDocument = null;
+		});
+
+	await creatingOffscreenDocument;
+}
+
+function clearKeepAliveTimer() {
+	if (!keepAliveTimer) return;
+	clearInterval(keepAliveTimer);
+	keepAliveTimer = null;
+}
+
+function startKeepAlive() {
+	clearKeepAliveTimer();
+	keepAliveTimer = setInterval(() => {
+		if (!ws || ws.readyState !== WebSocket.OPEN) {
+			clearKeepAliveTimer();
+			return;
+		}
+		sendToBridge({
+			type: "keepalive",
+			clientId: settingsCache?.clientId || undefined,
+			sentAt: Date.now(),
+		});
+	}, WEBSOCKET_KEEPALIVE_MS);
+}
+
 function scheduleReconnect() {
 	clearReconnectTimer();
 	reconnectTimer = setTimeout(() => {
@@ -72,6 +137,7 @@ function scheduleReconnect() {
 }
 
 function stopSocket() {
+	clearKeepAliveTimer();
 	if (!ws) return;
 	try {
 		ws.onopen = null;
@@ -1063,6 +1129,21 @@ const createPageToolkit = () => {
 		return accepted;
 	};
 
+	const collectHighlightContainers = (queryLower) => {
+		const root = document.body || document.documentElement;
+		const candidates = [];
+		for (const container of root.querySelectorAll(ANNOTATION_CONTAINER_SELECTOR)) {
+			if (!(container instanceof Element)) continue;
+			if (!isVisible(container)) continue;
+			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (container.closest('[data-onhand-highlight-kind]')) continue;
+			const text = lowerText(getElementText(container));
+			if (!text || !text.includes(queryLower)) continue;
+			candidates.push(container);
+		}
+		return candidates;
+	};
+
 	const buildNormalizedTextMap = (textNodes) => {
 		const positions = [];
 		let text = "";
@@ -1173,20 +1254,9 @@ const createPageToolkit = () => {
 		if (clearExisting) clearAnnotations();
 
 		let matchIndex = 0;
-		const groupedNodes = new Map();
-		for (const node of collectHighlightTextNodes(document.body || document.documentElement)) {
-			const container = node.parentElement?.closest(ANNOTATION_CONTAINER_SELECTOR);
-			if (!(container instanceof Element)) continue;
-			const existing = groupedNodes.get(container);
-			if (existing) {
-				existing.push(node);
-			} else {
-				groupedNodes.set(container, [node]);
-			}
-		}
-
-		for (const [container, textNodes] of groupedNodes.entries()) {
-			if (!(container instanceof Element)) continue;
+		for (const container of collectHighlightContainers(normalizedQuery)) {
+			const textNodes = collectHighlightTextNodes(container);
+			if (!textNodes.length) continue;
 			const mappedText = buildNormalizedTextMap(textNodes);
 			if (!mappedText.lowerText.includes(normalizedQuery)) continue;
 
@@ -2515,106 +2585,112 @@ async function handleBridgeMessage(message) {
 }
 
 async function connectBridge(force = false) {
-	const settings = await loadSettings();
-	if (!settings.token) {
-		await updateStatus({
-			connectionStatus: "needs-configuration",
-			lastError: "Set the bridge token in the extension options.",
+	if (connectBridgePromise) {
+		return connectBridgePromise;
+	}
+
+	connectBridgePromise = (async () => {
+		ensureOffscreenDocument().catch((error) => {
+			log("Could not ensure offscreen heartbeat document", error?.message || String(error));
 		});
-		return;
-	}
 
-	if (!force && ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(ws.readyState)) {
-		return;
-	}
+		const settings = await loadSettings();
+		if (!settings.token) {
+			await updateStatus({
+				connectionStatus: "needs-configuration",
+				lastError: "Set the bridge token in the extension options.",
+			});
+			return;
+		}
 
-	clearReconnectTimer();
-	stopSocket();
+		if (!force && ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(ws.readyState)) {
+			return;
+		}
 
-	const generation = ++socketGeneration;
-	const bridgeUrl = new URL(settings.bridgeUrl);
-	bridgeUrl.searchParams.set("token", settings.token);
-	bridgeUrl.searchParams.set("clientId", settings.clientId);
+		clearReconnectTimer();
+		stopSocket();
 
-	await updateStatus({
-		connectionStatus: "connecting",
-		lastError: "",
+		const generation = ++socketGeneration;
+		const bridgeUrl = new URL(settings.bridgeUrl);
+		bridgeUrl.searchParams.set("token", settings.token);
+		bridgeUrl.searchParams.set("clientId", settings.clientId);
+
+		await updateStatus({
+			connectionStatus: "connecting",
+			lastError: "",
+		});
+
+		try {
+			await probeBridgeAvailability(settings);
+		} catch (error) {
+			await updateStatus({
+				connectionStatus: "disconnected",
+				lastError: error?.message || "Bridge is not reachable yet.",
+			});
+			scheduleReconnect();
+			return;
+		}
+
+		ws = new WebSocket(bridgeUrl.toString());
+
+		ws.onopen = async () => {
+			if (generation !== socketGeneration) return;
+			log("Connected to bridge", bridgeUrl.toString());
+			startKeepAlive();
+			sendToBridge({
+				type: "hello",
+				clientId: settings.clientId,
+				clientLabel: String(settings.clientLabel || "").trim() || undefined,
+				browserName: navigator.userAgent,
+				extensionVersion: chrome.runtime.getManifest().version,
+				connectedAt: Date.now(),
+			});
+			await updateStatus({
+				connectionStatus: "connected",
+				lastError: "",
+				lastConnectedAt: Date.now(),
+			});
+			await pushState("connect");
+		};
+
+		ws.onmessage = async (event) => {
+			if (generation !== socketGeneration) return;
+			try {
+				const message = JSON.parse(event.data);
+				await handleBridgeMessage(message);
+			} catch (error) {
+				log("Failed to handle bridge message", error);
+			}
+		};
+
+		ws.onerror = async () => {
+			if (generation !== socketGeneration) return;
+			await updateStatus({
+				connectionStatus: "error",
+				lastError: "WebSocket error while connecting to bridge.",
+			});
+		};
+
+		ws.onclose = async () => {
+			if (generation !== socketGeneration) return;
+			log("Disconnected from bridge");
+			await updateStatus({
+				connectionStatus: "disconnected",
+			});
+			scheduleReconnect();
+		};
+	})().finally(() => {
+		connectBridgePromise = null;
 	});
 
-	try {
-		await probeBridgeAvailability(settings);
-	} catch (error) {
-		await updateStatus({
-			connectionStatus: "disconnected",
-			lastError: error?.message || "Bridge is not reachable yet.",
-		});
-		scheduleReconnect();
-		return;
-	}
-
-	ws = new WebSocket(bridgeUrl.toString());
-
-	ws.onopen = async () => {
-		if (generation !== socketGeneration) return;
-		log("Connected to bridge", bridgeUrl.toString());
-		sendToBridge({
-			type: "hello",
-			clientId: settings.clientId,
-			browserName: navigator.userAgent,
-			extensionVersion: chrome.runtime.getManifest().version,
-			connectedAt: Date.now(),
-		});
-		await updateStatus({
-			connectionStatus: "connected",
-			lastError: "",
-			lastConnectedAt: Date.now(),
-		});
-		await pushState("connect");
-	};
-
-	ws.onmessage = async (event) => {
-		if (generation !== socketGeneration) return;
-		try {
-			const message = JSON.parse(event.data);
-			await handleBridgeMessage(message);
-		} catch (error) {
-			log("Failed to handle bridge message", error);
-		}
-	};
-
-	ws.onerror = async () => {
-		if (generation !== socketGeneration) return;
-		await updateStatus({
-			connectionStatus: "error",
-			lastError: "WebSocket error while connecting to bridge.",
-		});
-	};
-
-	ws.onclose = async () => {
-		if (generation !== socketGeneration) return;
-		log("Disconnected from bridge");
-		await updateStatus({
-			connectionStatus: "disconnected",
-		});
-		scheduleReconnect();
-	};
+	return connectBridgePromise;
 }
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== "local") return;
-	if (!changes.bridgeUrl && !changes.token) return;
+	if (!changes.bridgeUrl && !changes.token && !changes.clientLabel) return;
 	settingsCache = null;
 	connectBridge(true).catch((error) => log("Reconnect after settings change failed", error));
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-	configureSidePanelActionClick();
-	loadSettings().then(() => connectBridge()).catch((error) => log("Install init failed", error));
-});
-
-chrome.runtime.onStartup.addListener(() => {
-	configureSidePanelActionClick();
-	connectBridge().catch((error) => log("Startup connect failed", error));
 });
 
 if (chrome.sidePanel?.onOpened?.addListener) {
@@ -2649,11 +2725,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					bridgeUrl: settings.bridgeUrl,
 					token: settings.token,
 					clientId: settings.clientId,
+					clientLabel: settings.clientLabel,
 					connectionStatus: settings.connectionStatus,
 					lastError: settings.lastError,
 					lastConnectedAt: settings.lastConnectedAt,
 				},
 			});
+			return;
+		}
+
+		if (message?.type === "offscreen-heartbeat") {
+			if (!ws || [WebSocket.CLOSING, WebSocket.CLOSED].includes(ws.readyState)) {
+				await connectBridge();
+			}
+			sendResponse({ ok: true });
 			return;
 		}
 
@@ -2732,10 +2817,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:restore-session") {
+			const settings = await getSettings();
 			const response = await callOnhandApi("/sessions/restore", {
 				method: "POST",
 				body: JSON.stringify({
 					sessionPath: message.sessionPath,
+					browserClientId: settings.clientId,
 				}),
 			});
 			sendResponse({
@@ -2747,6 +2834,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:submit-prompt") {
+			const settings = await getSettings();
 			const response = await callOnhandApi("/prompt", {
 				method: "POST",
 				body: JSON.stringify({
@@ -2755,6 +2843,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					attachments: Array.isArray(message.attachments) ? message.attachments : [],
 					source: message.source === "sidebar" ? "sidebar" : "desktop",
 					learningMode: Boolean(message.learningMode),
+					browserClientId: settings.clientId,
 				}),
 			});
 			sendResponse({
@@ -2765,10 +2854,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:activate-action") {
+			const settings = await getSettings();
 			const response = await callOnhandApi("/action", {
 				method: "POST",
 				body: JSON.stringify({
 					key: message.key,
+					browserClientId: settings.clientId,
 				}),
 			});
 			sendResponse({
@@ -2849,4 +2940,4 @@ connectBridge().catch((error) => {
 	log("Initial connect failed", error);
 });
 
-configureSidePanelActionClick();
+initializeExtensionSurface();
