@@ -122,6 +122,63 @@ const PRIMARY_FIXTURES = [
 			"PDF-grounded tutoring flows",
 		],
 	},
+	{
+		id: "onhand_github_repo",
+		title: "Onhand GitHub Repository",
+		category: "Repository landing page with README and code-navigation chrome",
+		url: "https://github.com/Phineas1500/Onhand",
+		why: [
+			"tests repo README grounding outside article and lecture-page layouts",
+			"good for code-adjacent explanation, structure summaries, and citation placement around GitHub chrome",
+		],
+		prompts: [
+			"what is this repo for and what are the main components?",
+			"explain the structure of this repo from the README and page content",
+		],
+		risks: [
+			"grounding on code/docs hosting UIs rather than article prose",
+			"note and highlight placement around sticky repository chrome",
+			"README extraction quality",
+		],
+	},
+	{
+		id: "anthropic_job_posting",
+		title: "Anthropic Greenhouse Job Posting",
+		category: "Public job/application page with sticky CTA and structured sections",
+		url: "https://job-boards.greenhouse.io/anthropic/jobs/5183006008",
+		why: [
+			"tests structured commercial/public pages outside docs and articles",
+			"good for sticky CTA overlap, long-form summaries, and section-based grounding",
+		],
+		prompts: [
+			"what does this role emphasize most?",
+			"what on this page would matter most to an applicant?",
+		],
+		risks: [
+			"annotation placement near sticky apply controls",
+			"grounding on sectioned marketing/careers pages",
+			"answer proportionality on non-encyclopedic pages",
+		],
+	},
+	{
+		id: "reddit_thread",
+		title: "Reddit Thread",
+		category: "Dynamic social thread with comments and vote chrome",
+		url: "https://www.reddit.com/r/BollyBlindsNGossip/comments/1snxrpq/neetu_kapoors_daadi_ki_shaadi_marks_the_acting/?share_id=BmNSk4KruTDDdJXlGn5yc&utm_medium=ios_app&utm_name=ioscss&utm_source=share&utm_term=1",
+		why: [
+			"tests social/threaded content with nested comments and changing page chrome",
+			"good for checking grounding on discussions rather than polished prose",
+		],
+		prompts: [
+			"what are the main reactions in this thread?",
+			"summarize the dominant viewpoints on this page",
+		],
+		risks: [
+			"highlighting/comment grounding in dynamic thread UIs",
+			"reply citations on noisy conversational content",
+			"annotation placement near interactive social controls",
+		],
+	},
 ];
 
 const SECONDARY_FIXTURES = [
@@ -156,7 +213,7 @@ const SCENARIO_MAP = {
 	},
 	dom_anchoring: {
 		label: "DOM anchoring regressions",
-		fixtures: ["cnns"],
+		fixtures: ["cnns", "onhand_github_repo"],
 	},
 	pdf: {
 		label: "PDF behavior regressions",
@@ -165,6 +222,18 @@ const SCENARIO_MAP = {
 	multi_tab: {
 		label: "Multi-tab synthesis regressions",
 		fixtures: ["sets", "bayesian_dl", "cnns", "practice_midterm_pdf"],
+	},
+	repo_docs: {
+		label: "Repository and docs-hosting page regressions",
+		fixtures: ["onhand_github_repo"],
+	},
+	sticky_cta: {
+		label: "Sticky CTA / structured public page regressions",
+		fixtures: ["anthropic_job_posting"],
+	},
+	social_threads: {
+		label: "Dynamic social-thread regressions",
+		fixtures: ["reddit_thread"],
 	},
 };
 
@@ -175,6 +244,9 @@ const STANDARD_PROMPTS = [
 	"teach this in learning mode",
 	"what prerequisite concept should I read first?",
 	"compare what these two tabs are saying",
+	"what is this repo for and what are the main components?",
+	"what does this role emphasize most?",
+	"what are the main reactions in this thread?",
 ];
 
 function parseArgs(argv) {

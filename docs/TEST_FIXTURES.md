@@ -164,6 +164,60 @@ Avoid using:
 - PDF-grounded tutoring flows
 - switching between HTML notes and PDF tabs
 
+### 7. Repository Landing Page With README and GitHub Chrome
+
+**URL**
+- `https://github.com/Phineas1500/Onhand`
+
+**Why this is in the set**
+- tests grounding on repository hosting UI instead of article prose or notebook-like notes
+- good for verifying README extraction, code-adjacent summaries, and citation placement around GitHub’s sticky repo chrome
+
+**Best test prompts**
+- `what is this repo for and what are the main components?`
+- `explain the structure of this repo from the README and page content`
+
+**Main product risks covered**
+- README extraction quality
+- grounding on code/docs hosting UIs
+- note and highlight placement around sticky repository chrome
+
+### 8. Structured Public Job Page With Sticky CTA
+
+**URL**
+- `https://job-boards.greenhouse.io/anthropic/jobs/5183006008`
+
+**Why this is in the set**
+- tests structured commercial/public pages outside docs and encyclopedic layouts
+- useful for sticky CTA overlap, long-form summaries, and section-based grounding
+
+**Best test prompts**
+- `what does this role emphasize most?`
+- `what on this page would matter most to an applicant?`
+
+**Main product risks covered**
+- annotation placement near sticky apply controls
+- grounding on sectioned marketing/careers pages
+- answer proportionality on non-encyclopedic pages
+
+### 9. Dynamic Social Thread
+
+**URL**
+- `https://www.reddit.com/r/BollyBlindsNGossip/comments/1snxrpq/neetu_kapoors_daadi_ki_shaadi_marks_the_acting/?share_id=BmNSk4KruTDDdJXlGn5yc&utm_medium=ios_app&utm_name=ioscss&utm_source=share&utm_term=1`
+
+**Why this is in the set**
+- tests threaded conversational content with nested comments and changing page chrome
+- useful for grounding on noisy discussions rather than polished expository prose
+
+**Best test prompts**
+- `what are the main reactions in this thread?`
+- `summarize the dominant viewpoints on this page`
+
+**Main product risks covered**
+- highlighting/comment grounding in dynamic thread UIs
+- reply citations on conversational content
+- annotation placement near interactive social controls
+
 ## Secondary Fixtures
 
 These are useful, but not part of the minimum smoke set.
@@ -192,6 +246,7 @@ If only one compact test bundle is open, use:
 4. `sets` Purdue notes
 5. `CNNs` Purdue notes
 6. `practice_midterm_2025.pdf`
+7. `Onhand` GitHub repository page
 
 This bundle covers:
 
@@ -201,6 +256,7 @@ This bundle covers:
 - Learning Mode
 - PDF side panel behavior
 - multi-tab synthesis
+- repository/README grounding
 
 ## Fixture-to-Scenario Mapping
 
@@ -221,6 +277,7 @@ Use:
 
 Use:
 - `CNNs`
+- `Onhand` GitHub repository page
 
 ### PDF behavior regressions
 
@@ -235,9 +292,26 @@ Use:
 - `CNNs`
 - `practice_midterm_2025.pdf`
 
+### Repository / docs-hosting regressions
+
+Use:
+- `Onhand` GitHub repository page
+
+### Sticky CTA / structured public page regressions
+
+Use:
+- Anthropic Greenhouse job posting
+
+### Dynamic social-thread regressions
+
+Use:
+- Reddit thread
+
 ## Fixture Notes
 
 - Prefer the Piazza PDF over the signed Gradescope PDF for repeatable testing.
+- Treat the GitHub repo and Anthropic job page as stable public fixtures.
+- Treat the Reddit thread as useful but less stable than the other public fixtures.
 - Prefer the Purdue lecture pages over arbitrary web pages for STEM tutoring tests because they are already part of your real use case.
 - Prefer `Donald_Trump` over thinner biography pages when you need to test deep causal explanation, because it contains more explicit evidence across sections.
 - Prefer `Shah_Rukh_Khan` when testing note sizing and infobox collisions, because it has already exposed those issues in practice.
