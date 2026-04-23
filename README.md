@@ -108,6 +108,7 @@ Useful browser/runtime checks:
 
 ```bash
 npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"
+npm run test:note-layout -- --browser-client="Chrome Test"
 npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-provider=openai-codex --expect-model=gpt-5.5 --expect-api=openai-codex-responses
 ```
 

@@ -28,6 +28,7 @@
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:browser-bridge": "node ./scripts/run-browser-bridge-regression.mjs",
+    "test:note-layout": "node ./scripts/run-note-layout-regression.mjs",
     "smoke:tier2": "node ./scripts/run-tier2-smoke.mjs"
   },
   "dependencies": {

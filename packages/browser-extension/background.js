@@ -1103,9 +1103,12 @@ const createPageToolkit = () => {
 
 	const ensureAnnotationStyles = () => {
 		const styleId = "onhand-browser-annotation-style";
-		if (document.getElementById(styleId)) return;
-		const style = document.createElement("style");
-		style.id = styleId;
+		let style = document.getElementById(styleId);
+		if (!(style instanceof HTMLStyleElement)) {
+			style = document.createElement("style");
+			style.id = styleId;
+			(document.head || document.documentElement).appendChild(style);
+		}
 		style.textContent = `
 			span[data-onhand-highlight-kind="inline"] {
 				background: #fde047 !important;
@@ -1127,25 +1130,27 @@ const createPageToolkit = () => {
 				scroll-margin-bottom: 20vh !important;
 			}
 			[data-onhand-note-kind="card"] {
-				background: #fff7c2 !important;
+				background: linear-gradient(90deg, #f59e0b 0 6px, #fff7c2 6px) !important;
 				color: #111827 !important;
 				border: 2px solid #f59e0b !important;
-				border-left-width: 6px !important;
 				border-radius: 10px !important;
 				box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18) !important;
 				margin: 12px 0 16px !important;
-				padding: 12px 14px !important;
-				display: inline-block !important;
+				padding: 12px 14px 12px 20px !important;
+				display: block !important;
+				width: fit-content !important;
 				inline-size: fit-content !important;
-				max-width: min(26rem, calc(100% - 24px)) !important;
+				max-width: min(26rem, 100%) !important;
+				max-inline-size: min(26rem, 100%) !important;
 				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
 				position: relative !important;
-				z-index: 2147483645 !important;
+				z-index: auto !important;
 				scroll-margin-top: 20vh !important;
 				scroll-margin-bottom: 20vh !important;
 				white-space: normal !important;
 				overflow-wrap: anywhere !important;
 				vertical-align: top !important;
+				clear: both !important;
 			}
 			[data-onhand-note-part="label"] {
 				color: #92400e !important;
@@ -1159,7 +1164,6 @@ const createPageToolkit = () => {
 				white-space: pre-wrap !important;
 			}
 		`;
-		(document.head || document.documentElement).appendChild(style);
 	};
 
 	const nextAnnotationId = () => `onhand-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -1234,6 +1238,46 @@ const createPageToolkit = () => {
 			return annotationElement;
 		}
 		return annotationElement.closest(ANNOTATION_CONTAINER_SELECTOR) || annotationElement.parentElement || annotationElement;
+	};
+
+	const findNoteInsertionPlacement = (container) => {
+		if (!(container instanceof Element)) return { target: container, position: "afterend" };
+		const tag = container.tagName;
+		if (tag === "CODE") {
+			const pre = container.closest("pre");
+			if (pre) return { target: pre, position: "afterend" };
+			const blockAncestor = container.parentElement?.closest(ANNOTATION_CONTAINER_SELECTOR);
+			if (blockAncestor) return findNoteInsertionPlacement(blockAncestor);
+		}
+		if (tag === "CAPTION") {
+			const table = container.closest("table");
+			if (table) return { target: table, position: "afterend" };
+		}
+		if (tag === "LI" || tag === "TD" || tag === "TH") {
+			return { target: container, position: "beforeend" };
+		}
+		const parent = container.parentElement;
+		if (!(parent instanceof Element)) return { target: container, position: "afterend" };
+		const isHeading = /^H[1-6]$/.test(tag);
+		const hasPermalinkSibling = Array.from(parent.children).some((child) =>
+			child !== container && child.matches?.("a.anchor, .anchor")
+		);
+		// GitHub renders markdown headings as a wrapper with a sibling permalink anchor.
+		// Insert notes after the wrapper so captions do not split the heading/link row.
+		if (isHeading && parent.classList.contains("markdown-heading") && hasPermalinkSibling) {
+			return { target: parent, position: "afterend" };
+		}
+		return { target: container, position: "afterend" };
+	};
+
+	const insertNoteAtPlacement = (note, placement) => {
+		const target = placement?.target;
+		if (!(target instanceof Element)) throw new Error("Could not determine where to place the note");
+		if (placement.position === "beforeend") {
+			target.append(note);
+			return;
+		}
+		target.insertAdjacentElement("afterend", note);
 	};
 
 	const collectHighlightTextNodes = (root) => {
@@ -1435,6 +1479,54 @@ const createPageToolkit = () => {
 	const findNoteForAnnotation = (annotationId) => {
 		const note = document.querySelector(`[data-onhand-note-for="${attrEscape(annotationId)}"]`);
 		return note instanceof Element ? note : null;
+	};
+
+	const ensureElementInViewport = async (element, block = "center") => {
+		if (!(element instanceof Element)) return;
+		const findScrollContainer = () => {
+			for (let current = element.parentElement; current && current !== document.body; current = current.parentElement) {
+				const style = getComputedStyle(current);
+				const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY) && current.scrollHeight > current.clientHeight + 1;
+				const canScrollX = /(auto|scroll|overlay)/.test(style.overflowX) && current.scrollWidth > current.clientWidth + 1;
+				if (canScrollY || canScrollX) return current;
+			}
+			return document.scrollingElement || document.documentElement || document.body;
+		};
+		await waitForLayout();
+		const margin = 24;
+		const html = document.documentElement;
+		const body = document.body;
+		const previousHtmlScrollBehavior = html?.style?.scrollBehavior || "";
+		const previousBodyScrollBehavior = body?.style?.scrollBehavior || "";
+		if (html?.style) html.style.scrollBehavior = "auto";
+		if (body?.style) body.style.scrollBehavior = "auto";
+		try {
+			for (let attempt = 0; attempt < 6; attempt += 1) {
+				const rect = element.getBoundingClientRect();
+				if (rect.top >= margin && rect.bottom <= window.innerHeight - margin && rect.left >= 0 && rect.right <= window.innerWidth) return;
+
+				let desiredTop = Math.round((window.innerHeight - rect.height) / 2);
+				if (block === "start") desiredTop = margin;
+				if (block === "end") desiredTop = window.innerHeight - rect.height - margin;
+				desiredTop = Math.max(margin, Math.min(desiredTop, window.innerHeight - margin));
+
+				let deltaX = 0;
+				if (rect.left < margin) deltaX = rect.left - margin;
+				if (rect.right > window.innerWidth - margin) deltaX = rect.right - window.innerWidth + margin;
+				const deltaY = rect.top - desiredTop;
+				const scroller = findScrollContainer();
+				if (scroller === document.scrollingElement || scroller === document.documentElement || scroller === document.body) {
+					window.scrollBy(deltaX, deltaY);
+				} else {
+					scroller.scrollTop += deltaY;
+					scroller.scrollLeft += deltaX;
+				}
+				await waitForLayout(500);
+			}
+		} finally {
+			if (html?.style) html.style.scrollBehavior = previousHtmlScrollBehavior;
+			if (body?.style) body.style.scrollBehavior = previousBodyScrollBehavior;
+		}
 	};
 
 	const removeNotesForAnnotation = (annotationId) => {
@@ -1787,7 +1879,7 @@ const createPageToolkit = () => {
 		const preferredTarget = options.target === "note" ? "note" : "annotation";
 		const target = preferredTarget === "note" && note ? note : container;
 		target.scrollIntoView({ behavior: "auto", block, inline: "nearest" });
-		await waitForLayout();
+		await ensureElementInViewport(target, block);
 		return {
 			annotationId: rawAnnotationId,
 			targetKind: target === note ? "note" : "annotation",
@@ -1812,6 +1904,7 @@ const createPageToolkit = () => {
 		ensureAnnotationStyles();
 		const annotationElement = findAnnotationElement(rawAnnotationId);
 		const container = findAnnotationContainer(annotationElement);
+		const insertionPlacement = findNoteInsertionPlacement(container);
 		const replacedCount = removeNotesForAnnotation(rawAnnotationId);
 		const noteId = nextAnnotationId();
 		const note = document.createElement("div");
@@ -1828,9 +1921,9 @@ const createPageToolkit = () => {
 		body.textContent = rawNoteText;
 
 		note.append(label, body);
-		container.insertAdjacentElement("afterend", note);
+		insertNoteAtPlacement(note, insertionPlacement);
 		note.style.boxSizing = "border-box";
-		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(rawAnnotationId, { block: options.block });
+		const scrolled = options.scrollIntoView === false ? null : await scrollToAnnotation(rawAnnotationId, { block: options.block, target: "note" });
 		if (!scrolled) {
 			await waitForLayout();
 		}
@@ -1839,6 +1932,8 @@ const createPageToolkit = () => {
 			annotationId: rawAnnotationId,
 			text: rawNoteText.slice(0, 500),
 			container: summarizeElement(container),
+			insertionTarget: summarizeElement(insertionPlacement.target),
+			insertionPosition: insertionPlacement.position,
 			anchorRect: rectToObject(annotationElement.getBoundingClientRect()),
 			rect: rectToObject(note.getBoundingClientRect()),
 			scrollY: window.scrollY,

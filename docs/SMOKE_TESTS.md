@@ -178,3 +178,26 @@ This smoke does not call the model. It sends local bridge commands directly to t
 
 - minimum: Tier 2
 - run before a full model smoke when browser-command reliability is the main risk
+
+## Smoke G: Note Layout Regression
+
+Use this when note placement, highlight containers, page scrolling, or annotation CSS changed.
+
+This smoke does not call the model. It navigates fixture pages through the local bridge, highlights representative text, calls `show_note`, and checks that the note card is visible, not horizontally or vertically overflowing the viewport, not clipped by overflow ancestors, and not inserted under invalid parents such as `p`, `pre`, `code`, `ul`, `table`, or GitHub `.markdown-heading`.
+
+### Setup
+
+- environment: usually `Chrome Test`
+- submission path: direct bridge command
+- default fixtures: `onhand_github_repo`, `personal_computer`, `bayesian_dl`
+
+### Commands
+
+- `npm run test:note-layout -- --browser-client="Chrome Test"`
+- `npm run test:note-layout -- --browser-client="Chrome Test" --fixture=anthropic_job_posting --max-cases=5`
+- `npm run test:note-layout -- --browser-client="Chrome Test" --fixtures=onhand_github_repo,donald_trump,shah_rukh_khan,bayesian_dl,sets,cnns,graph_representations,anthropic_job_posting --max-cases=5`
+
+### Tier guidance
+
+- minimum: Tier 2 for deterministic placement coverage
+- add Tier 3 if the page has sticky overlays, dynamic app chrome, or a visual issue that the DOM checks cannot fully prove

@@ -413,6 +413,32 @@ async function main() {
 				},
 				ANNOTATION_TIMEOUT_MS,
 			);
+			const notePlacement = await command(
+				"run_js",
+				{
+					tabId: tab.id,
+					expression: `(() => {
+						const annotationId = ${JSON.stringify(annotationId)};
+						const note = [...document.querySelectorAll('[data-onhand-note-kind="card"]')]
+							.find((candidate) => candidate.getAttribute("data-onhand-note-for") === annotationId);
+						const parent = note?.parentElement || null;
+						const previous = note?.previousElementSibling || null;
+						return {
+							found: Boolean(note),
+							outsideGithubHeading: parent?.classList?.contains("markdown-heading") !== true,
+							previousIsGithubHeading: previous?.classList?.contains("markdown-heading") === true,
+							parentClass: String(parent?.className || ""),
+							previousClass: String(previous?.className || ""),
+						};
+					})()`,
+				},
+				FAST_TIMEOUT_MS,
+			);
+			if (!notePlacement?.result?.found) {
+				failures.push("Note placement check did not find the created note card.");
+			} else if (notePlacement.result.outsideGithubHeading === false) {
+				failures.push("GitHub heading note was inserted inside .markdown-heading instead of after the heading wrapper.");
+			}
 		}
 	}
 

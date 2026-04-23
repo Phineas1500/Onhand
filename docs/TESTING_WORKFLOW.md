@@ -121,6 +121,7 @@ Examples:
 - if a run may still be in progress, use `npm run inspect:latest-session -- --wait`
 - run `npm run test:fixtures` to pull the standard fixture URLs and prompts for the scenario you are checking
 - run `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` to verify bridge command execution, extension runtime revision, annotation reliability, and browser-client isolation without calling the model
+- run `npm run test:note-layout -- --browser-client="Chrome Test"` to verify live note placement on GitHub, Wikipedia, and technical-note fixtures without calling the model
 - run `npm run smoke:tier2 -- --fixture=<id>` for a repeatable desktop/API smoke that navigates to a fixture, submits a prompt, waits for the saved reply, and fails on missing output
 - add `--expect-provider`, `--expect-model`, and `--expect-api` to Tier 2 smokes when model routing is part of the change
 
@@ -212,6 +213,7 @@ Default:
 
 Reason:
 - payloads can be checked structurally, but note placement and scroll-to-annotation must be seen
+- use `npm run test:note-layout -- --browser-client="Chrome Test"` before GUI validation when the risk is clipping, invalid DOM insertion, or scroll-to-note behavior
 
 ### PDF Support Changes
 
