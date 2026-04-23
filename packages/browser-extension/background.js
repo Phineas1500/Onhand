@@ -1086,7 +1086,18 @@ const createPageToolkit = () => {
 		};
 	};
 
-	const waitForLayout = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+	const waitForLayout = (timeoutMs = 250) =>
+		new Promise((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				window.clearTimeout(timeoutId);
+				resolve();
+			};
+			const timeoutId = window.setTimeout(finish, timeoutMs);
+			window.requestAnimationFrame(() => window.requestAnimationFrame(finish));
+		});
 
 	const ensureAnnotationStyles = () => {
 		const styleId = "onhand-browser-annotation-style";

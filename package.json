@@ -37,7 +37,7 @@
     "ws": "^8.18.3"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-coding-agent": "^0.69.0",
     "@sinclair/typebox": "*"
   },
   "engines": {

@@ -5,6 +5,7 @@ import {
 	AuthStorage,
 	createAgentSession,
 	DefaultResourceLoader,
+	getAgentDir,
 	ModelRegistry,
 	SessionManager,
 	SettingsManager,
@@ -851,25 +852,28 @@ function handleSessionEvent(session, event) {
 	}
 }
 
-async function createRuntime() {
+async function createRuntime({ sessionManager = SessionManager.continueRecent(PROJECT_ROOT, SESSION_DIR) } = {}) {
+	const agentDir = getAgentDir();
 	const authStorage = AuthStorage.create();
-	const modelRegistry = new ModelRegistry(authStorage);
-	const settingsManager = SettingsManager.create(PROJECT_ROOT);
+	const modelRegistry = ModelRegistry.create(authStorage);
+	const settingsManager = SettingsManager.create(PROJECT_ROOT, agentDir);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: PROJECT_ROOT,
+		agentDir,
 		settingsManager,
 		additionalExtensionPaths: [PI_EXTENSION_PATH],
-		appendSystemPrompt: ONHAND_APPEND_SYSTEM_PROMPT,
+		appendSystemPrompt: [ONHAND_APPEND_SYSTEM_PROMPT],
 	});
 	await resourceLoader.reload();
 
 	const result = await createAgentSession({
 		cwd: PROJECT_ROOT,
+		agentDir,
 		authStorage,
 		modelRegistry,
 		resourceLoader,
 		settingsManager,
-		sessionManager: SessionManager.continueRecent(PROJECT_ROOT, SESSION_DIR),
+		sessionManager,
 	});
 
 	if (result.extensionsResult.errors.length > 0) {
@@ -888,14 +892,34 @@ async function createRuntime() {
 	return result;
 }
 
+function createRuntimePromise(options) {
+	runtimePromise = createRuntime(options).catch((error) => {
+		runtimePromise = null;
+		throw error;
+	});
+	return runtimePromise;
+}
+
 async function ensureRuntime() {
 	if (!runtimePromise) {
-		runtimePromise = createRuntime().catch((error) => {
-			runtimePromise = null;
-			throw error;
-		});
+		createRuntimePromise();
 	}
 	return await runtimePromise;
+}
+
+async function replaceRuntime(options) {
+	if (runtimePromise) {
+		try {
+			const { session } = await runtimePromise;
+			sessionEventUnsubscribe?.();
+			sessionEventUnsubscribe = null;
+			session.dispose();
+		} catch {
+			// Ignore cleanup failures while replacing the runtime.
+		}
+	}
+	runtimePromise = null;
+	return await createRuntimePromise(options);
 }
 
 export async function getSessionOverview(limit = 3) {
@@ -914,28 +938,33 @@ export async function getSessionOverview(limit = 3) {
 }
 
 export async function startNewOnhandSession() {
-	const { session } = await ensureRuntime();
+	const currentRuntime = await ensureRuntime();
 	if (activeRequest) {
 		throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
 	}
-	const previousSessionFile = session.sessionFile;
-	const created = await session.newSession({ parentSession: previousSessionFile || undefined });
+	const previousSessionFile = currentRuntime.session.sessionFile;
+	const sessionManager = SessionManager.create(PROJECT_ROOT, SESSION_DIR);
+	if (previousSessionFile) {
+		sessionManager.newSession({ parentSession: previousSessionFile });
+	}
+	const { session } = await replaceRuntime({ sessionManager });
 	syncUiStateFromSession(session);
 	return {
-		created,
+		created: { cancelled: false },
 		currentSession: buildSessionState(session),
 	};
 }
 
 export async function switchOnhandSession(sessionPath) {
-	const { session } = await ensureRuntime();
+	await ensureRuntime();
 	if (activeRequest) {
 		throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
 	}
-	const switched = await session.switchSession(sessionPath);
+	const sessionManager = SessionManager.open(sessionPath, SESSION_DIR);
+	const { session } = await replaceRuntime({ sessionManager });
 	syncUiStateFromSession(session);
 	return {
-		switched,
+		switched: { cancelled: false },
 		currentSession: buildSessionState(session),
 	};
 }
