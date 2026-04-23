@@ -1,3 +1,5 @@
+import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
+
 const DEFAULT_SETTINGS = {
 	bridgeUrl: "ws://127.0.0.1:3210/ws",
 	token: "",
@@ -2613,6 +2615,8 @@ async function handleCommand(name, args = {}) {
 			return {
 				pong: true,
 				clientId: settings.clientId,
+				extensionVersion: chrome.runtime.getManifest().version,
+				runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				state: await snapshotState(),
 			};
 		}
@@ -3049,6 +3053,7 @@ async function connectBridge(force = false) {
 				clientLabel: String(settings.clientLabel || "").trim() || undefined,
 				browserName: navigator.userAgent,
 				extensionVersion: chrome.runtime.getManifest().version,
+				runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				connectedAt: Date.now(),
 			});
 			await updateStatus({

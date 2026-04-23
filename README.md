@@ -104,6 +104,13 @@ If you only want to check whether the local test surfaces are up after starting 
 npm run test:preflight
 ```
 
+Useful browser/runtime checks:
+
+```bash
+npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"
+npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-provider=openai-codex --expect-model=gpt-5.5 --expect-api=openai-codex-responses
+```
+
 ### 3. Start the bridge manually (fallback)
 
 ```bash
@@ -216,6 +223,8 @@ Also includes the command:
 ## Notes
 
 - For testing, the preferred runtime path is `npm run tmux:start` plus `npm run test:preflight`.
+- `npm run test:preflight` reports whether connected browser clients are running the expected unpacked-extension runtime revision.
+- `npm run test:browser-bridge -- --browser-client="Chrome Test"` runs direct bridge/browser regression checks without calling the model.
 - The tmux helper uses its own socket and session by default, both named `onhand`, so it should not interfere with unrelated tmux usage.
 - If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached. The desktop launcher now avoids attaching it on open and only requests richer live page context when the user actually sends a message.

@@ -78,6 +78,34 @@ function extractReasoningSummaries(content = []) {
 	return summaries;
 }
 
+function extractAssistantModelInfo(entry) {
+	const message = entry?.message || {};
+	const provider = String(message.provider || "").trim();
+	const modelId = String(message.model || message.modelId || "").trim();
+	const api = String(message.api || "").trim();
+	const responseId = String(message.responseId || "").trim();
+	if (!provider && !modelId && !api && !responseId) return null;
+	return {
+		provider,
+		modelId,
+		api,
+		responseId,
+	};
+}
+
+function extractTurnModelInfo(entries, latestUserIndex, assistantEntries) {
+	const assistantModelInfo = [...assistantEntries].reverse().map(extractAssistantModelInfo).find(Boolean) || {};
+	const modelChange = [...entries.slice(0, latestUserIndex + 1)]
+		.reverse()
+		.find((entry) => entry?.type === "model_change");
+	return {
+		provider: assistantModelInfo.provider || String(modelChange?.provider || "").trim(),
+		modelId: assistantModelInfo.modelId || String(modelChange?.modelId || "").trim(),
+		api: assistantModelInfo.api || "",
+		responseId: assistantModelInfo.responseId || "",
+	};
+}
+
 function extractUserQuestion(text) {
 	const source = String(text || "");
 	const match = source.match(/User question:\s*([\s\S]*?)\s*Captured browser context/i);
@@ -229,6 +257,7 @@ export function inspectLatestTurn(entries, sessionPath) {
 		.find((entry) => extractFinalAnswer(entry?.message?.content));
 	const lastAssistantEntry = assistantEntries.at(-1) || null;
 	const finalReply = extractFinalAnswer(finalAssistantEntry?.message?.content);
+	const model = extractTurnModelInfo(entries, latestUserIndex, assistantEntries);
 	const reasoningSummaries = dedupe(assistantEntries.flatMap((entry) => extractReasoningSummaries(entry?.message?.content)));
 	const pageActionItems = toolResultEntries.map((entry) => summarizeToolResult(entry.message)).filter(Boolean);
 	const artifacts = pageActionItems
@@ -252,6 +281,7 @@ export function inspectLatestTurn(entries, sessionPath) {
 		latestTurn: {
 			userPrompt,
 			finalReply,
+			model,
 			reasoningSummaries,
 			pageActions,
 			artifacts,
@@ -302,6 +332,11 @@ function printHumanReadable(report) {
 
 	const turn = report.latestTurn;
 	console.log(`\nLatest user prompt:\n${turn.userPrompt || "(none)"}`);
+	if (turn.model?.provider || turn.model?.modelId || turn.model?.api) {
+		const providerModel = [turn.model.provider, turn.model.modelId].filter(Boolean).join("/");
+		const api = turn.model.api ? ` via ${turn.model.api}` : "";
+		console.log(`\nModel:\n${providerModel || "(unknown)"}${api}`);
+	}
 	console.log(`\nLatest assistant reply:\n${turn.finalReply || "(none)"}`);
 	if (!turn.finalReply && turn.isPossiblyRunning) {
 		console.log("\nNote: latest turn has page/tool activity but no final reply yet. Rerun with --wait to poll for completion.");

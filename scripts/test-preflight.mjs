@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { ONHAND_EXTENSION_RUNTIME_REVISION } from "../packages/browser-extension/runtime-revision.js";
+
 const PROJECT_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const CONFIG_PATH = join(homedir(), ".config", "pi-browser-bridge", "config.json");
 const SESSION_DIR = join(PROJECT_ROOT, ".onhand", "sessions", "desktop");
@@ -87,6 +89,19 @@ async function buildReport() {
 	const connectedClients = Array.isArray(bridgeHealth.data?.connectedClients)
 		? bridgeHealth.data.connectedClients.length
 		: 0;
+	const extensionClients = Array.isArray(bridgeHealth.data?.connectedClients)
+		? bridgeHealth.data.connectedClients.map((client) => {
+				const label = client?.hello?.clientLabel || client?.hello?.browserName || "Browser";
+				const runtimeRevision = String(client?.hello?.runtimeRevision || "").trim();
+				return {
+					clientId: client?.clientId || "",
+					label,
+					runtimeRevision,
+					ok: runtimeRevision === ONHAND_EXTENSION_RUNTIME_REVISION,
+				};
+			})
+		: [];
+	const staleExtensionClients = extensionClients.filter((client) => !client.ok);
 
 	return {
 		projectRoot: PROJECT_ROOT,
@@ -105,9 +120,16 @@ async function buildReport() {
 			port: desktopHealth.data?.port || 3211,
 			error: desktopHealth.error,
 		},
+		extensionRuntime: {
+			ok: staleExtensionClients.length === 0,
+			checked: extensionClients.length,
+			expectedRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
+			clients: extensionClients,
+			staleClients: staleExtensionClients,
+		},
 		sessions: sessionDir,
 		manualReminders: [
-			"If you changed packages/browser-extension/*, reload the unpacked extension before Tier 3 tests.",
+			"If extension runtime is STALE, reload the unpacked extension before Tier 2 / Tier 3 browser tests.",
 			"Use a dedicated Chrome window for GUI validation with Computer Use.",
 			"If the change is UI-sensitive, run Tier 1 and Tier 2 first, then verify the real flow with Computer Use.",
 		],
@@ -122,10 +144,24 @@ function printHealth(label, item, extra = "") {
 	}
 }
 
+function printExtensionRuntime(report) {
+	const runtime = report.extensionRuntime;
+	if (!runtime.checked) {
+		console.log("Extension runtime: SKIP (0 connected client(s))");
+		return;
+	}
+	const status = runtime.ok ? "OK" : "STALE";
+	console.log(`Extension runtime: ${status} (${runtime.staleClients.length} stale / ${runtime.checked} client(s), expected ${runtime.expectedRevision})`);
+	for (const client of runtime.staleClients) {
+		console.log(`  Stale: ${client.label} (${client.clientId}) revision ${client.runtimeRevision || "(missing)"}`);
+	}
+}
+
 function printHumanReadable(report) {
 	console.log(`Project root: ${report.projectRoot}`);
 	console.log("");
 	printHealth("Bridge", report.bridge, `${report.bridge.host}:${report.bridge.port}, ${report.bridge.connectedClients} client(s)`);
+	printExtensionRuntime(report);
 	printHealth("Desktop UI API", report.desktopUi, `${report.desktopUi.host}:${report.desktopUi.port}`);
 	printHealth(
 		"Session directory",

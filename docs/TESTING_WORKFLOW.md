@@ -71,6 +71,7 @@ For any non-trivial change:
    - `packages/browser-extension/*` changed: reload the unpacked extension
    - `packages/browser-bridge/*` changed: restart `npm run bridge`
    - before Tier 2 or Tier 3 runs, use `npm run test:preflight` to confirm the local test surfaces are up
+   - if `npm run test:preflight` reports extension runtime as `STALE`, reload the unpacked extension before browser tests
    - if you want a durable local runtime you can start/stop yourself, prefer tmux:
      - `npm run tmux:start`
      - `npm run tmux:status`
@@ -119,7 +120,9 @@ Examples:
 - run `npm run inspect:latest-session` to summarize the newest desktop session turn
 - if a run may still be in progress, use `npm run inspect:latest-session -- --wait`
 - run `npm run test:fixtures` to pull the standard fixture URLs and prompts for the scenario you are checking
+- run `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` to verify bridge command execution, extension runtime revision, annotation reliability, and browser-client isolation without calling the model
 - run `npm run smoke:tier2 -- --fixture=<id>` for a repeatable desktop/API smoke that navigates to a fixture, submits a prompt, waits for the saved reply, and fails on missing output
+- add `--expect-provider`, `--expect-model`, and `--expect-api` to Tier 2 smokes when model routing is part of the change
 
 This tier is sufficient for:
 - prompt/policy regressions
@@ -338,6 +341,24 @@ After this run, inspect with:
 To run the default version directly:
 
 - `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions`
+- `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-provider=openai-codex --expect-model=gpt-5.5 --expect-api=openai-codex-responses`
+
+### Smoke F: Direct Bridge Regression
+
+Default non-model browser-command check:
+
+- environment: targeted browser client, usually `Chrome Test`
+- submission path: direct bridge command
+- fixture: `onhand_github_repo`
+- purpose:
+  - verify the running unpacked extension has the expected runtime revision
+  - verify heading highlights return promptly even when Chrome throttles animation frames
+  - verify `get_visible_text` and `show_note` work after a highlight
+  - verify commands sent to `Chrome Test` do not change other connected clients such as `Helium`
+
+Run:
+
+- `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"`
 
 ## Preflight
 
@@ -387,9 +408,10 @@ This checks:
 - browser bridge health
 - desktop UI API health
 - connected browser client count
+- connected browser clients' unpacked-extension runtime revision
 - whether desktop session files are present
 
-It does not verify extension reload state. That still requires a manual reload when browser-extension files changed.
+If extension runtime is `STALE`, Chrome is still running older unpacked extension code. Reload the unpacked extension or restart Chrome before browser tests.
 
 The expected healthy setup for authoritative GUI testing is:
 

@@ -27,6 +27,7 @@
     "tmux:status": "./scripts/onhand-tmux.sh status",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
+    "test:browser-bridge": "node ./scripts/run-browser-bridge-regression.mjs",
     "smoke:tier2": "node ./scripts/run-tier2-smoke.mjs"
   },
   "dependencies": {

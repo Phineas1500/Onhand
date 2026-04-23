@@ -16,6 +16,7 @@ These are intentionally small and repeatable. They are not exhaustive QA plans.
   - `npm run tmux:stop`
 - Start with `npm run test:preflight`.
 - If browser-extension code changed, reload the unpacked extension in Chrome before the run.
+- If preflight reports extension runtime as `STALE`, reload the unpacked extension or restart Chrome before browser smokes.
 - If desktop or bridge code changed and you are using the managed runtime, prefer:
   - `npm run tmux:stop`
   - `npm run tmux:start`
@@ -120,6 +121,7 @@ Use this when the change is mostly runtime/state/prompt logic and a full GUI run
 ### Commands
 
 - `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions`
+- `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-provider=openai-codex --expect-model=gpt-5.5 --expect-api=openai-codex-responses`
 - `npm run inspect:latest-session`
 
 ### Tier guidance
@@ -145,3 +147,34 @@ Use this only when browser targeting or client binding changed.
 
 - minimum: Tier 2
 - add Tier 3 only if the GUI behavior itself changed
+
+## Smoke F: Direct Bridge Regression
+
+Use this when browser bridge, browser extension, annotation, stale-extension detection, or client targeting changed.
+
+This smoke does not call the model. It sends local bridge commands directly to the selected browser client, which makes failures faster and easier to attribute than a full agent run.
+
+### Setup
+
+- environment: usually `Chrome Test`
+- submission path: direct bridge command
+- fixture: `onhand_github_repo`
+
+### What to verify
+
+- the selected browser client matches the intended label/name
+- the connected extension runtime revision matches the source tree
+- `highlight_text` returns promptly for a README heading
+- `get_visible_text` still returns after annotation mutations
+- `show_note` can attach to the returned annotation id
+- other connected browser clients keep their active tab unchanged
+
+### Commands
+
+- `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"`
+- `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test" --json`
+
+### Tier guidance
+
+- minimum: Tier 2
+- run before a full model smoke when browser-command reliability is the main risk

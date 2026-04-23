@@ -29,6 +29,9 @@ function parseArgs(argv) {
 		json: false,
 		minPageActions: 0,
 		allowToolErrors: false,
+		expectProvider: "",
+		expectModel: "",
+		expectApi: "",
 		expectReplyIncludes: [],
 		help: false,
 	};
@@ -114,6 +117,18 @@ function parseArgs(argv) {
 			if (expected) args.expectReplyIncludes.push(expected);
 			continue;
 		}
+		if (value.startsWith("--expect-provider=")) {
+			args.expectProvider = value.slice("--expect-provider=".length).trim();
+			continue;
+		}
+		if (value.startsWith("--expect-model=")) {
+			args.expectModel = value.slice("--expect-model=".length).trim();
+			continue;
+		}
+		if (value.startsWith("--expect-api=")) {
+			args.expectApi = value.slice("--expect-api=".length).trim();
+			continue;
+		}
 		if (value.startsWith("--")) {
 			throw new Error(`Unknown option: ${value}`);
 		}
@@ -149,6 +164,9 @@ Options:
   --expect-actions                 Fail unless at least one page action/artifact is recorded
   --min-page-actions=<n>           Fail unless at least n page actions/artifacts are recorded
   --expect-reply-includes=<text>   Fail unless the final reply contains this text
+  --expect-provider=<provider>     Fail unless the session used this provider
+  --expect-model=<model>           Fail unless the session used this model id
+  --expect-api=<api>               Fail unless the session used this pi model API
   --allow-tool-errors              Do not fail on browser tool errors
   --timeout-ms=<n>                 Wait timeout for the final reply
   --json                           Print machine-readable output
@@ -399,6 +417,15 @@ function validateReport(report, args, prompt) {
 	if (turn.pageActions.length < args.minPageActions) {
 		failures.push(`Expected at least ${args.minPageActions} page action(s), found ${turn.pageActions.length}.`);
 	}
+	if (args.expectProvider && turn.model?.provider !== args.expectProvider) {
+		failures.push(`Expected provider ${args.expectProvider}, found ${turn.model?.provider || "(unknown)"}.`);
+	}
+	if (args.expectModel && turn.model?.modelId !== args.expectModel) {
+		failures.push(`Expected model ${args.expectModel}, found ${turn.model?.modelId || "(unknown)"}.`);
+	}
+	if (args.expectApi && turn.model?.api !== args.expectApi) {
+		failures.push(`Expected model API ${args.expectApi}, found ${turn.model?.api || "(unknown)"}.`);
+	}
 	for (const expected of args.expectReplyIncludes) {
 		if (!String(turn.finalReply || "").toLowerCase().includes(expected.toLowerCase())) {
 			failures.push(`Final reply did not include expected text: ${expected}`);
@@ -450,6 +477,11 @@ function printHumanReadable(result) {
 	if (result.requestId) console.log(`Request: ${result.requestId}`);
 
 	const turn = result.report?.latestTurn || null;
+	if (turn?.model?.provider || turn?.model?.modelId || turn?.model?.api) {
+		const providerModel = [turn.model.provider, turn.model.modelId].filter(Boolean).join("/");
+		const api = turn.model.api ? ` via ${turn.model.api}` : "";
+		console.log(`Model: ${providerModel || "(unknown)"}${api}`);
+	}
 	console.log("");
 	console.log(`Final reply: ${turn?.finalReply ? truncate(turn.finalReply, 320) : "(none)"}`);
 	console.log(`Page actions: ${turn?.pageActions?.length || 0}`);
