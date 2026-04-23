@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PROJECT_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const SESSION_DIR = join(PROJECT_ROOT, ".onhand", "sessions", "desktop");
@@ -171,7 +172,7 @@ function summarizeToolResult(message) {
 	}
 }
 
-async function resolveSessionPath(sessionRef) {
+export async function resolveSessionPath(sessionRef) {
 	const entries = (await fs.readdir(SESSION_DIR)).filter((entry) => entry.endsWith(".jsonl")).sort();
 	if (!entries.length) {
 		throw new Error(`No session files found in ${SESSION_DIR}`);
@@ -195,7 +196,7 @@ async function resolveSessionPath(sessionRef) {
 	return join(SESSION_DIR, substringMatches.at(-1));
 }
 
-async function loadSessionEntries(sessionPath) {
+export async function loadSessionEntries(sessionPath) {
 	const raw = await fs.readFile(sessionPath, "utf8");
 	return raw
 		.split("\n")
@@ -204,7 +205,7 @@ async function loadSessionEntries(sessionPath) {
 		.map((line) => JSON.parse(line));
 }
 
-function inspectLatestTurn(entries, sessionPath) {
+export function inspectLatestTurn(entries, sessionPath) {
 	const sessionInfo = [...entries].reverse().find((entry) => entry?.type === "session_info") || null;
 	const latestUserIndex = entries.findLastIndex(
 		(entry) => entry?.type === "message" && entry?.message?.role === "user",
@@ -272,7 +273,7 @@ async function sleep(ms) {
 	await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForLatestTurnCompletion(sessionPath, { timeoutMs, intervalMs }) {
+export async function waitForLatestTurnCompletion(sessionPath, { timeoutMs, intervalMs }) {
 	const startedAt = Date.now();
 	let latestReport = null;
 	while (true) {
@@ -365,7 +366,9 @@ async function main() {
 	printHumanReadable(report);
 }
 
-main().catch((error) => {
-	console.error(error?.message || String(error));
-	process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	main().catch((error) => {
+		console.error(error?.message || String(error));
+		process.exitCode = 1;
+	});
+}

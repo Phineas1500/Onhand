@@ -26,7 +26,8 @@
     "tmux:attach": "./scripts/onhand-tmux.sh attach",
     "tmux:status": "./scripts/onhand-tmux.sh status",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
-    "test:preflight": "node ./scripts/test-preflight.mjs"
+    "test:preflight": "node ./scripts/test-preflight.mjs",
+    "smoke:tier2": "node ./scripts/run-tier2-smoke.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

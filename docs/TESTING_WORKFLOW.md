@@ -119,6 +119,7 @@ Examples:
 - run `npm run inspect:latest-session` to summarize the newest desktop session turn
 - if a run may still be in progress, use `npm run inspect:latest-session -- --wait`
 - run `npm run test:fixtures` to pull the standard fixture URLs and prompts for the scenario you are checking
+- run `npm run smoke:tier2 -- --fixture=<id>` for a repeatable desktop/API smoke that navigates to a fixture, submits a prompt, waits for the saved reply, and fails on missing output
 
 This tier is sufficient for:
 - prompt/policy regressions
@@ -333,6 +334,10 @@ After this run, inspect with:
 
 - `npm run inspect:latest-session`
 - or `npm run inspect:latest-session -- --wait` if the turn may still be finishing
+
+To run the default version directly:
+
+- `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions`
 
 ## Preflight
 

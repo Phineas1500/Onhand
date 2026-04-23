@@ -10,6 +10,7 @@ const RECONNECT_DELAY_MS = 2000;
 const WEBSOCKET_KEEPALIVE_MS = 20_000;
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
+const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -22,6 +23,7 @@ let settingsCache = null;
 let creatingOffscreenDocument = null;
 let connectBridgePromise = null;
 const debuggerTaskChains = new Map();
+const tabCommandTaskChains = new Map();
 
 function log(...args) {
 	console.log("[onhand-browser-bridge]", ...args);
@@ -366,11 +368,33 @@ async function resolveTargetTab(args = {}) {
 	return tab;
 }
 
+function isDebuggerAttachConflict(error) {
+	return /another debugger|already attached/i.test(error?.message || String(error));
+}
+
+async function attachDebuggerWithRetry(target) {
+	let lastError = null;
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			await chrome.debugger.attach(target, "1.3");
+			return;
+		} catch (error) {
+			lastError = error;
+			if (!isDebuggerAttachConflict(error)) throw error;
+			try {
+				await chrome.debugger.detach(target);
+			} catch {}
+			await delay(DEBUGGER_ATTACH_RETRY_DELAY_MS * (attempt + 1));
+		}
+	}
+	throw lastError;
+}
+
 async function withDebugger(tabId, fn) {
 	const previousTask = debuggerTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = previousTask.catch(() => {}).then(async () => {
 		const target = { tabId };
-		await chrome.debugger.attach(target, "1.3");
+		await attachDebuggerWithRetry(target);
 		try {
 			return await fn({
 				send: async (method, params = {}) => {
@@ -391,6 +415,18 @@ async function withDebugger(tabId, fn) {
 	});
 
 	debuggerTaskChains.set(tabId, trackedTask);
+	return await trackedTask;
+}
+
+async function withTabCommand(tabId, fn) {
+	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
+	const scheduledTask = previousTask.catch(() => {}).then(fn);
+	const trackedTask = scheduledTask.finally(() => {
+		if (tabCommandTaskChains.get(tabId) === trackedTask) {
+			tabCommandTaskChains.delete(tabId);
+		}
+	});
+	tabCommandTaskChains.set(tabId, trackedTask);
 	return await trackedTask;
 }
 
@@ -2589,45 +2625,53 @@ async function handleCommand(name, args = {}) {
 		}
 		case "get_cookies": {
 			const tab = await resolveTargetTab(args);
-			const cookies = await getCookiesForTab(tab.id);
-			return {
-				tab: simplifyTab(tab),
-				cookies,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const cookies = await getCookiesForTab(tab.id);
+				return {
+					tab: simplifyTab(tab),
+					cookies,
+				};
+			});
 		}
 		case "run_js": {
 			if (typeof args.expression !== "string" || !args.expression.trim()) {
 				throw new Error("run_js requires a non-empty 'expression'");
 			}
 			const tab = await resolveTargetTab(args);
-			const result = await evaluateInTab(tab.id, args.expression);
-			return {
-				tab: simplifyTab(tab),
-				result,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const result = await evaluateInTab(tab.id, args.expression);
+				return {
+					tab: simplifyTab(tab),
+					result,
+				};
+			});
 		}
 		case "get_dom": {
 			const tab = await resolveTargetTab(args);
-			const outerHTML = await getDomOuterHtml(tab.id);
-			return {
-				tab: simplifyTab(tab),
-				outerHTML,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const outerHTML = await getDomOuterHtml(tab.id);
+				return {
+					tab: simplifyTab(tab),
+					outerHTML,
+				};
+			});
 		}
 		case "highlight_text": {
 			if (typeof args.text !== "string" || !args.text.trim()) {
 				throw new Error("highlight_text requires a non-empty 'text'");
 			}
 			const tab = await resolveTargetTab(args);
-			const annotation = await runPageToolkitMethod(tab.id, "highlightText", args.text, {
-				occurrence: args.occurrence,
-				clearExisting: args.clearExisting,
-				scrollIntoView: args.scrollIntoView,
+			return await withTabCommand(tab.id, async () => {
+				const annotation = await runPageToolkitMethod(tab.id, "highlightText", args.text, {
+					occurrence: args.occurrence,
+					clearExisting: args.clearExisting,
+					scrollIntoView: args.scrollIntoView,
+				});
+				return {
+					tab: simplifyTab(tab),
+					annotation,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				annotation,
-			};
 		}
 		case "show_note": {
 			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {
@@ -2637,109 +2681,129 @@ async function handleCommand(name, args = {}) {
 				throw new Error("show_note requires a non-empty 'note'");
 			}
 			const tab = await resolveTargetTab(args);
-			const note = await runPageToolkitMethod(tab.id, "showNote", args.annotationId, args.note, {
-				label: args.label,
-				scrollIntoView: args.scrollIntoView,
-				block: args.block,
+			return await withTabCommand(tab.id, async () => {
+				const note = await runPageToolkitMethod(tab.id, "showNote", args.annotationId, args.note, {
+					label: args.label,
+					scrollIntoView: args.scrollIntoView,
+					block: args.block,
+				});
+				return {
+					tab: simplifyTab(tab),
+					note,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				note,
-			};
 		}
 		case "scroll_to_annotation": {
 			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {
 				throw new Error("scroll_to_annotation requires a non-empty 'annotationId'");
 			}
 			const tab = await resolveTargetTab(args);
-			const annotation = await runPageToolkitMethod(tab.id, "scrollToAnnotation", args.annotationId, {
-				block: args.block,
-				target: args.target,
+			return await withTabCommand(tab.id, async () => {
+				const annotation = await runPageToolkitMethod(tab.id, "scrollToAnnotation", args.annotationId, {
+					block: args.block,
+					target: args.target,
+				});
+				return {
+					tab: simplifyTab(tab),
+					annotation,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				annotation,
-			};
 		}
 		case "capture_state": {
 			const tab = await resolveTargetTab(args);
-			const page = await runPageToolkitMethod(tab.id, "captureState");
-			return {
-				tab: simplifyTab(tab),
-				page,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const page = await runPageToolkitMethod(tab.id, "captureState");
+				return {
+					tab: simplifyTab(tab),
+					page,
+				};
+			});
 		}
 		case "get_visible_text": {
 			const tab = await resolveTargetTab(args);
-			const visible = await runPageToolkitMethod(tab.id, "getVisibleText", {
-				maxChars: args.maxChars,
-				maxBlocks: args.maxBlocks,
+			return await withTabCommand(tab.id, async () => {
+				const visible = await runPageToolkitMethod(tab.id, "getVisibleText", {
+					maxChars: args.maxChars,
+					maxBlocks: args.maxBlocks,
+				});
+				return {
+					tab: simplifyTab(tab),
+					visible,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				visible,
-			};
 		}
 		case "get_selection": {
 			const tab = await resolveTargetTab(args);
-			const selection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
-			return {
-				tab: simplifyTab(tab),
-				selection,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const selection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
+				return {
+					tab: simplifyTab(tab),
+					selection,
+				};
+			});
 		}
 		case "get_viewport_headings": {
 			const tab = await resolveTargetTab(args);
-			const headings = await runPageToolkitMethod(tab.id, "getViewportHeadings", {
-				maxHeadings: args.maxHeadings,
+			return await withTabCommand(tab.id, async () => {
+				const headings = await runPageToolkitMethod(tab.id, "getViewportHeadings", {
+					maxHeadings: args.maxHeadings,
+				});
+				return {
+					tab: simplifyTab(tab),
+					headings,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				headings,
-			};
 		}
 		case "get_scroll_state": {
 			const tab = await resolveTargetTab(args);
-			const scroll = await runPageToolkitMethod(tab.id, "getScrollState");
-			return {
-				tab: simplifyTab(tab),
-				scroll,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const scroll = await runPageToolkitMethod(tab.id, "getScrollState");
+				return {
+					tab: simplifyTab(tab),
+					scroll,
+				};
+			});
 		}
 		case "clear_annotations": {
 			const tab = await resolveTargetTab(args);
-			const cleared = await runPageToolkitMethod(tab.id, "clearAnnotations");
-			return {
-				tab: simplifyTab(tab),
-				...cleared,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const cleared = await runPageToolkitMethod(tab.id, "clearAnnotations");
+				return {
+					tab: simplifyTab(tab),
+					...cleared,
+				};
+			});
 		}
 		case "find_elements": {
 			if (typeof args.text !== "string" || !args.text.trim()) {
 				throw new Error("find_elements requires a non-empty 'text'");
 			}
 			const tab = await resolveTargetTab(args);
-			const matches = await runPageToolkitMethod(tab.id, "findElementsByText", args.text, {
-				interactiveOnly: args.interactiveOnly,
-				exact: args.exact,
-				includeHidden: args.includeHidden,
-				maxResults: args.maxResults,
+			return await withTabCommand(tab.id, async () => {
+				const matches = await runPageToolkitMethod(tab.id, "findElementsByText", args.text, {
+					interactiveOnly: args.interactiveOnly,
+					exact: args.exact,
+					includeHidden: args.includeHidden,
+					maxResults: args.maxResults,
+				});
+				return {
+					tab: simplifyTab(tab),
+					matches,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				matches,
-			};
 		}
 		case "click": {
 			if (typeof args.selector !== "string" || !args.selector.trim()) {
 				throw new Error("click requires a non-empty 'selector'");
 			}
 			const tab = await resolveTargetTab(args);
-			const element = await evaluateInTab(tab.id, `(${clickElementInPage.toString()})(${JSON.stringify({ selector: args.selector })})`);
-			return {
-				tab: simplifyTab(tab),
-				element,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const element = await evaluateInTab(tab.id, `(${clickElementInPage.toString()})(${JSON.stringify({ selector: args.selector })})`);
+				return {
+					tab: simplifyTab(tab),
+					element,
+				};
+			});
 		}
 		case "type_text": {
 			if (typeof args.selector !== "string" || !args.selector.trim()) {
@@ -2749,69 +2813,79 @@ async function handleCommand(name, args = {}) {
 				throw new Error("type_text requires a string 'text'");
 			}
 			const tab = await resolveTargetTab(args);
-			const element = await evaluateInTab(
-				tab.id,
-				`(${typeIntoElementInPage.toString()})(${JSON.stringify({
-					selector: args.selector,
-					text: args.text,
-					clear: args.clear,
-					submit: args.submit,
-				})})`,
-			);
-			return {
-				tab: simplifyTab(tab),
-				element,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const element = await evaluateInTab(
+					tab.id,
+					`(${typeIntoElementInPage.toString()})(${JSON.stringify({
+						selector: args.selector,
+						text: args.text,
+						clear: args.clear,
+						submit: args.submit,
+					})})`,
+				);
+				return {
+					tab: simplifyTab(tab),
+					element,
+				};
+			});
 		}
 		case "wait_for_selector": {
 			if (typeof args.selector !== "string" || !args.selector.trim()) {
 				throw new Error("wait_for_selector requires a non-empty 'selector'");
 			}
 			const tab = await resolveTargetTab(args);
-			const element = await evaluateInTab(
-				tab.id,
-				`(${waitForSelectorInPage.toString()})(${JSON.stringify({
-					selector: args.selector,
-					timeoutMs: args.timeoutMs,
-					visible: args.visible,
-				})})`,
-			);
-			return {
-				tab: simplifyTab(tab),
-				element,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const element = await evaluateInTab(
+					tab.id,
+					`(${waitForSelectorInPage.toString()})(${JSON.stringify({
+						selector: args.selector,
+						timeoutMs: args.timeoutMs,
+						visible: args.visible,
+					})})`,
+				);
+				return {
+					tab: simplifyTab(tab),
+					element,
+				};
+			});
 		}
 		case "collect_console": {
 			const tab = await resolveTargetTab(args);
-			const entries = await collectConsoleEvents(tab.id, args);
-			return {
-				tab: simplifyTab(tab),
-				entries,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const entries = await collectConsoleEvents(tab.id, args);
+				return {
+					tab: simplifyTab(tab),
+					entries,
+				};
+			});
 		}
 		case "collect_network": {
 			const tab = await resolveTargetTab(args);
-			const entries = await collectNetworkEvents(tab.id, args);
-			return {
-				tab: simplifyTab(tab),
-				entries,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const entries = await collectNetworkEvents(tab.id, args);
+				return {
+					tab: simplifyTab(tab),
+					entries,
+				};
+			});
 		}
 		case "click_text": {
 			if (typeof args.text !== "string" || !args.text.trim()) {
 				throw new Error("click_text requires a non-empty 'text'");
 			}
 			const tab = await resolveTargetTab(args);
-			const result = await runPageToolkitMethod(tab.id, "clickByText", args.text, {
-				exact: args.exact,
-				includeHidden: args.includeHidden,
-				maxResults: args.maxResults,
+			return await withTabCommand(tab.id, async () => {
+				const result = await runPageToolkitMethod(tab.id, "clickByText", args.text, {
+					exact: args.exact,
+					includeHidden: args.includeHidden,
+					maxResults: args.maxResults,
+				});
+				return {
+					tab: simplifyTab(tab),
+					element: result.element,
+					matches: result.matches,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				element: result.element,
-				matches: result.matches,
-			};
 		}
 		case "type_by_label": {
 			if (typeof args.labelText !== "string" || !args.labelText.trim()) {
@@ -2821,38 +2895,44 @@ async function handleCommand(name, args = {}) {
 				throw new Error("type_by_label requires a string 'text'");
 			}
 			const tab = await resolveTargetTab(args);
-			const result = await runPageToolkitMethod(tab.id, "typeByLabel", args.labelText, args.text, {
-				clear: args.clear,
-				submit: args.submit,
-				exact: args.exact,
-				includeHidden: args.includeHidden,
+			return await withTabCommand(tab.id, async () => {
+				const result = await runPageToolkitMethod(tab.id, "typeByLabel", args.labelText, args.text, {
+					clear: args.clear,
+					submit: args.submit,
+					exact: args.exact,
+					includeHidden: args.includeHidden,
+				});
+				return {
+					tab: simplifyTab(tab),
+					element: result.element,
+					matchedBy: result.matchedBy,
+					matches: result.matches,
+				};
 			});
-			return {
-				tab: simplifyTab(tab),
-				element: result.element,
-				matchedBy: result.matchedBy,
-				matches: result.matches,
-			};
 		}
 		case "pick_elements": {
 			if (typeof args.message !== "string" || !args.message.trim()) {
 				throw new Error("pick_elements requires a non-empty 'message'");
 			}
 			const tab = await resolveTargetTab(args);
-			const selection = await runPageToolkitMethod(tab.id, "pickElements", args.message);
-			return {
-				tab: simplifyTab(tab),
-				selection,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const selection = await runPageToolkitMethod(tab.id, "pickElements", args.message);
+				return {
+					tab: simplifyTab(tab),
+					selection,
+				};
+			});
 		}
 		case "capture_screenshot": {
 			const tab = await resolveTargetTab(args);
-			const screenshot = await captureTabScreenshot(tab.id, args);
-			return {
-				tab: simplifyTab(screenshot.tab),
-				dataUrl: screenshot.dataUrl,
-				method: screenshot.method,
-			};
+			return await withTabCommand(tab.id, async () => {
+				const screenshot = await captureTabScreenshot(tab.id, args);
+				return {
+					tab: simplifyTab(screenshot.tab),
+					dataUrl: screenshot.dataUrl,
+					method: screenshot.method,
+				};
+			});
 		}
 		case "open_onhand_sidebar": {
 			const windowId = await resolveSidebarWindowId(args);

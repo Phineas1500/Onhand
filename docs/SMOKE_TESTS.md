@@ -119,6 +119,7 @@ Use this when the change is mostly runtime/state/prompt logic and a full GUI run
 
 ### Commands
 
+- `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions`
 - `npm run inspect:latest-session`
 
 ### Tier guidance

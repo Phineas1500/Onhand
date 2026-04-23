@@ -1,8 +1,9 @@
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PROJECT_ROOT = resolve(new URL("..", import.meta.url).pathname);
 
-const PRIMARY_FIXTURES = [
+export const PRIMARY_FIXTURES = [
 	{
 		id: "donald_trump",
 		title: "Donald Trump Wikipedia",
@@ -181,7 +182,7 @@ const PRIMARY_FIXTURES = [
 	},
 ];
 
-const SECONDARY_FIXTURES = [
+export const SECONDARY_FIXTURES = [
 	{
 		id: "personal_computer",
 		title: "Personal Computer Wikipedia",
@@ -202,7 +203,7 @@ const SECONDARY_FIXTURES = [
 	},
 ];
 
-const SCENARIO_MAP = {
+export const SCENARIO_MAP = {
 	sidepanel_ui: {
 		label: "Side panel / annotation UI regressions",
 		fixtures: ["donald_trump", "shah_rukh_khan"],
@@ -237,7 +238,7 @@ const SCENARIO_MAP = {
 	},
 };
 
-const STANDARD_PROMPTS = [
+export const STANDARD_PROMPTS = [
 	"why did he become such a big star?",
 	"how did he win the 2024 election after losing in 2020?",
 	"use the notes I have open to help me understand how to solve this problem",
@@ -285,11 +286,11 @@ function fixtureMatches(fixture, filter) {
 	return haystack.includes(filter);
 }
 
-function pickFixtureMap() {
+export function pickFixtureMap() {
 	return new Map([...PRIMARY_FIXTURES, ...SECONDARY_FIXTURES].map((fixture) => [fixture.id, fixture]));
 }
 
-function buildReport(filter) {
+export function buildReport(filter) {
 	const primaryFixtures = PRIMARY_FIXTURES.filter((fixture) => fixtureMatches(fixture, filter));
 	const secondaryFixtures = SECONDARY_FIXTURES.filter((fixture) => fixtureMatches(fixture, filter));
 	const fixtureMap = pickFixtureMap();
@@ -399,4 +400,6 @@ async function main() {
 	printHumanReadable(report);
 }
 
-await main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	await main();
+}
