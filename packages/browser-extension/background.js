@@ -15,6 +15,13 @@ const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
+const FONT_ASSET_PATHS = Object.freeze({
+	newYorkRegular: "fonts/NewYork.woff2",
+	newYorkItalic: "fonts/NewYorkItalic.woff2",
+	ioskeleyRegular: "fonts/IoskeleyMono-Regular.woff2",
+	ioskeleyBold: "fonts/IoskeleyMono-Bold.woff2",
+	ioskeleyItalic: "fonts/IoskeleyMono-Italic.woff2",
+});
 
 let ws = null;
 let socketGeneration = 0;
@@ -47,6 +54,10 @@ function initializeExtensionSurface() {
 
 function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getExtensionFontUrls() {
+	return Object.fromEntries(Object.entries(FONT_ASSET_PATHS).map(([key, path]) => [key, chrome.runtime.getURL(path)]));
 }
 
 async function updateStatus(partial) {
@@ -726,7 +737,9 @@ const waitForSelectorInPage = async ({ selector, timeoutMs = 10000, visible = fa
 	});
 };
 
-const createPageToolkit = () => {
+const createPageToolkit = (options = {}) => {
+	const toolkitOptions = options && typeof options === "object" ? options : {};
+	const fontUrls = toolkitOptions.fontUrls && typeof toolkitOptions.fontUrls === "object" ? toolkitOptions.fontUrls : {};
 	const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 	const lowerText = (value) => normalizeText(value).toLowerCase();
 	const cssEscape = (value) => {
@@ -734,6 +747,56 @@ const createPageToolkit = () => {
 		return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
 	};
 	const attrEscape = (value) => String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	const cssUrl = (value) => {
+		const url = String(value || "").trim();
+		if (!url) return "";
+		return `url("${url.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
+	};
+	const annotationFontFaces = () => {
+		const newYorkRegular = cssUrl(fontUrls.newYorkRegular);
+		const newYorkItalic = cssUrl(fontUrls.newYorkItalic);
+		const ioskeleyRegular = cssUrl(fontUrls.ioskeleyRegular);
+		const ioskeleyBold = cssUrl(fontUrls.ioskeleyBold);
+		const ioskeleyItalic = cssUrl(fontUrls.ioskeleyItalic);
+		if (!newYorkRegular || !newYorkItalic || !ioskeleyRegular || !ioskeleyBold || !ioskeleyItalic) return "";
+		return `
+			@font-face {
+			  font-family: "New York";
+			  font-style: normal;
+			  font-weight: 400 1000;
+			  font-display: swap;
+			  src: ${newYorkRegular} format("woff2");
+			}
+			@font-face {
+			  font-family: "New York";
+			  font-style: italic;
+			  font-weight: 400 1000;
+			  font-display: swap;
+			  src: ${newYorkItalic} format("woff2");
+			}
+			@font-face {
+			  font-family: "Ioskeley Mono";
+			  font-style: normal;
+			  font-weight: 400;
+			  font-display: swap;
+			  src: ${ioskeleyRegular} format("woff2");
+			}
+			@font-face {
+			  font-family: "Ioskeley Mono";
+			  font-style: normal;
+			  font-weight: 700;
+			  font-display: swap;
+			  src: ${ioskeleyBold} format("woff2");
+			}
+			@font-face {
+			  font-family: "Ioskeley Mono";
+			  font-style: italic;
+			  font-weight: 400;
+			  font-display: swap;
+			  src: ${ioskeleyItalic} format("woff2");
+			}
+		`;
+	};
 
 	const isVisible = (element) => {
 		if (!(element instanceof Element)) return false;
@@ -1110,58 +1173,134 @@ const createPageToolkit = () => {
 			(document.head || document.documentElement).appendChild(style);
 		}
 		style.textContent = `
-			span[data-onhand-highlight-kind="inline"] {
-				background: #fde047 !important;
-				color: #111827 !important;
-				outline: 2px solid #ef4444 !important;
-				outline-offset: 1px !important;
-				border-radius: 3px !important;
-				padding: 0 0.08em !important;
-				box-decoration-break: clone !important;
-				-webkit-box-decoration-break: clone !important;
-			}
-			[data-onhand-highlight-kind="block"] {
-				background: rgba(253, 224, 71, 0.85) !important;
-				color: inherit !important;
-				outline: 2px solid #ef4444 !important;
-				outline-offset: 3px !important;
-				border-radius: 6px !important;
-				scroll-margin-top: 20vh !important;
-				scroll-margin-bottom: 20vh !important;
-			}
+			${annotationFontFaces()}
+
+			/* ============================================================
+			   Onhand in-browser annotations — Ramaway Dawn reskin.
+
+			   Paste this verbatim into the template-literal body of
+			   \`ensureAnnotationStyles()\` in background.js, replacing the
+			   existing yellow+red rules.
+
+			   DOM contract unchanged:
+			     span[data-onhand-highlight-kind="inline"]      — inline highlight
+			     [data-onhand-highlight-kind="block"]           — block highlight
+			     [data-onhand-note-kind="card"]                 — note card
+			       [data-onhand-note-part="label"]              — eyebrow
+			       [data-onhand-note-part="body"]               — prose
+			   ============================================================ */
+
+			/* Palette is scoped to Onhand nodes only so we never leak into the host page. */
+			span[data-onhand-highlight-kind="inline"],
+			[data-onhand-highlight-kind="block"],
 			[data-onhand-note-kind="card"] {
-				background: linear-gradient(90deg, #f59e0b 0 6px, #fff7c2 6px) !important;
-				color: #111827 !important;
-				border: 2px solid #f59e0b !important;
-				border-radius: 10px !important;
-				box-shadow: 0 14px 30px rgba(17, 24, 39, 0.18) !important;
-				margin: 12px 0 16px !important;
-				padding: 12px 14px 12px 20px !important;
-				display: block !important;
-				width: fit-content !important;
-				inline-size: fit-content !important;
-				max-width: min(26rem, 100%) !important;
-				max-inline-size: min(26rem, 100%) !important;
-				font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-				position: relative !important;
-				z-index: auto !important;
-				scroll-margin-top: 20vh !important;
-				scroll-margin-bottom: 20vh !important;
-				white-space: normal !important;
-				overflow-wrap: anywhere !important;
-				vertical-align: top !important;
-				clear: both !important;
+			  --onhand-hl-bg: rgba(234, 157, 52, 0.32) !important;
+			  --onhand-gold:  #ea9d34 !important;
+			  --onhand-pine:  #286983 !important;
+			  --onhand-mantle: #e6dbd1 !important;
+			  --onhand-surface-2: #cac1b9 !important;
+			  --onhand-text:  #575279 !important;
+			  --onhand-subtext: #797593 !important;
+			  --onhand-font-serif: "New York", "Iowan Old Style", Charter, Georgia, serif !important;
+			  --onhand-font-mono: "Ioskeley Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;
 			}
+
+			@media (prefers-color-scheme: dark) {
+			  span[data-onhand-highlight-kind="inline"],
+			  [data-onhand-highlight-kind="block"],
+			  [data-onhand-note-kind="card"] {
+			    --onhand-hl-bg: rgba(246, 193, 119, 0.28) !important;
+			    --onhand-gold:  #f6c177 !important;
+			    --onhand-pine:  #9ccfd8 !important;
+			    --onhand-mantle: #1f1d2e !important;
+			    --onhand-surface-2: #44415a !important;
+			    --onhand-text:  #e0def4 !important;
+			    --onhand-subtext: #908caa !important;
+			  }
+			}
+
+			/* Inline highlight — soft gold wash, no outline, no color override on the text */
+			span[data-onhand-highlight-kind="inline"] {
+			  background: var(--onhand-hl-bg) !important;
+			  color: inherit !important;
+			  border-radius: 2px !important;
+			  padding: 0 0.08em !important;
+			  box-decoration-break: clone !important;
+			  -webkit-box-decoration-break: clone !important;
+			  transition: background 150ms ease-out !important;
+			}
+
+			/* Block highlight — left gold rail + faint wash, preserves surrounding text */
+			[data-onhand-highlight-kind="block"] {
+			  background: var(--onhand-hl-bg) !important;
+			  border-left: 3px solid var(--onhand-gold) !important;
+			  padding-left: 12px !important;
+			  margin-left: -15px !important;
+			  border-radius: 0 3px 3px 0 !important;
+			  color: inherit !important;
+			  scroll-margin-top: 20vh !important;
+			  scroll-margin-bottom: 20vh !important;
+			}
+
+			/* Note card — editorial callout, pine-barred */
+			[data-onhand-note-kind="card"] {
+			  background: var(--onhand-mantle) !important;
+			  color: var(--onhand-text) !important;
+			  border: 1px solid var(--onhand-surface-2) !important;
+			  border-left: 3px solid var(--onhand-pine) !important;
+			  border-radius: 0 4px 4px 0 !important;
+			  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.06) !important;
+			  margin: 14px 0 18px !important;
+			  padding: 12px 14px !important;
+			  display: block !important;
+			  width: fit-content !important;
+			  inline-size: fit-content !important;
+			  max-width: min(32rem, 100%) !important;
+			  max-inline-size: min(32rem, 100%) !important;
+			  font: 15px/1.55 var(--onhand-font-serif) !important;
+			  position: relative !important;
+			  z-index: auto !important;
+			  scroll-margin-top: 20vh !important;
+			  scroll-margin-bottom: 20vh !important;
+			  white-space: normal !important;
+			  overflow-wrap: anywhere !important;
+			  vertical-align: top !important;
+			  clear: both !important;
+			}
+
+			@media (prefers-color-scheme: dark) {
+			  [data-onhand-note-kind="card"] {
+			    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+			  }
+			}
+
+			/* Eyebrow label — mono, pine-toned, with a pine dot */
 			[data-onhand-note-part="label"] {
-				color: #92400e !important;
-				font-size: 12px !important;
-				font-weight: 700 !important;
-				letter-spacing: 0.04em !important;
-				margin-bottom: 6px !important;
-				text-transform: uppercase !important;
+			  font-family: var(--onhand-font-mono) !important;
+			  color: var(--onhand-pine) !important;
+			  font-size: 11px !important;
+			  font-weight: 700 !important;
+			  letter-spacing: 0.08em !important;
+			  margin-bottom: 6px !important;
+			  text-transform: uppercase !important;
+			  display: flex !important;
+			  align-items: center !important;
+			  gap: 6px !important;
 			}
+
+			[data-onhand-note-part="label"]::before {
+			  content: "" !important;
+			  display: inline-block !important;
+			  width: 5px !important;
+			  height: 5px !important;
+			  border-radius: 50% !important;
+			  background: var(--onhand-pine) !important;
+			}
+
+			/* Body prose — New York-backed editorial serif */
 			[data-onhand-note-part="body"] {
-				white-space: pre-wrap !important;
+			  white-space: pre-wrap !important;
+			  color: var(--onhand-text) !important;
 			}
 		`;
 	};
@@ -1880,6 +2019,25 @@ const createPageToolkit = () => {
 		const target = preferredTarget === "note" && note ? note : container;
 		target.scrollIntoView({ behavior: "auto", block, inline: "nearest" });
 		await ensureElementInViewport(target, block);
+		const flashTarget = preferredTarget === "note" && note ? note : annotationElement;
+		try {
+			flashTarget.animate(
+				[
+					{ outline: "2px solid var(--onhand-gold, #ea9d34)", outlineOffset: "2px" },
+					{ outline: "2px solid transparent", outlineOffset: "2px" },
+				],
+				{ duration: 700, easing: "ease-out" },
+			);
+		} catch {
+			const previousOutline = flashTarget.style.outline;
+			const previousOutlineOffset = flashTarget.style.outlineOffset;
+			flashTarget.style.outline = "2px solid #ea9d34";
+			flashTarget.style.outlineOffset = "2px";
+			window.setTimeout(() => {
+				flashTarget.style.outline = previousOutline;
+				flashTarget.style.outlineOffset = previousOutlineOffset;
+			}, 700);
+		}
 		return {
 			annotationId: rawAnnotationId,
 			targetKind: target === note ? "note" : "annotation",
@@ -2176,14 +2334,15 @@ async function evaluateInTab(tabId, expression, options = {}) {
 }
 
 async function runPageToolkitMethod(tabId, methodName, ...args) {
+	const fontUrls = getExtensionFontUrls();
 	try {
 		const payload = await withOperationTimeout(
 			executeScriptInTab(
 				tabId,
-				async (toolkitSource, targetMethodName, targetArgs) => {
+				async (toolkitSource, targetMethodName, targetArgs, targetFontUrls) => {
 					try {
 						const toolkitFactory = (0, eval)(`(${toolkitSource})`);
-						const toolkit = toolkitFactory();
+						const toolkit = toolkitFactory({ fontUrls: targetFontUrls });
 						return {
 							ok: true,
 							value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
@@ -2195,7 +2354,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 						};
 					}
 				},
-				[createPageToolkit.toString(), methodName, args],
+				[createPageToolkit.toString(), methodName, args, fontUrls],
 			),
 			SCRIPT_EXECUTION_TIMEOUT_MS,
 			`Page toolkit scripting timed out: ${methodName}`,
@@ -2206,9 +2365,10 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		return payload.value;
 	} catch (scriptError) {
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
+		const serializedOptions = JSON.stringify({ fontUrls });
 		return await evaluateInTab(
 			tabId,
-			`(async () => { const toolkit = (${createPageToolkit.toString()})(); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
+			`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
 			{ skipScripting: true },
 		);
 	}
@@ -3260,9 +3420,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:fetch-state") {
 			const response = await callOnhandApi("/state");
+			const state = response.state && typeof response.state === "object" ? { ...response.state } : response.state;
+			if (state && typeof state === "object") {
+				try {
+					const captured = await handleCommand("capture_state", {});
+					state.tab = captured?.tab || null;
+					state.page = captured?.page || null;
+				} catch (error) {
+					state.pageCaptureError = error?.message || String(error);
+				}
+			}
 			sendResponse({
 				ok: true,
-				state: response.state,
+				state,
 			});
 			return;
 		}
@@ -3322,6 +3492,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:rename-session") {
+			const response = await callOnhandApi("/sessions/rename", {
+				method: "POST",
+				body: JSON.stringify({
+					sessionName: message.sessionName,
+				}),
+			});
+			sendResponse({
+				ok: true,
+				currentSession: response.currentSession,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:restore-session") {
 			const settings = await getSettings();
 			const response = await callOnhandApi("/sessions/restore", {
@@ -3371,6 +3555,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			sendResponse({
 				ok: true,
 				result: response.result,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:scroll-to-annotation") {
+			const annotationId = typeof message.annotationId === "string" ? message.annotationId.trim() : "";
+			if (!annotationId) {
+				throw new Error("Annotation id is required.");
+			}
+			const args = {
+				annotationId,
+				target: message.target === "note" ? "note" : "annotation",
+			};
+			if (typeof message.tabId === "number") {
+				args.tabId = message.tabId;
+			}
+			const result = await handleCommand("scroll_to_annotation", args);
+			sendResponse({
+				ok: true,
+				result,
 			});
 			return;
 		}

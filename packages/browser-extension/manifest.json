@@ -19,7 +19,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["vendor/*"],
+      "resources": ["vendor/*", "fonts/*"],
       "matches": ["<all_urls>"]
     }
   ]

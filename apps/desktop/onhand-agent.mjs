@@ -969,6 +969,22 @@ export async function switchOnhandSession(sessionPath) {
 	};
 }
 
+export async function renameCurrentOnhandSession(sessionName) {
+	const nextName = String(sessionName || "").replace(/\s+/g, " ").trim();
+	if (!nextName) {
+		throw new Error("Session name is required.");
+	}
+	const { session } = await ensureRuntime();
+	session.setSessionName(truncate(nextName, 120));
+	const currentSession = buildSessionState(session);
+	mutateUiState((state) => {
+		state.currentSession = currentSession;
+	});
+	return {
+		currentSession,
+	};
+}
+
 export async function stopOnhandRun() {
 	const { session } = await ensureRuntime();
 	if (!activeRequest) {

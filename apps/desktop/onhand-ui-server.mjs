@@ -55,6 +55,7 @@ export function createOnhandUiServer({
 	listSessions,
 	startNewSession,
 	switchSession,
+	renameSession,
 	restoreSession,
 	stopPrompt,
 	submitPrompt,
@@ -139,6 +140,25 @@ export function createOnhandUiServer({
 				sendJson(res, 200, {
 					ok: true,
 					...(await switchSession(body.sessionPath)),
+				});
+				return;
+			}
+
+			if (req.method === "POST" && pathname === "/sessions/rename") {
+				if (!renameSession) {
+					const error = new Error("Session rename is unavailable.");
+					error.statusCode = 501;
+					throw error;
+				}
+				const body = await readJsonBody(req);
+				if (typeof body.sessionName !== "string" || !body.sessionName.trim()) {
+					const error = new Error("Session name is required.");
+					error.statusCode = 400;
+					throw error;
+				}
+				sendJson(res, 200, {
+					ok: true,
+					...(await renameSession(body.sessionName)),
 				});
 				return;
 			}

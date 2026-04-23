@@ -11,6 +11,21 @@
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
 	const IS_NATIVE_SIDE_PANEL =
 		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
+	const FONT_ASSET_PATHS = Object.freeze({
+		newYorkRegular: "fonts/NewYork.woff2",
+		newYorkItalic: "fonts/NewYorkItalic.woff2",
+		ioskeleyRegular: "fonts/IoskeleyMono-Regular.woff2",
+		ioskeleyBold: "fonts/IoskeleyMono-Bold.woff2",
+		ioskeleyItalic: "fonts/IoskeleyMono-Italic.woff2",
+	});
+	const extensionUrl = (path) => {
+		try {
+			return chrome.runtime.getURL(path);
+		} catch {
+			return path;
+		}
+	};
+	const FONT_URLS = Object.fromEntries(Object.entries(FONT_ASSET_PATHS).map(([key, path]) => [key, extensionUrl(path)]));
 	const CITATION_STOP_WORDS = new Set([
 		"a",
 		"an",
@@ -88,6 +103,7 @@
 	let restoringSession = false;
 	let stoppingRequest = false;
 	let attachmentDrafts = [];
+	const sessionTitleDrafts = new Map();
 
 	const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 		"c",
@@ -372,7 +388,7 @@
 					.map(
 						(citation) => `
 							<button
-								class="reply-citation"
+								class="onhand-cite"
 								data-action-key="${escapeAttribute(citation.actionKey)}"
 								title="${escapeAttribute(citation.title || "Open page evidence")}"
 								type="button"
@@ -569,6 +585,41 @@
 			* {
 				box-sizing: border-box;
 			}
+			@font-face {
+				font-family: "New York";
+				font-style: normal;
+				font-weight: 400 1000;
+				font-display: swap;
+				src: url("${FONT_URLS.newYorkRegular}") format("woff2");
+			}
+			@font-face {
+				font-family: "New York";
+				font-style: italic;
+				font-weight: 400 1000;
+				font-display: swap;
+				src: url("${FONT_URLS.newYorkItalic}") format("woff2");
+			}
+			@font-face {
+				font-family: "Ioskeley Mono";
+				font-style: normal;
+				font-weight: 400;
+				font-display: swap;
+				src: url("${FONT_URLS.ioskeleyRegular}") format("woff2");
+			}
+			@font-face {
+				font-family: "Ioskeley Mono";
+				font-style: normal;
+				font-weight: 700;
+				font-display: swap;
+				src: url("${FONT_URLS.ioskeleyBold}") format("woff2");
+			}
+			@font-face {
+				font-family: "Ioskeley Mono";
+				font-style: italic;
+				font-weight: 400;
+				font-display: swap;
+				src: url("${FONT_URLS.ioskeleyItalic}") format("woff2");
+			}
 			.panel {
 				width: 100%;
 				height: 100%;
@@ -580,7 +631,7 @@
 				color: #f6f1e8;
 				border-left: 1px solid rgba(255, 255, 255, 0.08);
 				box-shadow: -24px 0 60px rgba(0, 0, 0, 0.38);
-				font-family: "SF Pro Text", "Segoe UI", sans-serif;
+				font-family: var(--rm-font-serif);
 				pointer-events: auto;
 			}
 			.header {
@@ -893,7 +944,7 @@
 			}
 			.reply-inline-code,
 			.reply-code-block code {
-				font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+				font-family: var(--rm-font-mono);
 			}
 			.reply-inline-code {
 				background: rgba(255, 255, 255, 0.08);
@@ -933,7 +984,7 @@
 				overflow-x: auto;
 			}
 			.reply-math-fallback {
-				font-family: "Times New Roman", serif;
+				font-family: var(--rm-font-serif);
 				font-style: italic;
 			}
 			.empty-card,
@@ -1081,7 +1132,7 @@
 				background: rgba(255, 255, 255, 0.03);
 				color: #f6f1e8;
 				padding: 12px 14px;
-				font: 13px/1.45 "SF Pro Text", "Segoe UI", sans-serif;
+				font: 13px/1.45 var(--rm-font-serif);
 				resize: vertical;
 				outline: none;
 			}
@@ -1113,60 +1164,740 @@
 				opacity: 0.6;
 				cursor: not-allowed;
 			}
+
+			:host {
+				--rm-base: #eee6dd;
+				--rm-mantle: #e6dbd1;
+				--rm-crust: #ddd0c6;
+				--rm-surface-0: #dcd3cb;
+				--rm-surface-1: #d1c9c2;
+				--rm-surface-2: #cac1b9;
+				--rm-text: #575279;
+				--rm-subtext: #797593;
+				--rm-love: #b4637a;
+				--rm-pine: #286983;
+				--rm-foam: #56949f;
+				--rm-iris: #907aa9;
+				--rm-gold: #ea9d34;
+				--rm-rose: #d6817d;
+				--rm-hl-bg: rgba(234, 157, 52, 0.32);
+				--rm-font-serif: "New York", "Iowan Old Style", Charter, Georgia, serif;
+				--rm-font-mono: "Ioskeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				:host {
+					--rm-base: #191724;
+					--rm-mantle: #1f1d2e;
+					--rm-crust: #26233a;
+					--rm-surface-0: #2a273f;
+					--rm-surface-1: #393552;
+					--rm-surface-2: #44415a;
+					--rm-text: #e0def4;
+					--rm-subtext: #908caa;
+					--rm-love: #eb6f92;
+					--rm-pine: #31748f;
+					--rm-foam: #9ccfd8;
+					--rm-iris: #c4a7e7;
+					--rm-gold: #f6c177;
+					--rm-rose: #ebbcba;
+					--rm-hl-bg: rgba(246, 193, 119, 0.28);
+				}
+			}
+
+			.onhand-sidebar {
+				background: var(--rm-base);
+				color: var(--rm-text);
+				font: 15px/1.6 var(--rm-font-serif);
+				border-left: 1px solid var(--rm-surface-2);
+				box-shadow: none;
+				display: flex;
+				flex-direction: column;
+				height: 100%;
+				width: 100%;
+				pointer-events: auto;
+			}
+			.onhand-sidebar button,
+			.onhand-sidebar input,
+			.onhand-sidebar select,
+			.onhand-sidebar textarea {
+				font: inherit;
+			}
+			.onhand-head {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				padding: 12px 16px;
+				border-bottom: 1px solid var(--rm-surface-2);
+				background: color-mix(in srgb, var(--rm-mantle) 60%, transparent);
+				position: relative;
+				z-index: 2;
+			}
+			.onhand-brand {
+				display: flex;
+				align-items: center;
+				color: var(--rm-text);
+				flex: 0 0 auto;
+			}
+			.onhand-brand svg {
+				width: 20px;
+				height: 20px;
+				color: currentColor;
+			}
+			.onhand-title {
+				flex: 1;
+				min-width: 0;
+				font-size: 16px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+				color: var(--rm-text);
+				border: 0;
+				background: transparent;
+				outline: none;
+				padding: 2px 0;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			.onhand-title:focus {
+				box-shadow: inset 0 -1px 0 var(--rm-pine);
+			}
+			.onhand-menu-wrap {
+				position: relative;
+				flex: 0 0 auto;
+			}
+			.onhand-menu {
+				width: 28px;
+				height: 28px;
+				display: grid;
+				place-items: center;
+				border: 0;
+				background: transparent;
+				color: var(--rm-subtext);
+				font-size: 18px;
+				line-height: 1;
+				border-radius: 3px;
+				cursor: pointer;
+			}
+			.onhand-menu:hover,
+			.onhand-menu[aria-expanded="true"] {
+				background: var(--rm-surface-1);
+				color: var(--rm-text);
+			}
+			.onhand-menu-panel {
+				position: absolute;
+				top: calc(100% + 8px);
+				right: 0;
+				width: 310px;
+				max-width: calc(100vw - 28px);
+				padding: 12px;
+				background: var(--rm-base);
+				color: var(--rm-text);
+				border: 1px solid var(--rm-surface-2);
+				box-shadow: 0 16px 34px rgba(25, 23, 36, 0.18);
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+			}
+			.onhand-menu-panel[hidden] {
+				display: none;
+			}
+			.onhand-status {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+				color: var(--rm-subtext);
+				font: 11px/1.4 var(--rm-font-mono);
+				padding-bottom: 8px;
+				border-bottom: 1px solid var(--rm-surface-1);
+			}
+			.onhand-status-pill {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				color: var(--rm-subtext);
+			}
+			.onhand-status-dot {
+				width: 7px;
+				height: 7px;
+				border-radius: 999px;
+				background: var(--rm-gold);
+			}
+			.onhand-status.ok .onhand-status-dot {
+				background: var(--rm-foam);
+			}
+			.onhand-status.error .onhand-status-dot {
+				background: var(--rm-love);
+			}
+			.onhand-menu-field {
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+				font: 10.5px/1.2 var(--rm-font-mono);
+				letter-spacing: 0.05em;
+				text-transform: uppercase;
+				color: var(--rm-subtext);
+			}
+			.onhand-select {
+				width: 100%;
+				min-width: 0;
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				border-radius: 3px;
+				padding: 8px 9px;
+				font: 12px/1.4 var(--rm-font-serif);
+				text-transform: none;
+				letter-spacing: 0;
+			}
+			.onhand-menu-actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 7px;
+			}
+			.onhand-menu-actions .session-button {
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				border-radius: 2px;
+				padding: 6px 8px;
+				font: 11px/1 var(--rm-font-mono);
+				cursor: pointer;
+			}
+			.onhand-menu-actions .session-button:hover {
+				background: var(--rm-surface-0);
+			}
+			.onhand-menu-actions .session-button:disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-menu-actions .stop-button {
+				color: var(--rm-love);
+				border-color: color-mix(in srgb, var(--rm-love) 38%, var(--rm-surface-2));
+			}
+			.onhand-hotkeys {
+				color: var(--rm-subtext);
+				font: 10px/1.45 var(--rm-font-mono);
+				border-top: 1px solid var(--rm-surface-1);
+				padding-top: 8px;
+			}
+			.onhand-scroll {
+				flex: 1;
+				min-height: 0;
+				overflow-y: auto;
+				overflow-x: hidden;
+			}
+			.onhand-scroll::-webkit-scrollbar {
+				width: 8px;
+			}
+			.onhand-scroll::-webkit-scrollbar-thumb {
+				background: var(--rm-surface-2);
+				border-radius: 999px;
+			}
+			.onhand-index {
+				padding: 10px 16px 14px;
+				border-bottom: 1px solid var(--rm-surface-1);
+				background: color-mix(in srgb, var(--rm-mantle) 40%, transparent);
+			}
+			.onhand-index[hidden] {
+				display: none;
+			}
+			.onhand-index-head {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				margin-bottom: 8px;
+			}
+			.onhand-label {
+				font: 700 10.5px/1 var(--rm-font-mono);
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+				color: var(--rm-subtext);
+			}
+			.onhand-count {
+				font: 10.5px var(--rm-font-mono);
+				color: var(--rm-subtext);
+			}
+			.onhand-index-item {
+				width: 100%;
+				display: flex;
+				gap: 10px;
+				padding: 6px 8px;
+				margin: 2px -8px;
+				border-radius: 3px;
+				cursor: pointer;
+				align-items: flex-start;
+				border: 0;
+				border-left: 2px solid transparent;
+				background: transparent;
+				text-align: left;
+			}
+			.onhand-index-item:hover {
+				background: var(--rm-mantle);
+				border-left-color: var(--rm-gold);
+			}
+			.onhand-index-num {
+				font: 700 11px var(--rm-font-mono);
+				color: var(--rm-foam);
+				min-width: 18px;
+				padding-top: 2px;
+			}
+			.onhand-index-text {
+				flex: 1;
+				font-size: 13.5px;
+				line-height: 1.4;
+				color: var(--rm-text);
+				font-style: italic;
+				min-width: 0;
+				display: -webkit-box;
+				-webkit-line-clamp: 2;
+				-webkit-box-orient: vertical;
+				overflow: hidden;
+			}
+			.onhand-index-note {
+				font: 10px var(--rm-font-mono);
+				color: var(--rm-pine);
+				padding-top: 3px;
+			}
+			.message-list {
+				display: block;
+			}
+			.onhand-entry {
+				padding: 16px 18px;
+				border-bottom: 1px solid var(--rm-surface-1);
+			}
+			.onhand-eyebrow {
+				font: 10.5px/1 var(--rm-font-mono);
+				letter-spacing: 0.05em;
+				color: var(--rm-subtext);
+				margin-bottom: 6px;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				flex-wrap: wrap;
+			}
+			.onhand-eyebrow .dot {
+				width: 3px;
+				height: 3px;
+				border-radius: 50%;
+				background: var(--rm-surface-2);
+			}
+			.onhand-q {
+				font-style: italic;
+				font-size: 16px;
+				color: var(--rm-subtext);
+				line-height: 1.4;
+				margin: 0 0 10px;
+				border-left: 2px solid var(--rm-surface-2);
+				padding-left: 10px;
+				max-width: 52ch;
+				white-space: pre-wrap;
+			}
+			.onhand-a {
+				color: var(--rm-text);
+				max-width: 52ch;
+			}
+			.onhand-a p,
+			.onhand-a ul,
+			.onhand-a ol,
+			.onhand-a pre,
+			.onhand-a blockquote,
+			.onhand-a h1,
+			.onhand-a h2,
+			.onhand-a h3,
+			.onhand-a h4,
+			.onhand-a .reply-math-block {
+				margin: 0 0 10px;
+			}
+			.onhand-a p:last-child {
+				margin-bottom: 0;
+			}
+			.onhand-a h1,
+			.onhand-a h2,
+			.onhand-a h3,
+			.onhand-a h4 {
+				color: var(--rm-text);
+				line-height: 1.28;
+			}
+			.onhand-a strong {
+				color: var(--rm-love);
+				font-weight: 600;
+			}
+			.onhand-a em {
+				color: var(--rm-foam);
+				font-style: italic;
+			}
+			.onhand-a a {
+				color: var(--rm-pine);
+				text-decoration: underline;
+				text-decoration-color: color-mix(in srgb, var(--rm-pine) 42%, transparent);
+			}
+			.onhand-a ul,
+			.onhand-a ol {
+				padding-left: 22px;
+			}
+			.onhand-a li + li {
+				margin-top: 6px;
+			}
+			.onhand-a blockquote {
+				border-left: 3px solid var(--rm-gold);
+				padding-left: 12px;
+				color: var(--rm-subtext);
+			}
+			.onhand-a code,
+			.reply-inline-code {
+				font-family: var(--rm-font-mono);
+				font-size: 0.88em;
+				background: var(--rm-surface-0);
+				color: var(--rm-love);
+				padding: 1px 4px;
+				border-radius: 2px;
+				border: 0;
+			}
+			.reply-code-block {
+				background: var(--rm-surface-0);
+				border: 1px solid var(--rm-surface-2);
+				border-radius: 3px;
+				padding: 12px;
+				overflow-x: auto;
+			}
+			.reply-code-block code {
+				display: block;
+				color: var(--rm-text);
+				background: transparent;
+				padding: 0;
+				white-space: pre;
+			}
+			.reply-citations {
+				display: inline;
+				margin-left: 3px;
+			}
+			.onhand-cite {
+				font-family: var(--rm-font-mono);
+				font-size: 0.72em;
+				color: var(--rm-pine);
+				font-weight: 700;
+				vertical-align: super;
+				line-height: 0;
+				padding: 0 1px;
+				text-decoration: none;
+				cursor: pointer;
+				border: 0;
+				background: transparent;
+			}
+			.onhand-cite:hover {
+				color: var(--rm-foam);
+				text-decoration: underline;
+			}
+			.reply-placeholder {
+				color: var(--rm-subtext);
+				font-style: italic;
+			}
+			.reply-math-block,
+			.reply-math-inline {
+				color: var(--rm-text);
+			}
+			.reply-math-block {
+				display: block;
+				overflow-x: auto;
+			}
+			.reply-math-fallback {
+				font-family: var(--rm-font-serif);
+				font-style: italic;
+			}
+			.onhand-reason {
+				margin: 10px 0 0;
+				font: 11px/1 var(--rm-font-mono);
+				color: var(--rm-subtext);
+			}
+			.onhand-reason summary {
+				cursor: pointer;
+				list-style: none;
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				padding: 4px 8px;
+				margin-left: -8px;
+				border-radius: 2px;
+			}
+			.onhand-reason summary::-webkit-details-marker {
+				display: none;
+			}
+			.onhand-reason summary::before {
+				content: ">";
+				color: var(--rm-surface-2);
+				transition: transform 120ms;
+				display: inline-block;
+			}
+			.onhand-reason[open] summary::before {
+				transform: rotate(90deg);
+			}
+			.onhand-reason summary:hover {
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+			}
+			.onhand-reason-body {
+				padding: 8px 0 0 14px;
+				color: var(--rm-subtext);
+				font: italic 13px/1.5 var(--rm-font-serif);
+				border-left: 1px solid var(--rm-surface-1);
+				margin-left: 2px;
+				white-space: pre-wrap;
+			}
+			.onhand-actions {
+				margin-top: 10px;
+				display: flex;
+				flex-wrap: wrap;
+				gap: 10px;
+				font: 11px var(--rm-font-mono);
+			}
+			.onhand-action {
+				color: var(--rm-pine);
+				cursor: pointer;
+				padding: 2px 0;
+				border: 0;
+				border-bottom: 1px solid transparent;
+				background: transparent;
+			}
+			.onhand-action:hover {
+				border-bottom-color: var(--rm-pine);
+			}
+			.onhand-cursor {
+				display: inline-block;
+				width: 2px;
+				height: 1em;
+				background: var(--rm-pine);
+				vertical-align: text-bottom;
+				margin-left: 1px;
+				animation: onhand-blink 1s steps(2) infinite;
+			}
+			@keyframes onhand-blink {
+				50% {
+					opacity: 0;
+				}
+			}
+			.onhand-compose {
+				border-top: 1px solid var(--rm-surface-2);
+				padding: 12px 14px 10px;
+				background: color-mix(in srgb, var(--rm-mantle) 40%, transparent);
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.onhand-compose.learning {
+				border-top-color: var(--rm-gold);
+				box-shadow: inset 0 2px 0 var(--rm-gold);
+			}
+			.onhand-draft-chips {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 6px;
+			}
+			.onhand-chip {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				max-width: 100%;
+				font: 10.5px var(--rm-font-mono);
+				padding: 3px 8px;
+				background: var(--rm-crust);
+				border: 1px solid var(--rm-surface-2);
+				border-radius: 2px;
+				color: var(--rm-text);
+			}
+			.onhand-chip span {
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.onhand-chip .x {
+				cursor: pointer;
+				color: var(--rm-subtext);
+				font-size: 12px;
+				line-height: 1;
+				border: 0;
+				background: transparent;
+				padding: 0;
+			}
+			.onhand-input {
+				background: var(--rm-base);
+				border: 1px solid var(--rm-surface-2);
+				border-radius: 3px;
+				padding: 10px 12px;
+				font: 15px/1.5 var(--rm-font-serif);
+				color: var(--rm-text);
+				min-height: 54px;
+				resize: vertical;
+				outline: none;
+			}
+			.onhand-input::placeholder {
+				color: var(--rm-subtext);
+				font-style: italic;
+			}
+			.onhand-input:focus {
+				border-color: var(--rm-pine);
+				box-shadow: 0 0 0 2px color-mix(in srgb, var(--rm-pine) 18%, transparent);
+			}
+			.onhand-row {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				font: 10.5px var(--rm-font-mono);
+				color: var(--rm-subtext);
+			}
+			.onhand-row .ctl {
+				display: inline-flex;
+				align-items: center;
+				gap: 5px;
+				cursor: pointer;
+				padding: 3px 6px;
+				border-radius: 2px;
+				border: 0;
+				background: transparent;
+				color: inherit;
+			}
+			.onhand-row .ctl:hover {
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+			}
+			.onhand-row .learn {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				cursor: pointer;
+				padding: 3px 6px;
+				border-radius: 2px;
+			}
+			.onhand-row .learn .sw {
+				width: 22px;
+				height: 12px;
+				border-radius: 999px;
+				background: var(--rm-surface-2);
+				position: relative;
+				transition: background 120ms;
+			}
+			.onhand-row .learn .sw::after {
+				content: "";
+				position: absolute;
+				top: 1px;
+				left: 1px;
+				width: 10px;
+				height: 10px;
+				border-radius: 50%;
+				background: #fff;
+				transition: transform 120ms;
+			}
+			.onhand-row .learn.on .sw {
+				background: var(--rm-gold);
+			}
+			.onhand-row .learn.on .sw::after {
+				transform: translateX(10px);
+			}
+			.onhand-row .spacer {
+				flex: 1;
+			}
+			.onhand-send {
+				font: 11px var(--rm-font-mono);
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				border: 0;
+				border-radius: 2px;
+				padding: 6px 12px;
+				cursor: pointer;
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+			}
+			.onhand-send:hover {
+				background: var(--rm-foam);
+			}
+			.onhand-send:disabled,
+			.onhand-input:disabled,
+			.onhand-row .ctl:disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-send .kbd {
+				background: color-mix(in srgb, var(--rm-base) 18%, transparent);
+				padding: 1px 4px;
+				border-radius: 2px;
+				font-size: 10px;
+			}
+			.onhand-hint {
+				font: 10px var(--rm-font-mono);
+				color: var(--rm-subtext);
+				text-align: center;
+				letter-spacing: 0.04em;
+				margin-top: 2px;
+			}
+			.onhand-empty {
+				padding: 20px 22px;
+				font-size: 15px;
+				line-height: 1.55;
+				max-width: 46ch;
+			}
+			.onhand-empty .lede {
+				color: var(--rm-text);
+				font-weight: 600;
+				margin-bottom: 6px;
+			}
+			.onhand-empty .empty-body {
+				color: var(--rm-subtext);
+				font-style: italic;
+			}
 		</style>
-		<div class="panel">
-			<div class="header">
-				<div class="brand">
-					<div class="eyebrow">Onhand</div>
-					<div class="title">Browser Sidebar</div>
+		<div class="onhand-sidebar panel" data-onhand-sidebar>
+			<header class="onhand-head">
+				<div class="onhand-brand" aria-label="Onhand">
+					<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+						<path d="M12 3.5 19.5 8v8L12 20.5 4.5 16V8L12 3.5Z" stroke="currentColor" stroke-width="1.8" />
+						<path d="M12 8v8M8.5 10.2l7 4.1M15.5 10.2l-7 4.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+					</svg>
 				</div>
-				<button id="closeButton" class="close-button" type="button">Close</button>
-			</div>
-			<div id="meta" class="meta">Connecting to Onhand…</div>
-			<div class="body">
-				<section class="section">
-					<div class="section-title">Session</div>
-					<div class="session-toolbar">
-						<select id="sessionSelect" class="session-select"></select>
-						<label id="learningModeLabel" class="mode-toggle" title="Learning Mode slows down the first answer and pushes Onhand to scaffold and check understanding.">
-							<input id="learningModeToggle" type="checkbox" />
-							<span>Learning</span>
+				<input id="sessionTitleInput" class="onhand-title" type="text" value="Current session" aria-label="Session title" spellcheck="false" />
+				<div class="onhand-menu-wrap">
+					<button id="menuButton" class="onhand-menu" type="button" aria-label="Open Onhand menu" aria-haspopup="menu" aria-expanded="false">&#8943;</button>
+					<div id="menuPanel" class="onhand-menu-panel" hidden>
+						<div id="meta" class="onhand-status">Connecting to Onhand...</div>
+						<label class="onhand-menu-field">
+							<span>Session</span>
+							<select id="sessionSelect" class="onhand-select"></select>
 						</label>
+						<div class="onhand-menu-actions">
+							<button id="newSessionButton" class="session-button" type="button">New</button>
+							<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
+							<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
+							<button id="closeButton" class="session-button" type="button">Close</button>
+						</div>
+						<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask</div>
 					</div>
-					<div class="session-actions">
-						<button id="newSessionButton" class="session-button" type="button">New</button>
-						<button id="restoreSessionButton" class="session-button" type="button">Restore Pages</button>
-						<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
-					</div>
-				</section>
-				<section class="section">
-					<div class="section-title">Conversation</div>
-					<div id="messages" class="message-list"></div>
-				</section>
-				<section class="section">
-					<div class="section-title">Live Activity</div>
-					<div id="activity"></div>
-				</section>
-				<section class="section">
-					<div class="section-title">On Page</div>
-					<div id="actions" class="action-list"></div>
-				</section>
-				<section id="replySection" class="section">
-					<div class="section-title">Latest Reply</div>
+				</div>
+			</header>
+			<div id="scroll" class="onhand-scroll">
+				<section id="pageIndex" class="onhand-index" hidden></section>
+				<div id="messages" class="message-list"></div>
+				<div id="activity" hidden></div>
+				<div id="actions" hidden></div>
+				<section id="replySection" hidden>
 					<div id="reply"></div>
 				</section>
 			</div>
-			<form id="composer" class="composer">
-				<div class="composer-top">
-					<button id="attachButton" class="attach-button" type="button">Attach</button>
+			<form id="composer" class="onhand-compose">
+				<div id="attachmentList" class="onhand-draft-chips"></div>
+				<textarea id="input" class="onhand-input" placeholder="Ask about this page or your selection..."></textarea>
+				<div class="onhand-row">
+					<button id="attachButton" class="ctl" type="button" aria-label="Attach files" title="Attach files">&#128206;</button>
 					<input id="fileInput" type="file" multiple hidden />
+					<label id="learningModeLabel" class="learn" title="Learning Mode slows down the first answer and asks Onhand to scaffold and check understanding.">
+						<span class="sw"></span>
+						<input id="learningModeToggle" type="checkbox" hidden />
+						<span>Learning</span>
+					</label>
+					<span class="spacer"></span>
+					<button id="sendButton" class="onhand-send" type="submit">Ask <span class="kbd">&#8617;</span></button>
 				</div>
-				<div id="attachmentList" class="attachment-list"></div>
-				<textarea id="input" class="input" placeholder="Send another message to Onhand…"></textarea>
-				<div class="actions-row">
-					<div id="helper" class="helper">Messages here continue the current Onhand session.</div>
-					<button id="sendButton" class="send-button" type="submit">Send</button>
-				</div>
+				<div id="helper" class="onhand-hint">esc dismiss · cmd+n new entry</div>
 			</form>
 		</div>
 	`;
@@ -1175,7 +1906,11 @@
 
 	const closeButton = shadow.getElementById("closeButton");
 	const meta = shadow.getElementById("meta");
-	const body = shadow.querySelector(".body");
+	const body = shadow.getElementById("scroll");
+	const menuButton = shadow.getElementById("menuButton");
+	const menuPanel = shadow.getElementById("menuPanel");
+	const sessionTitleInput = shadow.getElementById("sessionTitleInput");
+	const pageIndexEl = shadow.getElementById("pageIndex");
 	const sessionSelect = shadow.getElementById("sessionSelect");
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
 	const learningModeToggle = shadow.getElementById("learningModeToggle");
@@ -1228,14 +1963,24 @@
 		}, POLL_INTERVAL_MS);
 	}
 
+	function getSessionDraftKey(state) {
+		return state?.currentSession?.sessionFile || state?.currentSession?.sessionId || "current";
+	}
+
 	function renderMeta(state) {
-		const sessionName = state?.currentSession?.sessionName || "Current session";
+		const sessionKey = getSessionDraftKey(state);
+		const sessionName = sessionTitleDrafts.get(sessionKey) || state?.currentSession?.sessionName || "Current session";
 		const status = state?.status || "Ready";
 		const statusKind = /failed|error/i.test(status) ? "error" : /ready|complete/i.test(status) ? "ok" : "";
+		if (sessionTitleInput instanceof HTMLInputElement && shadow.activeElement !== sessionTitleInput) {
+			sessionTitleInput.value = sessionName;
+			sessionTitleInput.title = sessionName;
+		}
+		meta.className = `onhand-status ${statusKind}`;
 		meta.innerHTML = `
-			<div>${escapeHtml(sessionName)}</div>
-			<div class="status ${statusKind}">
-				<span class="status-dot"></span>
+			<div>Runtime</div>
+			<div class="onhand-status-pill">
+				<span class="onhand-status-dot"></span>
 				<span>${escapeHtml(status)}</span>
 			</div>
 		`;
@@ -1260,13 +2005,14 @@
 		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || activeRequest;
 		learningModeToggle.checked = learningMode;
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
-		learningModeLabel.classList.toggle("active", learningMode);
+		learningModeLabel.classList.toggle("on", learningMode);
+		composer.classList.toggle("learning", learningMode);
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
-		stopButton.textContent = stoppingRequest ? "Stopping…" : "Stop";
-		newSessionButton.textContent = creatingSession ? "Creating…" : "New";
-		restoreSessionButton.textContent = restoringSession ? "Restoring…" : "Restore Pages";
+		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
+		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
+		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
 	}
 
 	function renderAttachmentDrafts() {
@@ -1277,9 +2023,9 @@
 		attachmentList.innerHTML = attachmentDrafts
 			.map(
 				(attachment) => `
-					<div class="attachment-chip">
+					<div class="onhand-chip">
 						<span>${escapeHtml(attachment.name || "attachment")}</span>
-						<button class="attachment-remove" data-attachment-id="${escapeAttribute(attachment.id || "")}" type="button" aria-label="Remove attachment">×</button>
+						<button class="x" data-attachment-id="${escapeAttribute(attachment.id || "")}" type="button" aria-label="Remove attachment">×</button>
 					</div>
 				`,
 			)
@@ -1451,10 +2197,121 @@
 			pageActions,
 			pending: Boolean(state?.activeRequestId === currentTurnId || assistantMessage?.pending),
 			error: Boolean(assistantMessage?.error),
+			createdAt: userMessage?.createdAt || assistantMessage?.createdAt || new Date().toISOString(),
 		};
 	}
 
-	function renderActionButtons(actions, className = "action-list") {
+	function formatEntryTime(value) {
+		const date = value ? new Date(value) : new Date();
+		if (Number.isNaN(date.getTime())) return "";
+		return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	}
+
+	function pluralize(count, singular, plural = `${singular}s`) {
+		return `${count} ${count === 1 ? singular : plural}`;
+	}
+
+	function getCapturedAnnotations(state) {
+		const candidates = [
+			state?.page?.annotations,
+			state?.captureState?.annotations,
+			state?.pageState?.annotations,
+			state?.browserState?.annotations,
+			state?.annotations,
+		];
+		for (const candidate of candidates) {
+			if (Array.isArray(candidate)) return candidate;
+		}
+		return [];
+	}
+
+	function buildAnnotationIndexItems(state) {
+		const actions = Array.isArray(state?.pageActions) ? state.pageActions : [];
+		const actionByAnnotation = new Map();
+		for (const action of actions) {
+			if (!action?.annotationId) continue;
+			const previous = actionByAnnotation.get(action.annotationId);
+			if (!previous || action.type === "note") {
+				actionByAnnotation.set(action.annotationId, action);
+			}
+		}
+
+		const tabId = typeof state?.tab?.id === "number" ? state.tab.id : null;
+		const seen = new Set();
+		const items = [];
+		for (const annotation of getCapturedAnnotations(state)) {
+			const annotationId = String(annotation?.annotationId || "").trim();
+			if (!annotationId || seen.has(annotationId)) continue;
+			seen.add(annotationId);
+			const action = actionByAnnotation.get(annotationId);
+			const note = annotation?.note || null;
+			const matchedText = String(annotation?.matchedText || action?.citationText || action?.detail || note?.text || "Page annotation").trim();
+			items.push({
+				annotationId,
+				tabId,
+				actionKey: action?.key || "",
+				kind: String(annotation?.kind || action?.type || "annotation"),
+				text: matchedText,
+				hasNote: Boolean(note || action?.type === "note"),
+			});
+		}
+
+		if (items.length) return items;
+		for (const action of actions) {
+			const annotationId = String(action?.annotationId || "").trim();
+			if (!annotationId || seen.has(annotationId)) continue;
+			seen.add(annotationId);
+			items.push({
+				annotationId,
+				tabId: typeof action?.tabId === "number" ? action.tabId : tabId,
+				actionKey: action?.key || "",
+				kind: action?.type || "annotation",
+				text: String(action?.citationText || action?.detail || "Page annotation").trim(),
+				hasNote: action?.type === "note",
+			});
+		}
+		return items;
+	}
+
+	function renderPageIndex(state) {
+		const items = buildAnnotationIndexItems(state);
+		pageIndexEl.hidden = !items.length;
+		if (!items.length) {
+			pageIndexEl.innerHTML = "";
+			return 0;
+		}
+
+		const noteCount = items.filter((item) => item.hasNote).length;
+		const summary = [pluralize(items.length, "highlight"), noteCount ? pluralize(noteCount, "note") : ""]
+			.filter(Boolean)
+			.join(", ");
+		pageIndexEl.innerHTML = `
+			<div class="onhand-index-head">
+				<span class="onhand-label">On this page</span>
+				<span class="onhand-count">· ${escapeHtml(summary)}</span>
+			</div>
+			${items
+				.map(
+					(item, index) => `
+						<button
+							class="onhand-index-item"
+							data-annotation-id="${escapeAttribute(item.annotationId)}"
+							data-tab-id="${typeof item.tabId === "number" ? escapeAttribute(String(item.tabId)) : ""}"
+							data-target="${item.hasNote ? "note" : "annotation"}"
+							type="button"
+						>
+							<span class="onhand-index-num">${index + 1}</span>
+							<span class="onhand-index-text">${escapeHtml(item.text || "Page annotation")}</span>
+							${item.hasNote ? '<span class="onhand-index-note">edit</span>' : ""}
+						</button>
+					`,
+				)
+				.join("")}
+		`;
+		return items.length;
+	}
+
+	function renderActionButtons(actions, className = "onhand-actions") {
 		const items = Array.isArray(actions) ? actions : [];
 		if (!items.length) return "";
 		return `
@@ -1462,8 +2319,8 @@
 				${items
 					.map(
 						(action) => `
-							<button class="action-button" data-action-key="${escapeHtml(action.key)}" type="button">
-								${escapeHtml(action.detail ? `${action.label} · ${action.detail}` : action.label || "Open")}
+							<button class="onhand-action" data-action-key="${escapeAttribute(action.key)}" type="button">
+								${escapeHtml(action.detail ? `${action.label}: ${action.detail}` : action.label || "Open")}
 							</button>
 						`,
 					)
@@ -1472,128 +2329,96 @@
 		`;
 	}
 
-	function buildActivityMarkup(activities, options = {}) {
+	function getReasoningActivity(activities) {
 		const allActivities = Array.isArray(activities) ? activities : [];
-		if (!allActivities.length) {
-			return `<div class="empty-card">Tool runs and reasoning traces will show up here while Onhand is answering.</div>`;
-		}
-
-		const reasoningOpen = Boolean(options.reasoningOpen);
-		const reasoningActivities = allActivities.filter((activity) => activity.kind === "reasoning");
-		const nonReasoningActivities = allActivities.filter((activity) => activity.kind !== "reasoning");
-		const visibleActivities = options.limitToRecent === false
-			? [...reasoningActivities.slice(-1), ...nonReasoningActivities]
-			: [...reasoningActivities.slice(-1), ...nonReasoningActivities.slice(-7)];
-
-		return visibleActivities
-			.map((activity) => {
-				if (activity.kind === "reasoning") {
-					return `
-						<details class="reasoning-card" ${reasoningOpen ? "open" : ""}>
-							<summary>${escapeHtml(activity.label || "Reasoning")}</summary>
-							<div class="reasoning-body">${escapeHtml(activity.text || "")}</div>
-						</details>
-					`;
-				}
-
-				return `
-					<div class="activity-card ${escapeHtml(activity.state || "")}">
-						<div class="activity-dot"></div>
-						<div>${escapeHtml(activity.label || activity.toolName || "Activity")}</div>
-					</div>
-				`;
-			})
-			.join("");
+		return allActivities.filter((activity) => activity?.kind === "reasoning").slice(-1)[0] || null;
 	}
 
-	function renderMessages(turns) {
-		const items = Array.isArray(turns) ? turns : [];
+	function renderReasoningDetails(turn) {
+		const activities = Array.isArray(turn?.activities) ? turn.activities : [];
+		const reasoning = getReasoningActivity(activities);
+		const tools = activities.filter((activity) => activity?.kind !== "reasoning");
+		const actions = Array.isArray(turn?.pageActions) ? turn.pageActions : [];
+		const highlightCount = actions.filter((action) => action?.type === "annotation").length;
+		const noteCount = actions.filter((action) => action?.type === "note").length;
+		const lines = [
+			String(reasoning?.text || "").trim(),
+			...tools.map((activity) => String(activity?.label || activity?.toolName || "Activity").trim()).filter(Boolean),
+		].filter(Boolean);
+		if (!lines.length && !turn?.pending) return "";
+
+		const summary = [
+			turn?.pending ? "thinking" : "thought",
+			highlightCount ? `highlighted ${pluralize(highlightCount, "passage")}` : "",
+			noteCount ? `added ${pluralize(noteCount, "note")}` : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		const open = reasoningExpanded == null ? Boolean(turn?.pending) : Boolean(reasoningExpanded);
+		return `
+			<details class="onhand-reason" ${open ? "open" : ""}>
+				<summary>${escapeHtml(summary || "reasoning")}</summary>
+				<div class="onhand-reason-body">${escapeHtml(lines.join("\n")) || "Working through the page context..."}</div>
+			</details>
+		`;
+	}
+
+	function renderMessages(turns, annotationCount = 0) {
+		const items = (Array.isArray(turns) ? turns : []).filter(Boolean);
 		if (!items.length) {
-			messagesEl.innerHTML = `<div class="empty-card">Ask from the popup or here in the sidebar. Onhand will keep this conversation live while you browse.</div>`;
+			messagesEl.innerHTML = annotationCount
+				? ""
+				: `
+					<div class="onhand-empty">
+						<div class="lede">Nothing on this page yet.</div>
+						<div class="empty-body">Ask about the article, highlight a passage, or resume one of yesterday's entries from the menu.</div>
+					</div>
+				`;
 			return;
 		}
 
 		messagesEl.innerHTML = items
 			.map((turn) => {
 				const citationGroups = buildCitationGroups(turn?.pageActions);
+				const reply = String(turn?.reply || "").trim();
 				return `
-					<div class="turn-card">
-						${turn?.userPrompt
-							? `
-								<div class="message-card user">
-									<div class="message-role">You</div>
-									<div class="message-body">${escapeHtml(turn.userPrompt)}</div>
-								</div>
-							`
-							: ""}
-						${Array.isArray(turn?.activities) && turn.activities.length
-							? `
-								<div class="turn-subtitle">Live Activity</div>
-								<div>${buildActivityMarkup(turn.activities, { reasoningOpen: false, limitToRecent: false })}</div>
-							`
-							: ""}
-						${Array.isArray(turn?.pageActions) && turn.pageActions.length
-							? `
-								<div class="turn-subtitle">On Page</div>
-								${renderActionButtons(turn.pageActions, "turn-actions")}
-							`
-							: ""}
-						${String(turn?.reply || "").trim()
-							? `
-								<div class="reply-rich ${turn.pending ? "pending" : ""}">
-									<div class="message-role">Onhand</div>
-									<div class="message-body">${renderReplyMarkdown(turn.reply, citationGroups)}</div>
-								</div>
-							`
-							: `<div class="empty-card">Thinking…</div>`}
-					</div>
+					<article class="onhand-entry ${turn?.error ? "error" : ""}">
+						<div class="onhand-eyebrow">
+							<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
+							<span class="dot"></span>
+							<span>Onhand</span>
+							${Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
+						</div>
+						${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
+						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
+							${reply ? renderReplyMarkdown(reply, citationGroups) : '<p class="reply-placeholder">Thinking...</p>'}
+							${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
+							${renderReasoningDetails(turn)}
+							${renderActionButtons(turn?.pageActions)}
+						</div>
+					</article>
 				`;
 			})
 			.join("");
-	}
 
-	function renderActivity(state, options = {}) {
-		const activities = Array.isArray(state?.activities) ? state.activities : [];
-		const reasoningOpen =
-			reasoningExpanded == null ? Boolean(options.activeRequest) || !options.hasLatestReply : reasoningExpanded;
-		activityEl.innerHTML = buildActivityMarkup(activities, {
-			reasoningOpen,
-			limitToRecent: true,
-		});
-
-		activityEl.querySelectorAll(".reasoning-card").forEach((detailsEl) => {
+		messagesEl.querySelectorAll(".onhand-reason").forEach((detailsEl) => {
 			detailsEl.addEventListener("toggle", () => {
 				reasoningExpanded = detailsEl.open;
 			});
 		});
 	}
 
-	function renderLatestReply(state, latestAssistant) {
-		const replyText = String(latestAssistant?.reply || latestAssistant?.text || "").trim();
-		const hasReply = Boolean(replyText);
-		replySectionEl.style.display = hasReply ? "flex" : "none";
-		if (!hasReply) {
-			replyEl.innerHTML = "";
-			return;
-		}
-		const citationGroups = buildCitationGroups(latestAssistant?.pageActions || state?.pageActions);
-
-		replyEl.innerHTML = `
-			<div class="reply-rich ${latestAssistant?.pending || state?.activeRequestId ? "pending" : ""}">
-				<div class="message-role">Onhand</div>
-				<div class="message-body">${renderReplyMarkdown(replyText, citationGroups)}</div>
-			</div>
-		`;
+	function renderActivity() {
+		activityEl.innerHTML = "";
 	}
 
-	function renderActions(state) {
-		const actions = Array.isArray(state?.pageActions) ? state.pageActions : [];
-		if (!actions.length) {
-			actionsEl.innerHTML = `<div class="empty-card">When Onhand grounds an answer on the page, jump links will appear here.</div>`;
-			return;
-		}
+	function renderLatestReply() {
+		replySectionEl.hidden = true;
+		replyEl.innerHTML = "";
+	}
 
-		actionsEl.innerHTML = renderActionButtons(actions);
+	function renderActions() {
+		actionsEl.innerHTML = "";
 	}
 
 	function renderState(state) {
@@ -1607,15 +2432,17 @@
 		lastActiveRequestId = state?.activeRequestId || null;
 		const archivedTurns = Array.isArray(state?.turns) ? state.turns : [];
 		const currentTurn = deriveCurrentTurn(state);
+		const displayTurns = [...archivedTurns];
+		if (currentTurn && !displayTurns.some((turn) => turn?.id === currentTurn.id)) {
+			displayTurns.push(currentTurn);
+		}
 		currentState = state;
 		renderMeta(state);
 		renderSessionControls(state);
 		renderAttachmentDrafts();
-		renderMessages(archivedTurns);
-		renderActivity(state, {
-			hasLatestReply: Boolean(currentTurn?.reply?.trim()),
-			activeRequest: Boolean(state?.activeRequestId),
-		});
+		const annotationCount = renderPageIndex(state);
+		renderMessages(displayTurns, annotationCount);
+		renderActivity();
 		renderLatestReply(state, currentTurn);
 		renderActions(state);
 
@@ -1625,10 +2452,10 @@
 		attachButton.disabled = activeRequest || sending;
 		fileInput.disabled = activeRequest || sending;
 		helper.textContent = activeRequest
-			? "Onhand is currently responding. You can stop this run or wait for it to finish."
+			? "Onhand is responding · use Stop from the menu"
 			: attachmentDrafts.length
-				? "Messages and attachments will continue the current Onhand session."
-				: "Messages here continue the current Onhand session.";
+				? "attachments ready · enter ask"
+				: "esc dismiss · cmd+n new entry";
 		if (body instanceof HTMLElement && (activeRequest || wasNearBottom)) {
 			body.scrollTop = body.scrollHeight;
 		}
@@ -1689,6 +2516,38 @@
 		}
 	}
 
+	async function scrollToAnnotation(annotationId, tabId = null, target = "annotation") {
+		const payload = {
+			type: "sidebar:scroll-to-annotation",
+			annotationId,
+			target,
+		};
+		if (typeof tabId === "number" && Number.isFinite(tabId)) {
+			payload.tabId = tabId;
+		}
+		const response = await chrome.runtime.sendMessage(payload);
+		if (!response?.ok) {
+			throw new Error(response?.error || "Could not scroll to that annotation.");
+		}
+	}
+
+	async function renameSessionTitle(sessionName) {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:rename-session",
+			sessionName,
+		});
+		if (!response?.ok) {
+			throw new Error(response?.error || "Could not rename this session.");
+		}
+		if (response.currentSession) {
+			currentState = {
+				...(currentState || {}),
+				currentSession: response.currentSession,
+			};
+		}
+		await requestSessions();
+	}
+
 	async function updateLearningMode(learningMode) {
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:set-learning-mode",
@@ -1706,6 +2565,44 @@
 			},
 		});
 	}
+
+	function setMenuOpen(nextOpen) {
+		menuPanel.hidden = !nextOpen;
+		menuButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+	}
+
+	menuButton.addEventListener("click", () => {
+		setMenuOpen(Boolean(menuPanel.hidden));
+	});
+
+	sessionTitleInput.addEventListener("keydown", (event) => {
+		if (event.key === "Enter") {
+			event.preventDefault();
+			sessionTitleInput.blur();
+		}
+		if (event.key === "Escape") {
+			event.preventDefault();
+			renderMeta(currentState || {});
+			sessionTitleInput.blur();
+		}
+	});
+
+	sessionTitleInput.addEventListener("blur", () => {
+		const nextTitle = String(sessionTitleInput.value || "").trim();
+		if (nextTitle && currentState?.currentSession) {
+			sessionTitleDrafts.set(getSessionDraftKey(currentState), nextTitle);
+			currentState.currentSession.sessionName = nextTitle;
+			void renameSessionTitle(nextTitle)
+				.then(() => requestState())
+				.catch((error) => {
+					renderState({
+						...(currentState || {}),
+						status: error?.message || String(error),
+					});
+				});
+		}
+		renderMeta(currentState || {});
+	});
 
 	closeButton.addEventListener("click", () => {
 		setOpen(false);
@@ -1729,7 +2626,7 @@
 		const nextValue = Boolean(learningModeToggle.checked);
 		void updateLearningMode(nextValue).catch((error) => {
 			learningModeToggle.checked = !nextValue;
-			learningModeLabel.classList.toggle("active", !nextValue);
+			learningModeLabel.classList.toggle("on", !nextValue);
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
@@ -1792,6 +2689,23 @@
 		if (!(button instanceof HTMLElement)) return;
 		removeAttachmentDraft(button.dataset.attachmentId || "");
 		renderState(currentState || {});
+	});
+
+	pageIndexEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-annotation-id]");
+		if (!(button instanceof HTMLElement)) return;
+		const tabId = button.dataset.tabId ? Number(button.dataset.tabId) : null;
+		void scrollToAnnotation(
+			button.dataset.annotationId || "",
+			Number.isFinite(tabId) ? tabId : null,
+			button.dataset.target === "note" ? "note" : "annotation",
+		).catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
 	});
 
 	composer.addEventListener("submit", (event) => {
