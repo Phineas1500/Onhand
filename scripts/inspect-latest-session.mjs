@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const PROJECT_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const SESSION_DIR = join(PROJECT_ROOT, ".onhand", "sessions", "desktop");
+const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 
 function parseArgs(argv) {
 	const args = {
@@ -110,6 +111,11 @@ function extractUserQuestion(text) {
 	const source = String(text || "");
 	const match = source.match(/User question:\s*([\s\S]*?)\s*Captured browser context/i);
 	return (match ? match[1] : source).trim();
+}
+
+function isInternalOnhandUserPrompt(entry) {
+	if (entry?.type !== "message" || entry?.message?.role !== "user") return false;
+	return extractTextBlocks(entry.message.content).trim().startsWith(ONHAND_INTERNAL_PROMPT_PREFIX);
 }
 
 function truncate(value, maxChars = 160) {
@@ -236,7 +242,7 @@ export async function loadSessionEntries(sessionPath) {
 export function inspectLatestTurn(entries, sessionPath) {
 	const sessionInfo = [...entries].reverse().find((entry) => entry?.type === "session_info") || null;
 	const latestUserIndex = entries.findLastIndex(
-		(entry) => entry?.type === "message" && entry?.message?.role === "user",
+		(entry) => entry?.type === "message" && entry?.message?.role === "user" && !isInternalOnhandUserPrompt(entry),
 	);
 	if (latestUserIndex < 0) {
 		return {

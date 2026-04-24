@@ -15,6 +15,8 @@ const NAVIGATION_TIMEOUT_MS = 30000;
 function parseArgs(argv) {
 	const args = {
 		fixtureId: DEFAULT_FIXTURE_ID,
+		url: "",
+		title: "",
 		prompt: "0",
 		browserClient: "",
 		browserClientId: "",
@@ -33,6 +35,7 @@ function parseArgs(argv) {
 		expectModel: "",
 		expectApi: "",
 		expectReplyIncludes: [],
+		expectFixtureContent: false,
 		help: false,
 	};
 	const positionals = [];
@@ -76,8 +79,20 @@ function parseArgs(argv) {
 			args.allowToolErrors = true;
 			continue;
 		}
+		if (value === "--expect-fixture-content") {
+			args.expectFixtureContent = true;
+			continue;
+		}
 		if (value.startsWith("--fixture=")) {
 			args.fixtureId = value.slice("--fixture=".length).trim();
+			continue;
+		}
+		if (value.startsWith("--url=")) {
+			args.url = value.slice("--url=".length).trim();
+			continue;
+		}
+		if (value.startsWith("--title=")) {
+			args.title = value.slice("--title=".length).trim();
 			continue;
 		}
 		if (value.startsWith("--prompt=")) {
@@ -153,6 +168,8 @@ Runs a desktop/API Tier 2 smoke against a known fixture and inspects the saved s
 
 Options:
   --fixture=<id>                  Fixture id from npm run test:fixtures -- --json
+  --url=<url>                     Ad hoc fixture URL for exploratory smoke testing
+  --title=<title>                 Optional title for an ad hoc --url fixture
   --prompt=<index-or-text>         Fixture prompt index or custom prompt text
   --browser-client=<text>          Match connected browser by label, browser name, or id
   --client-id=<id>                 Exact connected browser client id
@@ -168,12 +185,14 @@ Options:
   --expect-model=<model>           Fail unless the session used this model id
   --expect-api=<api>               Fail unless the session used this pi model API
   --allow-tool-errors              Do not fail on browser tool errors
+  --expect-fixture-content         Also enforce fixture-defined reply content checks
   --timeout-ms=<n>                 Wait timeout for the final reply
   --json                           Print machine-readable output
 
 Default fixture: ${DEFAULT_FIXTURE_ID}
 If more than one browser client is connected, pass --browser-client or --client-id.
 Example: npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions
+Example: npm run smoke:tier2 -- --url=https://example.com --title="Example" --prompt="what matters here?"
 `);
 }
 
@@ -398,7 +417,7 @@ function truncate(value, maxChars = 220) {
 	return `${text.slice(0, maxChars - 1)}…`;
 }
 
-function validateReport(report, args, prompt) {
+function validateReport(report, args, prompt, fixture) {
 	const failures = [];
 	const turn = report?.latestTurn || null;
 	if (!turn) {
@@ -426,7 +445,11 @@ function validateReport(report, args, prompt) {
 	if (args.expectApi && turn.model?.api !== args.expectApi) {
 		failures.push(`Expected model API ${args.expectApi}, found ${turn.model?.api || "(unknown)"}.`);
 	}
-	for (const expected of args.expectReplyIncludes) {
+	const expectedReplyIncludes = [
+		...(args.expectFixtureContent && Array.isArray(fixture?.expectReplyIncludes) ? fixture.expectReplyIncludes : []),
+		...args.expectReplyIncludes,
+	];
+	for (const expected of expectedReplyIncludes) {
 		if (!String(turn.finalReply || "").toLowerCase().includes(expected.toLowerCase())) {
 			failures.push(`Final reply did not include expected text: ${expected}`);
 		}
@@ -510,11 +533,18 @@ async function main() {
 		return;
 	}
 
-	const fixture = pickFixtureMap().get(args.fixtureId);
+	const fixture = args.url
+		? {
+				id: "ad_hoc",
+				title: args.title || args.url,
+				url: args.url,
+				prompts: [],
+			}
+		: pickFixtureMap().get(args.fixtureId);
 	if (!fixture) {
 		throw new Error(`Unknown fixture id "${args.fixtureId}". Run npm run test:fixtures to list fixtures.`);
 	}
-	const prompt = resolvePrompt(fixture, args.prompt);
+	const prompt = resolvePrompt(fixture, args.url && args.prompt === "0" ? "" : args.prompt);
 	const bridgeConfig = await loadBridgeConfig();
 	const bridgeBaseUrl = `http://${bridgeConfig.host}:${bridgeConfig.port}`;
 	const desktopBaseUrl = `http://${bridgeConfig.host}:${process.env.ONHAND_UI_PORT || 3211}`;
@@ -600,7 +630,7 @@ async function main() {
 		timeoutMs: args.timeoutMs,
 		intervalMs: args.intervalMs,
 	});
-	const failures = validateReport(report, args, prompt);
+	const failures = validateReport(report, args, prompt, fixture);
 	if (args.navigate && !urlsMatch(activeTabAfterNavigate?.url, fixture.url)) {
 		failures.unshift(`Browser active tab did not settle on fixture URL. Last active URL: ${activeTabAfterNavigate?.url || "(unknown)"}`);
 	}

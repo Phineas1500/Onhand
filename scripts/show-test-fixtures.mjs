@@ -201,6 +201,102 @@ export const SECONDARY_FIXTURES = [
 		url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/13GNNs/Graph_Representations_part1.html",
 		bestFor: "cross-tab technical synthesis with other Purdue notes",
 	},
+	{
+		id: "pytorch_conv2d",
+		title: "PyTorch Conv2d Docs",
+		category: "API documentation with equations and parameter semantics",
+		url: "https://docs.pytorch.org/docs/stable/generated/torch.nn.modules.conv.Conv2d.html",
+		bestFor: "math/code anchoring on rendered docs equations",
+		tags: ["technical", "math", "docs"],
+		prompts: [
+			"I'm confused by groups, dilation, and the output shape formula. Use this page to explain what each changes and what I should check when debugging shape mismatches.",
+		],
+		expectReplyIncludes: ["groups", "dilation"],
+		risks: [
+			"highlighting formulas such as H_out/Hout across Sphinx math rendering",
+			"answering from parameter docs instead of generic CNN knowledge",
+		],
+	},
+	{
+		id: "annotated_transformer",
+		title: "The Annotated Transformer",
+		category: "Long notebook-style technical article",
+		url: "https://nlp.seas.harvard.edu/annotated-transformer/",
+		bestFor: "tool-loop and final-answer reliability on dense notebook pages",
+		tags: ["technical", "math", "notebook"],
+		prompts: [
+			"Explain the scaled dot-product attention section and why the 1/sqrt(d_k) scaling is needed; point me to the key code and equation.",
+		],
+		expectReplyIncludes: ["softmax", "gradients", "sqrt"],
+		risks: [
+			"gathering enough evidence but failing to produce a final reply",
+			"grounding around equations and code snippets on long pages",
+		],
+	},
+	{
+		id: "cp_algorithms_dijkstra_sparse",
+		title: "cp-algorithms Sparse Dijkstra",
+		category: "Competitive-programming algorithm explanation",
+		url: "https://cp-algorithms.com/graph/dijkstra_sparse.html",
+		bestFor: "algorithm tradeoff grounding with code-adjacent explanations",
+		tags: ["technical", "cs", "algorithms"],
+		prompts: [
+			"Guide me through why sparse-graph Dijkstra needs a priority queue or set and what complexity tradeoff the page is making.",
+		],
+		expectReplyIncludes: ["priority_queue", "stale"],
+		risks: [
+			"missing the stale-entry check",
+			"over-summarizing complexity without explaining the implementation tradeoff",
+		],
+	},
+	{
+		id: "distill_attention_rnns",
+		title: "Distill Augmented RNNs",
+		category: "Conceptual ML explainer with diagrams",
+		url: "https://distill.pub/2016/augmented-rnns/",
+		bestFor: "conceptual grounding on visual/essay-style technical material",
+		tags: ["technical", "ml", "conceptual"],
+		prompts: [
+			"Explain the attention section. What bottleneck is attention solving, and what should I look at first?",
+		],
+		expectReplyIncludes: ["attention", "query"],
+		risks: [
+			"choosing visually adjacent but conceptually weak passages",
+			"missing the encoder bottleneck intuition",
+		],
+	},
+	{
+		id: "wikipedia_fft",
+		title: "Fast Fourier Transform Wikipedia",
+		category: "Math/CS encyclopedia article",
+		url: "https://en.wikipedia.org/wiki/Fast_Fourier_transform",
+		bestFor: "algorithm overview plus recurrence/complexity grounding",
+		tags: ["technical", "math", "cs", "algorithms"],
+		prompts: [
+			"Explain the Cooley-Tukey idea and why the recurrence gives O(n log n) instead of O(n^2).",
+		],
+		expectReplyIncludes: ["Cooley", "O(n log n)", "DFT"],
+		risks: [
+			"answering only from the lead instead of the radix-2/Cooley-Tukey section",
+			"weak complexity explanation",
+		],
+	},
+	{
+		id: "arxiv_attention_transformer",
+		title: "Attention Is All You Need arXiv Abstract",
+		category: "Paper abstract and metadata page",
+		url: "https://arxiv.org/abs/1706.03762",
+		bestFor: "paper-summary grounding and cross-tab drift checks",
+		tags: ["technical", "paper", "ml"],
+		prompts: [
+			"Use this abstract to explain what the Transformer changed and what the abstract does not explain in detail.",
+		],
+		expectReplyIncludes: ["Transformer", "recurrent"],
+		risks: [
+			"overusing other open tabs when the prompt asks for the current abstract",
+			"claiming paper details not supported by the abstract page",
+		],
+	},
 ];
 
 export const SCENARIO_MAP = {
@@ -214,7 +310,7 @@ export const SCENARIO_MAP = {
 	},
 	dom_anchoring: {
 		label: "DOM anchoring regressions",
-		fixtures: ["cnns", "onhand_github_repo"],
+		fixtures: ["cnns", "onhand_github_repo", "pytorch_conv2d", "annotated_transformer"],
 	},
 	pdf: {
 		label: "PDF behavior regressions",
@@ -236,6 +332,17 @@ export const SCENARIO_MAP = {
 		label: "Dynamic social-thread regressions",
 		fixtures: ["reddit_thread"],
 	},
+	technical_content: {
+		label: "Technical/math/CS content grounding",
+		fixtures: [
+			"pytorch_conv2d",
+			"annotated_transformer",
+			"cp_algorithms_dijkstra_sparse",
+			"distill_attention_rnns",
+			"wikipedia_fft",
+			"arxiv_attention_transformer",
+		],
+	},
 };
 
 export const STANDARD_PROMPTS = [
@@ -248,6 +355,8 @@ export const STANDARD_PROMPTS = [
 	"what is this repo for and what are the main components?",
 	"what does this role emphasize most?",
 	"what are the main reactions in this thread?",
+	"explain the key equation and code path on this technical page",
+	"what are the most important caveats or debugging checks here?",
 ];
 
 function parseArgs(argv) {
@@ -279,6 +388,8 @@ function fixtureMatches(fixture, filter) {
 		...(fixture.why || []),
 		...(fixture.prompts || []),
 		...(fixture.risks || []),
+		...(fixture.expectReplyIncludes || []),
+		...(fixture.tags || []),
 		fixture.bestFor || "",
 	]
 		.join("\n")
@@ -332,6 +443,9 @@ function printFixtureDetails(fixture) {
 	if (Array.isArray(fixture.risks) && fixture.risks.length) {
 		console.log("  Risks covered:");
 		for (const item of fixture.risks) console.log(`    - ${item}`);
+	}
+	if (Array.isArray(fixture.expectReplyIncludes) && fixture.expectReplyIncludes.length) {
+		console.log(`  Reply checks: ${fixture.expectReplyIncludes.join(", ")}`);
 	}
 	if (fixture.bestFor) {
 		console.log(`  Best for: ${fixture.bestFor}`);

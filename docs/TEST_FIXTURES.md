@@ -236,6 +236,52 @@ These are useful, but not part of the minimum smoke set.
 - `https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/13GNNs/Graph_Representations_part1.html`
 - useful for cross-tab technical synthesis with other Purdue notes
 
+### Technical / Math / CS Grounding Fixtures
+
+Use these when testing whether Onhand can answer from dense technical pages, choose the right evidence, and avoid getting stuck in browser-tool loops.
+
+#### PyTorch Conv2d Docs
+- fixture id: `pytorch_conv2d`
+- URL: `https://docs.pytorch.org/docs/stable/generated/torch.nn.modules.conv.Conv2d.html`
+- prompt: `I'm confused by groups, dilation, and the output shape formula. Use this page to explain what each changes and what I should check when debugging shape mismatches.`
+- reply checks: `groups`, `dilation`
+- risks: Sphinx math anchoring, formula highlighting, parameter-specific grounding
+
+#### The Annotated Transformer
+- fixture id: `annotated_transformer`
+- URL: `https://nlp.seas.harvard.edu/annotated-transformer/`
+- prompt: `Explain the scaled dot-product attention section and why the 1/sqrt(d_k) scaling is needed; point me to the key code and equation.`
+- reply checks: `softmax`, `gradients`, `sqrt`
+- risks: long notebook pages, tool-loop avoidance, equation/code evidence selection
+
+#### cp-algorithms Sparse Dijkstra
+- fixture id: `cp_algorithms_dijkstra_sparse`
+- URL: `https://cp-algorithms.com/graph/dijkstra_sparse.html`
+- prompt: `Guide me through why sparse-graph Dijkstra needs a priority queue or set and what complexity tradeoff the page is making.`
+- reply checks: `priority_queue`, `stale`
+- risks: missing stale-entry logic, shallow complexity summaries
+
+#### Distill Augmented RNNs
+- fixture id: `distill_attention_rnns`
+- URL: `https://distill.pub/2016/augmented-rnns/`
+- prompt: `Explain the attention section. What bottleneck is attention solving, and what should I look at first?`
+- reply checks: `attention`, `query`
+- risks: visually rich conceptual pages, weak passage selection
+
+#### Fast Fourier Transform Wikipedia
+- fixture id: `wikipedia_fft`
+- URL: `https://en.wikipedia.org/wiki/Fast_Fourier_transform`
+- prompt: `Explain the Cooley-Tukey idea and why the recurrence gives O(n log n) instead of O(n^2).`
+- reply checks: `Cooley`, `O(n log n)`, `DFT`
+- risks: using only the lead, weak recurrence/complexity explanation
+
+#### Attention Is All You Need arXiv Abstract
+- fixture id: `arxiv_attention_transformer`
+- URL: `https://arxiv.org/abs/1706.03762`
+- prompt: `Use this abstract to explain what the Transformer changed and what the abstract does not explain in detail.`
+- reply checks: `Transformer`, `recurrent`
+- risks: cross-tab drift, unsupported claims beyond the abstract
+
 ## Preferred Core Fixture Bundle
 
 If only one compact test bundle is open, use:
@@ -247,6 +293,8 @@ If only one compact test bundle is open, use:
 5. `CNNs` Purdue notes
 6. `practice_midterm_2025.pdf`
 7. `Onhand` GitHub repository page
+8. `cp_algorithms_dijkstra_sparse` for a compact algorithmic grounding check
+9. `annotated_transformer` for long technical-page finalization reliability
 
 This bundle covers:
 
@@ -257,6 +305,8 @@ This bundle covers:
 - PDF side panel behavior
 - multi-tab synthesis
 - repository/README grounding
+- technical/math/CS grounding
+- browser-tool loop avoidance on dense technical pages
 
 ## Fixture-to-Scenario Mapping
 
@@ -307,11 +357,22 @@ Use:
 Use:
 - Reddit thread
 
+### Technical/math/CS content grounding
+
+Use:
+- `pytorch_conv2d`
+- `annotated_transformer`
+- `cp_algorithms_dijkstra_sparse`
+- `distill_attention_rnns`
+- `wikipedia_fft`
+- `arxiv_attention_transformer`
+
 ## Fixture Notes
 
 - Prefer the Piazza PDF over the signed Gradescope PDF for repeatable testing.
 - Treat the GitHub repo and Anthropic job page as stable public fixtures.
 - Treat the Reddit thread as useful but less stable than the other public fixtures.
+- Treat the technical/math/CS fixtures as content-quality checks, not only layout checks.
 - Prefer the Purdue lecture pages over arbitrary web pages for STEM tutoring tests because they are already part of your real use case.
 - Prefer `Donald_Trump` over thinner biography pages when you need to test deep causal explanation, because it contains more explicit evidence across sections.
 - Prefer `Shah_Rukh_Khan` when testing note sizing and infobox collisions, because it has already exposed those issues in practice.
@@ -326,6 +387,8 @@ Use these repeatedly so regressions are easier to spot:
 - `teach this in learning mode`
 - `what prerequisite concept should I read first?`
 - `compare what these two tabs are saying`
+- `explain the key equation and code path on this technical page`
+- `what are the most important caveats or debugging checks here?`
 
 ## Fixture Helper
 

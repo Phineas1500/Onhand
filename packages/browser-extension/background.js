@@ -1326,6 +1326,14 @@ const createPageToolkit = (options = {}) => {
 		"summary",
 	].join(", ");
 
+	const MATH_CONTAINER_SELECTOR = [
+		"mjx-container",
+		".MathJax",
+		".katex",
+		".math",
+		'[role="math"]',
+	].join(", ");
+
 	const EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR = [
 		"nav",
 		"header",
@@ -1379,24 +1387,49 @@ const createPageToolkit = (options = {}) => {
 		return annotationElement.closest(ANNOTATION_CONTAINER_SELECTOR) || annotationElement.parentElement || annotationElement;
 	};
 
+	const NOTE_NARROW_CONTEXT_WIDTH = 300;
+	const NOTE_READABLE_CONTEXT_WIDTH = 380;
+
+	const getElementWidth = (element) => {
+		if (!(element instanceof Element)) return 0;
+		const rect = element.getBoundingClientRect();
+		return Math.max(0, rect.width || element.clientWidth || 0);
+	};
+
+	const widenNarrowNotePlacement = (placement) => {
+		const target = placement?.target;
+		if (!(target instanceof Element)) return placement;
+		const targetWidth = getElementWidth(target);
+		if (!targetWidth || targetWidth >= NOTE_NARROW_CONTEXT_WIDTH) return placement;
+		for (let current = target.parentElement; current && current !== document.body; current = current.parentElement) {
+			if (!(current instanceof Element)) continue;
+			if (current.matches?.("html, body, table, tr, tbody, thead, tfoot")) continue;
+			const width = getElementWidth(current);
+			if (width >= NOTE_READABLE_CONTEXT_WIDTH) {
+				return { target: current, position: "afterend" };
+			}
+		}
+		return placement;
+	};
+
 	const findNoteInsertionPlacement = (container) => {
 		if (!(container instanceof Element)) return { target: container, position: "afterend" };
 		const tag = container.tagName;
 		if (tag === "CODE") {
 			const pre = container.closest("pre");
-			if (pre) return { target: pre, position: "afterend" };
+			if (pre) return widenNarrowNotePlacement({ target: pre, position: "afterend" });
 			const blockAncestor = container.parentElement?.closest(ANNOTATION_CONTAINER_SELECTOR);
 			if (blockAncestor) return findNoteInsertionPlacement(blockAncestor);
 		}
 		if (tag === "CAPTION") {
 			const table = container.closest("table");
-			if (table) return { target: table, position: "afterend" };
+			if (table) return widenNarrowNotePlacement({ target: table, position: "afterend" });
 		}
 		if (tag === "LI" || tag === "TD" || tag === "TH") {
-			return { target: container, position: "beforeend" };
+			return widenNarrowNotePlacement({ target: container, position: "beforeend" });
 		}
 		const parent = container.parentElement;
-		if (!(parent instanceof Element)) return { target: container, position: "afterend" };
+		if (!(parent instanceof Element)) return widenNarrowNotePlacement({ target: container, position: "afterend" });
 		const isHeading = /^H[1-6]$/.test(tag);
 		const hasPermalinkSibling = Array.from(parent.children).some((child) =>
 			child !== container && child.matches?.("a.anchor, .anchor")
@@ -1404,9 +1437,9 @@ const createPageToolkit = (options = {}) => {
 		// GitHub renders markdown headings as a wrapper with a sibling permalink anchor.
 		// Insert notes after the wrapper so captions do not split the heading/link row.
 		if (isHeading && parent.classList.contains("markdown-heading") && hasPermalinkSibling) {
-			return { target: parent, position: "afterend" };
+			return widenNarrowNotePlacement({ target: parent, position: "afterend" });
 		}
-		return { target: container, position: "afterend" };
+		return widenNarrowNotePlacement({ target: container, position: "afterend" });
 	};
 
 	const insertNoteAtPlacement = (note, placement) => {
@@ -1478,9 +1511,148 @@ const createPageToolkit = (options = {}) => {
 		"with",
 	]);
 
+	const HIGHLIGHT_CHARACTER_ALIASES = new Map(
+		Object.entries({
+			"₀": "0",
+			"₁": "1",
+			"₂": "2",
+			"₃": "3",
+			"₄": "4",
+			"₅": "5",
+			"₆": "6",
+			"₇": "7",
+			"₈": "8",
+			"₉": "9",
+			"⁰": "0",
+			"¹": "1",
+			"²": "2",
+			"³": "3",
+			"⁴": "4",
+			"⁵": "5",
+			"⁶": "6",
+			"⁷": "7",
+			"⁸": "8",
+			"⁹": "9",
+			"ₐ": "a",
+			"ₑ": "e",
+			"ₕ": "h",
+			"ᵢ": "i",
+			"ⱼ": "j",
+			"ₖ": "k",
+			"ₗ": "l",
+			"ₘ": "m",
+			"ₙ": "n",
+			"ₒ": "o",
+			"ₚ": "p",
+			"ᵣ": "r",
+			"ₛ": "s",
+			"ₜ": "t",
+			"ᵤ": "u",
+			"ᵥ": "v",
+			"ₓ": "x",
+			"ᵃ": "a",
+			"ᵇ": "b",
+			"ᶜ": "c",
+			"ᵈ": "d",
+			"ᵉ": "e",
+			"ᶠ": "f",
+			"ᵍ": "g",
+			"ʰ": "h",
+			"ⁱ": "i",
+			"ʲ": "j",
+			"ᵏ": "k",
+			"ˡ": "l",
+			"ᵐ": "m",
+			"ⁿ": "n",
+			"ᵒ": "o",
+			"ᵖ": "p",
+			"ʳ": "r",
+			"ˢ": "s",
+			"ᵗ": "t",
+			"ᵘ": "u",
+			"ᵛ": "v",
+			"ʷ": "w",
+			"ˣ": "x",
+			"ʸ": "y",
+			"ᶻ": "z",
+			"√": "sqrt",
+			"−": "-",
+			"–": "-",
+			"—": "-",
+			"×": "x",
+			"∗": "*",
+		}),
+	);
+	const HIGHLIGHT_SEARCH_IGNORED_CHARACTERS = new Set(["`"]);
+
+	const normalizeHighlightSearchFragment = (character) => {
+		if (HIGHLIGHT_SEARCH_IGNORED_CHARACTERS.has(character)) return "";
+		const aliased = HIGHLIGHT_CHARACTER_ALIASES.get(character);
+		if (aliased) return aliased;
+		return String(character || "")
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.replace(/[\u200b-\u200f\u2060-\u206f]/g, "");
+	};
+
+	const buildSearchProjection = (text, positions = []) => {
+		let searchText = "";
+		const searchPositions = [];
+		let pendingSpace = null;
+
+		const appendSearchCharacter = (character, position) => {
+			if (!character) return;
+			if (/\s/.test(character)) {
+				if (searchText && !pendingSpace) pendingSpace = position;
+				return;
+			}
+			if (pendingSpace) {
+				searchText += " ";
+				searchPositions.push(pendingSpace);
+				pendingSpace = null;
+			}
+			searchText += character.toLowerCase();
+			searchPositions.push(position);
+		};
+
+		const source = String(text || "");
+		for (let index = 0; index < source.length; ) {
+			const character = String.fromCodePoint(source.codePointAt(index));
+			const position = positions[index] || null;
+			const normalized = normalizeHighlightSearchFragment(character);
+			for (const normalizedCharacter of normalized) {
+				appendSearchCharacter(normalizedCharacter, position);
+			}
+			index += character.length;
+		}
+
+		let compactText = "";
+		const compactPositions = [];
+		for (let index = 0; index < searchText.length; index += 1) {
+			if (!/[a-z0-9]/.test(searchText[index])) continue;
+			compactText += searchText[index];
+			compactPositions.push(searchPositions[index]);
+		}
+
+		return { searchText, searchPositions, compactText, compactPositions };
+	};
+
+	const getRangeEndOffset = (position) => position?.endOffset ?? (position?.offset ?? 0) + 1;
+
+	const normalizeHighlightSearchText = (value) => buildSearchProjection(String(value || "").replace(/\s+/g, " ").trim()).searchText;
+
+	const compactHighlightSearchText = (value) => buildSearchProjection(String(value || "").replace(/\s+/g, " ").trim()).compactText;
+
+	const isMathLikeHighlightQuery = (value) => {
+		const text = String(value || "").trim();
+		if (!text) return false;
+		if (/[=()[\]{}_^√∑∏∫+\-*\/\\]|[₀-₉⁰¹²³⁴⁵⁶⁷⁸⁹ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ]/u.test(text)) return true;
+		const compact = text.replace(/\s+/g, "");
+		return /^[A-Z][A-Za-z0-9]{1,10}$/.test(compact);
+	};
+
 	const tokenizeNormalizedText = (value) =>
-		String(value ?? "")
-			.toLowerCase()
+		normalizeHighlightSearchText(value)
 			.split(/[^a-z0-9]+/i)
 			.map((part) => part.trim())
 			.filter((part) => part.length >= 2);
@@ -1499,16 +1671,21 @@ const createPageToolkit = (options = {}) => {
 	const collectHighlightContainers = (queryLower, rawQuery) => {
 		const root = document.body || document.documentElement;
 		const candidates = [];
+		const querySearch = normalizeHighlightSearchText(rawQuery);
+		const queryCompact = compactHighlightSearchText(rawQuery);
+		const useCompact = isMathLikeHighlightQuery(rawQuery) && queryCompact.length >= 3;
 		const queryTokens = tokenizeApproximateQuery(rawQuery);
 		const minimumOverlap = Math.min(2, queryTokens.length);
-		for (const container of root.querySelectorAll(ANNOTATION_CONTAINER_SELECTOR)) {
+		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
 			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const text = lowerText(getElementText(container));
 			if (!text) continue;
-			if (!text.includes(queryLower)) {
+			const searchText = normalizeHighlightSearchText(text);
+			const compactText = compactHighlightSearchText(text);
+			if (!text.includes(queryLower) && !searchText.includes(querySearch) && !(useCompact && compactText.includes(queryCompact))) {
 				if (!queryTokens.length) continue;
 				const containerTokens = new Set(tokenizeApproximateQuery(text));
 				const overlap = countTokenOverlap(queryTokens, containerTokens);
@@ -1527,12 +1704,14 @@ const createPageToolkit = (options = {}) => {
 
 		for (const node of textNodes) {
 			const value = String(node.nodeValue || "");
-			for (let offset = 0; offset < value.length; offset += 1) {
-				const character = value[offset];
+			for (let offset = 0; offset < value.length; ) {
+				const character = String.fromCodePoint(value.codePointAt(offset));
+				const position = { node, offset, endOffset: offset + character.length };
 				if (/\s/.test(character)) {
 					if (hasContent && !pendingSpace) {
-						pendingSpace = { node, offset };
+						pendingSpace = position;
 					}
+					offset += character.length;
 					continue;
 				}
 
@@ -1543,15 +1722,23 @@ const createPageToolkit = (options = {}) => {
 				}
 
 				text += character;
-				positions.push({ node, offset });
+				for (let unit = 0; unit < character.length; unit += 1) {
+					positions.push(position);
+				}
 				hasContent = true;
+				offset += character.length;
 			}
 		}
 
+		const searchProjection = buildSearchProjection(text, positions);
 		return {
 			text,
 			lowerText: text.toLowerCase(),
 			positions,
+			searchText: searchProjection.searchText,
+			searchPositions: searchProjection.searchPositions,
+			compactText: searchProjection.compactText,
+			compactPositions: searchProjection.compactPositions,
 		};
 	};
 
@@ -1711,10 +1898,80 @@ const createPageToolkit = (options = {}) => {
 		};
 	};
 
+	const highlightBlockElement = async (element, rawQuery, options = {}) => {
+		if (!(element instanceof Element)) return null;
+		const annotationId = nextAnnotationId();
+		element.setAttribute("data-onhand-highlight-kind", "block");
+		element.setAttribute("data-onhand-annotation-id", annotationId);
+		if (options.scrollIntoView !== false) {
+			element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+		}
+		await waitForLayout();
+		return {
+			annotationId,
+			kind: "block",
+			matchedText: getElementText(element).slice(0, 500) || normalizeText(rawQuery),
+			container: summarizeElement(findAnnotationContainer(element)),
+			rect: rectToObject(element.getBoundingClientRect()),
+			scrollY: window.scrollY,
+			approximate: Boolean(options.approximate),
+			fallback: options.fallback || undefined,
+		};
+	};
+
+	const getMathElementComparableText = (element) => {
+		if (!(element instanceof Element)) return "";
+		const parts = [
+			getElementText(element),
+			element.getAttribute("aria-label"),
+			element.getAttribute("data-latex"),
+			element.getAttribute("data-tex"),
+			element.getAttribute("alttext"),
+		];
+		for (const annotation of element.querySelectorAll("annotation, annotation-xml")) {
+			parts.push(annotation.textContent || "");
+		}
+		return parts.filter(Boolean).join(" ");
+	};
+
+	const findBestMathBlockFallback = (rawQuery) => {
+		if (!isMathLikeHighlightQuery(rawQuery)) return null;
+		const root = document.body || document.documentElement;
+		const querySearch = normalizeHighlightSearchText(rawQuery);
+		const queryCompact = compactHighlightSearchText(rawQuery);
+		const queryTokens = tokenizeApproximateQuery(rawQuery);
+		let best = null;
+		for (const element of root.querySelectorAll(MATH_CONTAINER_SELECTOR)) {
+			if (!(element instanceof Element)) continue;
+			if (!isVisible(element)) continue;
+			if (element.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (element.closest('[data-onhand-highlight-kind]')) continue;
+			const text = getMathElementComparableText(element);
+			if (!text.trim()) continue;
+			const searchText = normalizeHighlightSearchText(text);
+			const compactText = compactHighlightSearchText(text);
+			const tokenSet = new Set(tokenizeApproximateQuery(text));
+			const overlap = countTokenOverlap(queryTokens, tokenSet);
+			let score = overlap * 100;
+			if (querySearch && searchText.includes(querySearch)) score += 500;
+			if (queryCompact && compactText.includes(queryCompact)) score += 400;
+			if (score <= 0) continue;
+			const rect = element.getBoundingClientRect();
+			score -= Math.abs(rect.top - window.innerHeight / 2) * 0.01;
+			if (!best || score > best.score) {
+				best = { element, score };
+			}
+		}
+		return best?.element || null;
+	};
+
 	const highlightText = async (query, options = {}) => {
 		const rawQuery = String(query ?? "").trim();
 		const normalizedQuery = lowerText(rawQuery);
 		if (!normalizedQuery) throw new Error("highlightText requires a non-empty query");
+		const searchQuery = normalizeHighlightSearchText(rawQuery);
+		const compactQuery = compactHighlightSearchText(rawQuery);
+		const useCompactQuery = isMathLikeHighlightQuery(rawQuery) && compactQuery.length >= 3;
 
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting !== false;
@@ -1728,45 +1985,82 @@ const createPageToolkit = (options = {}) => {
 			const textNodes = collectHighlightTextNodes(container);
 			if (!textNodes.length) continue;
 			const mappedText = buildNormalizedTextMap(textNodes);
-			const hasExactMatch = mappedText.lowerText.includes(normalizedQuery);
-			if (!hasExactMatch) {
-				const approximate = findBestApproximateHighlightRange(mappedText, rawQuery);
-				if (!approximate) continue;
-				if (!bestApproximateMatch || approximate.score > bestApproximateMatch.score) {
-					bestApproximateMatch = { ...approximate, mappedText, container };
-				}
-				continue;
-			}
+			const exactModes = [
+				{
+					text: mappedText.lowerText,
+					positions: mappedText.positions,
+					query: normalizedQuery,
+					fallback: null,
+				},
+				{
+					text: mappedText.searchText,
+					positions: mappedText.searchPositions,
+					query: searchQuery,
+					fallback: "normalized-text",
+				},
+				...(useCompactQuery
+					? [
+							{
+								text: mappedText.compactText,
+								positions: mappedText.compactPositions,
+								query: compactQuery,
+								fallback: "compact-math-text",
+							},
+						]
+					: []),
+			];
+			let attemptedExactMatch = false;
+			for (const mode of exactModes) {
+				if (!mode.query || !mode.text.includes(mode.query)) continue;
+				attemptedExactMatch = true;
+				let searchFrom = 0;
+				while (searchFrom <= mode.text.length) {
+					const foundAt = mode.text.indexOf(mode.query, searchFrom);
+					if (foundAt === -1) break;
+					matchIndex += 1;
+					if (matchIndex === occurrence) {
+						const start = mode.positions[foundAt];
+						const end = mode.positions[foundAt + mode.query.length - 1];
+						if (!start || !end) break;
 
-			let searchFrom = 0;
-			while (searchFrom <= mappedText.lowerText.length) {
-				const foundAt = mappedText.lowerText.indexOf(normalizedQuery, searchFrom);
-				if (foundAt === -1) break;
-				matchIndex += 1;
-				if (matchIndex === occurrence) {
-					const start = mappedText.positions[foundAt];
-					const end = mappedText.positions[foundAt + normalizedQuery.length - 1];
-					if (!start || !end) break;
+						const mathContainer = start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR);
+						if (mathContainer && isMathLikeHighlightQuery(rawQuery)) {
+							return await highlightBlockElement(mathContainer, rawQuery, {
+								scrollIntoView,
+								approximate: Boolean(mode.fallback),
+								fallback: mode.fallback || "math-container",
+							});
+						}
 
-					const range = document.createRange();
-					range.setStart(start.node, start.offset);
-					range.setEnd(end.node, end.offset + 1);
-					const annotationId = nextAnnotationId();
-					const highlight = wrapRangeInHighlight(range, annotationId);
-					if (scrollIntoView) {
-						highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+						const range = document.createRange();
+						range.setStart(start.node, start.offset);
+						range.setEnd(end.node, getRangeEndOffset(end));
+						const annotationId = nextAnnotationId();
+						const highlight = wrapRangeInHighlight(range, annotationId);
+						if (scrollIntoView) {
+							highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+						}
+						await waitForLayout();
+						return {
+							annotationId,
+							kind: "inline",
+							matchedText: getElementText(highlight).slice(0, 500) || normalizeText(rawQuery),
+							container: summarizeElement(findAnnotationContainer(highlight)),
+							rect: rectToObject(highlight.getBoundingClientRect()),
+							scrollY: window.scrollY,
+							approximate: Boolean(mode.fallback),
+							fallback: mode.fallback || undefined,
+						};
 					}
-					await waitForLayout();
-					return {
-						annotationId,
-						kind: "inline",
-						matchedText: getElementText(highlight).slice(0, 500) || normalizeText(rawQuery),
-						container: summarizeElement(findAnnotationContainer(highlight)),
-						rect: rectToObject(highlight.getBoundingClientRect()),
-						scrollY: window.scrollY,
-					};
+					searchFrom = foundAt + Math.max(mode.query.length, 1);
 				}
-				searchFrom = foundAt + Math.max(normalizedQuery.length, 1);
+			}
+			if (attemptedExactMatch) continue;
+
+			const approximate = findBestApproximateHighlightRange(mappedText, rawQuery);
+			if (!approximate) continue;
+			if (!bestApproximateMatch || approximate.score > bestApproximateMatch.score) {
+				bestApproximateMatch = { ...approximate, mappedText, container };
 			}
 		}
 
@@ -1774,9 +2068,17 @@ const createPageToolkit = (options = {}) => {
 			const start = bestApproximateMatch.mappedText.positions[bestApproximateMatch.startIndex];
 			const end = bestApproximateMatch.mappedText.positions[bestApproximateMatch.endIndex - 1];
 			if (start && end) {
+				const mathContainer = start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR);
+				if (mathContainer && isMathLikeHighlightQuery(rawQuery)) {
+					return await highlightBlockElement(mathContainer, rawQuery, {
+						scrollIntoView,
+						approximate: true,
+						fallback: "math-container",
+					});
+				}
 				const range = document.createRange();
 				range.setStart(start.node, start.offset);
-				range.setEnd(end.node, end.offset + 1);
+				range.setEnd(end.node, getRangeEndOffset(end));
 				const annotationId = nextAnnotationId();
 				const highlight = wrapRangeInHighlight(range, annotationId);
 				if (scrollIntoView) {
@@ -1793,6 +2095,15 @@ const createPageToolkit = (options = {}) => {
 					approximate: true,
 				};
 			}
+		}
+
+		const mathFallback = occurrence === 1 ? findBestMathBlockFallback(rawQuery) : null;
+		if (mathFallback) {
+			return await highlightBlockElement(mathFallback, rawQuery, {
+				scrollIntoView,
+				approximate: true,
+				fallback: "math-container",
+			});
 		}
 
 		throw new Error(`No visible text matched: ${query}`);

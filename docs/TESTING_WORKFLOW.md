@@ -123,6 +123,8 @@ Examples:
 - run `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` to verify bridge command execution, extension runtime revision, annotation reliability, and browser-client isolation without calling the model
 - run `npm run test:note-layout -- --browser-client="Chrome Test"` to verify live note placement on GitHub, Wikipedia, and technical-note fixtures without calling the model
 - run `npm run smoke:tier2 -- --fixture=<id>` for a repeatable desktop/API smoke that navigates to a fixture, submits a prompt, waits for the saved reply, and fails on missing output
+- run `npm run smoke:tier2 -- --url=<url> --title=<label> --prompt=<prompt>` for exploratory technical/math/CS pages before promoting them into fixture docs
+- add `--expect-fixture-content` on technical/math/CS fixtures when you want the smoke to verify the reply includes the fixture's expected concepts
 - add `--expect-provider`, `--expect-model`, and `--expect-api` to Tier 2 smokes when model routing is part of the change
 
 This tier is sufficient for:
@@ -344,6 +346,8 @@ To run the default version directly:
 
 - `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --expect-actions`
 - `npm run smoke:tier2 -- --fixture=onhand_github_repo --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-provider=openai-codex --expect-model=gpt-5.5 --expect-api=openai-codex-responses`
+- `npm run smoke:tier2 -- --url=https://cp-algorithms.com/graph/dijkstra_sparse.html --title="cp-algorithms Dijkstra Sparse" --prompt="Guide me through why sparse-graph Dijkstra needs a priority queue or set and what complexity tradeoff the page is making." --browser-client="Chrome Test" --expect-actions`
+- `npm run smoke:tier2 -- --fixture=cp_algorithms_dijkstra_sparse --prompt=0 --browser-client="Chrome Test" --expect-actions --expect-fixture-content`
 
 ### Smoke F: Direct Bridge Regression
 

@@ -15,6 +15,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..", "..");
 const PI_EXTENSION_PATH = join(PROJECT_ROOT, "packages", "pi-extension", "index.ts");
 const SESSION_DIR = join(PROJECT_ROOT, ".onhand", "sessions", "desktop");
+const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
+const ONHAND_BROWSER_TOOL_SOFT_LIMIT = parsePositiveEnvInt("ONHAND_BROWSER_TOOL_SOFT_LIMIT", 8);
+const ONHAND_BROWSER_PAGE_ACTION_SOFT_LIMIT = parsePositiveEnvInt("ONHAND_BROWSER_PAGE_ACTION_SOFT_LIMIT", 4);
+const ONHAND_GROUNDING_BUDGET_STEER = `${ONHAND_INTERNAL_PROMPT_PREFIX} grounding-budget reminder:
+You have already gathered enough browser evidence for this Onhand answer. Stop using browser tools now, do not search for more passages, and write the final answer using the highlighted or noted evidence already on the page. If a highlight failed because an equation or code token was hard to match, use the nearest successful passage and explain the formula or code in prose.`;
 const ONHAND_APPEND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor and research copilot running inside a compact desktop launcher.
 
 Prefer helping with the material already open in the user's browser. Stay grounded in the captured browser context supplied with each prompt. If you need more detail or the user asks you to point to something, use the available browser tools to inspect the live page.
@@ -51,6 +56,8 @@ Do not rush to an answer from one weak surface quote if the page has richer supp
 
 When highlighting, prefer short, distinctive visible spans from the supporting passage rather than long exact sentences or whole paragraphs. Choose the smallest phrase that still anchors the evidence clearly, but keep it self-contained: avoid dangling fragments, half-clauses, or tiny math lead-ins such as a few words before an equation. If the best evidence is expressed mathematically, prefer highlighting the nearby natural-language sentence or a fuller clause that states what the equation means, then explain the formal part in the note or answer.
 
+On technical, mathematical, code, notebook, paper, or documentation pages, one strong equation or code anchor plus one explanatory sentence is usually enough evidence for a focused question. Once you have highlighted the key equation/code and the sentence explaining why it matters, stop using browser tools and answer directly. Do not keep searching just to find another version of the same point.
+
 Keep your reasoning focused on the conceptual interpretation of the page, not on repetitive tool mechanics. Do not narrate every DOM or extraction step unless it materially affects the answer.
 
 Avoid navigating away from the current page unless the user explicitly asks. Keep replies concise and launcher-friendly by default, keep on-page notes short and explanatory, and use markdown emphasis sparingly. Bold only short phrases that truly need emphasis; do not bold whole bullets, sentences, or most of the answer.`;
@@ -73,6 +80,11 @@ let activeRequest = null;
 let sessionEventUnsubscribe = null;
 let uiState = createEmptyUiState();
 const uiStateListeners = new Set();
+
+function parsePositiveEnvInt(name, fallback) {
+	const parsed = Number.parseInt(process.env[name] || "", 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function truncate(value, maxChars = 1200) {
 	const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -292,7 +304,12 @@ function extractTextFromContent(content) {
 
 function extractUserFacingUserText(message) {
 	const text = extractTextFromContent(message?.content);
+	if (isInternalOnhandUserPrompt(text)) return "";
 	return extractUserQuestionFromSessionText(text) || truncate(text, 240);
+}
+
+function isInternalOnhandUserPrompt(value) {
+	return String(value || "").trim().startsWith(ONHAND_INTERNAL_PROMPT_PREFIX);
 }
 
 function buildConversationMessagesFromAgent(agentMessages = []) {
@@ -707,15 +724,55 @@ function buildPageAction(toolName, result) {
 }
 
 function pushPageAction(action) {
-	if (!activeRequest || !action) return;
-	if (activeRequest.pageActions.some((existing) => existing.key === action.key)) return;
+	if (!activeRequest || !action) return false;
+	if (activeRequest.pageActions.some((existing) => existing.key === action.key)) return false;
 	activeRequest.pageActions.push(action);
+	activeRequest.browserPageActionCount = (activeRequest.browserPageActionCount || 0) + 1;
 	emitRequestEvent({
 		type: "page_actions",
 		actions: [...activeRequest.pageActions],
 	});
 	mutateUiState((state) => {
 		state.pageActions = [...activeRequest.pageActions];
+	});
+	return true;
+}
+
+function isBrowserToolName(toolName) {
+	return String(toolName || "").startsWith("browser_");
+}
+
+function shouldSteerAfterGroundingBudget() {
+	if (!activeRequest || activeRequest.aborted || activeRequest.groundingBudgetSteerSent) return false;
+	if (activeRequest.reply.trim()) return false;
+	const browserToolCount = activeRequest.browserToolExecutionCount || 0;
+	const pageActionCount = activeRequest.browserPageActionCount || 0;
+	if (pageActionCount >= ONHAND_BROWSER_PAGE_ACTION_SOFT_LIMIT && browserToolCount >= 3) return true;
+	return browserToolCount >= ONHAND_BROWSER_TOOL_SOFT_LIMIT;
+}
+
+function maybeSteerAfterGroundingBudget(session) {
+	if (!shouldSteerAfterGroundingBudget()) return;
+	const requestId = activeRequest.id;
+	activeRequest.groundingBudgetSteerSent = true;
+	appendUiActivity({
+		id: `grounding-budget:${requestId}`,
+		kind: "reasoning",
+		label: "Grounding budget reached",
+		text: "Onhand has enough browser evidence; steering the agent to stop gathering and write the answer.",
+		state: "complete",
+	});
+	emitRequestEvent({ type: "status", status: "Writing answer…" });
+	setUiStatus("Writing answer…");
+	void session.steer(ONHAND_GROUNDING_BUDGET_STEER).catch((error) => {
+		if (!activeRequest || activeRequest.id !== requestId) return;
+		appendUiActivity({
+			id: `grounding-budget:${requestId}`,
+			kind: "reasoning",
+			label: "Grounding budget steer failed",
+			text: truncate(error?.message || String(error), 500),
+			state: "error",
+		});
 	});
 }
 
@@ -768,6 +825,10 @@ function handleSessionEvent(session, event) {
 		}
 		case "tool_execution_start": {
 			activeRequest.toolExecutionCount = (activeRequest.toolExecutionCount || 0) + 1;
+			if (isBrowserToolName(event.toolName)) {
+				activeRequest.browserToolExecutionCount = (activeRequest.browserToolExecutionCount || 0) + 1;
+				maybeSteerAfterGroundingBudget(session);
+			}
 			appendUiActivity({
 				id: getToolActivityId(event),
 				kind: "tool",
@@ -808,6 +869,9 @@ function handleSessionEvent(session, event) {
 					state: "complete",
 				});
 				pushPageAction(buildPageAction(event.toolName, event.result));
+				if (isBrowserToolName(event.toolName)) {
+					maybeSteerAfterGroundingBudget(session);
+				}
 				emitRequestEvent({ type: "status", status: "Writing answer…" });
 				setUiStatus("Writing answer…");
 			}
@@ -1025,6 +1089,9 @@ export async function submitOnhandPrompt({
 		reasoning: "",
 		pageActions: [],
 		toolExecutionCount: 0,
+		browserToolExecutionCount: 0,
+		browserPageActionCount: 0,
+		groundingBudgetSteerSent: false,
 		aborted: false,
 		browserClientId,
 	};
