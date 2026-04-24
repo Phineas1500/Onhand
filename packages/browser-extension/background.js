@@ -740,8 +740,16 @@ const waitForSelectorInPage = async ({ selector, timeoutMs = 10000, visible = fa
 const createPageToolkit = (options = {}) => {
 	const toolkitOptions = options && typeof options === "object" ? options : {};
 	const fontUrls = toolkitOptions.fontUrls && typeof toolkitOptions.fontUrls === "object" ? toolkitOptions.fontUrls : {};
+	const katexUrl = typeof toolkitOptions.katexUrl === "string" ? toolkitOptions.katexUrl : "";
 	const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 	const lowerText = (value) => normalizeText(value).toLowerCase();
+	const escapeHtml = (value) =>
+		String(value ?? "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#39;");
 	const cssEscape = (value) => {
 		if (window.CSS?.escape) return window.CSS.escape(String(value));
 		return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
@@ -796,6 +804,76 @@ const createPageToolkit = (options = {}) => {
 			  src: ${ioskeleyItalic} format("woff2");
 			}
 		`;
+	};
+	const NOTE_TOKEN_PREFIX = "@@ONHAND_NOTE_TOKEN_";
+	let noteKatexModule = null;
+	let noteKatexLoadPromise = null;
+
+	const createNoteTokenStore = () => {
+		const tokens = [];
+		return {
+			replace(html) {
+				const token = `${NOTE_TOKEN_PREFIX}${tokens.length}@@`;
+				tokens.push(html);
+				return token;
+			},
+			restore(text) {
+				let restored = String(text || "");
+				for (let index = 0; index < tokens.length; index += 1) {
+					restored = restored.split(`${NOTE_TOKEN_PREFIX}${index}@@`).join(tokens[index]);
+				}
+				return restored;
+			},
+		};
+	};
+
+	const noteMayContainMath = (value) => /\\\(|\\\[|\$\$|\$(?!\$)/.test(String(value || ""));
+
+	const renderNoteMathExpression = (source, displayMode = false) => {
+		const expression = String(source || "").trim();
+		if (!expression) return "";
+		const tag = displayMode ? "div" : "span";
+		const className = displayMode ? "onhand-note-math-block" : "onhand-note-math-inline";
+		try {
+			if (noteKatexModule?.renderToString) {
+				const rendered = noteKatexModule.renderToString(expression, {
+					displayMode,
+					throwOnError: false,
+					output: "mathml",
+					strict: "ignore",
+				});
+				return `<${tag} class="${className}">${rendered}</${tag}>`;
+			}
+		} catch {}
+		return `<${tag} class="${className} onhand-note-math-fallback">${escapeHtml(expression)}</${tag}>`;
+	};
+
+	const renderNoteRichText = (text) => {
+		const store = createNoteTokenStore();
+		let working = String(text || "").replace(/\r\n?/g, "\n");
+		working = working.replace(/`([^`]+)`/g, (_match, code) =>
+			store.replace(`<code data-onhand-note-part="code">${escapeHtml(code)}</code>`),
+		);
+		working = working.replace(/\\\[([\s\S]+?)\\\]/g, (_match, math) => store.replace(renderNoteMathExpression(math, true)));
+		working = working.replace(/\$\$([\s\S]+?)\$\$/g, (_match, math) => store.replace(renderNoteMathExpression(math, true)));
+		working = working.replace(/\\\(([\s\S]+?)\\\)/g, (_match, math) => store.replace(renderNoteMathExpression(math, false)));
+		working = working.replace(/\$(?!\$)([^$\n]+?)\$/g, (_match, math) => store.replace(renderNoteMathExpression(math, false)));
+		let html = escapeHtml(working);
+		html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+		html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+		return store.restore(html);
+	};
+
+	const ensureNoteKatexLoaded = () => {
+		if (noteKatexModule || !katexUrl) return Promise.resolve(noteKatexModule);
+		if (noteKatexLoadPromise) return noteKatexLoadPromise;
+		noteKatexLoadPromise = import(katexUrl)
+			.then((module) => {
+				noteKatexModule = module.default || module;
+				return noteKatexModule;
+			})
+			.catch(() => null);
+		return noteKatexLoadPromise;
 	};
 
 	const isVisible = (element) => {
@@ -1301,6 +1379,52 @@ const createPageToolkit = (options = {}) => {
 			[data-onhand-note-part="body"] {
 			  white-space: pre-wrap !important;
 			  color: var(--onhand-text) !important;
+			}
+
+			[data-onhand-note-part="body"] strong {
+			  font-weight: 700 !important;
+			  color: var(--onhand-text) !important;
+			}
+
+			[data-onhand-note-part="body"] em {
+			  font-style: italic !important;
+			  color: var(--onhand-text) !important;
+			}
+
+			[data-onhand-note-part="code"] {
+			  font-family: var(--onhand-font-mono) !important;
+			  font-size: 0.9em !important;
+			  background: color-mix(in srgb, var(--onhand-surface-2) 42%, transparent) !important;
+			  border: 1px solid color-mix(in srgb, var(--onhand-surface-2) 72%, transparent) !important;
+			  border-radius: 5px !important;
+			  padding: 0.08em 0.32em !important;
+			}
+
+			.onhand-note-math-inline,
+			.onhand-note-math-block {
+			  color: var(--onhand-text) !important;
+			  max-width: 100% !important;
+			}
+
+			.onhand-note-math-inline {
+			  display: inline !important;
+			}
+
+			.onhand-note-math-block {
+			  display: block !important;
+			  margin: 8px 0 !important;
+			  overflow-x: auto !important;
+			  overflow-y: hidden !important;
+			}
+
+			.onhand-note-math-inline math,
+			.onhand-note-math-block math {
+			  color: var(--onhand-text) !important;
+			  max-width: 100% !important;
+			}
+
+			.onhand-note-math-fallback {
+			  font-style: italic !important;
 			}
 		`;
 	};
@@ -2387,7 +2511,12 @@ const createPageToolkit = (options = {}) => {
 
 		const body = document.createElement("div");
 		body.setAttribute("data-onhand-note-part", "body");
-		body.textContent = rawNoteText;
+		body.setAttribute("data-onhand-note-source", rawNoteText);
+		if (noteMayContainMath(rawNoteText)) {
+			await ensureNoteKatexLoaded();
+		}
+		body.innerHTML = renderNoteRichText(rawNoteText);
+		body.setAttribute("data-onhand-note-renderer", noteKatexModule ? "katex" : "plain");
 
 		note.append(label, body);
 		insertNoteAtPlacement(note, insertionPlacement);
@@ -2432,7 +2561,7 @@ const createPageToolkit = (options = {}) => {
 						? {
 							noteId: note.getAttribute("data-onhand-note-id") || null,
 							label: normalizeText(label?.textContent || "") || null,
-							text: normalizeText(body?.textContent || note.textContent || "").slice(0, 1000),
+							text: normalizeText(body?.getAttribute?.("data-onhand-note-source") || body?.textContent || note.textContent || "").slice(0, 1000),
 							rect: rectToObject(note.getBoundingClientRect()),
 						}
 						: null,
@@ -2645,15 +2774,18 @@ async function evaluateInTab(tabId, expression, options = {}) {
 }
 
 async function runPageToolkitMethod(tabId, methodName, ...args) {
-	const fontUrls = getExtensionFontUrls();
+	const toolkitOptions = {
+		fontUrls: getExtensionFontUrls(),
+		katexUrl: chrome.runtime.getURL("vendor/katex.mjs"),
+	};
 	try {
 		const payload = await withOperationTimeout(
 			executeScriptInTab(
 				tabId,
-				async (toolkitSource, targetMethodName, targetArgs, targetFontUrls) => {
+				async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
 					try {
 						const toolkitFactory = (0, eval)(`(${toolkitSource})`);
-						const toolkit = toolkitFactory({ fontUrls: targetFontUrls });
+						const toolkit = toolkitFactory(targetToolkitOptions);
 						return {
 							ok: true,
 							value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
@@ -2665,7 +2797,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 						};
 					}
 				},
-				[createPageToolkit.toString(), methodName, args, fontUrls],
+				[createPageToolkit.toString(), methodName, args, toolkitOptions],
 			),
 			SCRIPT_EXECUTION_TIMEOUT_MS,
 			`Page toolkit scripting timed out: ${methodName}`,
@@ -2676,7 +2808,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		return payload.value;
 	} catch (scriptError) {
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
-		const serializedOptions = JSON.stringify({ fontUrls });
+		const serializedOptions = JSON.stringify(toolkitOptions);
 		return await evaluateInTab(
 			tabId,
 			`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,

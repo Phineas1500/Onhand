@@ -408,7 +408,7 @@ async function main() {
 				{
 					tabId: tab.id,
 					annotationId,
-					note: "Bridge regression check: heading highlights must return promptly.",
+					note: "Bridge regression check: heading highlights must return promptly. Formula check: $H_{out}=\\left\\lfloor H_{in}/s \\right\\rfloor$.",
 					label: "Regression",
 				},
 				ANNOTATION_TIMEOUT_MS,
@@ -421,12 +421,16 @@ async function main() {
 						const annotationId = ${JSON.stringify(annotationId)};
 						const note = [...document.querySelectorAll('[data-onhand-note-kind="card"]')]
 							.find((candidate) => candidate.getAttribute("data-onhand-note-for") === annotationId);
+						const body = note?.querySelector?.('[data-onhand-note-part="body"]') || null;
 						const parent = note?.parentElement || null;
 						const previous = note?.previousElementSibling || null;
 						return {
 							found: Boolean(note),
 							outsideGithubHeading: parent?.classList?.contains("markdown-heading") !== true,
 							previousIsGithubHeading: previous?.classList?.contains("markdown-heading") === true,
+							mathCount: note ? note.querySelectorAll('math').length : 0,
+							renderer: body?.getAttribute('data-onhand-note-renderer') || "",
+							sourceIncludesLatex: String(body?.getAttribute('data-onhand-note-source') || "").includes("$H_{out}="),
 							parentClass: String(parent?.className || ""),
 							previousClass: String(previous?.className || ""),
 						};
@@ -438,6 +442,15 @@ async function main() {
 				failures.push("Note placement check did not find the created note card.");
 			} else if (notePlacement.result.outsideGithubHeading === false) {
 				failures.push("GitHub heading note was inserted inside .markdown-heading instead of after the heading wrapper.");
+			} else if (Number(notePlacement.result.mathCount || 0) < 1) {
+				failures.push("Note LaTeX rendering check did not find rendered MathML in the note card.");
+			} else if (!notePlacement.result.sourceIncludesLatex) {
+				failures.push("Note source preservation check did not retain the original LaTeX source.");
+			}
+			const captured = await command("capture_state", { tabId: tab.id }, ANNOTATION_TIMEOUT_MS);
+			const capturedNote = captured?.page?.annotations?.find((item) => item?.annotationId === annotationId)?.note || null;
+			if (!String(capturedNote?.text || "").includes("$H_{out}=")) {
+				failures.push("Captured browser state did not preserve the note's original LaTeX source.");
 			}
 		}
 	}
