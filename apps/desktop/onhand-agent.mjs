@@ -541,6 +541,15 @@ function normalizeComparableText(value) {
 	return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function findAssistantMessageIndexAfterUser(messages, userIndex) {
+	for (let index = userIndex + 1; index < messages.length; index += 1) {
+		const message = messages[index];
+		if (message?.role === "user") return -1;
+		if (message?.role === "assistant") return index;
+	}
+	return -1;
+}
+
 function preserveCurrentTurnMessageIds(messages, currentTurnId, previousMessages = []) {
 	if (!currentTurnId || !Array.isArray(messages) || !messages.length) {
 		return Array.isArray(messages) ? messages : [];
@@ -554,31 +563,26 @@ function preserveCurrentTurnMessageIds(messages, currentTurnId, previousMessages
 		? previousMessages.find((message) => message?.id === `assistant:${currentTurnId}`)
 		: null;
 	const targetUserText = normalizeComparableText(previousUserMessage?.text);
-	if (!targetUserText) return nextMessages;
+	let matchingUserIndex = targetUserText
+		? nextMessages.findLastIndex(
+				(message) => message?.role === "user" && normalizeComparableText(message?.text) === targetUserText,
+			)
+		: -1;
 
-	const matchingUserIndex = nextMessages.findLastIndex(
-		(message) => message?.role === "user" && normalizeComparableText(message?.text) === targetUserText,
-	);
+	if (matchingUserIndex < 0) {
+		matchingUserIndex = nextMessages.findLastIndex((message) => message?.role === "user");
+	}
 	if (matchingUserIndex < 0) return nextMessages;
 
 	nextMessages[matchingUserIndex] = {
 		...nextMessages[matchingUserIndex],
 		id: `user:${currentTurnId}`,
+		text: previousUserMessage?.text || nextMessages[matchingUserIndex].text,
 		createdAt: nextMessages[matchingUserIndex].createdAt || previousUserMessage?.createdAt,
 	};
 
-	const matchingAssistantIndex = nextMessages.findIndex((message, index) => {
-		if (index <= matchingUserIndex) return false;
-		if (message?.role === "user") return false;
-		return message?.role === "assistant";
-	});
-	const userBeforeAssistantIndex =
-		matchingAssistantIndex >= 0
-			? nextMessages.findIndex(
-					(message, index) => index > matchingUserIndex && index < matchingAssistantIndex && message?.role === "user",
-				)
-			: -1;
-	if (matchingAssistantIndex >= 0 && userBeforeAssistantIndex < 0) {
+	const matchingAssistantIndex = findAssistantMessageIndexAfterUser(nextMessages, matchingUserIndex);
+	if (matchingAssistantIndex >= 0) {
 		nextMessages[matchingAssistantIndex] = {
 			...nextMessages[matchingAssistantIndex],
 			id: `assistant:${currentTurnId}`,

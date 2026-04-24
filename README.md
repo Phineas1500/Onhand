@@ -8,6 +8,14 @@ The intended experience is:
 - have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
 - save the session so it can be replayed later with the relevant artifacts restored
 
+## Onhand at work
+
+<p align="center">
+  <img src="screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention with page highlights, notes, and a sidebar answer" width="960">
+</p>
+
+<p align="center"><em>Onhand grounding an explanation in the page the user already has open.</em></p>
+
 ## Current status
 
 This repository is now organized around **Onhand**, but the main implemented subsystem today is still the **browser grounding layer**:
