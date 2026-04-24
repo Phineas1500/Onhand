@@ -122,6 +122,7 @@ Examples:
 - run `npm run test:fixtures` to pull the standard fixture URLs and prompts for the scenario you are checking
 - run `npm run test:browser-bridge -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` to verify bridge command execution, extension runtime revision, annotation reliability, and browser-client isolation without calling the model
 - run `npm run test:note-layout -- --browser-client="Chrome Test"` to verify live note placement on GitHub, Wikipedia, and technical-note fixtures without calling the model
+- run `npm run test:session-restore -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` to verify future sessions can restore saved highlights/notes from browser tool-result history even without an explicit artifact bundle
 - run `npm run smoke:tier2 -- --fixture=<id>` for a repeatable desktop/API smoke that navigates to a fixture, submits a prompt, waits for the saved reply, and fails on missing output
 - run `npm run smoke:tier2 -- --url=<url> --title=<label> --prompt=<prompt>` for exploratory technical/math/CS pages before promoting them into fixture docs
 - add `--expect-fixture-content` on technical/math/CS fixtures when you want the smoke to verify the reply includes the fixture's expected concepts
@@ -231,6 +232,12 @@ Reason:
 Default:
 - Tier 1
 - Tier 2
+
+Restore behavior:
+- session restore first uses persisted browser artifacts when they exist
+- if no artifacts exist, restore replays saved `browser_highlight_text` and `browser_show_note` tool results from the session JSONL
+- this replay fallback is the compatibility path that makes future page-grounded sessions restorable without requiring every turn to persist an explicit artifact bundle
+- use `npm run test:session-restore -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"` as the deterministic regression for that guarantee
 
 Add Tier 3 if:
 - the user flow includes visible restore, session switching in the side panel, or reopen behavior

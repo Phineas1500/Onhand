@@ -14,6 +14,7 @@ import {
 	getSessionOverview,
 	primeOnhandUiRequest,
 	renameCurrentOnhandSession,
+	remapOnhandPageActions,
 	startNewOnhandSession,
 	stopOnhandRun,
 	submitOnhandPrompt,
@@ -575,6 +576,127 @@ async function readBrowserArtifactIndex() {
 	}
 }
 
+function getReplayPageKey(tab = {}) {
+	return String(tab.url || tab.title || "").trim();
+}
+
+function ensureReplayPage(pages, tab = {}) {
+	const key = getReplayPageKey(tab);
+	if (!key) return null;
+	let page = pages.get(key);
+	if (!page) {
+		page = {
+			version: 1,
+			type: "browser_capture",
+			artifactId: `session-replay:${key}`,
+			source: "session-replay",
+			label: "Replayed from session tool history",
+			tab: {
+				id: tab.id,
+				windowId: tab.windowId,
+				title: tab.title || "",
+				url: tab.url || "",
+			},
+			page: {
+				url: tab.url || "",
+				title: tab.title || "",
+				scrollX: 0,
+				scrollY: 0,
+				annotations: [],
+				annotationCount: 0,
+			},
+		};
+		pages.set(key, page);
+	}
+	return page;
+}
+
+function parseSessionToolResult(line) {
+	try {
+		const entry = JSON.parse(line);
+		const message = entry?.message;
+		if (entry?.type !== "message" || message?.role !== "toolResult") return null;
+		return message;
+	} catch {
+		return null;
+	}
+}
+
+async function buildSessionReplaySummaries(sessionPath) {
+	const raw = await readFile(sessionPath, "utf8");
+	const pages = new Map();
+
+	for (const line of raw.split(/\n/)) {
+		const message = parseSessionToolResult(line);
+		if (!message?.toolName) continue;
+		const details = message.details || {};
+		const tab = details.tab || {};
+		const page = ensureReplayPage(pages, tab);
+		if (!page) continue;
+
+		if (message.toolName === "browser_clear_annotations") {
+			page.page.annotations = [];
+			page.page.annotationCount = 0;
+			continue;
+		}
+
+		if (message.toolName === "browser_highlight_text") {
+			const annotation = details.annotation || {};
+			const matchedText = String(annotation.matchedText || "").trim();
+			const annotationId = String(annotation.annotationId || "").trim();
+			if (!matchedText || !annotationId) continue;
+			if (details.clearExisting !== false) {
+				page.page.annotations = [];
+			}
+			page.page.scrollX = 0;
+			page.page.scrollY = typeof annotation.scrollY === "number" ? annotation.scrollY : page.page.scrollY || 0;
+			page.page.annotations.push({
+				annotationId,
+				kind: annotation.kind || "inline",
+				matchedText,
+				container: annotation.container || null,
+				rect: annotation.rect || null,
+				note: null,
+			});
+			page.page.annotationCount = page.page.annotations.length;
+			continue;
+		}
+
+		if (message.toolName === "browser_show_note") {
+			const note = details.note || {};
+			const annotationId = String(note.annotationId || "").trim();
+			const noteText = String(note.note || note.text || "").trim();
+			if (!annotationId || !noteText) continue;
+			const annotation = page.page.annotations.find((candidate) => candidate.annotationId === annotationId);
+			if (!annotation) continue;
+			annotation.note = {
+				noteId: note.noteId || null,
+				label: note.label || null,
+				text: noteText,
+				rect: note.rect || null,
+			};
+		}
+	}
+
+	return [...pages.values()]
+		.map((page) => {
+			page.page.annotationCount = Array.isArray(page.page.annotations) ? page.page.annotations.length : 0;
+			return page;
+		})
+		.filter((page) => page.page.annotationCount > 0 && (page.page.url || page.tab.url));
+}
+
+function latestSummariesByUrl(summaries) {
+	const latestByUrl = new Map();
+	for (const summary of summaries) {
+		const key = String(summary.url || summary.page?.url || summary.tab?.url || summary.title || summary.page?.title || summary.artifactId);
+		if (!latestByUrl.has(key)) {
+			latestByUrl.set(key, summary);
+		}
+	}
+	return [...latestByUrl.values()];
+}
+
 function chooseBestMatchingTab(tabs, url, title) {
 	const exactUrlMatches = tabs.filter((tab) => (tab?.url || "") === url);
 	if (exactUrlMatches.length > 0) {
@@ -627,7 +749,10 @@ async function restoreArtifactSummary(artifactSummary, clientId = null) {
 	if (manifest?.type !== "browser_capture") {
 		throw new Error(`Artifact ${artifactSummary.artifactId || statePath} is not a browser capture.`);
 	}
+	return await restoreCaptureManifest({ ...artifactSummary, source: "artifact" }, manifest, clientId);
+}
 
+async function restoreCaptureManifest(captureSummary, manifest, clientId = null) {
 	const tab = await resolveTargetTabForArtifact(manifest, clientId);
 	await runBridgeCommand("clear_annotations", { tabId: tab.id }, 15000, clientId);
 
@@ -666,7 +791,10 @@ async function restoreArtifactSummary(artifactSummary, clientId = null) {
 				noteRestored = true;
 			}
 			restored.push({
+				originalAnnotationId: annotation.annotationId || null,
 				annotationId: restoredAnnotationId,
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
 				noteRestored,
 			});
 		} catch (error) {
@@ -702,12 +830,21 @@ async function restoreArtifactSummary(artifactSummary, clientId = null) {
 	}
 
 	return {
-		artifactId: artifactSummary.artifactId,
-		title: artifactSummary.title || manifest?.page?.title || manifest?.tab?.title || "(untitled)",
-		url: artifactSummary.url || manifest?.page?.url || manifest?.tab?.url || "",
+		artifactId: captureSummary.artifactId,
+		source: captureSummary.source || "artifact",
+		title: captureSummary.title || manifest?.page?.title || manifest?.tab?.title || "(untitled)",
+		url: captureSummary.url || manifest?.page?.url || manifest?.tab?.url || "",
 		tabId: tab?.id || null,
 		restoredCount: restored.length,
 		failedCount: failed.length,
+		annotationMappings: restored
+			.filter((item) => item.originalAnnotationId && item.annotationId)
+			.map((item) => ({
+				originalAnnotationId: item.originalAnnotationId,
+				annotationId: item.annotationId,
+				tabId: item.tabId,
+				windowId: item.windowId,
+			})),
 	};
 }
 
@@ -730,21 +867,23 @@ async function restoreSessionPages(sessionPath, browserClientId = null) {
 		)
 		.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
 
-	if (!sessionArtifacts.length) {
-		throw new Error("No saved browser artifacts were found for that session.");
-	}
-
-	const latestArtifactsByUrl = new Map();
-	for (const artifact of sessionArtifacts) {
-		const key = String(artifact.url || artifact.title || artifact.artifactId);
-		if (!latestArtifactsByUrl.has(key)) {
-			latestArtifactsByUrl.set(key, artifact);
+	const restoredPages = [];
+	if (sessionArtifacts.length) {
+		for (const artifact of latestSummariesByUrl(sessionArtifacts)) {
+			restoredPages.push(await restoreArtifactSummary(artifact, resolvedBrowserClientId));
+		}
+	} else {
+		const replaySummaries = await buildSessionReplaySummaries(normalizedSessionPath);
+		if (!replaySummaries.length) {
+			throw new Error("No saved browser artifacts or replayable browser annotations were found for that session.");
+		}
+		for (const replaySummary of latestSummariesByUrl(replaySummaries)) {
+			restoredPages.push(await restoreCaptureManifest(replaySummary, replaySummary, resolvedBrowserClientId));
 		}
 	}
-
-	const restoredPages = [];
-	for (const artifact of latestArtifactsByUrl.values()) {
-		restoredPages.push(await restoreArtifactSummary(artifact, resolvedBrowserClientId));
+	const currentSessionFile = getOnhandUiState().currentSession?.sessionFile || null;
+	if (currentSessionFile && resolve(currentSessionFile) === normalizedSessionPath) {
+		remapOnhandPageActions(restoredPages.flatMap((page) => page.annotationMappings || []));
 	}
 
 	return {

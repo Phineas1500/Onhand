@@ -243,3 +243,32 @@ This smoke does not call the model. It navigates fixture pages through the local
 
 - minimum: Tier 2 for deterministic placement coverage
 - add Tier 3 if the page has sticky overlays, dynamic app chrome, or a visual issue that the DOM checks cannot fully prove
+
+## Smoke H: Session Restore Regression
+
+Use this when session restore, page actions, browser artifacts, or saved browser tool-result handling changes.
+
+This smoke does not call the model. It writes a synthetic future-style session JSONL containing saved `browser_highlight_text` and `browser_show_note` tool results, serves a local fixture page, restores through the desktop `/sessions/restore` API, and verifies the restored highlight/note through `capture_state`.
+
+### Setup
+
+- environment: usually `Chrome Test`
+- submission path: desktop restore API plus direct bridge verification
+- fixture: local temporary HTTP page created by the test
+
+### What to verify
+
+- sessions with saved browser highlight/note tool results restore even without an explicit artifact bundle
+- restore response reports `source: session-replay`
+- the selected browser client receives the restored tab and annotations
+- the restored note is present in live `capture_state`
+
+### Commands
+
+- `npm run test:session-restore -- --browser-client="Chrome Test" --expect-client-label="Chrome Test"`
+- `npm run test:session-restore -- --browser-client="Chrome Test" --expect-client-label="Chrome Test" --json`
+
+### Tier guidance
+
+- minimum: Tier 2 for future-session restore coverage
+- add Tier 3 only when checking the visible session picker/sidebar restore UX

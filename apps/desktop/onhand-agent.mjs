@@ -393,6 +393,110 @@ function buildTurnsFromMessages(messages = []) {
 	return turns;
 }
 
+function appendUniquePageAction(actions, action) {
+	if (!action) return false;
+	if (actions.some((existing) => existing?.key === action.key)) return false;
+	actions.push(action);
+	return true;
+}
+
+function buildPageActionFromToolResultMessage(message) {
+	if (message?.role !== "toolResult" || !message.toolName) return null;
+	return buildPageAction(message.toolName, {
+		details: message.details || {},
+		toolCallId: message.toolCallId || null,
+	});
+}
+
+function buildTurnsFromAgentMessages(agentMessages = []) {
+	const turns = [];
+	let pendingUser = null;
+	let pendingPageActions = [];
+
+	for (let index = 0; index < (Array.isArray(agentMessages) ? agentMessages.length : 0); index += 1) {
+		const message = agentMessages[index];
+		if (!message || typeof message !== "object" || !message.role) continue;
+
+		if (message.role === "user") {
+			const text = extractUserFacingUserText(message);
+			if (!text) continue;
+			if (pendingUser) {
+				turns.push({
+					id: pendingUser.id?.startsWith("user:") ? pendingUser.id.slice("user:".length) : `${turns.length + 1}`,
+					userPrompt: pendingUser.text || "",
+					reply: "",
+					activities: [],
+					pageActions: [...pendingPageActions],
+					pending: false,
+					error: false,
+					createdAt: pendingUser.createdAt || new Date().toISOString(),
+				});
+			}
+			pendingUser = {
+				id: `user:${index}`,
+				role: "user",
+				text,
+			};
+			pendingPageActions = [];
+			continue;
+		}
+
+		if (message.role === "toolResult") {
+			if (pendingUser) {
+				appendUniquePageAction(pendingPageActions, buildPageActionFromToolResultMessage(message));
+			}
+			continue;
+		}
+
+		if (message.role !== "assistant") continue;
+		const reply = extractTextFromContent(message.content);
+		if (!reply) continue;
+
+		if (pendingUser) {
+			turns.push({
+				id: pendingUser.id?.startsWith("user:") ? pendingUser.id.slice("user:".length) : `${turns.length + 1}`,
+				userPrompt: pendingUser.text || "",
+				reply,
+				activities: [],
+				pageActions: [...pendingPageActions],
+				pending: Boolean(message.pending),
+				error: Boolean(message.error),
+				createdAt: message.createdAt || new Date().toISOString(),
+			});
+			pendingUser = null;
+			pendingPageActions = [];
+			continue;
+		}
+
+		turns.push({
+			id: message.id?.startsWith("assistant:") ? message.id.slice("assistant:".length) : `${turns.length + 1}`,
+			userPrompt: "",
+			reply,
+			activities: [],
+			pageActions: [...pendingPageActions],
+			pending: Boolean(message.pending),
+			error: Boolean(message.error),
+			createdAt: message.createdAt || new Date().toISOString(),
+		});
+		pendingPageActions = [];
+	}
+
+	if (pendingUser && (pendingUser.text || pendingPageActions.length)) {
+		turns.push({
+			id: pendingUser.id?.startsWith("user:") ? pendingUser.id.slice("user:".length) : `${turns.length + 1}`,
+			userPrompt: pendingUser.text || "",
+			reply: "",
+			activities: [],
+			pageActions: [...pendingPageActions],
+			pending: false,
+			error: false,
+			createdAt: pendingUser.createdAt || new Date().toISOString(),
+		});
+	}
+
+	return turns;
+}
+
 function archiveCurrentTurnIntoHistory(state = uiState) {
 	const turnId = state?.currentTurnId;
 	if (!turnId || state?.activeRequestId === turnId) {
@@ -501,7 +605,7 @@ function syncUiStateFromSession(session, overrides = {}) {
 			: sessionMessages;
 	replaceUiState({
 		...createEmptyUiState(currentSession),
-		turns: sameSession ? [...(uiState.turns || [])] : buildTurnsFromMessages(messages),
+		turns: sameSession ? [...(uiState.turns || [])] : buildTurnsFromAgentMessages(session.agent.state.messages),
 		currentTurnId: sameSession ? uiState.currentTurnId : null,
 		messages,
 		...overrides,
@@ -647,10 +751,10 @@ function getToolStatusMessage(toolName) {
 	}
 }
 
-function buildPageAction(toolName, result) {
+function buildPageAction(toolName, result, options = {}) {
 	const details = result?.details || {};
 	const tab = details.tab || null;
-	const browserClientId = activeRequest?.browserClientId || null;
+	const browserClientId = options.browserClientId || activeRequest?.browserClientId || null;
 	switch (toolName) {
 		case "browser_activate_tab": {
 			const detail = truncate(details.tab?.title || details.tab?.url || "Relevant page", 72);
@@ -727,8 +831,7 @@ function buildPageAction(toolName, result) {
 
 function pushPageAction(action) {
 	if (!activeRequest || !action) return false;
-	if (activeRequest.pageActions.some((existing) => existing.key === action.key)) return false;
-	activeRequest.pageActions.push(action);
+	if (!appendUniquePageAction(activeRequest.pageActions, action)) return false;
 	activeRequest.browserPageActionCount = (activeRequest.browserPageActionCount || 0) + 1;
 	emitRequestEvent({
 		type: "page_actions",
@@ -1210,7 +1313,55 @@ export function subscribeOnhandUiState(listener) {
 
 export function getOnhandPageAction(actionKey) {
 	if (!actionKey) return null;
-	return uiState.pageActions.find((action) => action.key === actionKey) || null;
+	const key = String(actionKey);
+	const currentAction = uiState.pageActions.find((action) => action.key === key);
+	if (currentAction) return currentAction;
+	for (let index = (uiState.turns || []).length - 1; index >= 0; index -= 1) {
+		const action = (uiState.turns[index]?.pageActions || []).find((candidate) => candidate?.key === key);
+		if (action) return action;
+	}
+	return null;
+}
+
+export function remapOnhandPageActions(annotationMappings = []) {
+	const mappingByOriginalId = new Map();
+	for (const mapping of Array.isArray(annotationMappings) ? annotationMappings : []) {
+		const originalAnnotationId = String(mapping?.originalAnnotationId || "").trim();
+		const annotationId = String(mapping?.annotationId || "").trim();
+		if (!originalAnnotationId || !annotationId) continue;
+		mappingByOriginalId.set(originalAnnotationId, {
+			annotationId,
+			tabId: typeof mapping.tabId === "number" ? mapping.tabId : null,
+			windowId: typeof mapping.windowId === "number" ? mapping.windowId : null,
+		});
+	}
+	if (!mappingByOriginalId.size) return { updatedCount: 0 };
+
+	let updatedCount = 0;
+	const remapAction = (action) => {
+		if (!action?.annotationId) return action;
+		const originalAnnotationId = String(action.originalAnnotationId || action.annotationId || "").trim();
+		const mapping = mappingByOriginalId.get(originalAnnotationId);
+		if (!mapping) return action;
+		updatedCount += 1;
+		return {
+			...action,
+			originalAnnotationId,
+			annotationId: mapping.annotationId,
+			tabId: mapping.tabId ?? action.tabId,
+			windowId: mapping.windowId ?? action.windowId,
+		};
+	};
+
+	mutateUiState((state) => {
+		state.pageActions = (state.pageActions || []).map(remapAction);
+		state.turns = (state.turns || []).map((turn) => ({
+			...turn,
+			pageActions: (turn.pageActions || []).map(remapAction),
+		}));
+	});
+
+	return { updatedCount };
 }
 
 export async function disposeOnhandAgent() {

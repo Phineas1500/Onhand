@@ -29,6 +29,7 @@
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:browser-bridge": "node ./scripts/run-browser-bridge-regression.mjs",
     "test:note-layout": "node ./scripts/run-note-layout-regression.mjs",
+    "test:session-restore": "node ./scripts/run-session-restore-regression.mjs",
     "smoke:tier2": "node ./scripts/run-tier2-smoke.mjs"
   },
   "dependencies": {
