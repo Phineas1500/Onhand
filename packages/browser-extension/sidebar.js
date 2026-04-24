@@ -8,7 +8,9 @@
 	const PAGE_STYLE_ID = "onhand-extension-sidebar-layout";
 	const HOST_ID = "onhand-extension-sidebar-host";
 	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
+	const SIDEBAR_THEME_STORAGE_KEY = "onhandSidebarTheme";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
+	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
 	const IS_NATIVE_SIDE_PANEL =
 		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
 	const FONT_ASSET_PATHS = Object.freeze({
@@ -102,6 +104,7 @@
 	let creatingSession = false;
 	let restoringSession = false;
 	let stoppingRequest = false;
+	let sidebarTheme = "system";
 	let attachmentDrafts = [];
 	const sessionTitleDrafts = new Map();
 
@@ -173,6 +176,24 @@
 
 	function escapeAttribute(value) {
 		return escapeHtml(value).replace(/`/g, "&#96;");
+	}
+
+	function normalizeSidebarTheme(value) {
+		const normalized = String(value || "system").toLowerCase();
+		return SIDEBAR_THEME_VALUES.has(normalized) ? normalized : "system";
+	}
+
+	async function loadSidebarThemePreference() {
+		try {
+			const stored = await chrome.storage.local.get({ [SIDEBAR_THEME_STORAGE_KEY]: "system" });
+			return normalizeSidebarTheme(stored[SIDEBAR_THEME_STORAGE_KEY]);
+		} catch {
+			return "system";
+		}
+	}
+
+	async function saveSidebarThemePreference(nextTheme) {
+		await chrome.storage.local.set({ [SIDEBAR_THEME_STORAGE_KEY]: normalizeSidebarTheme(nextTheme) });
 	}
 
 	function isTextAttachment(file) {
@@ -512,6 +533,8 @@
 		return katexLoadPromise;
 	}
 
+	sidebarTheme = await loadSidebarThemePreference();
+
 	const host = document.createElement("div");
 	host.id = HOST_ID;
 	if (IS_NATIVE_SIDE_PANEL) {
@@ -534,6 +557,22 @@
 		host.style.pointerEvents = "none";
 		host.style.display = "none";
 	}
+
+	const sidebarThemeTargets = [host];
+
+	function applySidebarTheme(nextTheme) {
+		sidebarTheme = normalizeSidebarTheme(nextTheme);
+		for (const target of sidebarThemeTargets) {
+			if (!(target instanceof HTMLElement)) continue;
+			if (sidebarTheme === "system") {
+				target.removeAttribute("data-onhand-theme");
+			} else {
+				target.setAttribute("data-onhand-theme", sidebarTheme);
+			}
+		}
+	}
+
+	applySidebarTheme(sidebarTheme);
 
 	function ensurePageLayoutStyle() {
 		if (IS_NATIVE_SIDE_PANEL) return null;
@@ -1166,6 +1205,7 @@
 			}
 
 			:host {
+				color-scheme: light;
 				--rm-base: #eee6dd;
 				--rm-mantle: #e6dbd1;
 				--rm-crust: #ddd0c6;
@@ -1187,6 +1227,7 @@
 
 			@media (prefers-color-scheme: dark) {
 				:host {
+					color-scheme: dark;
 					--rm-base: #191724;
 					--rm-mantle: #1f1d2e;
 					--rm-crust: #26233a;
@@ -1203,6 +1244,46 @@
 					--rm-rose: #ebbcba;
 					--rm-hl-bg: rgba(246, 193, 119, 0.28);
 				}
+			}
+
+			:host([data-onhand-theme="light"]),
+			.onhand-sidebar[data-onhand-theme="light"] {
+				color-scheme: light;
+				--rm-base: #eee6dd;
+				--rm-mantle: #e6dbd1;
+				--rm-crust: #ddd0c6;
+				--rm-surface-0: #dcd3cb;
+				--rm-surface-1: #d1c9c2;
+				--rm-surface-2: #cac1b9;
+				--rm-text: #575279;
+				--rm-subtext: #797593;
+				--rm-love: #b4637a;
+				--rm-pine: #286983;
+				--rm-foam: #56949f;
+				--rm-iris: #907aa9;
+				--rm-gold: #ea9d34;
+				--rm-rose: #d6817d;
+				--rm-hl-bg: rgba(234, 157, 52, 0.32);
+			}
+
+			:host([data-onhand-theme="dark"]),
+			.onhand-sidebar[data-onhand-theme="dark"] {
+				color-scheme: dark;
+				--rm-base: #191724;
+				--rm-mantle: #1f1d2e;
+				--rm-crust: #26233a;
+				--rm-surface-0: #2a273f;
+				--rm-surface-1: #393552;
+				--rm-surface-2: #44415a;
+				--rm-text: #e0def4;
+				--rm-subtext: #908caa;
+				--rm-love: #eb6f92;
+				--rm-pine: #31748f;
+				--rm-foam: #9ccfd8;
+				--rm-iris: #c4a7e7;
+				--rm-gold: #f6c177;
+				--rm-rose: #ebbcba;
+				--rm-hl-bg: rgba(246, 193, 119, 0.28);
 			}
 
 			.onhand-sidebar {
@@ -1864,6 +1945,14 @@
 							<span>Session</span>
 							<select id="sessionSelect" class="onhand-select"></select>
 						</label>
+						<label class="onhand-menu-field">
+							<span>Theme</span>
+							<select id="themeSelect" class="onhand-select">
+								<option value="system">System</option>
+								<option value="light">Light</option>
+								<option value="dark">Dark</option>
+							</select>
+						</label>
 						<div class="onhand-menu-actions">
 							<button id="newSessionButton" class="session-button" type="button">New</button>
 							<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
@@ -1904,6 +1993,12 @@
 
 	(document.body || document.documentElement).appendChild(host);
 
+	const sidebarRoot = shadow.querySelector("[data-onhand-sidebar]");
+	if (sidebarRoot instanceof HTMLElement) {
+		sidebarThemeTargets.push(sidebarRoot);
+		applySidebarTheme(sidebarTheme);
+	}
+
 	const closeButton = shadow.getElementById("closeButton");
 	const meta = shadow.getElementById("meta");
 	const body = shadow.getElementById("scroll");
@@ -1912,6 +2007,7 @@
 	const sessionTitleInput = shadow.getElementById("sessionTitleInput");
 	const pageIndexEl = shadow.getElementById("pageIndex");
 	const sessionSelect = shadow.getElementById("sessionSelect");
+	const themeSelect = shadow.getElementById("themeSelect");
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
 	const learningModeToggle = shadow.getElementById("learningModeToggle");
 	const newSessionButton = shadow.getElementById("newSessionButton");
@@ -1929,6 +2025,7 @@
 	const input = shadow.getElementById("input");
 	const helper = shadow.getElementById("helper");
 	const sendButton = shadow.getElementById("sendButton");
+	themeSelect.value = sidebarTheme;
 
 	function setOpen(nextOpen) {
 		open = Boolean(nextOpen);
@@ -2003,6 +2100,7 @@
 
 		const activeRequest = Boolean(state?.activeRequestId);
 		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || activeRequest;
+		themeSelect.value = sidebarTheme;
 		learningModeToggle.checked = learningMode;
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
 		learningModeLabel.classList.toggle("on", learningMode);
@@ -2622,6 +2720,25 @@
 		});
 	});
 
+	function updateSidebarThemeFromSelect() {
+		const previousTheme = sidebarTheme;
+		const nextTheme = normalizeSidebarTheme(themeSelect.value);
+		if (nextTheme === previousTheme) return;
+		applySidebarTheme(nextTheme);
+		themeSelect.value = sidebarTheme;
+		void saveSidebarThemePreference(nextTheme).catch((error) => {
+			applySidebarTheme(previousTheme);
+			themeSelect.value = sidebarTheme;
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	}
+
+	themeSelect.addEventListener("input", updateSidebarThemeFromSelect);
+	themeSelect.addEventListener("change", updateSidebarThemeFromSelect);
+
 	learningModeToggle.addEventListener("change", () => {
 		const nextValue = Boolean(learningModeToggle.checked);
 		void updateLearningMode(nextValue).catch((error) => {
@@ -2759,6 +2876,14 @@
 			if (message?.type === "onhand:sidebar-visibility") {
 				setOpen(Boolean(message.open));
 			}
+		});
+	}
+
+	if (chrome.storage?.onChanged?.addListener) {
+		chrome.storage.onChanged.addListener((changes, areaName) => {
+			if (areaName !== "local" || !changes[SIDEBAR_THEME_STORAGE_KEY]) return;
+			applySidebarTheme(changes[SIDEBAR_THEME_STORAGE_KEY].newValue);
+			themeSelect.value = sidebarTheme;
 		});
 	}
 

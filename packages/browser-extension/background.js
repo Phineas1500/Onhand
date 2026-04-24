@@ -14,6 +14,8 @@ const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
+const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
+const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const FONT_ASSET_PATHS = Object.freeze({
 	newYorkRegular: "fonts/NewYork.woff2",
@@ -58,6 +60,20 @@ function delay(ms) {
 
 function getExtensionFontUrls() {
 	return Object.fromEntries(Object.entries(FONT_ASSET_PATHS).map(([key, path]) => [key, chrome.runtime.getURL(path)]));
+}
+
+function normalizeOnhandTheme(value) {
+	const theme = String(value || "system").toLowerCase();
+	return ONHAND_THEME_VALUES.has(theme) ? theme : "system";
+}
+
+async function getOnhandThemePreference() {
+	try {
+		const stored = await chrome.storage.local.get({ [ONHAND_THEME_STORAGE_KEY]: "system" });
+		return normalizeOnhandTheme(stored[ONHAND_THEME_STORAGE_KEY]);
+	} catch {
+		return "system";
+	}
 }
 
 async function updateStatus(partial) {
@@ -741,6 +757,11 @@ const createPageToolkit = (options = {}) => {
 	const toolkitOptions = options && typeof options === "object" ? options : {};
 	const fontUrls = toolkitOptions.fontUrls && typeof toolkitOptions.fontUrls === "object" ? toolkitOptions.fontUrls : {};
 	const katexUrl = typeof toolkitOptions.katexUrl === "string" ? toolkitOptions.katexUrl : "";
+	const normalizeAnnotationTheme = (value) => {
+		const theme = String(value || "system").toLowerCase();
+		return theme === "light" || theme === "dark" ? theme : "system";
+	};
+	const annotationTheme = normalizeAnnotationTheme(toolkitOptions.theme);
 	const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 	const lowerText = (value) => normalizeText(value).toLowerCase();
 	const escapeHtml = (value) =>
@@ -874,6 +895,32 @@ const createPageToolkit = (options = {}) => {
 			})
 			.catch(() => null);
 		return noteKatexLoadPromise;
+	};
+
+	const applyAnnotationThemeToElement = (element) => {
+		if (!(element instanceof Element)) return false;
+		if (annotationTheme === "system") {
+			if (element.hasAttribute("data-onhand-theme")) {
+				element.removeAttribute("data-onhand-theme");
+			}
+			return true;
+		}
+		if (element.getAttribute("data-onhand-theme") !== annotationTheme) {
+			element.setAttribute("data-onhand-theme", annotationTheme);
+		}
+		return true;
+	};
+
+	const syncAnnotationThemeAttributes = () => {
+		let updated = 0;
+		for (const element of Array.from(
+			document.querySelectorAll(
+				'span[data-onhand-highlight-kind="inline"], [data-onhand-highlight-kind="block"], [data-onhand-note-kind="card"]',
+			),
+		)) {
+			if (applyAnnotationThemeToElement(element)) updated += 1;
+		}
+		return { theme: annotationTheme, updated };
 	};
 
 	const isVisible = (element) => {
@@ -1297,6 +1344,30 @@ const createPageToolkit = (options = {}) => {
 			  }
 			}
 
+			span[data-onhand-highlight-kind="inline"][data-onhand-theme="light"],
+			[data-onhand-highlight-kind="block"][data-onhand-theme="light"],
+			[data-onhand-note-kind="card"][data-onhand-theme="light"] {
+			  --onhand-hl-bg: rgba(234, 157, 52, 0.32) !important;
+			  --onhand-gold:  #ea9d34 !important;
+			  --onhand-pine:  #286983 !important;
+			  --onhand-mantle: #e6dbd1 !important;
+			  --onhand-surface-2: #cac1b9 !important;
+			  --onhand-text:  #575279 !important;
+			  --onhand-subtext: #797593 !important;
+			}
+
+			span[data-onhand-highlight-kind="inline"][data-onhand-theme="dark"],
+			[data-onhand-highlight-kind="block"][data-onhand-theme="dark"],
+			[data-onhand-note-kind="card"][data-onhand-theme="dark"] {
+			  --onhand-hl-bg: rgba(246, 193, 119, 0.28) !important;
+			  --onhand-gold:  #f6c177 !important;
+			  --onhand-pine:  #9ccfd8 !important;
+			  --onhand-mantle: #1f1d2e !important;
+			  --onhand-surface-2: #44415a !important;
+			  --onhand-text:  #e0def4 !important;
+			  --onhand-subtext: #908caa !important;
+			}
+
 			/* Inline highlight — soft gold wash, no outline, no color override on the text */
 			span[data-onhand-highlight-kind="inline"] {
 			  background: var(--onhand-hl-bg) !important;
@@ -1350,6 +1421,14 @@ const createPageToolkit = (options = {}) => {
 			  [data-onhand-note-kind="card"] {
 			    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 			  }
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-theme="light"] {
+			  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.06) !important;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-theme="dark"] {
+			  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 			}
 
 			/* Eyebrow label — mono, pine-toned, with a pine dot */
@@ -1427,6 +1506,7 @@ const createPageToolkit = (options = {}) => {
 			  font-style: italic !important;
 			}
 		`;
+		syncAnnotationThemeAttributes();
 	};
 
 	const nextAnnotationId = () => `onhand-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -1916,6 +1996,7 @@ const createPageToolkit = (options = {}) => {
 		const highlight = document.createElement("span");
 		highlight.setAttribute("data-onhand-highlight-kind", "inline");
 		highlight.setAttribute("data-onhand-annotation-id", annotationId);
+		applyAnnotationThemeToElement(highlight);
 		try {
 			range.surroundContents(highlight);
 		} catch {
@@ -2011,6 +2092,7 @@ const createPageToolkit = (options = {}) => {
 		for (const element of Array.from(document.querySelectorAll('[data-onhand-highlight-kind="block"]'))) {
 			element.removeAttribute("data-onhand-highlight-kind");
 			element.removeAttribute("data-onhand-annotation-id");
+			element.removeAttribute("data-onhand-theme");
 			clearedBlock += 1;
 		}
 
@@ -2027,6 +2109,7 @@ const createPageToolkit = (options = {}) => {
 		const annotationId = nextAnnotationId();
 		element.setAttribute("data-onhand-highlight-kind", "block");
 		element.setAttribute("data-onhand-annotation-id", annotationId);
+		applyAnnotationThemeToElement(element);
 		if (options.scrollIntoView !== false) {
 			element.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
 		}
@@ -2504,6 +2587,7 @@ const createPageToolkit = (options = {}) => {
 		note.setAttribute("data-onhand-note-kind", "card");
 		note.setAttribute("data-onhand-note-id", noteId);
 		note.setAttribute("data-onhand-note-for", rawAnnotationId);
+		applyAnnotationThemeToElement(note);
 
 		const label = document.createElement("div");
 		label.setAttribute("data-onhand-note-part", "label");
@@ -2582,6 +2666,14 @@ const createPageToolkit = (options = {}) => {
 			annotationCount: annotations.length,
 			annotations,
 		};
+	};
+
+	const syncAnnotationTheme = () => {
+		const result = syncAnnotationThemeAttributes();
+		if (result.updated > 0) {
+			ensureAnnotationStyles();
+		}
+		return result;
 	};
 
 	const pickElements = async (message) => {
@@ -2693,6 +2785,7 @@ const createPageToolkit = (options = {}) => {
 		showNote,
 		captureState,
 		clearAnnotations,
+		syncAnnotationTheme,
 		pickElements,
 	};
 };
@@ -2773,39 +2866,49 @@ async function evaluateInTab(tabId, expression, options = {}) {
 	});
 }
 
-async function runPageToolkitMethod(tabId, methodName, ...args) {
-	const toolkitOptions = {
+async function getPageToolkitOptions() {
+	return {
 		fontUrls: getExtensionFontUrls(),
 		katexUrl: chrome.runtime.getURL("vendor/katex.mjs"),
+		theme: await getOnhandThemePreference(),
 	};
+}
+
+async function executePageToolkitMethodViaScripting(tabId, methodName, args = [], toolkitOptions = {}) {
+	const payload = await executeScriptInTab(
+		tabId,
+		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
+			try {
+				const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+				const toolkit = toolkitFactory(targetToolkitOptions);
+				return {
+					ok: true,
+					value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					error: error?.message || String(error),
+				};
+			}
+		},
+		[createPageToolkit.toString(), methodName, args, toolkitOptions],
+	);
+	if (!payload?.ok) {
+		throw new Error(payload?.error || `Page toolkit method failed: ${methodName}`);
+	}
+	return payload.value;
+}
+
+async function runPageToolkitMethod(tabId, methodName, ...args) {
+	const toolkitOptions = await getPageToolkitOptions();
 	try {
 		const payload = await withOperationTimeout(
-			executeScriptInTab(
-				tabId,
-				async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
-					try {
-						const toolkitFactory = (0, eval)(`(${toolkitSource})`);
-						const toolkit = toolkitFactory(targetToolkitOptions);
-						return {
-							ok: true,
-							value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
-						};
-					} catch (error) {
-						return {
-							ok: false,
-							error: error?.message || String(error),
-						};
-					}
-				},
-				[createPageToolkit.toString(), methodName, args, toolkitOptions],
-			),
+			executePageToolkitMethodViaScripting(tabId, methodName, args, toolkitOptions),
 			SCRIPT_EXECUTION_TIMEOUT_MS,
 			`Page toolkit scripting timed out: ${methodName}`,
 		);
-		if (!payload?.ok) {
-			throw new Error(payload?.error || `Page toolkit method failed: ${methodName}`);
-		}
-		return payload.value;
+		return payload;
 	} catch (scriptError) {
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
@@ -2845,6 +2948,36 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 			}
 		}, timeoutMs);
 	});
+}
+
+function canRunPageToolkitOnTab(tab) {
+	if (typeof tab?.id !== "number" || !tab.url) return false;
+	try {
+		const protocol = new URL(tab.url).protocol;
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+async function syncAnnotationThemeInOpenTabs() {
+	const tabs = await chrome.tabs.query({});
+	const eligibleTabs = tabs.filter(canRunPageToolkitOnTab);
+	if (!eligibleTabs.length) return;
+	const toolkitOptions = await getPageToolkitOptions();
+	const results = await Promise.allSettled(
+		eligibleTabs.map((tab) =>
+			withOperationTimeout(
+				executePageToolkitMethodViaScripting(tab.id, "syncAnnotationTheme", [], toolkitOptions),
+				1000,
+				`Annotation theme sync timed out: ${tab.id}`,
+			),
+		),
+	);
+	const skipped = results.filter((result) => result.status === "rejected").length;
+	if (skipped) {
+		log(`Skipped annotation theme sync for ${skipped} tab(s)`);
+	}
 }
 
 async function navigateBrowser(args = {}) {
@@ -3797,9 +3930,13 @@ async function connectBridge(force = false) {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== "local") return;
-	if (!changes.bridgeUrl && !changes.token && !changes.clientLabel) return;
-	settingsCache = null;
-	connectBridge(true).catch((error) => log("Reconnect after settings change failed", error));
+	if (changes[ONHAND_THEME_STORAGE_KEY]) {
+		syncAnnotationThemeInOpenTabs().catch((error) => log("Annotation theme sync after settings change failed", error));
+	}
+	if (changes.bridgeUrl || changes.token || changes.clientLabel) {
+		settingsCache = null;
+		connectBridge(true).catch((error) => log("Reconnect after settings change failed", error));
+	}
 });
 
 if (chrome.sidePanel?.onOpened?.addListener) {
