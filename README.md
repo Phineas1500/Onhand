@@ -2,19 +2,17 @@
 
 Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
 
-The intended experience is:
-- invoke Onhand from a global shortcut
-- ask a question about the page, PDF, file, or material already in front of you
-- have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
-- save the session so it can be replayed later with the relevant artifacts restored
-
-## Onhand at work
-
 <p align="center">
   <img src="screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention with page highlights, notes, and a sidebar answer" width="960">
 </p>
 
 <p align="center"><em>Onhand grounding an explanation in the page the user already has open.</em></p>
+
+The intended experience is:
+- invoke Onhand from a global shortcut
+- ask a question about the page, PDF, file, or material already in front of you
+- have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
+- save the session so it can be replayed later with the relevant artifacts restored
 
 ## Current status
 
