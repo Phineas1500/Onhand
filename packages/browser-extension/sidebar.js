@@ -1579,6 +1579,19 @@
 				color: var(--rm-text);
 				max-width: 52ch;
 			}
+			.onhand-support {
+				margin: 0 0 12px;
+			}
+			.onhand-support > .onhand-reason:first-child,
+			.onhand-support > .onhand-actions:first-child {
+				margin-top: 0;
+			}
+			.onhand-response > :first-child {
+				margin-top: 0;
+			}
+			.onhand-response > :last-child {
+				margin-bottom: 0;
+			}
 			.onhand-a p,
 			.onhand-a ul,
 			.onhand-a ol,
@@ -2479,6 +2492,7 @@
 			.map((turn) => {
 				const citationGroups = buildCitationGroups(turn?.pageActions);
 				const reply = String(turn?.reply || "").trim();
+				const supportMarkup = `${renderReasoningDetails(turn)}${renderActionButtons(turn?.pageActions)}`;
 				return `
 					<article class="onhand-entry ${turn?.error ? "error" : ""}">
 						<div class="onhand-eyebrow">
@@ -2489,10 +2503,11 @@
 						</div>
 						${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
 						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
-							${reply ? renderReplyMarkdown(reply, citationGroups) : '<p class="reply-placeholder">Thinking...</p>'}
-							${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
-							${renderReasoningDetails(turn)}
-							${renderActionButtons(turn?.pageActions)}
+							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
+							<div class="onhand-response">
+								${reply ? renderReplyMarkdown(reply, citationGroups) : '<p class="reply-placeholder">Thinking...</p>'}
+								${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
+							</div>
 						</div>
 					</article>
 				`;

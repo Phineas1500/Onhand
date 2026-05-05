@@ -1,4 +1,5 @@
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
+import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
 
 const DEFAULT_SETTINGS = {
 	bridgeUrl: "ws://127.0.0.1:3210/ws",
@@ -33,11 +34,31 @@ let stateTimer = null;
 let settingsCache = null;
 let creatingOffscreenDocument = null;
 let connectBridgePromise = null;
+let onhandBrowserRuntime = null;
 const debuggerTaskChains = new Map();
 const tabCommandTaskChains = new Map();
 
 function log(...args) {
-	console.log("[onhand-browser-bridge]", ...args);
+	console.log("[onhand-extension]", ...args);
+}
+
+function getOnhandBrowserRuntime() {
+	if (!onhandBrowserRuntime) {
+		onhandBrowserRuntime = createOnhandBrowserRuntime({
+			runCommand: (name, args = {}) => handleCommand(name, args),
+			snapshotState,
+			log,
+			notifyAuthProgress: (event) => {
+				chrome.runtime
+					.sendMessage({
+						type: "browser-runtime:auth-progress",
+						...event,
+					})
+					.catch(() => {});
+			},
+		});
+	}
+	return onhandBrowserRuntime;
 }
 
 function configureSidePanelActionClick() {
@@ -50,7 +71,7 @@ function configureSidePanelActionClick() {
 function initializeExtensionSurface() {
 	configureSidePanelActionClick();
 	ensureOffscreenDocument().catch((error) => {
-		log("Could not initialize offscreen heartbeat document", error?.message || String(error));
+		log("Could not initialize offscreen runtime document", error?.message || String(error));
 	});
 }
 
@@ -130,7 +151,7 @@ async function ensureOffscreenDocument() {
 		.createDocument({
 			url: OFFSCREEN_DOCUMENT_PATH,
 			reasons: ["WORKERS"],
-			justification: "Maintain the browser bridge heartbeat in Chrome MV3.",
+			justification: "Maintain the Onhand browser runtime in Chrome MV3.",
 		})
 		.finally(() => {
 			creatingOffscreenDocument = null;
@@ -3965,11 +3986,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "get-status") {
 			const settings = await loadSettings();
+			const runtime = getOnhandBrowserRuntime();
+			const browserRuntime = await runtime.getSettings().catch((error) => ({
+				error: error?.message || String(error),
+			}));
 			sendResponse({
 				ok: true,
 				status: {
+					runtime: "browser-extension",
+					browserRuntime,
 					bridgeUrl: settings.bridgeUrl,
-					token: settings.token,
+					bridgeTokenConfigured: Boolean(settings.token),
 					clientId: settings.clientId,
 					clientLabel: settings.clientLabel,
 					connectionStatus: settings.connectionStatus,
@@ -3980,10 +4007,50 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "browser-runtime:update-settings") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.updateSettings({
+				aiProvider: message.aiProvider,
+				aiModel: message.aiModel,
+				aiApiKey: message.aiApiKey,
+				authMode: message.authMode,
+			});
+			sendResponse({
+				ok: true,
+				settings,
+			});
+			return;
+		}
+
+		if (message?.type === "browser-runtime:auth-progress") {
+			sendResponse({ ok: true });
+			return;
+		}
+
+		if (message?.type === "browser-runtime:oauth-sign-in") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.signIn({
+				providerId: message.providerId,
+				aiModel: message.aiModel,
+			});
+			sendResponse({
+				ok: true,
+				settings,
+			});
+			return;
+		}
+
+		if (message?.type === "browser-runtime:oauth-sign-out") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.signOut(message.providerId);
+			sendResponse({
+				ok: true,
+				settings,
+			});
+			return;
+		}
+
 		if (message?.type === "offscreen-heartbeat") {
-			if (!ws || [WebSocket.CLOSING, WebSocket.CLOSED].includes(ws.readyState)) {
-				await connectBridge();
-			}
 			sendResponse({ ok: true });
 			return;
 		}
@@ -3999,8 +4066,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:fetch-state") {
-			const response = await callOnhandApi("/state");
-			const state = response.state && typeof response.state === "object" ? { ...response.state } : response.state;
+			const runtime = getOnhandBrowserRuntime();
+			const runtimeState = await runtime.getState();
+			const state = runtimeState && typeof runtimeState === "object" ? { ...runtimeState } : runtimeState;
 			if (state && typeof state === "object") {
 				try {
 					const captured = await handleCommand("capture_state", {});
@@ -4018,25 +4086,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:set-learning-mode") {
-			const response = await callOnhandApi("/settings", {
-				method: "POST",
-				body: JSON.stringify({
-					learningMode: Boolean(message.learningMode),
-				}),
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.updateSettings({
+				learningMode: Boolean(message.learningMode),
 			});
 			sendResponse({
 				ok: true,
-				settings: response.settings,
+				settings,
 			});
 			return;
 		}
 
 		if (message?.type === "sidebar:list-sessions") {
-			const params = new URLSearchParams();
-			if (typeof message.limit === "number" && Number.isFinite(message.limit)) {
-				params.set("limit", String(message.limit));
-			}
-			const response = await callOnhandApi(`/sessions${params.size ? `?${params.toString()}` : ""}`);
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.listSessions(typeof message.limit === "number" && Number.isFinite(message.limit) ? message.limit : 20);
 			sendResponse({
 				ok: true,
 				currentSession: response.currentSession,
@@ -4046,9 +4109,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:new-session") {
-			const response = await callOnhandApi("/sessions/new", {
-				method: "POST",
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.startNewSession();
 			sendResponse({
 				ok: true,
 				created: response.created,
@@ -4058,12 +4120,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:switch-session") {
-			const response = await callOnhandApi("/sessions/switch", {
-				method: "POST",
-				body: JSON.stringify({
-					sessionPath: message.sessionPath,
-				}),
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.switchSession(message.sessionPath);
 			sendResponse({
 				ok: true,
 				switched: response.switched,
@@ -4073,12 +4131,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:rename-session") {
-			const response = await callOnhandApi("/sessions/rename", {
-				method: "POST",
-				body: JSON.stringify({
-					sessionName: message.sessionName,
-				}),
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.renameSession(message.sessionName);
 			sendResponse({
 				ok: true,
 				currentSession: response.currentSession,
@@ -4087,34 +4141,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:restore-session") {
-			const settings = await getSettings();
-			const response = await callOnhandApi("/sessions/restore", {
-				method: "POST",
-				body: JSON.stringify({
-					sessionPath: message.sessionPath,
-					browserClientId: settings.clientId,
-				}),
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.restoreSession(message.sessionPath);
 			sendResponse({
 				ok: true,
-				restoredPages: response.restoredPages,
-				restoredCount: response.restoredCount,
+				restoredPages: response.restoredPages || [],
+				restoredCount: response.restoredCount || 0,
 			});
 			return;
 		}
 
 		if (message?.type === "sidebar:submit-prompt") {
-			const settings = await getSettings();
-			const response = await callOnhandApi("/prompt", {
-				method: "POST",
-				body: JSON.stringify({
-					prompt: message.prompt,
-					displayPrompt: message.displayPrompt,
-					attachments: Array.isArray(message.attachments) ? message.attachments : [],
-					source: message.source === "sidebar" ? "sidebar" : "desktop",
-					learningMode: Boolean(message.learningMode),
-					browserClientId: settings.clientId,
-				}),
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.submitPrompt({
+				prompt: message.prompt,
+				displayPrompt: message.displayPrompt,
+				attachments: Array.isArray(message.attachments) ? message.attachments : [],
+				source: message.source === "sidebar" ? "sidebar" : "desktop",
+				learningMode: Boolean(message.learningMode),
 			});
 			sendResponse({
 				ok: true,
@@ -4124,17 +4168,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:activate-action") {
-			const settings = await getSettings();
-			const response = await callOnhandApi("/action", {
-				method: "POST",
-				body: JSON.stringify({
-					key: message.key,
-					browserClientId: settings.clientId,
-				}),
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.activateAction(message.key);
 			sendResponse({
 				ok: true,
-				result: response.result,
+				result,
 			});
 			return;
 		}
@@ -4160,9 +4198,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:stop") {
-			const response = await callOnhandApi("/stop", {
-				method: "POST",
-			});
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.stop();
 			sendResponse({
 				ok: true,
 				stopped: response.stopped,
@@ -4224,10 +4261,6 @@ chrome.tabs.onUpdated.addListener(() => {
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
 	await setSidebarWindowOpen(windowId, false);
-});
-
-connectBridge().catch((error) => {
-	log("Initial connect failed", error);
 });
 
 initializeExtensionSurface();

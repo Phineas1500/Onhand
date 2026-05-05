@@ -100,58 +100,62 @@ Use generic computer-use only as a fallback for unsupported apps or edge cases.
 ## 5. Recommended Technical Direction
 
 ## 5.1 App shell
-**Recommendation: Electron for v1**.
+**New recommendation: browser extension first, no desktop app for v1**.
 
-Why:
-- easiest way to embed pi’s SDK directly
-- global shortcut support
-- command palette UI is straightforward
-- session replay UI can be built quickly
-- browser/PDF rendering can live in the same app later
+Onhand has become a browser-first product in practice. The core value is already inside the Chromium extension: tab awareness, debugger-backed inspection, readable extraction, highlights, anchored notes, screenshots, and the side panel. The Electron launcher and localhost bridge now mostly add transport and process management overhead.
 
-Longer-term, if native macOS polish becomes a priority, keep the core logic in reusable Node packages so a Swift wrapper or native shell can be added later.
+The v1 shell should therefore be the browser extension side panel. The Electron app and bridge should be removed once the extension can host the agent runtime, persist sessions, and stream answers without localhost services.
+
+Detailed migration notes live in:
+
+- `docs/BROWSER_ONLY_MIGRATION.md`
 
 ## 5.2 Agent engine
-Use **pi’s SDK** as the agent runtime.
+Use **Pi's browser-compatible lower-level packages** as the agent runtime.
 
 Why:
 - custom tools are the core of Onhand
 - tree-structured session persistence is a strong fit
 - programmatic control over sessions, tools, prompts, and events
-- easier than trying to bolt a full product UI on top of the terminal app itself
+- `@mariozechner/pi-agent-core` provides the stateful agent loop, tool execution, events, steering, and abort behavior without the Node/TUI shell
+- `@mariozechner/pi-ai` supports browser usage when API keys, refreshed direct sign-in tokens, or proxy auth are supplied explicitly
+
+Do not browser-bundle `@mariozechner/pi-coding-agent` as-is. Its current value in Onhand comes from Node-side session/resource/settings helpers, not from browser primitives. Onhand should recreate the needed session and settings layer on top of extension storage.
 
 ## 5.3 Session persistence
-Use **pi SessionManager** for conversation state, branching, and agent messages.
+Use **extension-owned session storage** for conversation state, branching, and agent messages.
 
-Add **Onhand-specific artifact storage** alongside pi sessions for replay.
+Add **Onhand-specific artifact storage** alongside extension-owned sessions for replay.
 
 This means:
-- pi JSONL stores the reasoning/conversation tree
-- Onhand artifacts store workspace state, anchors, annotations, and snapshots
+- the extension stores session records in IndexedDB
+- Onhand artifacts store browser state, anchors, annotations, and snapshots
+- import/export becomes a first-class workflow because browser storage is less inspectable than filesystem-backed `.onhand` folders
 
 ## 5.4 Core adapters
 Onhand should be built around adapters:
-- **Browser adapter**: current Chromium extension + localhost bridge
+- **Browser adapter**: current Chromium extension tools, called directly from the extension runtime
 - **PDF adapter**: controlled PDF viewer (PDF.js recommended for v1/v2)
 - **File/editor adapter**: file path + selected text + line/section anchors
-- **Workspace adapter**: macOS Accessibility-based app/window/selection awareness
-- **Computer-use fallback**: later, for unsupported apps and edge cases
+- **Workspace adapter**: browser window/tab/session awareness first; native desktop awareness is no longer a v1 target
+- **Computer-use fallback**: later, for unsupported apps and edge cases, outside the browser-only core
 
 ---
 
 ## 6. Architecture
 
 ```text
-Onhand App (Electron)
+Onhand Browser Extension
 ├── UI Layer
-│   ├── global hotkey
-│   ├── command palette
+│   ├── side panel prompt surface
+│   ├── extension action / browser shortcut entrypoint
 │   ├── anchored note overlays
 │   ├── session browser
 │   └── replay viewer
 │
 ├── Agent Layer
-│   ├── pi SDK session
+│   ├── Pi Agent from @mariozechner/pi-agent-core
+│   ├── provider/model calls through @mariozechner/pi-ai
 │   ├── Onhand system prompt / behavior rules
 │   ├── tool orchestration
 │   └── project/session routing
@@ -164,7 +168,7 @@ Onhand App (Electron)
 │   └── computer-use fallback
 │
 └── Storage Layer
-    ├── pi session JSONL
+    ├── extension session records
     ├── Onhand project index
     ├── browser/document snapshots
     ├── annotation records
@@ -192,26 +196,22 @@ Suggested shape:
 
 ## 7.2 Sessions
 Each Onhand session should have:
-- a pi JSONL session
+- an extension-owned agent transcript
 - metadata
-- artifacts directory
+- artifact records
 
 Suggested storage layout:
 
 ```text
-~/Library/Application Support/Onhand/
-  projects/
-    <project-id>/
-      project.json
-      sessions/
-        <session-id>/
-          pi-session.jsonl
-          metadata.json
-          artifacts/
-            browser/
-            documents/
-            screenshots/
-            notes/
+IndexedDB: onhand
+  projects
+    <project-id> -> project metadata
+  sessions
+    <session-id> -> transcript, runtime metadata, page actions
+  artifacts
+    <artifact-id> -> manifest, browser snapshot refs, screenshot refs
+  blobs
+    <blob-id> -> saved HTML, screenshots, attachments
 ```
 
 ## 7.3 Browser artifact snapshot
@@ -428,13 +428,15 @@ The first true product milestone should satisfy all of these:
 - uses the user’s current tab/session state
 - does not require the user to manually navigate to the relevant text
 - restores session artifacts during replay
-- supports branching follow-up questions via pi session tree
+- supports branching follow-up questions via the extension session model
 
 ---
 
 ## 13. Implementation Phases
 
 ### 13.1 Current implementation checkpoint (2026-03-29)
+
+This checkpoint describes the existing prototype, not the new target architecture. The next work should migrate the working browser-grounding behavior into the extension-hosted runtime described above.
 
 Completed so far:
 - repo refactor to an Onhand-centered layout under `packages/`
@@ -496,7 +498,7 @@ Current status:
 - There is still no session browser or replay UI.
 
 Most important next step:
-- build a richer session browser / replay flow on top of the persisted launcher and browser artifacts.
+- prove the browser-only prompt path: the side panel submits directly to an extension-hosted Pi agent, the agent calls direct browser tools, and the session persists without the desktop app or localhost bridge.
 
 ## Phase 0 — Stabilize current browser bridge
 Goal: make the current prototype a reliable subsystem.
@@ -516,15 +518,15 @@ Exit criteria:
 Goal: answer questions on current web pages with visible grounding.
 
 Tasks:
-- global command palette prototype
-- embedded pi SDK session runtime
+- side panel prompt surface
+- browser-hosted Pi agent runtime using `@mariozechner/pi-agent-core`
 - Onhand system prompt + tool policies
 - highlight + scroll + note workflow
-- save browser snapshot + annotation records
-- replay simple browser sessions in-app
+- save browser snapshot + annotation records in extension storage
+- replay simple browser sessions from extension storage
 
 Status note:
-- the command palette prototype and embedded pi SDK session runtime now exist; the next gap is organizing and replaying those saved sessions/artifacts.
+- the current command palette and embedded Pi SDK session runtime exist in Electron; the next gap is replacing that path with an extension-hosted runtime.
 
 Exit criteria:
 - complete end-to-end browser tutoring demo works reliably
@@ -650,7 +652,7 @@ These tasks are enough to start the actual product, not just the tooling prototy
 
 ## 15. Suggested Repository Evolution
 
-The repo now uses a minimal Onhand-centered layout without over-scaffolding too early.
+The repo now uses a minimal Onhand-centered layout without over-scaffolding too early. The next structure should bias toward extension source modules and generated extension assets, not new desktop packages.
 
 Current relevant pieces:
 - `apps/desktop/`
@@ -662,18 +664,18 @@ Current relevant pieces:
 Next structural additions should be added only when implementation requires them. The most likely next step is:
 
 ```text
-apps/
-  desktop/
 packages/
-  browser-bridge/
   browser-extension/
-  browser-protocol/
-  browser-tools/
-  pi-extension/
+    src/
+      runtime/
+      tools/
+      storage/
+      ui/
+    dist/
 docs/
 ```
 
-That keeps the existing browser prototype usable while giving us a clean path toward the full Onhand app.
+That keeps the existing browser prototype usable while giving us a clean path toward deleting `apps/desktop`, `packages/browser-bridge`, and `packages/pi-extension`.
 
 ---
 
@@ -686,13 +688,15 @@ That keeps the existing browser prototype usable while giving us a clean path to
 - cross-app support becoming brittle if we rely too early on generic computer-use
 
 ## Open questions
-- should the first app shell be Electron only, or Electron + separate helper process?
+- should the agent runtime live in the side panel or in an offscreen document?
+- should production provider calls use local API keys, direct sign-in tokens, a user-configured proxy, or an Onhand-hosted proxy?
 - do we want to save full HTML snapshots, MHTML, or both?
 - how aggressive should automatic note placement be before falling back to a side panel?
 - should replay use saved snapshots by default instead of trying to restore live pages?
 
 ## Current recommendation
-- Electron app shell for v1
+- browser extension shell for v1
+- extension-hosted Pi agent runtime
 - save HTML snapshot + screenshot + structured annotations
 - use live pages for active work, saved snapshots for replay
 - use semantic adapters before generic computer-use
@@ -711,6 +715,6 @@ Build Onhand in this order:
 
 The most important next implementation step is:
 
-> make annotations/highlights/anchored notes first-class, persistent, and replayable.
+> make the side panel submit directly to an extension-hosted agent that can call the existing browser tools without Electron or the localhost bridge.
 
 That is the core of the product.
