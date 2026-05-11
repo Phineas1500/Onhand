@@ -105,12 +105,31 @@ For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Co
 ## Browser Runtime Tools
 
 - `browser_list_tabs`
+- `browser_activate_tab`
+- `browser_navigate`
+- `browser_extract_content`
 - `browser_highlight_text`
 - `browser_show_note`
 - `browser_scroll_to_annotation`
 - `browser_clear_annotations`
 - `browser_get_visible_text`
 - `browser_get_selection`
+- `browser_get_viewport_headings`
+- `browser_get_scroll_state`
+- `browser_capture_state`
+- `browser_list_artifacts`
+- `browser_restore_state`
+- `browser_find_elements`
+- `browser_wait_for_selector`
+- `browser_click`
+- `browser_type`
+- `browser_click_text`
+- `browser_type_by_label`
+- `browser_pick_elements`
+- `browser_collect_console`
+- `browser_collect_network`
+- `browser_get_dom`
+- `browser_capture_screenshot`
 - `browser_run_js`
 
 ## Notes
@@ -118,7 +137,7 @@ For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Co
 - If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached.
 - Some pages cannot be debugged, such as privileged browser pages.
-- Session restore/replay is not yet ported to browser-only storage.
+- Session restore/replay is now best-effort for browser-only artifacts; full replay fidelity is still in progress.
 - The legacy desktop, bridge, and pi-extension files are still present during this migration branch, but they are no longer required for the side-panel prompt path.
 
 ## Likely next steps

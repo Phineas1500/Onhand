@@ -411,6 +411,21 @@ async function resolveTargetTab(args = {}) {
 		return await chrome.tabs.get(args.tabId);
 	}
 
+	const titleNeedle = String(args.titleContains || "").trim().toLowerCase();
+	const urlNeedle = String(args.urlContains || "").trim().toLowerCase();
+	if (titleNeedle || urlNeedle) {
+		const tabs = await chrome.tabs.query({});
+		const matches = tabs.filter((tab) => {
+			const titleMatches = !titleNeedle || String(tab.title || "").toLowerCase().includes(titleNeedle);
+			const urlMatches = !urlNeedle || String(tab.url || "").toLowerCase().includes(urlNeedle);
+			return tab.id && titleMatches && urlMatches;
+		});
+		if (!matches.length) {
+			throw new Error(`No tab matched ${titleNeedle ? `title "${args.titleContains}"` : ""}${titleNeedle && urlNeedle ? " and " : ""}${urlNeedle ? `URL "${args.urlContains}"` : ""}`);
+		}
+		return matches.find((tab) => tab.active) || matches[0];
+	}
+
 	const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
 	if (!tab?.id) {
 		throw new Error("No active tab found");
@@ -3116,6 +3131,89 @@ async function captureTabScreenshot(tabId, options = {}) {
 		}
 }
 
+function extractReadableContentInPage(options = {}) {
+	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
+	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const isVisible = (element) => {
+		if (!(element instanceof Element)) return false;
+		const style = window.getComputedStyle(element);
+		if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+		const rect = element.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0;
+	};
+	const selectorFor = (element) => {
+		if (!(element instanceof Element)) return "";
+		const bits = [element.tagName.toLowerCase()];
+		if (element.id) bits.push(`#${element.id}`);
+		const className = String(element.className || "").trim().split(/\s+/).filter(Boolean).slice(0, 3).join(".");
+		if (className) bits.push(`.${className}`);
+		return bits.join("");
+	};
+	const root =
+		document.querySelector("article") ||
+		document.querySelector("main") ||
+		document.querySelector('[role="main"]') ||
+		document.querySelector(".mw-parser-output") ||
+		document.body ||
+		document.documentElement;
+	const ignoredSelector = "script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea";
+	const blocks = [];
+	const seen = new Set();
+	let usedChars = 0;
+	const pushBlock = (kind, text, element) => {
+		const clean = normalize(text);
+		if (!clean || clean.length < 2) return;
+		const key = clean.toLowerCase();
+		if (seen.has(key)) return;
+		seen.add(key);
+		const prefix = /^h[1-6]$/.test(kind) ? `${"#".repeat(Number(kind.slice(1)) || 2)} ` : kind === "li" ? "- " : kind === "blockquote" ? "> " : "";
+		const body = kind === "pre" ? `\`\`\`\n${String(text || "").trim().slice(0, 3000)}\n\`\`\`` : `${prefix}${clean}`;
+		if (usedChars >= maxChars) return;
+		const remaining = maxChars - usedChars;
+		const output = body.length > remaining ? `${body.slice(0, Math.max(0, remaining - 1))}…` : body;
+		blocks.push({
+			tag: kind,
+			selector: selectorFor(element),
+			text: output,
+		});
+		usedChars += output.length + 2;
+	};
+
+	const title = normalize(document.querySelector("h1")?.textContent || document.title);
+	if (title) pushBlock("h1", title, document.querySelector("h1") || document.documentElement);
+
+	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption")) {
+		if (usedChars >= maxChars) break;
+		if (!(element instanceof Element) || !isVisible(element)) continue;
+		if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
+		pushBlock(element.tagName.toLowerCase(), element.textContent || "", element);
+	}
+
+	if (blocks.length < 3) {
+		for (const element of root.querySelectorAll("div, section")) {
+			if (usedChars >= maxChars || blocks.length >= 40) break;
+			if (!(element instanceof Element) || !isVisible(element)) continue;
+			if (element.closest(ignoredSelector)) continue;
+			const text = normalize(element.textContent || "");
+			if (text.length < 80 || text.length > 1200) continue;
+			pushBlock("p", text, element);
+		}
+	}
+
+	const markdown = blocks.map((block) => block.text).join("\n\n");
+	return {
+		url: location.href,
+		title: document.title,
+		root: selectorFor(root),
+		blockCount: blocks.length,
+		charCount: markdown.length,
+		truncated: markdown.length >= maxChars,
+		blocks,
+		markdown,
+		text: markdown,
+	};
+}
+
 async function collectConsoleEvents(tabId, options = {}) {
 	const durationMs = clampNumber(options.durationMs, 3000, { min: 0, max: 60000 });
 	const maxEntries = clampNumber(options.maxEntries, 50, { min: 1, max: 500 });
@@ -3520,6 +3618,19 @@ async function handleCommand(name, args = {}) {
 				return {
 					tab: simplifyTab(tab),
 					outerHTML,
+				};
+			});
+		}
+		case "extract_content": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const content = await evaluateInTab(
+					tab.id,
+					`(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`,
+				);
+				return {
+					tab: simplifyTab(tab),
+					content,
 				};
 			});
 		}
@@ -4014,6 +4125,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiModel: message.aiModel,
 				aiApiKey: message.aiApiKey,
 				authMode: message.authMode,
+				speedMode: message.speedMode,
 			});
 			sendResponse({
 				ok: true,
@@ -4089,6 +4201,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.updateSettings({
 				learningMode: Boolean(message.learningMode),
+			});
+			sendResponse({
+				ok: true,
+				settings,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:set-speed-mode") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.updateSettings({
+				speedMode: message.speedMode,
 			});
 			sendResponse({
 				ok: true,
