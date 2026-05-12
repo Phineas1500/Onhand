@@ -1,9 +1,95 @@
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 
+function installChromeStorageStub() {
+	globalThis.chrome = {
+		storage: {
+			local: {
+				data: {},
+				async get(defaults) {
+					return { ...defaults, ...this.data };
+				},
+				async set(values) {
+					Object.assign(this.data, values);
+				},
+			},
+		},
+	};
+}
+
+function replaySmokeTab(overrides = {}) {
+	return {
+		id: 7,
+		windowId: 3,
+		active: true,
+		title: "Replay smoke page",
+		url: "https://example.test/replay-smoke",
+		...overrides,
+	};
+}
+
+function createReplayHost() {
+	const calls = [];
+	return {
+		calls,
+		async runCommand(name, args = {}) {
+			calls.push({ name, args });
+			const tab = replaySmokeTab();
+			if (name === "activate_tab") return { tab: replaySmokeTab({ id: Number(args.tabId || tab.id) }) };
+			if (name === "clear_annotations") return { tab, cleared: true };
+			if (name === "highlight_text") {
+				return {
+					tab,
+					annotation: {
+						annotationId: "replay-highlight",
+						matchedText: String(args.text || "Alpha smoke content"),
+					},
+				};
+			}
+			if (name === "show_note") return { tab, note: { annotationId: String(args.annotationId || "replay-highlight"), note: String(args.note || "") } };
+			if (name === "get_selection") return { selection: { text: "" } };
+			if (name === "get_visible_text") {
+				return {
+					tab,
+					visible: {
+						text: "Replay smoke page with Alpha smoke content available for highlighting.",
+					},
+				};
+			}
+			return { tab, ok: true };
+		},
+		async snapshotState() {
+			calls.push({ name: "snapshot_state", args: {} });
+			return {
+				windows: [
+					{
+						id: 3,
+						focused: true,
+						tabs: [replaySmokeTab()],
+					},
+				],
+			};
+		},
+		log() {},
+		notifyAuthProgress() {},
+	};
+}
+
+async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
+	const startedAt = Date.now();
+	let state = null;
+	while (Date.now() - startedAt <= timeoutMs) {
+		state = await runtime.getState();
+		if (!state.activeRequestId) return state;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	return state;
+}
+
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { formatToolResultForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
+	const { buildReplayAnnotationsFromPageActions, formatToolResultForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
+	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
 	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
@@ -50,6 +136,103 @@ async function assertSelectionFormatting() {
 		failedCount: 0,
 		failures: [],
 	});
+
+	const replayed = summarizeRestoredArtifact({
+		source: "browser-replay",
+		tab: { id: 7, title: "Open replay tab", url: "https://example.test/replay" },
+		artifact: {
+			page: { title: "Replay page", url: "https://example.test/replay" },
+		},
+		restoredAnnotations: 1,
+		restoredNotes: 1,
+		failures: [],
+	});
+	assert.equal(replayed.source, "browser-replay");
+	assert.equal(replayed.restoredCount, 1);
+
+	const replayAnnotations = buildReplayAnnotationsFromPageActions([
+		{
+			key: "highlight:ann-1",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Replay page",
+			url: "https://example.test/replay",
+			annotationId: "ann-1",
+			label: "Highlighted text",
+			detail: "Alpha smoke content",
+			citationText: "Alpha smoke content",
+		},
+		{
+			key: "note:ann-1",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Replay page",
+			url: "https://example.test/replay",
+			annotationId: "ann-1",
+			label: "Added note",
+			detail: "Important replay note",
+			citationText: "Important replay note",
+		},
+		{
+			key: "scroll:ann-1",
+			type: "annotation",
+			tabId: 7,
+			annotationId: "ann-1",
+			label: "Moved to section",
+			detail: "Brought the relevant part of the page into view",
+		},
+	]);
+	assert.deepEqual(replayAnnotations, [
+		{
+			key: "annotation:ann-1",
+			tabId: 7,
+			windowId: 3,
+			title: "Replay page",
+			url: "https://example.test/replay",
+			annotationId: "ann-1",
+			matchedText: "Alpha smoke content",
+			noteText: "Important replay note",
+		},
+	]);
+}
+
+async function assertSessionReplayRestore() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "Highlight the visible Alpha smoke content, then reply with the deterministic smoke result.",
+		displayPrompt: "replay smoke",
+		attachments: [],
+		learningMode: false,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete before replay regression timeout");
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	assert.deepEqual(session.artifactIds, []);
+	assert.equal(session.pageActions.some((action) => action.key === "highlight:replay-highlight"), true);
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].source, "browser-replay");
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), true);
+	assert.equal(
+		restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7 && call.args.text === "Alpha smoke content" && call.args.clearExisting === false),
+		true,
+	);
 }
 
 async function assertFixtureResponses() {
@@ -72,6 +255,7 @@ async function assertFixtureResponses() {
 
 async function main() {
 	await assertSelectionFormatting();
+	await assertSessionReplayRestore();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");
 }
