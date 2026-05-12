@@ -243,6 +243,24 @@ function isDebuggerAttachConflict(error) {
 	return /another debugger|already attached/i.test(error?.message || String(error));
 }
 
+function isRestrictedScriptingError(error) {
+	return /Cannot access contents of url|chrome-error:\/\/chromewebdata|Cannot access a chrome:\/\/ URL|Cannot access a chrome-extension:\/\/ URL|The extensions gallery cannot be scripted|Missing host permission/i.test(
+		error?.message || String(error),
+	);
+}
+
+function describeTabForError(tab) {
+	return tab?.title || tab?.url || `tab ${tab?.id || "(unknown)"}`;
+}
+
+async function assertDebuggerEligibleTab(tabId) {
+	const tab = await chrome.tabs.get(tabId);
+	if (!canRunPageToolkitOnTab(tab)) {
+		throw new Error(`Onhand cannot attach the browser debugger to this non-web tab: ${describeTabForError(tab)}`);
+	}
+	return tab;
+}
+
 async function attachDebuggerWithRetry(target) {
 	let lastError = null;
 	for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -264,6 +282,7 @@ async function attachDebuggerWithRetry(target) {
 async function withDebugger(tabId, fn) {
 	const previousTask = debuggerTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = previousTask.catch(() => {}).then(async () => {
+		await assertDebuggerEligibleTab(tabId);
 		const target = { tabId };
 		await attachDebuggerWithRetry(target);
 		try {
@@ -2669,10 +2688,13 @@ async function evaluateInTab(tabId, expression, options = {}) {
 		if (!settledPayload?.ok) {
 			throw new Error(settledPayload?.error || "Script evaluation failed");
 		}
-		return normalizeExecuteScriptValue(settledPayload.value);
-		} catch (scriptError) {
-			return await withDebugger(tabId, async ({ send }) => {
-				const response = await send("Runtime.evaluate", {
+			return normalizeExecuteScriptValue(settledPayload.value);
+			} catch (scriptError) {
+				if (isRestrictedScriptingError(scriptError)) {
+					throw scriptError;
+				}
+				return await withDebugger(tabId, async ({ send }) => {
+					const response = await send("Runtime.evaluate", {
 					expression,
 					awaitPromise: true,
 					returnByValue: true,
@@ -2744,6 +2766,10 @@ async function executePageToolkitMethodViaScripting(tabId, methodName, args = []
 
 async function runPageToolkitMethod(tabId, methodName, ...args) {
 	const toolkitOptions = await getPageToolkitOptions();
+	const tab = await chrome.tabs.get(tabId);
+	if (!canRunPageToolkitOnTab(tab)) {
+		throw new Error(`Onhand page tools only run on http/https tabs, not ${describeTabForError(tab)}`);
+	}
 	try {
 		const payload = await withOperationTimeout(
 			executePageToolkitMethodViaScripting(tabId, methodName, args, toolkitOptions),
@@ -2752,6 +2778,9 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		);
 		return payload;
 	} catch (scriptError) {
+		if (isRestrictedScriptingError(scriptError)) {
+			throw scriptError;
+		}
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
 		return await evaluateInTab(
@@ -2879,7 +2908,10 @@ async function getCookiesForTab(tabId) {
 async function getDomOuterHtml(tabId) {
 	try {
 		return await executeScriptInTab(tabId, () => document.documentElement?.outerHTML || "");
-	} catch {
+	} catch (scriptError) {
+		if (isRestrictedScriptingError(scriptError)) {
+			throw scriptError;
+		}
 		return await withDebugger(tabId, async ({ send }) => {
 			await send("DOM.enable");
 			const { root } = await send("DOM.getDocument", { depth: -1, pierce: true });

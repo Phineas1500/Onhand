@@ -919,6 +919,37 @@ function buildSessionState(session: RuntimeSession) {
 	};
 }
 
+function buildSessionListItem(session: RuntimeSession, currentSessionId: string) {
+	const conversation = buildConversationMessages(session.messages);
+	const firstUser = conversation.find((message) => message.role === "user");
+	const lastUser = [...conversation].reverse().find((message) => message.role === "user");
+	const pageActions = collectSessionPageActions(session);
+	const artifactCount = Array.isArray(session.artifactIds) ? session.artifactIds.length : 0;
+	const replayableCount = buildReplayAnnotationsFromPageActions(pageActions).length;
+	const highlightCount = pageActions.filter(
+		(action) => action?.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text"),
+	).length;
+	const noteCount = pageActions.filter((action) => action?.type === "note").length;
+	return {
+		path: session.id,
+		id: session.id,
+		title: session.name || firstUser?.text || "New session",
+		name: session.name || null,
+		preview: lastUser?.text || firstUser?.text || "No messages yet.",
+		messageCount: Array.isArray(session.messages) ? session.messages.length : 0,
+		turnCount: Array.isArray(session.turns) ? session.turns.length : 0,
+		pageActionCount: pageActions.length,
+		artifactCount,
+		highlightCount,
+		noteCount,
+		replayableCount,
+		canRestore: artifactCount > 0 || replayableCount > 0,
+		modifiedAt: session.updatedAt || session.createdAt || nowIso(),
+		createdAt: session.createdAt || null,
+		isCurrent: session.id === currentSessionId,
+	};
+}
+
 function extractTextFromContent(content: unknown): string {
 	if (typeof content === "string") return content.trim();
 	if (!Array.isArray(content)) return "";
@@ -1120,6 +1151,27 @@ function pickActiveTab(state: any) {
 
 function isPrivilegedUrl(url: unknown) {
 	return /^(?:chrome|edge|brave|about):\/\//i.test(String(url || ""));
+}
+
+function isRestorablePageUrl(url: unknown) {
+	try {
+		const protocol = new URL(String(url || "")).protocol;
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+function isRestorablePageTab(tab: any) {
+	return typeof tab?.id === "number" && isRestorablePageUrl(tab.url);
+}
+
+function tabMatchesSavedTarget(tab: any, url: string, title: string) {
+	if (!isRestorablePageTab(tab)) return false;
+	const tabUrl = String(tab.url || "").split("#")[0];
+	const targetUrl = String(url || "").split("#")[0];
+	const tabTitle = String(tab.title || "").trim().toLowerCase();
+	return Boolean((targetUrl && tabUrl === targetUrl) || (title && tabTitle === title));
 }
 
 function summarizeOpenTabs(state: any, activeTab: any, limit = 8) {
@@ -2229,13 +2281,19 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function findArtifactTab(tabs: any[], artifact: BrowserArtifact, params: any = {}) {
-		if (typeof params.tabId === "number") return tabs.find((tab) => tab.id === params.tabId) || null;
 		const url = String(artifact.page?.url || artifact.tab?.url || "").trim();
 		const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
+		if (typeof params.tabId === "number") {
+			const explicitTab = tabs.find((tab) => tab.id === params.tabId);
+			if (explicitTab && (!url && !title ? isRestorablePageTab(explicitTab) : tabMatchesSavedTarget(explicitTab, url, title))) {
+				return explicitTab;
+			}
+		}
+		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
-			tabs.find((tab) => url && tab.url === url) ||
-			tabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
-			tabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) ||
+			eligibleTabs.find((tab) => url && tab.url === url) ||
+			eligibleTabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
+			eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
 	}
@@ -2256,22 +2314,29 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		} else {
 			const activated = await host.runCommand("activate_tab", { tabId: tab.id });
 			tab = activated?.tab || tab;
-		}
-		const tabId = tab?.id;
-		if (typeof tabId !== "number") throw new Error("Could not resolve a tab for artifact restore.");
-		if (params.clearExisting !== false) {
-			await host.runCommand("clear_annotations", { tabId });
-		}
-		const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
-		let restoredAnnotations = 0;
-		let restoredNotes = 0;
-		const failures: string[] = [];
-		for (const annotation of annotations) {
-			const text = String(annotation?.matchedText || "").trim();
-			if (!text) continue;
-			try {
-				const highlighted = await host.runCommand("highlight_text", {
-					tabId,
+			}
+			if (!isRestorablePageTab(tab)) {
+				throw new Error(`Artifact ${artifact.id} resolved to a non-web tab and was not restored.`);
+			}
+			const tabId = tab?.id;
+			if (typeof tabId !== "number") throw new Error("Could not resolve a tab for artifact restore.");
+			const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
+			const failures: string[] = [];
+			if (params.clearExisting !== false && annotations.length > 0) {
+				try {
+					await host.runCommand("clear_annotations", { tabId });
+				} catch (error: any) {
+					failures.push(error?.message || String(error));
+				}
+			}
+			let restoredAnnotations = 0;
+			let restoredNotes = 0;
+			for (const annotation of annotations) {
+				const text = String(annotation?.matchedText || "").trim();
+				if (!text) continue;
+				try {
+					const highlighted = await host.runCommand("highlight_text", {
+						tabId,
 					text,
 					clearExisting: false,
 					scrollIntoView: false,
@@ -2290,15 +2355,18 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					restoredNotes += 1;
 				}
 			} catch (error: any) {
-				failures.push(error?.message || String(error));
+					failures.push(error?.message || String(error));
+				}
 			}
-		}
-		if (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number") {
-			await host.runCommand("run_js", {
-				tabId,
-				expression: `window.scrollTo(${Number(artifact.page?.scrollX || 0)}, ${Number(artifact.page?.scrollY || 0)}); true;`,
-			}).catch((error) => host.log?.("artifact scroll restore failed", error));
-		}
+			if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number")) {
+				await host.runCommand("run_js", {
+					tabId,
+					expression: `window.scrollTo(${Number(artifact.page?.scrollX || 0)}, ${Number(artifact.page?.scrollY || 0)}); true;`,
+				}).catch((error) => {
+					host.log?.("artifact scroll restore failed", error);
+					failures.push(error?.message || String(error));
+				});
+			}
 		return {
 			tab,
 			artifact,
@@ -2310,23 +2378,26 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function replayTargetKey(annotation: ReplayAnnotation) {
-		if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
 		if (annotation.url) return `url:${annotation.url.split("#")[0]}`;
 		if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
+		if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
 		return "active";
 	}
 
 	function findReplayTab(tabs: any[], annotation: ReplayAnnotation) {
-		if (typeof annotation.tabId === "number") {
-			const matchedTab = tabs.find((tab) => tab.id === annotation.tabId);
-			if (matchedTab) return matchedTab;
-		}
 		const url = String(annotation.url || "").trim();
 		const title = String(annotation.title || "").trim().toLowerCase();
+		if (typeof annotation.tabId === "number") {
+			const matchedTab = tabs.find((tab) => tab.id === annotation.tabId);
+			if (matchedTab && (!url && !title ? isRestorablePageTab(matchedTab) : tabMatchesSavedTarget(matchedTab, url, title))) {
+				return matchedTab;
+			}
+		}
+		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
-			tabs.find((tab) => url && tab.url === url) ||
-			tabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
-			tabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) ||
+			eligibleTabs.find((tab) => url && tab.url === url) ||
+			eligibleTabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
+			eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
 	}
@@ -2379,16 +2450,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				} catch (error: any) {
 					failures.push(error?.message || String(error));
 				}
-			}
-			if (!tab && !hasExplicitTarget) tab = activeTab;
-			const tabId = tab?.id;
-			if (typeof tabId !== "number") {
-				restored.push({
-					source: "browser-replay",
-					tab: null,
-					artifact: buildReplayArtifact(session, targetKey, null, annotations),
-					artifactId: "",
-					restoredAnnotations: 0,
+				}
+				if (!tab && !hasExplicitTarget && isRestorablePageTab(activeTab)) tab = activeTab;
+				const tabId = tab?.id;
+				if (typeof tabId !== "number" || !isRestorablePageTab(tab)) {
+					restored.push({
+						source: "browser-replay",
+						tab: null,
+						artifact: buildReplayArtifact(session, targetKey, null, annotations),
+						artifactId: "",
+						restoredAnnotations: 0,
 					restoredNotes: 0,
 					failures: failures.length ? failures : [`No matching browser tab is open for replay target ${targetKey}.`],
 				});
@@ -2575,19 +2646,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const sessions = Object.values(store.sessions)
 				.sort((left: any, right: any) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
 				.slice(0, Math.max(1, limit))
-				.map((session: any) => {
-					const firstUser = buildConversationMessages(session.messages).find((message) => message.role === "user");
-					return {
-						path: session.id,
-						id: session.id,
-						title: session.name || firstUser?.text || "New session",
-						name: session.name || null,
-						preview: firstUser?.text || "No messages yet.",
-						messageCount: Array.isArray(session.messages) ? session.messages.length : 0,
-						modifiedAt: session.updatedAt || session.createdAt || nowIso(),
-						isCurrent: session.id === store.currentSessionId,
-					};
-				});
+				.map((session: any) => buildSessionListItem(session as RuntimeSession, store.currentSessionId));
 			return {
 				currentSession: buildSessionState(store.sessions[store.currentSessionId]),
 				sessions,

@@ -104,6 +104,7 @@
 	let sessionSwitching = false;
 	let creatingSession = false;
 	let restoringSession = false;
+	let lastRestoreResult = null;
 	let stoppingRequest = false;
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
@@ -1487,6 +1488,53 @@
 				border-bottom: 1px solid var(--rm-surface-1);
 				background: color-mix(in srgb, var(--rm-mantle) 40%, transparent);
 			}
+			.onhand-restore-head {
+				display: flex;
+				align-items: baseline;
+				justify-content: space-between;
+				gap: 8px;
+				margin-bottom: 8px;
+			}
+			.onhand-menu-restore-result[hidden] {
+				display: none;
+			}
+			.onhand-restore-result {
+				margin-top: 10px;
+				border-top: 1px solid var(--rm-surface-1);
+				padding-top: 10px;
+			}
+			.onhand-restore-pages {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+			.onhand-restore-page {
+				padding: 7px 8px;
+				background: var(--rm-crust);
+				border: 1px solid var(--rm-surface-1);
+				font-size: 12px;
+				line-height: 1.35;
+			}
+			.onhand-restore-title {
+				display: block;
+				font-weight: 600;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			.onhand-restore-meta,
+			.onhand-restore-failure {
+				display: block;
+				margin-top: 3px;
+				color: var(--rm-subtext);
+				font: 10px/1.35 var(--rm-font-mono);
+			}
+			.onhand-restore-failure {
+				color: var(--rm-love);
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
 			.onhand-index[hidden] {
 				display: none;
 			}
@@ -1992,18 +2040,19 @@
 								<option value="light">Light</option>
 								<option value="dark">Dark</option>
 							</select>
-						</label>
-						<div class="onhand-menu-actions">
-							<button id="newSessionButton" class="session-button" type="button">New</button>
-							<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
-							<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
-							<button id="closeButton" class="session-button" type="button">Close</button>
+							</label>
+							<div class="onhand-menu-actions">
+								<button id="newSessionButton" class="session-button" type="button">New</button>
+								<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
+								<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
+								<button id="closeButton" class="session-button" type="button">Close</button>
+							</div>
+							<div id="restoreResult" class="onhand-menu-restore-result" hidden></div>
+							<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask</div>
 						</div>
-						<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask</div>
 					</div>
-				</div>
-			</header>
-			<div id="scroll" class="onhand-scroll">
+				</header>
+				<div id="scroll" class="onhand-scroll">
 				<section id="pageIndex" class="onhand-index" hidden></section>
 				<div id="messages" class="message-list"></div>
 				<div id="activity" hidden></div>
@@ -2053,6 +2102,7 @@
 	const menuButton = shadow.getElementById("menuButton");
 	const menuPanel = shadow.getElementById("menuPanel");
 	const sessionTitleInput = shadow.getElementById("sessionTitleInput");
+	const restoreResultEl = shadow.getElementById("restoreResult");
 	const pageIndexEl = shadow.getElementById("pageIndex");
 	const sessionSelect = shadow.getElementById("sessionSelect");
 	const themeSelect = shadow.getElementById("themeSelect");
@@ -2149,7 +2199,7 @@
 		}
 
 		const activeRequest = Boolean(state?.activeRequestId);
-		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || activeRequest;
+		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || restoringSession || activeRequest;
 		themeSelect.value = sidebarTheme;
 		learningModeToggle.checked = learningMode;
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
@@ -2198,7 +2248,7 @@
 
 	async function requestSessions(limit = 20) {
 		sessionLoading = true;
-		renderSessionControls(currentState || {});
+		renderState(currentState || {});
 		try {
 			const response = await chrome.runtime.sendMessage({ type: "sidebar:list-sessions", limit });
 			if (!response?.ok) {
@@ -2208,15 +2258,16 @@
 				currentSession: response.currentSession || null,
 				sessions: Array.isArray(response.sessions) ? response.sessions : [],
 			};
-			renderSessionControls(currentState || {});
+			renderState(currentState || {});
 		} finally {
 			sessionLoading = false;
-			renderSessionControls(currentState || {});
+			renderState(currentState || {});
 		}
 	}
 
 	async function createNewSession() {
 		creatingSession = true;
+		lastRestoreResult = null;
 		renderState(currentState || {});
 		try {
 			const response = await chrome.runtime.sendMessage({ type: "sidebar:new-session" });
@@ -2233,6 +2284,7 @@
 	async function switchSession(sessionPath) {
 		if (!sessionPath) return;
 		sessionSwitching = true;
+		lastRestoreResult = null;
 		renderState(currentState || {});
 		try {
 			const response = await chrome.runtime.sendMessage({
@@ -2249,8 +2301,9 @@
 		}
 	}
 
-	async function restoreSessionPages() {
+	async function restoreSessionPages(targetSessionPath = "") {
 		const sessionPath =
+			String(targetSessionPath || "").trim() ||
 			sessionSelect.value ||
 			currentState?.currentSession?.sessionFile ||
 			sessionOverview?.currentSession?.sessionFile ||
@@ -2268,6 +2321,11 @@
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not restore pages for that session.");
 			}
+			lastRestoreResult = {
+				sessionPath,
+				restoredPages: Array.isArray(response.restoredPages) ? response.restoredPages : [],
+				restoredCount: Number(response.restoredCount || 0),
+			};
 			renderState({
 				...(currentState || {}),
 				status:
@@ -2359,6 +2417,57 @@
 
 	function pluralize(count, singular, plural = `${singular}s`) {
 		return `${count} ${count === 1 ? singular : plural}`;
+	}
+
+	function buildRestoreResultMarkup() {
+		if (!lastRestoreResult) return "";
+		const pages = Array.isArray(lastRestoreResult.restoredPages) ? lastRestoreResult.restoredPages : [];
+		const restoredAnnotations = pages.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
+		const restoredNotes = pages.reduce((total, page) => total + Number(page?.restoredNotes || 0), 0);
+		const failedCount = pages.reduce((total, page) => total + Number(page?.failedCount || 0), 0);
+		const summary = pages.length
+			? [pluralize(pages.length, "page"), pluralize(restoredAnnotations, "highlight"), pluralize(restoredNotes, "note"), failedCount ? pluralize(failedCount, "failure") : ""]
+					.filter(Boolean)
+					.join(" / ")
+			: "No pages restored";
+		return `
+			<div class="onhand-restore-result">
+				<div class="onhand-restore-head">
+					<span class="onhand-label">Restore result</span>
+					<span class="onhand-count">${escapeHtml(summary)}</span>
+				</div>
+				<div class="onhand-restore-pages">
+					${
+						pages.length
+							? pages
+									.map((page) => {
+										const title = page?.title || page?.url || page?.artifactId || "Saved page";
+										const source = page?.source === "browser-replay" ? "replay" : "artifact";
+										const failures = Array.isArray(page?.failures) ? page.failures : [];
+										return `
+											<div class="onhand-restore-page">
+												<span class="onhand-restore-title">${escapeHtml(title)}</span>
+												<span class="onhand-restore-meta">${escapeHtml(source)} / ${escapeHtml(pluralize(Number(page?.restoredAnnotations || 0), "highlight"))} / ${escapeHtml(pluralize(Number(page?.restoredNotes || 0), "note"))}</span>
+												${failures.length ? `<span class="onhand-restore-failure">${escapeHtml(failures[0])}</span>` : ""}
+											</div>
+										`;
+									})
+									.join("")
+							: '<div class="onhand-restore-page"><span class="onhand-restore-title">Nothing restored</span><span class="onhand-restore-meta">No saved artifacts or replayable highlights were found.</span></div>'
+					}
+				</div>
+			</div>
+		`;
+	}
+
+	function renderRestoreResult() {
+		if (!lastRestoreResult) {
+			restoreResultEl.hidden = true;
+			restoreResultEl.innerHTML = "";
+			return;
+		}
+		restoreResultEl.hidden = false;
+		restoreResultEl.innerHTML = buildRestoreResultMarkup();
 	}
 
 	function getCapturedAnnotations(state) {
@@ -2592,6 +2701,7 @@
 		renderMeta(state);
 		renderSessionControls(state);
 		renderAttachmentDrafts();
+		renderRestoreResult();
 		const annotationCount = renderPageIndex(state);
 		renderMessages(displayTurns, annotationCount);
 		renderActivity();
@@ -2637,6 +2747,7 @@
 		const learningMode = Boolean(currentState?.preferences?.learningMode);
 		const speedMode = normalizeSpeedMode(currentState?.preferences?.speedMode);
 		sending = true;
+		lastRestoreResult = null;
 		renderState(currentState || {});
 		try {
 			const response = await chrome.runtime.sendMessage({
