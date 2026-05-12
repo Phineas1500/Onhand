@@ -118424,6 +118424,17 @@ function getSelectionText(selection) {
   }
   return "";
 }
+function compactActionText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+function pageActionTabFields(tab) {
+  const title = compactActionText(tab?.title);
+  const url2 = compactActionText(tab?.url);
+  return {
+    ...title ? { title } : {},
+    ...url2 ? { url: url2 } : {}
+  };
+}
 function normalizeAuthMode(value) {
   return value === "oauth" ? "oauth" : "api-key";
 }
@@ -118740,7 +118751,7 @@ function summarizeRestoredArtifact(result) {
   const artifact = result?.artifact || null;
   const failures = Array.isArray(result?.failures) ? result.failures : [];
   return {
-    source: "browser-artifact",
+    source: result?.source || "browser-artifact",
     artifactId: result?.artifactId || artifact?.id || "",
     tabId: typeof tab?.id === "number" ? tab.id : null,
     title: artifact?.page?.title || artifact?.tab?.title || tab?.title || "",
@@ -118751,6 +118762,72 @@ function summarizeRestoredArtifact(result) {
     failedCount: failures.length,
     failures
   };
+}
+function replayActionKey(action, text = "") {
+  const annotationId = compactActionText(action.annotationId);
+  if (annotationId) return `annotation:${annotationId}`;
+  const target = typeof action.tabId === "number" ? `tab:${action.tabId}` : compactActionText(action.url) ? `url:${compactActionText(action.url)}` : compactActionText(action.title) ? `title:${compactActionText(action.title).toLowerCase()}` : "active";
+  const normalizedText = compactActionText(text || action.citationText || action.detail).toLowerCase();
+  return `text:${target}:${normalizedText}`;
+}
+function mergeReplayTarget(target, action) {
+  if (typeof target.tabId !== "number" && typeof action.tabId === "number") target.tabId = action.tabId;
+  if (typeof target.windowId !== "number" && typeof action.windowId === "number") target.windowId = action.windowId;
+  if (!target.annotationId && action.annotationId) target.annotationId = action.annotationId;
+  if (!target.title && action.title) target.title = action.title;
+  if (!target.url && action.url) target.url = action.url;
+}
+function buildReplayAnnotationsFromPageActions(pageActions = []) {
+  const annotations = /* @__PURE__ */ new Map();
+  const notes = /* @__PURE__ */ new Map();
+  for (const action of pageActions) {
+    if (!action || typeof action !== "object") continue;
+    if (action.type === "note") {
+      const noteText = compactActionText(action.citationText || action.detail);
+      if (!noteText) continue;
+      notes.set(replayActionKey(action), { action, text: noteText });
+      continue;
+    }
+    const isHighlight = action.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
+    if (!isHighlight) continue;
+    const matchedText = compactActionText(action.citationText || action.detail);
+    if (!matchedText) continue;
+    const key = replayActionKey(action, matchedText);
+    const existing = annotations.get(key);
+    if (existing) {
+      mergeReplayTarget(existing, action);
+      continue;
+    }
+    annotations.set(key, {
+      key,
+      tabId: typeof action.tabId === "number" ? action.tabId : null,
+      windowId: typeof action.windowId === "number" ? action.windowId : null,
+      title: action.title,
+      url: action.url,
+      annotationId: action.annotationId || null,
+      matchedText
+    });
+  }
+  for (const [key, note] of notes) {
+    const annotation = annotations.get(key);
+    if (!annotation) continue;
+    annotation.noteText = note.text;
+    mergeReplayTarget(annotation, note.action);
+  }
+  return Array.from(annotations.values());
+}
+function collectSessionPageActions(session) {
+  const actions = [
+    ...Array.isArray(session.pageActions) ? session.pageActions : [],
+    ...Array.isArray(session.turns) ? session.turns.flatMap((turn) => turn.pageActions || []) : []
+  ];
+  const seen = /* @__PURE__ */ new Set();
+  return actions.filter((action) => {
+    const key = action?.key || JSON.stringify(action || {});
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 function emptyUsage() {
   return {
@@ -119262,6 +119339,7 @@ ${truncate(html, 5e3)}` : "No DOM returned.";
   }
 }
 var __browserRuntimeTest = {
+  buildReplayAnnotationsFromPageActions,
   formatToolResultForModel: toolResultTextForModel,
   getSelectionText,
   summarizeRestoredArtifact
@@ -119597,6 +119675,7 @@ function buildPageAction(toolName, result) {
         type: "tab",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         label: "Switched tab",
         detail
       };
@@ -119608,6 +119687,7 @@ function buildPageAction(toolName, result) {
         type: "tab",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         label: "Opened page",
         detail
       };
@@ -119620,6 +119700,7 @@ function buildPageAction(toolName, result) {
         type: "annotation",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         annotationId: details.annotation?.annotationId || null,
         label: "Highlighted text",
         detail: matchedText,
@@ -119634,6 +119715,7 @@ function buildPageAction(toolName, result) {
         type: "note",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         annotationId: details.note?.annotationId || null,
         label: "Added note",
         detail: noteText,
@@ -119646,6 +119728,7 @@ function buildPageAction(toolName, result) {
         type: "annotation",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         annotationId: details.annotation?.annotationId || null,
         label: "Moved to section",
         detail: "Brought the relevant part of the page into view"
@@ -119658,6 +119741,7 @@ function buildPageAction(toolName, result) {
         type: "artifact",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         artifactId,
         label: "Saved artifact",
         detail: truncate(details.page?.title || tab?.title || artifactId, 72)
@@ -119669,6 +119753,7 @@ function buildPageAction(toolName, result) {
         type: "artifact",
         tabId: tab?.id || null,
         windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
         artifactId: details.artifactId || details.artifact?.id || null,
         label: "Restored artifact",
         detail: truncate(details.artifact?.page?.title || details.artifact?.tab?.title || "Saved browser state", 72)
@@ -120077,6 +120162,133 @@ function createOnhandBrowserRuntime(host) {
       failures
     };
   }
+  function replayTargetKey(annotation) {
+    if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
+    if (annotation.url) return `url:${annotation.url.split("#")[0]}`;
+    if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
+    return "active";
+  }
+  function findReplayTab(tabs, annotation) {
+    if (typeof annotation.tabId === "number") {
+      const matchedTab = tabs.find((tab) => tab.id === annotation.tabId);
+      if (matchedTab) return matchedTab;
+    }
+    const url2 = String(annotation.url || "").trim();
+    const title = String(annotation.title || "").trim().toLowerCase();
+    return tabs.find((tab) => url2 && tab.url === url2) || tabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || tabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
+  }
+  function buildReplayArtifact(session, targetKey, tab, annotations) {
+    const first = annotations[0] || {};
+    const now = nowIso();
+    return {
+      id: `session_replay_${session.id}_${targetKey}`.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 160),
+      createdAt: session.createdAt,
+      updatedAt: now,
+      sessionId: session.id,
+      label: session.name || "Session replay",
+      tab,
+      page: {
+        title: tab?.title || first.title || "",
+        url: tab?.url || first.url || "",
+        annotations: annotations.map((annotation) => ({
+          matchedText: annotation.matchedText,
+          note: annotation.noteText ? { text: annotation.noteText, label: annotation.noteLabel || "Onhand" } : null
+        }))
+      }
+    };
+  }
+  async function restoreSessionPageActions(session, params = {}) {
+    const replayAnnotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
+    if (!replayAnnotations.length) throw new Error("No saved browser artifacts or replayable page actions were found for this session.");
+    const state = await host.snapshotState();
+    const tabs = flattenTabs(state);
+    const activeTab = pickActiveTab(state);
+    const grouped = /* @__PURE__ */ new Map();
+    for (const annotation of replayAnnotations) {
+      const key = replayTargetKey(annotation);
+      const group = grouped.get(key) || [];
+      group.push(annotation);
+      grouped.set(key, group);
+    }
+    const restored = [];
+    for (const [targetKey, annotations] of grouped) {
+      const first = annotations[0];
+      const failures = [];
+      let tab = findReplayTab(tabs, first);
+      const hasExplicitTarget = typeof first.tabId === "number" || Boolean(first.url || first.title);
+      if (!tab && first.url && params.openIfNeeded !== false) {
+        try {
+          const navigated = await host.runCommand("navigate", { url: first.url, newTab: true, waitForLoad: true });
+          tab = navigated?.tab || navigated;
+        } catch (error48) {
+          failures.push(error48?.message || String(error48));
+        }
+      }
+      if (!tab && !hasExplicitTarget) tab = activeTab;
+      const tabId = tab?.id;
+      if (typeof tabId !== "number") {
+        restored.push({
+          source: "browser-replay",
+          tab: null,
+          artifact: buildReplayArtifact(session, targetKey, null, annotations),
+          artifactId: "",
+          restoredAnnotations: 0,
+          restoredNotes: 0,
+          failures: failures.length ? failures : [`No matching browser tab is open for replay target ${targetKey}.`]
+        });
+        continue;
+      }
+      try {
+        const activated = await host.runCommand("activate_tab", { tabId });
+        tab = activated?.tab || tab;
+      } catch (error48) {
+        host.log?.("session replay tab activation failed", error48);
+      }
+      if (params.clearExisting !== false) {
+        try {
+          await host.runCommand("clear_annotations", { tabId });
+        } catch (error48) {
+          failures.push(error48?.message || String(error48));
+        }
+      }
+      let restoredAnnotations = 0;
+      let restoredNotes = 0;
+      for (const annotation of annotations) {
+        try {
+          const highlighted = await host.runCommand("highlight_text", {
+            tabId,
+            text: annotation.matchedText,
+            clearExisting: false,
+            scrollIntoView: false
+          });
+          restoredAnnotations += 1;
+          const annotationId = highlighted?.annotation?.annotationId;
+          if (annotation.noteText && annotationId) {
+            await host.runCommand("show_note", {
+              tabId,
+              annotationId,
+              note: annotation.noteText,
+              label: annotation.noteLabel || "Onhand",
+              scrollIntoView: false
+            });
+            restoredNotes += 1;
+          }
+        } catch (error48) {
+          failures.push(error48?.message || String(error48));
+        }
+      }
+      restored.push({
+        source: "browser-replay",
+        tab,
+        artifact: buildReplayArtifact(session, targetKey, tab, annotations),
+        artifactId: "",
+        restoredAnnotations,
+        restoredNotes,
+        failures
+      });
+    }
+    return restored;
+  }
   const artifactHooks = {
     captureArtifact,
     listArtifacts: listBrowserArtifacts,
@@ -120249,13 +120461,14 @@ function createOnhandBrowserRuntime(host) {
       const session = store.sessions[targetSessionId];
       if (!session) throw new Error("Session not found.");
       const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
-      if (!artifactIds.length) throw new Error("No saved browser artifacts were found for this session.");
-      const restored = [];
+      const restored = artifactIds.length ? [] : await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: true });
       for (const artifactId of artifactIds) {
         restored.push(await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true }));
       }
       const restoredPages = restored.map(summarizeRestoredArtifact);
-      await publishState({ status: `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` });
+      const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
+      const status = artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
+      await publishState({ status });
       return {
         restored,
         restoredPages,
