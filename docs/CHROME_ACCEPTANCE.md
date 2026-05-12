@@ -29,7 +29,7 @@ npm run acceptance:chrome -- --suite=all --json
 - Build the runtime with `npm run build:browser-runtime`.
 - Reload the unpacked Chrome extension from `packages/browser-extension/`.
 - Use Chrome, not Helium.
-- Use the Onhand side panel, not the legacy desktop submit path.
+- Use the Onhand side panel.
 - Confirm the extension options status shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, and `aiModel: "gpt-5.5"`.
 - Start a fresh Onhand session whose title includes the run id.
 

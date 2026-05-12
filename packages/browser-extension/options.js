@@ -8,18 +8,8 @@ const aiModelInput = document.getElementById("aiModel");
 const modelHelpEl = document.getElementById("modelHelp");
 const authModeInput = document.getElementById("authMode");
 const aiApiKeyInput = document.getElementById("aiApiKey");
-const bridgeUrlInput = document.getElementById("bridgeUrl");
-const tokenInput = document.getElementById("token");
-const clientLabelInput = document.getElementById("clientLabel");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
-
-function wsToHttp(url) {
-	const parsed = new URL(url);
-	parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
-	if (parsed.pathname === "/ws") parsed.pathname = "/health";
-	return parsed.toString();
-}
 
 function renderStatus(data, className = "") {
 	statusEl.className = className;
@@ -73,18 +63,12 @@ function selectedModel() {
 async function loadForm() {
 	const stored = await chrome.storage.local.get({
 		[RUNTIME_STORAGE_KEY]: null,
-		bridgeUrl: "ws://127.0.0.1:3210/ws",
-		token: "",
-		clientLabel: "",
 	});
 	const runtimeSettings = stored[RUNTIME_STORAGE_KEY]?.settings || {};
 	authModeInput.value = runtimeSettings.authMode === "api-key" ? "api-key" : "oauth";
 	const apiModel = runtimeSettings.aiProvider === API_PROVIDER ? runtimeSettings.aiModel || API_MODEL : API_MODEL;
 	aiModelInput.value = authModeInput.value === "oauth" ? CODEX_MODEL : apiModel;
 	aiApiKeyInput.value = runtimeSettings.aiApiKey || "";
-	bridgeUrlInput.value = stored.bridgeUrl;
-	tokenInput.value = stored.token;
-	clientLabelInput.value = stored.clientLabel;
 	syncAuthModeFields();
 }
 
@@ -108,11 +92,6 @@ async function refreshStatus() {
 }
 
 async function save() {
-	await chrome.storage.local.set({
-		bridgeUrl: bridgeUrlInput.value.trim(),
-		token: tokenInput.value.trim(),
-		clientLabel: clientLabelInput.value.trim(),
-	});
 	const response = await chrome.runtime.sendMessage({
 		type: "browser-runtime:update-settings",
 		aiProvider: selectedProvider(),
@@ -159,33 +138,11 @@ async function signOutSelectedProvider() {
 	renderAuthStatus(`Signed out of ${CODEX_PROVIDER}.`, "ok");
 }
 
-async function testBridge() {
-	try {
-		const response = await fetch(wsToHttp(bridgeUrlInput.value.trim()), {
-			headers: {
-				Authorization: `Bearer ${tokenInput.value.trim()}`,
-			},
-		});
-		const data = await response.json();
-		if (!response.ok) {
-			renderStatus(data, "error");
-			return;
-		}
-		renderStatus(data, "ok");
-	} catch (error) {
-		renderStatus(error?.message || String(error), "error");
-	}
-}
-
 document.getElementById("save").addEventListener("click", () => {
 	save().catch((error) => renderStatus(error?.message || String(error), "error"));
 });
 
 authModeInput.addEventListener("change", syncAuthModeFields);
-
-document.getElementById("test").addEventListener("click", () => {
-	testBridge().catch((error) => renderStatus(error?.message || String(error), "error"));
-});
 
 document.getElementById("refresh").addEventListener("click", () => {
 	refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error"));

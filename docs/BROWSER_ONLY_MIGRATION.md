@@ -1,6 +1,6 @@
 # Browser-Only Onhand Migration
 
-This branch changes the intended direction for Onhand: the browser extension should become the whole product surface. The Electron launcher and localhost browser bridge should be removed once the extension can host the agent runtime itself.
+This document records the browser-only migration. Onhand now uses the browser extension as the product surface and runtime. The Electron launcher, localhost browser bridge, and pi-extension bridge adapter have been removed.
 
 ## Implemented On This Branch
 
@@ -9,21 +9,16 @@ This branch changes the intended direction for Onhand: the browser extension sho
 - Routed side-panel state, prompt, session, stop, learning-mode, and page-action messages to the in-extension runtime instead of the localhost Onhand API.
 - Added extension options for OpenAI Codex OAuth and OpenAI API-key auth.
 - Added browser-side OAuth for OpenAI Codex credentials, defaulting to `openai-codex` / `gpt-5.5`.
-- Stopped the extension from automatically connecting to the legacy localhost bridge on startup or offscreen heartbeat.
-
-Remaining legacy files are still present so the migration can be reviewed in a smaller branch before deleting `apps/desktop`, `packages/browser-bridge`, `packages/pi-extension`, and bridge-based smoke tests.
+- Removed the legacy bridge options UI, token configuration, WebSocket client, Electron desktop app, localhost bridge server, pi-extension bridge adapter, tmux helper, and bridge-based smoke scripts.
 
 ## Current Topology
 
-Onhand currently has four runtime pieces:
+Onhand currently has two runtime pieces:
 
-- `apps/desktop/main.mjs`: Electron shell, global shortcut, settings, browser-client selection, session restore orchestration, and the local UI API.
-- `apps/desktop/onhand-agent.mjs`: Pi SDK session host, Onhand prompt policy, session list/switch/rename, event-to-UI state mapping, and grounding-budget steering.
-- `packages/browser-bridge/server.mjs`: localhost HTTP/WebSocket relay between Node-side Pi tools and the browser extension.
-- `packages/browser-extension/background.js`: the actual browser-control implementation. This already owns tab state, `chrome.debugger`, `chrome.scripting`, annotations, screenshots, side panel open/close, and sidebar message routing.
-- `packages/pi-extension/index.ts`: Pi tool definitions that call the localhost bridge and write artifacts to the local filesystem.
+- `packages/browser-extension/background.js`: the browser-control implementation, side-panel message router, runtime host, tab state, `chrome.debugger`, `chrome.scripting`, annotations, screenshots, side panel open/close, and artifact operations.
+- `packages/browser-extension/src/browser-runtime.ts`: the browser-bundled Pi runtime, Onhand prompt policy, session list/switch/rename/restore, event-to-UI state mapping, and browser `AgentTool` definitions.
 
-The browser extension already contains most browser automation. The Node side mainly supplies Pi session/runtime APIs, filesystem-backed persistence, and localhost transport.
+Node is now only used for development scripts such as bundling, fixture serving, and deterministic smoke tests.
 
 ## Sitegeist Takeaways
 
@@ -71,7 +66,7 @@ Onhand Browser Extension
     └── import/export payloads
 ```
 
-The first implementation should keep the side panel message names stable where possible. Instead of routing sidebar messages through `callOnhandApi()` to `http://127.0.0.1:3211`, `background.js` should call an in-extension runtime controller.
+The side panel message names remain stable where possible. `background.js` calls the in-extension runtime controller directly.
 
 ## Runtime Placement
 
@@ -84,15 +79,15 @@ Reasons:
 - An offscreen document is already used for keepalive. It can become the long-lived runtime context if we need agent execution to continue while the side panel is hidden.
 - The background service worker should stay as a router for Chrome events, tab state, and APIs that naturally live there.
 
-Initial recommendation:
+Current placement:
 
-1. Put the agent runtime in the side panel while developing the first browser-only prompt path.
-2. Move runtime ownership to an offscreen document only if side-panel closure during a run needs to be supported.
-3. Keep browser API calls in background and expose them to the runtime over `chrome.runtime.Port` or `chrome.runtime.sendMessage`.
+1. The runtime controller is created by the background service worker.
+2. The offscreen document is kept for MV3 runtime liveness.
+3. Browser API calls stay in background command handlers and are exposed to the runtime as browser `AgentTool` calls.
 
 ## Pi Package Strategy
 
-Do not try to browser-bundle `@mariozechner/pi-coding-agent`.
+Onhand does not browser-bundle `@mariozechner/pi-coding-agent`.
 
 That package currently pulls in Node-oriented session/resource/settings layers, filesystem tools, TUI pieces, and extension loading behavior that are unnecessary in a browser extension. Instead:
 
@@ -104,19 +99,17 @@ This means Onhand owns browser session persistence rather than relying on Pi's N
 
 ## Tool Migration
 
-The browser tool implementation should move in this order:
+The browser tool migration is complete for the current browser-grounded MVP:
 
-1. Keep the existing command handlers in `packages/browser-extension/background.js` as the source of truth.
-2. Create browser `AgentTool` definitions that call those handlers directly instead of using `bridgeRequest()`.
-3. Preserve the current public tool names, descriptions, and schemas from `packages/pi-extension/index.ts` so the Onhand prompt remains stable.
-4. Replace filesystem artifact writes in `packages/pi-extension/index.ts` with extension storage writes.
-5. Delete `packages/pi-extension` after all browser tools are registered natively in the extension runtime.
-
-Most browser-control code does not need to be ported; it needs to stop crossing the localhost boundary.
+1. Command handlers in `packages/browser-extension/background.js` remain the browser-control source of truth.
+2. Browser `AgentTool` definitions in `packages/browser-extension/src/browser-runtime.ts` call those handlers directly.
+3. Public tool names remain stable for prompt continuity.
+4. Browser artifacts are stored in extension storage/IndexedDB fallback logic.
+5. `packages/pi-extension` has been deleted.
 
 ## Storage Migration
 
-Node-side paths to replace:
+Removed Node-side paths:
 
 - `.onhand/sessions/desktop/`
 - `.onhand/settings.json`
@@ -159,20 +152,18 @@ For this branch, OpenAI Codex OAuth is the preferred path and API key mode is th
 
 ## Deletion Sequence
 
-Do not delete the desktop and bridge first. Delete them after an extension-hosted prompt can stream, call at least one browser tool, and persist a session.
+Completed:
 
-Recommended PR sequence:
+1. Added an extension build step and TypeScript source tree so Pi browser packages can be bundled.
+2. Added a browser runtime controller with a working prompt path and no desktop dependency.
+3. Ported browser tools as direct extension tools.
+4. Replaced side-panel prompt/state/session messages to call the browser runtime controller.
+5. Moved sessions/settings/artifacts to extension storage.
+6. Removed the bridge options UI, bridge token config, WebSocket client, and localhost API calls.
+7. Deleted `apps/desktop`, `packages/browser-bridge`, `packages/pi-extension`, tmux scripts, and bridge-based tests.
+8. Replaced tests with extension-runtime and side-panel smoke tests.
 
-1. Add an extension build step and TypeScript source tree so Pi browser packages can be bundled.
-2. Add a browser runtime controller with one working prompt path and no desktop dependency.
-3. Port `browser_get_visible_text`, `browser_highlight_text`, and `browser_show_note` as direct extension tools.
-4. Replace `sidebar:submit-prompt`, `sidebar:fetch-state`, `sidebar:stop`, and session messages to call the browser runtime controller.
-5. Move sessions/settings/artifacts to extension storage.
-6. Remove the bridge options UI, bridge token config, WebSocket client, and localhost API calls.
-7. Delete `apps/desktop`, `packages/browser-bridge`, `packages/pi-extension`, tmux scripts, and bridge-based tests.
-8. Replace tests with extension-runtime and side-panel smoke tests.
-
-## Early Acceptance Criteria
+## Acceptance Criteria
 
 The first browser-only slice is done when:
 
@@ -181,7 +172,7 @@ The first browser-only slice is done when:
 - The agent streams an answer into the side panel.
 - The agent can call a direct browser tool and leave a highlight or note on the active tab.
 - Refreshing the extension preserves at least the active session transcript.
-- `npm run desktop`, `npm run bridge`, bridge options, and token setup are no longer needed for that path.
+- `npm run desktop`, `npm run bridge`, bridge options, and token setup no longer exist.
 
 ## Current Smoke Coverage
 
