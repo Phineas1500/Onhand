@@ -118735,6 +118735,23 @@ function artifactSummary(artifact) {
     hasScreenshot: Boolean(artifact.screenshotDataUrl)
   };
 }
+function summarizeRestoredArtifact(result) {
+  const tab = result?.tab || null;
+  const artifact = result?.artifact || null;
+  const failures = Array.isArray(result?.failures) ? result.failures : [];
+  return {
+    source: "browser-artifact",
+    artifactId: result?.artifactId || artifact?.id || "",
+    tabId: typeof tab?.id === "number" ? tab.id : null,
+    title: artifact?.page?.title || artifact?.tab?.title || tab?.title || "",
+    url: artifact?.page?.url || artifact?.tab?.url || tab?.url || "",
+    restoredCount: Number(result?.restoredAnnotations || 0),
+    restoredAnnotations: Number(result?.restoredAnnotations || 0),
+    restoredNotes: Number(result?.restoredNotes || 0),
+    failedCount: failures.length,
+    failures
+  };
+}
 function emptyUsage() {
   return {
     input: 0,
@@ -119246,7 +119263,8 @@ ${truncate(html, 5e3)}` : "No DOM returned.";
 }
 var __browserRuntimeTest = {
   formatToolResultForModel: toolResultTextForModel,
-  getSelectionText
+  getSelectionText,
+  summarizeRestoredArtifact
 };
 function streamOnhandFast(model, context, options = {}) {
   const { onhandReasoningProfile, ...streamOptions } = options || {};
@@ -120236,9 +120254,12 @@ function createOnhandBrowserRuntime(host) {
       for (const artifactId of artifactIds) {
         restored.push(await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true }));
       }
+      const restoredPages = restored.map(summarizeRestoredArtifact);
       await publishState({ status: `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` });
       return {
         restored,
+        restoredPages,
+        restoredCount: restoredPages.length,
         currentSession: buildSessionState(session)
       };
     },

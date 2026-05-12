@@ -3,9 +3,10 @@ import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { formatToolResultForModel, getSelectionText } = __browserRuntimeTest || {};
+	const { formatToolResultForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
+	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
 
 	const emptyCases = [
 		undefined,
@@ -26,6 +27,29 @@ async function assertSelectionFormatting() {
 
 	const selectedText = formatToolResultForModel("browser_get_selection", { selection: { text: " Alpha smoke content " } });
 	assert.equal(selectedText, "Selected text:\nAlpha smoke content");
+
+	const restored = summarizeRestoredArtifact({
+		tab: { id: 42, title: "Restored tab", url: "https://example.test/page" },
+		artifactId: "artifact_test",
+		artifact: {
+			page: { title: "Captured page", url: "https://example.test/captured" },
+		},
+		restoredAnnotations: 2,
+		restoredNotes: 1,
+		failures: [],
+	});
+	assert.deepEqual(restored, {
+		source: "browser-artifact",
+		artifactId: "artifact_test",
+		tabId: 42,
+		title: "Captured page",
+		url: "https://example.test/captured",
+		restoredCount: 2,
+		restoredAnnotations: 2,
+		restoredNotes: 1,
+		failedCount: 0,
+		failures: [],
+	});
 }
 
 async function assertFixtureResponses() {
