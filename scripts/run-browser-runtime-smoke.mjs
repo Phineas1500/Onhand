@@ -326,9 +326,13 @@ function buildResult({ args, state, provider, model, host }) {
 		const toolNames = (latestTurn?.activities || []).map((activity) => activity.toolName).filter(Boolean);
 		const erroredTools = (latestTurn?.activities || []).filter((activity) => activity.state === "error").map((activity) => activity.toolName);
 		const missingTools = EXPECTED_PORT_TOOLS.filter((toolName) => !toolNames.includes(toolName));
+		const networkCall = (host?.calls || []).find((call) => call.name === "collect_network");
 		if (reply !== "Browser runtime ports ok") failures.push(`Expected deterministic ports reply, found ${reply || "(missing)"}.`);
 		if (missingTools.length) failures.push(`Missing tool activity for: ${missingTools.join(", ")}.`);
 		if (erroredTools.length) failures.push(`Tool activities failed for: ${erroredTools.join(", ")}.`);
+		if (!networkCall?.args?.reload || !networkCall?.args?.ignoreCache) {
+			failures.push("Expected collect_network port smoke to exercise reload=true and ignoreCache=true.");
+		}
 	} else if (args.realOpenAI) {
 		if (!/Onhand smoke ok/i.test(reply)) failures.push("Real OpenAI reply did not include the expected smoke text.");
 	} else {

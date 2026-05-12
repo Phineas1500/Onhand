@@ -380,6 +380,14 @@ function truncate(value: unknown, maxChars = 1200) {
 	return `${text.slice(0, maxChars - 1)}...`;
 }
 
+function getSelectionText(selection: unknown) {
+	if (typeof selection === "string") return selection.trim();
+	if (selection && typeof selection === "object" && typeof (selection as any).text === "string") {
+		return (selection as any).text.trim();
+	}
+	return "";
+}
+
 function normalizeAuthMode(value: unknown): RuntimeSettings["authMode"] {
 	return value === "oauth" ? "oauth" : "api-key";
 }
@@ -532,6 +540,8 @@ function getSmokeModel(modelId: string) {
 				fauxToolCall("browser_collect_network", {
 					durationMs: 10,
 					maxEntries: 5,
+					reload: true,
+					ignoreCache: true,
 					onlyFailures: false,
 				}),
 				fauxToolCall("browser_get_dom", { maxChars: 800 }),
@@ -1049,7 +1059,7 @@ async function renderBrowserContext(host: RuntimeHost) {
 				lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""}`);
 			}
 		}
-		const selectionText = selection?.selection?.text || selection?.selection || "";
+		const selectionText = getSelectionText(selection?.selection);
 		if (selectionText) lines.push(`Selected text: ${JSON.stringify(truncate(selectionText, 800))}`);
 		const visibleText = visible?.visible?.text || visible?.text || "";
 		if (visibleText) {
@@ -1212,7 +1222,7 @@ function toolResultTextForModel(toolName: string, result: any) {
 			return text ? `${heading}\n${truncate(text, 8000)}` : `${heading}\n(No readable content returned.)`;
 		}
 		case "browser_get_selection": {
-			const selectionText = String(details.selection?.text || details.selection || "").trim();
+			const selectionText = getSelectionText(details.selection);
 			return selectionText ? `Selected text:\n${truncate(selectionText, 1200)}` : "No selected text.";
 		}
 		case "browser_get_viewport_headings": {
@@ -1299,6 +1309,11 @@ function toolResultTextForModel(toolName: string, result: any) {
 			return toolResultText(details, TOOL_RESULT_MAX_CHARS);
 	}
 }
+
+export const __browserRuntimeTest = {
+	formatToolResultForModel: toolResultTextForModel,
+	getSelectionText,
+};
 
 function streamOnhandFast(model: any, context: any, options: any = {}) {
 	const { onhandReasoningProfile, ...streamOptions } = options || {};

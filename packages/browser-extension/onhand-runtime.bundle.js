@@ -118417,6 +118417,13 @@ function truncate(value, maxChars = 1200) {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars - 1)}...`;
 }
+function getSelectionText(selection) {
+  if (typeof selection === "string") return selection.trim();
+  if (selection && typeof selection === "object" && typeof selection.text === "string") {
+    return selection.text.trim();
+  }
+  return "";
+}
 function normalizeAuthMode(value) {
   return value === "oauth" ? "oauth" : "api-key";
 }
@@ -118562,6 +118569,8 @@ function getSmokeModel(modelId) {
         fauxToolCall("browser_collect_network", {
           durationMs: 10,
           maxEntries: 5,
+          reload: true,
+          ignoreCache: true,
           onlyFailures: false
         }),
         fauxToolCall("browser_get_dom", { maxChars: 800 }),
@@ -119004,7 +119013,7 @@ async function renderBrowserContext(host) {
         lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""}`);
       }
     }
-    const selectionText = selection?.selection?.text || selection?.selection || "";
+    const selectionText = getSelectionText(selection?.selection);
     if (selectionText) lines.push(`Selected text: ${JSON.stringify(truncate(selectionText, 800))}`);
     const visibleText = visible?.visible?.text || visible?.text || "";
     if (visibleText) {
@@ -119151,7 +119160,7 @@ ${truncate(text, 8e3)}` : `${heading}
 (No readable content returned.)`;
     }
     case "browser_get_selection": {
-      const selectionText = String(details.selection?.text || details.selection || "").trim();
+      const selectionText = getSelectionText(details.selection);
       return selectionText ? `Selected text:
 ${truncate(selectionText, 1200)}` : "No selected text.";
     }
@@ -119235,6 +119244,10 @@ ${truncate(html, 5e3)}` : "No DOM returned.";
       return toolResultText(details, TOOL_RESULT_MAX_CHARS);
   }
 }
+var __browserRuntimeTest = {
+  formatToolResultForModel: toolResultTextForModel,
+  getSelectionText
+};
 function streamOnhandFast(model, context, options = {}) {
   const { onhandReasoningProfile, ...streamOptions } = options || {};
   const reasoningProfile = onhandReasoningProfile;
@@ -120317,5 +120330,6 @@ function createOnhandBrowserRuntime(host) {
   };
 }
 export {
+  __browserRuntimeTest,
   createOnhandBrowserRuntime
 };
