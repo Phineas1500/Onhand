@@ -21,9 +21,9 @@ npm run test:preflight
 Use Chrome for real side-panel validation, especially when OAuth, tool routing, annotations, artifacts, network/debugger collection, or UI state changed.
 
 1. Run `npm run build:extension`.
-2. Reload the unpacked extension from `packages/browser-extension/`.
-3. Open the extension options page.
-4. Confirm `authMode: "oauth"`, `aiProvider: "openai-codex"`, and `aiModel: "gpt-5.5"` in the status JSON.
+2. Reload the unpacked extension from `packages/browser-extension/` using Computer Use on `chrome://extensions`.
+3. Open the extension options page with Computer Use.
+4. Confirm `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON.
 5. Print the acceptance matrix:
 
 ```sh
@@ -32,6 +32,8 @@ npm run acceptance:chrome -- --suite=all --run-id=chrome-acceptance-YYYY-MM-DD
 
 6. Run those prompts manually in the Onhand side panel.
 7. Record PASS/FAIL results in the PR.
+
+Use Computer Use for extension UI and side-panel prompts. Use the Codex Chrome Extension backend only for normal web page automation after the Onhand side panel, extension options page, and `chrome://extensions` are closed. A Codex Chrome `another extension UI is open` blocker is an automation conflict, not an OAuth failure by itself.
 
 The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. The real-page matrix currently covers Wikipedia, the-internet.herokuapp.com, and React docs.
 

@@ -95,7 +95,7 @@ For a real provider call:
 OPENAI_API_KEY=... npm run smoke:browser-runtime -- --real-openai
 ```
 
-For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Codex, confirm the options page shows `openai-codex` / `gpt-5.5` in the status JSON, then run the local fixture with `npm run serve:fixture`. Open `http://127.0.0.1:8765/` in Chrome, start a fresh Onhand side-panel session with a Chrome-specific title, and submit the read, interaction, debug, artifact, and network reload prompts there.
+For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Codex, confirm the options page shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON, then run the local fixture with `npm run serve:fixture`. Open `http://127.0.0.1:8765/` in Chrome, start a fresh Onhand side-panel session with a Chrome-specific title, and submit the read, interaction, debug, artifact, and network reload prompts there.
 
 For browser-runtime regression coverage, run:
 
