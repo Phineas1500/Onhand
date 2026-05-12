@@ -9,14 +9,14 @@ Onhand is a contextual AI assistant for learning and research. The goal is to he
 <p align="center"><em>Onhand grounding an explanation in the page the user already has open.</em></p>
 
 The intended experience is:
-- invoke Onhand from a global shortcut
+- invoke Onhand from the browser extension side panel
 - ask a question about the page, PDF, file, or material already in front of you
 - have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
 - save the session so it can be replayed later with the relevant artifacts restored
 
 ## Current status
 
-This branch makes the browser extension the primary Onhand runtime:
+Onhand now uses the browser extension as its runtime:
 
 1. the Chromium extension hosts the side panel UI
 2. `@mariozechner/pi-agent-core` and `@mariozechner/pi-ai` are bundled into the extension
@@ -27,7 +27,7 @@ This branch makes the browser extension the primary Onhand runtime:
 
 ## Browser-only direction
 
-The intended direction is to make the browser extension the whole Onhand runtime. The Electron desktop app and localhost bridge are now legacy paths; the side panel can submit prompts without starting either one.
+The browser extension is the whole Onhand runtime. The Electron desktop app, localhost bridge, and pi-extension bridge adapter have been removed.
 
 See:
 
@@ -39,18 +39,15 @@ The broader product plan lives in:
 
 ## Current repository layout
 
-- `apps/desktop/` - legacy Electron desktop shell for Onhand
 - `docs/ONHAND_PLAN.md` - product and implementation plan
-- `packages/browser-bridge/` - legacy local HTTP + WebSocket bridge server
 - `packages/browser-extension/` - unpacked Chromium extension and browser-hosted Pi runtime
-- `packages/pi-extension/` - legacy pi extension tools for the browser bridge
+- `scripts/` - browser-runtime build, smoke, fixture, preflight, and Chrome acceptance helpers
 
 ## Security model
 
 - browser-only mode stores the selected OpenAI auth mode, model, API key, and Codex sign-in refresh token in extension local storage
 - the extension calls the provider API directly from the extension runtime
 - direct sign-in currently supports only OpenAI Codex OAuth with `openai-codex` / `gpt-5.5`
-- the legacy bridge still uses a bearer token and localhost WebSocket when manually used
 
 ## Setup
 
@@ -150,11 +147,9 @@ npm run acceptance:chrome -- --suite=all
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached.
 - Some pages cannot be debugged, such as privileged browser pages.
 - Session restore/replay is now best-effort for browser-only artifacts; full replay fidelity is still in progress.
-- The legacy desktop, bridge, and pi-extension files are still present during this migration branch, but they are no longer required for the side-panel prompt path.
 
 ## Likely next steps
 
-- remove the legacy desktop app, bridge server, pi extension, and bridge-based tests after the browser-only path is verified in Chrome
 - stronger replay/restore fidelity beyond best-effort text matching
 - move sessions/artifacts from `chrome.storage.local` to IndexedDB once transcripts and captured artifacts grow
 - PDF/document support after the browser-grounded MVP is solid

@@ -102,9 +102,9 @@ Use generic computer-use only as a fallback for unsupported apps or edge cases.
 ## 5.1 App shell
 **New recommendation: browser extension first, no desktop app for v1**.
 
-Onhand has become a browser-first product in practice. The core value is already inside the Chromium extension: tab awareness, debugger-backed inspection, readable extraction, highlights, anchored notes, screenshots, and the side panel. The Electron launcher and localhost bridge now mostly add transport and process management overhead.
+Onhand is now a browser-first product in practice. The core value is inside the Chromium extension: tab awareness, debugger-backed inspection, readable extraction, highlights, anchored notes, screenshots, and the side panel.
 
-The v1 shell should therefore be the browser extension side panel. The Electron app and bridge should be removed once the extension can host the agent runtime, persist sessions, and stream answers without localhost services.
+The v1 shell is the browser extension side panel. The Electron app, localhost bridge, and pi-extension bridge adapter have been removed.
 
 Detailed migration notes live in:
 
@@ -434,24 +434,16 @@ The first true product milestone should satisfy all of these:
 
 ## 13. Implementation Phases
 
-### 13.1 Current implementation checkpoint (2026-03-29)
+### 13.1 Current implementation checkpoint
 
-This checkpoint describes the existing prototype, not the new target architecture. The next work should migrate the working browser-grounding behavior into the extension-hosted runtime described above.
+This checkpoint describes the browser-only runtime after the desktop/bridge removal.
 
 Completed so far:
 - repo refactor to an Onhand-centered layout under `packages/`
-- compact Electron desktop launcher under `apps/desktop/`:
-  - launcher-style command palette with a temporary global shortcut (`CommandOrControl+Shift+Space`)
-  - live browser-context preview via the local browser bridge
-  - real pi SDK session wired into the launcher with streaming replies
-  - richer in-launcher answer UI for grounded replies
-  - browser context gathered lazily on send so opening the launcher does not immediately attach `chrome.debugger`
-  - launcher now surfaces page actions taken by the agent (tab switch, highlight, note, saved artifact)
-  - launcher sessions persisted locally under `.onhand/sessions/desktop/` and continued by default
-  - lightweight launcher-side session management:
-    - recent sessions listed directly in the launcher
-    - `Cmd/Ctrl+N` starts a fresh launcher session
-    - new launcher sessions are auto-named from the first prompt
+- browser extension side panel prompt surface
+- browser-hosted Pi agent runtime using `@mariozechner/pi-agent-core`
+- OpenAI Codex OAuth and OpenAI API-key settings in the extension options page
+- extension-local sessions, settings, and browser artifact storage
 - first-class browser annotation tools:
   - `browser_highlight_text`
   - `browser_show_note`
@@ -459,11 +451,9 @@ Completed so far:
   - `browser_clear_annotations`
 - lightweight browser state capture with `browser_capture_state`
 - first-pass browser artifact persistence:
-  - writes captured browser state to `.onhand/artifacts/browser/<artifact-id>/state.json`
-  - writes HTML snapshots to `.onhand/artifacts/browser/<artifact-id>/page.html`
-  - writes screenshots to `.onhand/artifacts/browser/<artifact-id>/screenshot.png`
-  - appends a session-linked pi custom entry of type `onhand/browser-capture`
-  - maintains a lightweight artifact index at `.onhand/artifacts/browser/index.json`
+  - writes captured browser state to extension storage
+  - can include HTML snapshots and screenshots
+  - tracks session-linked artifact ids
 - first-pass browser restore support:
   - restores persisted annotations from a saved browser artifact via `browser_restore_state`
   - re-applies highlights/notes to a live page using best-effort text-based matching
@@ -493,15 +483,14 @@ Testing workflow reference:
 - see `docs/TESTING_WORKFLOW.md` for the default validation tiers, service reload procedure, and when Computer Use should or should not be used
 
 Current status:
-- Phase 0 is in progress but the core browser-grounding primitives now exist and are working reliably enough to build on.
-- Phase 14.3 now has a usable desktop launcher with real pi SDK prompt routing, streaming replies, and lightweight recent-session management.
+- The browser-only prompt path works: the side panel submits directly to an extension-hosted Pi agent, the agent calls direct browser tools, and sessions persist without desktop or bridge services.
 - There is still no session browser or replay UI.
 
 Most important next step:
-- prove the browser-only prompt path: the side panel submits directly to an extension-hosted Pi agent, the agent calls direct browser tools, and the session persists without the desktop app or localhost bridge.
+- improve session replay and browser artifact restore fidelity.
 
-## Phase 0 — Stabilize current browser bridge
-Goal: make the current prototype a reliable subsystem.
+## Phase 0 — Stabilize browser tools
+Goal: make browser-grounding primitives reliable.
 
 Tasks:
 - formalize browser tool contracts
@@ -524,9 +513,6 @@ Tasks:
 - highlight + scroll + note workflow
 - save browser snapshot + annotation records in extension storage
 - replay simple browser sessions from extension storage
-
-Status note:
-- the current command palette and embedded Pi SDK session runtime exist in Electron; the next gap is replacing that path with an extension-hosted runtime.
 
 Exit criteria:
 - complete end-to-end browser tutoring demo works reliably
@@ -612,29 +598,24 @@ Remaining:
 - [ ] improve restore fidelity beyond best-effort text-based matching
 - [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts
 
-### 14.3 Build minimal Onhand app shell — in progress
+### 14.3 Build minimal Onhand app shell — complete
 Started:
-- [x] create Electron app under `apps/desktop/`
-- [x] add temporary global shortcut (`CommandOrControl+Shift+Space`)
-- [x] add compact command-palette-style launcher UI
-- [x] show live browser-context preview from the bridge inside the shell
-- [x] route shell prompt submission to a real pi SDK session
-- [x] stream replies into the launcher UI
-- [x] persist launcher sessions locally under `.onhand/sessions/desktop/`
-- [x] add lightweight launcher session management (recent sessions + fresh-session shortcut)
-- [x] improve launcher reply UI and surface page actions taken by the agent
-- [x] wire launcher ask-flow to encourage existing browser grounding actions (tab switch, highlight, note, artifact capture)
+- [x] create browser extension side-panel app shell
+- [x] route side-panel prompt submission to a browser-hosted Pi agent
+- [x] stream replies into the side-panel UI
+- [x] persist sessions in extension storage
+- [x] add lightweight session management
+- [x] surface page actions taken by the agent
 
 Remaining:
-- [ ] decide how the shell should manage session/project selection before the full replay UI exists
-- [ ] decide how much past-session context should be surfaced directly in the launcher vs. the standalone app
+- [ ] decide how much past-session context should be surfaced directly in the side panel vs. a fuller replay UI
 
 ### 14.4 Add replay MVP
 - session list
 - open session
 - replay saved browser state from artifacts
 - render chat + annotations together
-- connect persisted launcher sessions to the replay/session browser
+- connect persisted browser sessions to the replay/session browser
 
 ### 14.5 Add visible-context tools — in progress
 Started:
@@ -655,10 +636,8 @@ These tasks are enough to start the actual product, not just the tooling prototy
 The repo now uses a minimal Onhand-centered layout without over-scaffolding too early. The next structure should bias toward extension source modules and generated extension assets, not new desktop packages.
 
 Current relevant pieces:
-- `apps/desktop/`
-- `packages/browser-bridge/`
 - `packages/browser-extension/`
-- `packages/pi-extension/`
+- `scripts/`
 - `docs/`
 
 Next structural additions should be added only when implementation requires them. The most likely next step is:
@@ -675,7 +654,7 @@ packages/
 docs/
 ```
 
-That keeps the existing browser prototype usable while giving us a clean path toward deleting `apps/desktop`, `packages/browser-bridge`, and `packages/pi-extension`.
+Keep the repo biased toward extension source modules, generated extension assets, and focused browser-runtime test scripts.
 
 ---
 
@@ -715,6 +694,6 @@ Build Onhand in this order:
 
 The most important next implementation step is:
 
-> make the side panel submit directly to an extension-hosted agent that can call the existing browser tools without Electron or the localhost bridge.
+> improve browser-only replay: saved sessions, artifacts, highlights, notes, and screenshots should restore predictably from extension storage.
 
 That is the core of the product.

@@ -6,7 +6,7 @@ Onhand today is very good at *information delivery*: finding the right passage, 
 
 The suggestion to look into pedagogy is a push to make Onhand structure *the learning process itself*, not just the location of the answer. The moat isn't "AI that can read your browser" — it is "AI that can teach you using your browser as the textbook."
 
-This document translates the main evidence-backed pedagogical concepts into concrete changes grounded in the current codebase (pi SDK session in `apps/desktop/onhand-agent.mjs`, tool primitives in `packages/pi-extension/index.ts`, sidebar UI in `packages/browser-extension/sidebar.js`).
+This document translates the main evidence-backed pedagogical concepts into concrete changes grounded in the current codebase: the browser runtime in `packages/browser-extension/src/browser-runtime.ts`, browser command handlers in `packages/browser-extension/background.js`, and sidebar UI in `packages/browser-extension/sidebar.js`.
 
 The strategy is: reuse the highlight/note/scroll/artifact primitives that already exist, and change *what the agent chooses to do with them* plus *what state is tracked across turns and sessions*. Most of this is prompt engineering and session-state work, not new infrastructure.
 
@@ -47,13 +47,12 @@ Goal: one toggle, different system prompt, no new data model. Prove the prompt-e
 
 **3.1 Add the toggle**
 - Sidebar: add a "Learning mode" checkbox near the session controls in `packages/browser-extension/sidebar.js` (alongside the existing session toolbar around the "New / Restore Pages / Stop" buttons).
-- Persist the flag via `chrome.storage.local` and send it on every `/prompt` call as part of the POST body.
-- Desktop launcher: mirror the toggle in `apps/desktop/renderer.js` so both entry points behave the same.
+- Persist the flag via `chrome.storage.local` and include it on side-panel prompt submission.
 
 **3.2 Thread the flag through the agent**
-- Extend the `submitOnhandPrompt` handler in `apps/desktop/onhand-agent.mjs` (~line 862) to accept `{ learningMode: boolean }`.
-- In `buildLauncherPrompt` (line 228), branch on the flag: when on, replace the current "answer-oriented" guidance at the bottom of the prompt with learning-oriented guidance (see 3.3).
-- Also branch `ONHAND_APPEND_SYSTEM_PROMPT` (line 17): either swap in a pedagogy-flavored variant, or append an additional block when the flag is on. Prefer appending to keep the answer-mode rules stable.
+- Thread `{ learningMode: boolean }` through `submitPrompt` in `packages/browser-extension/src/browser-runtime.ts`.
+- In `buildLauncherPrompt`, branch on the flag: when on, append learning-oriented guidance (see 3.3).
+- Prefer appending to the base prompt to keep the answer-mode rules stable.
 
 **3.3 The Learning Mode system prompt additions**
 
@@ -148,7 +147,7 @@ This is the most ambitious phase and should come only after the first three are 
 
 **6.1 Extend artifact metadata**
 
-Artifacts are already persisted via `browser_capture_state` in `packages/pi-extension/index.ts` (the `persistBrowserCaptureArtifact` path). Extend the saved `state.json` schema to include:
+Artifacts are persisted by `browser_capture_state` in `packages/browser-extension/src/browser-runtime.ts`. Extend the artifact schema to include:
 
 ```json
 {

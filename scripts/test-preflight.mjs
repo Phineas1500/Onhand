@@ -1,191 +1,120 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { ONHAND_EXTENSION_RUNTIME_REVISION } from "../packages/browser-extension/runtime-revision.js";
+const PROJECT_ROOT = process.cwd();
 
-const PROJECT_ROOT = resolve(new URL("..", import.meta.url).pathname);
-const CONFIG_PATH = join(homedir(), ".config", "pi-browser-bridge", "config.json");
-const SESSION_DIR = join(PROJECT_ROOT, ".onhand", "sessions", "desktop");
-const FAST_TIMEOUT_MS = 1500;
+const REQUIRED_FILES = [
+	"packages/browser-extension/manifest.json",
+	"packages/browser-extension/background.js",
+	"packages/browser-extension/sidepanel.html",
+	"packages/browser-extension/sidebar.js",
+	"packages/browser-extension/options.html",
+	"packages/browser-extension/options.js",
+	"packages/browser-extension/onhand-runtime.bundle.js",
+	"packages/browser-extension/src/browser-runtime.ts",
+	"packages/browser-extension/src/browser-oauth.ts",
+	"scripts/build-browser-runtime.mjs",
+	"scripts/run-browser-runtime-regressions.mjs",
+	"scripts/run-browser-runtime-smoke.mjs",
+	"scripts/show-chrome-acceptance.mjs",
+];
 
-function parseArgs(argv) {
-	return {
-		json: argv.includes("--json"),
-	};
-}
+const REMOVED_PATHS = [
+	"apps/desktop/main.mjs",
+	"packages/browser-bridge/server.mjs",
+	"packages/pi-extension/index.ts",
+	"scripts/run-browser-bridge-regression.mjs",
+	"scripts/run-tier2-smoke.mjs",
+];
 
-async function loadBridgeConfig() {
-	const raw = await readFile(CONFIG_PATH, "utf8");
-	const parsed = JSON.parse(raw);
-	return {
-		host: parsed.host || "127.0.0.1",
-		port: Number(parsed.port || 3210),
-		token: parsed.token || "",
-	};
-}
+const REQUIRED_SCRIPTS = [
+	"build:browser-runtime",
+	"build:extension",
+	"acceptance:chrome",
+	"serve:fixture",
+	"test:fixtures",
+	"test:preflight",
+	"test:browser-runtime-regressions",
+	"smoke:browser-runtime",
+];
 
-async function requestJson(url, token) {
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), FAST_TIMEOUT_MS).unref();
+const REMOVED_SCRIPTS = [
+	"bridge",
+	"bridge:token",
+	"bridge:config",
+	"desktop",
+	"tmux:start",
+	"tmux:stop",
+	"tmux:attach",
+	"tmux:status",
+	"test:browser-bridge",
+	"test:note-layout",
+	"test:session-restore",
+	"smoke:tier2",
+];
+
+async function exists(path) {
 	try {
-		const headers = new Headers();
-		if (token) headers.set("Authorization", `Bearer ${token}`);
-		const response = await fetch(url, {
-			headers,
-			signal: controller.signal,
-		});
-		const data = await response.json();
-		return {
-			ok: response.ok && data?.ok !== false,
-			status: response.status,
-			data,
-			error: response.ok && data?.ok !== false ? "" : data?.error || `HTTP ${response.status}`,
-		};
-	} catch (error) {
-		return {
-			ok: false,
-			status: 0,
-			data: null,
-			error: error?.name === "AbortError" ? "request timed out" : error?.message || String(error),
-		};
-	} finally {
-		clearTimeout(timeoutId);
+		await access(join(PROJECT_ROOT, path));
+		return true;
+	} catch {
+		return false;
 	}
 }
 
-async function inspectSessionDir() {
-	try {
-		const { readdir } = await import("node:fs/promises");
-		const entries = (await readdir(SESSION_DIR)).filter((entry) => entry.endsWith(".jsonl")).sort();
-		return {
-			ok: true,
-			dir: SESSION_DIR,
-			count: entries.length,
-			latest: entries.at(-1) || "",
-		};
-	} catch (error) {
-		return {
-			ok: false,
-			dir: SESSION_DIR,
-			count: 0,
-			latest: "",
-			error: error?.message || String(error),
-		};
-	}
-}
-
-async function buildReport() {
-	const bridgeConfig = await loadBridgeConfig();
-	const bridgeBaseUrl = `http://${bridgeConfig.host}:${bridgeConfig.port}`;
-	const desktopBaseUrl = "http://127.0.0.1:3211";
-
-	const [bridgeHealth, desktopHealth, sessionDir] = await Promise.all([
-		requestJson(`${bridgeBaseUrl}/health`, bridgeConfig.token),
-		requestJson(`${desktopBaseUrl}/health`, bridgeConfig.token),
-		inspectSessionDir(),
-	]);
-
-	const connectedClients = Array.isArray(bridgeHealth.data?.connectedClients)
-		? bridgeHealth.data.connectedClients.length
-		: 0;
-	const extensionClients = Array.isArray(bridgeHealth.data?.connectedClients)
-		? bridgeHealth.data.connectedClients.map((client) => {
-				const label = client?.hello?.clientLabel || client?.hello?.browserName || "Browser";
-				const runtimeRevision = String(client?.hello?.runtimeRevision || "").trim();
-				return {
-					clientId: client?.clientId || "",
-					label,
-					runtimeRevision,
-					ok: runtimeRevision === ONHAND_EXTENSION_RUNTIME_REVISION,
-				};
-			})
-		: [];
-	const staleExtensionClients = extensionClients.filter((client) => !client.ok);
-
-	return {
-		projectRoot: PROJECT_ROOT,
-		bridge: {
-			baseUrl: bridgeBaseUrl,
-			ok: bridgeHealth.ok,
-			connectedClients,
-			host: bridgeHealth.data?.host || bridgeConfig.host,
-			port: bridgeHealth.data?.port || bridgeConfig.port,
-			error: bridgeHealth.error,
-		},
-		desktopUi: {
-			baseUrl: desktopBaseUrl,
-			ok: desktopHealth.ok,
-			host: desktopHealth.data?.host || "127.0.0.1",
-			port: desktopHealth.data?.port || 3211,
-			error: desktopHealth.error,
-		},
-		extensionRuntime: {
-			ok: staleExtensionClients.length === 0,
-			checked: extensionClients.length,
-			expectedRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
-			clients: extensionClients,
-			staleClients: staleExtensionClients,
-		},
-		sessions: sessionDir,
-		manualReminders: [
-			"If extension runtime is STALE, reload the unpacked extension before Tier 2 / Tier 3 browser tests.",
-			"Use a dedicated Chrome window for GUI validation with Computer Use.",
-			"If the change is UI-sensitive, run Tier 1 and Tier 2 first, then verify the real flow with Computer Use.",
-		],
-	};
-}
-
-function printHealth(label, item, extra = "") {
-	const status = item.ok ? "OK" : "FAIL";
-	console.log(`${label}: ${status}${extra ? ` (${extra})` : ""}`);
-	if (!item.ok && item.error) {
-		console.log(`  Error: ${item.error}`);
-	}
-}
-
-function printExtensionRuntime(report) {
-	const runtime = report.extensionRuntime;
-	if (!runtime.checked) {
-		console.log("Extension runtime: SKIP (0 connected client(s))");
-		return;
-	}
-	const status = runtime.ok ? "OK" : "STALE";
-	console.log(`Extension runtime: ${status} (${runtime.staleClients.length} stale / ${runtime.checked} client(s), expected ${runtime.expectedRevision})`);
-	for (const client of runtime.staleClients) {
-		console.log(`  Stale: ${client.label} (${client.clientId}) revision ${client.runtimeRevision || "(missing)"}`);
-	}
-}
-
-function printHumanReadable(report) {
-	console.log(`Project root: ${report.projectRoot}`);
-	console.log("");
-	printHealth("Bridge", report.bridge, `${report.bridge.host}:${report.bridge.port}, ${report.bridge.connectedClients} client(s)`);
-	printExtensionRuntime(report);
-	printHealth("Desktop UI API", report.desktopUi, `${report.desktopUi.host}:${report.desktopUi.port}`);
-	printHealth(
-		"Session directory",
-		report.sessions,
-		`${report.sessions.count} session file(s)${report.sessions.latest ? `, latest ${report.sessions.latest}` : ""}`,
-	);
-	if (!report.sessions.ok && report.sessions.error) {
-		console.log(`  Error: ${report.sessions.error}`);
-	}
-	console.log("");
-	console.log("Manual reminders:");
-	for (const line of report.manualReminders) {
-		console.log(`- ${line}`);
-	}
+function printCheck(label, ok, detail = "") {
+	const status = ok ? "OK" : "FAIL";
+	console.log(`${label}: ${status}${detail ? ` (${detail})` : ""}`);
 }
 
 async function main() {
-	const args = parseArgs(process.argv.slice(2));
-	const report = await buildReport();
-	if (args.json) {
-		console.log(JSON.stringify(report, null, 2));
-		return;
+	const failures = [];
+	console.log(`Project root: ${PROJECT_ROOT}`);
+	console.log("");
+
+	const missingRequired = [];
+	for (const path of REQUIRED_FILES) {
+		if (!(await exists(path))) missingRequired.push(path);
 	}
-	printHumanReadable(report);
+	printCheck("Browser extension runtime files", missingRequired.length === 0, missingRequired.length ? missingRequired.join(", ") : "");
+	if (missingRequired.length) failures.push("Required browser-only files are missing.");
+
+	const lingeringRemoved = [];
+	for (const path of REMOVED_PATHS) {
+		if (await exists(path)) lingeringRemoved.push(path);
+	}
+	printCheck("Legacy desktop/bridge files removed", lingeringRemoved.length === 0, lingeringRemoved.length ? lingeringRemoved.join(", ") : "");
+	if (lingeringRemoved.length) failures.push("Legacy desktop/bridge files are still present.");
+
+	const packageJson = JSON.parse(await readFile(join(PROJECT_ROOT, "package.json"), "utf8"));
+	const scripts = packageJson.scripts || {};
+	const missingScripts = REQUIRED_SCRIPTS.filter((name) => !scripts[name]);
+	const lingeringScripts = REMOVED_SCRIPTS.filter((name) => scripts[name]);
+	printCheck("Browser-only npm scripts", missingScripts.length === 0, missingScripts.length ? `missing ${missingScripts.join(", ")}` : "");
+	printCheck("Legacy npm scripts removed", lingeringScripts.length === 0, lingeringScripts.length ? lingeringScripts.join(", ") : "");
+	if (missingScripts.length) failures.push("Browser-only npm scripts are missing.");
+	if (lingeringScripts.length) failures.push("Legacy npm scripts are still present.");
+
+	const manifest = JSON.parse(await readFile(join(PROJECT_ROOT, "packages/browser-extension/manifest.json"), "utf8"));
+	const hasSidePanel = Boolean(manifest.side_panel?.default_path);
+	const hasBackgroundWorker = manifest.background?.service_worker === "background.js";
+	printCheck("Chrome side panel manifest", hasSidePanel && hasBackgroundWorker, `side_panel=${hasSidePanel}, background=${hasBackgroundWorker}`);
+	if (!hasSidePanel || !hasBackgroundWorker) failures.push("Manifest is missing the side panel or background worker.");
+
+	console.log("");
+	console.log("Manual reminders:");
+	console.log("- Reload the unpacked extension after changing the generated runtime bundle.");
+	console.log("- For real Chrome validation, run the prompts from `npm run acceptance:chrome -- --suite=all` in the Onhand side panel.");
+	console.log("- The browser-only runtime no longer requires Electron, tmux, or a localhost bridge.");
+
+	if (failures.length) {
+		console.log("");
+		for (const failure of failures) console.error(`- ${failure}`);
+		process.exitCode = 1;
+	}
 }
 
-await main();
+main().catch((error) => {
+	console.error(error?.stack || error?.message || String(error));
+	process.exitCode = 1;
+});

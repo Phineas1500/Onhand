@@ -1,16 +1,6 @@
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
 
-const DEFAULT_SETTINGS = {
-	bridgeUrl: "ws://127.0.0.1:3210/ws",
-	token: "",
-	clientLabel: "",
-};
-
-const DEFAULT_ONHAND_API_PORT = 3211;
-const STATE_DEBOUNCE_MS = 200;
-const RECONNECT_DELAY_MS = 2000;
-const WEBSOCKET_KEEPALIVE_MS = 20_000;
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
@@ -26,14 +16,7 @@ const FONT_ASSET_PATHS = Object.freeze({
 	ioskeleyItalic: "fonts/IoskeleyMono-Italic.woff2",
 });
 
-let ws = null;
-let socketGeneration = 0;
-let reconnectTimer = null;
-let keepAliveTimer = null;
-let stateTimer = null;
-let settingsCache = null;
 let creatingOffscreenDocument = null;
-let connectBridgePromise = null;
 let onhandBrowserRuntime = null;
 const debuggerTaskChains = new Map();
 const tabCommandTaskChains = new Map();
@@ -97,38 +80,6 @@ async function getOnhandThemePreference() {
 	}
 }
 
-async function updateStatus(partial) {
-	await chrome.storage.local.set(partial);
-}
-
-async function loadSettings() {
-	const stored = await chrome.storage.local.get({
-		...DEFAULT_SETTINGS,
-		clientId: "",
-		connectionStatus: "disconnected",
-		lastError: "",
-		lastConnectedAt: 0,
-	});
-
-	if (!stored.clientId) {
-		stored.clientId = self.crypto.randomUUID();
-		await chrome.storage.local.set({ clientId: stored.clientId });
-	}
-
-	settingsCache = stored;
-	return stored;
-}
-
-async function getSettings() {
-	return settingsCache || (await loadSettings());
-}
-
-function clearReconnectTimer() {
-	if (!reconnectTimer) return;
-	clearTimeout(reconnectTimer);
-	reconnectTimer = null;
-}
-
 async function ensureOffscreenDocument() {
 	if (!chrome.offscreen?.createDocument) return;
 
@@ -158,130 +109,6 @@ async function ensureOffscreenDocument() {
 		});
 
 	await creatingOffscreenDocument;
-}
-
-function clearKeepAliveTimer() {
-	if (!keepAliveTimer) return;
-	clearInterval(keepAliveTimer);
-	keepAliveTimer = null;
-}
-
-function startKeepAlive() {
-	clearKeepAliveTimer();
-	keepAliveTimer = setInterval(() => {
-		if (!ws || ws.readyState !== WebSocket.OPEN) {
-			clearKeepAliveTimer();
-			return;
-		}
-		sendToBridge({
-			type: "keepalive",
-			clientId: settingsCache?.clientId || undefined,
-			sentAt: Date.now(),
-		});
-	}, WEBSOCKET_KEEPALIVE_MS);
-}
-
-function scheduleReconnect() {
-	clearReconnectTimer();
-	reconnectTimer = setTimeout(() => {
-		connectBridge().catch((error) => {
-			log("Reconnect failed", error);
-		});
-	}, RECONNECT_DELAY_MS);
-}
-
-function stopSocket() {
-	clearKeepAliveTimer();
-	if (!ws) return;
-	try {
-		ws.onopen = null;
-		ws.onclose = null;
-		ws.onerror = null;
-		ws.onmessage = null;
-		ws.close();
-	} catch {}
-	ws = null;
-}
-
-function sendToBridge(message) {
-	if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-	ws.send(JSON.stringify(message));
-	return true;
-}
-
-function bridgeWsToHttp(url) {
-	const parsed = new URL(String(url || DEFAULT_SETTINGS.bridgeUrl));
-	parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
-	return parsed;
-}
-
-function getOnhandApiBaseUrl(bridgeUrl) {
-	const parsed = bridgeWsToHttp(bridgeUrl);
-	parsed.port = String(DEFAULT_ONHAND_API_PORT);
-	parsed.pathname = "";
-	parsed.search = "";
-	parsed.hash = "";
-	return parsed.toString().replace(/\/$/, "");
-}
-
-function getBridgeHealthUrl(bridgeUrl) {
-	const parsed = bridgeWsToHttp(bridgeUrl);
-	parsed.pathname = "/health";
-	parsed.search = "";
-	parsed.hash = "";
-	return parsed.toString();
-}
-
-async function probeBridgeAvailability(settings) {
-	const response = await fetch(getBridgeHealthUrl(settings.bridgeUrl), {
-		headers: {
-			Authorization: `Bearer ${settings.token}`,
-		},
-	});
-
-	let data;
-	try {
-		data = await response.json();
-	} catch {
-		throw new Error("Bridge health check returned a non-JSON response.");
-	}
-
-	if (!response.ok || data?.ok === false) {
-		throw new Error(data?.error || `Bridge health check failed: ${response.status}`);
-	}
-
-	return data;
-}
-
-async function callOnhandApi(path, init = {}) {
-	const settings = await getSettings();
-	if (!settings.token) {
-		throw new Error("Set the bridge token in the extension options.");
-	}
-
-	const headers = new Headers(init.headers || {});
-	headers.set("Authorization", `Bearer ${settings.token}`);
-	if (init.body && !headers.has("Content-Type")) {
-		headers.set("Content-Type", "application/json");
-	}
-
-	const response = await fetch(`${getOnhandApiBaseUrl(settings.bridgeUrl)}${path}`, {
-		...init,
-		headers,
-	});
-
-	let data;
-	try {
-		data = await response.json();
-	} catch {
-		throw new Error(`Onhand UI API returned a non-JSON response for ${path}`);
-	}
-
-	if (!response.ok || data?.ok === false) {
-		throw new Error(data?.error || `Onhand UI API request failed: ${response.status}`);
-	}
-
-	return data;
 }
 
 async function getSidebarWindowStates() {
@@ -374,27 +201,6 @@ async function snapshotState() {
 		focusedWindowId: focusedWindow?.id ?? null,
 		windows: windows.map(simplifyWindow),
 	};
-}
-
-async function pushState(reason = "update") {
-	const settings = await getSettings();
-	if (!settings.clientId) return;
-	const state = await snapshotState();
-	sendToBridge({
-		type: "state",
-		clientId: settings.clientId,
-		reason,
-		state,
-	});
-}
-
-function scheduleStatePush(reason) {
-	if (stateTimer) clearTimeout(stateTimer);
-	stateTimer = setTimeout(() => {
-		pushState(reason).catch((error) => {
-			log("Failed to push state", error);
-		});
-	}, STATE_DEBOUNCE_MS);
 }
 
 async function focusTab(tabId) {
@@ -3035,7 +2841,6 @@ async function navigateBrowser(args = {}) {
 			windowId,
 		});
 		const finalTab = waitForLoad ? await waitForTabComplete(createdTab.id, timeoutMs) : await chrome.tabs.get(createdTab.id);
-		scheduleStatePush("navigate:new-tab");
 		return finalTab;
 	}
 
@@ -3045,7 +2850,6 @@ async function navigateBrowser(args = {}) {
 		active: args.active === true ? true : undefined,
 	});
 	const finalTab = waitForLoad ? await waitForTabComplete(updatedTab.id, timeoutMs) : await chrome.tabs.get(updatedTab.id);
-		scheduleStatePush("navigate:update-tab");
 	return finalTab;
 }
 
@@ -3561,10 +3365,8 @@ async function collectNetworkEvents(tabId, options = {}) {
 async function handleCommand(name, args = {}) {
 	switch (name) {
 		case "ping": {
-			const settings = await getSettings();
 			return {
 				pong: true,
-				clientId: settings.clientId,
 				extensionVersion: chrome.runtime.getManifest().version,
 				runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				state: await snapshotState(),
@@ -3577,7 +3379,6 @@ async function handleCommand(name, args = {}) {
 		case "activate_tab": {
 			const tab = await resolveTargetTab(args);
 			const focusedTab = await focusTab(tab.id);
-			scheduleStatePush("activate_tab");
 			return {
 				tab: simplifyTab(focusedTab),
 			};
@@ -3925,149 +3726,10 @@ async function handleCommand(name, args = {}) {
 	}
 }
 
-async function handleBridgeMessage(message) {
-	if (!message || typeof message !== "object") return;
-
-	if (message.type === "welcome") {
-		await updateStatus({
-			connectionStatus: "connected",
-			lastError: "",
-			lastConnectedAt: Date.now(),
-		});
-		return;
-	}
-
-	if (message.type !== "command") return;
-
-	try {
-		const result = await handleCommand(message.name, message.args || {});
-		sendToBridge({
-			type: "result",
-			id: message.id,
-			ok: true,
-			result,
-		});
-	} catch (error) {
-		sendToBridge({
-			type: "result",
-			id: message.id,
-			ok: false,
-			error: error?.message || String(error),
-		});
-	}
-}
-
-async function connectBridge(force = false) {
-	if (connectBridgePromise) {
-		return connectBridgePromise;
-	}
-
-	connectBridgePromise = (async () => {
-		ensureOffscreenDocument().catch((error) => {
-			log("Could not ensure offscreen heartbeat document", error?.message || String(error));
-		});
-
-		const settings = await loadSettings();
-		if (!settings.token) {
-			await updateStatus({
-				connectionStatus: "needs-configuration",
-				lastError: "Set the bridge token in the extension options.",
-			});
-			return;
-		}
-
-		if (!force && ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(ws.readyState)) {
-			return;
-		}
-
-		clearReconnectTimer();
-		stopSocket();
-
-		const generation = ++socketGeneration;
-		const bridgeUrl = new URL(settings.bridgeUrl);
-		bridgeUrl.searchParams.set("token", settings.token);
-		bridgeUrl.searchParams.set("clientId", settings.clientId);
-
-		await updateStatus({
-			connectionStatus: "connecting",
-			lastError: "",
-		});
-
-		try {
-			await probeBridgeAvailability(settings);
-		} catch (error) {
-			await updateStatus({
-				connectionStatus: "disconnected",
-				lastError: error?.message || "Bridge is not reachable yet.",
-			});
-			scheduleReconnect();
-			return;
-		}
-
-		ws = new WebSocket(bridgeUrl.toString());
-
-		ws.onopen = async () => {
-			if (generation !== socketGeneration) return;
-			log("Connected to bridge", bridgeUrl.toString());
-			startKeepAlive();
-			sendToBridge({
-				type: "hello",
-				clientId: settings.clientId,
-				clientLabel: String(settings.clientLabel || "").trim() || undefined,
-				browserName: navigator.userAgent,
-				extensionVersion: chrome.runtime.getManifest().version,
-				runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
-				connectedAt: Date.now(),
-			});
-			await updateStatus({
-				connectionStatus: "connected",
-				lastError: "",
-				lastConnectedAt: Date.now(),
-			});
-			await pushState("connect");
-		};
-
-		ws.onmessage = async (event) => {
-			if (generation !== socketGeneration) return;
-			try {
-				const message = JSON.parse(event.data);
-				await handleBridgeMessage(message);
-			} catch (error) {
-				log("Failed to handle bridge message", error);
-			}
-		};
-
-		ws.onerror = async () => {
-			if (generation !== socketGeneration) return;
-			await updateStatus({
-				connectionStatus: "error",
-				lastError: "WebSocket error while connecting to bridge.",
-			});
-		};
-
-		ws.onclose = async () => {
-			if (generation !== socketGeneration) return;
-			log("Disconnected from bridge");
-			await updateStatus({
-				connectionStatus: "disconnected",
-			});
-			scheduleReconnect();
-		};
-	})().finally(() => {
-		connectBridgePromise = null;
-	});
-
-	return connectBridgePromise;
-}
-
 chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== "local") return;
 	if (changes[ONHAND_THEME_STORAGE_KEY]) {
 		syncAnnotationThemeInOpenTabs().catch((error) => log("Annotation theme sync after settings change failed", error));
-	}
-	if (changes.bridgeUrl || changes.token || changes.clientLabel) {
-		settingsCache = null;
-		connectBridge(true).catch((error) => log("Reconnect after settings change failed", error));
 	}
 });
 
@@ -4089,14 +3751,7 @@ if (chrome.sidePanel?.onClosed?.addListener) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	(async () => {
-		if (message?.type === "reconnect") {
-			await connectBridge(true);
-			sendResponse({ ok: true });
-			return;
-		}
-
 		if (message?.type === "get-status") {
-			const settings = await loadSettings();
 			const runtime = getOnhandBrowserRuntime();
 			const browserRuntime = await runtime.getSettings().catch((error) => ({
 				error: error?.message || String(error),
@@ -4106,13 +3761,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				status: {
 					runtime: "browser-extension",
 					browserRuntime,
-					bridgeUrl: settings.bridgeUrl,
-					bridgeTokenConfigured: Boolean(settings.token),
-					clientId: settings.clientId,
-					clientLabel: settings.clientLabel,
-					connectionStatus: settings.connectionStatus,
-					lastError: settings.lastError,
-					lastConnectedAt: settings.lastConnectedAt,
+					extensionVersion: chrome.runtime.getManifest().version,
+					runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				},
 			});
 			return;
@@ -4281,7 +3931,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				prompt: message.prompt,
 				displayPrompt: message.displayPrompt,
 				attachments: Array.isArray(message.attachments) ? message.attachments : [],
-				source: message.source === "sidebar" ? "sidebar" : "desktop",
+				source: "sidebar",
 				learningMode: Boolean(message.learningMode),
 			});
 			sendResponse({
@@ -4365,22 +4015,6 @@ chrome.action.onClicked.addListener((tab) => {
 		}
 		await openSidebarForWindow(windowId);
 	})().catch((error) => log("Could not toggle Onhand sidebar from toolbar action", error?.message || String(error)));
-});
-
-for (const eventName of [
-	chrome.tabs.onCreated,
-	chrome.tabs.onRemoved,
-	chrome.tabs.onMoved,
-	chrome.tabs.onActivated,
-	chrome.windows.onCreated,
-	chrome.windows.onRemoved,
-	chrome.windows.onFocusChanged,
-]) {
-	eventName.addListener(() => scheduleStatePush("browser-event"));
-}
-
-chrome.tabs.onUpdated.addListener(() => {
-	scheduleStatePush("tabs.onUpdated");
 });
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
