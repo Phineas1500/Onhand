@@ -110,6 +110,12 @@ npm run test:browser-runtime-regressions
 npm run smoke:browser-runtime -- --ports
 ```
 
+For the repeatable Chrome/OAuth acceptance gate, see `docs/CHROME_ACCEPTANCE.md` or print the current prompt matrix with:
+
+```sh
+npm run acceptance:chrome -- --suite=all
+```
+
 ## Browser Runtime Tools
 
 - `browser_list_tabs`

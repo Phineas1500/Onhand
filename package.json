@@ -23,6 +23,7 @@
     "bridge:config": "node ./packages/browser-bridge/server.mjs config",
     "desktop": "electron ./apps/desktop/main.mjs",
     "inspect:latest-session": "node ./scripts/inspect-latest-session.mjs",
+    "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
     "tmux:start": "./scripts/onhand-tmux.sh start",
     "tmux:stop": "./scripts/onhand-tmux.sh stop",
     "tmux:attach": "./scripts/onhand-tmux.sh attach",
