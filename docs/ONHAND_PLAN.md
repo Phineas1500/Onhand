@@ -150,7 +150,7 @@ Onhand Browser Extension
 │   ├── side panel prompt surface
 │   ├── extension action / browser shortcut entrypoint
 │   ├── anchored note overlays
-│   ├── session browser
+│   ├── session menu controls
 │   └── replay viewer
 │
 ├── Agent Layer
@@ -484,10 +484,10 @@ Testing workflow reference:
 
 Current status:
 - The browser-only prompt path works: the side panel submits directly to an extension-hosted Pi agent, the agent calls direct browser tools, and sessions persist without desktop or bridge services.
-- There is still no session browser or replay UI.
+- The existing side-panel menu can reopen saved sessions and restore saved pages or replayable page actions. A fuller replay view with saved snapshots/screenshots is still missing.
 
 Most important next step:
-- improve session replay and browser artifact restore fidelity.
+- improve session replay fidelity and saved snapshot viewing beyond live-page restore.
 
 ## Phase 0 — Stabilize browser tools
 Goal: make browser-grounding primitives reliable.
@@ -611,11 +611,17 @@ Remaining:
 - [ ] decide how much past-session context should be surfaced directly in the side panel vs. a fuller replay UI
 
 ### 14.4 Add replay MVP
-- session list
-- open session
-- replay saved browser state from artifacts
-- render chat + annotations together
-- connect persisted browser sessions to the replay/session browser
+Started:
+- [x] runtime session list exposes replay metadata for tests and future UI
+- [x] open saved sessions from the existing side-panel menu
+- [x] restore saved browser state or replayable page actions from a selected session
+- [x] show menu-scoped restore result details for restored pages, annotations, notes, and failures
+
+Remaining:
+- [ ] decide whether replay metadata belongs in the hidden menu selector or only in a fuller replay view
+- [ ] render chat + annotations together in a fuller replay view
+- [ ] add saved snapshot/screenshot viewing instead of only restoring to live pages
+- [ ] improve restore fidelity for changed pages and missing tabs
 
 ### 14.5 Add visible-context tools — in progress
 Started:

@@ -93,6 +93,7 @@ This suite checks:
 - DOM collection
 - screenshots
 - persisted artifacts
+- menu-based session restore UI
 - no-cache network reload
 
 ### Real Page Matrix
@@ -113,6 +114,7 @@ A passing run has:
 
 - all prompted checklists marked PASS
 - the fixture artifact answer containing an `artifact_...` id and `Onhand Port Smoke Fixture`
+- the fixture session replay case showing restore metadata from the three-dot menu Restore pages action
 - the fixture network answer containing `GET 200 http://127.0.0.1:8765/`
 - the fixture JSON click answer containing `Network loaded: fixture-json`
 - no answer containing `[object Object]`
@@ -130,6 +132,7 @@ Chrome acceptance <run id>: PASS
 - fixture-interact: PASS
 - fixture-debug: PASS
 - fixture-artifact: PASS (<artifact id>)
+- fixture-session-replay: PASS
 - fixture-network: PASS (<collected URL/status>)
 - real-static-article: PASS
 - real-form-page: PASS

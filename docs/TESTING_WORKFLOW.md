@@ -43,6 +43,7 @@ The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. Th
 - Browser tools return readable results, not `[object Object]`.
 - Highlights and notes attach to the intended text and remain clickable from page actions.
 - Artifact save/list/restore paths work for browser-only artifacts.
+- The three-dot menu session selector still switches saved sessions, and its Restore pages action reports restored pages, annotations, notes, and failures.
 - Network collection with reload and `ignoreCache` captures the expected document or API request.
 - The session list, new session, switch session, rename, stop, learning mode, and speed mode controls still work.
 

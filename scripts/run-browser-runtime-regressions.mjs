@@ -28,14 +28,27 @@ function replaySmokeTab(overrides = {}) {
 	};
 }
 
-function createReplayHost() {
+function createReplayHost(options = {}) {
 	const calls = [];
+	const tabs = Array.isArray(options.tabs) && options.tabs.length ? options.tabs : [replaySmokeTab()];
+	const tabForArgs = (args = {}) => tabs.find((candidate) => candidate.id === Number(args.tabId)) || tabs[0] || replaySmokeTab();
 	return {
 		calls,
 		async runCommand(name, args = {}) {
 			calls.push({ name, args });
-			const tab = replaySmokeTab();
-			if (name === "activate_tab") return { tab: replaySmokeTab({ id: Number(args.tabId || tab.id) }) };
+			const tab = tabForArgs(args);
+			if (name === "navigate") {
+				return {
+					tab: {
+						id: Number(options.navigateTabId || 99),
+						windowId: Number(options.navigateWindowId || tab.windowId || 3),
+						active: true,
+						title: options.navigateTitle || "Restored target",
+						url: String(args.url || options.navigateUrl || "https://example.test/restored"),
+					},
+				};
+			}
+			if (name === "activate_tab") return { tab };
 			if (name === "clear_annotations") return { tab, cleared: true };
 			if (name === "highlight_text") {
 				return {
@@ -62,13 +75,13 @@ function createReplayHost() {
 			calls.push({ name: "snapshot_state", args: {} });
 			return {
 				windows: [
-					{
-						id: 3,
-						focused: true,
-						tabs: [replaySmokeTab()],
-					},
-				],
-			};
+				{
+					id: 3,
+					focused: true,
+					tabs,
+				},
+			],
+		};
 		},
 		log() {},
 		notifyAuthProgress() {},
@@ -222,6 +235,14 @@ async function assertSessionReplayRestore() {
 	assert.deepEqual(session.artifactIds, []);
 	assert.equal(session.pageActions.some((action) => action.key === "highlight:replay-highlight"), true);
 
+	const listed = await runtime.listSessions();
+	assert.equal(listed.sessions.length, 1);
+	assert.equal(listed.sessions[0].id, session.id);
+	assert.equal(listed.sessions[0].turnCount, 1);
+	assert.equal(listed.sessions[0].highlightCount, 1);
+	assert.equal(listed.sessions[0].replayableCount, 1);
+	assert.equal(listed.sessions[0].canRestore, true);
+
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession();
 	const restoreCalls = host.calls.slice(callCountBeforeRestore);
@@ -233,6 +254,118 @@ async function assertSessionReplayRestore() {
 		restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7 && call.args.text === "Alpha smoke content" && call.args.clearExisting === false),
 		true,
 	);
+}
+
+async function assertSessionReplayDoesNotTrustStaleTabIds() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				active: true,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+			replaySmokeTab({
+				id: 8,
+				active: false,
+				title: "Replay smoke page",
+				url: "https://example.test/replay-smoke",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:stale-tab",
+			type: "annotation",
+			tabId: 7,
+			title: "Replay smoke page",
+			url: "https://example.test/replay-smoke",
+			label: "Highlighted text",
+			citationText: "Alpha smoke content",
+			annotationId: "stale-tab",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].tabId, 8);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), true);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 8), true);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7), false);
+}
+
+async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+		],
+		navigateTabId: 9,
+		navigateTitle: "Fixture restored",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_empty_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_empty_restore: {
+				id: "artifact_empty_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "empty restore",
+				tab: {
+					id: 101,
+					windowId: 3,
+					title: "Fixture restored",
+					url: "http://127.0.0.1:8765/",
+				},
+				page: {
+					title: "Fixture restored",
+					url: "http://127.0.0.1:8765/",
+					scrollX: 0,
+					scrollY: 320,
+					annotations: [],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 0);
+	assert.equal(restoreCalls.some((call) => call.name === "navigate"), true);
+	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
 }
 
 async function assertFixtureResponses() {
@@ -256,6 +389,8 @@ async function assertFixtureResponses() {
 async function main() {
 	await assertSelectionFormatting();
 	await assertSessionReplayRestore();
+	await assertSessionReplayDoesNotTrustStaleTabIds();
+	await assertEmptyArtifactRestoreDoesNotRunPageTools();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");
 }

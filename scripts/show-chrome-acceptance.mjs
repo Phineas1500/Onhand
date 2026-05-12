@@ -88,6 +88,18 @@ const suites = {
 				],
 			},
 			{
+				id: "fixture-session-replay",
+				title: "Fixture menu session restore UI",
+				url: "http://127.0.0.1:8765/",
+				prompt:
+					'CHROME ACCEPTANCE FIXTURE SESSION REPLAY {runId}: Use browser_highlight_text for "Alpha smoke content" with clearExisting true, then use browser_show_note on that highlight with note "session replay check {runId}". Answer only: CHROME_ACCEPTANCE_SESSION_REPLAY highlighted_and_noted.',
+				expected: [
+					"answer is CHROME_ACCEPTANCE_SESSION_REPLAY highlighted_and_noted",
+					"the three-dot menu session selector includes the current session",
+					"clicking Restore pages in the menu shows a Restore result with at least one page result",
+				],
+			},
+			{
 				id: "fixture-network",
 				title: "Fixture no-cache network reload",
 				url: "http://127.0.0.1:8765/",
