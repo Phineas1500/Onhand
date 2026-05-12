@@ -31,7 +31,14 @@ function replaySmokeTab(overrides = {}) {
 function createReplayHost(options = {}) {
 	const calls = [];
 	const tabs = Array.isArray(options.tabs) && options.tabs.length ? options.tabs : [replaySmokeTab()];
-	const tabForArgs = (args = {}) => tabs.find((candidate) => candidate.id === Number(args.tabId)) || tabs[0] || replaySmokeTab();
+	const tabForArgs = (args = {}) => {
+		const explicitTab = tabs.find((candidate) => candidate.id === Number(args.tabId));
+		if (explicitTab) return explicitTab;
+		if (typeof args.windowId === "number") {
+			return tabs.find((candidate) => candidate.windowId === args.windowId && candidate.active) || tabs.find((candidate) => candidate.windowId === args.windowId) || tabs[0] || replaySmokeTab();
+		}
+		return tabs[0] || replaySmokeTab();
+	};
 	return {
 		calls,
 		async runCommand(name, args = {}) {
@@ -368,6 +375,50 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
 }
 
+async function assertSidePanelPromptTargetsOriginWindow() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				windowId: 3,
+				active: true,
+				title: "Stale fixture tab",
+				url: "http://127.0.0.1:8765/",
+			}),
+			replaySmokeTab({
+				id: 8,
+				windowId: 4,
+				active: true,
+				title: "Personal computer - Wikipedia",
+				url: "https://en.wikipedia.org/wiki/Personal_computer",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-ports-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "Port smoke all browser tools: exercise every browser_* port once and then reply exactly Browser runtime ports ok.",
+		displayPrompt: "side panel target window smoke",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 4,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete target-window regression");
+	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "highlight_text" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 3), false);
+	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 3), false);
+}
+
 async function assertFixtureResponses() {
 	const fixture = await startFixtureServer({ port: 0 });
 	try {
@@ -391,6 +442,7 @@ async function main() {
 	await assertSessionReplayRestore();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
+	await assertSidePanelPromptTargetsOriginWindow();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");
 }

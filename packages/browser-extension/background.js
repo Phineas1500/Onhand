@@ -219,8 +219,9 @@ async function resolveTargetTab(args = {}) {
 
 	const titleNeedle = String(args.titleContains || "").trim().toLowerCase();
 	const urlNeedle = String(args.urlContains || "").trim().toLowerCase();
+	const windowId = typeof args.windowId === "number" && Number.isFinite(args.windowId) ? args.windowId : undefined;
 	if (titleNeedle || urlNeedle) {
-		const tabs = await chrome.tabs.query({});
+		const tabs = await chrome.tabs.query(windowId === undefined ? {} : { windowId });
 		const matches = tabs.filter((tab) => {
 			const titleMatches = !titleNeedle || String(tab.title || "").toLowerCase().includes(titleNeedle);
 			const urlMatches = !urlNeedle || String(tab.url || "").toLowerCase().includes(urlNeedle);
@@ -232,7 +233,9 @@ async function resolveTargetTab(args = {}) {
 		return matches.find((tab) => tab.active) || matches[0];
 	}
 
-	const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+	const [tab] = await chrome.tabs.query(
+		windowId === undefined ? { active: true, lastFocusedWindow: true } : { active: true, windowId },
+	);
 	if (!tab?.id) {
 		throw new Error("No active tab found");
 	}
@@ -3865,7 +3868,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const state = runtimeState && typeof runtimeState === "object" ? { ...runtimeState } : runtimeState;
 			if (state && typeof state === "object") {
 				try {
-					const captured = await handleCommand("capture_state", {});
+					const captured = await handleCommand("capture_state", { windowId: message.windowId });
 					state.tab = captured?.tab || null;
 					state.page = captured?.page || null;
 				} catch (error) {
@@ -3965,6 +3968,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				attachments: Array.isArray(message.attachments) ? message.attachments : [],
 				source: "sidebar",
 				learningMode: Boolean(message.learningMode),
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});
 			sendResponse({
 				ok: true,
