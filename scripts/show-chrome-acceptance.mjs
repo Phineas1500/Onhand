@@ -81,14 +81,14 @@ const suites = {
 		cases: [
 			{
 				id: "real-static-article",
-				title: "Static docs/article grounding",
-				url: "https://developer.mozilla.org/en-US/docs/Web/HTML",
+				title: "Static article grounding",
+				url: "https://en.wikipedia.org/wiki/Personal_computer",
 				prompt:
-					'CHROME ACCEPTANCE STATIC ARTICLE {runId}: Use browser_get_visible_text, browser_extract_content, browser_get_viewport_headings, and browser_get_selection on this page. Answer only a compact PASS/FAIL checklist; include the page title, whether "HTML" appears, at least two visible headings, and do not include [object Object].',
+					'CHROME ACCEPTANCE STATIC ARTICLE {runId}: Use browser_get_visible_text, browser_extract_content, browser_get_viewport_headings, and browser_get_selection on this page. Answer only a compact PASS/FAIL checklist; include the page title, whether "personal computer" appears, at least two visible headings, and do not include [object Object].',
 				expected: [
 					"PASS for visible text, extract content, headings, and selection",
-					"page title identifies HTML",
-					"answer includes HTML",
+					"page title identifies Personal computer",
+					"answer includes personal computer",
 					"answer does not include [object Object]",
 				],
 			},

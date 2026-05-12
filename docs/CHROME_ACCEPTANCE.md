@@ -60,7 +60,7 @@ Submit the real-page prompts from `npm run acceptance:chrome -- --suite=real-pag
 
 The current real pages are:
 
-- `https://developer.mozilla.org/en-US/docs/Web/HTML` for static docs/article grounding.
+- `https://en.wikipedia.org/wiki/Personal_computer` for static article grounding.
 - `https://the-internet.herokuapp.com/login` for app-like form interaction without submitting data.
 - `https://react.dev/learn` for a client-routed documentation page with network reload.
 
