@@ -119079,8 +119079,12 @@ function flattenTabs(state) {
     }))
   );
 }
-function pickActiveTab(state) {
+function pickActiveTab(state, targetWindowId) {
   const tabs = flattenTabs(state);
+  if (typeof targetWindowId === "number") {
+    const targetWindowTab = tabs.find((tab) => tab.active && tab.windowId === targetWindowId);
+    if (targetWindowTab) return targetWindowTab;
+  }
   return tabs.find((tab) => tab.active && tab.windowFocused) || tabs.find((tab) => tab.active) || tabs[0] || null;
 }
 function isPrivilegedUrl(url2) {
@@ -119117,10 +119121,10 @@ function summarizeOpenTabs(state, activeTab, limit2 = 8) {
     url: tab.url || ""
   }));
 }
-async function renderBrowserContext(host) {
+async function renderBrowserContext(host, options = {}) {
   try {
     const state = await host.snapshotState();
-    const activeTab = pickActiveTab(state);
+    const activeTab = pickActiveTab(state, options.targetWindowId);
     const openTabs = summarizeOpenTabs(state, activeTab);
     let selection = null;
     let visible = null;
@@ -119410,7 +119414,7 @@ function streamOnhandFast(model, context, options = {}) {
   }
   return streamSimple(model, context, baseOptions);
 }
-function createTools(host, artifactHooks) {
+function createTools(host, artifactHooks, prepareCommandParams = (params) => params) {
   const commandTool = (name, label, description, parameters, commandName, options = {}) => ({
     name,
     label,
@@ -119418,7 +119422,7 @@ function createTools(host, artifactHooks) {
     parameters,
     executionMode: options.sequential ? "sequential" : void 0,
     async execute(_toolCallId, params) {
-      const result = await host.runCommand(commandName, params);
+      const result = await host.runCommand(commandName, prepareCommandParams(params));
       return {
         content: [{ type: "text", text: toolResultTextForModel(name, result) }],
         details: result
@@ -119530,7 +119534,7 @@ function createTools(host, artifactHooks) {
       parameters: CAPTURE_STATE_SCHEMA,
       executionMode: "sequential",
       async execute(_toolCallId, params) {
-        const result = await artifactHooks.captureArtifact(params);
+        const result = await artifactHooks.captureArtifact(prepareCommandParams(params));
         return {
           content: [{ type: "text", text: toolResultTextForModel("browser_capture_state", result) }],
           details: result
@@ -119558,7 +119562,7 @@ function createTools(host, artifactHooks) {
       parameters: RESTORE_ARTIFACT_SCHEMA,
       executionMode: "sequential",
       async execute(_toolCallId, params) {
-        const result = await artifactHooks.restoreArtifact(params);
+        const result = await artifactHooks.restoreArtifact(prepareCommandParams(params));
         return {
           content: [{ type: "text", text: toolResultTextForModel("browser_restore_state", result) }],
           details: result
@@ -120076,6 +120080,17 @@ function createOnhandBrowserRuntime(host) {
     }
     return result.apiKey;
   }
+  function withDefaultBrowserTarget(params = {}) {
+    const targetWindowId = activeRequest?.targetWindowId;
+    if (typeof targetWindowId !== "number") return params || {};
+    if (typeof params?.tabId === "number" || params?.titleContains || params?.urlContains || typeof params?.windowId === "number") {
+      return params || {};
+    }
+    return {
+      ...params || {},
+      windowId: targetWindowId
+    };
+  }
   async function getPublicSettings() {
     const store = await loadStore();
     return buildPublicSettings(store.settings);
@@ -120086,7 +120101,8 @@ function createOnhandBrowserRuntime(host) {
     return `artifact_${stamp}_${title}_${crypto.randomUUID().slice(0, 8)}`;
   }
   async function captureArtifact(params = {}) {
-    const capture = await host.runCommand("capture_state", params);
+    const captureParams = withDefaultBrowserTarget(params);
+    const capture = await host.runCommand("capture_state", captureParams);
     const tab = capture?.tab || null;
     const page = capture?.page || null;
     let persistedArtifact = null;
@@ -120095,7 +120111,7 @@ function createOnhandBrowserRuntime(host) {
       let screenshotDataUrl = null;
       if (params.includeHtml === true) {
         try {
-          const dom = await host.runCommand("get_dom", { ...params, tabId: tab?.id || params.tabId });
+          const dom = await host.runCommand("get_dom", { ...captureParams, tabId: tab?.id || captureParams.tabId });
           outerHTML = typeof dom?.outerHTML === "string" ? dom.outerHTML : null;
         } catch (error48) {
           host.log?.("artifact HTML capture failed", error48);
@@ -120103,7 +120119,7 @@ function createOnhandBrowserRuntime(host) {
       }
       if (params.includeScreenshot === true) {
         try {
-          const screenshot = await host.runCommand("capture_screenshot", { ...params, tabId: tab?.id || params.tabId });
+          const screenshot = await host.runCommand("capture_screenshot", { ...captureParams, tabId: tab?.id || captureParams.tabId });
           screenshotDataUrl = typeof screenshot?.dataUrl === "string" ? screenshot.dataUrl : null;
         } catch (error48) {
           host.log?.("artifact screenshot capture failed", error48);
@@ -120539,8 +120555,9 @@ function createOnhandBrowserRuntime(host) {
       const displayPrompt = String(request?.displayPrompt || prompt || "").trim() || "Attached files";
       const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
       const requestId = crypto.randomUUID();
+      const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
       const model = await getConfiguredModel(store.settings);
-      const browserContext = await renderBrowserContext(host);
+      const browserContext = await renderBrowserContext(host, { targetWindowId });
       const recentConversation = buildRecentConversationContext(session);
       const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
       const requestSettings = {
@@ -120548,7 +120565,7 @@ function createOnhandBrowserRuntime(host) {
         speedMode: normalizeSpeedMode(request?.speedMode ?? store.settings.speedMode)
       };
       const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
-      const tools = selectToolsForPrompt(createTools(host, artifactHooks), prompt, attachments, learningMode);
+      const tools = selectToolsForPrompt(createTools(host, artifactHooks, withDefaultBrowserTarget), prompt, attachments, learningMode);
       if (!session.name && session.messages.length === 0) {
         session.name = buildSessionTitleFromPrompt(displayPrompt);
       }
@@ -120561,7 +120578,8 @@ function createOnhandBrowserRuntime(host) {
         pageActions: [],
         artifactIds: [],
         createdAt: nowIso(),
-        aborted: false
+        aborted: false,
+        targetWindowId
       };
       await publishState({ status: `Starting Onhand (${reasoningProfile.mode})...` });
       activeAgent = new Agent({

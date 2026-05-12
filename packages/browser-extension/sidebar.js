@@ -2725,7 +2725,10 @@
 
 	async function requestState() {
 		if (!open) return;
-		const response = await chrome.runtime.sendMessage({ type: "sidebar:fetch-state" });
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:fetch-state",
+			windowId: await ensureCurrentWindowId(),
+		});
 		if (!response?.ok) {
 			renderState({
 				currentSession: { sessionName: "Onhand unavailable" },
@@ -2758,6 +2761,7 @@
 				learningMode,
 				speedMode,
 				source: "sidebar",
+				windowId: await ensureCurrentWindowId(),
 			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not submit prompt.");
