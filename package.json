@@ -16,23 +16,31 @@
     ]
   },
   "scripts": {
+    "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs",
+    "build:extension": "npm run build:browser-runtime",
     "bridge": "node ./packages/browser-bridge/server.mjs",
     "bridge:token": "node ./packages/browser-bridge/server.mjs token",
     "bridge:config": "node ./packages/browser-bridge/server.mjs config",
     "desktop": "electron ./apps/desktop/main.mjs",
     "inspect:latest-session": "node ./scripts/inspect-latest-session.mjs",
+    "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
     "tmux:start": "./scripts/onhand-tmux.sh start",
     "tmux:stop": "./scripts/onhand-tmux.sh stop",
     "tmux:attach": "./scripts/onhand-tmux.sh attach",
     "tmux:status": "./scripts/onhand-tmux.sh status",
+    "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
+    "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
     "test:browser-bridge": "node ./scripts/run-browser-bridge-regression.mjs",
     "test:note-layout": "node ./scripts/run-note-layout-regression.mjs",
     "test:session-restore": "node ./scripts/run-session-restore-regression.mjs",
+    "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs",
     "smoke:tier2": "node ./scripts/run-tier2-smoke.mjs"
   },
   "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.70.0",
+    "@mariozechner/pi-ai": "^0.70.0",
     "@mozilla/readability": "^0.6.0",
     "jsdom": "^26.1.0",
     "turndown": "^7.2.0",
@@ -47,6 +55,7 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "electron": "^41.1.0"
+    "electron": "^41.1.0",
+    "esbuild": "^0.28.0"
   }
 }

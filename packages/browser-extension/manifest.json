@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Onhand Browser Bridge",
+  "name": "Onhand",
   "version": "0.1.0",
-  "description": "Connects a Chromium browser to Onhand through a localhost bridge.",
+  "description": "Runs the Onhand contextual tutor directly inside the browser extension.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "storage", "debugger", "sidePanel", "offscreen", "scripting"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "http://*/*", "https://*/*"],
@@ -15,7 +15,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Onhand Browser Bridge"
+    "default_title": "Onhand"
   },
   "web_accessible_resources": [
     {
