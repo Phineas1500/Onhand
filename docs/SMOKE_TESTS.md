@@ -13,7 +13,8 @@ These are intentionally small and repeatable. They are not exhaustive QA plans.
 - Use `npm run smoke:browser-runtime -- --real-openai` only when `OPENAI_API_KEY` is available and a real provider call is the goal.
 - Reload the unpacked extension in Chrome after rebuilding `packages/browser-extension/onhand-runtime.bundle.js`.
 - Use the extension side panel for authoritative UX checks.
-- For manual Chrome model smokes, use OpenAI Codex sign-in and confirm the options status reports `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, and `authMode: "oauth"` before submitting from the side panel.
+- For manual Chrome model smokes, use OpenAI Codex sign-in and confirm the options status reports `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` before submitting from the side panel.
+- When validating through Codex, use Computer Use for extension UI and side-panel prompts. Use the Codex Chrome Extension backend only for normal page automation after extension UI is closed.
 
 ## Smoke 0: Browser Runtime
 

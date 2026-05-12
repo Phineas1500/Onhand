@@ -1,12 +1,43 @@
 const DEFAULT_RUN_ID = `chrome-acceptance-${new Date().toISOString().slice(0, 10)}`;
 
+const OPERATOR_NOTES = [
+	"Use Computer Use for chrome://extensions reloads, the Onhand options page, the Onhand side panel, and prompt submission.",
+	"Use the Codex Chrome Extension backend only for normal web page automation after extension UI is closed.",
+	"If Codex Chrome reports that another extension UI is open, close the side panel, extension options tab, or chrome://extensions tab and retry page automation.",
+	"Treat that Codex Chrome blocker as an automation conflict unless the Onhand side-panel prompt itself fails with an OAuth or model error.",
+];
+
 const suites = {
+	oauth: {
+		label: "OAuth prompt probe",
+		setup: [
+			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"close extension options, chrome://extensions, and any open Onhand side panel before using Codex Chrome page automation",
+			"open https://en.wikipedia.org/wiki/Personal_computer in Chrome",
+			"open the Onhand side panel with Computer Use",
+			"start a fresh Onhand side-panel session named OAuth validation {runId}",
+		],
+		cases: [
+			{
+				id: "oauth-wikipedia",
+				title: "OAuth side-panel prompt submission",
+				url: "https://en.wikipedia.org/wiki/Personal_computer",
+				prompt:
+					"OAUTH VALIDATION {runId}: Use browser_get_visible_text on this page. Answer only: OAUTH_VALIDATION_PASS <page title> contains_personal_computer=<yes/no>.",
+				expected: [
+					"answer starts with OAUTH_VALIDATION_PASS",
+					"page title identifies Personal computer",
+					"answer includes contains_personal_computer=yes",
+				],
+			},
+		],
+	},
 	fixture: {
 		label: "Local fixture matrix",
 		setup: [
-			"npm run build:browser-runtime",
-			"reload the unpacked Chrome extension from packages/browser-extension/",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, and aiModel gpt-5.5",
+			"npm run build:extension",
+			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
 			"npm run serve:fixture",
 			"open http://127.0.0.1:8765/ in Chrome",
 			"start a fresh Onhand side-panel session named Chrome acceptance {runId}",
@@ -74,7 +105,7 @@ const suites = {
 		label: "Real page matrix",
 		setup: [
 			"reload the unpacked Chrome extension if the runtime bundle changed",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, and aiModel gpt-5.5",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
 			"start a fresh Onhand side-panel session named Chrome real-page acceptance {runId}",
 			"run each case in Chrome, not Helium",
 		],
@@ -151,9 +182,9 @@ function parseArgs(argv) {
 }
 
 function selectedSuites(name) {
-	if (name === "all") return [suites.fixture, suites["real-pages"]];
+	if (name === "all") return [suites.oauth, suites.fixture, suites["real-pages"]];
 	if (suites[name]) return [suites[name]];
-	throw new Error(`Unknown suite: ${name}. Expected all, fixture, or real-pages.`);
+	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, or real-pages.`);
 }
 
 function hydrate(value, runId) {
@@ -163,6 +194,7 @@ function hydrate(value, runId) {
 function buildPlan(args) {
 	return {
 		runId: args.runId,
+		operatorNotes: OPERATOR_NOTES,
 		suites: selectedSuites(args.suite).map((suite) => ({
 			...suite,
 			setup: suite.setup.map((line) => hydrate(line, args.runId)),
@@ -176,13 +208,16 @@ function buildPlan(args) {
 }
 
 function printHelp() {
-	console.log("Usage: npm run acceptance:chrome -- [--suite=all|fixture|real-pages] [--run-id=<id>] [--json]");
+	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|real-pages] [--run-id=<id>] [--json]");
 }
 
 function printPlan(plan) {
 	console.log(`# Chrome Acceptance Gate: ${plan.runId}`);
 	console.log("");
 	console.log("Use Chrome with the Codex Chrome Extension and OpenAI Codex OAuth. Record PASS/FAIL results in the PR or handoff.");
+	console.log("");
+	console.log("Operator notes:");
+	for (const line of plan.operatorNotes) console.log(`- ${line}`);
 	for (const suite of plan.suites) {
 		console.log("");
 		console.log(`## ${suite.label}`);
