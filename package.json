@@ -17,6 +17,7 @@
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
+    "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs"

@@ -280,6 +280,24 @@ async function assertConstitutionPromptContract() {
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
 }
 
+async function assertReplayHighlightCandidateGeneration() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { getReplayHighlightCandidates } = __browserRuntimeTest || {};
+	assert.equal(typeof getReplayHighlightCandidates, "function", "browser runtime replay candidate export is missing");
+
+	const promiseCandidates = getReplayHighlightCandidates(
+		"The Promise object represents the eventual completion (or failure) of an asynchronous operation and its resulting value.[1]",
+	);
+	assert.equal(
+		promiseCandidates.includes("The Promise object represents the eventual completion (or failure) of an asynchronous operation and its resulting value."),
+		true,
+	);
+	assert.equal(promiseCandidates.some((candidate) => /\[1\]/.test(candidate)), false);
+
+	const connectorCandidates = getReplayHighlightCandidates("that would give us better steady state proposals than P(W)?");
+	assert.equal(connectorCandidates.includes("better steady state proposals than P(W)?"), true);
+}
+
 async function assertSessionBoundaryClearsActivePageAnnotations() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -663,6 +681,7 @@ async function main() {
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertConstitutionPromptContract();
+	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertSessionReplayRestore();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
