@@ -1278,7 +1278,7 @@ const createPageToolkit = (options = {}) => {
 			  white-space: normal !important;
 			  overflow-wrap: anywhere !important;
 			  vertical-align: top !important;
-			  clear: both !important;
+			  clear: none !important;
 			}
 
 			@media (prefers-color-scheme: dark) {

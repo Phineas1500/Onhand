@@ -77,6 +77,23 @@ async function assertNoHighlight({ name, html, query }) {
 	);
 }
 
+async function assertNoteDoesNotClearFloats() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<aside style="float:right;width:320px;height:520px">Floating page media</aside>
+			<p>A Markov chain or Markov process is a stochastic process describing a sequence of possible events.</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("Markov chain or Markov process", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "The note should stay visually attached to the highlighted paragraph.", {
+		scrollIntoView: false,
+	});
+	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
+	assert.ok(note, "note card was not inserted");
+	assert.equal(dom.window.getComputedStyle(note).clear, "none", "note cards must not clear floated page media");
+	assert.equal(note.previousElementSibling?.tagName, "P", "note should be inserted directly after the highlighted paragraph");
+}
+
 async function main() {
 	await assertHighlight({
 		name: "curly quote exact projection",
@@ -106,6 +123,8 @@ async function main() {
 		html: `<main><p>Markov chain Monte Carlo is used for sampling from complex probability distributions.</p></main>`,
 		query: "Hamiltonian Monte Carlo specifically",
 	});
+
+	await assertNoteDoesNotClearFloats();
 
 	console.log("Page toolkit regressions: PASS");
 }
