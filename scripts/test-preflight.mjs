@@ -17,6 +17,7 @@ const REQUIRED_FILES = [
 	"docs/ONHAND_CONSTITUTION.md",
 	"scripts/build-browser-runtime.mjs",
 	"scripts/run-browser-runtime-regressions.mjs",
+	"scripts/run-page-toolkit-regressions.mjs",
 	"scripts/run-sidebar-regressions.mjs",
 	"scripts/run-browser-runtime-smoke.mjs",
 	"scripts/show-chrome-acceptance.mjs",

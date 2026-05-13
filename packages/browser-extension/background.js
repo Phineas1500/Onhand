@@ -1278,7 +1278,7 @@ const createPageToolkit = (options = {}) => {
 			  white-space: normal !important;
 			  overflow-wrap: anywhere !important;
 			  vertical-align: top !important;
-			  clear: both !important;
+			  clear: none !important;
 			}
 
 			@media (prefers-color-scheme: dark) {
@@ -1645,8 +1645,21 @@ const createPageToolkit = (options = {}) => {
 			"ᶻ": "z",
 			"√": "sqrt",
 			"−": "-",
+			"‐": "-",
+			"‑": "-",
+			"‒": "-",
 			"–": "-",
 			"—": "-",
+			"―": "-",
+			"“": '"',
+			"”": '"',
+			"„": '"',
+			"‟": '"',
+			"‘": "'",
+			"’": "'",
+			"‚": "'",
+			"‛": "'",
+			"…": "...",
 			"×": "x",
 			"∗": "*",
 		}),
@@ -1666,18 +1679,18 @@ const createPageToolkit = (options = {}) => {
 	const buildSearchProjection = (text, positions = []) => {
 		let searchText = "";
 		const searchPositions = [];
-		let pendingSpace = null;
+		let pendingSpace;
 
 		const appendSearchCharacter = (character, position) => {
 			if (!character) return;
 			if (/\s/.test(character)) {
-				if (searchText && !pendingSpace) pendingSpace = position;
+				if (searchText && pendingSpace === undefined) pendingSpace = position || null;
 				return;
 			}
-			if (pendingSpace) {
+			if (pendingSpace !== undefined) {
 				searchText += " ";
 				searchPositions.push(pendingSpace);
-				pendingSpace = null;
+				pendingSpace = undefined;
 			}
 			searchText += character.toLowerCase();
 			searchPositions.push(position);
@@ -1741,7 +1754,7 @@ const createPageToolkit = (options = {}) => {
 		const candidates = [];
 		const querySearch = normalizeHighlightSearchText(rawQuery);
 		const queryCompact = compactHighlightSearchText(rawQuery);
-		const useCompact = isMathLikeHighlightQuery(rawQuery) && queryCompact.length >= 3;
+		const useCompact = queryCompact.length >= (isMathLikeHighlightQuery(rawQuery) ? 3 : 12);
 		const queryTokens = tokenizeApproximateQuery(rawQuery);
 		const minimumOverlap = Math.min(2, queryTokens.length);
 		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
@@ -1826,11 +1839,71 @@ const createPageToolkit = (options = {}) => {
 		return ranges.filter(([segmentStart, segmentEnd]) => segmentEnd - segmentStart >= 12);
 	};
 
+	const buildSearchTokenRanges = (mappedText) => {
+		const positionToTextIndex = new Map();
+		(mappedText.positions || []).forEach((position, index) => {
+			if (position && !positionToTextIndex.has(position)) positionToTextIndex.set(position, index);
+		});
+		const tokens = [];
+		const pattern = /[a-z0-9]{2,}/g;
+		let match;
+		while ((match = pattern.exec(mappedText.searchText || ""))) {
+			const token = match[0];
+			const startPosition = mappedText.searchPositions?.[match.index];
+			const endPosition = mappedText.searchPositions?.[pattern.lastIndex - 1];
+			const startIndex = positionToTextIndex.get(startPosition);
+			const endIndex = positionToTextIndex.get(endPosition);
+			if (!Number.isFinite(startIndex) || !Number.isFinite(endIndex)) continue;
+			tokens.push({
+				token,
+				startIndex,
+				endIndex: endIndex + 1,
+			});
+		}
+		return tokens;
+	};
+
+	const findBestTokenWindowHighlightRange = (mappedText, query) => {
+		const queryTokens = tokenizeApproximateQuery(query);
+		if (queryTokens.length < 2) return null;
+		const queryTokenSet = new Set(queryTokens);
+		const primaryToken = queryTokens[0] || null;
+		const pageTokens = buildSearchTokenRanges(mappedText).filter((entry) => entry.token.length >= 2);
+		if (!pageTokens.length) return null;
+
+		const maxWindowTokens = Math.min(32, Math.max(8, queryTokens.length + 10));
+		let best = null;
+		for (let startTokenIndex = 0; startTokenIndex < pageTokens.length; startTokenIndex += 1) {
+			const matched = new Set();
+			for (let endTokenIndex = startTokenIndex; endTokenIndex < pageTokens.length && endTokenIndex < startTokenIndex + maxWindowTokens; endTokenIndex += 1) {
+				const token = pageTokens[endTokenIndex].token;
+				if (queryTokenSet.has(token)) matched.add(token);
+				if (!matched.size) continue;
+				const windowTokenCount = endTokenIndex - startTokenIndex + 1;
+				const overlap = matched.size;
+				const coverage = overlap / queryTokens.length;
+				const density = overlap / Math.max(windowTokenCount, 1);
+				const hasPrimary = Boolean(primaryToken && matched.has(primaryToken));
+				if (overlap < Math.min(3, queryTokens.length) && coverage < 0.7) continue;
+				if (!hasPrimary && coverage < 0.75) continue;
+				const startIndex = pageTokens[startTokenIndex].startIndex;
+				const endIndex = pageTokens[endTokenIndex].endIndex;
+				const text = mappedText.text.slice(startIndex, endIndex).trim();
+				if (text.length < 12) continue;
+				const score = overlap * 150 + coverage * 80 + density * 45 + (hasPrimary ? 25 : 0) - text.length * 0.015;
+				if (!best || score > best.score) {
+					best = { startIndex, endIndex, overlap, coverage, score, text };
+				}
+			}
+		}
+		return best;
+	};
+
 	const findBestApproximateHighlightRange = (mappedText, query) => {
 		const queryTokens = tokenizeApproximateQuery(query);
 		if (queryTokens.length < 2) return null;
 		const tokenSet = new Set(queryTokens);
-		let best = null;
+		let best = findBestTokenWindowHighlightRange(mappedText, query);
 		const primaryToken = queryTokens[0] || null;
 
 		for (const [startIndex, endIndex] of buildSegmentRanges(mappedText)) {
@@ -2042,7 +2115,8 @@ const createPageToolkit = (options = {}) => {
 		if (!normalizedQuery) throw new Error("highlightText requires a non-empty query");
 		const searchQuery = normalizeHighlightSearchText(rawQuery);
 		const compactQuery = compactHighlightSearchText(rawQuery);
-		const useCompactQuery = isMathLikeHighlightQuery(rawQuery) && compactQuery.length >= 3;
+		const useCompactQuery = compactQuery.length >= (isMathLikeHighlightQuery(rawQuery) ? 3 : 12);
+		const compactFallback = isMathLikeHighlightQuery(rawQuery) ? "compact-math-text" : "compact-text";
 
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting !== false;
@@ -2075,15 +2149,13 @@ const createPageToolkit = (options = {}) => {
 								text: mappedText.compactText,
 								positions: mappedText.compactPositions,
 								query: compactQuery,
-								fallback: "compact-math-text",
+								fallback: compactFallback,
 							},
 						]
 					: []),
 			];
-			let attemptedExactMatch = false;
 			for (const mode of exactModes) {
 				if (!mode.query || !mode.text.includes(mode.query)) continue;
-				attemptedExactMatch = true;
 				let searchFrom = 0;
 				while (searchFrom <= mode.text.length) {
 					const foundAt = mode.text.indexOf(mode.query, searchFrom);
@@ -2126,7 +2198,6 @@ const createPageToolkit = (options = {}) => {
 					searchFrom = foundAt + Math.max(mode.query.length, 1);
 				}
 			}
-			if (attemptedExactMatch) continue;
 
 			const approximate = findBestApproximateHighlightRange(mappedText, rawQuery);
 			if (!approximate) continue;

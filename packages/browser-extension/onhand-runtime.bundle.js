@@ -118847,6 +118847,50 @@ function collectSessionPageActions(session) {
     return true;
   });
 }
+function stripReplayCitationMarkers(value) {
+  return compactActionText(value).replace(/\s*(?:\[\d+(?:\s*,\s*\d+)*\])+\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+function addReplayHighlightCandidate(candidates, value) {
+  const text = stripReplayCitationMarkers(value);
+  if (text.length < 12) return;
+  if (!candidates.includes(text)) candidates.push(text);
+}
+function trimReplayConnector(value) {
+  return String(value || "").replace(/^(?:but|and|so|however|therefore|then)[,\s]+/i, "").replace(/^(?:that|this|it|which)\s+(?:would|could|can|might|should)\s+(?:give|yield|provide|produce|lead to|result in)\s+(?:us\s+)?/i, "").replace(/^(?:can|could|would|should)\s+we\s+/i, "").trim();
+}
+function getReplayHighlightCandidates(value) {
+  const text = compactActionText(value);
+  const candidates = [];
+  addReplayHighlightCandidate(candidates, text);
+  addReplayHighlightCandidate(candidates, stripReplayCitationMarkers(text));
+  for (const part of text.split(/\s*(?:\.{3}|…)\s*/).filter(Boolean)) {
+    addReplayHighlightCandidate(candidates, part);
+    addReplayHighlightCandidate(candidates, trimReplayConnector(part));
+  }
+  for (const part of text.split(/(?<=[.!?;:])\s+/).filter(Boolean)) {
+    addReplayHighlightCandidate(candidates, part);
+    addReplayHighlightCandidate(candidates, trimReplayConnector(part));
+  }
+  for (const part of stripReplayCitationMarkers(text).split(/\s*(?:\.{3}|…|[.!?;:])\s*/).filter(Boolean)) {
+    addReplayHighlightCandidate(candidates, part);
+    addReplayHighlightCandidate(candidates, trimReplayConnector(part));
+  }
+  const words = text.split(/\s+/).filter(Boolean);
+  for (const count of [18, 14, 10]) {
+    if (words.length > count) {
+      addReplayHighlightCandidate(candidates, words.slice(0, count).join(" "));
+      addReplayHighlightCandidate(candidates, trimReplayConnector(words.slice(0, count).join(" ")));
+      addReplayHighlightCandidate(candidates, words.slice(-count).join(" "));
+    }
+  }
+  for (const count of [8, 6, 5]) {
+    if (words.length < count) continue;
+    for (let index = 0; index <= words.length - count; index += 1) {
+      addReplayHighlightCandidate(candidates, words.slice(index, index + count).join(" "));
+    }
+  }
+  return candidates.slice(0, 18);
+}
 function emptyUsage() {
   return {
     input: 0,
@@ -119423,6 +119467,7 @@ var __browserRuntimeTest = {
   buildReplayAnnotationsFromPageActions,
   classifyPromptForReasoning,
   formatToolResultForModel: toolResultTextForModel,
+  getReplayHighlightCandidates,
   getPublicActivities,
   getSelectionText,
   getPromptContractForTest() {
@@ -120357,42 +120402,6 @@ function createOnhandBrowserRuntime(host) {
         }))
       }
     };
-  }
-  function addReplayHighlightCandidate(candidates, value) {
-    const text = compactActionText(value);
-    if (text.length < 12) return;
-    if (!candidates.includes(text)) candidates.push(text);
-  }
-  function trimReplayConnector(value) {
-    return String(value || "").replace(/^(?:but|and|so|however|therefore|then)[,\s]+/i, "").replace(/^(?:that|this|it|which)\s+(?:would|could|can|might|should)\s+(?:give|yield|provide|produce|lead to|result in)\s+(?:us\s+)?/i, "").replace(/^(?:can|could|would|should)\s+we\s+/i, "").trim();
-  }
-  function getReplayHighlightCandidates(value) {
-    const text = compactActionText(value);
-    const candidates = [];
-    addReplayHighlightCandidate(candidates, text);
-    for (const part of text.split(/\s*(?:\.{3}|…)\s*/).filter(Boolean)) {
-      addReplayHighlightCandidate(candidates, part);
-      addReplayHighlightCandidate(candidates, trimReplayConnector(part));
-    }
-    for (const part of text.split(/(?<=[.!?;:])\s+/).filter(Boolean)) {
-      addReplayHighlightCandidate(candidates, part);
-      addReplayHighlightCandidate(candidates, trimReplayConnector(part));
-    }
-    const words = text.split(/\s+/).filter(Boolean);
-    for (const count of [18, 14, 10]) {
-      if (words.length > count) {
-        addReplayHighlightCandidate(candidates, words.slice(0, count).join(" "));
-        addReplayHighlightCandidate(candidates, trimReplayConnector(words.slice(0, count).join(" ")));
-        addReplayHighlightCandidate(candidates, words.slice(-count).join(" "));
-      }
-    }
-    for (const count of [8, 6, 5]) {
-      if (words.length < count) continue;
-      for (let index = 0; index <= words.length - count; index += 1) {
-        addReplayHighlightCandidate(candidates, words.slice(index, index + count).join(" "));
-      }
-    }
-    return candidates.slice(0, 18);
   }
   async function highlightTextWithReplayCandidates(tabId, text, options = {}) {
     let lastError = null;
