@@ -175,28 +175,35 @@ let smokeModelRegistration: ReturnType<typeof registerFauxProvider> | null = nul
 const ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor running inside a Chromium extension side panel.
 
 Onhand's constitution:
-- The page is the canvas. The substance of your help belongs in anchored highlights and short marginal notes on the user's material; chat is secondary.
+- The page is the canvas. Do the page work before the chat answer: anchored highlights and short marginal notes carry the substance; chat is secondary.
 - Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
 - Be concise by default and deep when warranted. A focused pass means one useful anchor and a short synthesis, not ungrounded prose. Thorough means covering the key relevant points, not annotating everything nearby.
 - The session is the artifact. Highlights, notes, citations, and restoreable page state are more important than a transcript.
-- Stay unobtrusive. Notes should feel like marginalia: short, local, and placed near what they explain.
+- Stay unobtrusive. Notes should feel like marginalia: short, local, placed near what they explain, and useful when replayed later.
 
 Default answer mode:
-- For questions about page material, first ground the answer in exact visible/open-page text: highlight the key passage(s), add a short orienting note when useful, and scroll the first relevant anchor into view.
+- For questions about page material, first ground the answer in exact visible/open-page text: highlight the key passage(s), add a short orienting note only when it helps the user read or remember the passage, and scroll the first relevant anchor into view.
 - If captured context already contains the needed text, use it to choose the anchor and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
-- Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points.
+- Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
+- Do not add notes that merely paraphrase the highlight. A note should name the role of the passage, explain a hard step, or leave useful marginalia for session replay.
+- Only successful highlight/note tool results count as anchors. If a highlight attempt fails, retry with a smaller exact visible span or omit/qualify that claim in chat.
 - For multi-part, comparative, "show evidence", or confused follow-up questions, anchor each distinct key point, but keep each note and chat paragraph short. Stop once the answer is supported.
+- For roadmap, list, or navigation questions, every named step or item in chat must be anchored by a highlight/note. Do not rely on a heading-only highlight if the answer depends on items beneath it. Highlight the sentence, list, or linked items that actually support the claimed path; if a reliable anchor is not available, answer only the anchored part and say the rest is visible but not anchored.
+- For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
+- If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
+- Chat should be a brief guide to what the annotations show: one to three short paragraphs for ordinary questions, with citations, not a detached summary of the page.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
 
-const ONHAND_LEARNING_MODE_APPEND = `Learning mode is enabled for this request.
+const ONHAND_LEARNING_MODE_APPEND = `Learning is enabled for this request.
 
-Learning mode hardens the teaching stance:
+Learning uses a tutoring stance:
 - For conceptual questions, do not dump the full answer first. Anchor the relevant passage/equation and ask one short page-anchored question that helps the user reason from it.
+- Stay fast: the first move should be a useful page anchor or anchored prompt, not a long preamble.
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
 - Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be anchored to a highlight or note, not floated in chat.
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
@@ -408,6 +415,71 @@ function truncate(value: unknown, maxChars = 1200) {
 	const text = String(value || "").replace(/\s+/g, " ").trim();
 	if (text.length <= maxChars) return text;
 	return `${text.slice(0, maxChars - 1)}...`;
+}
+
+function truncateStructuredText(value: unknown, maxChars = 1200) {
+	const text = String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/[ \t\f\v]+/g, " ")
+		.replace(/\n[ \t]+/g, "\n")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+	if (text.length <= maxChars) return text;
+	return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function visibleBlockPrefix(block: any) {
+	const tag = String(block?.tag || "").toLowerCase();
+	if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag.slice(1)) || 2)} `;
+	if (tag === "li") return "- ";
+	if (tag === "blockquote") return "> ";
+	return "";
+}
+
+function formatVisibleTextForModel(visible: any, maxChars = VISIBLE_TEXT_TOOL_MAX_CHARS) {
+	const blocks = Array.isArray(visible?.blocks) ? visible.blocks : [];
+	if (blocks.length) {
+		const lines = blocks
+			.map((block) => {
+				const text = String(block?.text || "").replace(/\s+/g, " ").trim();
+				if (!text) return "";
+				return `${visibleBlockPrefix(block)}${text}`;
+			})
+			.filter(Boolean);
+		if (lines.length) return truncateStructuredText(lines.join("\n"), maxChars);
+	}
+	return truncateStructuredText(visible?.text || "", maxChars);
+}
+
+function normalizeHighlightRetryCandidate(value: unknown) {
+	return String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, "")
+		.replace(/^\s{0,3}#{1,6}\s+/, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function buildHighlightRetryCandidates(value: unknown) {
+	const raw = String(value || "").trim();
+	if (!raw) return [];
+	const hasListShape = /(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+\S/u.test(raw);
+	const hasMultipleLines = raw.split(/\r?\n/).filter((line) => line.trim()).length > 1;
+	if (!hasListShape && !hasMultipleLines) return [];
+
+	const candidates: string[] = [];
+	const addCandidate = (candidate: unknown) => {
+		const normalized = normalizeHighlightRetryCandidate(candidate);
+		if (normalized.length < 16 || normalized.length > 260) return;
+		if (normalized.toLowerCase() === normalizeHighlightRetryCandidate(raw).toLowerCase()) return;
+		if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
+	};
+
+	for (const line of raw.split(/\r?\n/)) addCandidate(line);
+	for (const part of raw.split(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/u)) addCandidate(part);
+
+	return candidates.slice(0, 8);
 }
 
 function getSelectionText(selection: unknown) {
@@ -1317,10 +1389,10 @@ async function renderBrowserContext(host: RuntimeHost, options: { targetWindowId
 		}
 		const selectionText = getSelectionText(selection?.selection);
 		if (selectionText) lines.push(`Selected text: ${JSON.stringify(truncate(selectionText, 800))}`);
-		const visibleText = visible?.visible?.text || visible?.text || "";
+		const visibleText = formatVisibleTextForModel(visible?.visible || visible, BROWSER_CONTEXT_MAX_CHARS);
 		if (visibleText) {
 			lines.push("Visible text snapshot:");
-			lines.push(truncate(visibleText, BROWSER_CONTEXT_MAX_CHARS));
+			lines.push(visibleText);
 		}
 		if (warning) lines.push(`Warning: ${warning}`);
 		return lines.join("\n") || "Browser context was unavailable.";
@@ -1413,10 +1485,16 @@ function buildLauncherPrompt(
 		"",
 		"Use this captured context as your starting point. Prefer current and already-open pages over navigation.",
 		"Constitution runtime contract:",
+		"- Do page work before chat. Highlight, note only when useful, and scroll the first anchor before giving the synthesis.",
 		"- Page-material claims need anchors. Use exact highlights and short notes for the major claims unless the user explicitly asked for no page changes.",
-		"- Grounding budget: simple questions get one strong highlight and at most one note, then an answer. Do not annotate nearby examples just because they are related.",
+		"- Grounding budget: simple questions get one strong highlight and at most one note, then an answer. Do not annotate nearby examples just because they are related. Roadmap/list/navigation questions are not simple when the answer names multiple items.",
+		"- Notes are not mini-summaries. Add one only when it explains how to read the highlighted passage or leaves useful marginalia for replay.",
+		"- Failed highlight attempts are not anchors. Retry with a smaller exact visible span, or leave that claim out of the answer.",
 		"- If the captured context already includes the needed text, use it to choose a short exact highlight and avoid extra read tools.",
 		"- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, anchor each key point, but keep the answer concise.",
+		"- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only anchor. Every named step/item in chat needs a matching anchor, or it should be omitted/qualified as unanchored.",
+		"- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
+		"- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
 		"- Do not call browser_extract_content more than once unless the first result is unusable.",
 		"- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
 		...(toolInventory ? ["", "Available browser tools for this request:", toolInventory] : []),
@@ -1475,15 +1553,15 @@ function toolResultTextForModel(toolName: string, result: any) {
 			return `Navigated to: ${formatCompactTab(tab)}`;
 		case "browser_get_visible_text": {
 			const visible = details.visible || {};
-			const text = String(visible.text || "").trim();
+			const text = formatVisibleTextForModel(visible, VISIBLE_TEXT_TOOL_MAX_CHARS);
 			const heading = `Visible text from ${formatCompactTab(tab || visible)}:`;
-			return text ? `${heading}\n${truncate(text, VISIBLE_TEXT_TOOL_MAX_CHARS)}` : `${heading}\n(No visible text returned.)`;
+			return text ? `${heading}\n${text}` : `${heading}\n(No visible text returned.)`;
 		}
 		case "browser_extract_content": {
 			const content = details.content || details.extracted || {};
 			const text = String(content.markdown || content.text || content || "").trim();
 			const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
-			return text ? `${heading}\n${truncate(text, 8000)}` : `${heading}\n(No readable content returned.)`;
+			return text ? `${heading}\n${truncateStructuredText(text, 8000)}` : `${heading}\n(No readable content returned.)`;
 		}
 		case "browser_get_selection": {
 			const selectionText = getSelectionText(details.selection);
@@ -1506,7 +1584,10 @@ function toolResultTextForModel(toolName: string, result: any) {
 		case "browser_highlight_text": {
 			const annotationId = details.annotation?.annotationId || "(unknown annotation)";
 			const matchedText = details.annotation?.matchedText || details.annotation?.text || "the requested text";
-			return `Highlighted ${JSON.stringify(truncate(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}`;
+			const fallback = details.highlightRetry?.originalText
+				? " Original highlight text did not match as one visible span; only this smaller item is anchored."
+				: "";
+			return `Highlighted ${JSON.stringify(truncate(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}`;
 		}
 		case "browser_show_note": {
 			const annotationId = details.note?.annotationId || details.annotation?.annotationId || "(unknown annotation)";
@@ -1575,8 +1656,10 @@ function toolResultTextForModel(toolName: string, result: any) {
 }
 
 export const __browserRuntimeTest = {
+	buildHighlightRetryCandidates,
 	buildReplayAnnotationsFromPageActions,
 	classifyPromptForReasoning,
+	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
 	getReplayHighlightCandidates,
 	getPublicActivities,
@@ -1644,7 +1727,33 @@ function createTools(host: RuntimeHost, artifactHooks: RuntimeArtifactHooks, pre
 		parameters,
 		executionMode: options.sequential ? "sequential" : undefined,
 		async execute(_toolCallId, params) {
-			const result = await host.runCommand(commandName, prepareCommandParams(params) as Record<string, unknown>);
+			let result: any;
+			try {
+				result = await host.runCommand(commandName, prepareCommandParams(params) as Record<string, unknown>);
+			} catch (error) {
+				if (commandName !== "highlight_text") throw error;
+				const candidates = buildHighlightRetryCandidates((params as any)?.text);
+				let lastError = error;
+				for (const candidate of candidates) {
+					try {
+						result = await host.runCommand(
+							commandName,
+							prepareCommandParams({ ...(params as any), text: candidate }) as Record<string, unknown>,
+						);
+						result = {
+							...result,
+							highlightRetry: {
+								originalText: String((params as any)?.text || ""),
+								usedText: candidate,
+							},
+						};
+						break;
+					} catch (candidateError) {
+						lastError = candidateError;
+					}
+				}
+				if (!result) throw lastError;
+			}
 			return {
 				content: [{ type: "text", text: toolResultTextForModel(name, result) }],
 				details: result,
@@ -1721,7 +1830,7 @@ function createTools(host: RuntimeHost, artifactHooks: RuntimeArtifactHooks, pre
 		commandTool(
 			"browser_highlight_text",
 			"Browser Highlight Text",
-			"Create an anchor by highlighting exact visible text that supports a material claim. Use short, distinctive spans. For simple questions, use this at most once before answering.",
+			"Create an anchor by highlighting exact visible text that supports a material claim. Use short, distinctive spans. Avoid heading-only anchors unless the heading alone answers the user's question. If the answer names multiple roadmap/list/navigation items, create one highlight per item or one exact visible span covering the items. For list items, send the item words, not a heading-plus-list block; Markdown markers in tool output are structure cues. If an item cannot be highlighted successfully, do not claim it as page-supported. For simple non-list questions, use this at most once before answering.",
 			HIGHLIGHT_TEXT_SCHEMA,
 			"highlight_text",
 			{ sequential: true },
