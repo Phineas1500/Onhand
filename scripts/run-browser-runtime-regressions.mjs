@@ -30,10 +30,13 @@ function replaySmokeTab(overrides = {}) {
 
 function createReplayHost(options = {}) {
 	const calls = [];
-	const tabs = Array.isArray(options.tabs) && options.tabs.length ? options.tabs : [replaySmokeTab()];
+	const tabs = Array.isArray(options.tabs) && options.tabs.length ? [...options.tabs] : [replaySmokeTab()];
 	const tabForArgs = (args = {}) => {
-		const explicitTab = tabs.find((candidate) => candidate.id === Number(args.tabId));
-		if (explicitTab) return explicitTab;
+		if (Object.hasOwn(args, "tabId")) {
+			const explicitTab = tabs.find((candidate) => candidate.id === Number(args.tabId));
+			if (explicitTab) return explicitTab;
+			if (options.strictTabIds) throw new Error(`No tab with id: ${args.tabId}.`);
+		}
 		if (typeof args.windowId === "number") {
 			return tabs.find((candidate) => candidate.windowId === args.windowId && candidate.active) || tabs.find((candidate) => candidate.windowId === args.windowId) || tabs[0] || replaySmokeTab();
 		}
@@ -45,19 +48,27 @@ function createReplayHost(options = {}) {
 			calls.push({ name, args });
 			const tab = tabForArgs(args);
 			if (name === "navigate") {
-				return {
-					tab: {
-						id: Number(options.navigateTabId || 99),
-						windowId: Number(options.navigateWindowId || tab.windowId || 3),
-						active: true,
-						title: options.navigateTitle || "Restored target",
-						url: String(args.url || options.navigateUrl || "https://example.test/restored"),
-					},
+				const navigatedTab = {
+					id: Number(options.navigateTabId || 99),
+					windowId: Number(options.navigateWindowId || tab.windowId || 3),
+					active: true,
+					title: options.navigateTitle || "Restored target",
+					url: String(args.url || options.navigateUrl || "https://example.test/restored"),
 				};
+				for (const candidate of tabs) {
+					if (candidate.windowId === navigatedTab.windowId) candidate.active = false;
+				}
+				const existingIndex = tabs.findIndex((candidate) => candidate.id === navigatedTab.id);
+				if (existingIndex >= 0) tabs[existingIndex] = navigatedTab;
+				else tabs.push(navigatedTab);
+				return { tab: navigatedTab };
 			}
 			if (name === "activate_tab") return { tab };
 			if (name === "clear_annotations") return { tab, cleared: true };
 			if (name === "highlight_text") {
+				if (options.rejectHighlightText?.(String(args.text || ""))) {
+					throw new Error(`No visible text matched: ${args.text}`);
+				}
 				return {
 					tab,
 					annotation: {
@@ -207,6 +218,7 @@ async function assertSelectionFormatting() {
 	assert.deepEqual(replayAnnotations, [
 		{
 			key: "annotation:ann-1",
+			actionKeys: ["highlight:ann-1", "note:ann-1"],
 			tabId: 7,
 			windowId: 3,
 			title: "Replay page",
@@ -216,6 +228,32 @@ async function assertSelectionFormatting() {
 			noteText: "Important replay note",
 		},
 	]);
+}
+
+async function assertPublicActivitiesFilterInternalThinking() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { getPublicActivities } = __browserRuntimeTest || {};
+	assert.equal(typeof getPublicActivities, "function", "browser runtime activity filter export is missing");
+
+	const activities = getPublicActivities([
+		{
+			id: "reasoning:test",
+			kind: "reasoning",
+			label: "Reasoning",
+			text: "I need to think through how to perform the requested page actions.",
+		},
+		{
+			id: "tool:dom",
+			kind: "tool",
+			label: "Reading page HTML...",
+			toolName: "browser_get_dom",
+			state: "complete",
+		},
+	]);
+
+	assert.equal(activities.length, 1);
+	assert.equal(activities[0].toolName, "browser_get_dom");
+	assert.doesNotMatch(JSON.stringify(activities), /I need to think|Reasoning/);
 }
 
 async function assertSessionReplayRestore() {
@@ -314,6 +352,123 @@ async function assertSessionReplayDoesNotTrustStaleTabIds() {
 	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 8), true);
 	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
 	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7), false);
+}
+
+async function assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const fullText = "But sampling from P(W) still causes too many rejections... can we improve it?";
+	const prefixText = "But sampling from P(W) still causes too many rejections";
+	const questionText = "that would give us better steady state proposals than P(W)?";
+	const questionFallbackText = "better steady state proposals than P(W)?";
+	const staleTabId = 1235284726;
+	const restoredTabId = 88;
+	const host = createReplayHost({
+		strictTabIds: true,
+		navigateTabId: restoredTabId,
+		navigateTitle: "BayesianDL",
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				active: true,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+		],
+		rejectHighlightText: (text) => text === fullText || text === questionText,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.name = "BayesianDL";
+	const highlightAction = {
+		key: "highlight:old-ann",
+		type: "annotation",
+		tabId: staleTabId,
+		windowId: 44,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		annotationId: "old-ann",
+		label: "Highlighted text",
+		detail: fullText,
+		citationText: fullText,
+	};
+	const noteAction = {
+		key: "note:old-ann",
+		type: "note",
+		tabId: staleTabId,
+		windowId: 44,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		annotationId: "old-ann",
+		label: "Added note",
+		detail: "Rejection sampling is limited by low acceptance rates.",
+		citationText: "Rejection sampling is limited by low acceptance rates.",
+	};
+	const secondHighlightAction = {
+		key: "highlight:old-ann-2",
+		type: "annotation",
+		tabId: staleTabId,
+		windowId: 44,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		annotationId: "old-ann-2",
+		label: "Highlighted text",
+		detail: questionText,
+		citationText: questionText,
+	};
+	session.pageActions = [{ ...highlightAction }, { ...noteAction }, { ...secondHighlightAction }];
+	session.turns = [
+		{
+			id: "turn-restore",
+			userPrompt: "how is rejection sampling limited?",
+			reply: "Rejection sampling is limited by low acceptance rates.[1]",
+			activities: [],
+			pageActions: [{ ...highlightAction }, { ...noteAction }, { ...secondHighlightAction }],
+			pending: false,
+			error: false,
+			createdAt: new Date().toISOString(),
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession(session.id);
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].tabId, restoredTabId);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 2);
+	assert.equal(restored.restoredPages[0].restoredNotes, 1);
+	assert.equal(restored.restoredPages[0].failedCount, 0);
+	assert.equal(highlightCalls[0]?.args.text, fullText);
+	assert.equal(highlightCalls.some((call) => call.args.text === prefixText), true);
+	assert.equal(highlightCalls.some((call) => call.args.text === questionFallbackText), true);
+	assert.equal(restoreCalls.some((call) => call.name === "activate_tab" && call.args.tabId === staleTabId), false);
+
+	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const updatedHighlight = savedSession.turns[0].pageActions.find((action) => action.key === "highlight:old-ann");
+	const updatedNote = savedSession.turns[0].pageActions.find((action) => action.key === "note:old-ann");
+	assert.equal(updatedHighlight.tabId, restoredTabId);
+	assert.equal(updatedHighlight.annotationId, "replay-highlight");
+	assert.equal(updatedNote.tabId, restoredTabId);
+	assert.equal(updatedNote.annotationId, "replay-highlight");
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:old-ann");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(activateCalls.some((call) => call.name === "activate_tab" && call.args.tabId === staleTabId), false);
+	assert.equal(activateCalls.some((call) => call.name === "activate_tab" && call.args.tabId === restoredTabId), true);
+	assert.equal(
+		activateCalls.some((call) => call.name === "scroll_to_annotation" && call.args.tabId === restoredTabId && call.args.annotationId === "replay-highlight"),
+		true,
+	);
 }
 
 async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
@@ -439,8 +594,10 @@ async function assertFixtureResponses() {
 
 async function main() {
 	await assertSelectionFormatting();
+	await assertPublicActivitiesFilterInternalThinking();
 	await assertSessionReplayRestore();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
+	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
 	await assertSidePanelPromptTargetsOriginWindow();
 	await assertFixtureResponses();

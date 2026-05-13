@@ -94,7 +94,7 @@
 	let currentState = null;
 	let pollingTimer = null;
 	let sending = false;
-	let reasoningExpanded = null;
+	let progressExpanded = null;
 	let lastActiveRequestId = null;
 	let katexModule = null;
 	let katexLoadPromise = null;
@@ -313,54 +313,131 @@
 		return [...new Set(snippets)];
 	}
 
-	function buildCitationGroups(actions) {
-		const groups = [];
-		const groupMap = new Map();
-		for (const action of Array.isArray(actions) ? actions : []) {
-			if (!action || typeof action !== "object") continue;
-			if (action.type !== "annotation" && action.type !== "note") continue;
+	function getCitationTargetKey(action) {
+		const url = String(action?.url || "").trim().split("#")[0];
+		if (url) return `url:${url}`;
+		const title = normalizeCitationText(action?.title || "");
+		if (title) return `title:${title}`;
+		return "page";
+	}
 
-			const groupId = action.annotationId || action.key;
-			let group = groupMap.get(groupId);
-			if (!group) {
-				group = {
-					groupId,
-					number: groups.length + 1,
-					actionKey: action.key,
-					noteKey: null,
-					highlightKey: null,
-					matchTokens: new Set(),
-					snippets: new Set(),
-					titles: [],
-				};
-				groupMap.set(groupId, group);
-				groups.push(group);
-			}
+	function getCitationEvidenceKey(action) {
+		const citationText = normalizeCitationText(action?.citationText || action?.detail || "");
+		if (!citationText) return "";
+		return `${getCitationTargetKey(action)}:${citationText}`;
+	}
 
-			const citationText = String(action.citationText || action.detail || "").trim();
-			for (const token of tokenizeCitationText(citationText)) {
-				group.matchTokens.add(token);
-			}
-			for (const snippet of buildCitationSnippets(citationText)) {
-				group.snippets.add(snippet);
-			}
-			if (action.type === "annotation") {
-				group.highlightKey = action.key;
-			}
-			if (action.type === "note") {
-				group.noteKey = action.key;
-			}
-			group.actionKey = group.noteKey || group.highlightKey || group.actionKey || action.key;
-			group.titles.push(action.detail ? `${action.label}: ${action.detail}` : action.label || "Open page evidence");
+	function createCitationRegistry() {
+		return {
+			groups: [],
+			groupMap: new Map(),
+			evidenceMap: new Map(),
+		};
+	}
+
+	function ensureCitationGroup(registry, action) {
+		if (!action || typeof action !== "object") return null;
+		if (action.type !== "annotation" && action.type !== "note") return null;
+		const targetKey = getCitationTargetKey(action);
+		const annotationGroupId = action.annotationId ? `annotation:${targetKey}:${action.annotationId}` : "";
+		const evidenceKey = getCitationEvidenceKey(action);
+		let group = (annotationGroupId && registry.groupMap.get(annotationGroupId)) || (evidenceKey && registry.evidenceMap.get(evidenceKey)) || null;
+		if (!group) {
+			const groupId = annotationGroupId || evidenceKey || action.key;
+			group = {
+				groupId,
+				sourceIndex: registry.groups.length,
+				actionKey: action.key,
+				noteKey: null,
+				highlightKey: null,
+				matchTokens: new Set(),
+				snippets: new Set(),
+				titles: [],
+			};
+			registry.groupMap.set(groupId, group);
+			registry.groups.push(group);
 		}
+		if (annotationGroupId) registry.groupMap.set(annotationGroupId, group);
+		if (evidenceKey) registry.evidenceMap.set(evidenceKey, group);
+		return group;
+	}
 
-		return groups.map((group) => ({
-			number: group.number,
+	function addCitationActionToRegistry(registry, action) {
+		const group = ensureCitationGroup(registry, action);
+		if (!group) return null;
+		const citationText = String(action.citationText || action.detail || "").trim();
+		for (const token of tokenizeCitationText(citationText)) {
+			group.matchTokens.add(token);
+		}
+		for (const snippet of buildCitationSnippets(citationText)) {
+			group.snippets.add(snippet);
+		}
+		if (action.type === "annotation" && !group.highlightKey) {
+			group.highlightKey = action.key;
+		}
+		if (action.type === "note" && !group.noteKey) {
+			group.noteKey = action.key;
+		}
+		group.actionKey = group.noteKey || group.highlightKey || group.actionKey || action.key;
+		group.titles.push(action.detail ? `${action.label}: ${action.detail}` : action.label || "Open page evidence");
+		return group;
+	}
+
+	function getPublicCitationGroups(registry, currentGroupIds = new Set()) {
+		return registry.groups.map((group) => ({
+			groupId: group.groupId,
+			sourceIndex: group.sourceIndex,
 			actionKey: group.noteKey || group.highlightKey || group.actionKey,
 			matchTokens: [...group.matchTokens],
 			snippets: [...group.snippets],
 			title: group.titles[0] || "Open page evidence",
+			current: currentGroupIds.has(group.groupId),
 		}));
+	}
+
+	function buildTurnCitationGroups(turns) {
+		const registry = createCitationRegistry();
+		const byTurnId = new Map();
+		for (const turn of Array.isArray(turns) ? turns : []) {
+			const currentGroupIds = new Set();
+			for (const action of Array.isArray(turn?.pageActions) ? turn.pageActions : []) {
+				const group = addCitationActionToRegistry(registry, action);
+				if (group) currentGroupIds.add(group.groupId);
+			}
+			if (turn?.id) byTurnId.set(turn.id, getPublicCitationGroups(registry, currentGroupIds));
+		}
+		return byTurnId;
+	}
+
+	function buildCitationGroups(actions) {
+		const registry = createCitationRegistry();
+		const currentGroupIds = new Set();
+		for (const action of Array.isArray(actions) ? actions : []) {
+			const group = addCitationActionToRegistry(registry, action);
+			if (group) currentGroupIds.add(group.groupId);
+		}
+		return getPublicCitationGroups(registry, currentGroupIds);
+	}
+
+	function createCitationNumbering() {
+		return {
+			nextNumber: 1,
+			groupNumbers: new Map(),
+		};
+	}
+
+	function getCitationGroupKey(citation) {
+		return citation?.groupId || citation?.actionKey || citation?.title || "";
+	}
+
+	function assignCitationNumber(citation, numbering) {
+		if (!numbering) return citation;
+		const groupKey = getCitationGroupKey(citation);
+		if (!groupKey) return { ...citation, number: citation.number || numbering.nextNumber++ };
+		if (!numbering.groupNumbers.has(groupKey)) {
+			numbering.groupNumbers.set(groupKey, numbering.nextNumber++);
+		}
+		return { ...citation, number: numbering.groupNumbers.get(groupKey) };
 	}
 
 	function findCitationsForBlock(text, citationGroups) {
@@ -383,36 +460,56 @@
 			}
 
 			let phraseBonus = 0;
+			let position = Number.POSITIVE_INFINITY;
 			for (const snippet of group.snippets) {
 				if (!snippet) continue;
-				if (blockNormalized.includes(snippet) || snippet.includes(blockNormalized)) {
+				const blockIndex = blockNormalized.indexOf(snippet);
+				const snippetIndex = snippet.indexOf(blockNormalized);
+				if (blockIndex >= 0 || snippetIndex >= 0) {
 					phraseBonus = Math.max(phraseBonus, snippet.split(" ").length >= 5 ? 4 : 2.5);
+					position = Math.min(position, blockIndex >= 0 ? blockIndex : 0);
+				}
+			}
+			if (!Number.isFinite(position)) {
+				for (const token of group.matchTokens) {
+					const tokenIndex = blockNormalized.indexOf(token);
+					if (tokenIndex >= 0) position = Math.min(position, tokenIndex);
 				}
 			}
 
 			const score = overlap + numericOverlap * 1.5 + phraseBonus;
 			const minimumOverlap = numericOverlap > 0 ? 1 : 2;
 			const minimumScore = numericOverlap > 0 ? 2.5 : 3;
-			if (phraseBonus >= 4 || (overlap >= minimumOverlap && score >= minimumScore)) {
+			const matchedCurrentEvidence = group.current && overlap >= minimumOverlap && score >= minimumScore;
+			if (phraseBonus >= 4 || matchedCurrentEvidence) {
 				matches.push({
-					number: group.number,
+					groupId: group.groupId,
+					sourceIndex: group.sourceIndex,
 					actionKey: group.actionKey,
 					title: group.title,
+					position,
 					score,
 				});
 			}
 		}
 
 		return matches
-			.sort((left, right) => right.score - left.score || left.number - right.number)
-			.slice(0, 2);
+			.sort((left, right) => right.score - left.score || (left.sourceIndex || 0) - (right.sourceIndex || 0))
+			.slice(0, 2)
+			.sort((left, right) => {
+				const leftPosition = Number.isFinite(left.position) ? left.position : Number.POSITIVE_INFINITY;
+				const rightPosition = Number.isFinite(right.position) ? right.position : Number.POSITIVE_INFINITY;
+				if (leftPosition !== rightPosition) return leftPosition - rightPosition;
+				return right.score - left.score || (left.sourceIndex || 0) - (right.sourceIndex || 0);
+			});
 	}
 
-	function renderReplyCitations(citations) {
+	function renderReplyCitations(citations, citationNumbering) {
 		if (!citations.length) return "";
+		const numberedCitations = citations.map((citation) => assignCitationNumber(citation, citationNumbering));
 		return `
 			<span class="reply-citations">
-				${citations
+				${numberedCitations
 					.map(
 						(citation) => `
 							<button
@@ -428,12 +525,12 @@
 		`;
 	}
 
-	function renderCitedBlock(tag, text, citationGroups) {
+	function renderCitedBlock(tag, text, citationGroups, citationNumbering) {
 		const citations = findCitationsForBlock(text, citationGroups);
-		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations)}</${tag}>`;
+		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
 	}
 
-	function renderReplyMarkdown(text, citationGroups = []) {
+	function renderReplyMarkdown(text, citationGroups = [], citationNumbering = createCitationNumbering()) {
 		const source = String(text || "").replace(/\r\n?/g, "\n");
 		if (!source.trim()) {
 			return '<p class="reply-placeholder">Thinking…</p>';
@@ -457,14 +554,14 @@
 
 		function flushParagraph() {
 			if (!paragraphLines.length) return;
-			parts.push(renderCitedBlock("p", paragraphLines.join(" "), citationGroups));
+			parts.push(renderCitedBlock("p", paragraphLines.join(" "), citationGroups, citationNumbering));
 			paragraphLines = [];
 		}
 
 		function flushList() {
 			if (!listItems.length) return;
 			const tag = listKind === "ordered" ? "ol" : "ul";
-			parts.push(`<${tag}>${listItems.map((item) => renderCitedBlock("li", item, citationGroups)).join("")}</${tag}>`);
+			parts.push(`<${tag}>${listItems.map((item) => renderCitedBlock("li", item, citationGroups, citationNumbering)).join("")}</${tag}>`);
 			listItems = [];
 			listKind = null;
 		}
@@ -497,7 +594,7 @@
 			if (quoteMatch) {
 				flushParagraph();
 				flushList();
-				parts.push(renderCitedBlock("blockquote", quoteMatch[1], citationGroups));
+				parts.push(renderCitedBlock("blockquote", quoteMatch[1], citationGroups, citationNumbering));
 				continue;
 			}
 
@@ -525,7 +622,7 @@
 		flushParagraph();
 		flushList();
 
-		return blockStore.restore(parts.join("")) || renderCitedBlock("p", source, citationGroups);
+		return blockStore.restore(parts.join("")) || renderCitedBlock("p", source, citationGroups, citationNumbering);
 	}
 
 	function ensureKatexLoaded() {
@@ -1636,7 +1733,7 @@
 			.onhand-support {
 				margin: 0 0 12px;
 			}
-			.onhand-support > .onhand-reason:first-child,
+			.onhand-support > .onhand-progress:first-child,
 			.onhand-support > .onhand-actions:first-child {
 				margin-top: 0;
 			}
@@ -1754,12 +1851,12 @@
 				font-family: var(--rm-font-serif);
 				font-style: italic;
 			}
-			.onhand-reason {
+			.onhand-progress {
 				margin: 10px 0 0;
 				font: 11px/1 var(--rm-font-mono);
 				color: var(--rm-subtext);
 			}
-			.onhand-reason summary {
+			.onhand-progress summary {
 				cursor: pointer;
 				list-style: none;
 				display: inline-flex;
@@ -1769,29 +1866,41 @@
 				margin-left: -8px;
 				border-radius: 2px;
 			}
-			.onhand-reason summary::-webkit-details-marker {
+			.onhand-progress summary::-webkit-details-marker {
 				display: none;
 			}
-			.onhand-reason summary::before {
+			.onhand-progress summary::before {
 				content: ">";
 				color: var(--rm-surface-2);
 				transition: transform 120ms;
 				display: inline-block;
 			}
-			.onhand-reason[open] summary::before {
+			.onhand-progress[open] summary::before {
 				transform: rotate(90deg);
 			}
-			.onhand-reason summary:hover {
+			.onhand-progress summary:hover {
 				background: var(--rm-mantle);
 				color: var(--rm-text);
 			}
-			.onhand-reason-body {
+			.onhand-progress-body {
 				padding: 8px 0 0 14px;
 				color: var(--rm-subtext);
-				font: italic 13px/1.5 var(--rm-font-serif);
 				border-left: 1px solid var(--rm-surface-1);
 				margin-left: 2px;
-				white-space: pre-wrap;
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+			}
+			.onhand-progress-line {
+				display: grid;
+				grid-template-columns: 54px minmax(0, 1fr);
+				gap: 8px;
+				font: 12px/1.35 var(--rm-font-mono);
+			}
+			.onhand-progress-status {
+				color: var(--rm-foam);
+				font-size: 10px;
+				text-transform: uppercase;
 			}
 			.onhand-actions {
 				margin-top: 10px;
@@ -2167,12 +2276,15 @@
 		const sessionKey = getSessionDraftKey(state);
 		const sessionName = sessionTitleDrafts.get(sessionKey) || state?.currentSession?.sessionName || "Current session";
 		const status = state?.status || "Ready";
-		const statusKind = /failed|error/i.test(status) ? "error" : /ready|complete/i.test(status) ? "ok" : "";
+		const statusKind = /failed|error|not implemented/i.test(status) ? "error" : /ready|complete/i.test(status) ? "ok" : "";
+		const revision = state?.preferences?.runtimeRevision || "";
+		const extensionVersion = state?.preferences?.extensionVersion || "";
 		if (sessionTitleInput instanceof HTMLInputElement && shadow.activeElement !== sessionTitleInput) {
 			sessionTitleInput.value = sessionName;
 			sessionTitleInput.title = sessionName;
 		}
 		meta.className = `onhand-status ${statusKind}`;
+		meta.title = [extensionVersion ? `Onhand ${extensionVersion}` : "", revision ? `runtime ${revision}` : ""].filter(Boolean).join(" / ");
 		meta.innerHTML = `
 			<div>Runtime</div>
 			<div class="onhand-status-pill">
@@ -2588,36 +2700,77 @@
 		`;
 	}
 
-	function getReasoningActivity(activities) {
-		const allActivities = Array.isArray(activities) ? activities : [];
-		return allActivities.filter((activity) => activity?.kind === "reasoning").slice(-1)[0] || null;
+	function getProgressActivities(activities) {
+		return (Array.isArray(activities) ? activities : []).filter((activity) => activity?.kind === "tool");
 	}
 
-	function renderReasoningDetails(turn) {
-		const activities = Array.isArray(turn?.activities) ? turn.activities : [];
-		const reasoning = getReasoningActivity(activities);
-		const tools = activities.filter((activity) => activity?.kind !== "reasoning");
-		const actions = Array.isArray(turn?.pageActions) ? turn.pageActions : [];
+	function trimProgressLabel(value) {
+		return String(value || "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.replace(/\.\.\.$/, "");
+	}
+
+	function getProgressStatus(activity) {
+		if (activity?.state === "error") return "Failed";
+		if (activity?.state === "running") return "Running";
+		return "Done";
+	}
+
+	function formatProgressLine(activity) {
+		const label = trimProgressLabel(activity?.label || activity?.toolName || "Working");
+		return label ? { status: getProgressStatus(activity), label } : null;
+	}
+
+	function formatActionProgressLine(action) {
+		const label = String(action?.label || "Page action").trim();
+		const detail = String(action?.detail || "").trim();
+		const line = detail ? `${label}: ${detail}` : label;
+		return line ? { status: "Done", label: line } : null;
+	}
+
+	function buildProgressSummary(turn, tools, actions) {
+		const running = tools.find((activity) => activity?.state === "running");
+		if (turn?.pending) return running ? `Working · ${trimProgressLabel(running.label || running.toolName)}` : "Working";
+		const parts = ["Done"];
+		if (tools.length) parts.push(pluralize(tools.length, "page step"));
 		const highlightCount = actions.filter((action) => action?.type === "annotation").length;
 		const noteCount = actions.filter((action) => action?.type === "note").length;
-		const lines = [
-			String(reasoning?.text || "").trim(),
-			...tools.map((activity) => String(activity?.label || activity?.toolName || "Activity").trim()).filter(Boolean),
-		].filter(Boolean);
+		const artifactCount = actions.filter((action) => action?.type === "artifact").length;
+		if (highlightCount) parts.push(`highlighted ${pluralize(highlightCount, "passage")}`);
+		if (noteCount) parts.push(`added ${pluralize(noteCount, "note")}`);
+		if (artifactCount) parts.push(pluralize(artifactCount, "artifact"));
+		if (!tools.length && actions.length && !highlightCount && !noteCount && !artifactCount) {
+			parts.push(pluralize(actions.length, "page action"));
+		}
+		return parts.join(" · ");
+	}
+
+	function renderProgressDetails(turn) {
+		const activities = Array.isArray(turn?.activities) ? turn.activities : [];
+		const tools = getProgressActivities(activities);
+		const actions = Array.isArray(turn?.pageActions) ? turn.pageActions : [];
+		const lines = [...tools.map(formatProgressLine), ...actions.map(formatActionProgressLine)].filter(Boolean);
+		if (!lines.length && turn?.pending) lines.push({ status: "Working", label: "Preparing page context" });
 		if (!lines.length && !turn?.pending) return "";
 
-		const summary = [
-			turn?.pending ? "thinking" : "thought",
-			highlightCount ? `highlighted ${pluralize(highlightCount, "passage")}` : "",
-			noteCount ? `added ${pluralize(noteCount, "note")}` : "",
-		]
-			.filter(Boolean)
-			.join(" · ");
-		const open = reasoningExpanded == null ? Boolean(turn?.pending) : Boolean(reasoningExpanded);
+		const summary = buildProgressSummary(turn, tools, actions);
+		const open = progressExpanded == null ? Boolean(turn?.pending) : Boolean(progressExpanded);
 		return `
-			<details class="onhand-reason" ${open ? "open" : ""}>
-				<summary>${escapeHtml(summary || "reasoning")}</summary>
-				<div class="onhand-reason-body">${escapeHtml(lines.join("\n")) || "Working through the page context..."}</div>
+			<details class="onhand-progress" ${open ? "open" : ""}>
+				<summary>${escapeHtml(summary || "Progress")}</summary>
+				<div class="onhand-progress-body">
+					${lines
+						.map(
+							(line) => `
+								<div class="onhand-progress-line">
+									<span class="onhand-progress-status">${escapeHtml(line.status)}</span>
+									<span>${escapeHtml(line.label)}</span>
+								</div>
+							`,
+						)
+						.join("")}
+				</div>
 			</details>
 		`;
 	}
@@ -2636,11 +2789,13 @@
 			return;
 		}
 
+		const citationGroupsByTurnId = buildTurnCitationGroups(items);
+		const citationNumbering = createCitationNumbering();
 		messagesEl.innerHTML = items
 			.map((turn) => {
-				const citationGroups = buildCitationGroups(turn?.pageActions);
+				const citationGroups = citationGroupsByTurnId.get(turn?.id) || buildCitationGroups(turn?.pageActions);
 				const reply = String(turn?.reply || "").trim();
-				const supportMarkup = `${renderReasoningDetails(turn)}${renderActionButtons(turn?.pageActions)}`;
+				const supportMarkup = `${renderProgressDetails(turn)}${renderActionButtons(turn?.pageActions)}`;
 				return `
 					<article class="onhand-entry ${turn?.error ? "error" : ""}">
 						<div class="onhand-eyebrow">
@@ -2653,7 +2808,7 @@
 						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 							<div class="onhand-response">
-								${reply ? renderReplyMarkdown(reply, citationGroups) : '<p class="reply-placeholder">Thinking...</p>'}
+								${reply ? renderReplyMarkdown(reply, citationGroups, citationNumbering) : '<p class="reply-placeholder">Thinking...</p>'}
 								${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 							</div>
 						</div>
@@ -2662,9 +2817,9 @@
 			})
 			.join("");
 
-		messagesEl.querySelectorAll(".onhand-reason").forEach((detailsEl) => {
+		messagesEl.querySelectorAll(".onhand-progress").forEach((detailsEl) => {
 			detailsEl.addEventListener("toggle", () => {
-				reasoningExpanded = detailsEl.open;
+				progressExpanded = detailsEl.open;
 			});
 		});
 	}
@@ -2688,7 +2843,7 @@
 				? body.scrollHeight - body.scrollTop - body.clientHeight < 96
 				: false;
 		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
-			reasoningExpanded = null;
+			progressExpanded = null;
 		}
 		lastActiveRequestId = state?.activeRequestId || null;
 		const archivedTurns = Array.isArray(state?.turns) ? state.turns : [];

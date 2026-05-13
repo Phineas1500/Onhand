@@ -3867,6 +3867,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const runtimeState = await runtime.getState();
 			const state = runtimeState && typeof runtimeState === "object" ? { ...runtimeState } : runtimeState;
 			if (state && typeof state === "object") {
+				state.preferences = {
+					...(state.preferences || {}),
+					extensionVersion: chrome.runtime.getManifest().version,
+					runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
+				};
 				try {
 					const captured = await handleCommand("capture_state", { windowId: message.windowId });
 					state.tab = captured?.tab || null;

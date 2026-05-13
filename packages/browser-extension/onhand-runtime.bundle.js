@@ -118771,6 +118771,9 @@ function replayActionKey(action, text = "") {
   return `text:${target}:${normalizedText}`;
 }
 function mergeReplayTarget(target, action) {
+  if (action.key && !target.actionKeys?.includes(action.key)) {
+    target.actionKeys = [...target.actionKeys || [], action.key];
+  }
   if (typeof target.tabId !== "number" && typeof action.tabId === "number") target.tabId = action.tabId;
   if (typeof target.windowId !== "number" && typeof action.windowId === "number") target.windowId = action.windowId;
   if (!target.annotationId && action.annotationId) target.annotationId = action.annotationId;
@@ -118800,6 +118803,7 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
     }
     annotations.set(key, {
       key,
+      actionKeys: action.key ? [action.key] : [],
       tabId: typeof action.tabId === "number" ? action.tabId : null,
       windowId: typeof action.windowId === "number" ? action.windowId : null,
       title: action.title,
@@ -119393,6 +119397,7 @@ ${truncate(html, 5e3)}` : "No DOM returned.";
 var __browserRuntimeTest = {
   buildReplayAnnotationsFromPageActions,
   formatToolResultForModel: toolResultTextForModel,
+  getPublicActivities,
   getSelectionText,
   summarizeRestoredArtifact
 };
@@ -119820,6 +119825,9 @@ function appendUniquePageAction(actions, action) {
   actions.push(action);
   return true;
 }
+function getPublicActivities(activities = []) {
+  return activities.filter((activity) => activity?.kind === "tool");
+}
 function createOnhandBrowserRuntime(host) {
   let storePromise = null;
   let uiState = null;
@@ -119933,12 +119941,13 @@ function createOnhandBrowserRuntime(host) {
     const agentMessages = messagesOverride || activeAgent?.state.messages || [];
     const finalError = error48 || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
     const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
+    const publicActivities = getPublicActivities(uiState?.activities || []);
     updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
     const turn = {
       id: requestId,
       userPrompt: activeRequest.displayPrompt,
       reply,
-      activities: [...uiState?.activities || []],
+      activities: publicActivities,
       pageActions: [...activeRequest.pageActions],
       pending: false,
       error: Boolean(finalError),
@@ -119974,13 +119983,6 @@ function createOnhandBrowserRuntime(host) {
           updateAssistantDraft(requestId, activeRequest.reply, { pending: true });
           void publishState({ status: "Responding..." });
         } else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
-          activeRequest.reasoning = `${activeRequest.reasoning || ""}${assistantEvent.delta || ""}`;
-          appendActivity({
-            id: `reasoning:${requestId}`,
-            kind: "reasoning",
-            label: "Reasoning",
-            text: truncate(activeRequest.reasoning, 5e3)
-          });
           void publishState({ status: "Thinking..." });
         }
         break;
@@ -120260,6 +120262,18 @@ function createOnhandBrowserRuntime(host) {
     const eligibleTabs = tabs.filter(isRestorablePageTab);
     return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
   }
+  function findActionTab(tabs, action) {
+    const url2 = String(action.url || "").trim();
+    const title = String(action.title || "").trim().toLowerCase();
+    if (typeof action.tabId === "number") {
+      const matchedTab = tabs.find((tab) => tab.id === action.tabId);
+      if (matchedTab && (!url2 && !title ? isRestorablePageTab(matchedTab) : tabMatchesSavedTarget(matchedTab, url2, title))) {
+        return matchedTab;
+      }
+    }
+    const eligibleTabs = tabs.filter(isRestorablePageTab);
+    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
+  }
   function buildReplayArtifact(session, targetKey, tab, annotations) {
     const first = annotations[0] || {};
     const now = nowIso();
@@ -120279,6 +120293,110 @@ function createOnhandBrowserRuntime(host) {
         }))
       }
     };
+  }
+  function addReplayHighlightCandidate(candidates, value) {
+    const text = compactActionText(value);
+    if (text.length < 12) return;
+    if (!candidates.includes(text)) candidates.push(text);
+  }
+  function trimReplayConnector(value) {
+    return String(value || "").replace(/^(?:but|and|so|however|therefore|then)[,\s]+/i, "").replace(/^(?:that|this|it|which)\s+(?:would|could|can|might|should)\s+(?:give|yield|provide|produce|lead to|result in)\s+(?:us\s+)?/i, "").replace(/^(?:can|could|would|should)\s+we\s+/i, "").trim();
+  }
+  function getReplayHighlightCandidates(value) {
+    const text = compactActionText(value);
+    const candidates = [];
+    addReplayHighlightCandidate(candidates, text);
+    for (const part of text.split(/\s*(?:\.{3}|…)\s*/).filter(Boolean)) {
+      addReplayHighlightCandidate(candidates, part);
+      addReplayHighlightCandidate(candidates, trimReplayConnector(part));
+    }
+    for (const part of text.split(/(?<=[.!?;:])\s+/).filter(Boolean)) {
+      addReplayHighlightCandidate(candidates, part);
+      addReplayHighlightCandidate(candidates, trimReplayConnector(part));
+    }
+    const words = text.split(/\s+/).filter(Boolean);
+    for (const count of [18, 14, 10]) {
+      if (words.length > count) {
+        addReplayHighlightCandidate(candidates, words.slice(0, count).join(" "));
+        addReplayHighlightCandidate(candidates, trimReplayConnector(words.slice(0, count).join(" ")));
+        addReplayHighlightCandidate(candidates, words.slice(-count).join(" "));
+      }
+    }
+    for (const count of [8, 6, 5]) {
+      if (words.length < count) continue;
+      for (let index = 0; index <= words.length - count; index += 1) {
+        addReplayHighlightCandidate(candidates, words.slice(index, index + count).join(" "));
+      }
+    }
+    return candidates.slice(0, 18);
+  }
+  async function highlightTextWithReplayCandidates(tabId, text, options = {}) {
+    let lastError = null;
+    for (const candidate of getReplayHighlightCandidates(text)) {
+      try {
+        const result = await host.runCommand("highlight_text", {
+          tabId,
+          text: candidate,
+          clearExisting: false,
+          scrollIntoView: options.scrollIntoView !== false
+        });
+        return result;
+      } catch (error48) {
+        lastError = error48;
+      }
+    }
+    throw lastError || new Error(`No visible text matched: ${text}`);
+  }
+  function updateReplayActionArray(actions, annotation, tab, restoredAnnotation) {
+    if (!Array.isArray(actions)) return false;
+    const actionKeys = new Set(annotation.actionKeys || []);
+    const oldAnnotationId = annotation.annotationId || "";
+    const newAnnotationId = restoredAnnotation?.annotationId || oldAnnotationId;
+    let changed = false;
+    for (const action of actions) {
+      const matchesKey = Boolean(action.key && actionKeys.has(action.key));
+      const matchesAnnotation = Boolean(oldAnnotationId && action.annotationId === oldAnnotationId);
+      if (!matchesKey && !matchesAnnotation) continue;
+      if (typeof tab?.id === "number") action.tabId = tab.id;
+      if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
+      if (tab?.title) action.title = tab.title;
+      if (tab?.url) action.url = tab.url;
+      if (newAnnotationId && (action.annotationId || action.type === "annotation" || action.type === "note")) {
+        action.annotationId = newAnnotationId;
+      }
+      changed = true;
+    }
+    return changed;
+  }
+  function updateSessionReplayActionTargets(session, annotation, tab, restoredAnnotation) {
+    let changed = updateReplayActionArray(session.pageActions, annotation, tab, restoredAnnotation);
+    if (Array.isArray(session.turns)) {
+      for (const turn of session.turns) {
+        changed = updateReplayActionArray(turn.pageActions, annotation, tab, restoredAnnotation) || changed;
+      }
+    }
+    if (changed) session.updatedAt = nowIso();
+    return changed;
+  }
+  async function resolveActionTab(action, params = {}) {
+    const state = await host.snapshotState();
+    const tabs = flattenTabs(state);
+    let tab = findActionTab(tabs, action);
+    const url2 = String(action.url || "").trim();
+    if (!tab && url2 && params.openIfNeeded !== false) {
+      const navigated = await host.runCommand("navigate", { url: url2, newTab: true, waitForLoad: true });
+      tab = navigated?.tab || navigated;
+    }
+    if (!tab) return null;
+    const tabId = tab?.id;
+    if (typeof tabId !== "number" || !isRestorablePageTab(tab)) return null;
+    try {
+      const activated = await host.runCommand("activate_tab", { tabId });
+      return activated?.tab || tab;
+    } catch (error48) {
+      host.log?.("action tab activation failed", error48);
+      return tab;
+    }
   }
   async function restoreSessionPageActions(session, params = {}) {
     const replayAnnotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
@@ -120338,14 +120456,10 @@ function createOnhandBrowserRuntime(host) {
       let restoredNotes = 0;
       for (const annotation of annotations) {
         try {
-          const highlighted = await host.runCommand("highlight_text", {
-            tabId,
-            text: annotation.matchedText,
-            clearExisting: false,
-            scrollIntoView: false
-          });
+          const highlighted = await highlightTextWithReplayCandidates(tabId, annotation.matchedText, { scrollIntoView: false });
           restoredAnnotations += 1;
           const annotationId = highlighted?.annotation?.annotationId;
+          updateSessionReplayActionTargets(session, annotation, tab, highlighted?.annotation);
           if (annotation.noteText && annotationId) {
             await host.runCommand("show_note", {
               tabId,
@@ -120539,7 +120653,12 @@ function createOnhandBrowserRuntime(host) {
       const restoredPages = restored.map(summarizeRestoredArtifact);
       const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
       const status = artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
-      await publishState({ status });
+      session.updatedAt = nowIso();
+      store.sessions[targetSessionId] = session;
+      await saveStore(store);
+      await publishState(
+        targetSessionId === store.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
+      );
       return {
         restored,
         restoredPages,
@@ -120574,7 +120693,6 @@ function createOnhandBrowserRuntime(host) {
         id: requestId,
         displayPrompt,
         reply: "",
-        reasoning: "",
         pageActions: [],
         artifactIds: [],
         createdAt: nowIso(),
@@ -120619,18 +120737,31 @@ function createOnhandBrowserRuntime(host) {
       ];
       const action = actions.find((candidate) => candidate.key === actionKey);
       if (!action) throw new Error("Could not find that Onhand page action.");
-      if (typeof action.tabId === "number") {
-        await host.runCommand("activate_tab", { tabId: action.tabId });
-      }
+      const tab = await resolveActionTab(action);
+      const tabId = typeof tab?.id === "number" ? tab.id : void 0;
       if (action.artifactId) {
-        await restoreArtifact({ artifactId: action.artifactId, openIfNeeded: true, clearExisting: true });
+        await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: true });
       }
       if (action.annotationId) {
-        await host.runCommand("scroll_to_annotation", {
-          tabId: typeof action.tabId === "number" ? action.tabId : void 0,
-          annotationId: action.annotationId,
-          target: action.type === "note" ? "note" : "annotation"
-        });
+        if (typeof tabId !== "number") throw new Error("No matching browser tab is open for that citation.");
+        try {
+          await host.runCommand("scroll_to_annotation", {
+            tabId,
+            annotationId: action.annotationId,
+            target: action.type === "note" ? "note" : "annotation"
+          });
+        } catch (error48) {
+          const citationText = compactActionText(action.citationText || action.detail);
+          if (!citationText) throw error48;
+          const highlighted = await highlightTextWithReplayCandidates(tabId, citationText, { scrollIntoView: true });
+          const annotationId = highlighted?.annotation?.annotationId;
+          if (!annotationId) throw error48;
+          action.annotationId = annotationId;
+          action.tabId = tabId;
+          if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
+          if (tab?.title) action.title = tab.title;
+          if (tab?.url) action.url = tab.url;
+        }
       }
       return action;
     }
