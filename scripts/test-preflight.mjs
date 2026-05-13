@@ -11,10 +11,12 @@ const REQUIRED_FILES = [
 	"packages/browser-extension/options.html",
 	"packages/browser-extension/options.js",
 	"packages/browser-extension/onhand-runtime.bundle.js",
+	"packages/browser-extension/runtime-revision.js",
 	"packages/browser-extension/src/browser-runtime.ts",
 	"packages/browser-extension/src/browser-oauth.ts",
 	"scripts/build-browser-runtime.mjs",
 	"scripts/run-browser-runtime-regressions.mjs",
+	"scripts/run-sidebar-regressions.mjs",
 	"scripts/run-browser-runtime-smoke.mjs",
 	"scripts/show-chrome-acceptance.mjs",
 ];
@@ -34,6 +36,7 @@ const REQUIRED_SCRIPTS = [
 	"serve:fixture",
 	"test:fixtures",
 	"test:preflight",
+	"test:sidebar-regressions",
 	"test:browser-runtime-regressions",
 	"smoke:browser-runtime",
 ];
@@ -100,6 +103,11 @@ async function main() {
 	const hasBackgroundWorker = manifest.background?.service_worker === "background.js";
 	printCheck("Chrome side panel manifest", hasSidePanel && hasBackgroundWorker, `side_panel=${hasSidePanel}, background=${hasBackgroundWorker}`);
 	if (!hasSidePanel || !hasBackgroundWorker) failures.push("Manifest is missing the side panel or background worker.");
+
+	const runtimeRevisionSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/runtime-revision.js"), "utf8");
+	const runtimeRevision = runtimeRevisionSource.match(/ONHAND_EXTENSION_RUNTIME_REVISION\s*=\s*"([^"]+)"/)?.[1] || "";
+	printCheck("Browser extension runtime revision", Boolean(runtimeRevision), runtimeRevision);
+	if (!runtimeRevision) failures.push("Runtime revision is missing.");
 
 	console.log("");
 	console.log("Manual reminders:");
