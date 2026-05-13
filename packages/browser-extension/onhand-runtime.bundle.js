@@ -118211,8 +118211,8 @@ var RECENT_CONTEXT_TURN_LIMIT = 4;
 var RECENT_CONTEXT_PROMPT_MAX_CHARS = 260;
 var RECENT_CONTEXT_REPLY_MAX_CHARS = 700;
 var ONHAND_MAX_OUTPUT_TOKENS = 900;
-var ONHAND_FAST_OUTPUT_TOKENS = 700;
-var ONHAND_DEEP_OUTPUT_TOKENS = 1600;
+var ONHAND_FAST_OUTPUT_TOKENS = 550;
+var ONHAND_DEEP_OUTPUT_TOKENS = 1100;
 var DEFAULT_SETTINGS = {
   learningMode: false,
   speedMode: "auto",
@@ -118224,22 +118224,36 @@ var DEFAULT_SETTINGS = {
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var smokeModelRegistration = null;
-var ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor and research copilot running inside a Chromium extension side panel.
+var ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor running inside a Chromium extension side panel.
 
-Prefer helping with the material already open in the user's browser. Stay grounded in the captured browser context supplied with each prompt.
+Onhand's constitution:
+- The page is the canvas. The substance of your help belongs in anchored highlights and short marginal notes on the user's material; chat is secondary.
+- Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
+- Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
+- The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
+- Be concise by default and deep when warranted. A focused pass means one useful anchor and a short synthesis, not ungrounded prose. Thorough means covering the key relevant points, not annotating everything nearby.
+- The session is the artifact. Highlights, notes, citations, and restoreable page state are more important than a transcript.
+- Stay unobtrusive. Notes should feel like marginalia: short, local, and placed near what they explain.
 
-For quick questions that the captured context already answers, answer directly and concisely. Use browser tools only when you need more context, need to act on the page, or a highlight/note would materially improve the answer.
-
-When visual grounding would help, highlight the exact supporting text, add a short note near it, scroll it into view, and then answer concisely.
-
-For straightforward explanations, one or two strong supporting passages are usually enough. Once the main claims are grounded, stop gathering more evidence and answer.
-
-Avoid navigating away from the current page unless the user explicitly asks.
+Default answer mode:
+- For questions about page material, first ground the answer in exact visible/open-page text: highlight the key passage(s), add a short orienting note when useful, and scroll the first relevant anchor into view.
+- If captured context already contains the needed text, use it to choose the anchor and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
+- Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points.
+- For multi-part, comparative, "show evidence", or confused follow-up questions, anchor each distinct key point, but keep each note and chat paragraph short. Stop once the answer is supported.
+- If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
+- If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
 var ONHAND_LEARNING_MODE_APPEND = `Learning mode is enabled for this request.
 
-Help the user learn from the material on screen. When useful, identify a prerequisite concept, correct likely misconceptions, and add one short retrieval-check note. Do not force Socratic behavior on simple or transactional prompts.`;
+Learning mode hardens the teaching stance:
+- For conceptual questions, do not dump the full answer first. Anchor the relevant passage/equation and ask one short page-anchored question that helps the user reason from it.
+- Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
+- Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be anchored to a highlight or note, not floated in chat.
+- Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
+- If another already-open tab likely contains a prerequisite or related example, use the tab list and connect the pages before opening anything new.
+- Do not solve homework-style prompts outright. Guide the derivation from the page.
+- Drop the Socratic stance when the user explicitly asks for the direct answer, asks for a study artifact, or is visibly frustrated. Still anchor material claims.`;
 var LIST_TABS_SCHEMA = typebox_exports.Object({
   onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" }))
 });
@@ -118439,7 +118453,7 @@ function normalizeAuthMode(value) {
   return value === "oauth" ? "oauth" : "api-key";
 }
 function normalizeSpeedMode(value) {
-  return value === "fast" || value === "deep" ? value : "auto";
+  return "auto";
 }
 function normalizeOAuthCredentials(value) {
   if (!value || typeof value !== "object") return {};
@@ -119015,46 +119029,49 @@ function buildRecentConversationContext(session) {
 function classifyPromptForReasoning(prompt, attachments = [], learningMode = false) {
   const text = String(prompt || "").toLowerCase();
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-  if (learningMode || hasAttachments) return "deep";
+  if (hasAttachments) return "deep";
   const asksForToolSmoke = /\bbrowser_[a-z_]+\b|\b(port smoke|smoke test|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
   const asksForPageAction = /\b(highlight|annotate|note|scroll|click|open|navigate|go to|fill|type|select|press|mark|point (?:me )?to|show me where)\b/.test(text);
-  const asksForDeepWork = /\b(why|how does|how do|compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|teach|quiz|lesson|step[- ]by[- ]step|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs)\b/.test(
+  const asksForDeepWork = /\b(compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs)\b/.test(
     text
   );
+  const asksForConceptualWork = /\b(why|how does|how do|teach|quiz|lesson|step[- ]by[- ]step|walk me through|help me understand)\b/.test(text);
   const asksForFastAnswer = /\b(one sentence|briefly|quickly|short answer|tl;?dr|no highlights?|no notes?|according to this page|what is|who is|when did|where is|which|how many|summari[sz]e)\b/.test(
     text
   );
   if (asksForToolSmoke) return "balanced";
   if (asksForDeepWork) return "deep";
+  if (asksForConceptualWork) return "balanced";
   if (asksForPageAction) return "balanced";
+  if (learningMode) return "balanced";
   if (asksForFastAnswer) return "fast";
   if (text.length > 260) return "balanced";
   return "fast";
 }
 function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false) {
-  const setting = normalizeSpeedMode(settings2.speedMode);
-  const mode = setting === "auto" ? classifyPromptForReasoning(prompt, attachments, learningMode) : setting;
+  const setting = "auto";
+  const mode = classifyPromptForReasoning(prompt, attachments, learningMode);
   const base = {
     setting,
     mode,
-    reason: setting === "auto" ? `Auto chose ${mode}.` : `User selected ${setting}.`
+    reason: `Internal routing chose ${mode}.`
   };
   switch (mode) {
     case "deep":
       return {
         ...base,
-        reasoningEffort: "medium",
-        textVerbosity: "medium",
+        reasoningEffort: "low",
+        textVerbosity: "low",
         maxTokens: ONHAND_DEEP_OUTPUT_TOKENS,
-        promptPolicy: "Speed policy: Deep. Spend more effort on synthesis and use browser tools when extra evidence or page actions would improve the answer. Still avoid redundant inspection and unrelated navigation."
+        promptPolicy: "Runtime policy: Source-thorough pass. Cover distinct requested key points with page anchors, but cap the first response at four highlights and three notes unless the user explicitly asks for exhaustive annotation. Avoid redundant inspection and unrelated navigation."
       };
     case "balanced":
       return {
         ...base,
-        reasoningEffort: "low",
+        reasoningEffort: "none",
         textVerbosity: "low",
         maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
-        promptPolicy: "Speed policy: Auto chose a balanced pass. Use at most one focused round of browser inspection unless the user explicitly requested a page action or the captured context is insufficient."
+        promptPolicy: "Runtime policy: Focused grounding pass. For ordinary page questions, use one or two highlights and at most one note, then answer briefly. Inspect more only when captured context is insufficient."
       };
     case "fast":
     default:
@@ -119063,7 +119080,7 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
         reasoningEffort: "none",
         textVerbosity: "low",
         maxTokens: ONHAND_FAST_OUTPUT_TOKENS,
-        promptPolicy: "Speed policy: Fast. Prefer answering immediately from the captured context in one to three short paragraphs. Do not call browser tools or create page actions unless the user explicitly asks or the captured context is clearly insufficient."
+        promptPolicy: "Runtime policy: Quick grounded answer. Prefer captured context; use one short exact highlight when page claims need support, skip notes unless they add local value, and answer in one to three short paragraphs."
       };
   }
 }
@@ -119181,7 +119198,7 @@ function textHasAny(text, pattern) {
   pattern.lastIndex = 0;
   return pattern.test(text);
 }
-function selectToolsForPrompt(allTools, prompt, _attachments = [], _learningMode = false) {
+function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode = false) {
   const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
   const selected = /* @__PURE__ */ new Set();
   const text = String(prompt || "").toLowerCase();
@@ -119200,6 +119217,9 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], _learningMode
     add([...explicitToolNames]);
     if (textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|url|across tabs|multiple tabs|all tabs)\b/)) {
       add(TAB_TOOL_NAMES);
+    }
+    if (learningMode) {
+      add(["browser_list_tabs"]);
     }
     if (textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
       add(INTERACTION_TOOL_NAMES);
@@ -119241,9 +119261,14 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     reasoningProfile.promptPolicy,
     `Routing note: ${reasoningProfile.reason}`,
     "",
-    "Use this captured context as your starting point. Prefer already-open tabs and pages over navigation.",
-    "If the answer is clear from the captured context, answer now without calling a browser tool.",
-    "Use browser tools only when more context or a page action is needed. If you do use page actions, support major claims with one or two visible passages.",
+    "Use this captured context as your starting point. Prefer current and already-open pages over navigation.",
+    "Constitution runtime contract:",
+    "- Page-material claims need anchors. Use exact highlights and short notes for the major claims unless the user explicitly asked for no page changes.",
+    "- Grounding budget: simple questions get one strong highlight and at most one note, then an answer. Do not annotate nearby examples just because they are related.",
+    "- If the captured context already includes the needed text, use it to choose a short exact highlight and avoid extra read tools.",
+    "- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, anchor each key point, but keep the answer concise.",
+    "- Do not call browser_extract_content more than once unless the first result is unusable.",
+    "- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
     "Use markdown emphasis sparingly and only for short phrases that really matter.",
     ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
@@ -119396,9 +119421,36 @@ ${truncate(html, 5e3)}` : "No DOM returned.";
 }
 var __browserRuntimeTest = {
   buildReplayAnnotationsFromPageActions,
+  classifyPromptForReasoning,
   formatToolResultForModel: toolResultTextForModel,
   getPublicActivities,
   getSelectionText,
+  getPromptContractForTest() {
+    const answerPrompt = buildLauncherPrompt(
+      "How does rejection sampling work on this page?",
+      "Active tab: BayesianDL\nVisible text snapshot:\nIn rejection sampling, we want to sample X from p(x).",
+      [],
+      false,
+      buildReasoningProfile(DEFAULT_SETTINGS, "How does rejection sampling work on this page?", [], false),
+      [],
+      ""
+    );
+    const learningPrompt = buildLauncherPrompt(
+      "How does rejection sampling work on this page?",
+      "Active tab: BayesianDL\nVisible text snapshot:\nIn rejection sampling, we want to sample X from p(x).",
+      [],
+      true,
+      buildReasoningProfile(DEFAULT_SETTINGS, "How does rejection sampling work on this page?", [], true),
+      [],
+      ""
+    );
+    return {
+      systemPrompt: ONHAND_SYSTEM_PROMPT,
+      learningModeAppend: ONHAND_LEARNING_MODE_APPEND,
+      answerPrompt,
+      learningPrompt
+    };
+  },
   summarizeRestoredArtifact
 };
 function streamOnhandFast(model, context, options = {}) {
@@ -119475,7 +119527,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_extract_content",
       "Browser Extract Content",
-      "Extract readable article or document text from the live page. Prefer this for long pages before resorting to JavaScript.",
+      "Extract readable article or document text from the live page. Use at most once per response unless the first result is unusable.",
       EXTRACT_CONTENT_SCHEMA,
       "extract_content"
     ),
@@ -119503,7 +119555,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_highlight_text",
       "Browser Highlight Text",
-      "Highlight exact visible text on the page. Use short, distinctive spans.",
+      "Create an anchor by highlighting exact visible text that supports a material claim. Use short, distinctive spans. For simple questions, use this at most once before answering.",
       HIGHLIGHT_TEXT_SCHEMA,
       "highlight_text",
       { sequential: true }
@@ -119511,7 +119563,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_show_note",
       "Browser Show Note",
-      "Show a short explanatory note attached to a highlighted passage.",
+      "Attach a short marginal note to a highlight. Prefer one local orienting sentence over a summary or detached answer. Do not add a note for every highlight.",
       SHOW_NOTE_SCHEMA,
       "show_note",
       { sequential: true }
@@ -120093,6 +120145,18 @@ function createOnhandBrowserRuntime(host) {
       windowId: targetWindowId
     };
   }
+  async function clearActivePageAnnotations(targetWindowId) {
+    try {
+      const state = await host.snapshotState();
+      const activeTab = pickActiveTab(state, targetWindowId);
+      if (!isRestorablePageTab(activeTab)) return false;
+      await host.runCommand("clear_annotations", { tabId: activeTab.id });
+      return true;
+    } catch (error48) {
+      host.log?.("session boundary annotation clear failed", error48);
+      return false;
+    }
+  }
   async function getPublicSettings() {
     const store = await loadStore();
     return buildPublicSettings(store.settings);
@@ -120606,8 +120670,10 @@ function createOnhandBrowserRuntime(host) {
         sessions
       };
     },
-    async startNewSession() {
+    async startNewSession(options = {}) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
+      const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
+      await clearActivePageAnnotations(targetWindowId);
       const store = await loadStore();
       const session = createSession();
       store.sessions[session.id] = session;
@@ -120619,8 +120685,10 @@ function createOnhandBrowserRuntime(host) {
         currentSession: buildSessionState(session)
       };
     },
-    async switchSession(sessionId) {
+    async switchSession(sessionId, options = {}) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
+      const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
+      await clearActivePageAnnotations(targetWindowId);
       const store = await loadStore();
       if (!store.sessions[sessionId]) throw new Error("Session not found.");
       store.currentSessionId = sessionId;
@@ -120699,7 +120767,7 @@ function createOnhandBrowserRuntime(host) {
         aborted: false,
         targetWindowId
       };
-      await publishState({ status: `Starting Onhand (${reasoningProfile.mode})...` });
+      await publishState({ status: "Starting Onhand..." });
       activeAgent = new Agent({
         initialState: {
           systemPrompt: ONHAND_SYSTEM_PROMPT,

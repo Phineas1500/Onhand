@@ -256,6 +256,73 @@ async function assertPublicActivitiesFilterInternalThinking() {
 	assert.doesNotMatch(JSON.stringify(activities), /I need to think|Reasoning/);
 }
 
+async function assertConstitutionPromptContract() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { classifyPromptForReasoning, getPromptContractForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
+	assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
+
+	const contract = getPromptContractForTest();
+	assert.match(contract.systemPrompt, /The page is the canvas/);
+	assert.match(contract.systemPrompt, /Every material claim is anchored/);
+	assert.match(contract.systemPrompt, /focused pass/);
+	assert.match(contract.systemPrompt, /The user's pages come first/);
+	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
+	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong highlight/);
+	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
+	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
+	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
+	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
+	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
+	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
+	assert.equal(classifyPromptForReasoning("what is this term?", [], true), "balanced");
+	assert.equal(classifyPromptForReasoning("What are React components, and why would I split UI into components?", [], false), "balanced");
+	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
+}
+
+async function assertSessionBoundaryClearsActivePageAnnotations() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				windowId: 3,
+				active: true,
+				title: "Wrong active window",
+				url: "https://example.test/wrong-window",
+			}),
+			replaySmokeTab({
+				id: 8,
+				windowId: 4,
+				active: true,
+				title: "Target active window",
+				url: "https://example.test/target-window",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const firstSessionId = globalThis.chrome.storage.local.data.onhandBrowserRuntime.currentSessionId;
+
+	const callCountBeforeNew = host.calls.length;
+	await runtime.startNewSession({ targetWindowId: 4 });
+	const newSessionCalls = host.calls.slice(callCountBeforeNew);
+	assert.equal(newSessionCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), true);
+	assert.equal(newSessionCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
+
+	const callCountBeforeSwitch = host.calls.length;
+	await runtime.switchSession(firstSessionId, { targetWindowId: 4 });
+	const switchCalls = host.calls.slice(callCountBeforeSwitch);
+	assert.equal(switchCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), true);
+	assert.equal(switchCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
+}
+
 async function assertSessionReplayRestore() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -595,6 +662,8 @@ async function assertFixtureResponses() {
 async function main() {
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
+	await assertConstitutionPromptContract();
+	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertSessionReplayRestore();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
