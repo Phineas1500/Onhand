@@ -35,6 +35,7 @@ See:
 
 The broader product plan lives in:
 
+- `docs/ONHAND_CONSTITUTION.md`
 - `docs/ONHAND_PLAN.md`
 
 ## Current repository layout

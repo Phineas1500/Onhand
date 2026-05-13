@@ -14,6 +14,7 @@ const REQUIRED_FILES = [
 	"packages/browser-extension/runtime-revision.js",
 	"packages/browser-extension/src/browser-runtime.ts",
 	"packages/browser-extension/src/browser-oauth.ts",
+	"docs/ONHAND_CONSTITUTION.md",
 	"scripts/build-browser-runtime.mjs",
 	"scripts/run-browser-runtime-regressions.mjs",
 	"scripts/run-sidebar-regressions.mjs",
@@ -108,6 +109,16 @@ async function main() {
 	const runtimeRevision = runtimeRevisionSource.match(/ONHAND_EXTENSION_RUNTIME_REVISION\s*=\s*"([^"]+)"/)?.[1] || "";
 	printCheck("Browser extension runtime revision", Boolean(runtimeRevision), runtimeRevision);
 	if (!runtimeRevision) failures.push("Runtime revision is missing.");
+
+	const constitutionSource = await readFile(join(PROJECT_ROOT, "docs/ONHAND_CONSTITUTION.md"), "utf8");
+	const constitutionRequiredPhrases = ["The page is the canvas", "Every claim is anchored", "Teach, don't tell", "The session is the artifact"];
+	const missingConstitutionPhrases = constitutionRequiredPhrases.filter((phrase) => !constitutionSource.includes(phrase));
+	printCheck(
+		"Onhand constitution",
+		missingConstitutionPhrases.length === 0,
+		missingConstitutionPhrases.length ? `missing ${missingConstitutionPhrases.join(", ")}` : "core principles present",
+	);
+	if (missingConstitutionPhrases.length) failures.push("Onhand constitution is missing core principles.");
 
 	console.log("");
 	console.log("Manual reminders:");

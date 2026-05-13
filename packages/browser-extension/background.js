@@ -3924,7 +3924,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:new-session") {
 			const runtime = getOnhandBrowserRuntime();
-			const response = await runtime.startNewSession();
+			const response = await runtime.startNewSession({
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
 			sendResponse({
 				ok: true,
 				created: response.created,
@@ -3935,7 +3937,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:switch-session") {
 			const runtime = getOnhandBrowserRuntime();
-			const response = await runtime.switchSession(message.sessionPath);
+			const response = await runtime.switchSession(message.sessionPath, {
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
 			sendResponse({
 				ok: true,
 				switched: response.switched,

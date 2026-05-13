@@ -11,7 +11,6 @@
 	const SIDEBAR_THEME_STORAGE_KEY = "onhandSidebarTheme";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
 	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
-	const SPEED_MODE_VALUES = new Set(["auto", "fast", "deep"]);
 	const IS_NATIVE_SIDE_PANEL =
 		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
 	const FONT_ASSET_PATHS = Object.freeze({
@@ -183,11 +182,6 @@
 	function normalizeSidebarTheme(value) {
 		const normalized = String(value || "system").toLowerCase();
 		return SIDEBAR_THEME_VALUES.has(normalized) ? normalized : "system";
-	}
-
-	function normalizeSpeedMode(value) {
-		const normalized = String(value || "auto").toLowerCase();
-		return SPEED_MODE_VALUES.has(normalized) ? normalized : "auto";
 	}
 
 	async function loadSidebarThemePreference() {
@@ -2181,14 +2175,6 @@
 						<input id="learningModeToggle" type="checkbox" hidden />
 						<span>Learning</span>
 					</label>
-					<label id="speedModeLabel" class="speed" title="Auto uses fast answers unless a request needs deeper work.">
-						<span>Speed</span>
-						<select id="speedModeSelect" aria-label="Answer speed">
-							<option value="auto">Auto</option>
-							<option value="fast">Fast</option>
-							<option value="deep">Deep</option>
-						</select>
-					</label>
 					<span class="spacer"></span>
 					<button id="sendButton" class="onhand-send" type="submit">Ask <span class="kbd">&#8617;</span></button>
 				</div>
@@ -2217,7 +2203,6 @@
 	const themeSelect = shadow.getElementById("themeSelect");
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
 	const learningModeToggle = shadow.getElementById("learningModeToggle");
-	const speedModeSelect = shadow.getElementById("speedModeSelect");
 	const newSessionButton = shadow.getElementById("newSessionButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
 	const stopButton = shadow.getElementById("stopButton");
@@ -2298,7 +2283,6 @@
 		const currentPath = state?.currentSession?.sessionFile || sessionOverview?.currentSession?.sessionFile || "";
 		const sessions = Array.isArray(sessionOverview?.sessions) ? sessionOverview.sessions : [];
 		const learningMode = Boolean(state?.preferences?.learningMode);
-		const speedMode = normalizeSpeedMode(state?.preferences?.speedMode);
 		if (!sessions.length) {
 			sessionSelect.innerHTML = `<option value="">${sessionLoading ? "Loading sessions…" : "Current session"}</option>`;
 		} else {
@@ -2317,8 +2301,6 @@
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
 		learningModeLabel.classList.toggle("on", learningMode);
 		composer.classList.toggle("learning", learningMode);
-		speedModeSelect.value = speedMode;
-		speedModeSelect.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
@@ -2382,7 +2364,10 @@
 		lastRestoreResult = null;
 		renderState(currentState || {});
 		try {
-			const response = await chrome.runtime.sendMessage({ type: "sidebar:new-session" });
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:new-session",
+				windowId: await ensureCurrentWindowId(),
+			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not create a new session.");
 			}
@@ -2402,6 +2387,7 @@
 			const response = await chrome.runtime.sendMessage({
 				type: "sidebar:switch-session",
 				sessionPath,
+				windowId: await ensureCurrentWindowId(),
 			});
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not switch sessions.");
@@ -2903,7 +2889,6 @@
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
 		const learningMode = Boolean(currentState?.preferences?.learningMode);
-		const speedMode = normalizeSpeedMode(currentState?.preferences?.speedMode);
 		sending = true;
 		lastRestoreResult = null;
 		renderState(currentState || {});
@@ -2914,7 +2899,6 @@
 				displayPrompt,
 				attachments,
 				learningMode,
-				speedMode,
 				source: "sidebar",
 				windowId: await ensureCurrentWindowId(),
 			});
@@ -2986,24 +2970,6 @@
 				...(currentState?.preferences || {}),
 				...(response.settings || {}),
 				learningMode: Boolean(response.settings?.learningMode),
-			},
-		});
-	}
-
-	async function updateSpeedMode(speedMode) {
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:set-speed-mode",
-			speedMode: normalizeSpeedMode(speedMode),
-		});
-		if (!response?.ok) {
-			throw new Error(response?.error || "Could not update answer speed.");
-		}
-		renderState({
-			...(currentState || {}),
-			preferences: {
-				...(currentState?.preferences || {}),
-				...(response.settings || {}),
-				speedMode: normalizeSpeedMode(response.settings?.speedMode),
 			},
 		});
 	}
@@ -3088,18 +3054,6 @@
 		void updateLearningMode(nextValue).catch((error) => {
 			learningModeToggle.checked = !nextValue;
 			learningModeLabel.classList.toggle("on", !nextValue);
-			renderState({
-				...(currentState || {}),
-				status: error?.message || String(error),
-			});
-		});
-	});
-
-	speedModeSelect.addEventListener("change", () => {
-		const previousValue = normalizeSpeedMode(currentState?.preferences?.speedMode);
-		const nextValue = normalizeSpeedMode(speedModeSelect.value);
-		void updateSpeedMode(nextValue).catch((error) => {
-			speedModeSelect.value = previousValue;
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
