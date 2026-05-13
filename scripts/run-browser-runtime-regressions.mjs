@@ -119,9 +119,11 @@ async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
 
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { buildReplayAnnotationsFromPageActions, formatToolResultForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
+	const { buildHighlightRetryCandidates, buildReplayAnnotationsFromPageActions, formatToolResultForModel, formatVisibleTextForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
+	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
+	assert.equal(typeof formatVisibleTextForModel, "function", "browser runtime visible formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
 	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
 
@@ -144,6 +146,26 @@ async function assertSelectionFormatting() {
 
 	const selectedText = formatToolResultForModel("browser_get_selection", { selection: { text: " Alpha smoke content " } });
 	assert.equal(selectedText, "Selected text:\nAlpha smoke content");
+
+	const visibleText = formatVisibleTextForModel({
+		blocks: [
+			{ tag: "h2", text: "You will learn" },
+			{ tag: "li", text: "How to create and nest components" },
+			{ tag: "li", text: "How to add markup and styles" },
+		],
+	});
+	assert.equal(visibleText, "## You will learn\n- How to create and nest components\n- How to add markup and styles");
+	assert.match(
+		formatToolResultForModel("browser_extract_content", {
+			tab: replaySmokeTab(),
+			content: { markdown: "## You will learn\n\n- How to create and nest components" },
+		}),
+		/## You will learn\n\n- How to create and nest components/,
+	);
+	assert.deepEqual(buildHighlightRetryCandidates("## You will learn\n- How to create and nest components\n- How to add markup and styles"), [
+		"How to create and nest components",
+		"How to add markup and styles",
+	]);
 
 	const restored = summarizeRestoredArtifact({
 		tab: { id: 42, title: "Restored tab", url: "https://example.test/page" },
@@ -265,14 +287,31 @@ async function assertConstitutionPromptContract() {
 	const contract = getPromptContractForTest();
 	assert.match(contract.systemPrompt, /The page is the canvas/);
 	assert.match(contract.systemPrompt, /Every material claim is anchored/);
+	assert.match(contract.systemPrompt, /Do the page work before the chat answer/);
 	assert.match(contract.systemPrompt, /focused pass/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
+	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
+	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
+	assert.match(contract.systemPrompt, /Chat should be a brief guide to what the annotations show/);
+	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
+	assert.match(contract.systemPrompt, /every named step or item in chat must be anchored/);
+	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
+	assert.match(contract.systemPrompt, /do not send a heading-plus-list block as one highlight/);
+	assert.match(contract.systemPrompt, /Do not replace missing list items with nearby headings/);
 	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
+	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong highlight/);
+	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
+	assert.match(contract.answerPrompt, /Failed highlight attempts are not anchors/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
+	assert.match(contract.answerPrompt, /Roadmap\/list\/navigation answers need the actual supporting list/);
+	assert.match(contract.answerPrompt, /Every named step\/item in chat needs a matching anchor/);
+	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
+	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
+	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
 	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
 	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
 	assert.equal(classifyPromptForReasoning("what is this term?", [], true), "balanced");

@@ -169,6 +169,11 @@ async function assertSessionWideCitationNumbers() {
 	const dom = await renderSidebar(createState(), runtimeMessages);
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	assert.ok(host, "expected sidebar host to render");
+	const learningLabel = host.shadowRoot.getElementById("learningModeLabel");
+	assert.ok(learningLabel, "expected learning label to render");
+	assert.match(learningLabel.title, /tutor from the page/);
+	assert.match(learningLabel.title, /anchor prompts/);
+	assert.doesNotMatch(learningLabel.title, /slows down/i);
 	const entries = [...host.shadowRoot.querySelectorAll(".onhand-entry")];
 	assert.equal(entries.length, 3);
 

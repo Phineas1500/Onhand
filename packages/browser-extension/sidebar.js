@@ -2170,7 +2170,7 @@
 				<div class="onhand-row">
 					<button id="attachButton" class="ctl" type="button" aria-label="Attach files" title="Attach files">&#128206;</button>
 					<input id="fileInput" type="file" multiple hidden />
-					<label id="learningModeLabel" class="learn" title="Learning Mode slows down the first answer and asks Onhand to scaffold and check understanding.">
+					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
 						<span class="sw"></span>
 						<input id="learningModeToggle" type="checkbox" hidden />
 						<span>Learning</span>
