@@ -112,7 +112,55 @@ function createState() {
 	};
 }
 
-async function renderSidebar(state, runtimeMessages) {
+function createLearningState() {
+	const state = createState();
+	state.preferences.learningMode = true;
+	state.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [
+			{
+				conceptId: "concept_rejection_sampling",
+				label: "Rejection sampling",
+				firstSeenAt: "2026-05-12T10:00:00.000Z",
+				lastSeenAt: "2026-05-12T10:02:00.000Z",
+				sources: [
+					{
+						tabTitle: "BayesianDL",
+						url: "https://example.test/bayesian-dl",
+						annotationId: "ann-first",
+					},
+				],
+			},
+			{
+				conceptId: "concept_monte_carlo",
+				label: "Monte Carlo estimates",
+				firstSeenAt: "2026-05-12T10:01:00.000Z",
+				lastSeenAt: "2026-05-12T10:01:00.000Z",
+				sources: [
+					{
+						tabTitle: "BayesianDL",
+						url: "https://example.test/bayesian-dl",
+						annotationId: "ann-second",
+					},
+				],
+			},
+		],
+		openChecks: [
+			{
+				checkId: "check-rejection-prediction",
+				kind: "prediction",
+				conceptId: "concept_rejection_sampling",
+				promptText: "Before we explain it: what do you think gets rejected here?",
+				annotationId: "ann-first",
+				askedAt: "2026-05-12T10:03:00.000Z",
+			},
+		],
+		responses: [],
+	};
+	return state;
+}
+
+async function renderSidebar(state, runtimeMessages, options = {}) {
 	const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 		pretendToBeVisual: true,
 		runScripts: "outside-only",
@@ -205,6 +253,12 @@ async function renderSidebar(state, runtimeMessages) {
 					};
 				}
 				if (message?.type === "sidebar:activate-action") return { ok: true };
+				if (message?.type === "sidebar:scroll-to-annotation") {
+					if (typeof options.scrollToAnnotationResponse === "function") {
+						return options.scrollToAnnotationResponse(message);
+					}
+					return { ok: true, result: { annotation: { annotationId: message.annotationId } } };
+				}
 				return { ok: true };
 			},
 		},
@@ -293,6 +347,114 @@ async function assertReplayViewRendersSavedSnapshot() {
 	dom.window.close();
 }
 
+async function assertLearningSessionPanelRendersState() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createLearningState(), runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	assert.ok(host, "expected sidebar host to render");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	assert.ok(learnerPanel, "expected learner panel to render");
+	assert.equal(learnerPanel.hidden, false, "expected learner panel to be visible in Learning Mode with state");
+	assert.match(learnerPanel.textContent, /This session/);
+	assert.match(learnerPanel.textContent, /2 concepts/);
+	assert.match(learnerPanel.textContent, /1 open check/);
+	assert.match(learnerPanel.textContent, /Covered/);
+	assert.match(learnerPanel.textContent, /Rejection sampling/);
+	assert.match(learnerPanel.textContent, /Monte Carlo estimates/);
+	assert.match(learnerPanel.textContent, /Waiting/);
+	assert.match(learnerPanel.textContent, /what do you think gets rejected here/);
+	assert.match(learnerPanel.textContent, /prediction · Rejection sampling/);
+
+	const sourceButtons = [...learnerPanel.querySelectorAll("[data-learner-annotation-id]")];
+	assert.equal(sourceButtons.length, 3);
+	const conceptSourceButton = learnerPanel.querySelector('[data-learner-annotation-id="ann-second"]');
+	assert.ok(conceptSourceButton, "expected concept source button");
+	conceptSourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:scroll-to-annotation" &&
+				message.annotationId === "ann-second" &&
+				message.target === "annotation",
+		),
+		true,
+	);
+	assert.match(learnerPanel.textContent, /Jumped to source/);
+
+	const checkSourceButton = learnerPanel.querySelector('[data-learner-annotation-id="ann-first"][data-target="note"]');
+	assert.ok(checkSourceButton, "expected open-check source button");
+	checkSourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:scroll-to-annotation" &&
+				message.annotationId === "ann-first" &&
+				message.target === "note",
+		),
+		true,
+	);
+
+	dom.window.close();
+}
+
+async function assertLearningSessionPanelReportsSourceFailure() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createLearningState(), runtimeMessages, {
+		scrollToAnnotationResponse(message) {
+			return {
+				ok: false,
+				error: `No annotation found with id: ${message.annotationId}`,
+			};
+		},
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="ann-second"]');
+	assert.ok(sourceButton, "expected concept source button");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:scroll-to-annotation" && message.annotationId === "ann-second"),
+		true,
+	);
+	const feedback = learnerPanel.querySelector(".onhand-learner-feedback");
+	assert.ok(feedback, "expected learner source feedback");
+	assert.match(feedback.textContent, /Source not found on this page/);
+	assert.equal(feedback.classList.contains("error"), true);
+
+	dom.window.close();
+}
+
+async function assertLearningSessionPanelHidesOutsideLearningState() {
+	const answerRuntimeMessages = [];
+	const answerState = createLearningState();
+	answerState.preferences.learningMode = false;
+	const answerDom = await renderSidebar(answerState, answerRuntimeMessages);
+	const answerPanel = answerDom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("learnerPanel");
+	assert.equal(answerPanel.hidden, true, "expected learner panel to hide in Answer Mode");
+	answerDom.window.close();
+
+	const emptyRuntimeMessages = [];
+	const emptyState = createState();
+	emptyState.preferences.learningMode = true;
+	emptyState.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [],
+		openChecks: [],
+		responses: [],
+	};
+	const emptyDom = await renderSidebar(emptyState, emptyRuntimeMessages);
+	const emptyPanel = emptyDom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("learnerPanel");
+	assert.equal(emptyPanel.hidden, true, "expected learner panel to hide when Learning Mode has no state");
+	emptyDom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
 await assertReplayViewRendersSavedSnapshot();
+await assertLearningSessionPanelRendersState();
+await assertLearningSessionPanelReportsSourceFailure();
+await assertLearningSessionPanelHidesOutsideLearningState();
 console.log("sidebar regressions passed");

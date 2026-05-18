@@ -107,6 +107,8 @@
 	let stoppingRequest = false;
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
+	let learnerSourceFeedback = null;
+	let learnerSourceFeedbackSequence = 0;
 	let replayState = {
 		open: false,
 		loading: false,
@@ -1642,6 +1644,102 @@
 			.onhand-index[hidden] {
 				display: none;
 			}
+			.onhand-learner-panel[hidden] {
+				display: none;
+			}
+			.onhand-learner-panel {
+				border-top: 1px solid var(--rm-surface-2);
+				background: color-mix(in srgb, var(--rm-mantle) 58%, transparent);
+				padding: 10px 14px 11px;
+			}
+			.onhand-learner-head {
+				display: flex;
+				align-items: baseline;
+				justify-content: space-between;
+				gap: 10px;
+				margin-bottom: 8px;
+			}
+			.onhand-learner-grid {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr);
+				gap: 8px;
+			}
+			.onhand-learner-group {
+				min-width: 0;
+			}
+			.onhand-learner-group-title {
+				display: block;
+				margin-bottom: 4px;
+				font: 700 10px/1 var(--rm-font-mono);
+				letter-spacing: 0.05em;
+				text-transform: uppercase;
+				color: var(--rm-subtext);
+			}
+			.onhand-learner-items {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+			}
+			.onhand-learner-item {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto;
+				align-items: start;
+				gap: 8px;
+				min-width: 0;
+				padding: 6px 7px;
+				background: color-mix(in srgb, var(--rm-base) 60%, transparent);
+				border: 1px solid var(--rm-surface-1);
+				border-radius: 3px;
+			}
+			.onhand-learner-main {
+				min-width: 0;
+			}
+			.onhand-learner-title {
+				display: block;
+				color: var(--rm-text);
+				font-size: 13px;
+				line-height: 1.3;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.onhand-learner-detail {
+				display: block;
+				margin-top: 2px;
+				color: var(--rm-subtext);
+				font: 10.5px/1.35 var(--rm-font-mono);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.onhand-learner-source {
+				border: 0;
+				background: transparent;
+				color: var(--rm-pine);
+				font: 700 10.5px/1.2 var(--rm-font-mono);
+				padding: 2px 0;
+				cursor: pointer;
+			}
+			.onhand-learner-source:hover {
+				color: var(--rm-foam);
+				text-decoration: underline;
+			}
+			.onhand-learner-feedback {
+				margin: -2px 0 8px;
+				color: var(--rm-subtext);
+				font: 10.5px/1.35 var(--rm-font-mono);
+			}
+			.onhand-learner-feedback.ok {
+				color: var(--rm-pine);
+			}
+			.onhand-learner-feedback.error {
+				color: var(--rm-love);
+			}
+			.onhand-learner-more {
+				color: var(--rm-subtext);
+				font: 10.5px/1.3 var(--rm-font-mono);
+				padding: 1px 7px;
+			}
 			.onhand-replay[hidden] {
 				display: none;
 			}
@@ -2336,6 +2434,7 @@
 					<div id="reply"></div>
 				</section>
 			</div>
+			<section id="learnerPanel" class="onhand-learner-panel" hidden></section>
 			<form id="composer" class="onhand-compose">
 				<div id="attachmentList" class="onhand-draft-chips"></div>
 				<textarea id="input" class="onhand-input" placeholder="Ask about this page or your selection..."></textarea>
@@ -2385,6 +2484,7 @@
 	const replySectionEl = shadow.getElementById("replySection");
 	const replyEl = shadow.getElementById("reply");
 	const actionsEl = shadow.getElementById("actions");
+	const learnerPanelEl = shadow.getElementById("learnerPanel");
 	const composer = shadow.getElementById("composer");
 	const attachButton = shadow.getElementById("attachButton");
 	const fileInput = shadow.getElementById("fileInput");
@@ -2778,6 +2878,146 @@
 
 	function pluralize(count, singular, plural = `${singular}s`) {
 		return `${count} ${count === 1 ? singular : plural}`;
+	}
+
+	function compactLearnerPanelText(value, maxChars = 120) {
+		const text = String(value || "")
+			.replace(/\s+/g, " ")
+			.trim();
+		if (text.length <= maxChars) return text;
+		return `${text.slice(0, Math.max(0, maxChars - 1)).trim()}…`;
+	}
+
+	function normalizeLearnerStateForPanel(state) {
+		const learnerState = state?.learnerState && typeof state.learnerState === "object" ? state.learnerState : {};
+		return {
+			concepts: Array.isArray(learnerState.conceptsIntroduced) ? learnerState.conceptsIntroduced.filter(Boolean) : [],
+			openChecks: Array.isArray(learnerState.openChecks) ? learnerState.openChecks.filter(Boolean) : [],
+		};
+	}
+
+	function getLearnerConceptLabel(concepts, conceptId) {
+		const id = String(conceptId || "").trim();
+		if (!id) return "Concept";
+		const concept = concepts.find((item) => String(item?.conceptId || "") === id);
+		return compactLearnerPanelText(concept?.label || id.replace(/^concept[_:-]?/, "").replace(/[_-]+/g, " "), 64) || "Concept";
+	}
+
+	function getLatestLearnerSource(concept) {
+		const sources = Array.isArray(concept?.sources) ? concept.sources.filter(Boolean) : [];
+		return sources.length ? sources[sources.length - 1] : null;
+	}
+
+	function getLearnerSourceLabel(source) {
+		const title = compactLearnerPanelText(source?.tabTitle || source?.title, 54);
+		if (title) return title;
+		const hostname = safeHostname(source?.url);
+		return hostname || "";
+	}
+
+	function renderLearnerSourceButton(annotationId, target = "annotation") {
+		const id = String(annotationId || "").trim();
+		if (!id) return "";
+		return `
+			<button
+				class="onhand-learner-source"
+				data-learner-annotation-id="${escapeAttribute(id)}"
+				data-target="${escapeAttribute(target)}"
+				type="button"
+				title="Jump to source"
+			>source</button>
+		`;
+	}
+
+	function renderLearnerSourceFeedback() {
+		if (!learnerSourceFeedback?.message) return "";
+		const kind = ["pending", "ok", "error"].includes(learnerSourceFeedback.kind) ? learnerSourceFeedback.kind : "pending";
+		return `<div class="onhand-learner-feedback ${escapeAttribute(kind)}" role="status">${escapeHtml(learnerSourceFeedback.message)}</div>`;
+	}
+
+	function renderLearnerConceptItem(concept) {
+		const source = getLatestLearnerSource(concept);
+		const sourceLabel = getLearnerSourceLabel(source);
+		const label = compactLearnerPanelText(concept?.label || concept?.conceptId || "Concept", 64);
+		return `
+			<div class="onhand-learner-item">
+				<span class="onhand-learner-main">
+					<span class="onhand-learner-title">${escapeHtml(label)}</span>
+					${sourceLabel ? `<span class="onhand-learner-detail">${escapeHtml(sourceLabel)}</span>` : ""}
+				</span>
+				${renderLearnerSourceButton(source?.annotationId, "annotation")}
+			</div>
+		`;
+	}
+
+	function renderLearnerCheckItem(check, concepts) {
+		const promptText = compactLearnerPanelText(check?.promptText || "Open learning check", 88);
+		const kind = String(check?.kind || "check").replace(/[_-]+/g, " ");
+		const conceptLabel = getLearnerConceptLabel(concepts, check?.conceptId);
+		return `
+			<div class="onhand-learner-item">
+				<span class="onhand-learner-main">
+					<span class="onhand-learner-title">${escapeHtml(promptText)}</span>
+					<span class="onhand-learner-detail">${escapeHtml(kind)} · ${escapeHtml(conceptLabel)}</span>
+				</span>
+				${renderLearnerSourceButton(check?.annotationId, "note")}
+			</div>
+		`;
+	}
+
+	function renderLearnerPanel(state, hiddenByView = false) {
+		const learningMode = Boolean(state?.preferences?.learningMode);
+		const { concepts, openChecks } = normalizeLearnerStateForPanel(state);
+		const hasState = concepts.length > 0 || openChecks.length > 0;
+		learnerPanelEl.hidden = hiddenByView || !learningMode || !hasState;
+		if (learnerPanelEl.hidden) {
+			learnerPanelEl.innerHTML = "";
+			learnerSourceFeedback = null;
+			return;
+		}
+
+		const visibleConcepts = concepts.slice(-5);
+		const visibleChecks = openChecks.slice(-3);
+		const conceptOverflow = Math.max(0, concepts.length - visibleConcepts.length);
+		const checkOverflow = Math.max(0, openChecks.length - visibleChecks.length);
+		const summary = [concepts.length ? pluralize(concepts.length, "concept") : "", openChecks.length ? pluralize(openChecks.length, "open check") : ""]
+			.filter(Boolean)
+			.join(" · ");
+		learnerPanelEl.innerHTML = `
+			<div class="onhand-learner-head">
+				<span class="onhand-label">This session</span>
+				<span class="onhand-count">${escapeHtml(summary)}</span>
+			</div>
+			${renderLearnerSourceFeedback()}
+			<div class="onhand-learner-grid">
+				${
+					visibleConcepts.length
+						? `
+							<div class="onhand-learner-group">
+								<span class="onhand-learner-group-title">Covered</span>
+								<div class="onhand-learner-items">
+									${visibleConcepts.map(renderLearnerConceptItem).join("")}
+									${conceptOverflow ? `<div class="onhand-learner-more">+${conceptOverflow} earlier</div>` : ""}
+								</div>
+							</div>
+						`
+						: ""
+				}
+				${
+					visibleChecks.length
+						? `
+							<div class="onhand-learner-group">
+								<span class="onhand-learner-group-title">Waiting</span>
+								<div class="onhand-learner-items">
+									${visibleChecks.map((check) => renderLearnerCheckItem(check, concepts)).join("")}
+									${checkOverflow ? `<div class="onhand-learner-more">+${checkOverflow} earlier</div>` : ""}
+								</div>
+							</div>
+						`
+						: ""
+				}
+			</div>
+		`;
 	}
 
 	function getSelectedSessionPath(targetSessionPath = "") {
@@ -3291,6 +3531,7 @@
 		renderRestoreResult();
 		renderReplayView();
 		const showingReplay = Boolean(replayState.open);
+		renderLearnerPanel(state, showingReplay);
 		pageIndexEl.hidden = true;
 		messagesEl.hidden = showingReplay;
 		const annotationCount = showingReplay ? 0 : renderPageIndex(state);
@@ -3392,6 +3633,46 @@
 		const response = await chrome.runtime.sendMessage(payload);
 		if (!response?.ok) {
 			throw new Error(response?.error || "Could not scroll to that annotation.");
+		}
+	}
+
+	function learnerSourceErrorMessage(error) {
+		const message = String(error?.message || error || "").trim();
+		if (/not found|no annotation|source.*missing|annotation.*missing/i.test(message)) {
+			return "Source not found on this page";
+		}
+		return message || "Could not jump to source";
+	}
+
+	function setLearnerSourceFeedback(feedback) {
+		learnerSourceFeedback = feedback;
+		renderState(currentState || {});
+	}
+
+	async function jumpToLearnerSource(annotationId, target = "annotation") {
+		const id = String(annotationId || "").trim();
+		if (!id) return;
+		const sequence = ++learnerSourceFeedbackSequence;
+		setLearnerSourceFeedback({
+			annotationId: id,
+			kind: "pending",
+			message: "Opening source...",
+		});
+		try {
+			await scrollToAnnotation(id, null, target);
+			if (sequence !== learnerSourceFeedbackSequence) return;
+			setLearnerSourceFeedback({
+				annotationId: id,
+				kind: "ok",
+				message: "Jumped to source",
+			});
+		} catch (error) {
+			if (sequence !== learnerSourceFeedbackSequence) return;
+			setLearnerSourceFeedback({
+				annotationId: id,
+				kind: "error",
+				message: learnerSourceErrorMessage(error),
+			});
 		}
 	}
 
@@ -3634,6 +3915,13 @@
 				status: error?.message || String(error),
 			});
 		});
+	});
+
+	learnerPanelEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-learner-annotation-id]");
+		if (!(button instanceof HTMLElement)) return;
+		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation");
 	});
 
 	composer.addEventListener("submit", (event) => {

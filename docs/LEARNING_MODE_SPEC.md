@@ -15,7 +15,8 @@ Implementation progress:
 
 - Slice A is implemented in the browser runtime: `learnerState` is normalized with each session, exposed in runtime state, updateable through `recordLearningEvent`, and covered by browser-runtime regressions.
 - Slice B is partially implemented: Learning Mode prompts now include compact learner-state context, and the agent has an internal `onhand_record_learning_event` tool for concept/check updates.
-- Still pending: the sidebar "This session" panel, acceptance-matrix cases, richer repeated-concept prompt behavior, and cross-tab interleaving behavior.
+- Slice C is implemented in the sidebar: Learning Mode sessions with state now show a compact "This session" panel with covered concepts, open checks, and best-effort source jumps with visible success/failure feedback.
+- Still pending: acceptance-matrix cases, richer repeated-concept prompt behavior, and cross-tab interleaving behavior.
 
 ## Product thesis
 
