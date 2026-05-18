@@ -34,6 +34,7 @@ interface RuntimeSession {
 	turns: UiTurn[];
 	pageActions: PageAction[];
 	artifactIds: string[];
+	learnerState: LearnerState;
 }
 
 interface RuntimeSettings {
@@ -106,6 +107,84 @@ interface PageAction {
 	citationText?: string;
 }
 
+type LearnerMode = "answer" | "learning";
+type LearnerCheckKind = "prediction" | "retrieval";
+type LearnerAssessment = "correct" | "partial" | "incorrect" | "skipped";
+
+interface LearnerConceptSource {
+	tabTitle?: string;
+	url?: string;
+	annotationId?: string;
+	artifactId?: string;
+}
+
+interface LearnerConcept {
+	conceptId: string;
+	label: string;
+	firstSeenAt: string;
+	lastSeenAt: string;
+	sources: LearnerConceptSource[];
+}
+
+interface LearnerCheck {
+	checkId: string;
+	kind: LearnerCheckKind;
+	conceptId: string;
+	promptText: string;
+	annotationId?: string;
+	askedAt: string;
+}
+
+interface LearnerResponse {
+	checkId: string;
+	assessment: LearnerAssessment;
+	resolvedAt: string;
+	evidence?: string;
+}
+
+interface LearnerState {
+	mode: LearnerMode;
+	conceptsIntroduced: LearnerConcept[];
+	openChecks: LearnerCheck[];
+	responses: LearnerResponse[];
+}
+
+type LearningEvent =
+	| {
+			kind: "concept_introduced";
+			conceptId?: string;
+			conceptLabel?: string;
+			label?: string;
+			annotationId?: string;
+			artifactId?: string;
+			url?: string;
+			tabTitle?: string;
+			at?: string;
+	  }
+	| {
+			kind: "check_opened";
+			checkId?: string;
+			checkKind?: LearnerCheckKind;
+			kindOverride?: LearnerCheckKind;
+			conceptId?: string;
+			conceptLabel?: string;
+			label?: string;
+			promptText?: string;
+			annotationId?: string;
+			artifactId?: string;
+			url?: string;
+			tabTitle?: string;
+			at?: string;
+	  }
+	| {
+			kind: "check_resolved";
+			checkId?: string;
+			itemId?: string;
+			assessment?: LearnerAssessment;
+			evidence?: string;
+			at?: string;
+	  };
+
 interface BrowserArtifact {
 	id: string;
 	createdAt: string;
@@ -149,6 +228,7 @@ const OPENAI_CODEX_MODEL = "gpt-5.5";
 const SMOKE_PROVIDER = "onhand-smoke";
 const SMOKE_MODEL = "onhand-smoke-1";
 const SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
+const SMOKE_LEARNING_MODEL = "onhand-smoke-learning-1";
 const BROWSER_CONTEXT_MAX_CHARS = 1800;
 const BROWSER_CONTEXT_MAX_BLOCKS = 8;
 const TOOL_RESULT_MAX_CHARS = 1800;
@@ -205,6 +285,9 @@ Learning uses a tutoring stance:
 - For conceptual questions, do not dump the full answer first. Anchor the relevant passage/equation and ask one short page-anchored question that helps the user reason from it.
 - Stay fast: the first move should be a useful page anchor or anchored prompt, not a long preamble.
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
+- Use onhand_record_learning_event to keep learner state current: record a concept when you introduce it, record a prediction/retrieval check when you place it, and resolve an open check before moving on when the user answers it.
+- Include annotationId, tabTitle, and url in learning events whenever you have them from browser tool results. If you open a check, reuse the returned checkId when resolving it later.
+- If a concept is already in learner state, prefer a quick refresher that points back to its anchor instead of re-explaining from scratch.
 - Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be anchored to a highlight or note, not floated in chat.
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
 - If another already-open tab likely contains a prerequisite or related example, use the tab list and connect the pages before opening anything new.
@@ -384,6 +467,22 @@ const RESTORE_ARTIFACT_SCHEMA = Type.Object({
 	openIfNeeded: Type.Optional(Type.Boolean({ description: "Open the artifact URL in a new tab if no matching tab is open" })),
 });
 
+const RECORD_LEARNING_EVENT_SCHEMA = Type.Object({
+	kind: Type.String({ description: "Learning event kind: concept_introduced, check_opened, or check_resolved" }),
+	conceptId: Type.Optional(Type.String({ description: "Stable concept id when known" })),
+	conceptLabel: Type.Optional(Type.String({ description: "Short human-readable concept label" })),
+	checkId: Type.Optional(Type.String({ description: "Stable check id when opening or resolving a prediction/retrieval check" })),
+	itemId: Type.Optional(Type.String({ description: "Legacy check id alias when resolving a check" })),
+	checkKind: Type.Optional(Type.String({ description: "Check kind when opening a check: prediction or retrieval" })),
+	promptText: Type.Optional(Type.String({ description: "The exact prediction or retrieval prompt shown to the user" })),
+	assessment: Type.Optional(Type.String({ description: "Assessment when resolving a check: correct, partial, incorrect, or skipped" })),
+	evidence: Type.Optional(Type.String({ description: "Brief model-visible rationale for the assessment" })),
+	annotationId: Type.Optional(Type.String({ description: "Annotation id that anchors this learning event" })),
+	artifactId: Type.Optional(Type.String({ description: "Artifact id that anchors this learning event" })),
+	url: Type.Optional(Type.String({ description: "Source page URL for the learning event" })),
+	tabTitle: Type.Optional(Type.String({ description: "Source tab title for the learning event" })),
+});
+
 const CORE_READ_TOOL_NAMES = [
 	"browser_get_visible_text",
 	"browser_extract_content",
@@ -405,6 +504,7 @@ const INTERACTION_TOOL_NAMES = [
 ];
 const DEBUG_TOOL_NAMES = ["browser_collect_console", "browser_collect_network", "browser_get_dom", "browser_capture_screenshot", "browser_run_js"];
 const ARTIFACT_TOOL_NAMES = ["browser_capture_state", "browser_list_artifacts", "browser_restore_state"];
+const LEARNING_TOOL_NAMES = ["onhand_record_learning_event"];
 const EXACT_TOOL_NAME_PATTERN = /\bbrowser_[a-z_]+\b/g;
 
 function nowIso() {
@@ -503,6 +603,259 @@ function pageActionTabFields(tab: any) {
 	};
 }
 
+function normalizeLearnerMode(value: unknown, fallback: LearnerMode = "answer"): LearnerMode {
+	if (value === "learning") return "learning";
+	if (value === "answer") return "answer";
+	return fallback;
+}
+
+function normalizeLearnerCheckKind(value: unknown, fallback: LearnerCheckKind = "prediction"): LearnerCheckKind {
+	return value === "retrieval" ? "retrieval" : fallback;
+}
+
+function normalizeLearnerAssessment(value: unknown): LearnerAssessment {
+	if (value === "correct" || value === "partial" || value === "incorrect" || value === "skipped") return value;
+	return "partial";
+}
+
+function normalizeLearnerTimestamp(value: unknown, fallback: string) {
+	const text = String(value || "").trim();
+	return Number.isFinite(Date.parse(text)) ? text : fallback;
+}
+
+function compactLearnerText(value: unknown, maxChars = 160) {
+	return truncate(compactActionText(value), maxChars);
+}
+
+function learnerSlug(value: unknown) {
+	return compactLearnerText(value, 80)
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "")
+		.slice(0, 64);
+}
+
+function uniqueLearnerId(prefix: string, seed: unknown, usedIds: Set<string>) {
+	const base = `${prefix}_${learnerSlug(seed) || crypto.randomUUID().slice(0, 8)}`;
+	let candidate = base;
+	let suffix = 2;
+	while (usedIds.has(candidate)) {
+		candidate = `${base}_${suffix}`;
+		suffix += 1;
+	}
+	usedIds.add(candidate);
+	return candidate;
+}
+
+function normalizeLearnerSource(rawSource: any): LearnerConceptSource | null {
+	const tabTitle = compactLearnerText(rawSource?.tabTitle || rawSource?.title, 120);
+	const url = compactLearnerText(rawSource?.url, 240);
+	const annotationId = compactLearnerText(rawSource?.annotationId, 120);
+	const artifactId = compactLearnerText(rawSource?.artifactId, 120);
+	const source = {
+		...(tabTitle ? { tabTitle } : {}),
+		...(url ? { url } : {}),
+		...(annotationId ? { annotationId } : {}),
+		...(artifactId ? { artifactId } : {}),
+	};
+	return Object.keys(source).length ? source : null;
+}
+
+function learnerSourceKey(source: LearnerConceptSource) {
+	return [source.annotationId || "", source.artifactId || "", source.url || "", source.tabTitle || ""].join("\n");
+}
+
+function appendLearnerSource(sources: LearnerConceptSource[] = [], source: LearnerConceptSource | null) {
+	if (!source) return sources;
+	const key = learnerSourceKey(source);
+	if (sources.some((existing) => learnerSourceKey(existing) === key)) return sources;
+	return [...sources, source];
+}
+
+function normalizeLearnerConcept(rawConcept: any, usedIds: Set<string>, fallbackNow: string): LearnerConcept | null {
+	if (!rawConcept || typeof rawConcept !== "object") return null;
+	const label = compactLearnerText(rawConcept.label || rawConcept.conceptLabel || rawConcept.conceptId, 80);
+	if (!label) return null;
+	const requestedId = compactLearnerText(rawConcept.conceptId, 120);
+	const conceptId = requestedId && !usedIds.has(requestedId) ? requestedId : uniqueLearnerId("concept", label, usedIds);
+	usedIds.add(conceptId);
+	const firstSeenAt = normalizeLearnerTimestamp(rawConcept.firstSeenAt || rawConcept.createdAt, fallbackNow);
+	const lastSeenAt = normalizeLearnerTimestamp(rawConcept.lastSeenAt, firstSeenAt);
+	const rawSources = Array.isArray(rawConcept.sources) ? rawConcept.sources : [];
+	let sources: LearnerConceptSource[] = [];
+	for (const rawSource of rawSources) {
+		sources = appendLearnerSource(sources, normalizeLearnerSource(rawSource));
+	}
+	sources = appendLearnerSource(sources, normalizeLearnerSource(rawConcept));
+	return {
+		conceptId,
+		label,
+		firstSeenAt,
+		lastSeenAt,
+		sources,
+	};
+}
+
+function normalizeLearnerCheck(rawCheck: any, usedIds: Set<string>, fallbackNow: string, forcedKind?: LearnerCheckKind): LearnerCheck | null {
+	if (!rawCheck || typeof rawCheck !== "object") return null;
+	const promptText = compactLearnerText(rawCheck.promptText || rawCheck.prompt || rawCheck.question, 260);
+	if (!promptText) return null;
+	const conceptId =
+		compactLearnerText(rawCheck.conceptId, 120) ||
+		`concept_${learnerSlug(rawCheck.conceptLabel || rawCheck.label || "concept") || "concept"}`;
+	const requestedId = compactLearnerText(rawCheck.checkId || rawCheck.predictionId || rawCheck.itemId, 120);
+	const checkId = requestedId && !usedIds.has(requestedId) ? requestedId : uniqueLearnerId("check", `${conceptId} ${promptText}`, usedIds);
+	usedIds.add(checkId);
+	const annotationId = compactLearnerText(rawCheck.annotationId, 120);
+	return {
+		checkId,
+		kind: normalizeLearnerCheckKind(forcedKind || rawCheck.kind || rawCheck.checkKind),
+		conceptId,
+		promptText,
+		...(annotationId ? { annotationId } : {}),
+		askedAt: normalizeLearnerTimestamp(rawCheck.askedAt || rawCheck.createdAt, fallbackNow),
+	};
+}
+
+function normalizeLearnerResponse(rawResponse: any, fallbackNow: string): LearnerResponse | null {
+	if (!rawResponse || typeof rawResponse !== "object") return null;
+	const checkId = compactLearnerText(rawResponse.checkId || rawResponse.itemId, 120);
+	if (!checkId) return null;
+	const evidence = compactLearnerText(rawResponse.evidence || rawResponse.rationale, 320);
+	return {
+		checkId,
+		assessment: normalizeLearnerAssessment(rawResponse.assessment),
+		resolvedAt: normalizeLearnerTimestamp(rawResponse.resolvedAt || rawResponse.createdAt, fallbackNow),
+		...(evidence ? { evidence } : {}),
+	};
+}
+
+function createEmptyLearnerState(mode: LearnerMode = "answer"): LearnerState {
+	return {
+		mode,
+		conceptsIntroduced: [],
+		openChecks: [],
+		responses: [],
+	};
+}
+
+function normalizeLearnerState(rawState: unknown, modeOverride?: LearnerMode): LearnerState {
+	const fallbackNow = nowIso();
+	if (!rawState || typeof rawState !== "object") return createEmptyLearnerState(modeOverride || "answer");
+	const raw = rawState as any;
+	const conceptIds = new Set<string>();
+	const conceptsIntroduced = (Array.isArray(raw.conceptsIntroduced) ? raw.conceptsIntroduced : [])
+		.map((concept: any) => normalizeLearnerConcept(concept, conceptIds, fallbackNow))
+		.filter(Boolean) as LearnerConcept[];
+
+	const checkIds = new Set<string>();
+	const rawOpenChecks = [
+		...(Array.isArray(raw.openChecks) ? raw.openChecks.map((check: any) => ({ check })) : []),
+		...(Array.isArray(raw.openPredictions) ? raw.openPredictions.map((check: any) => ({ check, kind: "prediction" as LearnerCheckKind })) : []),
+		...(Array.isArray(raw.openRetrievalChecks) ? raw.openRetrievalChecks.map((check: any) => ({ check, kind: "retrieval" as LearnerCheckKind })) : []),
+	];
+	const openChecks = rawOpenChecks
+		.map(({ check, kind }) => normalizeLearnerCheck(check, checkIds, fallbackNow, kind))
+		.filter(Boolean) as LearnerCheck[];
+
+	const rawResponses = Array.isArray(raw.responses) ? raw.responses : Array.isArray(raw.responded) ? raw.responded : [];
+	const responseIds = new Set<string>();
+	const responses = rawResponses
+		.map((response: any) => normalizeLearnerResponse(response, fallbackNow))
+		.filter((response: LearnerResponse | null): response is LearnerResponse => {
+			if (!response || responseIds.has(response.checkId)) return false;
+			responseIds.add(response.checkId);
+			return true;
+		});
+
+	return {
+		mode: normalizeLearnerMode(modeOverride || raw.mode),
+		conceptsIntroduced,
+		openChecks,
+		responses,
+	};
+}
+
+function setLearnerStateMode(rawState: unknown, mode: LearnerMode): LearnerState {
+	return normalizeLearnerState(rawState, mode);
+}
+
+function findLearnerConcept(state: LearnerState, conceptId: string, label: string) {
+	const normalizedLabel = label.toLowerCase();
+	return state.conceptsIntroduced.find(
+		(concept) => (conceptId && concept.conceptId === conceptId) || concept.label.toLowerCase() === normalizedLabel,
+	);
+}
+
+function upsertLearnerConcept(state: LearnerState, rawEvent: any, now: string): LearnerConcept {
+	const label = compactLearnerText(rawEvent?.conceptLabel || rawEvent?.label || rawEvent?.conceptId || "Concept", 80) || "Concept";
+	const requestedId = compactLearnerText(rawEvent?.conceptId, 120);
+	const existing = findLearnerConcept(state, requestedId, label);
+	const source = normalizeLearnerSource(rawEvent);
+	if (existing) {
+		existing.lastSeenAt = normalizeLearnerTimestamp(rawEvent?.at || rawEvent?.lastSeenAt, now);
+		existing.sources = appendLearnerSource(existing.sources, source);
+		return existing;
+	}
+	const usedIds = new Set(state.conceptsIntroduced.map((concept) => concept.conceptId));
+	const conceptId = requestedId && !usedIds.has(requestedId) ? requestedId : uniqueLearnerId("concept", label, usedIds);
+	const firstSeenAt = normalizeLearnerTimestamp(rawEvent?.at || rawEvent?.firstSeenAt, now);
+	const concept = {
+		conceptId,
+		label,
+		firstSeenAt,
+		lastSeenAt: firstSeenAt,
+		sources: appendLearnerSource([], source),
+	};
+	state.conceptsIntroduced.push(concept);
+	return concept;
+}
+
+function applyLearningEvent(rawState: unknown, rawEvent: LearningEvent, options: { now?: string; mode?: LearnerMode } = {}): LearnerState {
+	const now = normalizeLearnerTimestamp(options.now, nowIso());
+	const state = normalizeLearnerState(rawState, options.mode);
+	const event = rawEvent && typeof rawEvent === "object" ? rawEvent : ({} as any);
+	if (event.kind === "concept_introduced") {
+		upsertLearnerConcept(state, event, now);
+		return state;
+	}
+	if (event.kind === "check_opened") {
+		const promptText = compactLearnerText(event.promptText, 260);
+		if (!promptText) return state;
+		const concept = upsertLearnerConcept(state, event, now);
+		const usedIds = new Set([...state.openChecks.map((check) => check.checkId), ...state.responses.map((response) => response.checkId)]);
+		const requestedId = compactLearnerText(event.checkId, 120);
+		const checkId = requestedId || uniqueLearnerId("check", `${concept.conceptId} ${promptText}`, usedIds);
+		const annotationId = compactLearnerText(event.annotationId, 120);
+		const check = {
+			checkId,
+			kind: normalizeLearnerCheckKind(event.checkKind || event.kindOverride),
+			conceptId: concept.conceptId,
+			promptText,
+			...(annotationId ? { annotationId } : {}),
+			askedAt: normalizeLearnerTimestamp(event.at, now),
+		};
+		const existingIndex = state.openChecks.findIndex((openCheck) => openCheck.checkId === checkId);
+		if (existingIndex >= 0) state.openChecks[existingIndex] = check;
+		else state.openChecks.push(check);
+		return state;
+	}
+	if (event.kind === "check_resolved") {
+		const checkId = compactLearnerText(event.checkId || event.itemId, 120);
+		if (!checkId) return state;
+		state.openChecks = state.openChecks.filter((check) => check.checkId !== checkId);
+		const response: LearnerResponse = {
+			checkId,
+			assessment: normalizeLearnerAssessment(event.assessment),
+			resolvedAt: normalizeLearnerTimestamp(event.at, now),
+			...(compactLearnerText(event.evidence, 320) ? { evidence: compactLearnerText(event.evidence, 320) } : {}),
+		};
+		state.responses = [...state.responses.filter((entry) => entry.checkId !== checkId), response];
+		return state;
+	}
+	return state;
+}
+
 function normalizeAuthMode(value: unknown): RuntimeSettings["authMode"] {
 	return value === "oauth" ? "oauth" : "api-key";
 }
@@ -574,10 +927,44 @@ function getSmokeModel(modelId: string) {
 		models: [
 			{ id: SMOKE_MODEL, name: "Onhand Smoke Model", reasoning: false },
 			{ id: SMOKE_PORTS_MODEL, name: "Onhand Ports Smoke Model", reasoning: false },
+			{ id: SMOKE_LEARNING_MODEL, name: "Onhand Learning Smoke Model", reasoning: false },
 		],
 		tokenSize: { min: 8, max: 16 },
 	});
-	if (modelId === SMOKE_PORTS_MODEL) {
+	if (modelId === SMOKE_LEARNING_MODEL) {
+		smokeModelRegistration.setResponses([
+			fauxAssistantMessage([
+				fauxToolCall("browser_highlight_text", {
+					text: "Alpha smoke content",
+					clearExisting: true,
+					scrollIntoView: true,
+				}),
+				fauxToolCall("onhand_record_learning_event", {
+					kind: "concept_introduced",
+					conceptLabel: "Alpha smoke content",
+					annotationId: "smoke-highlight",
+					tabTitle: "Browser runtime smoke page",
+					url: "https://example.com/onhand-smoke",
+				}),
+				fauxToolCall("browser_show_note", {
+					annotationId: "smoke-highlight",
+					note: "Before I explain: what role do you think Alpha smoke content plays here?",
+					label: "Onhand",
+				}),
+				fauxToolCall("onhand_record_learning_event", {
+					kind: "check_opened",
+					checkId: "check-alpha-smoke",
+					checkKind: "prediction",
+					conceptLabel: "Alpha smoke content",
+					promptText: "Before I explain: what role do you think Alpha smoke content plays here?",
+					annotationId: "smoke-highlight",
+					tabTitle: "Browser runtime smoke page",
+					url: "https://example.com/onhand-smoke",
+				}),
+			]),
+			fauxAssistantMessage(fauxText("Browser runtime learning smoke ok")),
+		]);
+	} else if (modelId === SMOKE_PORTS_MODEL) {
 		smokeModelRegistration.setResponses([
 			fauxAssistantMessage([
 				fauxToolCall("browser_list_tabs", { onlyActive: false }),
@@ -694,6 +1081,7 @@ function createSession(name: string | null = null): RuntimeSession {
 		turns: [],
 		pageActions: [],
 		artifactIds: [],
+		learnerState: createEmptyLearnerState(),
 	};
 }
 
@@ -707,6 +1095,7 @@ function normalizeSession(rawSession: any): RuntimeSession {
 	session.turns = Array.isArray(session.turns) ? session.turns : [];
 	session.pageActions = Array.isArray(session.pageActions) ? session.pageActions : [];
 	session.artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds.filter((id) => typeof id === "string") : [];
+	session.learnerState = normalizeLearnerState(session.learnerState);
 	return session;
 }
 
@@ -1088,9 +1477,11 @@ function createStoredConversationMessages(turns: UiTurn[] = []): AgentMessage[] 
 
 function createEmptyState(session: RuntimeSession | null, settings: RuntimeSettings) {
 	const publicSettings = buildPublicSettings(settings);
+	const learnerMode = settings.learningMode ? "learning" : "answer";
 	return {
 		currentSession: session ? buildSessionState(session) : null,
 		turns: session?.turns || [],
+		learnerState: session ? setLearnerStateMode(session.learnerState, learnerMode) : createEmptyLearnerState(learnerMode),
 		currentTurnId: null,
 		messages: [] as UiMessage[],
 		activities: [] as UiActivity[],
@@ -1250,6 +1641,56 @@ function buildRecentConversationContext(session: RuntimeSession) {
 				.join("\n"),
 		)
 		.join("\n\n");
+}
+
+function getLearnerConceptLabel(state: LearnerState, conceptId: string) {
+	return state.conceptsIntroduced.find((concept) => concept.conceptId === conceptId)?.label || conceptId || "concept";
+}
+
+function formatLearnerSourceForPrompt(concept: LearnerConcept) {
+	const source = concept.sources[concept.sources.length - 1];
+	if (!source) return "";
+	const bits = [
+		source.annotationId ? `annotationId=${source.annotationId}` : "",
+		source.artifactId ? `artifactId=${source.artifactId}` : "",
+		source.tabTitle ? `tab="${truncate(source.tabTitle, 60)}"` : "",
+		source.url ? `url=${truncate(source.url, 100)}` : "",
+	].filter(Boolean);
+	return bits.length ? ` [${bits.join(", ")}]` : "";
+}
+
+function buildLearnerStatePromptSummary(rawState: unknown) {
+	const state = normalizeLearnerState(rawState, "learning");
+	const lines = ["Current Learning Mode state for this session:"];
+	if (!state.conceptsIntroduced.length && !state.openChecks.length && !state.responses.length) {
+		lines.push("- No concepts or checks have been recorded yet.");
+	} else {
+		if (state.conceptsIntroduced.length) {
+			lines.push("- Concepts already introduced:");
+			for (const concept of state.conceptsIntroduced.slice(-6)) {
+				lines.push(`  - ${concept.label} (${concept.conceptId}), lastSeenAt=${concept.lastSeenAt}${formatLearnerSourceForPrompt(concept)}`);
+			}
+		}
+		if (state.openChecks.length) {
+			lines.push("- Open checks waiting on the user:");
+			for (const check of state.openChecks.slice(-4)) {
+				const conceptLabel = getLearnerConceptLabel(state, check.conceptId);
+				const anchor = check.annotationId ? ` annotationId=${check.annotationId}` : "";
+				lines.push(`  - ${check.kind} ${check.checkId} for ${conceptLabel}: "${truncate(check.promptText, 180)}"${anchor}`);
+			}
+		}
+		if (state.responses.length) {
+			lines.push("- Recently resolved checks:");
+			for (const response of state.responses.slice(-3)) {
+				const evidence = response.evidence ? ` - ${truncate(response.evidence, 140)}` : "";
+				lines.push(`  - ${response.checkId}: ${response.assessment}${evidence}`);
+			}
+		}
+	}
+	lines.push(
+		"- If the user's latest message answers an open check, resolve that check with onhand_record_learning_event before introducing new material.",
+	);
+	return lines.join("\n");
 }
 
 function classifyPromptForReasoning(prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfileName {
@@ -1459,6 +1900,9 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 	const text = String(prompt || "").toLowerCase();
 	const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
 	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
+	const selectableToolNames = allTools
+		.map((tool) => tool.name)
+		.filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
 
 	const add = (names: string[]) => {
 		for (const name of names) {
@@ -1467,7 +1911,7 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 	};
 
 	if (wantsAllPorts) {
-		add(allTools.map((tool) => tool.name));
+		add(selectableToolNames);
 	} else {
 		add(CORE_READ_TOOL_NAMES);
 		add(VISUAL_GROUNDING_TOOL_NAMES);
@@ -1478,6 +1922,7 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 		}
 		if (learningMode) {
 			add(["browser_list_tabs"]);
+			add(LEARNING_TOOL_NAMES);
 		}
 		if (textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
 			add(INTERACTION_TOOL_NAMES);
@@ -1514,12 +1959,15 @@ function buildLauncherPrompt(
 	reasoningProfile: ReasoningProfile,
 	tools: AgentTool[] = [],
 	recentConversation = "",
+	learnerState: LearnerState | null = null,
 ) {
 	const attachmentContext = buildAttachmentContext(attachments);
 	const toolInventory = buildToolInventory(prompt, tools);
+	const learnerStateSummary = learningMode ? buildLearnerStatePromptSummary(learnerState) : "";
 	return [
 		"The user invoked Onhand from the browser extension side panel.",
 		...(recentConversation ? ["", "Recent conversation, summarized:", recentConversation] : []),
+		...(learnerStateSummary ? ["", learnerStateSummary] : []),
 		"",
 		`User question:\n${String(prompt || "").trim() || "(See attached files.)"}`,
 		...(attachmentContext ? ["", "Attached files:", attachmentContext] : []),
@@ -1589,6 +2037,27 @@ function toolResultTextForModel(toolName: string, result: any) {
 	const details = result?.details || result || {};
 	const tab = details.tab || null;
 	switch (toolName) {
+		case "onhand_record_learning_event": {
+			const event = details.event || {};
+			const state = normalizeLearnerState(details.learnerState, "learning");
+			if (event.kind === "check_opened") {
+				const check = state.openChecks[state.openChecks.length - 1];
+				return check
+					? `Recorded learning check. checkId: ${check.checkId}; conceptId: ${check.conceptId}; kind: ${check.kind}.`
+					: "Recorded learning check.";
+			}
+			if (event.kind === "check_resolved") {
+				const response = state.responses.find((entry) => entry.checkId === (event.checkId || event.itemId));
+				return response
+					? `Resolved learning check ${response.checkId} as ${response.assessment}.`
+					: `Resolved learning check ${event.checkId || event.itemId || ""}.`;
+			}
+			if (event.kind === "concept_introduced") {
+				const concept = state.conceptsIntroduced[state.conceptsIntroduced.length - 1];
+				return concept ? `Recorded learning concept. conceptId: ${concept.conceptId}; label: ${concept.label}.` : "Recorded learning concept.";
+			}
+			return "Recorded learning event.";
+		}
 		case "browser_list_tabs": {
 			const tabs = Array.isArray(details.tabs) ? details.tabs : [];
 			const lines = tabs.slice(0, 12).map((tabInfo: any) => `${tabInfo?.active ? "* " : "- "}${formatCompactTab(tabInfo)}`);
@@ -1703,15 +2172,38 @@ function toolResultTextForModel(toolName: string, result: any) {
 }
 
 export const __browserRuntimeTest = {
+	applyLearningEvent,
+	buildLearnerStatePromptSummary,
 	buildHighlightRetryCandidates,
 	buildReplayAnnotationsFromPageActions,
 	classifyPromptForReasoning,
+	createEmptyLearnerState,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
 	getReplayHighlightCandidates,
 	getPublicActivities,
 	getSelectionText,
+	normalizeLearnerState,
 	getPromptContractForTest() {
+		const learnerState = applyLearningEvent(
+			applyLearningEvent(createEmptyLearnerState("learning"), {
+				kind: "concept_introduced",
+				conceptLabel: "Rejection sampling",
+				conceptId: "concept_rejection_sampling",
+				annotationId: "ann-rejection",
+				tabTitle: "BayesianDL",
+				url: "https://example.test/bayes",
+			}),
+			{
+				kind: "check_opened",
+				checkId: "check-rejection-1",
+				checkKind: "prediction",
+				conceptId: "concept_rejection_sampling",
+				conceptLabel: "Rejection sampling",
+				promptText: "Before I explain: why do you think so many samples get rejected?",
+				annotationId: "ann-rejection",
+			},
+		);
 		const answerPrompt = buildLauncherPrompt(
 			"How does rejection sampling work on this page?",
 			"Active tab: BayesianDL\nVisible text snapshot:\nIn rejection sampling, we want to sample X from p(x).",
@@ -1729,6 +2221,7 @@ export const __browserRuntimeTest = {
 			buildReasoningProfile(DEFAULT_SETTINGS, "How does rejection sampling work on this page?", [], true),
 			[],
 			"",
+			learnerState,
 		);
 		return {
 			systemPrompt: ONHAND_SYSTEM_PROMPT,
@@ -1737,6 +2230,29 @@ export const __browserRuntimeTest = {
 			learningPrompt,
 		};
 	},
+	getToolNamesForTest(prompt: string, learningMode = false) {
+		const host: RuntimeHost = {
+			async runCommand() {
+				return {};
+			},
+			async snapshotState() {
+				return { windows: [] };
+			},
+		};
+		const artifactHooks: RuntimeArtifactHooks = {
+			async captureArtifact() {
+				return {};
+			},
+			async listArtifacts() {
+				return [];
+			},
+			async restoreArtifact() {
+				return {};
+			},
+		};
+		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode).map((tool) => tool.name);
+	},
+	setLearnerStateMode,
 	summarizeRestoredArtifact,
 };
 
@@ -1759,7 +2275,32 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 	return streamSimple(model, context, baseOptions);
 }
 
-function createTools(host: RuntimeHost, artifactHooks: RuntimeArtifactHooks, prepareCommandParams: (params: any) => any = (params) => params): AgentTool[] {
+function createRecordLearningEventTool(recordLearningEvent: (event: LearningEvent) => Promise<LearnerState>): AgentTool {
+	return {
+		name: "onhand_record_learning_event",
+		label: "Onhand Record Learning Event",
+		description: "Internal Learning Mode tool. Record introduced concepts, opened prediction/retrieval checks, and resolved checks in this session's learner state.",
+		parameters: RECORD_LEARNING_EVENT_SCHEMA,
+		executionMode: "sequential",
+		async execute(_toolCallId, params: any) {
+			const event = (params && typeof params === "object" ? params : {}) as LearningEvent;
+			const learnerState = await recordLearningEvent(event);
+			const details = { event, learnerState };
+			return {
+				content: [{ type: "text", text: toolResultTextForModel("onhand_record_learning_event", details) }],
+				details,
+			};
+		},
+	};
+}
+
+function createTools(
+	host: RuntimeHost,
+	artifactHooks: RuntimeArtifactHooks,
+	prepareCommandParams: (params: any) => any = (params) => params,
+	recordLearningEvent: (event: LearningEvent) => Promise<LearnerState> = async (event) =>
+		applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" }),
+): AgentTool[] {
 	const commandTool = (
 		name: string,
 		label: string,
@@ -1809,6 +2350,7 @@ function createTools(host: RuntimeHost, artifactHooks: RuntimeArtifactHooks, pre
 	});
 
 	return [
+		createRecordLearningEventTool(recordLearningEvent),
 		{
 			name: "browser_list_tabs",
 			label: "Browser List Tabs",
@@ -2042,6 +2584,8 @@ function createTools(host: RuntimeHost, artifactHooks: RuntimeArtifactHooks, pre
 
 function getToolStatusMessage(toolName: string) {
 	switch (toolName) {
+		case "onhand_record_learning_event":
+			return "Updating learning state...";
 		case "browser_list_tabs":
 			return "Checking open tabs...";
 		case "browser_activate_tab":
@@ -2095,6 +2639,10 @@ function getToolStatusMessage(toolName: string) {
 		default:
 			return toolName?.startsWith("browser_") ? "Inspecting the current page..." : `Using ${toolName}...`;
 	}
+}
+
+function isInternalToolName(toolName: string) {
+	return toolName.startsWith("onhand_");
 }
 
 function buildPageAction(toolName: string, result: any): PageAction | null {
@@ -2204,7 +2752,7 @@ function appendUniquePageAction(actions: PageAction[], action: PageAction | null
 }
 
 function getPublicActivities(activities: UiActivity[] = []) {
-	return activities.filter((activity) => activity?.kind === "tool");
+	return activities.filter((activity) => activity?.kind === "tool" && !isInternalToolName(activity.toolName || ""));
 }
 
 export function createOnhandBrowserRuntime(host: RuntimeHost) {
@@ -2289,6 +2837,24 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			updatedAt: Date.now(),
 		};
 		return uiState;
+	}
+
+	async function recordLearningEventForSession(session: RuntimeSession, event: LearningEvent, mode: LearnerMode) {
+		const store = await loadStore();
+		const storedSession = (store.sessions[session.id] as RuntimeSession) || session;
+		storedSession.learnerState = applyLearningEvent(setLearnerStateMode(storedSession.learnerState, mode), event, { mode });
+		storedSession.updatedAt = nowIso();
+		store.sessions[storedSession.id] = storedSession;
+		if (store.currentSessionId === storedSession.id) {
+			session.learnerState = storedSession.learnerState;
+			session.updatedAt = storedSession.updatedAt;
+		}
+		await saveStore(store);
+		await publishState({
+			currentSession: buildSessionState(storedSession),
+			learnerState: storedSession.learnerState,
+		});
+		return storedSession.learnerState;
 	}
 
 	function updateAssistantDraft(requestId: string, text: string, extra: Record<string, unknown> = {}) {
@@ -2387,6 +2953,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			case "tool_execution_start": {
 				const toolName = (event as any).toolName || "";
+				if (isInternalToolName(toolName)) {
+					void publishState({ status: getToolStatusMessage(toolName) });
+					break;
+				}
 				appendActivity({
 					id: `tool:${(event as any).toolCallId || toolName}`,
 					kind: "tool",
@@ -2399,6 +2969,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			case "tool_execution_end": {
 				const toolName = (event as any).toolName || "";
+				if (isInternalToolName(toolName)) {
+					void publishState({ status: (event as any).isError ? "Trying a different approach..." : "Writing answer..." });
+					break;
+				}
 				const activityId = `tool:${(event as any).toolCallId || toolName}`;
 				if ((event as any).isError) {
 					appendActivity({
@@ -2928,6 +3502,17 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			};
 		},
 
+		async recordLearningEvent(event: LearningEvent) {
+			const store = await loadStore();
+			const session = store.sessions[store.currentSessionId] as RuntimeSession;
+			const mode = store.settings.learningMode ? "learning" : "answer";
+			const learnerState = await recordLearningEventForSession(session, event, mode);
+			return {
+				currentSession: buildSessionState(session),
+				learnerState,
+			};
+		},
+
 		async getSettings() {
 			return await getPublicSettings();
 		},
@@ -2961,8 +3546,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				authMode,
 				oauthCredentials: nextOAuthCredentials,
 			};
-			await saveStore(store);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
+			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
+			store.sessions[session.id] = session;
+			await saveStore(store);
 			uiState = createEmptyState(session, store.settings);
 			uiState.messages = buildConversationMessages(session.messages);
 			return await getPublicSettings();
@@ -3077,6 +3664,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			await clearActivePageAnnotations(targetWindowId);
 			const store = await loadStore();
 			const session = createSession();
+			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
 			store.sessions[session.id] = session;
 			store.currentSessionId = session.id;
 			await saveStore(store);
@@ -3094,8 +3682,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const store = await loadStore();
 			if (!store.sessions[sessionId]) throw new Error("Session not found.");
 			store.currentSessionId = sessionId;
-			await saveStore(store);
 			const session = store.sessions[sessionId] as RuntimeSession;
+			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
+			store.sessions[session.id] = session;
+			await saveStore(store);
 			uiState = createEmptyState(session, store.settings);
 			uiState.messages = buildConversationMessages(session.messages);
 			return {
@@ -3161,15 +3751,24 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
 			const requestSettings = {
 				...store.settings,
+				learningMode,
 				speedMode: normalizeSpeedMode(request?.speedMode ?? store.settings.speedMode),
 			};
+			session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
 			const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
-			const tools = selectToolsForPrompt(createTools(host, artifactHooks, withDefaultBrowserTarget), prompt, attachments, learningMode);
+			const tools = selectToolsForPrompt(
+				createTools(host, artifactHooks, withDefaultBrowserTarget, (event) =>
+					recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+				),
+				prompt,
+				attachments,
+				learningMode,
+			);
 			if (!session.name && session.messages.length === 0) {
 				session.name = buildSessionTitleFromPrompt(displayPrompt);
 			}
 
-			beginRequest(session, store.settings, requestId, displayPrompt);
+			beginRequest(session, requestSettings, requestId, displayPrompt);
 			activeRequest = {
 				id: requestId,
 				displayPrompt,
@@ -3201,7 +3800,19 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
 
 			void activeAgent
-				.prompt(buildLauncherPrompt(prompt, browserContext, attachments, learningMode, reasoningProfile, tools, recentConversation), buildPromptImages(attachments))
+				.prompt(
+					buildLauncherPrompt(
+						prompt,
+						browserContext,
+						attachments,
+						learningMode,
+						reasoningProfile,
+						tools,
+						recentConversation,
+						session.learnerState,
+					),
+					buildPromptImages(attachments),
+				)
 				.catch((error) => finalizeRequest(session, requestId, error instanceof Error ? error : new Error(String(error))));
 
 			return { requestId };
