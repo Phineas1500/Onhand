@@ -654,6 +654,93 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
 }
 
+async function assertSessionReplaySnapshotPayload() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.name = "Snapshot replay";
+	session.artifactIds = ["artifact_snapshot_replay"];
+	session.turns = [
+		{
+			id: "turn-snapshot",
+			userPrompt: "Explain the saved highlight.",
+			reply: "The saved highlight is replayable.",
+			activities: [],
+			pageActions: [
+				{
+					key: "highlight:snapshot",
+					type: "annotation",
+					tabId: 7,
+					title: "Snapshot replay page",
+					url: "https://example.test/snapshot",
+					annotationId: "ann-snapshot",
+					label: "Highlighted text",
+					detail: "Alpha smoke content",
+					citationText: "Alpha smoke content",
+				},
+			],
+			pending: false,
+			error: false,
+			createdAt: "2026-05-17T12:00:00.000Z",
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_snapshot_replay: {
+				id: "artifact_snapshot_replay",
+				createdAt: "2026-05-17T12:00:01.000Z",
+				updatedAt: "2026-05-17T12:00:01.000Z",
+				sessionId: session.id,
+				label: "snapshot replay artifact",
+				tab: replaySmokeTab({ title: "Snapshot replay page", url: "https://example.test/snapshot" }),
+				page: {
+					title: "Snapshot replay page",
+					url: "https://example.test/snapshot",
+					capturedAt: 1779048001000,
+					scrollX: 0,
+					scrollY: 144,
+					viewport: { width: 1200, height: 800 },
+					annotations: [
+						{
+							annotationId: "ann-snapshot",
+							kind: "inline",
+							matchedText: "Alpha smoke content",
+							note: { text: "This is the saved note.", label: "Onhand" },
+						},
+					],
+					annotationCount: 1,
+				},
+				outerHTML: "<main><h1>Snapshot replay page</h1><p>Alpha smoke content</p></main>",
+				screenshotDataUrl: "data:image/png;base64,U05BUFNIT1Q=",
+			},
+		},
+	});
+
+	const replay = await runtime.getSessionReplay(session.id);
+	assert.equal(replay.session.id, session.id);
+	assert.equal(replay.selectedArtifactId, "artifact_snapshot_replay");
+	assert.equal(replay.artifacts.length, 1);
+	assert.equal(replay.artifacts[0].hasScreenshot, true);
+	assert.equal(replay.artifacts[0].hasHtml, true);
+	assert.equal(replay.artifacts[0].annotations[0].matchedText, "Alpha smoke content");
+	assert.equal(replay.artifacts[0].annotations[0].noteText, "This is the saved note.");
+	assert.equal("screenshotDataUrl" in replay.artifacts[0], false, "session replay summary should not include the large screenshot payload");
+
+	const detail = await runtime.getReplayArtifact("artifact_snapshot_replay");
+	assert.equal(detail.artifact.screenshotDataUrl, "data:image/png;base64,U05BUFNIT1Q=");
+	assert.match(detail.artifact.outerHTML, /Snapshot replay page/);
+	assert.equal(detail.artifact.annotations[0].noteLabel, "Onhand");
+}
+
 async function assertSidePanelPromptTargetsOriginWindow() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -726,6 +813,7 @@ async function main() {
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
+	await assertSessionReplaySnapshotPayload();
 	await assertSidePanelPromptTargetsOriginWindow();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");

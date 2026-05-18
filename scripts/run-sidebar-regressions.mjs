@@ -131,13 +131,77 @@ async function renderSidebar(state, runtimeMessages) {
 				if (message?.type === "sidebar:list-sessions") {
 					return {
 						ok: true,
-						currentSession: state.currentSession,
+						currentSession: { ...state.currentSession, sessionFile: state.currentSession.sessionId },
 						sessions: [
 							{
 								id: state.currentSession.sessionId,
 								name: state.currentSession.sessionName,
+								path: state.currentSession.sessionId,
+								title: state.currentSession.sessionName,
 							},
 						],
+					};
+				}
+				if (message?.type === "sidebar:get-session-replay") {
+					return {
+						ok: true,
+						session: {
+							id: state.currentSession.sessionId,
+							path: state.currentSession.sessionId,
+							title: state.currentSession.sessionName,
+						},
+						turns: state.turns,
+						pageActions: state.pageActions || [],
+						artifacts: [
+							{
+								artifactId: "artifact-sidebar-replay",
+								title: "BayesianDL",
+								url: "https://example.test/bayesian-dl",
+								annotationCount: 1,
+								hasScreenshot: true,
+								hasHtml: true,
+								annotations: [
+									{
+										annotationId: "ann-first",
+										matchedText: "Rejection sampling rejects too many samples from P(W).",
+										noteText: "Saved replay note",
+										noteLabel: "Onhand",
+									},
+								],
+							},
+						],
+						replayableAnnotations: [],
+						selectedArtifactId: "artifact-sidebar-replay",
+					};
+				}
+				if (message?.type === "sidebar:get-replay-artifact") {
+					return {
+						ok: true,
+						artifact: {
+							artifactId: "artifact-sidebar-replay",
+							title: "BayesianDL",
+							url: "https://example.test/bayesian-dl",
+							annotationCount: 1,
+							hasScreenshot: true,
+							hasHtml: true,
+							screenshotDataUrl: "data:image/png;base64,UkVQTEFZ",
+							outerHTML: "<main><h1>BayesianDL</h1><p>Rejection sampling rejects too many samples from P(W).</p></main>",
+							annotations: [
+								{
+									annotationId: "ann-first",
+									matchedText: "Rejection sampling rejects too many samples from P(W).",
+									noteText: "Saved replay note",
+									noteLabel: "Onhand",
+								},
+							],
+						},
+					};
+				}
+				if (message?.type === "sidebar:restore-session") {
+					return {
+						ok: true,
+						restoredPages: [],
+						restoredCount: 0,
 					};
 				}
 				if (message?.type === "sidebar:activate-action") return { ok: true };
@@ -197,5 +261,38 @@ async function assertSessionWideCitationNumbers() {
 	dom.window.close();
 }
 
+async function assertReplayViewRendersSavedSnapshot() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	assert.ok(host, "expected sidebar host to render");
+	const replayButton = host.shadowRoot.getElementById("replaySessionButton");
+	assert.ok(replayButton, "expected replay menu button to render");
+	replayButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+
+	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:get-session-replay"), true);
+	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:get-replay-artifact" && message.artifactId === "artifact-sidebar-replay"), true);
+	const replayView = host.shadowRoot.getElementById("replayView");
+	assert.equal(replayView.hidden, false, "expected replay view to be visible");
+	assert.match(replayView.textContent, /Replay/);
+	assert.match(replayView.textContent, /Saved replay note/);
+	assert.match(replayView.textContent, /Transcript/);
+	const snapshotImage = replayView.querySelector(".onhand-replay-image");
+	assert.ok(snapshotImage, "expected saved screenshot image to render");
+	assert.equal(snapshotImage.getAttribute("src"), "data:image/png;base64,UkVQTEFZ");
+	assert.equal(host.shadowRoot.getElementById("messages").hidden, true);
+	assert.equal(host.shadowRoot.getElementById("composer").hidden, true);
+
+	const liveButton = replayView.querySelector("[data-replay-close]");
+	liveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(replayView.hidden, true, "expected live button to close replay view");
+	assert.equal(host.shadowRoot.getElementById("messages").hidden, false);
+
+	dom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
+await assertReplayViewRendersSavedSnapshot();
 console.log("sidebar regressions passed");

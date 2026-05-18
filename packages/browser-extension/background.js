@@ -3993,6 +3993,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:get-session-replay") {
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.getSessionReplay(message.sessionPath);
+			sendResponse({
+				ok: true,
+				...response,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:get-replay-artifact") {
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.getReplayArtifact(message.artifactId);
+			sendResponse({
+				ok: true,
+				...response,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:new-session") {
 			const runtime = getOnhandBrowserRuntime();
 			const response = await runtime.startNewSession({

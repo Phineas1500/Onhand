@@ -118811,6 +118811,48 @@ function artifactSummary(artifact) {
     hasScreenshot: Boolean(artifact.screenshotDataUrl)
   };
 }
+function artifactReplayAnnotations(artifact) {
+  const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
+  return annotations.map((annotation, index) => {
+    if (!annotation || typeof annotation !== "object") return null;
+    const note = annotation.note && typeof annotation.note === "object" ? annotation.note : null;
+    return {
+      annotationId: String(annotation.annotationId || `artifact-${artifact.id}-${index}`),
+      kind: String(annotation.kind || "annotation"),
+      matchedText: compactActionText(annotation.matchedText || annotation.text || ""),
+      noteText: note ? compactActionText(note.text || "") : "",
+      noteLabel: note ? compactActionText(note.label || "Onhand") : "",
+      rect: annotation.rect || null,
+      noteRect: note?.rect || null,
+      container: annotation.container || null
+    };
+  }).filter(Boolean);
+}
+function replayArtifactSummary(artifact) {
+  const summary = artifactSummary(artifact);
+  return {
+    ...summary,
+    id: artifact.id,
+    page: {
+      title: artifact.page?.title || artifact.tab?.title || "",
+      url: artifact.page?.url || artifact.tab?.url || "",
+      capturedAt: artifact.page?.capturedAt || null,
+      scrollX: typeof artifact.page?.scrollX === "number" ? artifact.page.scrollX : null,
+      scrollY: typeof artifact.page?.scrollY === "number" ? artifact.page.scrollY : null,
+      viewport: artifact.page?.viewport || null,
+      annotationCount: summary.annotationCount
+    },
+    tab: artifact.tab || null,
+    annotations: artifactReplayAnnotations(artifact)
+  };
+}
+function replayArtifactSnapshot(artifact) {
+  return {
+    ...replayArtifactSummary(artifact),
+    screenshotDataUrl: artifact.screenshotDataUrl || "",
+    outerHTML: artifact.outerHTML || ""
+  };
+}
 function summarizeRestoredArtifact(result) {
   const tab = result?.tab || null;
   const artifact = result?.artifact || null;
@@ -120763,6 +120805,36 @@ function createOnhandBrowserRuntime(host) {
       return {
         currentSession: buildSessionState(store.sessions[store.currentSessionId]),
         sessions
+      };
+    },
+    async getSessionReplay(sessionId) {
+      const store = await loadStore();
+      const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+      const session = store.sessions[targetSessionId];
+      if (!session) throw new Error("Session not found.");
+      const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
+      const artifacts = [];
+      for (const artifactId of artifactIds) {
+        const artifact = await getBrowserArtifact(artifactId);
+        if (artifact) artifacts.push(replayArtifactSummary(artifact));
+      }
+      const pageActions = collectSessionPageActions(session);
+      const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
+      return {
+        currentSession: buildSessionState(store.sessions[store.currentSessionId]),
+        session: buildSessionListItem(session, store.currentSessionId),
+        turns: Array.isArray(session.turns) ? session.turns : [],
+        pageActions,
+        artifacts,
+        replayableAnnotations,
+        selectedArtifactId: artifacts[0]?.artifactId || null
+      };
+    },
+    async getReplayArtifact(artifactId) {
+      const artifact = await getBrowserArtifact(artifactId);
+      if (!artifact) throw new Error(`Could not find Onhand artifact: ${artifactId || "(blank)"}`);
+      return {
+        artifact: replayArtifactSnapshot(artifact)
       };
     },
     async startNewSession(options = {}) {
