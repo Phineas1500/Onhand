@@ -271,18 +271,27 @@ async function assertPublicActivitiesFilterInternalThinking() {
 			toolName: "browser_get_dom",
 			state: "complete",
 		},
+		{
+			id: "tool:learning",
+			kind: "tool",
+			label: "Updating learning state...",
+			toolName: "onhand_record_learning_event",
+			state: "complete",
+		},
 	]);
 
 	assert.equal(activities.length, 1);
 	assert.equal(activities[0].toolName, "browser_get_dom");
 	assert.doesNotMatch(JSON.stringify(activities), /I need to think|Reasoning/);
+	assert.doesNotMatch(JSON.stringify(activities), /onhand_record_learning_event/);
 }
 
 async function assertConstitutionPromptContract() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { classifyPromptForReasoning, getPromptContractForTest } = __browserRuntimeTest || {};
+	const { classifyPromptForReasoning, getPromptContractForTest, getToolNamesForTest } = __browserRuntimeTest || {};
 	assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
 	assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
+	assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
 
 	const contract = getPromptContractForTest();
 	assert.match(contract.systemPrompt, /The page is the canvas/);
@@ -310,13 +319,203 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
+	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
 	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
 	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
+	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
 	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
 	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
+	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
+	assert.match(contract.learningPrompt, /Rejection sampling \(concept_rejection_sampling\)/);
+	assert.match(contract.learningPrompt, /check-rejection-1/);
+	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
+	const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);
+	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
+	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
+	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
+	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
+	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
+	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
 	assert.equal(classifyPromptForReasoning("what is this term?", [], true), "balanced");
 	assert.equal(classifyPromptForReasoning("What are React components, and why would I split UI into components?", [], false), "balanced");
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
+}
+
+async function assertLearnerStateUpdates() {
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { applyLearningEvent, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
+	assert.equal(typeof createEmptyLearnerState, "function", "browser runtime learner-state factory export is missing");
+	assert.equal(typeof normalizeLearnerState, "function", "browser runtime learner-state normalizer export is missing");
+	assert.equal(typeof applyLearningEvent, "function", "browser runtime learning-event reducer export is missing");
+	assert.equal(typeof setLearnerStateMode, "function", "browser runtime learner-state mode export is missing");
+
+	let learnerState = createEmptyLearnerState("learning");
+	assert.deepEqual(learnerState, {
+		mode: "learning",
+		conceptsIntroduced: [],
+		openChecks: [],
+		responses: [],
+	});
+
+	learnerState = applyLearningEvent(
+		learnerState,
+		{
+			kind: "concept_introduced",
+			conceptLabel: "Derivative",
+			annotationId: "ann-derivative",
+			tabTitle: "Calculus notes",
+			url: "https://example.test/calculus",
+		},
+		{ now: "2026-05-18T05:00:00.000Z" },
+	);
+	assert.equal(learnerState.conceptsIntroduced.length, 1);
+	assert.equal(learnerState.conceptsIntroduced[0].conceptId, "concept_derivative");
+	assert.equal(learnerState.conceptsIntroduced[0].label, "Derivative");
+	assert.deepEqual(learnerState.conceptsIntroduced[0].sources, [
+		{
+			tabTitle: "Calculus notes",
+			url: "https://example.test/calculus",
+			annotationId: "ann-derivative",
+		},
+	]);
+
+	learnerState = applyLearningEvent(
+		learnerState,
+		{
+			kind: "check_opened",
+			checkId: "check-derivative-1",
+			checkKind: "retrieval",
+			conceptLabel: "Derivative",
+			promptText: "In your own words, what is this derivative measuring?",
+			annotationId: "ann-derivative",
+		},
+		{ now: "2026-05-18T05:01:00.000Z" },
+	);
+	assert.equal(learnerState.conceptsIntroduced.length, 1, "opening a check should reuse the existing concept");
+	assert.deepEqual(learnerState.openChecks, [
+		{
+			checkId: "check-derivative-1",
+			kind: "retrieval",
+			conceptId: "concept_derivative",
+			promptText: "In your own words, what is this derivative measuring?",
+			annotationId: "ann-derivative",
+			askedAt: "2026-05-18T05:01:00.000Z",
+		},
+	]);
+
+	learnerState = applyLearningEvent(
+		learnerState,
+		{
+			kind: "check_resolved",
+			checkId: "check-derivative-1",
+			assessment: "partial",
+			evidence: "User connected the derivative to rate of change but missed instantaneous behavior.",
+		},
+		{ now: "2026-05-18T05:02:00.000Z" },
+	);
+	assert.equal(learnerState.openChecks.length, 0);
+	assert.deepEqual(learnerState.responses, [
+		{
+			checkId: "check-derivative-1",
+			assessment: "partial",
+			resolvedAt: "2026-05-18T05:02:00.000Z",
+			evidence: "User connected the derivative to rate of change but missed instantaneous behavior.",
+		},
+	]);
+
+	let generatedCheckState = createEmptyLearnerState("learning");
+	generatedCheckState = applyLearningEvent(
+		generatedCheckState,
+		{ kind: "check_opened", conceptLabel: "Limit", promptText: "What value does this approach?" },
+		{ now: "2026-05-18T05:03:00.000Z" },
+	);
+	const firstGeneratedCheckId = generatedCheckState.openChecks[0].checkId;
+	generatedCheckState = applyLearningEvent(
+		generatedCheckState,
+		{ kind: "check_resolved", checkId: firstGeneratedCheckId, assessment: "correct" },
+		{ now: "2026-05-18T05:04:00.000Z" },
+	);
+	generatedCheckState = applyLearningEvent(
+		generatedCheckState,
+		{ kind: "check_opened", conceptLabel: "Limit", promptText: "What value does this approach?" },
+		{ now: "2026-05-18T05:05:00.000Z" },
+	);
+	assert.notEqual(generatedCheckState.openChecks[0].checkId, firstGeneratedCheckId);
+
+	const legacyState = normalizeLearnerState({
+		mode: "learning",
+		conceptsIntroduced: [{ conceptId: "concept_limit", label: "Limit", firstSeenAt: "2026-05-18T04:00:00.000Z" }],
+		openPredictions: [{ predictionId: "pred-limit", conceptId: "concept_limit", promptText: "What value does this approach?" }],
+		openRetrievalChecks: [{ checkId: "retrieval-limit", conceptId: "concept_limit", promptText: "Say back the epsilon-delta claim." }],
+		responded: [{ itemId: "pred-old", assessment: "correct", resolvedAt: "2026-05-18T04:05:00.000Z" }],
+	});
+	assert.equal(legacyState.openChecks.length, 2);
+	assert.equal(legacyState.openChecks[0].kind, "prediction");
+	assert.equal(legacyState.openChecks[1].kind, "retrieval");
+	assert.equal(legacyState.responses[0].checkId, "pred-old");
+	assert.equal(setLearnerStateMode(legacyState, "answer").mode, "answer");
+
+	installChromeStorageStub();
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		learningMode: true,
+	});
+	const stateBeforeEvent = await runtime.getState();
+	assert.equal(stateBeforeEvent.learnerState.mode, "learning");
+	const recorded = await runtime.recordLearningEvent({
+		kind: "concept_introduced",
+		conceptLabel: "Monte Carlo",
+		annotationId: "ann-monte-carlo",
+		tabTitle: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+	});
+	assert.equal(recorded.learnerState.conceptsIntroduced[0].label, "Monte Carlo");
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const savedSession = store.sessions[store.currentSessionId];
+	assert.equal(savedSession.learnerState.mode, "learning");
+	assert.equal(savedSession.learnerState.conceptsIntroduced[0].label, "Monte Carlo");
+}
+
+async function assertLearningModeToolLoopPersistsAgentEvents() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-learning-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		learningMode: true,
+	});
+	await runtime.submitPrompt({
+		prompt: "Teach this page concept in Learning Mode.",
+		displayPrompt: "learning smoke",
+		attachments: [],
+		learningMode: true,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete learning-mode tool regression");
+	assert.equal(completedState.learnerState.mode, "learning");
+	assert.equal(completedState.learnerState.conceptsIntroduced[0].label, "Alpha smoke content");
+	assert.deepEqual(completedState.learnerState.openChecks, [
+		{
+			checkId: "check-alpha-smoke",
+			kind: "prediction",
+			conceptId: "concept_alpha_smoke_content",
+			promptText: "Before I explain: what role do you think Alpha smoke content plays here?",
+			annotationId: "smoke-highlight",
+			askedAt: completedState.learnerState.openChecks[0].askedAt,
+		},
+	]);
+	assert.equal(completedState.activities.some((activity) => activity.toolName === "onhand_record_learning_event"), false);
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	assert.equal(session.learnerState.conceptsIntroduced[0].label, "Alpha smoke content");
+	assert.equal(session.learnerState.openChecks[0].checkId, "check-alpha-smoke");
 }
 
 async function assertReplayHighlightCandidateGeneration() {
@@ -807,6 +1006,8 @@ async function main() {
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertConstitutionPromptContract();
+	await assertLearnerStateUpdates();
+	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertSessionReplayRestore();

@@ -10,6 +10,8 @@ This document translates the main evidence-backed pedagogical concepts into conc
 
 The strategy is: reuse the highlight/note/scroll/artifact primitives that already exist, and change *what the agent chooses to do with them* plus *what state is tracked across turns and sessions*. Most of this is prompt engineering and session-state work, not new infrastructure.
 
+For the concrete product behavior and implementation contract, see `docs/LEARNING_MODE_SPEC.md`.
+
 ---
 
 ## 1. Pedagogical concepts, mapped to Onhand
