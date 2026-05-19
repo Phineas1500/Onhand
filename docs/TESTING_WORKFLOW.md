@@ -35,7 +35,7 @@ npm run acceptance:chrome -- --suite=all --run-id=chrome-acceptance-YYYY-MM-DD
 
 Use Computer Use for extension UI and side-panel prompts. Use the Codex Chrome Extension backend only for normal web page automation after the Onhand side panel, extension options page, and `chrome://extensions` are closed. A Codex Chrome `another extension UI is open` blocker is an automation conflict, not an OAuth failure by itself.
 
-The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. The real-page matrix currently covers Wikipedia, the-internet.herokuapp.com, and React docs. The Learning Mode matrix covers the BayesianDL notes page with Answer Mode control, concept prompt, open-check resolution, and repeated-concept refresher cases.
+The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. The real-page matrix currently covers Wikipedia, the-internet.herokuapp.com, and React docs. The Learning Mode matrix covers the BayesianDL notes page with Answer Mode control, concept prompt, open-check resolution, repeated-concept refresher, and cross-tab offer cases.
 
 ## What To Check
 

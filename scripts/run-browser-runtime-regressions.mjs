@@ -326,6 +326,11 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /prefer a lightweight refresher/);
 	assert.match(contract.learningModeAppend, /add at most one replacement highlight and no note/);
 	assert.match(contract.learningModeAppend, /do not open or record a second check/);
+	assert.match(contract.learningModeAppend, /Cross-tab interleaving is offer-first/);
+	assert.match(contract.learningModeAppend, /call browser_list_tabs once only if the captured list is missing or ambiguous/);
+	assert.match(contract.learningModeAppend, /Do not switch to, read, highlight, or note a related tab unless the user explicitly asks/);
+	assert.match(contract.learningModeAppend, /anchor each page separately and say which tab supports which claim/);
+	assert.match(contract.learningModeAppend, /Do not record an offered related tab as a learning source/);
 	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
 	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
 	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
@@ -341,6 +346,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /If there is no open check for the concept/);
 	assert.match(contract.learningPrompt, /reuse the existing conceptId/);
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
+	assert.match(contract.learningPrompt, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
 	assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
 	const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);

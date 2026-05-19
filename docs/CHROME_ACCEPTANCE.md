@@ -122,6 +122,7 @@ This suite checks:
 - Learning Mode asks a page-anchored prediction or retrieval question before a full explanation
 - an open check can be resolved by a user response in the next turn
 - repeated concepts get a lightweight refresher and source pointer instead of a full restart, a new note, or a batch of fresh highlights
+- Learning Mode notices related open tabs and offers to connect them before switching context
 - the sidebar learner-state panel does not duplicate the same concept
 - the sidebar does not accumulate multiple open checks for the same repeated concept
 
@@ -158,6 +159,7 @@ Chrome acceptance <run id>: PASS
 - learning-concept-prompt: PASS
 - learning-open-check-resolution: PASS
 - learning-repeated-concept: PASS
+- learning-cross-tab-offer: PASS
 ```
 
 If a case fails, include the exact prompt, the observed answer, and whether the failure was a tool error, page content drift, OAuth/runtime issue, or visual side-panel issue.
