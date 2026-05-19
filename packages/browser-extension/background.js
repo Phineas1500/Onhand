@@ -2728,80 +2728,87 @@ const createPageToolkit = (options = {}) => {
 async function evaluateInTab(tabId, expression, options = {}) {
 	if (!options.skipScripting) {
 		try {
-		const payload = await executeScriptInTab(
-			tabId,
-			async (source) => {
-				try {
-					const value = await (0, eval)(source);
-					return {
-						ok: true,
-						value: (() => {
-							if (value == null) return value;
-							if (["string", "number", "boolean"].includes(typeof value)) return value;
-							try {
-								return JSON.parse(JSON.stringify(value));
-							} catch {
-								return String(value);
-							}
-						})(),
-					};
-				} catch (error) {
-					return {
-						ok: false,
-						error: error?.message || String(error),
-					};
-				}
-			},
-			[expression],
-		);
-		const settledPayload = await withOperationTimeout(
-			Promise.resolve(payload),
-			SCRIPT_EXECUTION_TIMEOUT_MS,
-			"Script evaluation timed out",
-		);
-		if (!settledPayload?.ok) {
-			throw new Error(settledPayload?.error || "Script evaluation failed");
-		}
+			const settledPayload = await withOperationTimeout(
+				executeScriptInTab(
+					tabId,
+					async (source) => {
+						try {
+							const value = await (0, eval)(source);
+							return {
+								ok: true,
+								value: (() => {
+									if (value == null) return value;
+									if (["string", "number", "boolean"].includes(typeof value)) return value;
+									try {
+										return JSON.parse(JSON.stringify(value));
+									} catch {
+										return String(value);
+									}
+								})(),
+							};
+						} catch (error) {
+							return {
+								ok: false,
+								error: error?.message || String(error),
+							};
+						}
+					},
+					[expression],
+				),
+				SCRIPT_EXECUTION_TIMEOUT_MS,
+				"Script evaluation timed out",
+			);
+			if (!settledPayload?.ok) {
+				throw new Error(settledPayload?.error || "Script evaluation failed");
+			}
 			return normalizeExecuteScriptValue(settledPayload.value);
-			} catch (scriptError) {
-				if (isRestrictedScriptingError(scriptError)) {
-					throw scriptError;
-				}
-				return await withDebugger(tabId, async ({ send }) => {
+		} catch (scriptError) {
+			if (isRestrictedScriptingError(scriptError)) {
+				throw scriptError;
+			}
+			return await withOperationTimeout(
+				withDebugger(tabId, async ({ send }) => {
 					const response = await send("Runtime.evaluate", {
-					expression,
-					awaitPromise: true,
-					returnByValue: true,
-					userGesture: true,
-				});
-				if (response.exceptionDetails) {
-					throw new Error(
-						response.exceptionDetails.exception?.description ||
-							response.exceptionDetails.text ||
-							scriptError?.message ||
-							"Runtime.evaluate failed",
-					);
-				}
-				return normalizeRemoteObject(response.result);
-			});
-		}
-	}
-	return await withDebugger(tabId, async ({ send }) => {
-		const response = await send("Runtime.evaluate", {
-			expression,
-			awaitPromise: true,
-			returnByValue: true,
-			userGesture: true,
-		});
-		if (response.exceptionDetails) {
-			throw new Error(
-				response.exceptionDetails.exception?.description ||
-					response.exceptionDetails.text ||
-					"Runtime.evaluate failed",
+						expression,
+						awaitPromise: true,
+						returnByValue: true,
+						userGesture: true,
+					});
+					if (response.exceptionDetails) {
+						throw new Error(
+							response.exceptionDetails.exception?.description ||
+								response.exceptionDetails.text ||
+								scriptError?.message ||
+								"Runtime.evaluate failed",
+						);
+					}
+					return normalizeRemoteObject(response.result);
+				}),
+				SCRIPT_EXECUTION_TIMEOUT_MS,
+				"Debugger evaluation timed out",
 			);
 		}
-		return normalizeRemoteObject(response.result);
-	});
+	}
+	return await withOperationTimeout(
+		withDebugger(tabId, async ({ send }) => {
+			const response = await send("Runtime.evaluate", {
+				expression,
+				awaitPromise: true,
+				returnByValue: true,
+				userGesture: true,
+			});
+			if (response.exceptionDetails) {
+				throw new Error(
+					response.exceptionDetails.exception?.description ||
+						response.exceptionDetails.text ||
+						"Runtime.evaluate failed",
+				);
+			}
+			return normalizeRemoteObject(response.result);
+		}),
+		SCRIPT_EXECUTION_TIMEOUT_MS,
+		"Debugger evaluation timed out",
+	);
 }
 
 async function getPageToolkitOptions() {
@@ -2857,10 +2864,14 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		}
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
-		return await evaluateInTab(
-			tabId,
-			`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
-			{ skipScripting: true },
+		return await withOperationTimeout(
+			evaluateInTab(
+				tabId,
+				`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
+				{ skipScripting: true },
+			),
+			SCRIPT_EXECUTION_TIMEOUT_MS,
+			`Page toolkit debugger fallback timed out: ${methodName}`,
 		);
 	}
 }

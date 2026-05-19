@@ -163,6 +163,69 @@ const suites = {
 			},
 		],
 	},
+	learning: {
+		label: "Learning Mode matrix",
+		setup: [
+			"reload the unpacked Chrome extension if the runtime bundle changed",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"open https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html in Chrome",
+			"start a fresh Onhand side-panel session named Chrome learning acceptance {runId}",
+			"run these cases in order; keep the same session for the Learning Mode cases so repeated-concept state can accumulate",
+		],
+		cases: [
+			{
+				id: "learning-answer-control",
+				title: "Answer Mode direct control",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+				steps: ["Turn Learning Mode off before submitting this prompt."],
+				prompt:
+					"CHROME LEARNING ANSWER CONTROL {runId}: Use this page to answer directly: what is rejection sampling? Anchor the answer with a highlight, but do not ask me a prediction or retrieval question.",
+				expected: [
+					"Learning Mode toggle is off before submission",
+					"answer directly explains rejection sampling with a page anchor/highlight",
+					"answer does not ask a prediction, retrieval, or say-it-back question",
+				],
+			},
+			{
+				id: "learning-concept-prompt",
+				title: "Learning Mode concept prompt",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+				steps: ["Turn Learning Mode on before submitting this prompt.", "Use the same fresh side-panel session for the remaining Learning Mode cases."],
+				prompt: "CHROME LEARNING CONCEPT {runId}: Teach me how rejection sampling works from this page.",
+				expected: [
+					"first move anchors a relevant page passage or equation",
+					"answer asks one short page-anchored prediction or retrieval question before a full explanation",
+					"the sidebar This session panel appears with a Rejection sampling concept and an open check",
+				],
+			},
+			{
+				id: "learning-open-check-resolution",
+				title: "Learning Mode open-check resolution",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+				steps: ["Keep Learning Mode on.", "Submit this as the next turn in the same session as learning-concept-prompt."],
+				prompt:
+					"CHROME LEARNING CHECK RESPONSE {runId}: I think samples are rejected when they fall under the proposal distribution but outside the target distribution's accepted probability region.",
+				expected: [
+					"answer assesses the user's response before introducing new material",
+					"answer gives a hint or correction anchored to the page if needed",
+					"the previously open check is resolved or no longer shown as open in the sidebar",
+				],
+			},
+			{
+				id: "learning-repeated-concept",
+				title: "Learning Mode repeated-concept refresher",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+				steps: ["Keep Learning Mode on.", "Submit this as a later turn in the same session, after rejection sampling is already in This session."],
+				prompt: "CHROME LEARNING REPEAT {runId}: Can you remind me how rejection sampling works again?",
+				expected: [
+					"answer treats rejection sampling as already covered earlier in the session",
+					"answer gives a quick refresher instead of restarting a full explanation",
+					"answer points back to the earlier source highlight or anchor when possible",
+					"the sidebar does not show a duplicate Rejection sampling concept",
+				],
+			},
+		],
+	},
 };
 
 function parseArgs(argv) {
@@ -194,9 +257,9 @@ function parseArgs(argv) {
 }
 
 function selectedSuites(name) {
-	if (name === "all") return [suites.oauth, suites.fixture, suites["real-pages"]];
+	if (name === "all") return [suites.oauth, suites.fixture, suites["real-pages"], suites.learning];
 	if (suites[name]) return [suites[name]];
-	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, or real-pages.`);
+	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, real-pages, or learning.`);
 }
 
 function hydrate(value, runId) {
@@ -220,7 +283,7 @@ function buildPlan(args) {
 }
 
 function printHelp() {
-	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|real-pages] [--run-id=<id>] [--json]");
+	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|real-pages|learning] [--run-id=<id>] [--json]");
 }
 
 function printPlan(plan) {
@@ -240,6 +303,11 @@ function printPlan(plan) {
 			console.log("");
 			console.log(`### ${testCase.id}: ${testCase.title}`);
 			console.log(`URL: ${testCase.url}`);
+			if (Array.isArray(testCase.steps) && testCase.steps.length) {
+				console.log("");
+				console.log("Steps:");
+				for (const line of testCase.steps) console.log(`- ${line}`);
+			}
 			console.log("");
 			console.log("Prompt:");
 			console.log(testCase.prompt);

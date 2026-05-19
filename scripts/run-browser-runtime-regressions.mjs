@@ -328,7 +328,13 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
 	assert.match(contract.learningPrompt, /Rejection sampling \(concept_rejection_sampling\)/);
 	assert.match(contract.learningPrompt, /check-rejection-1/);
+	assert.match(contract.learningPrompt, /Likely repeated concepts in the user's latest message/);
+	assert.match(contract.learningPrompt, /start with a brief reminder that it came up earlier/);
+	assert.match(contract.learningPrompt, /point to its source anchor when possible/);
+	assert.match(contract.learningPrompt, /reuse the existing conceptId/);
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
+	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
+	assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
 	const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);
 	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
