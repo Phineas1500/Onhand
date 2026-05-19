@@ -108,6 +108,22 @@ The current real pages are:
 
 This suite checks that the tool path still works outside the controlled fixture on article, form, and client-routed layouts.
 
+### Learning Mode Matrix
+
+Submit the Learning Mode prompts from `npm run acceptance:chrome -- --suite=learning`.
+
+The current page is:
+
+- `https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html` for STEM tutoring and repeated-concept behavior.
+
+This suite checks:
+
+- Answer Mode still gives a direct anchored answer without a tutoring prompt
+- Learning Mode asks a page-anchored prediction or retrieval question before a full explanation
+- an open check can be resolved by a user response in the next turn
+- repeated concepts get a quick refresher and source pointer instead of a full restart
+- the sidebar learner-state panel does not duplicate the same concept
+
 ## Passing The Gate
 
 A passing run has:
@@ -137,6 +153,10 @@ Chrome acceptance <run id>: PASS
 - real-static-article: PASS
 - real-form-page: PASS
 - real-client-routed-page: PASS
+- learning-answer-control: PASS
+- learning-concept-prompt: PASS
+- learning-open-check-resolution: PASS
+- learning-repeated-concept: PASS
 ```
 
 If a case fails, include the exact prompt, the observed answer, and whether the failure was a tool error, page content drift, OAuth/runtime issue, or visual side-panel issue.

@@ -119454,9 +119454,79 @@ function formatLearnerSourceForPrompt(concept) {
   ].filter(Boolean);
   return bits.length ? ` [${bits.join(", ")}]` : "";
 }
-function buildLearnerStatePromptSummary(rawState) {
+var LEARNER_CONCEPT_MATCH_STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "how",
+  "in",
+  "into",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "page",
+  "that",
+  "the",
+  "this",
+  "to",
+  "what",
+  "when",
+  "where",
+  "why",
+  "with",
+  "work",
+  "works"
+]);
+function normalizeLearnerConceptMatchText(value) {
+  return String(value || "").toLowerCase().replace(/^concept[_-]+/, "").replace(/[_-]+/g, " ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function normalizeLearnerConceptToken(token) {
+  if (token.length > 4 && token.endsWith("s")) return token.slice(0, -1);
+  return token;
+}
+function tokenizeLearnerConceptMatchText(value) {
+  return normalizeLearnerConceptMatchText(value).split(" ").map(normalizeLearnerConceptToken).filter((token) => token.length >= 3 && !LEARNER_CONCEPT_MATCH_STOPWORDS.has(token));
+}
+function learnerConceptPhraseMatches(promptText, conceptText) {
+  if (!promptText || !conceptText || conceptText.length < 5) return false;
+  return ` ${promptText} `.includes(` ${conceptText} `);
+}
+function learnerConceptTokensMatch(promptTokens, conceptTokens) {
+  if (!conceptTokens.length) return false;
+  if (conceptTokens.length === 1) return conceptTokens[0].length >= 5 && promptTokens.has(conceptTokens[0]);
+  return conceptTokens.every((token) => promptTokens.has(token));
+}
+function isLearnerConceptMentionedInPrompt(concept, promptText, promptTokens) {
+  const labelText = normalizeLearnerConceptMatchText(concept.label);
+  const conceptIdText = normalizeLearnerConceptMatchText(concept.conceptId);
+  if (learnerConceptPhraseMatches(promptText, labelText) || learnerConceptPhraseMatches(promptText, conceptIdText)) return true;
+  return learnerConceptTokensMatch(promptTokens, tokenizeLearnerConceptMatchText(labelText)) || learnerConceptTokensMatch(promptTokens, tokenizeLearnerConceptMatchText(conceptIdText));
+}
+function findRepeatedLearnerConceptsForPrompt(state, latestPrompt) {
+  const promptText = normalizeLearnerConceptMatchText(latestPrompt);
+  if (!promptText) return [];
+  const promptTokens = new Set(tokenizeLearnerConceptMatchText(promptText));
+  if (!promptTokens.size) return [];
+  const matches = [];
+  for (const concept of [...state.conceptsIntroduced].reverse()) {
+    if (isLearnerConceptMentionedInPrompt(concept, promptText, promptTokens)) matches.push(concept);
+    if (matches.length >= 3) break;
+  }
+  return matches;
+}
+function buildLearnerStatePromptSummary(rawState, latestPrompt = "") {
   const state = normalizeLearnerState(rawState, "learning");
   const lines = ["Current Learning Mode state for this session:"];
+  const repeatedConcepts = findRepeatedLearnerConceptsForPrompt(state, latestPrompt);
   if (!state.conceptsIntroduced.length && !state.openChecks.length && !state.responses.length) {
     lines.push("- No concepts or checks have been recorded yet.");
   } else {
@@ -119480,6 +119550,16 @@ function buildLearnerStatePromptSummary(rawState) {
         const evidence = response.evidence ? ` - ${truncate(response.evidence, 140)}` : "";
         lines.push(`  - ${response.checkId}: ${response.assessment}${evidence}`);
       }
+    }
+    if (repeatedConcepts.length) {
+      lines.push("- Likely repeated concepts in the user's latest message:");
+      for (const concept of repeatedConcepts) {
+        lines.push(`  - ${concept.label} (${concept.conceptId})${formatLearnerSourceForPrompt(concept)}`);
+      }
+      lines.push(
+        "- For likely repeated concepts, start with a brief reminder that it came up earlier, point to its source anchor when possible, then ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
+        "- Do not treat a likely repeated concept as brand-new. When recording learning events for it, reuse the existing conceptId."
+      );
     }
   }
   lines.push(
@@ -119710,7 +119790,7 @@ function buildToolInventory(prompt, tools) {
 function buildLauncherPrompt(prompt, browserContext, attachments, learningMode, reasoningProfile, tools = [], recentConversation = "", learnerState = null) {
   const attachmentContext = buildAttachmentContext(attachments);
   const toolInventory = buildToolInventory(prompt, tools);
-  const learnerStateSummary = learningMode ? buildLearnerStatePromptSummary(learnerState) : "";
+  const learnerStateSummary = learningMode ? buildLearnerStatePromptSummary(learnerState, prompt) : "";
   return [
     "The user invoked Onhand from the browser extension side panel.",
     ...recentConversation ? ["", "Recent conversation, summarized:", recentConversation] : [],
@@ -119960,11 +120040,22 @@ var __browserRuntimeTest = {
       "",
       learnerState
     );
+    const newConceptLearningPrompt = buildLauncherPrompt(
+      "How does Bayes theorem work on this page?",
+      "Active tab: BayesianDL\nVisible text snapshot:\nBayes theorem updates probability after new evidence.",
+      [],
+      true,
+      buildReasoningProfile(DEFAULT_SETTINGS, "How does Bayes theorem work on this page?", [], true),
+      [],
+      "",
+      learnerState
+    );
     return {
       systemPrompt: ONHAND_SYSTEM_PROMPT,
       learningModeAppend: ONHAND_LEARNING_MODE_APPEND,
       answerPrompt,
-      learningPrompt
+      learningPrompt,
+      newConceptLearningPrompt
     };
   },
   getToolNamesForTest(prompt, learningMode = false) {
