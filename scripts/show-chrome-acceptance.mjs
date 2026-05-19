@@ -226,6 +226,25 @@ const suites = {
 					"the sidebar does not accumulate multiple open checks for the same repeated concept",
 				],
 			},
+			{
+				id: "learning-cross-tab-offer",
+				title: "Learning Mode cross-tab interleaving offer",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+				steps: [
+					"Keep Learning Mode on.",
+					"Open two additional related tabs in the same Chrome window: https://en.wikipedia.org/wiki/Rejection_sampling and https://en.wikipedia.org/wiki/Monte_Carlo_method.",
+					"Return to the BayesianDL tab before submitting this prompt.",
+				],
+				prompt:
+					"CHROME LEARNING CROSS TAB {runId}: I'm trying to understand why rejection sampling wastes samples. Use this current page first, and if another open tab looks related, offer to connect it before pulling it in.",
+				expected: [
+					"answer uses the current BayesianDL page as the primary anchor",
+					"answer notices at least one related open tab by title or domain",
+					"answer offers to connect the related tab instead of switching to it automatically",
+					"page actions do not show reading, highlighting, noting, or activating the related tab before user consent",
+					"the Learning Mode response stays concise and asks at most one follow-up question",
+				],
+			},
 		],
 	},
 };

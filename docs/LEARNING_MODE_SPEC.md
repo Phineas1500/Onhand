@@ -17,7 +17,7 @@ Implementation progress:
 - Slice B is partially implemented: Learning Mode prompts now include compact learner-state context, detect likely repeated concepts in the latest prompt, and the agent has an internal `onhand_record_learning_event` tool for concept/check updates.
 - Slice C is implemented in the sidebar: Learning Mode sessions with state now show a compact "This session" panel with covered concepts, open checks, and best-effort source jumps with visible success/failure feedback.
 - Slice D is implemented in the Chrome acceptance matrix: Answer Mode control, Learning Mode concept prompt, open-check resolution, and repeated-concept refresher cases are available through `npm run acceptance:chrome -- --suite=learning`.
-- Still pending: cross-tab interleaving behavior.
+- Slice E is implemented as prompt-contract behavior: Learning Mode scans captured open tabs, offers related-tab connections before switching context, and has a manual Chrome acceptance case.
 
 ## Product thesis
 
@@ -93,6 +93,18 @@ Expected behavior:
 - Point back to the source highlight when possible.
 - Offer or provide a concise refresher.
 - Only re-explain fully if the user asks or appears confused.
+
+### Cross-tab interleaving
+
+Learning Mode should use Onhand's awareness of already-open tabs without stealing the user's attention.
+
+Expected behavior:
+
+- Treat the current tab as the primary teaching source unless the user explicitly asks for cross-tab comparison.
+- Scan the captured open-tab list, and call `browser_list_tabs` only when the captured list is missing or ambiguous.
+- If another open tab appears related, name it briefly and offer to connect it.
+- Do not switch to, read, highlight, or note the related tab until the user accepts or directly asks for cross-tab work.
+- Once the user accepts, anchor each tab separately and say which tab supports which claim.
 
 ### Direct-answer escape hatch
 
@@ -334,9 +346,9 @@ Use open tabs as related teaching material.
 
 Deliverables:
 
-- Prompt guidance to scan tab titles and summaries for related context.
-- Offer-first behavior before switching context.
-- Manual acceptance with at least three related tabs.
+- [x] Prompt guidance to scan tab titles and summaries for related context.
+- [x] Offer-first behavior before switching context.
+- [x] Manual acceptance with at least three related tabs.
 
 ## Open questions
 
