@@ -287,7 +287,8 @@ Learning uses a tutoring stance:
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
 - Use onhand_record_learning_event to keep learner state current: record a concept when you introduce it, record a prediction/retrieval check when you place it, and resolve an open check before moving on when the user answers it.
 - Include annotationId, tabTitle, and url in learning events whenever you have them from browser tool results. If you open a check, reuse the returned checkId when resolving it later.
-- If a concept is already in learner state, prefer a quick refresher that points back to its anchor instead of re-explaining from scratch.
+- If a concept is already in learner state, prefer a lightweight refresher: use the existing source anchor, avoid broad re-inspection, add at most one replacement highlight and no note unless the user asks for a deeper pass, and do not re-explain from scratch.
+- If that concept already has an open check, do not open or record a second check. Point back to the existing check or ask the user to answer it.
 - Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be anchored to a highlight or note, not floated in chat.
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
 - If another already-open tab likely contains a prerequisite or related example, use the tab list and connect the pages before opening anything new.
@@ -730,6 +731,14 @@ function normalizeLearnerResponse(rawResponse: any, fallbackNow: string): Learne
 	};
 }
 
+function dedupeLearnerOpenChecksByConcept(openChecks: LearnerCheck[]) {
+	const checksByConcept = new Map<string, LearnerCheck>();
+	for (const check of openChecks) {
+		checksByConcept.set(check.conceptId, check);
+	}
+	return [...checksByConcept.values()];
+}
+
 function createEmptyLearnerState(mode: LearnerMode = "answer"): LearnerState {
 	return {
 		mode,
@@ -771,7 +780,7 @@ function normalizeLearnerState(rawState: unknown, modeOverride?: LearnerMode): L
 	return {
 		mode: normalizeLearnerMode(modeOverride || raw.mode),
 		conceptsIntroduced,
-		openChecks,
+		openChecks: dedupeLearnerOpenChecksByConcept(openChecks),
 		responses,
 	};
 }
@@ -837,7 +846,11 @@ function applyLearningEvent(rawState: unknown, rawEvent: LearningEvent, options:
 		};
 		const existingIndex = state.openChecks.findIndex((openCheck) => openCheck.checkId === checkId);
 		if (existingIndex >= 0) state.openChecks[existingIndex] = check;
-		else state.openChecks.push(check);
+		else {
+			const sameConceptIndex = state.openChecks.findIndex((openCheck) => openCheck.conceptId === concept.conceptId);
+			if (sameConceptIndex >= 0) state.openChecks[sameConceptIndex] = check;
+			else state.openChecks.push(check);
+		}
 		return state;
 	}
 	if (event.kind === "check_resolved") {
@@ -1782,7 +1795,10 @@ function buildLearnerStatePromptSummary(rawState: unknown, latestPrompt = "") {
 				lines.push(`  - ${concept.label} (${concept.conceptId})${formatLearnerSourceForPrompt(concept)}`);
 			}
 			lines.push(
-				"- For likely repeated concepts, start with a brief reminder that it came up earlier, point to its source anchor when possible, then ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
+				"- For likely repeated concepts, keep the turn lightweight: start with a brief reminder that it came up earlier, use the existing source anchor when possible, and avoid re-running the full teaching flow.",
+				"- Page-work budget for repeated concepts: jump/scroll to the existing anchor if available; if that fails, use at most one fallback read and at most one replacement highlight, not a broad search. Do not annotate nearby examples or add notes unless the user explicitly asks for a deeper pass.",
+				"- If one of these concepts already has an open check listed above, do not call onhand_record_learning_event with check_opened for it. Point to the existing check instead.",
+				"- If there is no open check for the concept, ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
 				"- Do not treat a likely repeated concept as brand-new. When recording learning events for it, reuse the existing conceptId.",
 			);
 		}
@@ -1994,12 +2010,13 @@ function textHasAny(text: string, pattern: RegExp) {
 	return pattern.test(text);
 }
 
-function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachments: any[] = [], learningMode = false) {
+function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachments: any[] = [], learningMode = false, learnerState: unknown = null) {
 	const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
 	const selected = new Set<string>();
 	const text = String(prompt || "").toLowerCase();
 	const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
 	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
+	const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
 	const selectableToolNames = allTools
 		.map((tool) => tool.name)
 		.filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
@@ -2038,6 +2055,11 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 	}
 
 	if (!selected.size) add(CORE_READ_TOOL_NAMES);
+	if (repeatedConcepts.length && !wantsAllPorts) {
+		for (const name of ["browser_extract_content", "browser_show_note"]) {
+			if (!explicitToolNames.has(name)) selected.delete(name);
+		}
+	}
 	return allTools.filter((tool) => selected.has(tool.name));
 }
 
@@ -2338,10 +2360,11 @@ export const __browserRuntimeTest = {
 			learningModeAppend: ONHAND_LEARNING_MODE_APPEND,
 			answerPrompt,
 			learningPrompt,
+			learnerState,
 			newConceptLearningPrompt,
 		};
 	},
-	getToolNamesForTest(prompt: string, learningMode = false) {
+	getToolNamesForTest(prompt: string, learningMode = false, learnerState: unknown = null) {
 		const host: RuntimeHost = {
 			async runCommand() {
 				return {};
@@ -2361,7 +2384,7 @@ export const __browserRuntimeTest = {
 				return {};
 			},
 		};
-		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode).map((tool) => tool.name);
+		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState).map((tool) => tool.name);
 	},
 	setLearnerStateMode,
 	summarizeRestoredArtifact,
@@ -3874,6 +3897,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				prompt,
 				attachments,
 				learningMode,
+				session.learnerState,
 			);
 			if (!session.name && session.messages.length === 0) {
 				session.name = buildSessionTitleFromPrompt(displayPrompt);
