@@ -121,8 +121,9 @@ This suite checks:
 - Answer Mode still gives a direct anchored answer without a tutoring prompt
 - Learning Mode asks a page-anchored prediction or retrieval question before a full explanation
 - an open check can be resolved by a user response in the next turn
-- repeated concepts get a quick refresher and source pointer instead of a full restart
+- repeated concepts get a lightweight refresher and source pointer instead of a full restart, a new note, or a batch of fresh highlights
 - the sidebar learner-state panel does not duplicate the same concept
+- the sidebar does not accumulate multiple open checks for the same repeated concept
 
 ## Passing The Gate
 

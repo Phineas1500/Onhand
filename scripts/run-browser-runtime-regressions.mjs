@@ -323,14 +323,22 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
 	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
 	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
+	assert.match(contract.learningModeAppend, /prefer a lightweight refresher/);
+	assert.match(contract.learningModeAppend, /add at most one replacement highlight and no note/);
+	assert.match(contract.learningModeAppend, /do not open or record a second check/);
 	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
 	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
 	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
 	assert.match(contract.learningPrompt, /Rejection sampling \(concept_rejection_sampling\)/);
 	assert.match(contract.learningPrompt, /check-rejection-1/);
 	assert.match(contract.learningPrompt, /Likely repeated concepts in the user's latest message/);
-	assert.match(contract.learningPrompt, /start with a brief reminder that it came up earlier/);
-	assert.match(contract.learningPrompt, /point to its source anchor when possible/);
+	assert.match(contract.learningPrompt, /keep the turn lightweight/);
+	assert.match(contract.learningPrompt, /use the existing source anchor when possible/);
+	assert.match(contract.learningPrompt, /avoid re-running the full teaching flow/);
+	assert.match(contract.learningPrompt, /Page-work budget for repeated concepts/);
+	assert.match(contract.learningPrompt, /at most one fallback read and at most one replacement highlight/);
+	assert.match(contract.learningPrompt, /do not call onhand_record_learning_event with check_opened/);
+	assert.match(contract.learningPrompt, /If there is no open check for the concept/);
 	assert.match(contract.learningPrompt, /reuse the existing conceptId/);
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
@@ -342,6 +350,11 @@ async function assertConstitutionPromptContract() {
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
+	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
+	assert.equal(repeatedLearningToolNames.includes("onhand_record_learning_event"), true);
+	assert.equal(repeatedLearningToolNames.includes("browser_scroll_to_annotation"), true);
+	assert.equal(repeatedLearningToolNames.includes("browser_show_note"), false);
+	assert.equal(repeatedLearningToolNames.includes("browser_extract_content"), false);
 	assert.equal(classifyPromptForReasoning("what is this term?", [], true), "balanced");
 	assert.equal(classifyPromptForReasoning("What are React components, and why would I split UI into components?", [], false), "balanced");
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
@@ -412,8 +425,31 @@ async function assertLearnerStateUpdates() {
 	learnerState = applyLearningEvent(
 		learnerState,
 		{
+			kind: "check_opened",
+			checkId: "check-derivative-2",
+			checkKind: "retrieval",
+			conceptLabel: "Derivative",
+			promptText: "What input change is this derivative measuring?",
+			annotationId: "ann-derivative",
+		},
+		{ now: "2026-05-18T05:01:30.000Z" },
+	);
+	assert.deepEqual(learnerState.openChecks, [
+		{
+			checkId: "check-derivative-2",
+			kind: "retrieval",
+			conceptId: "concept_derivative",
+			promptText: "What input change is this derivative measuring?",
+			annotationId: "ann-derivative",
+			askedAt: "2026-05-18T05:01:30.000Z",
+		},
+	]);
+
+	learnerState = applyLearningEvent(
+		learnerState,
+		{
 			kind: "check_resolved",
-			checkId: "check-derivative-1",
+			checkId: "check-derivative-2",
 			assessment: "partial",
 			evidence: "User connected the derivative to rate of change but missed instantaneous behavior.",
 		},
@@ -422,7 +458,7 @@ async function assertLearnerStateUpdates() {
 	assert.equal(learnerState.openChecks.length, 0);
 	assert.deepEqual(learnerState.responses, [
 		{
-			checkId: "check-derivative-1",
+			checkId: "check-derivative-2",
 			assessment: "partial",
 			resolvedAt: "2026-05-18T05:02:00.000Z",
 			evidence: "User connected the derivative to rate of change but missed instantaneous behavior.",
@@ -455,9 +491,8 @@ async function assertLearnerStateUpdates() {
 		openRetrievalChecks: [{ checkId: "retrieval-limit", conceptId: "concept_limit", promptText: "Say back the epsilon-delta claim." }],
 		responded: [{ itemId: "pred-old", assessment: "correct", resolvedAt: "2026-05-18T04:05:00.000Z" }],
 	});
-	assert.equal(legacyState.openChecks.length, 2);
-	assert.equal(legacyState.openChecks[0].kind, "prediction");
-	assert.equal(legacyState.openChecks[1].kind, "retrieval");
+	assert.equal(legacyState.openChecks.length, 1);
+	assert.equal(legacyState.openChecks[0].kind, "retrieval");
 	assert.equal(legacyState.responses[0].checkId, "pred-old");
 	assert.equal(setLearnerStateMode(legacyState, "answer").mode, "answer");
 
