@@ -700,7 +700,7 @@ async function assertLearningSessionPanelRendersState() {
 	assert.match(learnerPanel.textContent, /Covered/);
 	assert.match(learnerPanel.textContent, /Rejection sampling/);
 	assert.match(learnerPanel.textContent, /Monte Carlo estimates/);
-	assert.match(learnerPanel.textContent, /Waiting/);
+	assert.match(learnerPanel.textContent, /To answer/);
 	assert.match(learnerPanel.textContent, /what do you think gets rejected here/);
 	assert.match(learnerPanel.textContent, /prediction · Rejection sampling/);
 

@@ -252,7 +252,7 @@ Suggested layout:
 
 - Header: `This session`
 - Concepts row/list: short concept labels, newest last or grouped by source.
-- Waiting row/list: open checks with concise prompt text.
+- To answer row/list: open checks with concise prompt text.
 - Source action: click concept or check to scroll to the annotation when an `annotationId` is available.
 
 Rendering rules:

@@ -12,7 +12,22 @@
         color: #111827;
       }
       h1 {
+        display: flex;
+        align-items: center;
+        gap: 10px;
         margin-bottom: 8px;
+      }
+      .logo-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        color: #575279;
+        font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Noto Sans Symbols", serif;
+        font-size: 31px;
+        line-height: 1;
+        transform: translateY(-1px);
       }
       h2 {
         margin: 0 0 8px;
@@ -110,7 +125,7 @@
     </style>
   </head>
   <body>
-    <h1>Onhand</h1>
+    <h1><span class="logo-mark" aria-hidden="true">☞</span><span>Onhand</span></h1>
     <p class="help">
       Configure the browser-hosted runtime used by the extension side panel.
     </p>

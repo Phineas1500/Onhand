@@ -1439,10 +1439,15 @@
 				color: var(--rm-text);
 				flex: 0 0 auto;
 			}
-			.onhand-brand svg {
+			.onhand-logo-mark {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
 				width: 20px;
 				height: 20px;
+				font: 22px/1 "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Noto Sans Symbols", serif;
 				color: currentColor;
+				transform: translateY(-1px);
 			}
 			.onhand-title {
 				flex: 1;
@@ -2412,6 +2417,7 @@
 			.onhand-row .ctl {
 				display: inline-flex;
 				align-items: center;
+				justify-content: center;
 				gap: 5px;
 				cursor: pointer;
 				padding: 3px 6px;
@@ -2419,6 +2425,12 @@
 				border: 0;
 				background: transparent;
 				color: inherit;
+			}
+			.onhand-row .ctl svg {
+				width: 13px;
+				height: 18px;
+				flex: 0 0 auto;
+				stroke: currentColor;
 			}
 			.onhand-row .ctl:hover {
 				background: var(--rm-mantle);
@@ -2534,10 +2546,7 @@
 		<div class="onhand-sidebar panel" data-onhand-sidebar>
 			<header class="onhand-head">
 				<div class="onhand-brand" aria-label="Onhand">
-					<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path d="M12 3.5 19.5 8v8L12 20.5 4.5 16V8L12 3.5Z" stroke="currentColor" stroke-width="1.8" />
-						<path d="M12 8v8M8.5 10.2l7 4.1M15.5 10.2l-7 4.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-					</svg>
+					<span class="onhand-logo-mark" aria-hidden="true">☞</span>
 				</div>
 				<input id="sessionTitleInput" class="onhand-title" type="text" value="Current session" aria-label="Session title" spellcheck="false" />
 				<div class="onhand-menu-wrap">
@@ -2582,7 +2591,11 @@
 				<div id="attachmentList" class="onhand-draft-chips"></div>
 				<textarea id="input" class="onhand-input" placeholder="Ask about this page or your selection..."></textarea>
 				<div class="onhand-row">
-					<button id="attachButton" class="ctl" type="button" aria-label="Attach files" title="Attach files">&#128206;</button>
+					<button id="attachButton" class="ctl" type="button" aria-label="Attach files" title="Attach files">
+						<svg class="onhand-attach-icon" viewBox="0 0 13 18" fill="none" aria-hidden="true" focusable="false">
+							<path d="M4.6 5.2v7.3a1.9 1.9 0 1 0 3.8 0V4.6a2.9 2.9 0 0 0-5.8 0v8a4.2 4.2 0 1 0 8.4 0V5.7" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</button>
 					<input id="fileInput" type="file" multiple hidden />
 					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
 						<span class="sw"></span>
@@ -3409,7 +3422,7 @@
 					visibleChecks.length
 						? `
 							<div class="onhand-learner-group">
-								<span class="onhand-learner-group-title">Waiting</span>
+								<span class="onhand-learner-group-title">To answer</span>
 								<div class="onhand-learner-items">
 									${visibleChecks.map((check) => renderLearnerCheckItem(check, concepts)).join("")}
 								</div>
