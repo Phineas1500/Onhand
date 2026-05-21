@@ -177,10 +177,12 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 				runtimeMessages.push(message);
 				if (message?.type === "sidebar:fetch-state") return { ok: true, state };
 				if (message?.type === "sidebar:list-sessions") {
+					const configuredSessions =
+						typeof options.sessions === "function" ? options.sessions(state) : Array.isArray(options.sessions) ? options.sessions : null;
 					return {
 						ok: true,
 						currentSession: { ...state.currentSession, sessionFile: state.currentSession.sessionId },
-						sessions: [
+						sessions: configuredSessions || [
 							{
 								id: state.currentSession.sessionId,
 								name: state.currentSession.sessionName,
@@ -190,7 +192,14 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						],
 					};
 				}
+				if (message?.type === "sidebar:switch-session" && typeof options.switchSessionResponse === "function") {
+					return options.switchSessionResponse(message, state);
+				}
 				if (message?.type === "sidebar:get-session-replay") {
+					const pageActions = [
+						...(Array.isArray(state.pageActions) ? state.pageActions : []),
+						...(Array.isArray(state.turns) ? state.turns.flatMap((turn) => turn.pageActions || []) : []),
+					];
 					return {
 						ok: true,
 						session: {
@@ -199,7 +208,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 							title: state.currentSession.sessionName,
 						},
 						turns: state.turns,
-						pageActions: state.pageActions || [],
+						pageActions,
 						artifacts: [
 							{
 								artifactId: "artifact-sidebar-replay",
@@ -218,7 +227,13 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 								],
 							},
 						],
-						replayableAnnotations: [],
+						replayableAnnotations: [
+							{
+								annotationId: "ann-first",
+								matchedText: "Rejection sampling rejects too many samples from P(W).",
+								actionKeys: ["highlight:first"],
+							},
+						],
 						selectedArtifactId: "artifact-sidebar-replay",
 					};
 				}
@@ -252,7 +267,12 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						restoredCount: 0,
 					};
 				}
-				if (message?.type === "sidebar:activate-action") return { ok: true };
+				if (message?.type === "sidebar:activate-action") {
+					if (typeof options.activateActionResponse === "function") {
+						return options.activateActionResponse(message);
+					}
+					return { ok: true };
+				}
 				if (message?.type === "sidebar:scroll-to-annotation") {
 					if (typeof options.scrollToAnnotationResponse === "function") {
 						return options.scrollToAnnotationResponse(message);
@@ -300,6 +320,12 @@ async function assertSessionWideCitationNumbers() {
 		citationButtonsByEntry.map((buttons) => buttons.map((button) => button.textContent.trim())),
 		[["[1]"], ["[2]"], ["[3]", "[2]"]],
 	);
+	const styleText = host.shadowRoot.querySelector("style")?.textContent || "";
+	assert.match(styleText, /\.onhand-cite\s*\{[^}]*min-height:\s*18px/s);
+	assert.match(styleText, /\.onhand-cite\s*\{[^}]*min-width:\s*18px/s);
+	assert.doesNotMatch(styleText, /\.onhand-cite\s*\{[^}]*line-height:\s*0\b/s);
+	assert.match(styleText, /\.onhand-action\s*\{[^}]*min-height:\s*22px/s);
+	assert.match(styleText, /\.onhand-action\s*\{[^}]*padding:\s*2px 4px/s);
 	assert.equal(citationButtonsByEntry[0][0].dataset.actionKey, "highlight:first");
 	assert.equal(citationButtonsByEntry[1][0].dataset.actionKey, "highlight:second");
 	assert.equal(citationButtonsByEntry[2][0].dataset.actionKey, "highlight:third");
@@ -315,26 +341,185 @@ async function assertSessionWideCitationNumbers() {
 	dom.window.close();
 }
 
-async function assertReplayViewRendersSavedSnapshot() {
+async function assertTranscriptActionButtonsActivateDirectly() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.turns[0].pageActions.push({
+		key: "note:first",
+		type: "note",
+		annotationId: "ann-first",
+		label: "Added note",
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		detail: "Remember that rejection sampling can waste many proposed samples.",
+		citationText: "Remember that rejection sampling can waste many proposed samples.",
+	});
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const actionButton = host.shadowRoot.querySelector('.onhand-action[data-action-key="note:first"]');
+	assert.ok(actionButton, "expected added-note transcript action button");
+	assert.equal(actionButton.dataset.onhandActionBound, "true");
+
+	const actionPointerDown = new dom.window.MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+	actionButton.dispatchEvent(actionPointerDown);
+	assert.equal(actionPointerDown.defaultPrevented, true, "expected action button pointerdown to prevent text selection");
+	actionButton.dispatchEvent(new dom.window.MouseEvent("pointerup", { bubbles: true, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "note:first"),
+		true,
+	);
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
+	actionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: false, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
+		2,
+	);
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
+	const actionMouseDown = new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true });
+	actionButton.dispatchEvent(actionMouseDown);
+	assert.equal(actionMouseDown.defaultPrevented, true, "expected action button mousedown to prevent text selection");
+	actionButton.dispatchEvent(new dom.window.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+	actionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
+		3,
+		"expected one activation from the mouseup/click pair for one physical click",
+	);
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
+	const citationButton = host.shadowRoot.querySelector('.onhand-cite[data-action-key="note:first"]');
+	assert.ok(citationButton, "expected citation to target the paired note action");
+	const citationPointerDown = new dom.window.MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+	citationButton.dispatchEvent(citationPointerDown);
+	assert.equal(citationPointerDown.defaultPrevented, true, "expected citation pointerdown to prevent text selection");
+	citationButton.dispatchEvent(new dom.window.MouseEvent("pointerup", { bubbles: true, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
+		4,
+	);
+
+	dom.window.close();
+}
+
+async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.currentSession = {
+		sessionId: "session-alpha",
+		sessionName: "Alpha session",
+	};
+	const sessions = [
+		{
+			id: "session-alpha",
+			name: "Alpha session",
+			path: "session-alpha",
+			title: "Alpha session",
+		},
+		{
+			id: "session-beta",
+			name: "Beta session",
+			path: "session-beta",
+			title: "Beta session",
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages, {
+		sessions: () => sessions,
+		async switchSessionResponse(message) {
+			assert.equal(message.sessionPath, "session-beta");
+			await new Promise((resolve) => dom.window.setTimeout(resolve, 20));
+			state.currentSession = {
+				sessionId: "session-beta",
+				sessionName: "Beta session",
+			};
+			return { ok: true };
+		},
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const sessionSelect = host.shadowRoot.getElementById("sessionSelect");
+	assert.equal(sessionSelect.value, "session-alpha");
+
+	sessionSelect.focus();
+	sessionSelect.value = "session-beta";
+	sessionSelect.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:switch-session" && message.sessionPath === "session-beta"),
+		true,
+	);
+	assert.equal(sessionSelect.value, "session-beta", "expected focused picker to keep the intended selection while switching");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+	assert.equal(sessionSelect.disabled, false);
+	assert.equal(sessionSelect.value, "session-beta");
+
+	const reviewButton = host.shadowRoot.getElementById("replaySessionButton");
+	assert.equal(reviewButton.textContent, "Review");
+	reviewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:get-session-replay" && message.sessionPath === "session-beta"),
+		true,
+	);
+
+	dom.window.close();
+}
+
+async function assertReviewViewRendersSavedSnapshot() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	assert.ok(host, "expected sidebar host to render");
 	const replayButton = host.shadowRoot.getElementById("replaySessionButton");
-	assert.ok(replayButton, "expected replay menu button to render");
+	assert.ok(replayButton, "expected review menu button to render");
+	assert.equal(replayButton.textContent, "Review");
 	replayButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
 
-	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:get-session-replay"), true);
+	assert.equal(
+		runtimeMessages.some(
+			(message) => message?.type === "sidebar:get-session-replay" && message.sessionPath === "session-bayesian",
+		),
+		true,
+	);
 	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:get-replay-artifact" && message.artifactId === "artifact-sidebar-replay"), true);
 	const replayView = host.shadowRoot.getElementById("replayView");
 	assert.equal(replayView.hidden, false, "expected replay view to be visible");
-	assert.match(replayView.textContent, /Replay/);
+	assert.match(replayView.textContent, /Review/);
 	assert.match(replayView.textContent, /Saved replay note/);
-	assert.match(replayView.textContent, /Transcript/);
+	assert.doesNotMatch(replayView.textContent, /Transcript/);
 	const snapshotImage = replayView.querySelector(".onhand-replay-image");
 	assert.ok(snapshotImage, "expected saved screenshot image to render");
 	assert.equal(snapshotImage.getAttribute("src"), "data:image/png;base64,UkVQTEFZ");
+	const replayActionButton = replayView.querySelector('.onhand-replay-annotation [data-action-key="highlight:first"]');
+	assert.ok(replayActionButton, "expected saved annotation source button");
+	replayActionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:activate-action" &&
+				message.key === "highlight:first" &&
+				message.sessionPath === "session-bayesian",
+		),
+		true,
+	);
+	const restoreButton = replayView.querySelector("[data-replay-restore]");
+	assert.ok(restoreButton, "expected review restore button");
+	restoreButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.some(
+			(message) => message?.type === "sidebar:restore-session" && message.sessionPath === "session-bayesian",
+		),
+		true,
+	);
 	assert.equal(host.shadowRoot.getElementById("messages").hidden, true);
 	assert.equal(host.shadowRoot.getElementById("composer").hidden, true);
 
@@ -343,6 +528,51 @@ async function assertReplayViewRendersSavedSnapshot() {
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 	assert.equal(replayView.hidden, true, "expected live button to close replay view");
 	assert.equal(host.shadowRoot.getElementById("messages").hidden, false);
+
+	dom.window.close();
+}
+
+async function assertPageIndexHighlightWithNoteJumpsToAnnotation() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+	};
+	state.page = {
+		annotations: [
+			{
+				annotationId: "ann-stationary",
+				kind: "block",
+				matchedText: "q=qP",
+				note: {
+					text: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+					label: "Onhand",
+				},
+			},
+		],
+	};
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const pageIndex = host.shadowRoot.getElementById("pageIndex");
+	assert.match(pageIndex.textContent, /1 highlight, 1 note/);
+	const item = pageIndex.querySelector('[data-annotation-id="ann-stationary"]');
+	assert.ok(item, "expected page index item for restored highlight");
+	assert.equal(item.dataset.target, "annotation");
+
+	item.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:scroll-to-annotation" &&
+				message.annotationId === "ann-stationary" &&
+				message.target === "annotation",
+		),
+		true,
+	);
 
 	dom.window.close();
 }
@@ -374,9 +604,8 @@ async function assertLearningSessionPanelRendersState() {
 	assert.equal(
 		runtimeMessages.some(
 			(message) =>
-				message?.type === "sidebar:scroll-to-annotation" &&
-				message.annotationId === "ann-second" &&
-				message.target === "annotation",
+				message?.type === "sidebar:activate-action" &&
+				message.key === "highlight:second",
 		),
 		true,
 	);
@@ -389,9 +618,8 @@ async function assertLearningSessionPanelRendersState() {
 	assert.equal(
 		runtimeMessages.some(
 			(message) =>
-				message?.type === "sidebar:scroll-to-annotation" &&
-				message.annotationId === "ann-first" &&
-				message.target === "note",
+				message?.type === "sidebar:activate-action" &&
+				message.key === "highlight:first",
 		),
 		true,
 	);
@@ -399,13 +627,58 @@ async function assertLearningSessionPanelRendersState() {
 	dom.window.close();
 }
 
+async function assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale() {
+	const runtimeMessages = [];
+	const state = createLearningState();
+	state.turns = [
+		{
+			...state.turns[1],
+			pageActions: [state.turns[1].pageActions[0]],
+		},
+	];
+	state.pageActions = [state.turns[0].pageActions[0]];
+	state.learnerState.conceptsIntroduced = [
+		{
+			conceptId: "concept_monte_carlo",
+			label: "Monte Carlo estimates",
+			firstSeenAt: "2026-05-12T10:01:00.000Z",
+			lastSeenAt: "2026-05-12T10:01:00.000Z",
+			sources: [
+				{
+					tabTitle: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotationId: "stale-learner-source",
+				},
+			],
+		},
+	];
+	state.learnerState.openChecks = [];
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="stale-learner-source"]');
+	assert.ok(sourceButton, "expected stale learner source button");
+	assert.equal(sourceButton.dataset.actionKey, "highlight:second");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:second"),
+		true,
+	);
+	assert.match(learnerPanel.textContent, /Jumped to source/);
+
+	dom.window.close();
+}
+
 async function assertLearningSessionPanelReportsSourceFailure() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createLearningState(), runtimeMessages, {
-		scrollToAnnotationResponse(message) {
+		activateActionResponse(message) {
 			return {
 				ok: false,
-				error: `No annotation found with id: ${message.annotationId}`,
+				error: `No annotation found with key: ${message.key}`,
 			};
 		},
 	});
@@ -417,7 +690,7 @@ async function assertLearningSessionPanelReportsSourceFailure() {
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 
 	assert.equal(
-		runtimeMessages.some((message) => message?.type === "sidebar:scroll-to-annotation" && message.annotationId === "ann-second"),
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:second"),
 		true,
 	);
 	const feedback = learnerPanel.querySelector(".onhand-learner-feedback");
@@ -453,8 +726,12 @@ async function assertLearningSessionPanelHidesOutsideLearningState() {
 }
 
 await assertSessionWideCitationNumbers();
-await assertReplayViewRendersSavedSnapshot();
+await assertTranscriptActionButtonsActivateDirectly();
+await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
+await assertReviewViewRendersSavedSnapshot();
+await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertLearningSessionPanelRendersState();
+await assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
 console.log("sidebar regressions passed");

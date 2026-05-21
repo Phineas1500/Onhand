@@ -484,10 +484,10 @@ Testing workflow reference:
 
 Current status:
 - The browser-only prompt path works: the side panel submits directly to an extension-hosted Pi agent, the agent calls direct browser tools, and sessions persist without desktop or bridge services.
-- The existing side-panel menu can reopen saved sessions and restore saved pages or replayable page actions. A fuller replay view with saved snapshots/screenshots is still missing.
+- The existing side-panel menu can reopen saved sessions, restore saved pages or replayable page actions, and open a Review view with transcript, saved annotations, and saved screenshot/HTML snapshot previews. Successful annotated turns now auto-save an HTML/screenshot snapshot when the model did not explicitly persist one.
 
 Most important next step:
-- improve session replay fidelity and saved snapshot viewing beyond live-page restore.
+- improve session review/replay fidelity for changed pages and missing tabs beyond the current saved snapshot preview and best-effort live-page restore.
 
 ## Phase 0 — Stabilize browser tools
 Goal: make browser-grounding primitives reliable.
@@ -592,6 +592,7 @@ Started:
 - [x] add a first-pass restore hook with `browser_restore_state`
 - [x] add screenshot capture alongside the saved state/HTML snapshot
 - [x] add a lightweight artifact index/loader and `browser_list_artifacts`
+- [x] auto-save a Review snapshot after successful annotated turns when no artifact was explicitly captured
 
 Remaining:
 - [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout
@@ -616,11 +617,12 @@ Started:
 - [x] open saved sessions from the existing side-panel menu
 - [x] restore saved browser state or replayable page actions from a selected session
 - [x] show menu-scoped restore result details for restored pages, annotations, notes, and failures
+- [x] render chat + annotations together in a fuller Review view
+- [x] add saved snapshot/screenshot viewing instead of only restoring to live pages
+- [x] replay transcript source actions target the displayed saved session, not only the current live session
 
 Remaining:
-- [ ] decide whether replay metadata belongs in the hidden menu selector or only in a fuller replay view
-- [ ] render chat + annotations together in a fuller replay view
-- [ ] add saved snapshot/screenshot viewing instead of only restoring to live pages
+- [ ] decide whether replay metadata should stay available in the hidden menu selector now that the fuller Review view exists
 - [ ] improve restore fidelity for changed pages and missing tabs
 
 ### 14.5 Add visible-context tools — in progress

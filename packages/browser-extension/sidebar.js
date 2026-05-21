@@ -4,6 +4,7 @@
 
 	const SIDEBAR_WIDTH = 420;
 	const POLL_INTERVAL_MS = 900;
+	const ACTION_ACTIVATION_DEDUP_MS = 220;
 	const PAGE_OPEN_CLASS = "onhand-extension-sidebar-open";
 	const PAGE_STYLE_ID = "onhand-extension-sidebar-layout";
 	const HOST_ID = "onhand-extension-sidebar-host";
@@ -101,6 +102,7 @@
 	let sessionOverview = null;
 	let sessionLoading = false;
 	let sessionSwitching = false;
+	let pendingSessionPath = "";
 	let creatingSession = false;
 	let restoringSession = false;
 	let lastRestoreResult = null;
@@ -1079,7 +1081,7 @@
 				margin-left: 6px;
 				vertical-align: super;
 			}
-			.reply-rich .reply-citation {
+			.reply-rich .onhand-cite {
 				border: none;
 				background: rgba(246, 125, 80, 0.16);
 				color: #ffd4ba;
@@ -1091,7 +1093,7 @@
 				line-height: 18px;
 				cursor: pointer;
 			}
-			.reply-rich .reply-citation:hover {
+			.reply-rich .onhand-cite:hover {
 				background: rgba(246, 125, 80, 0.28);
 			}
 			.reply-inline-code,
@@ -1883,12 +1885,31 @@
 				background: var(--rm-base);
 				border-left: 2px solid var(--rm-gold);
 			}
+			.onhand-replay-annotation-head {
+				display: flex;
+				align-items: flex-start;
+				justify-content: space-between;
+				gap: 8px;
+			}
 			.onhand-replay-quote {
 				display: block;
 				font-size: 13px;
 				line-height: 1.35;
 				color: var(--rm-text);
 				font-style: italic;
+			}
+			.onhand-replay-source {
+				flex: 0 0 auto;
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				border-radius: 2px;
+				padding: 4px 6px;
+				font: 10px/1 var(--rm-font-mono);
+				cursor: pointer;
+			}
+			.onhand-replay-source:hover {
+				background: var(--rm-surface-0);
 			}
 			.onhand-replay-note {
 				display: block;
@@ -2077,21 +2098,31 @@
 				white-space: pre;
 			}
 			.reply-citations {
-				display: inline;
+				display: inline-flex;
+				align-items: center;
+				gap: 2px;
 				margin-left: 3px;
+				vertical-align: super;
 			}
 			.onhand-cite {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				min-width: 18px;
+				min-height: 18px;
 				font-family: var(--rm-font-mono);
 				font-size: 0.72em;
 				color: var(--rm-pine);
 				font-weight: 700;
-				vertical-align: super;
-				line-height: 0;
-				padding: 0 1px;
+				line-height: 1;
+				padding: 1px 3px;
 				text-decoration: none;
 				cursor: pointer;
 				border: 0;
 				background: transparent;
+				border-radius: 3px;
+				-webkit-user-select: none;
+				user-select: none;
 			}
 			.onhand-cite:hover {
 				color: var(--rm-foam);
@@ -2172,14 +2203,21 @@
 				font: 11px var(--rm-font-mono);
 			}
 			.onhand-action {
+				display: inline-flex;
+				align-items: center;
+				min-height: 22px;
 				color: var(--rm-pine);
 				cursor: pointer;
-				padding: 2px 0;
+				padding: 2px 4px;
 				border: 0;
 				border-bottom: 1px solid transparent;
 				background: transparent;
+				border-radius: 3px;
+				-webkit-user-select: none;
+				user-select: none;
 			}
 			.onhand-action:hover {
+				background: var(--rm-mantle);
 				border-bottom-color: var(--rm-pine);
 			}
 			.onhand-cursor {
@@ -2414,7 +2452,7 @@
 							</label>
 								<div class="onhand-menu-actions">
 									<button id="newSessionButton" class="session-button" type="button">New</button>
-									<button id="replaySessionButton" class="session-button" type="button">Replay</button>
+									<button id="replaySessionButton" class="session-button" type="button">Review</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
 									<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
 									<button id="closeButton" class="session-button" type="button">Close</button>
@@ -2553,29 +2591,49 @@
 		`;
 	}
 
-	function renderSessionControls(state) {
-		const currentPath =
+	function getCurrentSessionPath(state) {
+		return (
 			state?.currentSession?.sessionFile ||
 			state?.currentSession?.sessionId ||
 			sessionOverview?.currentSession?.sessionFile ||
 			sessionOverview?.currentSession?.sessionId ||
-			"";
+			""
+		);
+	}
+
+	function renderSessionControls(state) {
+		const currentPath = getCurrentSessionPath(state);
+		if (pendingSessionPath && pendingSessionPath === currentPath) {
+			pendingSessionPath = "";
+		}
+		const selectedPath = pendingSessionPath || currentPath;
 		const sessions = Array.isArray(sessionOverview?.sessions) ? sessionOverview.sessions : [];
 		const learningMode = Boolean(state?.preferences?.learningMode);
+		let sessionOptionsHtml = "";
 		if (!sessions.length) {
-			sessionSelect.innerHTML = `<option value="">${sessionLoading ? "Loading sessions…" : "Current session"}</option>`;
+			sessionOptionsHtml = `<option value="">${sessionLoading ? "Loading sessions…" : "Current session"}</option>`;
 		} else {
-			sessionSelect.innerHTML = sessions
+			sessionOptionsHtml = sessions
 				.map((session) => {
 					const title = session?.title || session?.name || "Session";
 					const path = session.path || session.id || session.sessionId || "";
-					return `<option value="${escapeAttribute(path)}" ${path === currentPath ? "selected" : ""}>${escapeHtml(title)}</option>`;
+					return `<option value="${escapeAttribute(path)}" ${path === selectedPath ? "selected" : ""}>${escapeHtml(title)}</option>`;
 				})
 				.join("");
+		}
+		const sessionSelectFocused = shadow.activeElement === sessionSelect;
+		const optionsSignature = `${selectedPath}\n${sessionOptionsHtml}`;
+		if (!sessionSelectFocused && sessionSelect.dataset.optionsSignature !== optionsSignature) {
+			sessionSelect.innerHTML = sessionOptionsHtml;
+			sessionSelect.dataset.optionsSignature = optionsSignature;
+		}
+		if (!sessionSelectFocused && sessionSelect.value !== selectedPath) {
+			sessionSelect.value = selectedPath;
 		}
 
 		const activeRequest = Boolean(state?.activeRequestId);
 		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || restoringSession || activeRequest;
+		sessionSelect.title = sessionSwitching ? "Switching session..." : "";
 		themeSelect.value = sidebarTheme;
 		learningModeToggle.checked = learningMode;
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
@@ -2587,7 +2645,7 @@
 		stopButton.disabled = !activeRequest || stoppingRequest;
 		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
 		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
-		replaySessionButton.textContent = replayState.loading ? "Opening..." : "Replay";
+		replaySessionButton.textContent = replayState.loading ? "Opening..." : "Review";
 		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
 	}
 
@@ -2662,7 +2720,11 @@
 	}
 
 	async function switchSession(sessionPath) {
+		sessionPath = String(sessionPath || "").trim();
 		if (!sessionPath) return;
+		const currentPath = getCurrentSessionPath(currentState);
+		if (sessionPath === currentPath && !pendingSessionPath) return;
+		pendingSessionPath = sessionPath;
 		sessionSwitching = true;
 		lastRestoreResult = null;
 		resetReplayState();
@@ -2679,6 +2741,9 @@
 			await Promise.all([requestState(), requestSessions()]);
 		} finally {
 			sessionSwitching = false;
+			if (pendingSessionPath === sessionPath) {
+				pendingSessionPath = "";
+			}
 			renderState(currentState || {});
 		}
 	}
@@ -2756,7 +2821,7 @@
 	async function openReplaySession(targetSessionPath = "") {
 		const sessionPath = getSelectedSessionPath(targetSessionPath);
 		if (!sessionPath) {
-			throw new Error("Choose a session to replay first.");
+			throw new Error("Choose a session to review first.");
 		}
 		setMenuOpen(false);
 		resetReplayState({ open: true, loading: true });
@@ -2767,7 +2832,7 @@
 				sessionPath,
 			});
 			if (!response?.ok) {
-				throw new Error(response?.error || "Could not open the replay view.");
+				throw new Error(response?.error || "Could not open the review view.");
 			}
 			const artifacts = Array.isArray(response.artifacts) ? response.artifacts : [];
 			const selectedArtifactId = response.selectedArtifactId || artifacts[0]?.artifactId || "";
@@ -2915,13 +2980,47 @@
 		return hostname || "";
 	}
 
-	function renderLearnerSourceButton(annotationId, target = "annotation") {
+	function isLearnerHighlightAction(action) {
+		return action?.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
+	}
+
+	function learnerSourceUrl(source) {
+		return String(source?.url || "").trim().split("#")[0];
+	}
+
+	function learnerSourceTitle(source) {
+		return String(source?.tabTitle || source?.title || "").trim().toLowerCase();
+	}
+
+	function actionMatchesLearnerSource(action, source) {
+		const sourceUrl = learnerSourceUrl(source);
+		const sourceTitle = learnerSourceTitle(source);
+		const actionUrl = String(action?.url || "").trim().split("#")[0];
+		const actionTitle = String(action?.title || "").trim().toLowerCase();
+		return Boolean((sourceUrl && actionUrl === sourceUrl) || (sourceTitle && actionTitle === sourceTitle));
+	}
+
+	function findActionForLearnerSource(source, target = "annotation") {
+		const exact = findActionForAnnotation(source?.annotationId, target);
+		if (exact) return exact;
+		const candidates = collectCurrentPageActions().filter((action) => action?.key && actionMatchesLearnerSource(action, source));
+		if (target === "note") {
+			const noteCandidates = candidates.filter((action) => action?.type === "note");
+			if (noteCandidates.length === 1) return noteCandidates[0];
+		}
+		const highlightCandidates = candidates.filter(isLearnerHighlightAction);
+		return highlightCandidates.length === 1 ? highlightCandidates[0] : null;
+	}
+
+	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "") {
 		const id = String(annotationId || "").trim();
-		if (!id) return "";
+		const key = String(actionKey || "").trim();
+		if (!id && !key) return "";
 		return `
 			<button
 				class="onhand-learner-source"
 				data-learner-annotation-id="${escapeAttribute(id)}"
+				${key ? `data-action-key="${escapeAttribute(key)}"` : ""}
 				data-target="${escapeAttribute(target)}"
 				type="button"
 				title="Jump to source"
@@ -2939,13 +3038,14 @@
 		const source = getLatestLearnerSource(concept);
 		const sourceLabel = getLearnerSourceLabel(source);
 		const label = compactLearnerPanelText(concept?.label || concept?.conceptId || "Concept", 64);
+		const action = findActionForLearnerSource(source, "annotation");
 		return `
 			<div class="onhand-learner-item">
 				<span class="onhand-learner-main">
 					<span class="onhand-learner-title">${escapeHtml(label)}</span>
 					${sourceLabel ? `<span class="onhand-learner-detail">${escapeHtml(sourceLabel)}</span>` : ""}
 				</span>
-				${renderLearnerSourceButton(source?.annotationId, "annotation")}
+				${renderLearnerSourceButton(source?.annotationId, "annotation", action?.key)}
 			</div>
 		`;
 	}
@@ -2954,13 +3054,16 @@
 		const promptText = compactLearnerPanelText(check?.promptText || "Open learning check", 88);
 		const kind = String(check?.kind || "check").replace(/[_-]+/g, " ");
 		const conceptLabel = getLearnerConceptLabel(concepts, check?.conceptId);
+		const concept = concepts.find((item) => String(item?.conceptId || "") === String(check?.conceptId || ""));
+		const source = { ...(getLatestLearnerSource(concept) || {}), annotationId: check?.annotationId || getLatestLearnerSource(concept)?.annotationId || "" };
+		const action = findActionForLearnerSource(source, "note");
 		return `
 			<div class="onhand-learner-item">
 				<span class="onhand-learner-main">
 					<span class="onhand-learner-title">${escapeHtml(promptText)}</span>
 					<span class="onhand-learner-detail">${escapeHtml(kind)} · ${escapeHtml(conceptLabel)}</span>
 				</span>
-				${renderLearnerSourceButton(check?.annotationId, "note")}
+				${renderLearnerSourceButton(check?.annotationId, "note", action?.key)}
 			</div>
 		`;
 	}
@@ -3023,6 +3126,7 @@
 	function getSelectedSessionPath(targetSessionPath = "") {
 		return (
 			String(targetSessionPath || "").trim() ||
+			pendingSessionPath ||
 			sessionSelect.value ||
 			currentState?.currentSession?.sessionFile ||
 			currentState?.currentSession?.sessionId ||
@@ -3055,6 +3159,34 @@
 
 	function replayAnnotationNote(annotation) {
 		return String(annotation?.noteText || annotation?.note?.text || "").trim();
+	}
+
+	function normalizeReplayLookupText(value) {
+		return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+	}
+
+	function replayCandidateActionKey(candidate) {
+		if (!candidate || typeof candidate !== "object") return "";
+		return String(candidate.actionKey || candidate.highlightKey || candidate.actionKeys?.[0] || candidate.key || "").trim();
+	}
+
+	function resolveReplayAnnotationActionKey(annotation) {
+		const annotationId = String(annotation?.annotationId || "").trim();
+		const quote = normalizeReplayLookupText(replayAnnotationText(annotation));
+		for (const candidate of Array.isArray(replayState.replayableAnnotations) ? replayState.replayableAnnotations : []) {
+			const actionKey = replayCandidateActionKey(candidate);
+			if (!actionKey) continue;
+			if (annotationId && String(candidate?.annotationId || "").trim() === annotationId) return actionKey;
+			if (quote && normalizeReplayLookupText(candidate?.matchedText || candidate?.citationText || candidate?.detail) === quote) return actionKey;
+		}
+		for (const action of Array.isArray(replayState.pageActions) ? replayState.pageActions : []) {
+			const actionKey = replayCandidateActionKey(action);
+			if (!actionKey) continue;
+			if (action?.type === "note") continue;
+			if (annotationId && String(action?.annotationId || "").trim() === annotationId) return actionKey;
+			if (quote && normalizeReplayLookupText(action?.citationText || action?.detail) === quote) return actionKey;
+		}
+		return "";
 	}
 
 	function safeHostname(url) {
@@ -3158,6 +3290,7 @@
 				kind: String(annotation?.kind || action?.type || "annotation"),
 				text: matchedText,
 				hasNote: Boolean(note || action?.type === "note"),
+				target: "annotation",
 			});
 		}
 
@@ -3173,6 +3306,7 @@
 				kind: action?.type || "annotation",
 				text: String(action?.citationText || action?.detail || "Page annotation").trim(),
 				hasNote: action?.type === "note",
+				target: action?.type === "note" ? "note" : "annotation",
 			});
 		}
 		return items;
@@ -3202,7 +3336,7 @@
 							class="onhand-index-item"
 							data-annotation-id="${escapeAttribute(item.annotationId)}"
 							data-tab-id="${typeof item.tabId === "number" ? escapeAttribute(String(item.tabId)) : ""}"
-							data-target="${item.hasNote ? "note" : "annotation"}"
+							data-target="${escapeAttribute(item.target || "annotation")}"
 							type="button"
 						>
 							<span class="onhand-index-num">${index + 1}</span>
@@ -3352,6 +3486,90 @@
 		});
 	}
 
+	function resolveActionSessionOptions(options = {}) {
+		const sessionPath =
+			typeof options.sessionPath === "function" ? String(options.sessionPath() || "").trim() : String(options.sessionPath || "").trim();
+		return sessionPath ? { sessionPath } : {};
+	}
+
+	function handleActionActivationError(error, options = {}) {
+		if (typeof options.onError === "function") {
+			options.onError(error);
+			return;
+		}
+		renderState({
+			...(currentState || {}),
+			status: error?.message || String(error),
+		});
+	}
+
+	function activateActionButton(button, options = {}) {
+		const key = String(button?.dataset?.actionKey || "").trim();
+		if (!key) {
+			handleActionActivationError(new Error("Could not activate that Onhand link."), options);
+			return;
+		}
+		if (button.dataset.onhandActionPending === "true") return;
+		const now = Date.now();
+		const lastActivatedAt = Number(button.dataset.onhandActionLastActivatedAt || 0);
+		if (Number.isFinite(lastActivatedAt) && now - lastActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
+		button.dataset.onhandActionLastActivatedAt = String(now);
+		button.dataset.onhandActionPending = "true";
+		void activateAction(key, resolveActionSessionOptions(options))
+			.catch((error) => handleActionActivationError(error, options))
+			.finally(() => {
+				if (button.dataset.onhandActionPending === "true") {
+					delete button.dataset.onhandActionPending;
+				}
+			});
+	}
+
+	function consumeActionPointer(event) {
+		event.preventDefault();
+		event.stopPropagation();
+	}
+
+	function actionButtonFromEvent(root, event) {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest("[data-action-key]");
+		return button instanceof HTMLElement && root.contains(button) ? button : null;
+	}
+
+	function bindActionButtons(root, options = {}) {
+		if (!(root instanceof Element)) return;
+		root.__onhandActionOptions = options;
+		if (root.dataset.onhandActionDelegationBound !== "true") {
+			root.dataset.onhandActionDelegationBound = "true";
+			for (const eventName of ["pointerdown", "mousedown"]) {
+				root.addEventListener(
+					eventName,
+					(event) => {
+						const button = actionButtonFromEvent(root, event);
+						if (!button) return;
+						consumeActionPointer(event);
+					},
+					true,
+				);
+			}
+			for (const eventName of ["pointerup", "mouseup", "click"]) {
+				root.addEventListener(
+					eventName,
+					(event) => {
+						const button = actionButtonFromEvent(root, event);
+						if (!button) return;
+						consumeActionPointer(event);
+						activateActionButton(button, root.__onhandActionOptions || options);
+					},
+					true,
+				);
+			}
+		}
+		root.querySelectorAll("[data-action-key]").forEach((button) => {
+			if (!(button instanceof HTMLElement) || button.dataset.onhandActionBound === "true") return;
+			button.dataset.onhandActionBound = "true";
+		});
+	}
+
 	function renderMessages(turns, annotationCount = 0) {
 		const emptyMarkup = annotationCount
 			? ""
@@ -3360,9 +3578,10 @@
 					<div class="lede">Nothing on this page yet.</div>
 					<div class="empty-body">Ask about the article, highlight a passage, or resume one of yesterday's entries from the menu.</div>
 				</div>
-			`;
+		`;
 		messagesEl.innerHTML = renderTurnListMarkup(turns, emptyMarkup);
 		bindProgressToggles(messagesEl);
+		bindActionButtons(messagesEl);
 	}
 
 	function renderReplayAnnotations(annotations) {
@@ -3376,9 +3595,13 @@
 					.map((annotation) => {
 						const quote = replayAnnotationText(annotation);
 						const note = replayAnnotationNote(annotation);
+						const actionKey = resolveReplayAnnotationActionKey(annotation);
 						return `
 							<div class="onhand-replay-annotation">
-								<span class="onhand-replay-quote">${escapeHtml(quote || "Saved highlight")}</span>
+								<div class="onhand-replay-annotation-head">
+									<span class="onhand-replay-quote">${escapeHtml(quote || "Saved highlight")}</span>
+									${actionKey ? `<button class="onhand-replay-source" data-action-key="${escapeAttribute(actionKey)}" type="button">Source</button>` : ""}
+								</div>
 								${note ? `<span class="onhand-replay-note">${escapeHtml(note)}</span>` : ""}
 							</div>
 						`;
@@ -3396,7 +3619,7 @@
 		if (!artifact) {
 			return replayState.artifacts.length
 				? '<div class="onhand-replay-empty">Choose a saved page to preview its snapshot.</div>'
-				: '<div class="onhand-replay-empty">This session has no saved page snapshot yet. Replay can still restore live-page highlights when the original page is available.</div>';
+				: '<div class="onhand-replay-empty">This session has no saved page snapshot yet. Review can still restore live-page highlights when the original page is available.</div>';
 		}
 		const title = artifact.title || artifact.page?.title || "Saved page";
 		const url = artifact.url || artifact.page?.url || "";
@@ -3436,7 +3659,7 @@
 		replayViewEl.innerHTML = `
 			<div class="onhand-replay-head">
 				<div>
-					<div class="onhand-label">Replay</div>
+					<div class="onhand-label">Review</div>
 					<div class="onhand-replay-title">${escapeHtml(title)}</div>
 				</div>
 				<div class="onhand-replay-actions">
@@ -3481,19 +3704,22 @@
 				</div>
 				${renderReplayAnnotations(annotations)}
 			</div>
-			<div class="onhand-replay-section">
-				<div class="onhand-index-head">
-					<span class="onhand-label">Transcript</span>
-					<span class="onhand-count">· ${escapeHtml(pluralize(Array.isArray(replayState.turns) ? replayState.turns.length : 0, "turn"))}</span>
-				</div>
-				${renderTurnListMarkup(replayState.turns, '<div class="onhand-replay-empty">No transcript was saved for this session.</div>')}
-			</div>
 		`;
 		const frame = replayViewEl.querySelector(".onhand-replay-frame");
 		if (frame instanceof HTMLIFrameElement && replayState.artifact?.outerHTML) {
 			frame.srcdoc = replayState.artifact.outerHTML;
 		}
 		bindProgressToggles(replayViewEl);
+		bindActionButtons(replayViewEl, {
+			sessionPath: () => replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "",
+			onError(error) {
+				replayState = {
+					...replayState,
+					error: error?.message || String(error),
+				};
+				renderState(currentState || {});
+			},
+		});
 	}
 
 	function renderActivity() {
@@ -3611,10 +3837,12 @@
 		}
 	}
 
-	async function activateAction(key) {
+	async function activateAction(key, options = {}) {
+		const sessionPath = String(options?.sessionPath || "").trim();
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:activate-action",
 			key,
+			...(sessionPath ? { sessionPath } : {}),
 		});
 		if (!response?.ok) {
 			throw new Error(response?.error || "Could not activate that Onhand link.");
@@ -3636,6 +3864,48 @@
 		}
 	}
 
+	function dedupePageActions(actions) {
+		const seen = new Set();
+		const unique = [];
+		for (const action of actions) {
+			if (!action || typeof action !== "object") continue;
+			const key = String(action.key || "").trim();
+			const signature =
+				key ||
+				[
+					action.type || "",
+					action.annotationId || "",
+					action.artifactId || "",
+					action.citationText || action.detail || "",
+					action.url || "",
+					action.title || "",
+				].join("\u0000");
+			if (signature && seen.has(signature)) continue;
+			if (signature) seen.add(signature);
+			unique.push(action);
+		}
+		return unique;
+	}
+
+	function collectCurrentPageActions() {
+		return dedupePageActions([
+			...(Array.isArray(currentState?.pageActions) ? currentState.pageActions : []),
+			...(Array.isArray(currentState?.turns) ? currentState.turns.flatMap((turn) => turn?.pageActions || []) : []),
+		]);
+	}
+
+	function findActionForAnnotation(annotationId, target = "annotation") {
+		const id = String(annotationId || "").trim();
+		if (!id) return null;
+		const matches = collectCurrentPageActions().filter((action) => action?.key && String(action.annotationId || "").trim() === id);
+		if (!matches.length) return null;
+		const isHighlightAction = (action) => action?.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
+		if (target === "note") {
+			return matches.find((action) => action?.type === "note") || matches.find(isHighlightAction) || matches[0];
+		}
+		return matches.find(isHighlightAction) || matches[0];
+	}
+
 	function learnerSourceErrorMessage(error) {
 		const message = String(error?.message || error || "").trim();
 		if (/not found|no annotation|source.*missing|annotation.*missing/i.test(message)) {
@@ -3649,9 +3919,10 @@
 		renderState(currentState || {});
 	}
 
-	async function jumpToLearnerSource(annotationId, target = "annotation") {
+	async function jumpToLearnerSource(annotationId, target = "annotation", preferredActionKey = "") {
 		const id = String(annotationId || "").trim();
-		if (!id) return;
+		const actionKey = String(preferredActionKey || "").trim();
+		if (!id && !actionKey) return;
 		const sequence = ++learnerSourceFeedbackSequence;
 		setLearnerSourceFeedback({
 			annotationId: id,
@@ -3659,7 +3930,16 @@
 			message: "Opening source...",
 		});
 		try {
-			await scrollToAnnotation(id, null, target);
+			if (actionKey) {
+				await activateAction(actionKey);
+			} else {
+				const action = findActionForAnnotation(id, target);
+				if (action?.key) {
+					await activateAction(action.key);
+				} else {
+					await scrollToAnnotation(id, null, target);
+				}
+			}
 			if (sequence !== learnerSourceFeedbackSequence) return;
 			setLearnerSourceFeedback({
 				annotationId: id,
@@ -3756,15 +4036,22 @@
 			.catch(() => {});
 	});
 
-	sessionSelect.addEventListener("change", () => {
-		const nextSessionPath = sessionSelect.value;
+	function handleSessionSelection() {
+		const nextSessionPath = String(sessionSelect.value || "").trim();
 		if (!nextSessionPath) return;
+		if (sessionSwitching && nextSessionPath === pendingSessionPath) return;
 		void switchSession(nextSessionPath).catch((error) => {
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
 			});
 		});
+	}
+
+	sessionSelect.addEventListener("input", handleSessionSelection);
+	sessionSelect.addEventListener("change", handleSessionSelection);
+	sessionSelect.addEventListener("blur", () => {
+		renderSessionControls(currentState || {});
 	});
 
 	function updateSidebarThemeFromSelect() {
@@ -3851,7 +4138,8 @@
 		}
 		const actionButton = target.closest("[data-action-key]");
 		if (actionButton instanceof HTMLElement) {
-			void activateAction(actionButton.dataset.actionKey || "").catch((error) => {
+			const sessionPath = replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
+			void activateAction(actionButton.dataset.actionKey || "", { sessionPath }).catch((error) => {
 				replayState = {
 					...replayState,
 					error: error?.message || String(error),
@@ -3921,7 +4209,7 @@
 		const target = event.target instanceof Element ? event.target : null;
 		const button = target?.closest("[data-learner-annotation-id]");
 		if (!(button instanceof HTMLElement)) return;
-		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation");
+		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation", button.dataset.actionKey || "");
 	});
 
 	composer.addEventListener("submit", (event) => {

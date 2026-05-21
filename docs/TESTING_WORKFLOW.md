@@ -44,6 +44,8 @@ The fixture matrix uses `npm run serve:fixture` and `http://127.0.0.1:8765/`. Th
 - Highlights and notes attach to the intended text and remain clickable from page actions.
 - Artifact save/list/restore paths work for browser-only artifacts.
 - The three-dot menu session selector still switches saved sessions, and its Restore pages action reports restored pages, annotations, notes, and failures.
+- The Review view opens saved snapshots/transcripts, and transcript source buttons target the reviewed saved session rather than only the current live session.
+- Successful annotated turns auto-save a Review snapshot with HTML and screenshot data when no explicit artifact capture happened.
 - Network collection with reload and `ignoreCache` captures the expected document or API request.
 - The session list, new session, switch session, rename, stop, learning mode, and speed mode controls still work.
 
