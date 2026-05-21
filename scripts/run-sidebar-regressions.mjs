@@ -590,9 +590,15 @@ async function assertPageIndexHighlightWithNoteJumpsToAnnotation() {
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const pageIndex = host.shadowRoot.getElementById("pageIndex");
 	assert.match(pageIndex.textContent, /1 highlight, 1 note/);
-	const item = pageIndex.querySelector('[data-annotation-id="ann-stationary"]');
-	assert.ok(item, "expected page index item for restored highlight");
+	assert.match(pageIndex.textContent, /Stationary means applying the Markov transition once leaves the distribution unchanged/);
+	const item = pageIndex.querySelector('.onhand-index-item[data-annotation-id="ann-stationary"]');
+	assert.ok(item, "expected page index highlight item for restored highlight");
 	assert.equal(item.dataset.target, "annotation");
+	const highlightKind = item.querySelector(".onhand-index-kind");
+	assert.equal(highlightKind?.textContent?.trim(), "highlight");
+	const notePreview = pageIndex.querySelector('.onhand-index-note-preview[data-annotation-id="ann-stationary"]');
+	assert.ok(notePreview, "expected page index note preview for restored note");
+	assert.equal(notePreview.dataset.target, "note");
 
 	item.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
@@ -603,6 +609,19 @@ async function assertPageIndexHighlightWithNoteJumpsToAnnotation() {
 				message?.type === "sidebar:scroll-to-annotation" &&
 				message.annotationId === "ann-stationary" &&
 				message.target === "annotation",
+		),
+		true,
+	);
+
+	notePreview.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:scroll-to-annotation" &&
+				message.annotationId === "ann-stationary" &&
+				message.target === "note",
 		),
 		true,
 	);

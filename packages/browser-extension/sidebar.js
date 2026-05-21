@@ -1934,23 +1934,35 @@
 				font: 10.5px var(--rm-font-mono);
 				color: var(--rm-subtext);
 			}
+			.onhand-index-list {
+				display: flex;
+				flex-direction: column;
+				gap: 2px;
+			}
+			.onhand-index-row {
+				margin: 2px -8px;
+				border-left: 2px solid transparent;
+				border-radius: 3px;
+			}
+			.onhand-index-row:hover {
+				background: var(--rm-mantle);
+				border-left-color: var(--rm-gold);
+			}
 			.onhand-index-item {
 				width: 100%;
 				display: flex;
 				gap: 10px;
 				padding: 6px 8px;
-				margin: 2px -8px;
+				margin: 0;
 				border-radius: 3px;
 				cursor: pointer;
 				align-items: flex-start;
 				border: 0;
-				border-left: 2px solid transparent;
 				background: transparent;
 				text-align: left;
 			}
 			.onhand-index-item:hover {
-				background: var(--rm-mantle);
-				border-left-color: var(--rm-gold);
+				background: color-mix(in srgb, var(--rm-surface-0) 38%, transparent);
 			}
 			.onhand-index-num {
 				font: 700 11px var(--rm-font-mono);
@@ -1970,10 +1982,43 @@
 				-webkit-box-orient: vertical;
 				overflow: hidden;
 			}
-			.onhand-index-note {
-				font: 10px var(--rm-font-mono);
-				color: var(--rm-pine);
+			.onhand-index-kind {
+				font: 700 10px var(--rm-font-mono);
+				color: var(--rm-foam);
 				padding-top: 3px;
+				text-transform: uppercase;
+			}
+			.onhand-index-note-preview {
+				width: 100%;
+				display: flex;
+				gap: 8px;
+				align-items: flex-start;
+				margin: -1px 0 1px;
+				padding: 2px 8px 7px 36px;
+				border: 0;
+				border-radius: 3px;
+				background: transparent;
+				color: var(--rm-pine);
+				text-align: left;
+				cursor: pointer;
+			}
+			.onhand-index-note-preview:hover {
+				background: color-mix(in srgb, var(--rm-pine) 9%, transparent);
+			}
+			.onhand-index-note-label {
+				flex: 0 0 auto;
+				font: 700 10px/1.35 var(--rm-font-mono);
+				text-transform: uppercase;
+				color: var(--rm-pine);
+			}
+			.onhand-index-note-text {
+				min-width: 0;
+				font: 11.5px/1.35 var(--rm-font-mono);
+				color: var(--rm-subtext);
+				display: -webkit-box;
+				-webkit-line-clamp: 2;
+				-webkit-box-orient: vertical;
+				overflow: hidden;
 			}
 			.message-list {
 				display: block;
@@ -3264,13 +3309,21 @@
 
 	function buildAnnotationIndexItems(state) {
 		const actions = Array.isArray(state?.pageActions) ? state.pageActions : [];
-		const actionByAnnotation = new Map();
+		const actionGroups = new Map();
 		for (const action of actions) {
 			if (!action?.annotationId) continue;
-			const previous = actionByAnnotation.get(action.annotationId);
-			if (!previous || action.type === "note") {
-				actionByAnnotation.set(action.annotationId, action);
-			}
+			const annotationId = String(action.annotationId || "").trim();
+			if (!annotationId) continue;
+			const group =
+				actionGroups.get(annotationId) || {
+					firstAction: null,
+					highlightAction: null,
+					noteAction: null,
+				};
+			if (!group.firstAction) group.firstAction = action;
+			if (action.type === "annotation" && !group.highlightAction) group.highlightAction = action;
+			if (action.type === "note" && !group.noteAction) group.noteAction = action;
+			actionGroups.set(annotationId, group);
 		}
 
 		const tabId = typeof state?.tab?.id === "number" ? state.tab.id : null;
@@ -3280,8 +3333,11 @@
 			const annotationId = String(annotation?.annotationId || "").trim();
 			if (!annotationId || seen.has(annotationId)) continue;
 			seen.add(annotationId);
-			const action = actionByAnnotation.get(annotationId);
+			const actionGroup = actionGroups.get(annotationId) || {};
+			const action = actionGroup.highlightAction || actionGroup.noteAction || actionGroup.firstAction || null;
+			const noteAction = actionGroup.noteAction || null;
 			const note = annotation?.note || null;
+			const noteText = String(note?.text || (noteAction ? noteAction.detail || noteAction.citationText : "") || "").trim();
 			const matchedText = String(annotation?.matchedText || action?.citationText || action?.detail || note?.text || "Page annotation").trim();
 			items.push({
 				annotationId,
@@ -3289,24 +3345,28 @@
 				actionKey: action?.key || "",
 				kind: String(annotation?.kind || action?.type || "annotation"),
 				text: matchedText,
-				hasNote: Boolean(note || action?.type === "note"),
+				noteText,
+				hasNote: Boolean(note || noteAction || noteText),
 				target: "annotation",
 			});
 		}
 
 		if (items.length) return items;
-		for (const action of actions) {
-			const annotationId = String(action?.annotationId || "").trim();
+		for (const [annotationId, actionGroup] of actionGroups.entries()) {
 			if (!annotationId || seen.has(annotationId)) continue;
 			seen.add(annotationId);
+			const action = actionGroup.highlightAction || actionGroup.noteAction || actionGroup.firstAction || null;
+			const noteAction = actionGroup.noteAction || null;
+			const noteText = String(noteAction ? noteAction.detail || noteAction.citationText : "").trim();
 			items.push({
 				annotationId,
 				tabId: typeof action?.tabId === "number" ? action.tabId : tabId,
 				actionKey: action?.key || "",
 				kind: action?.type || "annotation",
 				text: String(action?.citationText || action?.detail || "Page annotation").trim(),
-				hasNote: action?.type === "note",
-				target: action?.type === "note" ? "note" : "annotation",
+				noteText,
+				hasNote: Boolean(noteAction || noteText),
+				target: action?.type === "note" && !actionGroup.highlightAction ? "note" : "annotation",
 			});
 		}
 		return items;
@@ -3329,23 +3389,42 @@
 				<span class="onhand-label">On this page</span>
 				<span class="onhand-count">· ${escapeHtml(summary)}</span>
 			</div>
-			${items
-				.map(
-					(item, index) => `
-						<button
-							class="onhand-index-item"
-							data-annotation-id="${escapeAttribute(item.annotationId)}"
-							data-tab-id="${typeof item.tabId === "number" ? escapeAttribute(String(item.tabId)) : ""}"
-							data-target="${escapeAttribute(item.target || "annotation")}"
-							type="button"
-						>
-							<span class="onhand-index-num">${index + 1}</span>
-							<span class="onhand-index-text">${escapeHtml(item.text || "Page annotation")}</span>
-							${item.hasNote ? '<span class="onhand-index-note">edit</span>' : ""}
-						</button>
-					`,
-				)
-				.join("")}
+			<div class="onhand-index-list">
+				${items
+					.map(
+						(item, index) => `
+							<div class="onhand-index-row">
+								<button
+									class="onhand-index-item"
+									data-annotation-id="${escapeAttribute(item.annotationId)}"
+									data-tab-id="${typeof item.tabId === "number" ? escapeAttribute(String(item.tabId)) : ""}"
+									data-target="${escapeAttribute(item.target || "annotation")}"
+									type="button"
+								>
+									<span class="onhand-index-num">${index + 1}</span>
+									<span class="onhand-index-text">${escapeHtml(item.text || "Page annotation")}</span>
+									<span class="onhand-index-kind">highlight</span>
+								</button>
+								${
+									item.noteText
+										? `<button
+											class="onhand-index-note-preview"
+											data-annotation-id="${escapeAttribute(item.annotationId)}"
+											data-tab-id="${typeof item.tabId === "number" ? escapeAttribute(String(item.tabId)) : ""}"
+											data-target="note"
+											type="button"
+											title="${escapeAttribute(item.noteText)}"
+										>
+											<span class="onhand-index-note-label">Note</span>
+											<span class="onhand-index-note-text">${escapeHtml(item.noteText)}</span>
+										</button>`
+										: ""
+								}
+							</div>
+						`,
+					)
+					.join("")}
+			</div>
 		`;
 		return items.length;
 	}
