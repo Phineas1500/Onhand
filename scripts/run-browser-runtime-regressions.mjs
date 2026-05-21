@@ -79,10 +79,14 @@ function createReplayHost(options = {}) {
 				if (options.rejectHighlightText?.(String(args.text || ""))) {
 					throw new Error(`No visible text matched: ${args.text}`);
 				}
+				const annotationId =
+					typeof options.highlightAnnotationId === "function"
+						? options.highlightAnnotationId(String(args.text || ""), args)
+						: options.highlightAnnotationId || "replay-highlight";
 				return {
 					tab,
 					annotation: {
-						annotationId: "replay-highlight",
+						annotationId,
 						matchedText: String(args.text || "Alpha smoke content"),
 					},
 				};
@@ -336,6 +340,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do the page work before the chat answer/);
 	assert.match(contract.systemPrompt, /focused pass/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
+	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
 	assert.match(contract.systemPrompt, /Chat should be a brief guide to what the annotations show/);
@@ -994,6 +999,238 @@ async function assertArtifactRestoreUsesStrictReusableMatchingForShortMath() {
 	assert.equal(highlightCalls.at(-1)?.args.allowApproximate, false);
 	assert.equal(highlightCalls.at(-1)?.args.reuseExisting, true);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "replay-highlight"), true);
+}
+
+async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const sourceText = "Aperiodic Markov chain convergence";
+	const newerText = "Metropolis-Hastings acceptance probabilities";
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" })],
+		highlightAnnotationId(text) {
+			return text === sourceText ? "restored-source" : "restored-newer";
+		},
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	const sourceAction = {
+		key: "highlight:old-source",
+		type: "annotation",
+		tabId: 7,
+		windowId: 3,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		annotationId: "page-old-source",
+		label: "Highlighted text",
+		detail: sourceText,
+		citationText: sourceText,
+	};
+	const newerAction = {
+		key: "highlight:old-newer",
+		type: "annotation",
+		tabId: 7,
+		windowId: 3,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		annotationId: "page-old-newer",
+		label: "Highlighted text",
+		detail: newerText,
+		citationText: newerText,
+	};
+	session.artifactIds = ["artifact_old_bayesian", "artifact_new_bayesian"];
+	session.pageActions = [{ ...sourceAction }, { ...newerAction }];
+	session.turns = [
+		{
+			id: "turn-source",
+			userPrompt: "explain the source",
+			reply: "source",
+			activities: [],
+			pageActions: [{ ...sourceAction }],
+			pending: false,
+			error: false,
+			createdAt: new Date().toISOString(),
+		},
+		{
+			id: "turn-newer",
+			userPrompt: "explain the newer source",
+			reply: "newer",
+			activities: [],
+			pageActions: [{ ...newerAction }],
+			pending: false,
+			error: false,
+			createdAt: new Date().toISOString(),
+		},
+	];
+	session.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [
+			{
+				conceptId: "concept_aperiodic",
+				label: "Aperiodic Markov chain convergence",
+				firstSeenAt: new Date().toISOString(),
+				lastSeenAt: new Date().toISOString(),
+				sources: [{ tabTitle: "BayesianDL", url: "https://example.test/bayesian-dl", annotationId: "artifact-old-source" }],
+			},
+			{
+				conceptId: "concept_mh",
+				label: "Metropolis-Hastings acceptance probabilities",
+				firstSeenAt: new Date().toISOString(),
+				lastSeenAt: new Date().toISOString(),
+				sources: [{ tabTitle: "BayesianDL", url: "https://example.test/bayesian-dl", annotationId: "artifact-old-newer" }],
+			},
+		],
+		openChecks: [],
+		responses: [],
+	};
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_old_bayesian: {
+				id: "artifact_old_bayesian",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "old BayesianDL snapshot",
+				tab: replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" }),
+				page: {
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotations: [
+						{
+							annotationId: "ann-old-stale",
+							kind: "inline",
+							matchedText: "Older snapshot only",
+						},
+					],
+				},
+			},
+			artifact_new_bayesian: {
+				id: "artifact_new_bayesian",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "new BayesianDL snapshot",
+				tab: replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" }),
+				page: {
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotations: [
+						{
+							annotationId: "artifact-old-source",
+							kind: "inline",
+							matchedText: sourceText,
+						},
+						{
+							annotationId: "artifact-old-newer",
+							kind: "inline",
+							matchedText: newerText,
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1, "expected restore to use the latest snapshot for the page");
+	assert.equal(restored.restoredPages[0].artifactId, "artifact_new_bayesian");
+	assert.deepEqual(highlightCalls.map((call) => call.args.text), [sourceText, newerText]);
+	assert.equal(highlightCalls.some((call) => call.args.text === "Older snapshot only"), false);
+
+	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:old-source").annotationId, "restored-source");
+	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:old-newer").annotationId, "restored-newer");
+	assert.equal(savedSession.learnerState.conceptsIntroduced[0].sources[0].annotationId, "restored-source");
+	assert.equal(savedSession.learnerState.conceptsIntroduced[1].sources[0].annotationId, "restored-newer");
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:old-source");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(
+		activateCalls.some((call) => call.name === "scroll_to_annotation" && call.args.annotationId === "restored-source"),
+		true,
+		"expected source jump after restore to use the rebound annotation id",
+	);
+}
+
+async function assertArtifactActionActivationPreservesExistingAnnotations() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" })],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "artifact:concept-source",
+			type: "artifact",
+			tabId: 7,
+			windowId: 3,
+			title: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+			artifactId: "artifact_concept_source",
+			label: "Saved artifact",
+			detail: "BayesianDL",
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_concept_source: {
+				id: "artifact_concept_source",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "concept source",
+				tab: replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" }),
+				page: {
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotations: [
+						{
+							annotationId: "ann-concept-source",
+							kind: "inline",
+							matchedText: "Alpha smoke content",
+							note: { text: "Concept note", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("artifact:concept-source");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(
+		activateCalls.some((call) => call.name === "clear_annotations"),
+		false,
+		"jumping to a saved concept source should not clear the page's existing session annotations",
+	);
+	assert.equal(
+		activateCalls.some((call) => call.name === "highlight_text" && call.args.text === "Alpha smoke content" && call.args.clearExisting === false),
+		true,
+	);
+	assert.equal(activateCalls.some((call) => call.name === "show_note" && call.args.note === "Concept note"), true);
 }
 
 async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
@@ -1739,6 +1976,8 @@ async function main() {
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
 	await assertArtifactRestoreUsesStrictReusableMatchingForShortMath();
+	await assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets();
+	await assertArtifactActionActivationPreservesExistingAnnotations();
 	await assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails();
 	await assertSessionReplaySnapshotPayload();
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();

@@ -111,6 +111,8 @@
 	let attachmentDrafts = [];
 	let learnerSourceFeedback = null;
 	let learnerSourceFeedbackSequence = 0;
+	let learnerPanelCollapsed = false;
+	let replayArtifactsScrollLeft = 0;
 	let replayState = {
 		open: false,
 		loading: false,
@@ -122,6 +124,7 @@
 		artifacts: [],
 		replayableAnnotations: [],
 		selectedArtifactId: "",
+		sessionPath: "",
 		artifact: null,
 	};
 	const sessionTitleDrafts = new Map();
@@ -1661,10 +1664,34 @@
 				gap: 10px;
 				margin-bottom: 8px;
 			}
+			.onhand-learner-head-main {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				min-width: 0;
+			}
+			.onhand-learner-toggle {
+				border: 0;
+				background: transparent;
+				color: var(--rm-pine);
+				font: 700 10.5px/1.2 var(--rm-font-mono);
+				padding: 1px 0;
+				cursor: pointer;
+			}
+			.onhand-learner-toggle:hover {
+				color: var(--rm-foam);
+				text-decoration: underline;
+			}
+			.onhand-learner-body[hidden] {
+				display: none;
+			}
 			.onhand-learner-grid {
 				display: grid;
 				grid-template-columns: minmax(0, 1fr);
 				gap: 8px;
+				max-height: min(260px, 36vh);
+				overflow-y: auto;
+				padding-right: 2px;
 			}
 			.onhand-learner-group {
 				min-width: 0;
@@ -1746,23 +1773,51 @@
 				display: none;
 			}
 			.onhand-replay {
-				padding: 14px 16px 18px;
+				padding: 10px 16px 12px;
 				border-bottom: 1px solid var(--rm-surface-1);
 				background: color-mix(in srgb, var(--rm-mantle) 28%, transparent);
 			}
 			.onhand-replay-head {
 				display: flex;
-				align-items: flex-start;
+				align-items: center;
 				justify-content: space-between;
-				gap: 12px;
-				margin-bottom: 10px;
+				gap: 10px;
+			}
+			.onhand-replay-toggle {
+				flex: 1 1 auto;
+				min-width: 0;
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				padding: 2px 0;
+				border: 0;
+				background: transparent;
+				color: var(--rm-text);
+				text-align: left;
+				cursor: pointer;
+			}
+			.onhand-replay-toggle:hover .onhand-replay-title {
+				color: var(--rm-foam);
+			}
+			.onhand-replay-caret {
+				width: 12px;
+				color: var(--rm-pine);
+				font: 700 11px/1 var(--rm-font-mono);
 			}
 			.onhand-replay-title {
-				font-size: 16px;
-				line-height: 1.25;
+				font-size: 13px;
+				line-height: 1.3;
 				font-weight: 600;
 				color: var(--rm-text);
-				margin-top: 4px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.onhand-replay-body[hidden] {
+				display: none;
+			}
+			.onhand-replay-body {
+				margin-top: 10px;
 			}
 			.onhand-replay-actions {
 				display: flex;
@@ -1793,6 +1848,11 @@
 				margin-bottom: 12px;
 				color: var(--rm-subtext);
 				font: 10.5px/1.35 var(--rm-font-mono);
+			}
+			.onhand-replay-head > .onhand-replay-meta {
+				flex: 0 0 auto;
+				justify-content: flex-end;
+				margin-bottom: 0;
 			}
 			.onhand-replay-artifacts {
 				display: flex;
@@ -2497,7 +2557,6 @@
 							</label>
 								<div class="onhand-menu-actions">
 									<button id="newSessionButton" class="session-button" type="button">New</button>
-									<button id="replaySessionButton" class="session-button" type="button">Review</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
 									<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
 									<button id="closeButton" class="session-button" type="button">Close</button>
@@ -2559,7 +2618,6 @@
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
 	const learningModeToggle = shadow.getElementById("learningModeToggle");
 	const newSessionButton = shadow.getElementById("newSessionButton");
-	const replaySessionButton = shadow.getElementById("replaySessionButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
 	const stopButton = shadow.getElementById("stopButton");
 	const messagesEl = shadow.getElementById("messages");
@@ -2685,12 +2743,10 @@
 		learningModeLabel.classList.toggle("on", learningMode);
 		composer.classList.toggle("learning", learningMode);
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
-		replaySessionButton.disabled = replayState.loading || sessionLoading || sessionSwitching || creatingSession || activeRequest || !currentPath;
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
 		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
 		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
-		replaySessionButton.textContent = replayState.loading ? "Opening..." : "Review";
 		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
 	}
 
@@ -2880,7 +2936,7 @@
 				throw new Error(response?.error || "Could not open the review view.");
 			}
 			const artifacts = Array.isArray(response.artifacts) ? response.artifacts : [];
-			const selectedArtifactId = response.selectedArtifactId || artifacts[0]?.artifactId || "";
+			const selectedArtifactId = response.selectedArtifactId || artifacts.at(-1)?.artifactId || artifacts[0]?.artifactId || "";
 			replayState = {
 				open: true,
 				loading: false,
@@ -2892,6 +2948,7 @@
 				artifacts,
 				replayableAnnotations: Array.isArray(response.replayableAnnotations) ? response.replayableAnnotations : [],
 				selectedArtifactId,
+				sessionPath,
 				artifact: null,
 			};
 			renderState(currentState || {});
@@ -3045,16 +3102,202 @@
 		return Boolean((sourceUrl && actionUrl === sourceUrl) || (sourceTitle && actionTitle === sourceTitle));
 	}
 
-	function findActionForLearnerSource(source, target = "annotation") {
-		const exact = findActionForAnnotation(source?.annotationId, target);
-		if (exact) return exact;
-		const candidates = collectCurrentPageActions().filter((action) => action?.key && actionMatchesLearnerSource(action, source));
+	const LEARNER_SOURCE_STOPWORDS = new Set([
+		"a",
+		"an",
+		"and",
+		"are",
+		"as",
+		"at",
+		"be",
+		"by",
+		"for",
+		"from",
+		"how",
+		"in",
+		"into",
+		"is",
+		"it",
+		"of",
+		"on",
+		"or",
+		"page",
+		"that",
+		"the",
+		"this",
+		"to",
+		"what",
+		"when",
+		"where",
+		"why",
+		"with",
+	]);
+
+	function normalizeLearnerSourceText(value) {
+		return String(value || "")
+			.toLowerCase()
+			.replace(/^concept[_-]+/, "")
+			.replace(/[_-]+/g, " ")
+			.replace(/[^a-z0-9]+/g, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+	}
+
+	function normalizeLearnerSourceToken(token) {
+		if (token.length > 4 && token.endsWith("s")) return token.slice(0, -1);
+		return token;
+	}
+
+	function tokenizeLearnerSourceText(value) {
+		return normalizeLearnerSourceText(value)
+			.split(" ")
+			.map(normalizeLearnerSourceToken)
+			.filter((token) => token.length >= 3 && !LEARNER_SOURCE_STOPWORDS.has(token));
+	}
+
+	function learnerActionKeySuffix(action, prefix) {
+		const key = String(action?.key || "");
+		return key.startsWith(prefix) ? key.slice(prefix.length) : "";
+	}
+
+	function actionSameLearnerPage(left, right) {
+		const leftUrl = String(left?.url || "").trim().split("#")[0];
+		const rightUrl = String(right?.url || "").trim().split("#")[0];
+		if (leftUrl && rightUrl) return leftUrl === rightUrl;
+		const leftTitle = String(left?.title || "").trim().toLowerCase();
+		const rightTitle = String(right?.title || "").trim().toLowerCase();
+		return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
+	}
+
+	function relatedLearnerActions(action, actions) {
+		const annotationId = String(action?.annotationId || "").trim();
+		const highlightSuffix = learnerActionKeySuffix(action, "highlight:");
+		const noteSuffix = learnerActionKeySuffix(action, "note:");
+		const suffix = highlightSuffix || noteSuffix;
+		return actions.filter((candidate) => {
+			if (!candidate || candidate === action || !actionSameLearnerPage(candidate, action)) return false;
+			if (annotationId && String(candidate.annotationId || "").trim() === annotationId) return true;
+			if (!suffix) return false;
+			return learnerActionKeySuffix(candidate, "highlight:") === suffix || learnerActionKeySuffix(candidate, "note:") === suffix;
+		});
+	}
+
+	function findRelatedHighlightAction(action, actions) {
+		if (isLearnerHighlightAction(action)) return action;
+		const related = relatedLearnerActions(action, actions);
+		return related.find(isLearnerHighlightAction) || null;
+	}
+
+	function turnTextForLearnerAction(action) {
+		const key = String(action?.key || "").trim();
+		return (Array.isArray(currentState?.turns) ? currentState.turns : [])
+			.filter((turn) => Array.isArray(turn?.pageActions) && turn.pageActions.some((candidate) => learnerTurnActionMatches(candidate, action, key)))
+			.map((turn) => [turn?.userPrompt, turn?.reply].filter(Boolean).join(" "))
+			.join(" ");
+	}
+
+	function learnerActionTextKey(action) {
+		return normalizeLearnerSourceText(action?.citationText || action?.detail || "");
+	}
+
+	function learnerTurnActionMatches(candidate, action, actionKey = "") {
+		if (!candidate || !action) return false;
+		if (actionKey && String(candidate?.key || "").trim() === actionKey) return true;
+		if (!actionSameLearnerPage(candidate, action)) return false;
+		const candidateText = learnerActionTextKey(candidate);
+		const actionText = learnerActionTextKey(action);
+		return Boolean(candidateText && actionText && candidateText === actionText);
+	}
+
+	function actionLearnerSearchText(action, actions, options = {}) {
+		const relatedText = relatedLearnerActions(action, actions)
+			.map((candidate) => [candidate?.label, candidate?.detail, candidate?.citationText].filter(Boolean).join(" "))
+			.join(" ");
+		return [action?.label, action?.detail, action?.citationText, relatedText, options.includeTurnText === false ? "" : turnTextForLearnerAction(action)]
+			.filter(Boolean)
+			.join(" ");
+	}
+
+	function scoreLearnerActionMatch(action, actions, source, context = {}, options = {}) {
+		const learnerText = [
+			context?.label,
+			context?.conceptLabel,
+			context?.conceptId,
+			context?.promptText,
+			source?.label,
+			source?.conceptLabel,
+		]
+			.filter(Boolean)
+			.join(" ");
+		const learnerTokens = [...new Set(tokenizeLearnerSourceText(learnerText))];
+		if (!learnerTokens.length) return 0;
+		const actionText = normalizeLearnerSourceText(actionLearnerSearchText(action, actions, { includeTurnText: options.includeTurnText }));
+		if (!actionText) return 0;
+		const actionTokens = new Set(tokenizeLearnerSourceText(actionText));
+		let score = 0;
+		for (const token of learnerTokens) {
+			if (actionTokens.has(token)) score += 4;
+		}
+		const learnerPhrase = normalizeLearnerSourceText(context?.label || context?.conceptLabel || "");
+		if (learnerPhrase && learnerPhrase.length >= 5 && ` ${actionText} `.includes(` ${learnerPhrase} `)) score += 12;
+		if (options.includeAnnotationIdBonus !== false && String(source?.annotationId || "").trim() && String(action?.annotationId || "").trim() === String(source.annotationId).trim()) score += 100;
+		return score;
+	}
+
+	function learnerSourceContextHasText(source, context = {}) {
+		return tokenizeLearnerSourceText([
+			context?.label,
+			context?.conceptLabel,
+			context?.conceptId,
+			context?.promptText,
+			source?.label,
+			source?.conceptLabel,
+		].filter(Boolean).join(" ")).length > 0;
+	}
+
+	function findActionForLearnerSource(source, target = "annotation", context = {}) {
+		const currentPageActions = dedupePageActions(Array.isArray(currentState?.pageActions) ? currentState.pageActions : []);
+		const exactCurrentPage = findActionForAnnotation(source?.annotationId, target, currentPageActions);
+		const actions = collectCurrentPageActions();
+		const candidates = actions.filter((action) => action?.key && actionMatchesLearnerSource(action, source));
+		const currentPageCandidates = currentPageActions.filter((action) => action?.key && actionMatchesLearnerSource(action, source));
+		const preferredCandidates = currentPageCandidates.length ? currentPageCandidates : candidates;
+		const hasContextText = learnerSourceContextHasText(source, context);
+		const semanticRanked = preferredCandidates
+			.map((action) => ({
+				action,
+				score: scoreLearnerActionMatch(action, actions, source, context, { includeAnnotationIdBonus: false, includeTurnText: false }),
+			}))
+			.filter((entry) => entry.score > 0)
+			.sort((left, right) => right.score - left.score);
+		if (exactCurrentPage) {
+			const exactSemanticScore = scoreLearnerActionMatch(exactCurrentPage, actions, source, context, { includeAnnotationIdBonus: false, includeTurnText: false });
+			if (!hasContextText || exactSemanticScore > 0 || (semanticRanked[0]?.score || 0) < 4) return exactCurrentPage;
+		}
 		if (target === "note") {
-			const noteCandidates = candidates.filter((action) => action?.type === "note");
+			const noteCandidates = preferredCandidates.filter((action) => action?.type === "note");
 			if (noteCandidates.length === 1) return noteCandidates[0];
 		}
-		const highlightCandidates = candidates.filter(isLearnerHighlightAction);
-		return highlightCandidates.length === 1 ? highlightCandidates[0] : null;
+		const highlightCandidates = preferredCandidates.filter(isLearnerHighlightAction);
+		if (highlightCandidates.length === 1) return highlightCandidates[0];
+		const ranked = semanticRanked.length
+			? semanticRanked
+			: preferredCandidates
+				.map((action) => ({ action, score: scoreLearnerActionMatch(action, actions, source, context) }))
+				.filter((entry) => entry.score > 0)
+				.sort((left, right) => right.score - left.score);
+		if (!ranked.length || ranked[0].score < 4) return findActionForAnnotation(source?.annotationId, target);
+		if (target === "annotation") {
+			const topScore = ranked[0].score;
+			const topActions = ranked
+				.filter((entry) => entry.score === topScore)
+				.map((entry) => findRelatedHighlightAction(entry.action, actions) || entry.action);
+			const topKeys = new Set(topActions.map((action) => String(action?.key || "")).filter(Boolean));
+			if (topKeys.size > 1) return null;
+			return topActions[0] || null;
+		}
+		if (ranked.length > 1 && ranked[0].score === ranked[1].score) return null;
+		return ranked[0].action;
 	}
 
 	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "") {
@@ -3083,7 +3326,7 @@
 		const source = getLatestLearnerSource(concept);
 		const sourceLabel = getLearnerSourceLabel(source);
 		const label = compactLearnerPanelText(concept?.label || concept?.conceptId || "Concept", 64);
-		const action = findActionForLearnerSource(source, "annotation");
+		const action = findActionForLearnerSource(source, "annotation", concept);
 		return `
 			<div class="onhand-learner-item">
 				<span class="onhand-learner-main">
@@ -3101,7 +3344,7 @@
 		const conceptLabel = getLearnerConceptLabel(concepts, check?.conceptId);
 		const concept = concepts.find((item) => String(item?.conceptId || "") === String(check?.conceptId || ""));
 		const source = { ...(getLatestLearnerSource(concept) || {}), annotationId: check?.annotationId || getLatestLearnerSource(concept)?.annotationId || "" };
-		const action = findActionForLearnerSource(source, "note");
+		const action = findActionForLearnerSource(source, "note", { ...concept, label: conceptLabel, promptText });
 		return `
 			<div class="onhand-learner-item">
 				<span class="onhand-learner-main">
@@ -3124,19 +3367,21 @@
 			return;
 		}
 
-		const visibleConcepts = concepts.slice(-5);
-		const visibleChecks = openChecks.slice(-3);
-		const conceptOverflow = Math.max(0, concepts.length - visibleConcepts.length);
-		const checkOverflow = Math.max(0, openChecks.length - visibleChecks.length);
+		const visibleConcepts = concepts;
+		const visibleChecks = openChecks;
 		const summary = [concepts.length ? pluralize(concepts.length, "concept") : "", openChecks.length ? pluralize(openChecks.length, "open check") : ""]
 			.filter(Boolean)
 			.join(" · ");
 		learnerPanelEl.innerHTML = `
 			<div class="onhand-learner-head">
-				<span class="onhand-label">This session</span>
-				<span class="onhand-count">${escapeHtml(summary)}</span>
+				<span class="onhand-learner-head-main">
+					<span class="onhand-label">This session</span>
+					<span class="onhand-count">${escapeHtml(summary)}</span>
+				</span>
+				<button class="onhand-learner-toggle" data-learner-toggle type="button" aria-expanded="${learnerPanelCollapsed ? "false" : "true"}">${learnerPanelCollapsed ? "Show" : "Hide"}</button>
 			</div>
 			${renderLearnerSourceFeedback()}
+			<div class="onhand-learner-body" ${learnerPanelCollapsed ? "hidden" : ""}>
 			<div class="onhand-learner-grid">
 				${
 					visibleConcepts.length
@@ -3145,7 +3390,6 @@
 								<span class="onhand-learner-group-title">Covered</span>
 								<div class="onhand-learner-items">
 									${visibleConcepts.map(renderLearnerConceptItem).join("")}
-									${conceptOverflow ? `<div class="onhand-learner-more">+${conceptOverflow} earlier</div>` : ""}
 								</div>
 							</div>
 						`
@@ -3158,12 +3402,12 @@
 								<span class="onhand-learner-group-title">Waiting</span>
 								<div class="onhand-learner-items">
 									${visibleChecks.map((check) => renderLearnerCheckItem(check, concepts)).join("")}
-									${checkOverflow ? `<div class="onhand-learner-more">+${checkOverflow} earlier</div>` : ""}
 								</div>
 							</div>
 						`
 						: ""
 				}
+			</div>
 			</div>
 		`;
 	}
@@ -3182,6 +3426,7 @@
 	}
 
 	function resetReplayState(partial = {}) {
+		replayArtifactsScrollLeft = 0;
 		replayState = {
 			open: false,
 			loading: false,
@@ -3193,6 +3438,7 @@
 			artifacts: [],
 			replayableAnnotations: [],
 			selectedArtifactId: "",
+			sessionPath: "",
 			artifact: null,
 			...partial,
 		};
@@ -3712,6 +3958,9 @@
 	}
 
 	function renderReplaySnapshot() {
+		if (replayState.loading) {
+			return '<div class="onhand-replay-empty">Loading saved review...</div>';
+		}
 		if (replayState.loadingArtifact) {
 			return '<div class="onhand-replay-empty">Loading saved snapshot...</div>';
 		}
@@ -3740,78 +3989,100 @@
 	}
 
 	function renderReplayView() {
-		replayViewEl.hidden = !replayState.open;
-		if (!replayState.open) {
+		const currentPath = getCurrentSessionPath(currentState);
+		const hasSession = Boolean(currentPath || replayState.sessionPath || replayState.session);
+		replayViewEl.hidden = !hasSession;
+		if (!hasSession) {
 			replayViewEl.innerHTML = "";
 			return;
+		}
+		const previousArtifactsScroller = replayViewEl.querySelector(".onhand-replay-artifacts");
+		if (previousArtifactsScroller instanceof HTMLElement) {
+			replayArtifactsScrollLeft = previousArtifactsScroller.scrollLeft;
 		}
 		const session = replayState.session || {};
 		const title = session.title || session.name || currentState?.currentSession?.sessionName || "Saved session";
 		const artifacts = Array.isArray(replayState.artifacts) ? replayState.artifacts : [];
-		const selectedArtifactId = replayState.selectedArtifactId || replayState.artifact?.artifactId || "";
+		const selectedArtifactId = replayState.selectedArtifactId || replayState.artifact?.artifactId || artifacts.at(-1)?.artifactId || "";
 		const selectedSummary = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) || replayState.artifact || null;
 		const annotations = replayState.artifact?.annotations?.length ? replayState.artifact.annotations : replayState.replayableAnnotations;
+		const currentTurns = Array.isArray(currentState?.turns) ? currentState.turns : [];
+		const turnCount = Array.isArray(replayState.turns) && replayState.turns.length ? replayState.turns.length : currentTurns.length;
 		const meta = [
-			pluralize(Array.isArray(replayState.turns) ? replayState.turns.length : 0, "turn"),
-			pluralize(artifacts.length, "snapshot"),
-			pluralize(Array.isArray(annotations) ? annotations.length : 0, "highlight"),
-		];
+			turnCount ? pluralize(turnCount, "turn") : "",
+			replayState.loading || replayState.session ? pluralize(artifacts.length, "snapshot") : "",
+			replayState.loading || replayState.session ? pluralize(Array.isArray(annotations) ? annotations.length : 0, "highlight") : "",
+		].filter(Boolean);
 		replayViewEl.innerHTML = `
 			<div class="onhand-replay-head">
-				<div>
-					<div class="onhand-label">Review</div>
+				<button class="onhand-replay-toggle" data-replay-toggle type="button" aria-expanded="${replayState.open ? "true" : "false"}">
+					<span class="onhand-replay-caret" aria-hidden="true">${replayState.open ? "v" : ">"}</span>
+					<span class="onhand-label">Review</span>
 					<div class="onhand-replay-title">${escapeHtml(title)}</div>
-				</div>
+				</button>
+				${meta.length ? `<div class="onhand-replay-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+			</div>
+			<div class="onhand-replay-body" ${replayState.open ? "" : "hidden"}>
 				<div class="onhand-replay-actions">
-					<button class="onhand-replay-button" data-replay-close type="button">Live</button>
-					<button class="onhand-replay-button" data-replay-restore type="button" ${restoringSession ? "disabled" : ""}>${restoringSession ? "Restoring..." : "Restore"}</button>
+					<button class="onhand-replay-button" data-replay-restore type="button" ${restoringSession ? "disabled" : ""}>${restoringSession ? "Restoring..." : "Restore pages"}</button>
 				</div>
-			</div>
-			<div class="onhand-replay-meta">
-				${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
-				${replayState.loading ? "<span>Loading...</span>" : ""}
-			</div>
-			${replayState.error ? `<div class="onhand-replay-error">${escapeHtml(replayState.error)}</div>` : ""}
-			${
-				artifacts.length
-					? `
-						<div class="onhand-replay-artifacts">
-							${artifacts
-								.map((artifact) => {
-									const artifactTitle = artifact.title || artifact.page?.title || artifact.artifactId || "Saved page";
-									const bits = [
-										artifact.hasScreenshot ? "screenshot" : "",
-										artifact.hasHtml ? "HTML" : "",
-										pluralize(Number(artifact.annotationCount || 0), "highlight"),
-									].filter(Boolean);
-									return `
-										<button class="onhand-replay-artifact ${artifact.artifactId === selectedArtifactId ? "active" : ""}" data-replay-artifact-id="${escapeAttribute(artifact.artifactId)}" type="button">
-											<span class="onhand-replay-artifact-title">${escapeHtml(artifactTitle)}</span>
-											<span class="onhand-replay-artifact-meta">${escapeHtml(bits.join(" / ") || "metadata")}</span>
-										</button>
-									`;
-								})
-								.join("")}
-						</div>
-					`
-					: ""
-			}
-			${renderReplaySnapshot()}
-			<div class="onhand-replay-section">
-				<div class="onhand-index-head">
-					<span class="onhand-label">Saved annotations</span>
-					<span class="onhand-count">· ${escapeHtml(selectedSummary?.title || selectedSummary?.page?.title || "session")}</span>
+				<div class="onhand-replay-meta">
+					${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+					${replayState.loading ? "<span>Loading...</span>" : ""}
 				</div>
-				${renderReplayAnnotations(annotations)}
+				${replayState.error ? `<div class="onhand-replay-error">${escapeHtml(replayState.error)}</div>` : ""}
+				${
+					artifacts.length
+						? `
+							<div class="onhand-replay-artifacts">
+								${artifacts
+									.map((artifact) => {
+										const artifactTitle = artifact.title || artifact.page?.title || artifact.artifactId || "Saved page";
+										const bits = [
+											artifact.hasScreenshot ? "screenshot" : "",
+											artifact.hasHtml ? "HTML" : "",
+											pluralize(Number(artifact.annotationCount || 0), "highlight"),
+										].filter(Boolean);
+										return `
+											<button class="onhand-replay-artifact ${artifact.artifactId === selectedArtifactId ? "active" : ""}" data-replay-artifact-id="${escapeAttribute(artifact.artifactId)}" type="button">
+												<span class="onhand-replay-artifact-title">${escapeHtml(artifactTitle)}</span>
+												<span class="onhand-replay-artifact-meta">${escapeHtml(bits.join(" / ") || "metadata")}</span>
+											</button>
+										`;
+									})
+									.join("")}
+							</div>
+						`
+						: ""
+				}
+				${renderReplaySnapshot()}
+				<div class="onhand-replay-section">
+					<div class="onhand-index-head">
+						<span class="onhand-label">Saved annotations</span>
+						<span class="onhand-count">· ${escapeHtml(selectedSummary?.title || selectedSummary?.page?.title || "session")}</span>
+					</div>
+					${renderReplayAnnotations(annotations)}
+				</div>
 			</div>
 		`;
 		const frame = replayViewEl.querySelector(".onhand-replay-frame");
 		if (frame instanceof HTMLIFrameElement && replayState.artifact?.outerHTML) {
 			frame.srcdoc = replayState.artifact.outerHTML;
 		}
+		const artifactsScroller = replayViewEl.querySelector(".onhand-replay-artifacts");
+		if (artifactsScroller instanceof HTMLElement) {
+			artifactsScroller.scrollLeft = replayArtifactsScrollLeft;
+			artifactsScroller.addEventListener(
+				"scroll",
+				() => {
+					replayArtifactsScrollLeft = artifactsScroller.scrollLeft;
+				},
+				{ passive: true },
+			);
+		}
 		bindProgressToggles(replayViewEl);
 		bindActionButtons(replayViewEl, {
-			sessionPath: () => replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "",
+			sessionPath: () => replayState.sessionPath || replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "",
 			onError(error) {
 				replayState = {
 					...replayState,
@@ -3856,26 +4127,21 @@
 		renderAttachmentDrafts();
 		renderRestoreResult();
 		renderReplayView();
-		const showingReplay = Boolean(replayState.open);
-		renderLearnerPanel(state, showingReplay);
+		renderLearnerPanel(state, false);
 		pageIndexEl.hidden = true;
-		messagesEl.hidden = showingReplay;
-		const annotationCount = showingReplay ? 0 : renderPageIndex(state);
-		if (showingReplay) {
-			pageIndexEl.innerHTML = "";
-		} else {
-			renderMessages(displayTurns, annotationCount);
-		}
+		messagesEl.hidden = false;
+		const annotationCount = renderPageIndex(state);
+		renderMessages(displayTurns, annotationCount);
 		renderActivity();
 		renderLatestReply(state, currentTurn);
 		renderActions(state);
 
 		const activeRequest = Boolean(state?.activeRequestId);
-		composer.hidden = showingReplay;
-		input.disabled = activeRequest || sending || showingReplay;
-		sendButton.disabled = activeRequest || sending || showingReplay;
-		attachButton.disabled = activeRequest || sending || showingReplay;
-		fileInput.disabled = activeRequest || sending || showingReplay;
+		composer.hidden = false;
+		input.disabled = activeRequest || sending;
+		sendButton.disabled = activeRequest || sending;
+		attachButton.disabled = activeRequest || sending;
+		fileInput.disabled = activeRequest || sending;
 		helper.textContent = activeRequest
 			? "Onhand is responding · use Stop from the menu"
 			: attachmentDrafts.length
@@ -3994,10 +4260,10 @@
 		]);
 	}
 
-	function findActionForAnnotation(annotationId, target = "annotation") {
+	function findActionForAnnotation(annotationId, target = "annotation", actions = collectCurrentPageActions()) {
 		const id = String(annotationId || "").trim();
 		if (!id) return null;
-		const matches = collectCurrentPageActions().filter((action) => action?.key && String(action.annotationId || "").trim() === id);
+		const matches = (Array.isArray(actions) ? actions : []).filter((action) => action?.key && String(action.annotationId || "").trim() === id);
 		if (!matches.length) return null;
 		const isHighlightAction = (action) => action?.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
 		if (target === "note") {
@@ -4194,15 +4460,6 @@
 		});
 	});
 
-	replaySessionButton.addEventListener("click", () => {
-		void openReplaySession().catch((error) => {
-			renderState({
-				...(currentState || {}),
-				status: error?.message || String(error),
-			});
-		});
-	});
-
 	restoreSessionButton.addEventListener("click", () => {
 		void restoreSessionPages().catch((error) => {
 			renderState({
@@ -4220,13 +4477,37 @@
 			void loadReplayArtifact(artifactButton.dataset.replayArtifactId || "");
 			return;
 		}
-		if (target.closest("[data-replay-close]")) {
-			resetReplayState();
-			renderState(currentState || {});
+		if (target.closest("[data-replay-toggle]")) {
+			if (replayState.open) {
+				replayState = {
+					...replayState,
+					open: false,
+					error: "",
+				};
+				renderState(currentState || {});
+				return;
+			}
+			const currentPath = getSelectedSessionPath();
+			const loadedPath = replayState.sessionPath || replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
+			if (replayState.session && currentPath && loadedPath === currentPath) {
+				replayState = {
+					...replayState,
+					open: true,
+					error: "",
+				};
+				renderState(currentState || {});
+				return;
+			}
+			void openReplaySession().catch((error) => {
+				renderState({
+					...(currentState || {}),
+					status: error?.message || String(error),
+				});
+			});
 			return;
 		}
 		if (target.closest("[data-replay-restore]")) {
-			const sessionPath = replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
+			const sessionPath = replayState.sessionPath || replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
 			void restoreSessionPages(sessionPath).catch((error) => {
 				replayState = {
 					...replayState,
@@ -4238,7 +4519,7 @@
 		}
 		const actionButton = target.closest("[data-action-key]");
 		if (actionButton instanceof HTMLElement) {
-			const sessionPath = replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
+			const sessionPath = replayState.sessionPath || replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "";
 			void activateAction(actionButton.dataset.actionKey || "", { sessionPath }).catch((error) => {
 				replayState = {
 					...replayState,
@@ -4307,6 +4588,11 @@
 
 	learnerPanelEl.addEventListener("click", (event) => {
 		const target = event.target instanceof Element ? event.target : null;
+		if (target?.closest("[data-learner-toggle]")) {
+			learnerPanelCollapsed = !learnerPanelCollapsed;
+			renderState(currentState || {});
+			return;
+		}
 		const button = target?.closest("[data-learner-annotation-id]");
 		if (!(button instanceof HTMLElement)) return;
 		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation", button.dataset.actionKey || "");

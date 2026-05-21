@@ -130,6 +130,21 @@ async function assertExactSourceModeReusesExistingHighlight() {
 	assert.equal(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]").length, 1);
 }
 
+async function assertHighlightTextPreservesExistingAnnotationsByDefault() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>The Perron-Frobenius theorem identifies the largest eigenvalue.</p>
+			<p>The aperiodic condition prevents fixed-cycle behavior.</p>
+		</main>
+	`);
+	await toolkit.highlightText("Perron-Frobenius theorem", { scrollIntoView: false });
+	await toolkit.highlightText("aperiodic condition", { scrollIntoView: false });
+	const highlights = Array.from(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]"));
+	assert.equal(highlights.length, 2, "follow-up highlights should accumulate unless clearExisting=true");
+	assert.match(highlights[0].textContent, /Perron-Frobenius/);
+	assert.match(highlights[1].textContent, /aperiodic condition/);
+}
+
 async function assertExactMathSourceModeMatchesRenderedMathJax() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -230,6 +245,7 @@ async function main() {
 	await assertNoteDoesNotClearFloats();
 	await assertExactSourceModeDoesNotApproximate();
 	await assertExactSourceModeReusesExistingHighlight();
+	await assertHighlightTextPreservesExistingAnnotationsByDefault();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 

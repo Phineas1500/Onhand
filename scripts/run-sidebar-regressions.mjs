@@ -200,6 +200,24 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						...(Array.isArray(state.pageActions) ? state.pageActions : []),
 						...(Array.isArray(state.turns) ? state.turns.flatMap((turn) => turn.pageActions || []) : []),
 					];
+					const replayArtifacts = options.replayArtifacts || [
+						{
+							artifactId: "artifact-sidebar-replay",
+							title: "BayesianDL",
+							url: "https://example.test/bayesian-dl",
+							annotationCount: 1,
+							hasScreenshot: true,
+							hasHtml: true,
+							annotations: [
+								{
+									annotationId: "ann-first",
+									matchedText: "Rejection sampling rejects too many samples from P(W).",
+									noteText: "Saved replay note",
+									noteLabel: "Onhand",
+								},
+							],
+						},
+					];
 					return {
 						ok: true,
 						session: {
@@ -209,24 +227,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						},
 						turns: state.turns,
 						pageActions,
-						artifacts: [
-							{
-								artifactId: "artifact-sidebar-replay",
-								title: "BayesianDL",
-								url: "https://example.test/bayesian-dl",
-								annotationCount: 1,
-								hasScreenshot: true,
-								hasHtml: true,
-								annotations: [
-									{
-										annotationId: "ann-first",
-										matchedText: "Rejection sampling rejects too many samples from P(W).",
-										noteText: "Saved replay note",
-										noteLabel: "Onhand",
-									},
-								],
-							},
-						],
+						artifacts: replayArtifacts,
 						replayableAnnotations: [
 							{
 								annotationId: "ann-first",
@@ -234,10 +235,21 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 								actionKeys: ["highlight:first"],
 							},
 						],
-						selectedArtifactId: "artifact-sidebar-replay",
+						selectedArtifactId: options.selectedArtifactId || replayArtifacts.at(-1)?.artifactId || "artifact-sidebar-replay",
 					};
 				}
 				if (message?.type === "sidebar:get-replay-artifact") {
+					const replayArtifact = (options.replayArtifacts || []).find((artifact) => artifact.artifactId === message.artifactId);
+					if (replayArtifact) {
+						return {
+							ok: true,
+							artifact: {
+								...replayArtifact,
+								screenshotDataUrl: "data:image/png;base64,UkVQTEFZ",
+								outerHTML: "<main><h1>BayesianDL</h1><p>Saved replay artifact</p></main>",
+							},
+						};
+					}
 					return {
 						ok: true,
 						artifact: {
@@ -492,9 +504,10 @@ async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
 	assert.equal(sessionSelect.disabled, false);
 	assert.equal(sessionSelect.value, "session-beta");
 
-	const reviewButton = host.shadowRoot.getElementById("replaySessionButton");
-	assert.equal(reviewButton.textContent, "Review");
-	reviewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(host.shadowRoot.getElementById("replaySessionButton"), null, "expected review to be inline rather than a menu button");
+	const reviewToggle = host.shadowRoot.querySelector("[data-replay-toggle]");
+	assert.ok(reviewToggle, "expected inline review disclosure");
+	reviewToggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
 	assert.equal(
 		runtimeMessages.some((message) => message?.type === "sidebar:get-session-replay" && message.sessionPath === "session-beta"),
@@ -509,10 +522,13 @@ async function assertReviewViewRendersSavedSnapshot() {
 	const dom = await renderSidebar(createState(), runtimeMessages);
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	assert.ok(host, "expected sidebar host to render");
-	const replayButton = host.shadowRoot.getElementById("replaySessionButton");
-	assert.ok(replayButton, "expected review menu button to render");
-	assert.equal(replayButton.textContent, "Review");
-	replayButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(host.shadowRoot.getElementById("replaySessionButton"), null, "expected no separate review menu button");
+	const replayView = host.shadowRoot.getElementById("replayView");
+	assert.equal(replayView.hidden, false, "expected inline review disclosure to be visible");
+	assert.equal(replayView.querySelector(".onhand-replay-body").hidden, true, "expected review body to start collapsed");
+	const replayToggle = replayView.querySelector("[data-replay-toggle]");
+	assert.ok(replayToggle, "expected inline review disclosure toggle");
+	replayToggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
 
 	assert.equal(
@@ -522,11 +538,11 @@ async function assertReviewViewRendersSavedSnapshot() {
 		true,
 	);
 	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:get-replay-artifact" && message.artifactId === "artifact-sidebar-replay"), true);
-	const replayView = host.shadowRoot.getElementById("replayView");
 	assert.equal(replayView.hidden, false, "expected replay view to be visible");
+	assert.equal(replayView.querySelector(".onhand-replay-body").hidden, false, "expected review body to expand inline");
 	assert.match(replayView.textContent, /Review/);
 	assert.match(replayView.textContent, /Saved replay note/);
-	assert.doesNotMatch(replayView.textContent, /Transcript/);
+	assert.equal(replayView.querySelector("[data-replay-close]"), null, "expected no live/review mode switch button");
 	const snapshotImage = replayView.querySelector(".onhand-replay-image");
 	assert.ok(snapshotImage, "expected saved screenshot image to render");
 	assert.equal(snapshotImage.getAttribute("src"), "data:image/png;base64,UkVQTEFZ");
@@ -553,14 +569,55 @@ async function assertReviewViewRendersSavedSnapshot() {
 		),
 		true,
 	);
-	assert.equal(host.shadowRoot.getElementById("messages").hidden, true);
-	assert.equal(host.shadowRoot.getElementById("composer").hidden, true);
+	assert.equal(host.shadowRoot.getElementById("messages").hidden, false, "expected transcript to remain visible while review is open");
+	assert.equal(host.shadowRoot.getElementById("composer").hidden, false, "expected composer to remain visible while review is open");
 
-	const liveButton = replayView.querySelector("[data-replay-close]");
-	liveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	replayView.querySelector("[data-replay-toggle]").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
-	assert.equal(replayView.hidden, true, "expected live button to close replay view");
+	assert.equal(replayView.hidden, false, "expected collapsed review disclosure to remain on the page");
+	assert.equal(replayView.querySelector(".onhand-replay-body").hidden, true, "expected toggle to collapse review body");
 	assert.equal(host.shadowRoot.getElementById("messages").hidden, false);
+
+	dom.window.close();
+}
+
+async function assertReviewArtifactStripKeepsScrollPositionAcrossRenders() {
+	const runtimeMessages = [];
+	const artifacts = Array.from({ length: 8 }, (_, index) => ({
+		artifactId: `artifact-sidebar-replay-${index + 1}`,
+		title: `BayesianDL snapshot ${index + 1}`,
+		url: "https://example.test/bayesian-dl",
+		annotationCount: index + 1,
+		hasScreenshot: true,
+		hasHtml: true,
+		annotations: [
+			{
+				annotationId: `ann-${index + 1}`,
+				matchedText: `Saved replay passage ${index + 1}`,
+				noteText: "",
+			},
+		],
+	}));
+	const dom = await renderSidebar(createState(), runtimeMessages, {
+		replayArtifacts: artifacts,
+		selectedArtifactId: "artifact-sidebar-replay-8",
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	host.shadowRoot.querySelector("[data-replay-toggle]").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+
+	const replayView = host.shadowRoot.getElementById("replayView");
+	const scroller = replayView.querySelector(".onhand-replay-artifacts");
+	assert.ok(scroller, "expected replay artifact scroller");
+	scroller.scrollLeft = 180;
+	scroller.dispatchEvent(new dom.window.Event("scroll"));
+	const button = replayView.querySelector('[data-replay-artifact-id="artifact-sidebar-replay-3"]');
+	assert.ok(button, "expected another snapshot button");
+	button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+
+	const rerenderedScroller = replayView.querySelector(".onhand-replay-artifacts");
+	assert.equal(rerenderedScroller.scrollLeft, 180, "expected review artifact scroll position to survive rerender");
 
 	dom.window.close();
 }
@@ -724,6 +781,195 @@ async function assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStal
 	dom.window.close();
 }
 
+async function assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote() {
+	const runtimeMessages = [];
+	const state = createLearningState();
+	const pageUrl = "https://example.test/bayesian-dl";
+	state.learnerState.conceptsIntroduced = [
+		{
+			conceptId: "concept_stationary_distribution",
+			label: "Stationary distribution of a Markov chain",
+			firstSeenAt: "2026-05-12T10:03:00.000Z",
+			lastSeenAt: "2026-05-12T10:03:00.000Z",
+			sources: [
+					{
+						tabTitle: "BayesianDL",
+						url: pageUrl,
+						annotationId: "restored-unrelated",
+					},
+				],
+			},
+	];
+	state.learnerState.openChecks = [];
+	state.pageActions = [
+		{
+			key: "highlight:qeqp-restored",
+			type: "annotation",
+			annotationId: "restored-qeqp",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "q=qP",
+			citationText: "q=qP",
+		},
+		{
+			key: "note:qeqp-restored",
+			type: "note",
+			annotationId: "restored-qeqp",
+			label: "Added note",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+		},
+		{
+			key: "highlight:unrelated-restored",
+			type: "annotation",
+			annotationId: "restored-unrelated",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Metropolis-Hastings Algorithm",
+			citationText: "Metropolis-Hastings Algorithm",
+		},
+	];
+		state.turns = [
+			{
+				id: "turn-wrong-stale-id",
+				userPrompt: "what does this mean?",
+				reply: "Saved concept: Stationary distribution of a Markov chain.",
+				activities: [],
+				pageActions: [
+					{
+						key: "highlight:wrong-stale-id",
+						type: "annotation",
+						annotationId: "restored-unrelated",
+						label: "Highlighted text",
+						title: "BayesianDL",
+						url: pageUrl,
+						detail: "Metropolis-Hastings Algorithm",
+						citationText: "Metropolis-Hastings Algorithm",
+					},
+				],
+				pending: false,
+				error: false,
+				createdAt: "2026-05-12T10:02:00.000Z",
+			},
+			{
+				id: "turn-stationary",
+				userPrompt: "what does this mean?",
+			reply: "Saved concept: Stationary distribution of a Markov chain.",
+			activities: [],
+			pageActions: [
+				{
+					key: "highlight:qeqp-stale",
+					type: "annotation",
+					annotationId: "stale-stationary-source",
+					label: "Highlighted text",
+					title: "BayesianDL",
+					url: pageUrl,
+					detail: "q=qP",
+					citationText: "q=qP",
+				},
+				{
+					key: "note:qeqp-stale",
+					type: "note",
+					annotationId: "stale-stationary-source",
+					label: "Added note",
+					title: "BayesianDL",
+					url: pageUrl,
+					detail: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+					citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+				},
+			],
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:03:00.000Z",
+		},
+	];
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="restored-unrelated"]');
+	assert.ok(sourceButton, "expected semantically corrected stationary source button");
+	assert.equal(sourceButton.dataset.actionKey, "highlight:qeqp-restored");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:qeqp-restored"),
+		true,
+	);
+	assert.match(learnerPanel.textContent, /Jumped to source/);
+
+	dom.window.close();
+}
+
+async function assertLearningSessionPanelShowsAllConceptsAndCanCollapse() {
+	const runtimeMessages = [];
+	const state = createLearningState();
+	const concepts = Array.from({ length: 7 }, (_, index) => {
+		const number = index + 1;
+		return {
+			conceptId: `concept_${number}`,
+			label: `Concept ${number}`,
+			firstSeenAt: `2026-05-12T10:0${index}:00.000Z`,
+			lastSeenAt: `2026-05-12T10:0${index}:00.000Z`,
+			sources: [
+				{
+					tabTitle: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotationId: `ann-${number}`,
+				},
+			],
+		};
+	});
+	state.learnerState.conceptsIntroduced = concepts;
+	state.learnerState.openChecks = [];
+	state.turns = concepts.map((concept) => ({
+		id: `turn-${concept.conceptId}`,
+		userPrompt: concept.label,
+		reply: concept.label,
+		activities: [],
+		pageActions: [
+			{
+				key: `highlight:${concept.sources[0].annotationId}`,
+				type: "annotation",
+				annotationId: concept.sources[0].annotationId,
+				label: "Highlighted text",
+				title: "BayesianDL",
+				url: "https://example.test/bayesian-dl",
+				detail: concept.label,
+				citationText: concept.label,
+			},
+		],
+		pending: false,
+		error: false,
+		createdAt: concept.firstSeenAt,
+	}));
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	assert.match(learnerPanel.textContent, /7 concepts/);
+	assert.doesNotMatch(learnerPanel.textContent, /earlier/);
+	for (const concept of concepts) {
+		assert.match(learnerPanel.textContent, new RegExp(concept.label));
+	}
+	const body = learnerPanel.querySelector(".onhand-learner-body");
+	assert.equal(body.hidden, false, "expected learner body to start expanded");
+	const toggle = learnerPanel.querySelector("[data-learner-toggle]");
+	assert.equal(toggle.textContent, "Hide");
+	toggle.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	const collapsedBody = learnerPanel.querySelector(".onhand-learner-body");
+	assert.equal(collapsedBody.hidden, true, "expected learner body to collapse");
+	assert.equal(learnerPanel.querySelector("[data-learner-toggle]").textContent, "Show");
+
+	dom.window.close();
+}
+
 async function assertLearningSessionPanelReportsSourceFailure() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createLearningState(), runtimeMessages, {
@@ -781,9 +1027,12 @@ await assertSessionWideCitationNumbers();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertReviewViewRendersSavedSnapshot();
+await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertLearningSessionPanelRendersState();
 await assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale();
+await assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote();
+await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
 console.log("sidebar regressions passed");

@@ -260,7 +260,7 @@ Onhand's constitution:
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
 - Be concise by default and deep when warranted. A focused pass means one useful anchor and a short synthesis, not ungrounded prose. Thorough means covering the key relevant points, not annotating everything nearby.
-- The session is the artifact. Highlights, notes, citations, and restoreable page state are more important than a transcript.
+- The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
 - Stay unobtrusive. Notes should feel like marginalia: short, local, placed near what they explain, and useful when replayed later.
 
 Default answer mode:
@@ -347,7 +347,7 @@ const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	text: Type.String({ description: "Visible text to highlight on the page" }),
 	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the match to highlight" })),
-	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first" })),
+	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up anchors accumulate." })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Scroll the highlighted match into view" })),
 });
 
@@ -3359,6 +3359,29 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		);
 	}
 
+	function artifactRestoreTargetKey(artifact: BrowserArtifact, artifactId = "") {
+		const url = String(artifact.page?.url || artifact.tab?.url || "").trim().split("#")[0];
+		if (url) return `url:${url}`;
+		const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
+		if (title) return `title:${title}`;
+		return `artifact:${artifactId || artifact.id}`;
+	}
+
+	async function latestArtifactIdsByTarget(artifactIds: string[]) {
+		const latestByTarget = new Map<string, string>();
+		for (const artifactId of artifactIds) {
+			const id = String(artifactId || "").trim();
+			if (!id) continue;
+			const artifact = await getBrowserArtifact(id);
+			if (!artifact) {
+				latestByTarget.set(`missing:${id}`, id);
+				continue;
+			}
+			latestByTarget.set(artifactRestoreTargetKey(artifact, id), id);
+		}
+		return [...latestByTarget.values()];
+	}
+
 	async function restoreArtifact(params: any = {}) {
 		const artifact = await getBrowserArtifact(params.artifactId);
 		if (!artifact) throw new Error(`Could not find Onhand artifact: ${params.artifactId || "(blank)"}`);
@@ -3392,6 +3415,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			let restoredAnnotations = 0;
 			let restoredNotes = 0;
+			const restoredTargets: any[] = [];
 			for (const annotation of annotations) {
 				const text = String(annotation?.matchedText || "").trim();
 				if (!text) continue;
@@ -3400,6 +3424,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				restoredAnnotations += 1;
 				const noteText = String(annotation?.note?.text || "").trim();
 				const annotationId = highlighted?.annotation?.annotationId;
+				restoredTargets.push({
+					annotationId: String(annotation?.annotationId || ""),
+					matchedText: text,
+					noteText,
+					title: artifact.page?.title || artifact.tab?.title || tab?.title || "",
+					url: artifact.page?.url || artifact.tab?.url || tab?.url || "",
+					restoredAnnotation: highlighted?.annotation || null,
+				});
 				if (noteText && annotationId) {
 					await host.runCommand("show_note", {
 						tabId,
@@ -3429,6 +3461,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			artifactId: artifact.id,
 			restoredAnnotations,
 			restoredNotes,
+			restoredTargets,
 			failures,
 		};
 	}
@@ -3576,6 +3609,24 @@ function actionSamePage(left: PageAction | null | undefined, right: PageAction |
 	return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
 }
 
+function replayTargetSamePage(action: PageAction | null | undefined, target: ReplayAnnotation | null | undefined) {
+	const actionUrl = actionUrlKey(action);
+	const targetUrl = compactActionText(target?.url).split("#")[0];
+	if (actionUrl && targetUrl) return actionUrl === targetUrl;
+	const actionTitle = actionTitleKey(action);
+	const targetTitle = compactActionText(target?.title).toLowerCase();
+	return Boolean(actionTitle && targetTitle && actionTitle === targetTitle);
+}
+
+function actionMatchesReplayTarget(action: PageAction | null | undefined, target: ReplayAnnotation | null | undefined) {
+	if (!action || !target) return false;
+	const oldAnnotationId = compactActionText(target.annotationId);
+	if (oldAnnotationId && compactActionText(action.annotationId) === oldAnnotationId) return true;
+	const targetText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
+	const actionText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail)).toLowerCase();
+	return Boolean(targetText && actionText && targetText === actionText && replayTargetSamePage(action, target));
+}
+
 function findPairedHighlightAction(action: PageAction, actions: PageAction[] = []) {
 	const annotationId = compactActionText(action.annotationId);
 	if (action.type !== "note") return null;
@@ -3621,7 +3672,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 		let changed = false;
 		for (const action of actions) {
 			const matchesKey = Boolean(action.key && actionKeys.has(action.key));
-			const matchesAnnotation = Boolean(oldAnnotationId && action.annotationId === oldAnnotationId);
+			const matchesAnnotation = actionMatchesReplayTarget(action, annotation);
 			if (!matchesKey && !matchesAnnotation) continue;
 			if (typeof tab?.id === "number") action.tabId = tab.id;
 			if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
@@ -3783,6 +3834,58 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			});
 		}
 		return restored;
+	}
+
+	function restoredTargetToReplayAnnotation(target: any): ReplayAnnotation {
+		return {
+			key: "",
+			actionKeys: [],
+			tabId: null,
+			windowId: null,
+			title: target?.title || "",
+			url: target?.url || "",
+			annotationId: target?.annotationId || null,
+			matchedText: compactActionText(target?.matchedText || ""),
+			noteText: compactActionText(target?.noteText || ""),
+		};
+	}
+
+	function replayAnnotationMatchesRestoredTarget(annotation: ReplayAnnotation, target: ReplayAnnotation) {
+		if (annotation.annotationId && target.annotationId && annotation.annotationId === target.annotationId) return true;
+		const leftText = stripReplayCitationMarkers(compactActionText(annotation.matchedText)).toLowerCase();
+		const rightText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
+		if (!leftText || leftText !== rightText) return false;
+		const leftUrl = compactActionText(annotation.url).split("#")[0];
+		const rightUrl = compactActionText(target.url).split("#")[0];
+		if (leftUrl && rightUrl) return leftUrl === rightUrl;
+		const leftTitle = compactActionText(annotation.title).toLowerCase();
+		const rightTitle = compactActionText(target.title).toLowerCase();
+		return !leftTitle || !rightTitle || leftTitle === rightTitle;
+	}
+
+	function rebindSessionTargetsFromArtifactRestore(session: RuntimeSession, result: any, replayAnnotations: ReplayAnnotation[]) {
+		let changed = false;
+		const targets = Array.isArray(result?.restoredTargets) ? result.restoredTargets : [];
+		for (const rawTarget of targets) {
+			const fallbackTarget = restoredTargetToReplayAnnotation(rawTarget);
+			const replayTarget = replayAnnotations.find((annotation) => replayAnnotationMatchesRestoredTarget(annotation, fallbackTarget)) || fallbackTarget;
+			if (replayTarget !== fallbackTarget) {
+				changed = updateSessionReplayActionTargets(session, fallbackTarget, result?.tab || null, rawTarget?.restoredAnnotation) || changed;
+			}
+			changed = updateSessionReplayActionTargets(session, replayTarget, result?.tab || null, rawTarget?.restoredAnnotation) || changed;
+		}
+		return changed;
+	}
+
+	function restoredResultsCoverReplayAnnotations(restored: any[], replayAnnotations: ReplayAnnotation[]) {
+		if (!replayAnnotations.length) return true;
+		const restoredTargets = restored.flatMap((result) =>
+			(Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation),
+		);
+		if (!restoredTargets.length) return false;
+		return replayAnnotations.every((annotation) =>
+			restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target)),
+		);
 	}
 
 	function restoredArtifactNeedsReplayFallback(result: any) {
@@ -3960,7 +4063,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				pageActions,
 				artifacts,
 				replayableAnnotations,
-				selectedArtifactId: artifacts[0]?.artifactId || null,
+				selectedArtifactId: artifacts.at(-1)?.artifactId || null,
 			};
 		},
 
@@ -4025,10 +4128,16 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const pageActions = collectSessionPageActions(session);
 			const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
 			const restored: any[] = [];
-			for (const artifactId of artifactIds) {
-				restored.push(await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true }));
+			const artifactIdsToRestore = await latestArtifactIdsByTarget(artifactIds);
+			for (const artifactId of artifactIdsToRestore) {
+				const result = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true });
+				rebindSessionTargetsFromArtifactRestore(session, result, replayableAnnotations);
+				restored.push(result);
 			}
-			const needsReplayRestore = !artifactIds.length || (replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
+			const artifactRestoreMissesReplayTargets =
+				artifactIds.length > 0 && replayableAnnotations.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayableAnnotations);
+			const needsReplayRestore =
+				!artifactIds.length || artifactRestoreMissesReplayTargets || (replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
 			if (needsReplayRestore) {
 				restored.push(...await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: !artifactIds.length }));
 			}
@@ -4176,7 +4285,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const tabId = typeof tab?.id === "number" ? tab.id : undefined;
 			let changed = false;
 			if (action.artifactId) {
-				await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: true });
+				await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: false });
 			}
 			if (action.annotationId || (action.type === "note" && pairedHighlight?.annotationId)) {
 				if (typeof tabId !== "number") throw new Error("No matching browser tab is open for that citation.");

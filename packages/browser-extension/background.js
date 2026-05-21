@@ -2339,7 +2339,7 @@ const createPageToolkit = (options = {}) => {
 		const compactFallback = isMathLikeHighlightQuery(rawQuery) ? "compact-math-text" : "compact-text";
 
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
-		const clearExisting = options.clearExisting !== false;
+		const clearExisting = options.clearExisting === true;
 		const scrollIntoView = options.scrollIntoView !== false;
 		const exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
 		ensureAnnotationStyles();
