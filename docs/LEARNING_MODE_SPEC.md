@@ -181,6 +181,8 @@ Notes:
 
 - `openChecks` intentionally combines predictions and retrieval checks. The UI can render them together, and the agent only needs to know what is waiting on the user.
 - Runtime state keeps at most one open check per concept; a newer unresolved check for the same concept replaces the older one.
+- A concept should be one reviewable learning unit, not every highlight, citation, note, or algebraic detail. If a follow-up point restates or locally elaborates an existing concept, the agent should reuse that conceptId and append/update the source.
+- The runtime may merge near-duplicate concept events when their labels strongly overlap and their sources are on the same page or share an anchor. Distinct nearby concepts should remain separate when they would deserve separate retrieval checks.
 - `assessment` is model-visible scaffolding, not a user-facing grade.
 - Source links should be best effort. A concept can exist without a durable annotation if the runtime failed to place one.
 - `artifactId` is optional until artifacts become the durable replay surface for spaced review.
@@ -198,7 +200,7 @@ The agent should then follow this order:
 
 1. If the user is answering an open check, assess that response and close the check before moving on.
 2. If the user is asking about an already introduced concept, use lightweight refresher behavior: reuse or jump to the existing source anchor when possible, add at most one replacement highlight if the anchor is missing, avoid adding a new note unless the user asks for a deeper pass, and avoid re-running the full teaching flow. If the concept already has an open check, point to that check instead of opening another one.
-3. If the user is asking about a new concept, anchor it to a passage and add it to `conceptsIntroduced`.
+3. If the user is asking about a new reviewable concept, anchor it to a passage and add it to `conceptsIntroduced`; otherwise reuse the existing concept and append/update its source.
 4. If the answer is substantive, add one prediction or retrieval check unless that would feel forced.
 5. If related open tabs exist, offer an interleaving connection rather than automatically changing context.
 

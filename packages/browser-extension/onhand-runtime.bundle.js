@@ -118258,6 +118258,8 @@ Learning uses a tutoring stance:
 - Stay fast: the first move should be a useful page anchor or anchored prompt, not a long preamble.
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
 - Use onhand_record_learning_event to keep learner state current: record a concept when you introduce it, record a prediction/retrieval check when you place it, and resolve an open check before moving on when the user answers it.
+- A concept is one reviewable learning unit, not every highlighted detail, citation, algebra step, or note. Record multiple concepts in one turn only when each would deserve its own future retrieval check.
+- If a new point is a restatement, detail, or follow-up on an existing concept, reuse that conceptId and update/append its source instead of creating a new concept row.
 - Include annotationId, tabTitle, and url in learning events whenever you have them from browser tool results. If you open a check, reuse the returned checkId when resolving it later.
 - If a concept is already in learner state, prefer a lightweight refresher: use the existing source anchor, avoid broad re-inspection, add at most one replacement highlight and no note unless the user asks for a deeper pass, and do not re-explain from scratch.
 - If that concept already has an open check, do not open or record a second check. Point back to the existing check or ask the user to answer it.
@@ -118419,7 +118421,7 @@ var RESTORE_ARTIFACT_SCHEMA = typebox_exports.Object({
 var RECORD_LEARNING_EVENT_SCHEMA = typebox_exports.Object({
   kind: typebox_exports.String({ description: "Learning event kind: concept_introduced, check_opened, or check_resolved" }),
   conceptId: typebox_exports.Optional(typebox_exports.String({ description: "Stable concept id when known" })),
-  conceptLabel: typebox_exports.Optional(typebox_exports.String({ description: "Short human-readable concept label" })),
+  conceptLabel: typebox_exports.Optional(typebox_exports.String({ description: "Short human-readable reviewable concept label, not every nearby source detail" })),
   checkId: typebox_exports.Optional(typebox_exports.String({ description: "Stable check id when opening or resolving a prediction/retrieval check" })),
   itemId: typebox_exports.Optional(typebox_exports.String({ description: "Legacy check id alias when resolving a check" })),
   checkKind: typebox_exports.Optional(typebox_exports.String({ description: "Check kind when opening a check: prediction or retrieval" })),
@@ -118545,6 +118547,12 @@ function compactLearnerText(value, maxChars = 160) {
 function learnerSlug(value) {
   return compactLearnerText(value, 80).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
 }
+function normalizeLearnerSourcePageUrl(value) {
+  return compactLearnerText(value, 240).split("#")[0].replace(/\/+$/, "").toLowerCase();
+}
+function normalizeLearnerSourceTitle(value) {
+  return compactLearnerText(value, 120).toLowerCase();
+}
 function uniqueLearnerId(prefix, seed, usedIds) {
   const base = `${prefix}_${learnerSlug(seed) || crypto.randomUUID().slice(0, 8)}`;
   let candidate = base;
@@ -118572,11 +118580,83 @@ function normalizeLearnerSource(rawSource) {
 function learnerSourceKey(source) {
   return [source.annotationId || "", source.artifactId || "", source.url || "", source.tabTitle || ""].join("\n");
 }
+function learnerSourcesShareAnchor(left, right) {
+  if (!left || !right) return false;
+  const leftAnnotationId = compactLearnerText(left.annotationId, 120);
+  const rightAnnotationId = compactLearnerText(right.annotationId, 120);
+  if (leftAnnotationId && rightAnnotationId && leftAnnotationId === rightAnnotationId) return true;
+  const leftArtifactId = compactLearnerText(left.artifactId, 120);
+  const rightArtifactId = compactLearnerText(right.artifactId, 120);
+  return Boolean(leftArtifactId && rightArtifactId && leftArtifactId === rightArtifactId);
+}
+function learnerSourcesSamePage(left, right) {
+  if (!left || !right) return false;
+  const leftUrl = normalizeLearnerSourcePageUrl(left.url);
+  const rightUrl = normalizeLearnerSourcePageUrl(right.url);
+  if (leftUrl && rightUrl) return leftUrl === rightUrl;
+  const leftTitle = normalizeLearnerSourceTitle(left.tabTitle);
+  const rightTitle = normalizeLearnerSourceTitle(right.tabTitle);
+  return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
+}
 function appendLearnerSource(sources = [], source) {
   if (!source) return sources;
   const key = learnerSourceKey(source);
   if (sources.some((existing) => learnerSourceKey(existing) === key)) return sources;
   return [...sources, source];
+}
+function latestLearnerConceptSource(concept) {
+  const sources = Array.isArray(concept.sources) ? concept.sources.filter(Boolean) : [];
+  return sources.length ? sources[sources.length - 1] : null;
+}
+function learnerConceptSourceRelation(concept, source) {
+  if (!source) return "none";
+  const sources = Array.isArray(concept.sources) ? concept.sources.filter(Boolean) : [];
+  if (sources.some((existing) => learnerSourcesShareAnchor(existing, source))) return "anchor";
+  if (sources.some((existing) => learnerSourcesSamePage(existing, source))) return "page";
+  return "none";
+}
+function uniqueLearnerConceptTokens(value) {
+  return [...new Set(tokenizeLearnerConceptMatchText(value))];
+}
+function learnerConceptLabelsLikelySameUnit(leftLabel, rightLabel, sourceRelation) {
+  const leftText = normalizeLearnerConceptMatchText(leftLabel);
+  const rightText = normalizeLearnerConceptMatchText(rightLabel);
+  if (!leftText || !rightText) return false;
+  if (leftText === rightText) return true;
+  if (sourceRelation !== "anchor" && sourceRelation !== "page") return false;
+  const leftTokens = uniqueLearnerConceptTokens(leftText);
+  const rightTokens = uniqueLearnerConceptTokens(rightText);
+  if (leftTokens.length < 3 || rightTokens.length < 3) return false;
+  const rightSet = new Set(rightTokens);
+  const sharedCount = leftTokens.filter((token) => rightSet.has(token)).length;
+  if (sharedCount < 3) return false;
+  const smallerCount = Math.min(leftTokens.length, rightTokens.length);
+  const unionCount = (/* @__PURE__ */ new Set([...leftTokens, ...rightTokens])).size;
+  const containment = sharedCount / smallerCount;
+  const jaccard = sharedCount / unionCount;
+  return containment >= 0.8 && jaccard >= 0.6;
+}
+function latestLearnerTimestamp(left, right) {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isFinite(leftTime)) return right;
+  if (!Number.isFinite(rightTime)) return left;
+  return rightTime > leftTime ? right : left;
+}
+function earliestLearnerTimestamp(left, right) {
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (!Number.isFinite(leftTime)) return right;
+  if (!Number.isFinite(rightTime)) return left;
+  return rightTime < leftTime ? right : left;
+}
+function mergeLearnerConcept(existing, incoming) {
+  existing.firstSeenAt = earliestLearnerTimestamp(existing.firstSeenAt, incoming.firstSeenAt);
+  existing.lastSeenAt = latestLearnerTimestamp(existing.lastSeenAt, incoming.lastSeenAt);
+  for (const source of incoming.sources || []) {
+    existing.sources = appendLearnerSource(existing.sources, source);
+  }
+  return existing;
 }
 function normalizeLearnerConcept(rawConcept, usedIds, fallbackNow) {
   if (!rawConcept || typeof rawConcept !== "object") return null;
@@ -118651,7 +118731,7 @@ function normalizeLearnerState(rawState, modeOverride) {
   if (!rawState || typeof rawState !== "object") return createEmptyLearnerState(modeOverride || "answer");
   const raw = rawState;
   const conceptIds = /* @__PURE__ */ new Set();
-  const conceptsIntroduced = (Array.isArray(raw.conceptsIntroduced) ? raw.conceptsIntroduced : []).map((concept) => normalizeLearnerConcept(concept, conceptIds, fallbackNow)).filter(Boolean);
+  const conceptsIntroduced = dedupeLearnerConcepts((Array.isArray(raw.conceptsIntroduced) ? raw.conceptsIntroduced : []).map((concept) => normalizeLearnerConcept(concept, conceptIds, fallbackNow)).filter(Boolean));
   const checkIds = /* @__PURE__ */ new Set();
   const rawOpenChecks = [
     ...Array.isArray(raw.openChecks) ? raw.openChecks.map((check2) => ({ check: check2 })) : [],
@@ -118676,17 +118756,37 @@ function normalizeLearnerState(rawState, modeOverride) {
 function setLearnerStateMode(rawState, mode) {
   return normalizeLearnerState(rawState, mode);
 }
-function findLearnerConcept(state, conceptId, label) {
-  const normalizedLabel = label.toLowerCase();
-  return state.conceptsIntroduced.find(
-    (concept) => conceptId && concept.conceptId === conceptId || concept.label.toLowerCase() === normalizedLabel
-  );
+function dedupeLearnerConcepts(concepts) {
+  const deduped = [];
+  for (const concept of concepts) {
+    const existing = findLearnerConcept({ mode: "learning", conceptsIntroduced: deduped, openChecks: [], responses: [] }, concept.conceptId, concept.label, latestLearnerConceptSource(concept));
+    if (existing) mergeLearnerConcept(existing, concept);
+    else deduped.push(concept);
+  }
+  return deduped;
+}
+function findLearnerConcept(state, conceptId, label, source = null) {
+  if (conceptId) {
+    const exactIdMatch = state.conceptsIntroduced.find((concept) => concept.conceptId === conceptId);
+    if (exactIdMatch) return exactIdMatch;
+  }
+  const normalizedLabel = normalizeLearnerConceptMatchText(label);
+  if (normalizedLabel) {
+    const exactLabelMatch = state.conceptsIntroduced.find((concept) => normalizeLearnerConceptMatchText(concept.label) === normalizedLabel);
+    if (exactLabelMatch) return exactLabelMatch;
+  }
+  if (!source || !normalizedLabel) return void 0;
+  for (const concept of [...state.conceptsIntroduced].reverse()) {
+    const relation = learnerConceptSourceRelation(concept, source);
+    if (learnerConceptLabelsLikelySameUnit(concept.label, label, relation)) return concept;
+  }
+  return void 0;
 }
 function upsertLearnerConcept(state, rawEvent, now) {
   const label = compactLearnerText(rawEvent?.conceptLabel || rawEvent?.label || rawEvent?.conceptId || "Concept", 80) || "Concept";
   const requestedId = compactLearnerText(rawEvent?.conceptId, 120);
-  const existing = findLearnerConcept(state, requestedId, label);
   const source = normalizeLearnerSource(rawEvent);
+  const existing = findLearnerConcept(state, requestedId, label, source);
   if (existing) {
     existing.lastSeenAt = normalizeLearnerTimestamp(rawEvent?.at || rawEvent?.lastSeenAt, now);
     existing.sources = appendLearnerSource(existing.sources, source);
@@ -119520,6 +119620,12 @@ var LEARNER_CONCEPT_MATCH_STOPWORDS = /* @__PURE__ */ new Set([
   "where",
   "why",
   "with",
+  "address",
+  "addresses",
+  "explain",
+  "explains",
+  "mean",
+  "means",
   "work",
   "works"
 ]);
@@ -119527,6 +119633,8 @@ function normalizeLearnerConceptMatchText(value) {
   return String(value || "").toLowerCase().replace(/^concept[_-]+/, "").replace(/[_-]+/g, " ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 function normalizeLearnerConceptToken(token) {
+  if (token === "impracticality") return "impractical";
+  if (token.length > 5 && token.endsWith("ies")) return `${token.slice(0, -3)}y`;
   if (token.length > 4 && token.endsWith("s")) return token.slice(0, -1);
   return token;
 }
@@ -119603,7 +119711,8 @@ function buildLearnerStatePromptSummary(rawState, latestPrompt = "") {
     }
   }
   lines.push(
-    "- If the user's latest message answers an open check, resolve that check with onhand_record_learning_event before introducing new material."
+    "- If the user's latest message answers an open check, resolve that check with onhand_record_learning_event before introducing new material.",
+    "- Concept hygiene: reuse an existing conceptId for restatements or local details; record a new concept only for a separate future retrieval-check unit."
   );
   return lines.join("\n");
 }

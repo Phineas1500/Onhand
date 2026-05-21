@@ -365,6 +365,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
 	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
 	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
+	assert.match(contract.learningModeAppend, /one reviewable learning unit/);
+	assert.match(contract.learningModeAppend, /reuse that conceptId/);
 	assert.match(contract.learningModeAppend, /prefer a lightweight refresher/);
 	assert.match(contract.learningModeAppend, /add at most one replacement highlight and no note/);
 	assert.match(contract.learningModeAppend, /do not open or record a second check/);
@@ -388,6 +390,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /If there is no open check for the concept/);
 	assert.match(contract.learningPrompt, /reuse the existing conceptId/);
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
+	assert.match(contract.learningPrompt, /Concept hygiene/);
 	assert.match(contract.learningPrompt, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
 	assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
@@ -531,6 +534,100 @@ async function assertLearnerStateUpdates() {
 		{ now: "2026-05-18T05:05:00.000Z" },
 	);
 	assert.notEqual(generatedCheckState.openChecks[0].checkId, firstGeneratedCheckId);
+
+	let conceptHygieneState = createEmptyLearnerState("learning");
+	conceptHygieneState = applyLearningEvent(
+		conceptHygieneState,
+		{
+			kind: "concept_introduced",
+			conceptId: "concept_rejection_sampling_impractical",
+			conceptLabel: "Why rejection sampling is impractical for posterior sampling",
+			annotationId: "posterior-bound",
+			tabTitle: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+		},
+		{ now: "2026-05-18T05:06:00.000Z" },
+	);
+	conceptHygieneState = applyLearningEvent(
+		conceptHygieneState,
+		{
+			kind: "concept_introduced",
+			conceptId: "concept_posterior_rejection_sampling_impracticality",
+			conceptLabel: "Rejection sampling impracticality for posterior sampling",
+			annotationId: "posterior-bound-note",
+			tabTitle: "BayesianDL",
+			url: "https://example.test/bayesian-dl#nearby",
+		},
+		{ now: "2026-05-18T05:07:00.000Z" },
+	);
+	assert.equal(conceptHygieneState.conceptsIntroduced.length, 1, "near-duplicate learning concepts on the same page should be reused");
+	assert.equal(conceptHygieneState.conceptsIntroduced[0].conceptId, "concept_rejection_sampling_impractical");
+	assert.equal(conceptHygieneState.conceptsIntroduced[0].lastSeenAt, "2026-05-18T05:07:00.000Z");
+	assert.deepEqual(
+		conceptHygieneState.conceptsIntroduced[0].sources.map((source) => source.annotationId),
+		["posterior-bound", "posterior-bound-note"],
+	);
+
+	conceptHygieneState = applyLearningEvent(
+		conceptHygieneState,
+		{
+			kind: "concept_introduced",
+			conceptId: "concept_m_prime_acceptance",
+			conceptLabel: "M prime in acceptance probability simplification",
+			annotationId: "acceptance-simplification",
+			tabTitle: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+		},
+		{ now: "2026-05-18T05:08:00.000Z" },
+	);
+	assert.equal(conceptHygieneState.conceptsIntroduced.length, 2, "distinct nearby learning concepts should remain separate");
+
+	conceptHygieneState = applyLearningEvent(
+		conceptHygieneState,
+		{
+			kind: "check_opened",
+			checkId: "check-rejection-impractical",
+			checkKind: "retrieval",
+			conceptId: "concept_why_posterior_rejection_sampling_is_impractical",
+			conceptLabel: "Why posterior rejection sampling is impractical",
+			promptText: "Why does the global M bound make this inefficient?",
+			annotationId: "posterior-bound-note",
+			tabTitle: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+		},
+		{ now: "2026-05-18T05:09:00.000Z" },
+	);
+	assert.equal(conceptHygieneState.conceptsIntroduced.length, 2, "opening a check should not create a duplicate near-matching concept");
+	assert.equal(conceptHygieneState.openChecks[0].conceptId, "concept_rejection_sampling_impractical");
+
+	const dedupedLegacyConceptState = normalizeLearnerState({
+		mode: "learning",
+		conceptsIntroduced: [
+			{
+				conceptId: "concept_rejection_sampling_impractical",
+				label: "Why rejection sampling is impractical for posterior sampling",
+				firstSeenAt: "2026-05-18T05:00:00.000Z",
+				lastSeenAt: "2026-05-18T05:00:00.000Z",
+				sources: [{ annotationId: "posterior-bound", tabTitle: "BayesianDL", url: "https://example.test/bayesian-dl" }],
+			},
+			{
+				conceptId: "concept_posterior_rejection_sampling_impracticality",
+				label: "Rejection sampling impracticality for posterior sampling",
+				firstSeenAt: "2026-05-18T05:01:00.000Z",
+				lastSeenAt: "2026-05-18T05:02:00.000Z",
+				sources: [{ annotationId: "posterior-bound-note", tabTitle: "BayesianDL", url: "https://example.test/bayesian-dl" }],
+			},
+			{
+				conceptId: "concept_m_prime_acceptance",
+				label: "M prime in acceptance probability simplification",
+				firstSeenAt: "2026-05-18T05:03:00.000Z",
+				lastSeenAt: "2026-05-18T05:03:00.000Z",
+				sources: [{ annotationId: "acceptance-simplification", tabTitle: "BayesianDL", url: "https://example.test/bayesian-dl" }],
+			},
+		],
+	});
+	assert.equal(dedupedLegacyConceptState.conceptsIntroduced.length, 2, "normalization should compact legacy near-duplicate concepts");
+	assert.equal(dedupedLegacyConceptState.conceptsIntroduced[0].lastSeenAt, "2026-05-18T05:02:00.000Z");
 
 	const legacyState = normalizeLearnerState({
 		mode: "learning",
