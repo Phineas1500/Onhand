@@ -356,9 +356,14 @@ async function assertTranscriptActionButtonsActivateDirectly() {
 	});
 	const dom = await renderSidebar(state, runtimeMessages);
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const messages = host.shadowRoot.getElementById("messages");
 	const actionButton = host.shadowRoot.querySelector('.onhand-action[data-action-key="note:first"]');
 	assert.ok(actionButton, "expected added-note transcript action button");
 	assert.equal(actionButton.dataset.onhandActionBound, "true");
+	let legacyBubbleClickCount = 0;
+	messages.addEventListener("click", () => {
+		legacyBubbleClickCount += 1;
+	});
 
 	const actionPointerDown = new dom.window.MouseEvent("pointerdown", { bubbles: true, cancelable: true });
 	actionButton.dispatchEvent(actionPointerDown);
@@ -370,29 +375,46 @@ async function assertTranscriptActionButtonsActivateDirectly() {
 		true,
 	);
 
-	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
-	actionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: false, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 300));
+	messages.innerHTML = messages.innerHTML;
+	const delayedActionButton = messages.querySelector('.onhand-action[data-action-key="note:first"]');
+	assert.ok(delayedActionButton, "expected added-note transcript action button after rerender");
+	delayedActionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
+		1,
+		"expected delayed browser click after pointerup to be deduped across transcript rerenders",
+	);
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 950));
+	const standaloneActionButton = messages.querySelector('.onhand-action[data-action-key="note:first"]');
+	assert.ok(standaloneActionButton, "expected added-note transcript action button for standalone click");
+	standaloneActionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 	assert.equal(
 		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
 		2,
 	);
 
-	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 950));
+	const actionButtonForMousePair = messages.querySelector('.onhand-action[data-action-key="note:first"]');
+	assert.ok(actionButtonForMousePair, "expected added-note transcript action button for mouse pair");
 	const actionMouseDown = new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true });
-	actionButton.dispatchEvent(actionMouseDown);
+	actionButtonForMousePair.dispatchEvent(actionMouseDown);
 	assert.equal(actionMouseDown.defaultPrevented, true, "expected action button mousedown to prevent text selection");
-	actionButton.dispatchEvent(new dom.window.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-	actionButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	actionButtonForMousePair.dispatchEvent(new dom.window.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+	actionButtonForMousePair.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 	assert.equal(
 		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
 		3,
 		"expected one activation from the mouseup/click pair for one physical click",
 	);
+	assert.equal(legacyBubbleClickCount, 0, "delegated action handling should suppress older bubble click paths");
 
-	await new Promise((resolve) => dom.window.setTimeout(resolve, 260));
-	const citationButton = host.shadowRoot.querySelector('.onhand-cite[data-action-key="note:first"]');
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 950));
+	const citationButton = messages.querySelector('.onhand-cite[data-action-key="note:first"]');
 	assert.ok(citationButton, "expected citation to target the paired note action");
 	const citationPointerDown = new dom.window.MouseEvent("pointerdown", { bubbles: true, cancelable: true });
 	citationButton.dispatchEvent(citationPointerDown);
@@ -402,6 +424,17 @@ async function assertTranscriptActionButtonsActivateDirectly() {
 	assert.equal(
 		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
 		4,
+	);
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 300));
+	messages.innerHTML = messages.innerHTML;
+	const delayedCitationButton = messages.querySelector('.onhand-cite[data-action-key="note:first"]');
+	assert.ok(delayedCitationButton, "expected citation after rerender");
+	delayedCitationButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	assert.equal(
+		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
+		4,
+		"expected delayed browser click after pointerup to be deduped across citation rerenders",
 	);
 
 	dom.window.close();

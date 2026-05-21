@@ -121759,11 +121759,15 @@ function createOnhandBrowserRuntime(host) {
         }
         let noteShown = false;
         try {
-          await host.runCommand("scroll_to_annotation", {
+          const scrolled = await host.runCommand("scroll_to_annotation", {
             tabId,
             annotationId: targetAnnotationId || action.annotationId,
             target: action.type === "note" ? "note" : "annotation"
           });
+          const scrolledAnnotation = scrolled?.annotation || scrolled;
+          if (action.type === "note" && (scrolledAnnotation?.targetKind === "note" || scrolledAnnotation?.noteRect)) {
+            noteShown = true;
+          }
         } catch (error48) {
           const citationText = activationSourceText(action, allActions);
           if (!citationText) throw error48;

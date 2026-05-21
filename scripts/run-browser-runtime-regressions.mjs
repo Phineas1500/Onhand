@@ -69,7 +69,11 @@ function createReplayHost(options = {}) {
 				if (options.rejectScrollToAnnotation?.(String(args.annotationId || ""), args)) {
 					throw new Error(`No annotation found: ${args.annotationId}`);
 				}
-				return { tab, annotation: { annotationId: String(args.annotationId || "") } };
+				const extra =
+					typeof options.scrollToAnnotationResult === "function"
+						? options.scrollToAnnotationResult(args, tab)
+						: options.scrollToAnnotationResult || {};
+				return { tab, annotation: { annotationId: String(args.annotationId || ""), ...extra } };
 			}
 			if (name === "highlight_text") {
 				if (options.rejectHighlightText?.(String(args.text || ""))) {
@@ -1429,10 +1433,14 @@ async function assertReplayNoteActivationUsesPairedHighlightSource() {
 	assert.equal(savedSession.learnerState.openChecks[0].annotationId, "replay-highlight");
 }
 
-async function assertReplayNoteActivationReplaysNoteWhenAnnotationExists() {
+async function assertReplayNoteActivationDoesNotRegenerateExistingNote() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const host = createReplayHost();
+	const host = createReplayHost({
+		scrollToAnnotationResult(args) {
+			return args.target === "note" ? { targetKind: "note", noteRect: { top: 12, left: 20, width: 120, height: 48 } } : {};
+		},
+	});
 	const runtime = createOnhandBrowserRuntime(host);
 	await runtime.updateSettings({
 		aiProvider: "onhand-smoke",
@@ -1485,7 +1493,61 @@ async function assertReplayNoteActivationReplaysNoteWhenAnnotationExists() {
 		),
 		true,
 	);
-	assert.equal(noteCalls.length, 1);
+	assert.equal(noteCalls.length, 0, "existing notes should not be regenerated after the note was already focused");
+}
+
+async function assertReplayNoteActivationRegeneratesMissingNote() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		scrollToAnnotationResult(args) {
+			return args.target === "note" ? { targetKind: "annotation", noteRect: null } : {};
+		},
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:ann-stationary",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-stationary",
+			label: "Highlighted text",
+			detail: "q = qP",
+			citationText: "q = qP",
+		},
+		{
+			key: "note:ann-stationary",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-stationary",
+			label: "Added note",
+			detail: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("note:ann-stationary");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	const noteCalls = activateCalls.filter((call) => call.name === "show_note");
+	assert.equal(highlightCalls.length, 0);
+	assert.equal(noteCalls.length, 1, "missing note should be regenerated from the saved note action");
 	assert.equal(noteCalls[0]?.args.annotationId, "ann-stationary");
 	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the Markov transition once leaves the distribution unchanged.");
 	assert.equal(noteCalls[0]?.args.scrollIntoView, true);
@@ -1683,7 +1745,8 @@ async function main() {
 	await assertReplayActionActivationCanTargetSavedSession();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
 	await assertReplayNoteActivationUsesPairedHighlightSource();
-	await assertReplayNoteActivationReplaysNoteWhenAnnotationExists();
+	await assertReplayNoteActivationDoesNotRegenerateExistingNote();
+	await assertReplayNoteActivationRegeneratesMissingNote();
 	await assertReplayNoteActivationUsesRepairedPairedHighlightAnchor();
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();

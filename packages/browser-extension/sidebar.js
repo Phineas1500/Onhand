@@ -4,7 +4,7 @@
 
 	const SIDEBAR_WIDTH = 420;
 	const POLL_INTERVAL_MS = 900;
-	const ACTION_ACTIVATION_DEDUP_MS = 220;
+	const ACTION_ACTIVATION_DEDUP_MS = 900;
 	const PAGE_OPEN_CLASS = "onhand-extension-sidebar-open";
 	const PAGE_STYLE_ID = "onhand-extension-sidebar-layout";
 	const HOST_ID = "onhand-extension-sidebar-host";
@@ -3503,19 +3503,37 @@
 		});
 	}
 
-	function activateActionButton(button, options = {}) {
+	function getActionDedupeMap(root) {
+		if (!(root instanceof Element)) return null;
+		if (!root.__onhandActionLastActivatedAtByKey) {
+			root.__onhandActionLastActivatedAtByKey = new Map();
+		}
+		return root.__onhandActionLastActivatedAtByKey;
+	}
+
+	function actionDedupeKey(key, sessionOptions = {}) {
+		return `${key}\u0000${sessionOptions.sessionPath || ""}`;
+	}
+
+	function activateActionButton(button, options = {}, root = null) {
 		const key = String(button?.dataset?.actionKey || "").trim();
 		if (!key) {
 			handleActionActivationError(new Error("Could not activate that Onhand link."), options);
 			return;
 		}
+		const sessionOptions = resolveActionSessionOptions(options);
+		const dedupeKey = actionDedupeKey(key, sessionOptions);
+		const dedupeMap = getActionDedupeMap(root);
 		if (button.dataset.onhandActionPending === "true") return;
 		const now = Date.now();
 		const lastActivatedAt = Number(button.dataset.onhandActionLastActivatedAt || 0);
 		if (Number.isFinite(lastActivatedAt) && now - lastActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
+		const lastRootActivatedAt = Number(dedupeMap?.get(dedupeKey) || 0);
+		if (Number.isFinite(lastRootActivatedAt) && now - lastRootActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
 		button.dataset.onhandActionLastActivatedAt = String(now);
+		dedupeMap?.set(dedupeKey, now);
 		button.dataset.onhandActionPending = "true";
-		void activateAction(key, resolveActionSessionOptions(options))
+		void activateAction(key, sessionOptions)
 			.catch((error) => handleActionActivationError(error, options))
 			.finally(() => {
 				if (button.dataset.onhandActionPending === "true") {
@@ -3527,6 +3545,9 @@
 	function consumeActionPointer(event) {
 		event.preventDefault();
 		event.stopPropagation();
+		if (typeof event.stopImmediatePropagation === "function") {
+			event.stopImmediatePropagation();
+		}
 	}
 
 	function actionButtonFromEvent(root, event) {
@@ -3558,7 +3579,7 @@
 						const button = actionButtonFromEvent(root, event);
 						if (!button) return;
 						consumeActionPointer(event);
-						activateActionButton(button, root.__onhandActionOptions || options);
+						activateActionButton(button, root.__onhandActionOptions || options, root);
 					},
 					true,
 				);
