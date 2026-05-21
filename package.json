@@ -2,6 +2,7 @@
   "name": "onhand",
   "version": "0.1.0",
   "description": "Onhand: contextual AI assistant for learning and research running in a browser extension",
+  "license": "Apache-2.0",
   "type": "module",
   "keywords": [
     "pi-package",
