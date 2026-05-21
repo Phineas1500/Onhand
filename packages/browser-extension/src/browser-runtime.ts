@@ -1416,6 +1416,10 @@ function addReplayExactCandidate(candidates: string[], value: string) {
 	const text = stripReplayCitationMarkers(value);
 	if (!text) return;
 	addUniqueReplayCandidate(candidates, text);
+	const withoutTrailingEllipsis = text.replace(/\s*(?:\.{3}|…)\s*$/, "").trim();
+	if (withoutTrailingEllipsis && withoutTrailingEllipsis !== text && withoutTrailingEllipsis.length >= 12) {
+		addUniqueReplayCandidate(candidates, withoutTrailingEllipsis);
+	}
 	for (const variant of replayMathSpacingVariants(text)) addUniqueReplayCandidate(candidates, variant);
 }
 

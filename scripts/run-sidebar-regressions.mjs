@@ -906,6 +906,170 @@ async function assertLearningSessionPanelCanResolveRestoredConceptThroughPairedN
 	dom.window.close();
 }
 
+async function assertLearningSessionPanelPrefersPairedNoteSourceOverGenericHeading() {
+	const runtimeMessages = [];
+	const state = createLearningState();
+	const pageUrl = "https://example.test/bayesian-dl";
+	state.learnerState.conceptsIntroduced = [
+		{
+			conceptId: "concept_aperiodic_markov_chain",
+			label: "Aperiodic Markov chain in convergence",
+			firstSeenAt: "2026-05-12T10:04:00.000Z",
+			lastSeenAt: "2026-05-12T10:04:00.000Z",
+			sources: [
+				{
+					tabTitle: "BayesianDL",
+					url: pageUrl,
+					annotationId: "stale-aperiodic-source",
+				},
+			],
+		},
+	];
+	state.learnerState.openChecks = [];
+	state.pageActions = [
+		{
+			key: "highlight:generic-mcmc-heading",
+			type: "annotation",
+			annotationId: "restored-generic-mcmc",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Markov Chain Monte Carlo",
+			citationText: "Markov Chain Monte Carlo",
+		},
+		{
+			key: "highlight:aperiodic-condition-restored",
+			type: "annotation",
+			annotationId: "restored-aperiodic-condition",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "condition that the Markov chain is aperiodic",
+			citationText: "condition that the Markov chain is aperiodic",
+		},
+		{
+			key: "note:aperiodic-condition-restored",
+			type: "note",
+			annotationId: "restored-aperiodic-condition",
+			label: "Added note",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Aperiodic means the chain does not get trapped in a fixed cycle, so convergence can settle instead of oscillating.",
+			citationText: "Aperiodic means the chain does not get trapped in a fixed cycle, so convergence can settle instead of oscillating.",
+		},
+	];
+	state.turns = [
+		{
+			id: "turn-aperiodic",
+			userPrompt: "What does aperiodic mean in this convergence argument?",
+			reply: "Saved concept: Aperiodic Markov chain in convergence.",
+			activities: [],
+			pageActions: state.pageActions,
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:04:00.000Z",
+		},
+	];
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="stale-aperiodic-source"]');
+	assert.ok(sourceButton, "expected aperiodic concept source button");
+	assert.equal(sourceButton.dataset.actionKey, "highlight:aperiodic-condition-restored");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:aperiodic-condition-restored"),
+		true,
+	);
+
+	dom.window.close();
+}
+
+async function assertLearningSessionPanelPrefersPairedNoteSourceOverExactBroadSource() {
+	const runtimeMessages = [];
+	const state = createLearningState();
+	const pageUrl = "https://example.test/bayesian-dl";
+	state.learnerState.conceptsIntroduced = [
+		{
+			conceptId: "concept_rejection_sampling_impractical",
+			label: "Why rejection sampling is impractical for posterior sampling",
+			firstSeenAt: "2026-05-12T10:34:00.000Z",
+			lastSeenAt: "2026-05-12T10:34:00.000Z",
+			sources: [
+				{
+					tabTitle: "BayesianDL",
+					url: pageUrl,
+					annotationId: "broad-rejection-heading",
+				},
+			],
+		},
+	];
+	state.learnerState.openChecks = [];
+	state.pageActions = [
+		{
+			key: "highlight:broad-rejection-heading",
+			type: "annotation",
+			annotationId: "broad-rejection-heading",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Bayesian modeling: Posterior sampling via rejection sampling (impractical)",
+			citationText: "Bayesian modeling: Posterior sampling via rejection sampling (impractical)",
+		},
+		{
+			key: "highlight:posterior-bound-restored",
+			type: "annotation",
+			annotationId: "posterior-bound-restored",
+			label: "Highlighted text",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "Let M>=p(W|D)P(W), for all W be a constant",
+			citationText: "Let M>=p(W|D)P(W), for all W be a constant",
+		},
+		{
+			key: "note:posterior-bound-restored",
+			type: "note",
+			annotationId: "posterior-bound-restored",
+			label: "Added note",
+			title: "BayesianDL",
+			url: pageUrl,
+			detail: "This requires a global bound M on posterior/prior for all weights; if M is large or unknown, most proposed prior samples get rejected.",
+			citationText: "This requires a global bound M on posterior/prior for all weights; if M is large or unknown, most proposed prior samples get rejected.",
+		},
+	];
+	state.turns = [
+		{
+			id: "turn-rejection-impractical",
+			userPrompt: "Explain why rejection sampling becomes impractical for posterior sampling.",
+			reply: "Saved concept: Why rejection sampling is impractical for posterior sampling.",
+			activities: [],
+			pageActions: state.pageActions,
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:34:00.000Z",
+		},
+	];
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="broad-rejection-heading"]');
+	assert.ok(sourceButton, "expected rejection concept source button");
+	assert.equal(sourceButton.dataset.actionKey, "highlight:posterior-bound-restored");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:posterior-bound-restored"),
+		true,
+	);
+
+	dom.window.close();
+}
+
 async function assertLearningSessionPanelShowsAllConceptsAndCanCollapse() {
 	const runtimeMessages = [];
 	const state = createLearningState();
@@ -957,6 +1121,16 @@ async function assertLearningSessionPanelShowsAllConceptsAndCanCollapse() {
 	for (const concept of concepts) {
 		assert.match(learnerPanel.textContent, new RegExp(concept.label));
 	}
+	const grid = learnerPanel.querySelector(".onhand-learner-grid");
+	assert.ok(grid, "expected learner concept scroller");
+	grid.scrollTop = 140;
+	grid.dispatchEvent(new dom.window.Event("scroll"));
+	const firstSourceButton = learnerPanel.querySelector('[data-learner-annotation-id="ann-1"]');
+	assert.ok(firstSourceButton, "expected source button to trigger learner panel rerender");
+	firstSourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	const rerenderedGrid = learnerPanel.querySelector(".onhand-learner-grid");
+	assert.equal(rerenderedGrid.scrollTop, 140, "expected learner concept scroll position to survive rerender");
 	const body = learnerPanel.querySelector(".onhand-learner-body");
 	assert.equal(body.hidden, false, "expected learner body to start expanded");
 	const toggle = learnerPanel.querySelector("[data-learner-toggle]");
@@ -1032,6 +1206,8 @@ await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertLearningSessionPanelRendersState();
 await assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale();
 await assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote();
+await assertLearningSessionPanelPrefersPairedNoteSourceOverGenericHeading();
+await assertLearningSessionPanelPrefersPairedNoteSourceOverExactBroadSource();
 await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();

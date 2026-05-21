@@ -1233,6 +1233,161 @@ async function assertArtifactActionActivationPreservesExistingAnnotations() {
 	assert.equal(activateCalls.some((call) => call.name === "show_note" && call.args.note === "Concept note"), true);
 }
 
+async function assertCrossPageLearningSourceActivationOpensMissingPage() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const bayesianUrl = "https://example.test/bayesian-dl";
+	const cnnUrl = "https://example.test/cnns";
+	const cnnSourceText = "The filter is really just a single-layer MLP applied over an image patch";
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ id: 7, title: "BayesianDL", url: bayesianUrl })],
+		navigateTabId: 12,
+		navigateTitle: "CNNs",
+		rejectScrollToAnnotation: (annotationId) => annotationId === "stale-cnn-anchor",
+		highlightAnnotationId: (text) => (text === cnnSourceText ? "repaired-cnn-anchor" : "other-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:bayesian-source",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "BayesianDL",
+			url: bayesianUrl,
+			annotationId: "bayesian-anchor",
+			label: "Highlighted text",
+			detail: "q = qP",
+			citationText: "q = qP",
+		},
+		{
+			key: "highlight:cnn-source",
+			type: "annotation",
+			tabId: 41,
+			windowId: 9,
+			title: "CNNs",
+			url: cnnUrl,
+			annotationId: "stale-cnn-anchor",
+			label: "Highlighted text",
+			detail: cnnSourceText,
+			citationText: cnnSourceText,
+		},
+	];
+	session.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [
+			{
+				conceptId: "concept_stationary",
+				label: "Stationary distribution of a Markov chain",
+				firstSeenAt: "2026-05-17T12:00:00.000Z",
+				lastSeenAt: "2026-05-17T12:00:00.000Z",
+				sources: [{ annotationId: "bayesian-anchor", tabTitle: "BayesianDL", url: bayesianUrl }],
+			},
+			{
+				conceptId: "concept_local_receptive_fields",
+				label: "Local receptive fields vs fully connected layers",
+				firstSeenAt: "2026-05-21T15:30:00.000Z",
+				lastSeenAt: "2026-05-21T15:30:00.000Z",
+				sources: [{ annotationId: "stale-cnn-anchor", tabTitle: "CNNs", url: cnnUrl }],
+			},
+		],
+		openChecks: [],
+		responses: [],
+	};
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:cnn-source");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(
+		activateCalls.some((call) => call.name === "navigate" && call.args.url === cnnUrl && call.args.newTab === true),
+		true,
+		"cross-page source activation should open the saved page when it is not already open",
+	);
+	assert.equal(
+		activateCalls.some((call) => call.name === "activate_tab" && call.args.tabId === 12),
+		true,
+		"cross-page source activation should focus the reopened page",
+	);
+	assert.equal(
+		activateCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 12 && call.args.text === cnnSourceText),
+		true,
+		"cross-page source activation should repair stale anchors on the reopened page",
+	);
+	assert.equal(
+		activateCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7),
+		false,
+		"cross-page source activation must not try to repair the CNN source on the current BayesianDL tab",
+	);
+
+	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:cnn-source").annotationId, "repaired-cnn-anchor");
+	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:cnn-source").tabId, 12);
+	assert.equal(savedSession.learnerState.conceptsIntroduced[1].sources[0].annotationId, "repaired-cnn-anchor");
+}
+
+async function assertTruncatedActionActivationRetriesEllipsislessExactPrefix() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pageUrl = "https://example.test/bayesian-dl";
+	const truncatedSource = "Bayesian modeling: Posterior sampling via rejection sampling (impractic...";
+	const ellipsislessSource = "Bayesian modeling: Posterior sampling via rejection sampling (impractic";
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ id: 7, title: "BayesianDL", url: pageUrl })],
+		rejectScrollToAnnotation: (annotationId) => annotationId === "stale-broad-heading",
+		rejectHighlightText: (text) => text !== ellipsislessSource,
+		highlightAnnotationId: (text) => (text === ellipsislessSource ? "repaired-broad-heading" : "other-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:rejection-heading",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "BayesianDL",
+			url: pageUrl,
+			annotationId: "stale-broad-heading",
+			label: "Highlighted text",
+			detail: truncatedSource,
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:rejection-heading");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(
+		activateCalls.some((call) => call.name === "highlight_text" && call.args.text === truncatedSource),
+		true,
+		"activation should first try the stored exact source text",
+	);
+	assert.equal(
+		activateCalls.some((call) => call.name === "highlight_text" && call.args.text === ellipsislessSource),
+		true,
+		"activation should retry truncated action text without the trailing ellipsis",
+	);
+
+	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:rejection-heading").annotationId, "repaired-broad-heading");
+}
+
 async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -1978,6 +2133,8 @@ async function main() {
 	await assertArtifactRestoreUsesStrictReusableMatchingForShortMath();
 	await assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets();
 	await assertArtifactActionActivationPreservesExistingAnnotations();
+	await assertCrossPageLearningSourceActivationOpensMissingPage();
+	await assertTruncatedActionActivationRetriesEllipsislessExactPrefix();
 	await assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails();
 	await assertSessionReplaySnapshotPayload();
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();

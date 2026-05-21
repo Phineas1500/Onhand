@@ -112,6 +112,7 @@
 	let learnerSourceFeedback = null;
 	let learnerSourceFeedbackSequence = 0;
 	let learnerPanelCollapsed = false;
+	let learnerGridScrollTop = 0;
 	let replayArtifactsScrollLeft = 0;
 	let replayState = {
 		open: false,
@@ -3240,6 +3241,9 @@
 		}
 		const learnerPhrase = normalizeLearnerSourceText(context?.label || context?.conceptLabel || "");
 		if (learnerPhrase && learnerPhrase.length >= 5 && ` ${actionText} `.includes(` ${learnerPhrase} `)) score += 12;
+		const relatedActions = relatedLearnerActions(action, actions);
+		if (isLearnerHighlightAction(action) && relatedActions.some((candidate) => candidate?.type === "note")) score += 16;
+		if (action?.type === "note" && relatedActions.some(isLearnerHighlightAction)) score += 8;
 		if (options.includeAnnotationIdBonus !== false && String(source?.annotationId || "").trim() && String(action?.annotationId || "").trim() === String(source.annotationId).trim()) score += 100;
 		return score;
 	}
@@ -3272,7 +3276,8 @@
 			.sort((left, right) => right.score - left.score);
 		if (exactCurrentPage) {
 			const exactSemanticScore = scoreLearnerActionMatch(exactCurrentPage, actions, source, context, { includeAnnotationIdBonus: false, includeTurnText: false });
-			if (!hasContextText || exactSemanticScore > 0 || (semanticRanked[0]?.score || 0) < 4) return exactCurrentPage;
+			const topSemanticScore = semanticRanked[0]?.score || 0;
+			if (!hasContextText || (exactSemanticScore > 0 && exactSemanticScore >= topSemanticScore) || topSemanticScore < 4) return exactCurrentPage;
 		}
 		if (target === "note") {
 			const noteCandidates = preferredCandidates.filter((action) => action?.type === "note");
@@ -3364,7 +3369,12 @@
 		if (learnerPanelEl.hidden) {
 			learnerPanelEl.innerHTML = "";
 			learnerSourceFeedback = null;
+			learnerGridScrollTop = 0;
 			return;
+		}
+		const previousLearnerGrid = learnerPanelEl.querySelector(".onhand-learner-grid");
+		if (previousLearnerGrid instanceof HTMLElement) {
+			learnerGridScrollTop = previousLearnerGrid.scrollTop;
 		}
 
 		const visibleConcepts = concepts;
@@ -3410,6 +3420,17 @@
 			</div>
 			</div>
 		`;
+		const learnerGrid = learnerPanelEl.querySelector(".onhand-learner-grid");
+		if (learnerGrid instanceof HTMLElement) {
+			learnerGrid.scrollTop = learnerGridScrollTop;
+			learnerGrid.addEventListener(
+				"scroll",
+				() => {
+					learnerGridScrollTop = learnerGrid.scrollTop;
+				},
+				{ passive: true },
+			);
+		}
 	}
 
 	function getSelectedSessionPath(targetSessionPath = "") {
