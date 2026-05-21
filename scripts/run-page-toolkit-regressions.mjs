@@ -59,9 +59,9 @@ async function createToolkit(html) {
 	};
 }
 
-async function assertHighlight({ name, html, query, expectedText, expectedFallback }) {
+async function assertHighlight({ name, html, query, expectedText, expectedFallback, options = {} }) {
 	const { toolkit } = await createToolkit(html);
-	const result = await toolkit.highlightText(query, { scrollIntoView: false });
+	const result = await toolkit.highlightText(query, { scrollIntoView: false, ...options });
 	assert.match(result.matchedText, expectedText, `${name}: matched text`);
 	if (expectedFallback) {
 		assert.equal(result.fallback, expectedFallback, `${name}: fallback`);
@@ -92,6 +92,109 @@ async function assertNoteDoesNotClearFloats() {
 	assert.ok(note, "note card was not inserted");
 	assert.equal(dom.window.getComputedStyle(note).clear, "none", "note cards must not clear floated page media");
 	assert.equal(note.previousElementSibling?.tagName, "P", "note should be inserted directly after the highlighted paragraph");
+}
+
+async function assertExactSourceModeDoesNotApproximate() {
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>The Promise object represents the eventual completion (or failure) of an asynchronous operation and its resulting value.</p>
+		</main>
+	`);
+	await assert.rejects(
+		() =>
+			toolkit.highlightText("Promise represents eventual completion failure asynchronous operation resulting value", {
+				scrollIntoView: false,
+				exactOnly: true,
+				allowApproximate: false,
+			}),
+		/No visible text matched/i,
+	);
+}
+
+async function assertExactSourceModeReusesExistingHighlight() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>The convergence property is Q = QP for a stationary distribution.</p>
+		</main>
+	`);
+	const first = await toolkit.highlightText("Q = QP", { scrollIntoView: false });
+	const second = await toolkit.highlightText("Q = QP", {
+		scrollIntoView: false,
+		clearExisting: false,
+		exactOnly: true,
+		allowApproximate: false,
+		reuseExisting: true,
+	});
+	assert.equal(second.annotationId, first.annotationId);
+	assert.equal(second.reusedExisting, true);
+	assert.equal(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]").length, 1);
+}
+
+async function assertExactMathSourceModeMatchesRenderedMathJax() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>
+				Thus, the process converges to a unique stationary distribution.
+				<script type="math/tex; mode=display" id="MathJax-Element-1">{\\bf q} = {\\bf q} {\\bf P}  .</script>
+				<span class="MathJax_Display"><span class="MathJax" id="MathJax-Element-1-Frame"></span></span>
+			</p>
+			<p>Algorithm 1 begins after the display equation.</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("q = qP", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+	});
+	assert.equal(highlight.fallback, "math-source");
+	assert.equal(highlight.approximate, false);
+	const highlighted = dom.window.document.querySelector("[data-onhand-highlight-kind]");
+	assert.ok(highlighted?.classList.contains("MathJax_Display"), "expected rendered MathJax display to be highlighted");
+	await toolkit.showNote(highlight.annotationId, "Stationary means applying the transition leaves q unchanged.", {
+		scrollIntoView: false,
+	});
+	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
+	assert.ok(note, "math-source highlight should support notes");
+	assert.equal(note.previousElementSibling?.getAttribute("data-onhand-highlight-kind"), "block");
+}
+
+async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p id="stationary">
+				Thus, the process converges to a unique stationary distribution.
+				And this unique stationary distribution $$ {\\bf q} = {\\bf q} {\\bf P}  .$$
+			</p>
+			<p>Algorithm 1 begins after the display equation.</p>
+		</main>
+	`);
+	let converted = false;
+	dom.window.MathJax = {
+		Hub: {
+			Queue(callback) {
+				if (!converted) {
+					converted = true;
+					const paragraph = dom.window.document.getElementById("stationary");
+					paragraph.innerHTML = `
+						Thus, the process converges to a unique stationary distribution.
+						And this unique stationary distribution
+						<script type="math/tex; mode=display" id="MathJax-Element-2">{\\bf q} = {\\bf q} {\\bf P}  .</script>
+						<span class="MathJax_Display"><span class="MathJax" id="MathJax-Element-2-Frame"></span></span>
+					`;
+				}
+				dom.window.setTimeout(callback, 0);
+			},
+		},
+	};
+	const highlight = await toolkit.highlightText("q = qP", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+	});
+	assert.equal(highlight.fallback, "math-source");
+	const highlighted = dom.window.document.querySelector("[data-onhand-highlight-kind]");
+	assert.ok(highlighted?.classList.contains("MathJax_Display"), "expected delayed MathJax render target to be highlighted");
+	assert.notEqual(highlighted?.id, "stationary", "raw TeX paragraph should not be highlighted");
 }
 
 async function main() {
@@ -125,6 +228,10 @@ async function main() {
 	});
 
 	await assertNoteDoesNotClearFloats();
+	await assertExactSourceModeDoesNotApproximate();
+	await assertExactSourceModeReusesExistingHighlight();
+	await assertExactMathSourceModeMatchesRenderedMathJax();
+	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 
 	console.log("Page toolkit regressions: PASS");
 }

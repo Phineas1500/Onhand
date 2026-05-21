@@ -147,10 +147,10 @@ npm run acceptance:chrome -- --suite=all
 - If you previously loaded the unpacked extension from the old top-level `browser-extension/` path, reload it from `packages/browser-extension/`.
 - `chrome.debugger` is a powerful permission and may show a browser warning while attached.
 - Some pages cannot be debugged, such as privileged browser pages.
-- Session restore/replay is now best-effort for browser-only artifacts; full replay fidelity is still in progress.
+- Session restore/review is now artifact-backed for annotated turns. The side panel's Review action can preview saved snapshots/transcripts, and annotated replies automatically save an HTML/screenshot snapshot when the model did not explicitly capture one. Restore fidelity for changed pages and missing tabs is still in progress.
 
 ## Likely next steps
 
-- stronger replay/restore fidelity beyond best-effort text matching
+- stronger replay/restore fidelity for changed pages and missing tabs beyond best-effort text matching
 - move sessions/artifacts from `chrome.storage.local` to IndexedDB once transcripts and captured artifacts grow
 - PDF/document support after the browser-grounded MVP is solid

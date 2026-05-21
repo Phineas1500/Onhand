@@ -65,6 +65,12 @@ function createReplayHost(options = {}) {
 			}
 			if (name === "activate_tab") return { tab };
 			if (name === "clear_annotations") return { tab, cleared: true };
+			if (name === "scroll_to_annotation") {
+				if (options.rejectScrollToAnnotation?.(String(args.annotationId || ""), args)) {
+					throw new Error(`No annotation found: ${args.annotationId}`);
+				}
+				return { tab, annotation: { annotationId: String(args.annotationId || "") } };
+			}
 			if (name === "highlight_text") {
 				if (options.rejectHighlightText?.(String(args.text || ""))) {
 					throw new Error(`No visible text matched: ${args.text}`);
@@ -86,6 +92,33 @@ function createReplayHost(options = {}) {
 						text: "Replay smoke page with Alpha smoke content available for highlighting.",
 					},
 				};
+			}
+			if (name === "capture_state") {
+				return {
+					tab,
+					page: {
+						title: tab.title,
+						url: tab.url,
+						scrollX: 0,
+						scrollY: 120,
+						viewport: { width: 1200, height: 800 },
+						annotations: [
+							{
+								annotationId: "replay-highlight",
+								kind: "inline",
+								matchedText: "Alpha smoke content",
+								note: { text: "Replay smoke note", label: "Onhand" },
+							},
+						],
+						annotationCount: 1,
+					},
+				};
+			}
+			if (name === "get_dom") {
+				return { tab, outerHTML: "<main><h1>Replay smoke page</h1><p>Alpha smoke content</p></main>" };
+			}
+			if (name === "capture_screenshot") {
+				return { tab, method: "debugger", dataUrl: "data:image/png;base64,UkVQTEFZ" };
 			}
 			return { tab, ok: true };
 		},
@@ -647,8 +680,10 @@ async function assertSessionReplayRestore() {
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete before replay regression timeout");
 	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
 	const session = store.sessions[store.currentSessionId];
-	assert.deepEqual(session.artifactIds, []);
+	assert.equal(session.artifactIds.length, 1, "annotated turns should auto-save a review snapshot");
 	assert.equal(session.pageActions.some((action) => action.key === "highlight:replay-highlight"), true);
+	session.artifactIds = [];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
 
 	const listed = await runtime.listSessions();
 	assert.equal(listed.sessions.length, 1);
@@ -900,6 +935,147 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
 }
 
+async function assertArtifactRestoreUsesStrictReusableMatchingForShortMath() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" })],
+		rejectHighlightText: (text) => text !== "q = qP",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_short_math_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_short_math_restore: {
+				id: "artifact_short_math_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "short math restore",
+				tab: replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" }),
+				page: {
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotations: [
+						{
+							annotationId: "ann-math",
+							kind: "inline",
+							matchedText: "q=qP",
+							note: { text: "q is stationary under one transition.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restored.restoredPages[0].restoredNotes, 1);
+	assert.deepEqual(highlightCalls.map((call) => call.args.text), ["q=qP", "q = qP"]);
+	assert.equal(highlightCalls.at(-1)?.args.exactOnly, true);
+	assert.equal(highlightCalls.at(-1)?.args.allowApproximate, false);
+	assert.equal(highlightCalls.at(-1)?.args.reuseExisting, true);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "replay-highlight"), true);
+}
+
+async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	let spacedMathAttempts = 0;
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" })],
+		rejectHighlightText: (text) => text === "q=qP" || (text === "q = qP" && ++spacedMathAttempts === 1),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_failed_math_restore"];
+	session.pageActions = [
+		{
+			key: "highlight:ann-math",
+			type: "annotation",
+			tabId: 7,
+			title: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-math",
+			label: "Highlighted text",
+			detail: "q = qP",
+			citationText: "q = qP",
+		},
+		{
+			key: "note:ann-math",
+			type: "note",
+			tabId: 7,
+			title: "BayesianDL",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-math",
+			label: "Added note",
+			detail: "q is stationary under one transition.",
+			citationText: "q is stationary under one transition.",
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_failed_math_restore: {
+				id: "artifact_failed_math_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "failed math restore",
+				tab: replaySmokeTab({ title: "BayesianDL", url: "https://example.test/bayesian-dl" }),
+				page: {
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					annotations: [
+						{
+							annotationId: "ann-math",
+							kind: "inline",
+							matchedText: "q=qP",
+							note: { text: "q is stationary under one transition.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const highlightTexts = restoreCalls.filter((call) => call.name === "highlight_text").map((call) => call.args.text);
+	const replayPage = restored.restoredPages.find((page) => page.source === "browser-replay");
+	const artifactPage = restored.restoredPages.find((page) => page.source === "browser-artifact");
+	assert.equal(restored.restoredPages.length, 2);
+	assert.equal(artifactPage?.failedCount, 1);
+	assert.equal(replayPage?.restoredAnnotations, 1);
+	assert.equal(replayPage?.restoredNotes, 1);
+	assert.deepEqual(highlightTexts, ["q=qP", "q = qP", "q = qP"]);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), true);
+	assert.equal(restoreCalls.filter((call) => call.name === "clear_annotations" && call.args.tabId === 7).length, 1);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.note === "q is stationary under one transition."), true);
+}
+
 async function assertSessionReplaySnapshotPayload() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -987,6 +1163,445 @@ async function assertSessionReplaySnapshotPayload() {
 	assert.equal(detail.artifact.annotations[0].noteLabel, "Onhand");
 }
 
+async function assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "Highlight Alpha smoke content and answer briefly.",
+		displayPrompt: "auto snapshot regression",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete auto snapshot regression");
+
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	assert.equal(session.artifactIds.length, 1, "expected successful annotated turn to save one review snapshot");
+	assert.equal(
+		host.calls.some((call) => call.name === "capture_state" && call.args.persist === true && call.args.includeHtml === true && call.args.includeScreenshot === true && call.args.windowId === 3),
+		true,
+	);
+	assert.equal(host.calls.some((call) => call.name === "get_dom" && call.args.windowId === 3), true);
+	assert.equal(host.calls.some((call) => call.name === "capture_screenshot" && call.args.windowId === 3), true);
+
+	const artifacts = globalThis.chrome.storage.local.data.onhandBrowserArtifacts;
+	const artifact = artifacts[session.artifactIds[0]];
+	assert.equal(artifact.sessionId, session.id);
+	assert.match(artifact.label, /^Review snapshot:/);
+	assert.equal(artifact.outerHTML.includes("Replay smoke page"), true);
+	assert.equal(artifact.screenshotDataUrl, "data:image/png;base64,UkVQTEFZ");
+
+	const replay = await runtime.getSessionReplay(session.id);
+	assert.equal(replay.selectedArtifactId, session.artifactIds[0]);
+	assert.equal(replay.artifacts.length, 1);
+	assert.equal(replay.artifacts[0].hasHtml, true);
+	assert.equal(replay.artifacts[0].hasScreenshot, true);
+	assert.equal(replay.session.artifactCount, 1);
+}
+
+async function assertReplayActionActivationCanTargetSavedSession() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				windowId: 3,
+				active: true,
+				title: "Current live page",
+				url: "https://example.test/current",
+			}),
+			replaySmokeTab({
+				id: 8,
+				windowId: 4,
+				active: false,
+				title: "Saved replay page",
+				url: "https://example.test/saved",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const savedSessionId = "session_saved_replay_action";
+	store.sessions[savedSessionId] = {
+		id: savedSessionId,
+		name: "Saved replay action",
+		createdAt: "2026-05-17T12:00:00.000Z",
+		updatedAt: "2026-05-17T12:00:00.000Z",
+		messages: [],
+		pageActions: [],
+		artifactIds: [],
+		learnerState: { mode: "answer", conceptsIntroduced: [], openChecks: [], responses: [] },
+		turns: [
+			{
+				id: "turn-saved-action",
+				userPrompt: "Where was this saved?",
+				reply: "The saved citation points back to a non-current session.",
+				activities: [],
+				pageActions: [
+					{
+						key: "highlight:saved-session",
+						type: "annotation",
+						tabId: 8,
+						windowId: 4,
+						title: "Saved replay page",
+						url: "https://example.test/saved",
+						annotationId: "ann-saved-session",
+						label: "Highlighted text",
+						detail: "Saved replay source",
+						citationText: "Saved replay source",
+					},
+				],
+				pending: false,
+				error: false,
+				createdAt: "2026-05-17T12:00:00.000Z",
+			},
+		],
+	};
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:saved-session", { sessionId: savedSessionId });
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(activateCalls.some((call) => call.name === "activate_tab" && call.args.tabId === 8), true);
+	assert.equal(
+		activateCalls.some(
+			(call) => call.name === "scroll_to_annotation" && call.args.tabId === 8 && call.args.annotationId === "ann-saved-session",
+		),
+		true,
+	);
+}
+
+async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-ann",
+		rejectHighlightText: (text) => text === "Q=QP",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:old-ann",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Replay smoke page",
+			url: "https://example.test/replay-smoke",
+			annotationId: "old-ann",
+			label: "Highlighted text",
+			detail: "Q=QP [1]",
+			citationText: "Q=QP [1]",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	const activated = await runtime.activateAction("highlight:old-ann");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(highlightCalls.length, 2);
+	assert.deepEqual(highlightCalls.map((call) => call.args.text), ["Q=QP", "Q = QP"]);
+	assert.equal(highlightCalls[1]?.args.exactOnly, true);
+	assert.equal(highlightCalls[1]?.args.allowApproximate, false);
+	assert.equal(highlightCalls[1]?.args.reuseExisting, true);
+	assert.equal(activated.annotationId, "replay-highlight");
+
+	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	assert.equal(savedAction.annotationId, "replay-highlight");
+}
+
+async function assertReplayNoteActivationUsesPairedHighlightSource() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-ann",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:old-ann",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "old-ann",
+			label: "Highlighted text",
+			detail: "Q = QP",
+			citationText: "Q = QP",
+		},
+		{
+			key: "note:old-ann",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "old-ann",
+			label: "Added note",
+			detail: "Stationary means applying the transition keeps the distribution fixed.",
+			citationText: "Stationary means applying the transition keeps the distribution fixed.",
+		},
+	];
+	session.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [
+			{
+				conceptId: "concept_stationary",
+				label: "Stationary distribution",
+				firstSeenAt: "2026-05-17T12:00:00.000Z",
+				lastSeenAt: "2026-05-17T12:00:00.000Z",
+				sources: [
+					{
+						annotationId: "old-ann",
+						tabTitle: "Bayesian Deep Learning",
+						url: "https://example.test/bayesian-dl",
+					},
+				],
+			},
+		],
+		openChecks: [
+			{
+				checkId: "check-stationary",
+				kind: "prediction",
+				conceptId: "concept_stationary",
+				promptText: "What stays fixed here?",
+				annotationId: "old-ann",
+				askedAt: "2026-05-17T12:00:01.000Z",
+			},
+		],
+		responses: [],
+	};
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("note:old-ann");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	const noteCalls = activateCalls.filter((call) => call.name === "show_note");
+	assert.equal(highlightCalls.length, 1);
+	assert.equal(highlightCalls[0]?.args.text, "Q = QP");
+	assert.equal(highlightCalls[0]?.args.exactOnly, true);
+	assert.equal(highlightCalls[0]?.args.reuseExisting, true);
+	assert.equal(noteCalls.length, 1);
+	assert.equal(noteCalls[0]?.args.annotationId, "replay-highlight");
+	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the transition keeps the distribution fixed.");
+	assert.equal(noteCalls[0]?.args.scrollIntoView, true);
+
+	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedActions = savedSession.pageActions;
+	assert.equal(savedActions.find((action) => action.key === "highlight:old-ann").annotationId, "replay-highlight");
+	assert.equal(savedActions.find((action) => action.key === "note:old-ann").annotationId, "replay-highlight");
+	assert.equal(savedSession.learnerState.conceptsIntroduced[0].sources[0].annotationId, "replay-highlight");
+	assert.equal(savedSession.learnerState.openChecks[0].annotationId, "replay-highlight");
+}
+
+async function assertReplayNoteActivationReplaysNoteWhenAnnotationExists() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:ann-stationary",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-stationary",
+			label: "Highlighted text",
+			detail: "q = qP",
+			citationText: "q = qP",
+		},
+		{
+			key: "note:ann-stationary",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "ann-stationary",
+			label: "Added note",
+			detail: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("note:ann-stationary");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	const noteCalls = activateCalls.filter((call) => call.name === "show_note");
+	assert.equal(highlightCalls.length, 0, "existing annotations should not be re-highlighted just to replay a note");
+	assert.equal(
+		activateCalls.some(
+			(call) =>
+				call.name === "scroll_to_annotation" &&
+				call.args.annotationId === "ann-stationary" &&
+				call.args.target === "note",
+		),
+		true,
+	);
+	assert.equal(noteCalls.length, 1);
+	assert.equal(noteCalls[0]?.args.annotationId, "ann-stationary");
+	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the Markov transition once leaves the distribution unchanged.");
+	assert.equal(noteCalls[0]?.args.scrollIntoView, true);
+}
+
+async function assertReplayNoteActivationUsesRepairedPairedHighlightAnchor() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-ann",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:old-ann",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "current-ann",
+			label: "Highlighted text",
+			detail: "q = qP",
+			citationText: "q = qP",
+		},
+		{
+			key: "note:old-ann",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "old-ann",
+			label: "Added note",
+			detail: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("note:old-ann");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	const scrollCalls = activateCalls.filter((call) => call.name === "scroll_to_annotation");
+	const noteCalls = activateCalls.filter((call) => call.name === "show_note");
+	assert.equal(highlightCalls.length, 0, "paired live highlight anchor should avoid re-highlighting note text");
+	assert.equal(scrollCalls[0]?.args.annotationId, "current-ann");
+	assert.equal(scrollCalls[0]?.args.target, "note");
+	assert.equal(noteCalls.length, 1);
+	assert.equal(noteCalls[0]?.args.annotationId, "current-ann");
+	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the Markov transition once leaves the distribution unchanged.");
+
+	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions.find(
+		(action) => action.key === "note:old-ann",
+	);
+	assert.equal(savedAction.annotationId, "current-ann");
+}
+
+async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const unrelatedSentence = "Markov chain with transition matrix P, whose unique stationary distribution is pi.";
+	const exactCitation = `Q = QP. ${unrelatedSentence}`;
+	const host = createReplayHost({
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-source",
+		rejectHighlightText: (text) => text !== unrelatedSentence,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:old-source",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Bayesian Deep Learning",
+			url: "https://example.test/bayesian-dl",
+			annotationId: "old-source",
+			label: "Highlighted text",
+			detail: exactCitation,
+			citationText: exactCitation,
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await assert.rejects(() => runtime.activateAction("highlight:old-source"), /Source not found on this page/);
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(highlightCalls.length, 1);
+	assert.equal(highlightCalls[0]?.args.text, exactCitation);
+	assert.equal(highlightCalls[0]?.args.exactOnly, true);
+	assert.equal(highlightCalls[0]?.args.allowApproximate, false);
+	assert.equal(highlightCalls[0]?.args.reuseExisting, true);
+	assert.equal(highlightCalls.some((call) => call.args.text === unrelatedSentence), false);
+
+	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	assert.equal(savedAction.annotationId, "old-source");
+}
+
 async function assertSidePanelPromptTargetsOriginWindow() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -1061,7 +1676,16 @@ async function main() {
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
+	await assertArtifactRestoreUsesStrictReusableMatchingForShortMath();
+	await assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails();
 	await assertSessionReplaySnapshotPayload();
+	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();
+	await assertReplayActionActivationCanTargetSavedSession();
+	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
+	await assertReplayNoteActivationUsesPairedHighlightSource();
+	await assertReplayNoteActivationReplaysNoteWhenAnnotationExists();
+	await assertReplayNoteActivationUsesRepairedPairedHighlightAnchor();
+	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");

@@ -1397,10 +1397,32 @@ function stripReplayCitationMarkers(value: string) {
 		.trim();
 }
 
+function addUniqueReplayCandidate(candidates: string[], value: string) {
+	const text = stripReplayCitationMarkers(value);
+	if (!candidates.includes(text)) candidates.push(text);
+}
+
+function replayMathSpacingVariants(value: string) {
+	const text = stripReplayCitationMarkers(value);
+	if (!text || text.length > 80 || text.split(/\s+/).length > 8) return [];
+	if (!/[A-Za-z0-9)\]]\s*[=<>+\-*/]\s*[A-Za-z0-9([]/.test(text)) return [];
+	return [
+		text.replace(/\s*([=<>+\-*/])\s*/g, " $1 ").replace(/\s+/g, " ").trim(),
+		text.replace(/\s*([=<>+\-*/])\s*/g, "$1").replace(/\s+/g, " ").trim(),
+	].filter(Boolean);
+}
+
+function addReplayExactCandidate(candidates: string[], value: string) {
+	const text = stripReplayCitationMarkers(value);
+	if (!text) return;
+	addUniqueReplayCandidate(candidates, text);
+	for (const variant of replayMathSpacingVariants(text)) addUniqueReplayCandidate(candidates, variant);
+}
+
 function addReplayHighlightCandidate(candidates: string[], value: string) {
 	const text = stripReplayCitationMarkers(value);
 	if (text.length < 12) return;
-	if (!candidates.includes(text)) candidates.push(text);
+	addReplayExactCandidate(candidates, text);
 }
 
 function trimReplayConnector(value: string) {
@@ -2887,6 +2909,12 @@ function appendUniquePageAction(actions: PageAction[], action: PageAction | null
 	return true;
 }
 
+function isReviewableAnnotationAction(action: PageAction | null | undefined) {
+	if (!action || typeof action !== "object") return false;
+	if (action.type === "note") return true;
+	return action.type === "annotation" && (String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text");
+}
+
 function getPublicActivities(activities: UiActivity[] = []) {
 	return activities.filter((activity) => activity?.kind === "tool" && !isInternalToolName(activity.toolName || ""));
 }
@@ -3012,6 +3040,28 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		uiState.updatedAt = Date.now();
 	}
 
+	function shouldAutoPersistReviewSnapshot(request: any) {
+		if (!request || request.aborted) return false;
+		if (Array.isArray(request.artifactIds) && request.artifactIds.length > 0) return false;
+		return Array.isArray(request.pageActions) && request.pageActions.some(isReviewableAnnotationAction);
+	}
+
+	async function autoPersistReviewSnapshot(session: RuntimeSession, request: any, finalError: Error | null) {
+		if (finalError || !shouldAutoPersistReviewSnapshot(request)) return;
+		try {
+			const labelBase = session.name || request.displayPrompt || "Onhand review snapshot";
+			const result = await captureArtifact({
+				persist: true,
+				includeHtml: true,
+				includeScreenshot: true,
+				label: `Review snapshot: ${truncate(labelBase, 96)}`,
+			});
+			appendUniquePageAction(request.pageActions, buildPageAction("browser_capture_state", { details: result }));
+		} catch (error) {
+			host.log?.("automatic review snapshot capture failed", error);
+		}
+	}
+
 	function beginRequest(session: RuntimeSession, settings: RuntimeSettings, requestId: string, displayPrompt: string) {
 		const now = nowIso();
 		uiState = {
@@ -3040,6 +3090,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const agentMessages = messagesOverride || activeAgent?.state.messages || [];
 		const finalError = error || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
 		const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
+		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = getPublicActivities(uiState?.activities || []);
 		updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
 		const turn: UiTurn = {
@@ -3345,12 +3396,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				const text = String(annotation?.matchedText || "").trim();
 				if (!text) continue;
 				try {
-					const highlighted = await host.runCommand("highlight_text", {
-						tabId,
-					text,
-					clearExisting: false,
-					scrollIntoView: false,
-				});
+					const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false });
 				restoredAnnotations += 1;
 				const noteText = String(annotation?.note?.text || "").trim();
 				const annotationId = highlighted?.annotation?.annotationId;
@@ -3453,13 +3499,21 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	async function highlightTextWithReplayCandidates(tabId: number, text: string, options: any = {}) {
 		let lastError: any = null;
+		const candidates: string[] = [];
+		addReplayExactCandidate(candidates, compactActionText(text));
 		for (const candidate of getReplayHighlightCandidates(text)) {
+			if (!candidates.includes(candidate)) candidates.push(candidate);
+		}
+		for (const candidate of candidates) {
 			try {
 				const result = await host.runCommand("highlight_text", {
 					tabId,
 					text: candidate,
 					clearExisting: false,
 					scrollIntoView: options.scrollIntoView !== false,
+					exactOnly: true,
+					allowApproximate: false,
+					reuseExisting: true,
 				});
 				return result;
 			} catch (error) {
@@ -3467,6 +3521,96 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 		}
 		throw lastError || new Error(`No visible text matched: ${text}`);
+	}
+
+	async function highlightExactReplaySource(tabId: number, text: string, options: any = {}) {
+		const sourceText = stripReplayCitationMarkers(compactActionText(text));
+		if (!sourceText) throw new Error("Source not found on this page.");
+		const candidates: string[] = [];
+		addReplayExactCandidate(candidates, sourceText);
+		for (const candidate of candidates) {
+			try {
+				return await host.runCommand("highlight_text", {
+					tabId,
+					text: candidate,
+					clearExisting: false,
+					scrollIntoView: options.scrollIntoView !== false,
+					exactOnly: true,
+					allowApproximate: false,
+					reuseExisting: true,
+				});
+			} catch (error: any) {
+				// Try the next exact spacing variant before surfacing a source miss.
+			}
+		}
+		throw new Error(`Source not found on this page: ${sourceText}`);
+	}
+
+function isHighlightPageAction(action: PageAction | null | undefined) {
+	return Boolean(
+		action &&
+			action.type === "annotation" &&
+			(String(action.key || "").startsWith("highlight:") || action.label === "Highlighted text"),
+	);
+}
+
+function actionKeySuffix(action: PageAction | null | undefined, prefix: string) {
+	const key = compactActionText(action?.key);
+	return key.startsWith(prefix) ? key.slice(prefix.length) : "";
+}
+
+function actionUrlKey(action: PageAction | null | undefined) {
+	return compactActionText(action?.url).split("#")[0];
+}
+
+function actionTitleKey(action: PageAction | null | undefined) {
+	return compactActionText(action?.title).toLowerCase();
+}
+
+function actionSamePage(left: PageAction | null | undefined, right: PageAction | null | undefined) {
+	const leftUrl = actionUrlKey(left);
+	const rightUrl = actionUrlKey(right);
+	if (leftUrl && rightUrl) return leftUrl === rightUrl;
+	const leftTitle = actionTitleKey(left);
+	const rightTitle = actionTitleKey(right);
+	return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
+}
+
+function findPairedHighlightAction(action: PageAction, actions: PageAction[] = []) {
+	const annotationId = compactActionText(action.annotationId);
+	if (action.type !== "note") return null;
+	const highlights = actions.filter((candidate) => candidate && candidate !== action && isHighlightPageAction(candidate));
+	if (annotationId) {
+		const byAnnotation = highlights.find((candidate) => compactActionText(candidate.annotationId) === annotationId);
+		if (byAnnotation) return byAnnotation;
+	}
+	const noteSuffix = actionKeySuffix(action, "note:");
+	if (noteSuffix) {
+		const byKey = highlights.find(
+			(candidate) => actionKeySuffix(candidate, "highlight:") === noteSuffix && actionSamePage(candidate, action),
+		);
+		if (byKey) return byKey;
+	}
+	const samePageHighlights = highlights.filter((candidate) => actionSamePage(candidate, action));
+	const actionIndex = actions.indexOf(action);
+	if (actionIndex >= 0) {
+		const priorHighlights = samePageHighlights.filter((candidate) => {
+			const candidateIndex = actions.indexOf(candidate);
+			return candidateIndex >= 0 && candidateIndex < actionIndex;
+		});
+		const nearestPrior = priorHighlights[priorHighlights.length - 1];
+		if (nearestPrior) return nearestPrior;
+	}
+	return samePageHighlights.length === 1 ? samePageHighlights[0] : null;
+}
+
+function findPairedHighlightSourceText(action: PageAction, actions: PageAction[] = []) {
+	const paired = findPairedHighlightAction(action, actions);
+	return compactActionText(paired?.citationText || paired?.detail);
+}
+
+	function activationSourceText(action: PageAction, actions: PageAction[] = []) {
+		return findPairedHighlightSourceText(action, actions) || compactActionText(action.citationText || action.detail);
 	}
 
 	function updateReplayActionArray(actions: PageAction[] | undefined, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any) {
@@ -3491,6 +3635,30 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return changed;
 	}
 
+	function updateLearnerStateAnnotationTargets(learnerState: LearnerState | undefined, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any) {
+		if (!learnerState || typeof learnerState !== "object") return false;
+		const oldAnnotationId = annotation.annotationId || "";
+		const newAnnotationId = restoredAnnotation?.annotationId || oldAnnotationId;
+		if (!oldAnnotationId || !newAnnotationId || oldAnnotationId === newAnnotationId) return false;
+		let changed = false;
+		const updateSource = (source: LearnerConceptSource | undefined) => {
+			if (!source || source.annotationId !== oldAnnotationId) return;
+			source.annotationId = newAnnotationId;
+			if (tab?.title) source.tabTitle = tab.title;
+			if (tab?.url) source.url = tab.url;
+			changed = true;
+		};
+		for (const concept of Array.isArray(learnerState.conceptsIntroduced) ? learnerState.conceptsIntroduced : []) {
+			for (const source of Array.isArray(concept.sources) ? concept.sources : []) updateSource(source);
+		}
+		for (const check of Array.isArray(learnerState.openChecks) ? learnerState.openChecks : []) {
+			if (check.annotationId !== oldAnnotationId) continue;
+			check.annotationId = newAnnotationId;
+			changed = true;
+		}
+		return changed;
+	}
+
 	function updateSessionReplayActionTargets(session: RuntimeSession, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any) {
 		let changed = updateReplayActionArray(session.pageActions, annotation, tab, restoredAnnotation);
 		if (Array.isArray(session.turns)) {
@@ -3498,6 +3666,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				changed = updateReplayActionArray(turn.pageActions, annotation, tab, restoredAnnotation) || changed;
 			}
 		}
+		changed = updateLearnerStateAnnotationTargets(session.learnerState, annotation, tab, restoredAnnotation) || changed;
 		if (changed) session.updatedAt = nowIso();
 		return changed;
 	}
@@ -3614,6 +3783,15 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			});
 		}
 		return restored;
+	}
+
+	function restoredArtifactNeedsReplayFallback(result: any) {
+		const annotations = Array.isArray(result?.artifact?.page?.annotations) ? result.artifact.page.annotations : [];
+		if (!annotations.length) return false;
+		if (Array.isArray(result?.failures) && result.failures.length) return true;
+		const expectedAnnotations = annotations.filter((annotation: any) => String(annotation?.matchedText || "").trim()).length;
+		const expectedNotes = annotations.filter((annotation: any) => String(annotation?.note?.text || "").trim()).length;
+		return Number(result?.restoredAnnotations || 0) < expectedAnnotations || Number(result?.restoredNotes || 0) < expectedNotes;
 	}
 
 	const artifactHooks: RuntimeArtifactHooks = {
@@ -3844,16 +4022,24 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const session = store.sessions[targetSessionId] as RuntimeSession;
 			if (!session) throw new Error("Session not found.");
 			const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
-			const restored: any[] = artifactIds.length
-				? []
-				: await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: true });
+			const pageActions = collectSessionPageActions(session);
+			const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
+			const restored: any[] = [];
 			for (const artifactId of artifactIds) {
 				restored.push(await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true }));
 			}
+			const needsReplayRestore = !artifactIds.length || (replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
+			if (needsReplayRestore) {
+				restored.push(...await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: !artifactIds.length }));
+			}
 			const restoredPages = restored.map(summarizeRestoredArtifact);
 			const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
-			const status = artifactIds.length
-				? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.`
+			const replayPages = restored.filter((page) => page?.source === "browser-replay");
+			const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
+			const status = artifactPages.length && replayPages.length
+				? `Restored ${artifactPages.length} saved page state${artifactPages.length === 1 ? "" : "s"} and replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"}.`
+				: artifactIds.length
+					? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.`
 				: `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
 			session.updatedAt = nowIso();
 			store.sessions[targetSessionId] = session;
@@ -3966,38 +4152,106 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			};
 		},
 
-		async activateAction(actionKey: string) {
-			const state = await ensureUiState();
-			const actions = [
-				...(Array.isArray(state.pageActions) ? state.pageActions : []),
-				...(Array.isArray(state.turns) ? state.turns.flatMap((turn: UiTurn) => turn.pageActions || []) : []),
-			];
-			const action = actions.find((candidate: PageAction) => candidate.key === actionKey);
+		async activateAction(actionKey: string, options: any = {}) {
+			const store = await loadStore();
+			const requestedSessionId = String(options?.sessionId || options?.sessionPath || store.currentSessionId || "").trim();
+			const session = store.sessions[requestedSessionId] as RuntimeSession;
+			if (!session) throw new Error("Session not found.");
+			const isCurrentSession = requestedSessionId === store.currentSessionId;
+			const state = isCurrentSession ? await ensureUiState() : null;
+			const sessionActions = collectSessionPageActions(session);
+			const stateActions = state
+				? [
+						...(Array.isArray(state.pageActions) ? state.pageActions : []),
+						...(Array.isArray(state.turns) ? state.turns.flatMap((turn: UiTurn) => turn.pageActions || []) : []),
+					]
+				: [];
+			const allActions = [...sessionActions, ...stateActions];
+			let action = sessionActions.find((candidate: PageAction) => candidate.key === actionKey);
+			const actionBelongsToSession = Boolean(action);
+			action = action || stateActions.find((candidate: PageAction) => candidate.key === actionKey);
 			if (!action) throw new Error("Could not find that Onhand page action.");
+			const pairedHighlight = findPairedHighlightAction(action, allActions);
 			const tab = await resolveActionTab(action);
 			const tabId = typeof tab?.id === "number" ? tab.id : undefined;
+			let changed = false;
 			if (action.artifactId) {
 				await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: true });
 			}
-			if (action.annotationId) {
+			if (action.annotationId || (action.type === "note" && pairedHighlight?.annotationId)) {
 				if (typeof tabId !== "number") throw new Error("No matching browser tab is open for that citation.");
+				const targetAnnotationId =
+					action.type === "note" && pairedHighlight?.annotationId ? compactActionText(pairedHighlight.annotationId) : compactActionText(action.annotationId);
+				if (action.type === "note" && targetAnnotationId && targetAnnotationId !== action.annotationId) {
+					action.annotationId = targetAnnotationId;
+					changed = true;
+				}
+				let noteShown = false;
 				try {
 					await host.runCommand("scroll_to_annotation", {
 						tabId,
-						annotationId: action.annotationId,
+						annotationId: targetAnnotationId || action.annotationId,
 						target: action.type === "note" ? "note" : "annotation",
 					});
 				} catch (error) {
-					const citationText = compactActionText(action.citationText || action.detail);
+					const citationText = activationSourceText(action, allActions);
 					if (!citationText) throw error;
-					const highlighted = await highlightTextWithReplayCandidates(tabId, citationText, { scrollIntoView: true });
+					const highlighted = await highlightExactReplaySource(tabId, citationText, { scrollIntoView: true });
 					const annotationId = highlighted?.annotation?.annotationId;
 					if (!annotationId) throw error;
+					const replayTarget = {
+						key: "",
+						actionKeys: action.key ? [action.key] : [],
+						annotationId: action.annotationId || null,
+						matchedText: citationText,
+					};
+					if (actionBelongsToSession) {
+						changed = updateSessionReplayActionTargets(session, replayTarget, tab, highlighted?.annotation) || changed;
+					}
 					action.annotationId = annotationId;
 					action.tabId = tabId;
 					if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
 					if (tab?.title) action.title = tab.title;
 					if (tab?.url) action.url = tab.url;
+					if (action.type === "note") {
+						const noteText = compactActionText(action.citationText || action.detail);
+						if (noteText) {
+							await host.runCommand("show_note", {
+								tabId,
+								annotationId,
+								note: noteText,
+								label: "Onhand",
+								scrollIntoView: true,
+							});
+							noteShown = true;
+						}
+					}
+					changed = true;
+				}
+				if (action.type === "note" && !noteShown) {
+					const noteText = compactActionText(action.citationText || action.detail);
+					const annotationId = compactActionText(action.annotationId);
+					if (noteText && annotationId) {
+						await host.runCommand("show_note", {
+							tabId,
+							annotationId,
+							note: noteText,
+							label: "Onhand",
+							scrollIntoView: true,
+						});
+					}
+				}
+			}
+			if (changed && actionBelongsToSession) {
+				session.updatedAt = nowIso();
+				store.sessions[requestedSessionId] = session;
+				await saveStore(store);
+				if (isCurrentSession) {
+					await publishState({
+						currentSession: buildSessionState(session),
+						turns: session.turns || [],
+						pageActions: session.pageActions || [],
+					});
 				}
 			}
 			return action;

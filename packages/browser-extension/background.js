@@ -1724,12 +1724,95 @@ const createPageToolkit = (options = {}) => {
 
 	const compactHighlightSearchText = (value) => buildSearchProjection(String(value || "").replace(/\s+/g, " ").trim()).compactText;
 
+	const stripTexMarkupForSearch = (value) => {
+		let text = String(value || "");
+		if (!text.trim()) return "";
+		for (let index = 0; index < 6; index += 1) {
+			const replaced = text.replace(
+				/\\(?:bf|mathbf|boldsymbol|mathit|mathrm|mathcal|mathbb|mathsf|mathtt|rm|cal|it|text|operatorname)\s*\{([^{}]*)\}/g,
+				"$1",
+			);
+			if (replaced === text) break;
+			text = replaced;
+		}
+		return text
+			.replace(/\$\$/g, " ")
+			.replace(/\$/g, " ")
+			.replace(/\\(?:left|right|big|Big|bigg|Bigg|displaystyle|textstyle|scriptstyle|scriptscriptstyle)\b/g, " ")
+			.replace(/\\(?:quad|qquad)\b/g, " ")
+			.replace(/\\[,;!:]/g, " ")
+			.replace(/\\(?:vert|mid)\b/g, "|")
+			.replace(/\\(?:to|rightarrow)\b/g, "->")
+			.replace(/\\(?:times|cdot)\b/g, "*")
+			.replace(/\\infty\b/g, "infty")
+			.replace(/\\[a-zA-Z]+\b/g, " ")
+			.replace(/[{}]/g, " ");
+	};
+
+	const normalizeMathSourceSearchText = (value) => normalizeHighlightSearchText(stripTexMarkupForSearch(value));
+
+	const compactMathSourceSearchText = (value) => compactHighlightSearchText(stripTexMarkupForSearch(value));
+
 	const isMathLikeHighlightQuery = (value) => {
 		const text = String(value || "").trim();
 		if (!text) return false;
 		if (/[=()[\]{}_^√∑∏∫+\-*\/\\]|[₀-₉⁰¹²³⁴⁵⁶⁷⁸⁹ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ]/u.test(text)) return true;
 		const compact = text.replace(/\s+/g, "");
 		return /^[A-Z][A-Za-z0-9]{1,10}$/.test(compact);
+	};
+
+	const pageHasRawTexSource = () => {
+		const text = document.body?.textContent || "";
+		return /(?:\$\$|\\\(|\\\[|\\begin\{)/.test(text);
+	};
+
+	const pageHasRenderedMath = () => Boolean(document.querySelector(`${MATH_CONTAINER_SELECTOR}, script[type^="math/tex"]`));
+
+	const waitForMathTypesetting = async (rawQuery) => {
+		if (!isMathLikeHighlightQuery(rawQuery)) return;
+		if (!pageHasRawTexSource() && !window.MathJax) return;
+
+		const wait = (timeoutMs) => new Promise((resolve) => window.setTimeout(resolve, timeoutMs));
+		const waitForMathJaxQueue = async () => {
+			const mathJax = window.MathJax;
+			if (!mathJax) return false;
+			let queued = false;
+			await Promise.race([
+				new Promise((resolve) => {
+					const done = () => resolve(true);
+					try {
+						if (mathJax.startup?.promise?.then) {
+							queued = true;
+							mathJax.startup.promise.then(done, done);
+						} else if (mathJax.Hub?.Queue) {
+							queued = true;
+							mathJax.Hub.Queue(done);
+						} else if (mathJax.typesetPromise) {
+							queued = true;
+							mathJax.typesetPromise().then(done, done);
+						} else {
+							done();
+						}
+					} catch {
+						done();
+					}
+				}),
+				wait(2500).then(() => false),
+			]);
+			return queued;
+		};
+
+		const startedAt = Date.now();
+		while (!window.MathJax && pageHasRawTexSource() && Date.now() - startedAt < 2500) {
+			await wait(100);
+		}
+		await waitForMathJaxQueue();
+		for (let attempt = 0; attempt < 20; attempt += 1) {
+			if (pageHasRenderedMath()) break;
+			if (!pageHasRawTexSource()) break;
+			await wait(100);
+		}
+		await waitForLayout();
 	};
 
 	const tokenizeNormalizedText = (value) =>
@@ -1949,6 +2032,54 @@ const createPageToolkit = (options = {}) => {
 		return note instanceof Element ? note : null;
 	};
 
+	const buildAnnotationResult = (annotationElement, rawQuery, options = {}) => {
+		const annotationId = String(annotationElement.getAttribute("data-onhand-annotation-id") || "");
+		const kind = String(annotationElement.getAttribute("data-onhand-highlight-kind") || "inline");
+		return {
+			annotationId,
+			kind,
+			matchedText: getElementText(annotationElement).slice(0, 500) || normalizeText(rawQuery),
+			container: summarizeElement(findAnnotationContainer(annotationElement)),
+			rect: rectToObject(annotationElement.getBoundingClientRect()),
+			scrollY: window.scrollY,
+			approximate: Boolean(options.approximate),
+			fallback: options.fallback || undefined,
+			reusedExisting: Boolean(options.reusedExisting),
+		};
+	};
+
+	const findExistingAnnotationByText = (rawQuery, occurrence = 1) => {
+		const normalizedQuery = lowerText(rawQuery);
+		const searchQuery = normalizeHighlightSearchText(rawQuery);
+		const compactQuery = compactHighlightSearchText(rawQuery);
+		const useCompactQuery = compactQuery.length >= (isMathLikeHighlightQuery(rawQuery) ? 3 : 12);
+		if (!normalizedQuery && !searchQuery && !compactQuery) return null;
+		let matchIndex = 0;
+		for (const annotationElement of Array.from(document.querySelectorAll("[data-onhand-highlight-kind]"))) {
+			if (!(annotationElement instanceof Element)) continue;
+			if (!isVisible(annotationElement)) continue;
+			const text = getElementText(annotationElement);
+			if (!text) continue;
+			const lower = lowerText(text);
+			const searchText = normalizeHighlightSearchText(text);
+			const compactText = compactHighlightSearchText(text);
+			let fallback = "existing-annotation";
+			let matched = lower.includes(normalizedQuery);
+			if (!matched && searchQuery && searchText.includes(searchQuery)) {
+				matched = true;
+				fallback = "existing-normalized-text";
+			}
+			if (!matched && useCompactQuery && compactText.includes(compactQuery)) {
+				matched = true;
+				fallback = isMathLikeHighlightQuery(rawQuery) ? "existing-compact-math-text" : "existing-compact-text";
+			}
+			if (!matched) continue;
+			matchIndex += 1;
+			if (matchIndex === occurrence) return { annotationElement, fallback };
+		}
+		return null;
+	};
+
 	const ensureElementInViewport = async (element, block = "center") => {
 		if (!(element instanceof Element)) return;
 		const findScrollContainer = () => {
@@ -2078,6 +2209,95 @@ const createPageToolkit = (options = {}) => {
 		return parts.filter(Boolean).join(" ");
 	};
 
+	const isMathTexScript = (element) => {
+		if (!(element instanceof Element)) return false;
+		if (element.tagName.toLowerCase() !== "script") return false;
+		return /^math\/tex\b/i.test(String(element.getAttribute("type") || ""));
+	};
+
+	const findPreviousMathTexScript = (element) => {
+		let current = element instanceof Element ? element : null;
+		for (let index = 0; current && index < 12; index += 1) {
+			current = current.previousElementSibling;
+			if (!current) break;
+			if (isMathTexScript(current)) return current;
+			const nested = current.querySelector?.('script[type^="math/tex"]');
+			if (nested instanceof Element && isMathTexScript(nested)) return nested;
+		}
+		return null;
+	};
+
+	const findRenderedMathTargetForScript = (script) => {
+		if (!isMathTexScript(script)) return null;
+		const scriptId = script.getAttribute("id") || "";
+		if (scriptId) {
+			const frame = document.getElementById(`${scriptId}-Frame`);
+			if (frame instanceof Element && isVisible(frame)) {
+				return frame.closest(".MathJax_Display, mjx-container, .katex, .math") || frame;
+			}
+		}
+		let current = script.nextElementSibling;
+		for (let index = 0; current && index < 8; index += 1) {
+			if (current.matches?.(MATH_CONTAINER_SELECTOR) && isVisible(current)) return current;
+			const nested = current.querySelector?.(MATH_CONTAINER_SELECTOR);
+			if (nested instanceof Element && isVisible(nested)) return nested;
+			current = current.nextElementSibling;
+		}
+		const parent = script.parentElement;
+		return parent instanceof Element && isVisible(parent) ? parent : null;
+	};
+
+	const mathSourceTextsForElement = (element) => {
+		if (!(element instanceof Element)) return [];
+		const parts = [getMathElementComparableText(element)];
+		const id = element.getAttribute("id") || element.closest?.("[id]")?.getAttribute?.("id") || "";
+		const scriptId = id.endsWith("-Frame") ? id.slice(0, -"-Frame".length) : "";
+		const script = scriptId ? document.getElementById(scriptId) : null;
+		if (isMathTexScript(script)) parts.push(script.textContent || "");
+		const previousScript = findPreviousMathTexScript(element.closest?.(".MathJax_Display, mjx-container, .katex, .math") || element);
+		if (previousScript) parts.push(previousScript.textContent || "");
+		return parts.filter((part, index, list) => part && list.indexOf(part) === index);
+	};
+
+	const mathSourceMatchesQuery = (sourceText, rawQuery) => {
+		const querySearch = normalizeMathSourceSearchText(rawQuery);
+		const queryCompact = compactMathSourceSearchText(rawQuery);
+		if (!queryCompact || queryCompact.length < 3) return false;
+		const sourceSearch = normalizeMathSourceSearchText(sourceText);
+		const sourceCompact = compactMathSourceSearchText(sourceText);
+		return Boolean(
+			(sourceSearch && querySearch && sourceSearch.includes(querySearch)) ||
+				(sourceCompact && sourceCompact.includes(queryCompact)),
+		);
+	};
+
+	const findBestMathSourceFallback = (rawQuery) => {
+		if (!isMathLikeHighlightQuery(rawQuery)) return null;
+		let best = null;
+		const consider = (target, sourceText, score) => {
+			if (!(target instanceof Element) || !isVisible(target)) return;
+			if (target.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return;
+			if (target.closest('[data-onhand-highlight-kind]')) return;
+			if (!mathSourceMatchesQuery(sourceText, rawQuery)) return;
+			const rect = target.getBoundingClientRect();
+			const centeredScore = score - Math.abs(rect.top - window.innerHeight / 2) * 0.01;
+			if (!best || centeredScore > best.score) best = { element: target, score: centeredScore };
+		};
+
+		for (const script of Array.from(document.querySelectorAll('script[type^="math/tex"]'))) {
+			if (!isMathTexScript(script)) continue;
+			const target = findRenderedMathTargetForScript(script);
+			consider(target, script.textContent || "", 1200);
+		}
+		for (const element of Array.from(document.querySelectorAll(MATH_CONTAINER_SELECTOR))) {
+			if (!(element instanceof Element)) continue;
+			for (const sourceText of mathSourceTextsForElement(element)) {
+				consider(element, sourceText, 1000);
+			}
+		}
+		return best?.element || null;
+	};
+
 	const findBestMathBlockFallback = (rawQuery) => {
 		if (!isMathLikeHighlightQuery(rawQuery)) return null;
 		const root = document.body || document.documentElement;
@@ -2121,7 +2341,25 @@ const createPageToolkit = (options = {}) => {
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting !== false;
 		const scrollIntoView = options.scrollIntoView !== false;
+		const exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
 		ensureAnnotationStyles();
+		await waitForMathTypesetting(rawQuery);
+		if (options.reuseExisting) {
+			const existing = findExistingAnnotationByText(rawQuery, occurrence);
+			if (existing?.annotationElement) {
+				if (scrollIntoView) {
+					existing.annotationElement.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+					await ensureElementInViewport(existing.annotationElement, "center");
+				} else {
+					await waitForLayout();
+				}
+				return buildAnnotationResult(existing.annotationElement, rawQuery, {
+					approximate: existing.fallback !== "existing-annotation",
+					fallback: existing.fallback,
+					reusedExisting: true,
+				});
+			}
+		}
 		if (clearExisting) clearAnnotations();
 
 		let matchIndex = 0;
@@ -2199,14 +2437,23 @@ const createPageToolkit = (options = {}) => {
 				}
 			}
 
-			const approximate = findBestApproximateHighlightRange(mappedText, rawQuery);
+			const approximate = exactOnly ? null : findBestApproximateHighlightRange(mappedText, rawQuery);
 			if (!approximate) continue;
 			if (!bestApproximateMatch || approximate.score > bestApproximateMatch.score) {
 				bestApproximateMatch = { ...approximate, mappedText, container };
 			}
 		}
 
-		if (bestApproximateMatch && occurrence === 1) {
+		const mathSourceFallback = occurrence === 1 ? findBestMathSourceFallback(rawQuery) : null;
+		if (mathSourceFallback) {
+			return await highlightBlockElement(mathSourceFallback, rawQuery, {
+				scrollIntoView,
+				approximate: false,
+				fallback: "math-source",
+			});
+		}
+
+		if (!exactOnly && bestApproximateMatch && occurrence === 1) {
 			const start = bestApproximateMatch.mappedText.positions[bestApproximateMatch.startIndex];
 			const end = bestApproximateMatch.mappedText.positions[bestApproximateMatch.endIndex - 1];
 			if (start && end) {
@@ -2239,7 +2486,7 @@ const createPageToolkit = (options = {}) => {
 			}
 		}
 
-		const mathFallback = occurrence === 1 ? findBestMathBlockFallback(rawQuery) : null;
+		const mathFallback = !exactOnly && occurrence === 1 ? findBestMathBlockFallback(rawQuery) : null;
 		if (mathFallback) {
 			return await highlightBlockElement(mathFallback, rawQuery, {
 				scrollIntoView,
@@ -3562,6 +3809,9 @@ async function handleCommand(name, args = {}) {
 					occurrence: args.occurrence,
 					clearExisting: args.clearExisting,
 					scrollIntoView: args.scrollIntoView,
+					exactOnly: args.exactOnly,
+					allowApproximate: args.allowApproximate,
+					reuseExisting: args.reuseExisting,
 				});
 				return {
 					tab: simplifyTab(tab),
@@ -4090,7 +4340,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:activate-action") {
 			const runtime = getOnhandBrowserRuntime();
-			const result = await runtime.activateAction(message.key);
+			const result = await runtime.activateAction(message.key, {
+				sessionPath: typeof message.sessionPath === "string" ? message.sessionPath : "",
+			});
 			sendResponse({
 				ok: true,
 				result,
