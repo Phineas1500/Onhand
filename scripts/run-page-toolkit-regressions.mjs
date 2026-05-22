@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JSDOM } from "jsdom";
+import { scholarPdfHtml } from "./serve-browser-runtime-fixture.mjs";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -16,6 +17,113 @@ async function loadPageToolkitFactory() {
 	return expression;
 }
 
+async function loadBackgroundFunction(functionName) {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const start = source.indexOf(`function ${functionName}`);
+	assert.notEqual(start, -1, `${functionName} declaration not found`);
+	const signatureEnd = source.indexOf(")", start);
+	assert.notEqual(signatureEnd, -1, `${functionName} signature end not found`);
+	const bodyStart = source.indexOf("{", signatureEnd);
+	assert.notEqual(bodyStart, -1, `${functionName} body not found`);
+	let depth = 0;
+	for (let index = bodyStart; index < source.length; index += 1) {
+		const char = source[index];
+		if (char === "{") depth += 1;
+		if (char === "}") {
+			depth -= 1;
+			if (depth === 0) return source.slice(start, index + 1);
+		}
+	}
+	assert.fail(`${functionName} body end not found`);
+}
+
+async function assertPdfViewerHandoffHelpers() {
+	const functionNames = [
+		"isOwnExtensionPdfViewerUrl",
+		"isOnhandPdfViewerLikeUrl",
+		"isHttpLikeUrl",
+		"isLikelyPdfResourceUrl",
+		"normalizePdfUrlCandidate",
+		"extractPdfSourceUrlFromViewerLikeUrl",
+		"resolvePdfSourceUrlForViewer",
+		"buildOnhandPdfViewerUrl",
+	];
+	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
+	const helpers = new Function(
+		"chrome",
+		`${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`,
+	)({
+		runtime: {
+			getURL(path) {
+				return `chrome-extension://onhand-test/${path}`;
+			},
+		},
+	});
+
+	assert.equal(helpers.isLikelyPdfResourceUrl("https://arxiv.org/pdf/2509.03345"), true);
+	assert.equal(helpers.isLikelyPdfResourceUrl("https://example.test/article"), false);
+	assert.equal(helpers.isOnhandPdfViewerLikeUrl("chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf"), true);
+	assert.equal(
+		helpers.isOnhandPdfViewerLikeUrl("http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf"),
+		true,
+	);
+	assert.equal(
+		helpers.resolvePdfSourceUrlForViewer({}, { url: "http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf" }),
+		"http://127.0.0.1:8765/fixtures/scholar-reader.pdf",
+	);
+	assert.equal(
+		helpers.resolvePdfSourceUrlForViewer(
+			{},
+			{
+				url: "http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+			},
+		),
+		"http://127.0.0.1:8765/fixtures/onhand-viewer.pdf",
+	);
+	assert.equal(
+		helpers.resolvePdfSourceUrlForViewer({ pdfUrl: "https://example.test/download?id=paper-123" }, { url: "https://example.test/article" }),
+		"https://example.test/download?id=paper-123",
+	);
+	assert.equal(
+		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf"),
+		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
+	);
+	assert.equal(
+		helpers.resolvePdfSourceUrlForViewer({}, { url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fdownload%3Fid%3Dpaper-123" }),
+		"https://example.test/download?id=paper-123",
+	);
+	assert.throws(() => helpers.resolvePdfSourceUrlForViewer({}, { url: "https://example.test/article" }), /Could not determine a PDF URL/);
+
+	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(
+		backgroundSource,
+		/if \(!isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)\)/,
+		"Open PDF should not redirect an existing Onhand PDF viewer-like tab back to its raw PDF source",
+	);
+}
+
+async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/src/pdf-viewer.ts"), "utf8");
+	const start = source.indexOf("async function pdfShowNote");
+	const end = source.indexOf("\nasync function pdfScrollToAnnotation", start);
+	assert.notEqual(start, -1, "pdfShowNote declaration not found");
+	assert.notEqual(end, -1, "pdfShowNote end marker not found");
+	const body = source.slice(start, end);
+	const collapseResetIndex = body.indexOf("setPdfNoteCollapsed(note, false);");
+	const positionIndex = body.indexOf("positionPdfNote(note, annotation, page);");
+	assert.notEqual(collapseResetIndex, -1, "pdfShowNote should explicitly normalize the expanded note state");
+	assert.notEqual(positionIndex, -1, "pdfShowNote should position the PDF note");
+	assert.ok(
+		collapseResetIndex < positionIndex,
+		"pdfShowNote must clear collapsed note styles before positioning; doing it after positioning removes the expanded layout",
+	);
+	assert.match(source, /setImportantStyle\(note,\s*"min-height",\s*"30px"\)/, "collapsed PDF viewer notes should constrain their minimum height");
+	assert.match(source, /minHeight:\s*"76px"/, "expanded PDF viewer notes should have a minimum height on first render");
+	assert.match(source, /options\.reuseExisting === true/, "PDF viewer highlight replay should honor reuseExisting");
+	assert.match(source, /findExistingPdfHighlight/, "PDF viewer highlight replay should find existing PDF annotations before creating new ones");
+	assert.match(source, /removeDuplicatePdfHighlights/, "PDF viewer highlight replay should consolidate duplicate saved-artifact overlays");
+}
+
 function installLayoutShims(window) {
 	Object.defineProperty(window.HTMLElement.prototype, "innerText", {
 		get() {
@@ -27,6 +135,8 @@ function installLayoutShims(window) {
 		configurable: true,
 	});
 	window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+	window.scrollBy = function scrollBy() {};
+	window.scrollTo = function scrollTo() {};
 	window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
 		return {
 			x: 16,
@@ -44,7 +154,7 @@ function installLayoutShims(window) {
 	};
 }
 
-async function createToolkit(html) {
+async function createToolkit(html, toolkitOptions = {}) {
 	const dom = new JSDOM(html, {
 		url: "https://example.test/article",
 		pretendToBeVisual: true,
@@ -55,7 +165,22 @@ async function createToolkit(html) {
 	const createPageToolkit = dom.window.eval(`(${factoryExpression})`);
 	return {
 		dom,
-		toolkit: createPageToolkit({ theme: "light" }),
+		toolkit: createPageToolkit({ theme: "light", ...toolkitOptions }),
+	};
+}
+
+async function createToolkitAtUrl(html, url, toolkitOptions = {}) {
+	const dom = new JSDOM(html, {
+		url,
+		pretendToBeVisual: true,
+		runScripts: "outside-only",
+	});
+	installLayoutShims(dom.window);
+	const factoryExpression = await loadPageToolkitFactory();
+	const createPageToolkit = dom.window.eval(`(${factoryExpression})`);
+	return {
+		dom,
+		toolkit: createPageToolkit({ theme: "light", ...toolkitOptions }),
 	};
 }
 
@@ -212,7 +337,1239 @@ async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
 	assert.notEqual(highlighted?.id, "stationary", "raw TeX paragraph should not be highlighted");
 }
 
+async function assertPdfTextLayerVisibleTextUsesPdfSurface() {
+	const { toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="3">
+				<div class="canvasWrapper"></div>
+				<div class="textLayer">
+					<span>Recurrent</span>
+					<span> neural networks</span>
+					<span> preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "pdfjs");
+	assert.equal(surface.pageCount, 1);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.equal(visible.viewer, "pdfjs");
+	assert.equal(visible.blocks.length, 1);
+	assert.equal(visible.blocks[0].tag, "pdf-page");
+	assert.equal(visible.blocks[0].pageNumber, 3);
+	assert.match(visible.text, /\[p\. 3\] Recurrent neural networks preserve sequence state\./);
+}
+
+async function assertPdfDocumentIdentityUsesEmbeddedPdfUrl() {
+	const { toolkit } = await createToolkit(`
+		<title>Wrapped PDF Lecture</title>
+		<embed type="application/pdf" src="/files/lecture.pdf?download=1#page=3">
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="3">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "pdfjs");
+	assert.equal(surface.url, "https://example.test/article");
+	assert.equal(surface.viewerUrl, "https://example.test/article");
+	assert.equal(surface.pdfUrl, "https://example.test/files/lecture.pdf?download=1#page=3");
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.pdfAnchor.document.url, "https://example.test/files/lecture.pdf?download=1#page=3");
+	assert.equal(highlight.pdfAnchor.document.pdfUrl, "https://example.test/files/lecture.pdf?download=1#page=3");
+	assert.equal(highlight.pdfAnchor.document.viewerUrl, "https://example.test/article");
+	assert.equal(highlight.pdfAnchor.document.title, "Wrapped PDF Lecture");
+}
+
+async function assertPdfDocumentIdentityUsesViewerFileParameter() {
+	const { toolkit } = await createToolkitAtUrl(
+		`
+			<title>PDF.js Wrapped Lecture</title>
+			<main id="viewer" class="pdfViewer">
+				<div class="page" data-page-number="7">
+					<div class="textLayer">
+						<span>Recurrent neural networks preserve sequence state.</span>
+					</div>
+				</div>
+			</main>
+		`,
+		"https://example.test/pdfjs/web/viewer.html?file=%2Ffiles%2Flecture.pdf%3Fdownload%3D1%23page%3D7",
+	);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "pdfjs");
+	assert.equal(surface.viewerUrl, "https://example.test/pdfjs/web/viewer.html?file=%2Ffiles%2Flecture.pdf%3Fdownload%3D1%23page%3D7");
+	assert.equal(surface.pdfUrl, "https://example.test/files/lecture.pdf?download=1#page=7");
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.pdfAnchor.document.url, "https://example.test/files/lecture.pdf?download=1#page=7");
+	assert.equal(highlight.pdfAnchor.document.pdfUrl, "https://example.test/files/lecture.pdf?download=1#page=7");
+	assert.equal(highlight.pdfAnchor.document.viewerUrl, "https://example.test/pdfjs/web/viewer.html?file=%2Ffiles%2Flecture.pdf%3Fdownload%3D1%23page%3D7");
+}
+
+async function assertLikelyPdfTabUrlCoversContentTypePdfRoutes() {
+	const functionSource = await loadBackgroundFunction("isLikelyPdfTabUrl");
+	const isLikelyPdfTabUrl = (0, eval)(`(${functionSource})`);
+	assert.equal(isLikelyPdfTabUrl("https://example.test/files/lecture.pdf"), true);
+	assert.equal(isLikelyPdfTabUrl("https://example.test/viewer?file=%2Ffiles%2Flecture.pdf%23page%3D2"), true);
+	assert.equal(isLikelyPdfTabUrl("https://arxiv.org/pdf/1706.03762"), true);
+	assert.equal(isLikelyPdfTabUrl("https://example.test/download?format=pdf"), true);
+	assert.equal(isLikelyPdfTabUrl("https://example.test/article"), false);
+	assert.equal(isLikelyPdfTabUrl("https://example.test/profile/pdfshelf"), false);
+}
+
+async function assertReaderFrameFallbackDiagnosticsSurviveDebuggerFallback() {
+	const sources = await Promise.all([
+		loadBackgroundFunction("isUnsupportedPdfSurfacePayload"),
+		loadBackgroundFunction("shouldRetryGoogleScholarReaderFrame"),
+		loadBackgroundFunction("annotateGoogleScholarReaderFrameFallbackFailure"),
+		loadBackgroundFunction("annotateGoogleScholarReaderFrameFallbackFailureIfRelevant"),
+	]);
+	const { annotateGoogleScholarReaderFrameFallbackFailureIfRelevant } = (0, eval)(
+		`(() => { ${sources.join("\n")} return { annotateGoogleScholarReaderFrameFallbackFailureIfRelevant }; })()`,
+	);
+	const error = new Error("No Google Scholar PDF Reader frame context found");
+	const unsupported = annotateGoogleScholarReaderFrameFallbackFailureIfRelevant(
+		"getVisibleText",
+		{ surface: "pdf", viewer: "google-scholar", unsupported: true },
+		error,
+	);
+	assert.equal(unsupported.readerFrameFallback.attempted, true);
+	assert.equal(unsupported.readerFrameFallback.ok, false);
+	assert.match(unsupported.readerFrameFallback.error, /No Google Scholar PDF Reader frame context found/);
+
+	const emptySelection = annotateGoogleScholarReaderFrameFallbackFailureIfRelevant(
+		"getSelectionInfo",
+		{ hasSelection: false, surface: "pdf", viewer: "google-scholar" },
+		error,
+	);
+	assert.equal(emptySelection.readerFrameFallback.attempted, true);
+
+	const htmlPayload = { surface: "html", blocks: [] };
+	assert.equal(annotateGoogleScholarReaderFrameFallbackFailureIfRelevant("getVisibleText", htmlPayload, error), htmlPayload);
+	assert.equal(annotateGoogleScholarReaderFrameFallbackFailureIfRelevant("getVisibleText", unsupported, null), unsupported);
+}
+
+async function assertGenericPdfReaderPageRegionUsesPdfSurfaceOnlyWithPdfSignal() {
+	const { toolkit } = await createToolkit(`
+		<title>Google Scholar PDF Reader</title>
+		<main>
+			<section role="region" aria-label="Page 4" data-page-index="3">
+				<div class="scholar-selectable-text">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</section>
+		</main>
+	`);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "google-scholar");
+	assert.equal(surface.pageCount, 1);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.equal(visible.blocks[0].pageNumber, 4);
+	assert.match(visible.text, /\[p\. 4\] Recurrent neural networks preserve sequence state\./);
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.viewer, "google-scholar");
+	assert.equal(highlight.pdfAnchor.pageNumber, 4);
+	assert.equal(highlight.pdfAnchor.textQuote.exact, "Recurrent neural networks");
+}
+
+async function assertGenericPdfReaderFallbackIgnoresOnhandOverlayText() {
+	const { toolkit } = await createToolkit(`
+		<title>Google Scholar PDF Reader</title>
+		<main>
+			<section role="region" aria-label="Page 4" data-page-index="3">
+				<div class="scholar-selectable-text">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</section>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.match(visible.text, /\[p\. 4\] Recurrent neural networks preserve sequence state\./);
+	assert.doesNotMatch(visible.text, /RNNs carry state across a sequence/);
+
+	await assert.rejects(
+		() => toolkit.highlightText("RNNs carry state across a sequence", { scrollIntoView: false }),
+		/No visible PDF text matched/i,
+		"Onhand PDF note text should not be searchable as source PDF text",
+	);
+
+	const secondHighlight = await toolkit.highlightText("preserve sequence state", { scrollIntoView: false });
+	assert.equal(secondHighlight.kind, "pdf");
+	assert.equal(secondHighlight.pdfAnchor.pageNumber, 4);
+	assert.equal(secondHighlight.pdfAnchor.textQuote.exact, "preserve sequence state");
+}
+
+async function assertScholarNativeAnnotationsStaySeparateFromOnhandPdfState() {
+	const { dom, toolkit } = await createToolkit(`
+		<title>Google Scholar PDF Reader</title>
+		<main>
+			<section role="region" aria-label="Page 6" data-page-index="5">
+				<div class="scholar-selectable-text">
+					<span class="scholar-native-highlight">Recurrent neural networks</span>
+					<span> preserve sequence state across tokens.</span>
+				</div>
+				<div class="scholar-native-comment-popup" role="dialog" aria-label="Scholar comment">
+					<p>Native Scholar note should not become source PDF text.</p>
+					<button type="button">Delete comment</button>
+				</div>
+				<div class="scholar-toolbar" role="toolbar" aria-label="Scholar annotation toolbar">
+					<button type="button">Highlight</button>
+					<button type="button">Comment</button>
+				</div>
+			</section>
+		</main>
+	`);
+	const document = dom.window.document;
+	const nativeComment = document.querySelector(".scholar-native-comment-popup");
+	const nativeToolbar = document.querySelector(".scholar-toolbar");
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.match(visible.text, /\[p\. 6\] Recurrent neural networks preserve sequence state across tokens\./);
+	assert.doesNotMatch(visible.text, /Native Scholar note/);
+	assert.doesNotMatch(visible.text, /Delete comment/);
+	assert.doesNotMatch(visible.text, /Highlight Comment/);
+
+	const initialCapture = await toolkit.captureState();
+	assert.equal(initialCapture.annotationCount, 0, "native Scholar annotations should not be captured as Onhand annotations");
+
+	await assert.rejects(
+		() => toolkit.highlightText("Native Scholar note should not become source PDF text", { scrollIntoView: false }),
+		/No visible PDF text matched/i,
+		"native Scholar comments should not be searchable as source PDF text",
+	);
+
+	const highlight = await toolkit.highlightText("Recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.viewer, "google-scholar");
+	assert.equal(highlight.pdfAnchor.pageNumber, 6);
+	assert.equal(highlight.pdfAnchor.textQuote.exact, "Recurrent neural networks");
+	await toolkit.showNote(highlight.annotationId, "Onhand note text stays in the Onhand overlay only.", { scrollIntoView: false });
+
+	const onhandCapture = await toolkit.captureState();
+	assert.equal(onhandCapture.annotationCount, 1);
+	assert.equal(onhandCapture.annotations[0].kind, "pdf");
+	assert.equal(onhandCapture.annotations[0].note.text, "Onhand note text stays in the Onhand overlay only.");
+
+	const cleared = toolkit.clearAnnotations();
+	assert.equal(cleared.clearedPdf, 1);
+	assert.equal(cleared.clearedNotes, 1);
+	assert.ok(document.body.contains(nativeComment), "clearing Onhand annotations should not remove native Scholar comments");
+	assert.ok(document.body.contains(nativeToolbar), "clearing Onhand annotations should not remove native Scholar toolbar UI");
+	assert.equal(document.querySelectorAll('[data-onhand-highlight-kind], [data-onhand-note-kind="card"]').length, 0);
+}
+
+async function assertControlledScholarPdfFixtureMatchesAdapterContract() {
+	const { dom, toolkit } = await createToolkitAtUrl(
+		scholarPdfHtml,
+		"https://example.test/scholar-pdf.html?file=%2Ffixtures%2Fscholar-reader.pdf",
+	);
+	const document = dom.window.document;
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "google-scholar");
+	assert.equal(surface.pdfUrl, "https://example.test/fixtures/scholar-reader.pdf");
+	assert.equal(surface.pageCount, 1);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.match(visible.text, /\[p\. 4\] CS 577: Natural Language Processing/);
+	assert.match(visible.text, /Recurrent neural networks preserve sequence state across tokens/);
+	assert.doesNotMatch(visible.text, /Native Scholar note should not become source PDF text/);
+	assert.doesNotMatch(visible.text, /Yellow highlight/);
+
+	const nativeComment = document.querySelector(".scholar-native-comment-popup");
+	const nativeToolbar = document.querySelector(".scholar-toolbar");
+	const highlight = await toolkit.highlightText("Recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.viewer, "google-scholar");
+	assert.equal(highlight.pdfAnchor.pageNumber, 4);
+	await toolkit.showNote(highlight.annotationId, "Onhand note stays separate from native Scholar comments.", { scrollIntoView: false });
+
+	const capture = await toolkit.captureState();
+	assert.equal(capture.annotationCount, 1);
+	assert.equal(capture.annotations[0].kind, "pdf");
+	assert.equal(capture.annotations[0].note.text, "Onhand note stays separate from native Scholar comments.");
+	assert.ok(document.body.contains(nativeComment), "native Scholar comment should remain in the page");
+	assert.ok(document.body.contains(nativeToolbar), "native Scholar toolbar should remain in the page");
+}
+
+async function assertGoogleScholarReaderDomMatchesAdapterContract() {
+	const { dom, toolkit } = await createToolkitAtUrl(
+		`
+		<!doctype html>
+		<title>Google Scholar Reader</title>
+		<body>
+			<div class="gsr-root">
+				<div class="gsr-toolbar" role="toolbar" aria-label="Google Scholar PDF Reader toolbar">
+					<button type="button" aria-label="Highlight">Highlight</button>
+					<button type="button" aria-label="Comment">Comment</button>
+				</div>
+				<div class="gsr-body">
+					<div class="gsr-content-wrapper">
+						<div class="gsr-page-wrapper">
+							<div class="gsr-page" data-pn="7" style="position:relative;width:640px;height:880px">
+								<div class="gsr-page-ps"></div>
+								<div class="gsr-text-ctn" dir="ltr">
+									<span class="gsr-text" data-idx="0">Real Reader text layer exposes recurrent neural networks.</span>
+									<span class="gsr-text" data-idx="1">Onhand should anchor against this actual Google Scholar Reader DOM.</span>
+								</div>
+								<div class="gsr-comment-bubble" role="dialog">
+									<div class="gsr-comment-hl-text">Native Scholar note should not become source PDF text.</div>
+									<div class="gsr-comment-text" contenteditable="plaintext-only">Native comment body</div>
+								</div>
+							</div>
+						</div>
+						<div class="gsr-comment-wrapper"></div>
+					</div>
+				</div>
+			</div>
+		</body>
+		`,
+		"chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html",
+	);
+	const document = dom.window.document;
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "google-scholar");
+	assert.equal(surface.pageCount, 1);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.match(visible.text, /\[p\. 7\] Real Reader text layer exposes recurrent neural networks/);
+	assert.doesNotMatch(visible.text, /Native Scholar note/);
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.viewer, "google-scholar");
+	assert.equal(highlight.pdfAnchor.pageNumber, 7);
+	await toolkit.showNote(highlight.annotationId, "Onhand note belongs to the real Reader DOM.", { scrollIntoView: false });
+	assert.ok(document.querySelector('[data-onhand-highlight-kind="pdf"]'), "expected Onhand PDF overlay highlight");
+	assert.ok(document.querySelector('[data-onhand-note-kind="card"]'), "expected Onhand PDF note");
+	assert.ok(document.querySelector(".gsr-comment-bubble"), "native Scholar comment bubble should remain");
+}
+
+async function assertGenericPageRegionWithoutPdfSignalStaysHtmlSurface() {
+	const { toolkit } = await createToolkit(`
+		<main>
+			<section role="region" aria-label="Page 1">
+				<p>Normal article text that should not be treated as a PDF page.</p>
+			</section>
+		</main>
+	`);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "html");
+	assert.equal(surface.viewer, "html");
+}
+
+async function assertPdfEmbedWithoutTextLayerReturnsUnsupportedInsteadOfHtmlFallback() {
+	const { toolkit } = await createToolkit(`
+		<main>
+			<h1>Wrapper page text that should not be highlighted as PDF source</h1>
+			<embed type="application/pdf" src="lecture.pdf">
+		</main>
+	`);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "unknown-pdf");
+	assert.equal(surface.hasTextLayer, false);
+	assert.equal(surface.pdfUrl, "https://example.test/lecture.pdf");
+	assert.match(surface.unsupportedReason, /no readable text layer/i);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.surface, "pdf");
+	assert.equal(visible.unsupported, true);
+	assert.equal(visible.blocks.length, 0);
+	assert.match(visible.text, /does not expose selectable page text/i);
+	assert.doesNotMatch(visible.text, /Wrapper page text/);
+
+	await assert.rejects(
+		() => toolkit.highlightText("Wrapper page text", { scrollIntoView: false }),
+		/Unsupported PDF annotation surface/i,
+		"PDF surfaces without readable text should not silently fall back to HTML highlighting",
+	);
+
+	const { toolkit: topPdfToolkit } = await createToolkitAtUrl(
+		`
+		<body>
+			<iframe src="chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html"></iframe>
+		</body>
+		`,
+		"https://example.test/lecture.pdf",
+	);
+	const topSurface = topPdfToolkit.getAnnotationSurfaceInfo();
+	assert.equal(topSurface.surface, "pdf");
+	assert.equal(topSurface.hasTextLayer, false);
+	assert.match(topSurface.unsupportedReason, /no readable text layer/i);
+
+	const { toolkit: nativePdfShellToolkit } = await createToolkitAtUrl(
+		`
+		<body></body>
+		`,
+		"https://arxiv.org/pdf/2509.03345",
+	);
+	const nativePdfShellSurface = nativePdfShellToolkit.getAnnotationSurfaceInfo();
+	assert.equal(nativePdfShellSurface.surface, "pdf");
+	assert.equal(nativePdfShellSurface.viewer, "unknown-pdf");
+	assert.equal(nativePdfShellSurface.hasTextLayer, false);
+	assert.match(nativePdfShellSurface.unsupportedReason, /no readable text layer/i);
+	const nativePdfShellVisible = nativePdfShellToolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(nativePdfShellVisible.unsupported, true);
+	assert.equal(nativePdfShellVisible.blocks.length, 0);
+	assert.match(nativePdfShellVisible.text, /does not expose selectable page text/i);
+	await assert.rejects(
+		() => nativePdfShellToolkit.highlightText("Do Language Models Follow Occam", { scrollIntoView: false }),
+		/Unsupported PDF annotation surface/i,
+		"Chrome native PDF shells without DOM text should remain unsupported instead of using approximate HTML matching",
+	);
+
+	const { toolkit: nonPdfUrlReaderWrapperToolkit } = await createToolkitAtUrl(
+		`
+		<body>
+			<main>Wrapper page text should not become source text for a content-type PDF.</main>
+			<iframe src="chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html"></iframe>
+		</body>
+		`,
+		"https://arxiv.org/pdf/1706.03762",
+	);
+	const readerWrapperSurface = nonPdfUrlReaderWrapperToolkit.getAnnotationSurfaceInfo();
+	assert.equal(readerWrapperSurface.surface, "pdf");
+	assert.equal(readerWrapperSurface.viewer, "google-scholar");
+	assert.equal(readerWrapperSurface.hasTextLayer, false);
+	assert.equal(readerWrapperSurface.pdfUrl, "https://arxiv.org/pdf/1706.03762");
+	assert.equal(readerWrapperSurface.viewerUrl, "https://arxiv.org/pdf/1706.03762");
+	assert.match(readerWrapperSurface.unsupportedReason, /no readable text layer/i);
+	const readerWrapperVisible = nonPdfUrlReaderWrapperToolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(readerWrapperVisible.unsupported, true);
+	assert.equal(readerWrapperVisible.viewer, "google-scholar");
+	assert.equal(readerWrapperVisible.pdfUrl, "https://arxiv.org/pdf/1706.03762");
+	assert.doesNotMatch(readerWrapperVisible.text, /Wrapper page text/);
+}
+
+async function assertGoogleScholarReaderFrameUsesTopTabUrlForPdfIdentity() {
+	const topPdfUrl = "https://arxiv.org/pdf/1706.03762";
+	const topPdfTitle = "Attention Is All You Need";
+	const { toolkit } = await createToolkitAtUrl(
+		`
+		<!doctype html>
+		<title>Google Scholar Reader</title>
+		<body>
+			<div class="gsr-root">
+				<div class="gsr-body">
+					<div class="gsr-content-wrapper">
+						<div class="gsr-page-wrapper">
+							<div class="gsr-page" data-pn="2" style="position:relative;width:640px;height:880px">
+								<div class="gsr-text-ctn" dir="ltr">
+									<span class="gsr-text" data-idx="0">Scaled dot-product attention computes weighted value vectors.</span>
+								</div>
+							</div>
+						</div>
+						<div class="gsr-comment-wrapper"></div>
+					</div>
+				</div>
+			</div>
+		</body>
+		`,
+		"chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html",
+		{ sourceTabUrl: topPdfUrl, sourceTabTitle: topPdfTitle },
+	);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.viewer, "google-scholar");
+	assert.equal(surface.url, topPdfUrl);
+	assert.equal(surface.viewerUrl, topPdfUrl);
+	assert.equal(surface.pdfUrl, topPdfUrl);
+	assert.equal(surface.title, topPdfTitle);
+
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.equal(visible.url, topPdfUrl);
+	assert.equal(visible.viewerUrl, topPdfUrl);
+	assert.equal(visible.pdfUrl, topPdfUrl);
+	assert.equal(visible.title, topPdfTitle);
+	assert.match(visible.text, /\[p\. 2\] Scaled dot-product attention/);
+
+	const highlight = await toolkit.highlightText("Scaled dot-product attention", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.pdfAnchor.document.url, topPdfUrl);
+	assert.equal(highlight.pdfAnchor.document.viewerUrl, topPdfUrl);
+	assert.equal(highlight.pdfAnchor.document.pdfUrl, topPdfUrl);
+	assert.equal(highlight.pdfAnchor.document.title, topPdfTitle);
+}
+
+async function assertPdfHighlightAndNoteUseOverlayAnchors() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="5">
+				<div class="canvasWrapper"></div>
+				<div class="textLayer">
+					<span>The important phrase is </span>
+					<span>recurrent neural networks</span>
+					<span> in sequence models.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.surface, "pdf");
+	assert.equal(highlight.pdfAnchor.pageNumber, 5);
+	assert.equal(highlight.pdfAnchor.textQuote.exact, "recurrent neural networks");
+	assert.equal(highlight.pdfAnchor.rects[0].coordinateSpace, "page-normalized");
+
+	const overlay = dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]');
+	assert.ok(overlay, "expected an Onhand PDF highlight overlay");
+	assert.equal(overlay.getAttribute("data-onhand-annotation-id"), highlight.annotationId);
+	assert.equal(overlay.getAttribute("data-onhand-matched-text"), "recurrent neural networks");
+	assert.equal(overlay.style.getPropertyPriority("width"), "important");
+
+	const noteResult = await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	assert.equal(noteResult.pdfAnchor.pageNumber, highlight.pdfAnchor.pageNumber, "PDF note results should carry the source page anchor");
+	assert.equal(noteResult.pdfAnchor.matchedText, highlight.pdfAnchor.matchedText, "PDF note results should carry the source text anchor");
+	assert.deepEqual(noteResult.pdfAnchor.rects, highlight.pdfAnchor.rects, "PDF note results should carry the source rect anchor");
+	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
+	assert.ok(note, "expected PDF highlight to support an Onhand note card");
+	assert.equal(note.getAttribute("data-onhand-note-for"), highlight.annotationId);
+	assert.ok(note.closest("[data-onhand-pdf-overlay-layer]"), "PDF note should live in the Onhand overlay layer");
+	assert.equal(note.style.getPropertyPriority("position"), "important");
+	assert.equal(dom.window.getComputedStyle(note).position, "absolute");
+	assert.equal(note.style.getPropertyPriority("width"), "important");
+	assert.equal(note.style.display, "block", "expanded PDF notes should start in the same block layout used after reopen");
+	assert.equal(note.style.height, "auto", "expanded PDF notes should not keep collapsed marker height");
+	assert.equal(note.style.minHeight, "76px", "expanded PDF notes should have enough breathing room on first restore");
+	assert.equal(note.style.padding, "12px 14px", "expanded PDF notes should start with normal card padding");
+	assert.equal(note.style.overflow, "visible", "expanded PDF notes should not clip the note body");
+	assert.equal(note.style.getPropertyPriority("pointer-events"), "important");
+	const toggle = note.querySelector("[data-onhand-note-toggle]");
+	const noteBody = note.querySelector('[data-onhand-note-part="body"]');
+	assert.ok(toggle, "PDF note should have a collapse toggle");
+	assert.ok(noteBody, "PDF note should keep its body element");
+	toggle.click();
+	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "true", "PDF note toggle should collapse the note");
+	assert.equal(noteBody.hidden, true, "collapsed PDF notes should hide their body text");
+	assert.equal(note.style.width, "30px", "collapsed PDF notes should shrink to a small marker");
+	assert.equal(note.style.minHeight, "30px", "collapsed PDF notes should not keep the expanded card minimum height");
+	assert.equal(note.style.opacity, "0.48", "collapsed PDF notes should be translucent over PDF text");
+
+	const collapsedCapture = await toolkit.captureState();
+	assert.equal(collapsedCapture.annotations[0].note.text, "RNNs carry state across a sequence.", "collapsed PDF notes should still be captured");
+
+	overlay.click();
+	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "false", "clicking the highlight should reopen the note");
+	assert.equal(noteBody.hidden, false, "reopened PDF notes should show their body text");
+	assert.equal(note.style.opacity, "", "reopened PDF notes should not stay translucent");
+
+	note.setAttribute("data-onhand-note-collapsed", "false");
+	for (const [property, value] of [
+		["display", "flex"],
+		["align-items", "center"],
+		["justify-content", "center"],
+		["height", "30px"],
+		["min-height", "30px"],
+		["padding", "0"],
+		["overflow", "hidden"],
+		["opacity", "0.48"],
+	]) {
+		note.style.setProperty(property, value, "important");
+	}
+	dom.window.__onhandPdfOverlayMutationObserver?.disconnect?.();
+	dom.window.dispatchEvent(new dom.window.Event("resize"));
+	await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+	assert.equal(note.style.display, "block", "PDF overlay sync should restore expanded block layout after stale collapsed display");
+	assert.equal(note.style.height, "auto", "PDF overlay sync should restore expanded auto height after stale collapsed height");
+	assert.equal(note.style.minHeight, "76px", "PDF overlay sync should restore expanded minimum height after stale collapsed minimum height");
+	assert.equal(note.style.padding, "12px 14px", "PDF overlay sync should restore expanded card padding after stale collapsed padding");
+	assert.equal(note.style.overflow, "visible", "PDF overlay sync should restore expanded overflow after stale collapsed clipping");
+	assert.equal(note.style.opacity, "", "PDF overlay sync should clear stale collapsed opacity from expanded notes");
+
+	toggle.click();
+	const noteJump = await toolkit.scrollToAnnotation(highlight.annotationId, { target: "note", block: "center" });
+	assert.equal(noteJump.targetKind, "note", "jumping to a note should target the note card");
+	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "false", "jumping to a note should reopen a collapsed PDF note");
+
+	const captured = await toolkit.captureState();
+	assert.equal(captured.annotationCount, 1);
+	assert.equal(captured.annotations[0].kind, "pdf");
+	assert.equal(captured.annotations[0].matchedText, "recurrent neural networks");
+	assert.equal(captured.annotations[0].pdfAnchor.pageNumber, 5);
+	assert.equal(captured.annotations[0].note.text, "RNNs carry state across a sequence.");
+
+	toolkit.clearAnnotations();
+	dom.window.document.querySelector(".textLayer").textContent = "The visible PDF text changed after capture.";
+	const restored = await toolkit.highlightText("recurrent neural networks", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		pdfAnchor: captured.annotations[0].pdfAnchor,
+	});
+	assert.equal(restored.kind, "pdf");
+	assert.equal(restored.fallback, "pdf-anchor");
+	assert.equal(restored.pdfAnchor.pageNumber, 5);
+	assert.equal(restored.pdfAnchor.textQuote.exact, "recurrent neural networks");
+	assert.ok(dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]'), "expected PDF anchor restore to recreate overlay");
+
+	await toolkit.showNote(restored.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	const duplicate = await toolkit.highlightText("recurrent neural networks", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		pdfAnchor: captured.annotations[0].pdfAnchor,
+	});
+	await toolkit.showNote(duplicate.annotationId, "Duplicate replay note should be consolidated.", { scrollIntoView: false });
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 2, "test setup should reproduce stacked PDF highlights");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 2, "test setup should reproduce stacked PDF notes");
+	const replayed = await toolkit.highlightText("recurrent neural networks", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		reuseExisting: true,
+		pdfAnchor: captured.annotations[0].pdfAnchor,
+	});
+	assert.equal(replayed.annotationId, restored.annotationId, "PDF saved-artifact replay should reuse the restored annotation");
+	assert.equal(replayed.duplicateCount, 1, "PDF saved-artifact replay should remove stacked duplicate highlights");
+	const replayedAgain = await toolkit.highlightText("recurrent neural networks", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		reuseExisting: true,
+		pdfAnchor: captured.annotations[0].pdfAnchor,
+	});
+	assert.equal(replayedAgain.annotationId, restored.annotationId, "repeated PDF saved-artifact replay should stay idempotent");
+	await toolkit.showNote(replayedAgain.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+}
+
+async function assertOnhandPdfViewerSurfaceAndAnchorRestore() {
+	const sourceUrl = "http://127.0.0.1:8765/pdf/onhand-viewer";
+	const { dom, toolkit } = await createToolkitAtUrl(
+		`
+		<body data-onhand-pdf-rendered="true" data-onhand-pdf-url="${sourceUrl}">
+			<div id="viewer" data-onhand-pdf-viewer-root>
+				<section class="page" data-page-number="1" data-onhand-pdf-page="true">
+					<div class="canvasWrapper"></div>
+					<div class="textLayer" data-onhand-pdf-text-layer="true">
+						<span>The important phrase is </span>
+						<span>recurrent neural networks</span>
+						<span> in sequence models.</span>
+					</div>
+				</section>
+			</div>
+		</body>
+	`,
+		`chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(sourceUrl)}`,
+	);
+	const surface = toolkit.getAnnotationSurfaceInfo();
+	assert.equal(surface.surface, "pdf");
+	assert.equal(surface.hasTextLayer, true);
+	assert.equal(surface.pdfUrl, sourceUrl);
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.pdfAnchor.document.pdfUrl, sourceUrl);
+	assert.equal(highlight.pdfAnchor.pageNumber, 1);
+
+	toolkit.clearAnnotations();
+	dom.window.document.querySelector("[data-onhand-pdf-text-layer]").textContent = "The rendered PDF text changed after capture.";
+	const restored = await toolkit.highlightText("recurrent neural networks", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		pdfAnchor: highlight.pdfAnchor,
+	});
+	assert.equal(restored.kind, "pdf");
+	assert.equal(restored.fallback, "pdf-anchor");
+	assert.equal(restored.pdfAnchor.pageNumber, 1);
+	assert.ok(dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]'), "expected own PDF viewer anchor restore to recreate overlay");
+}
+
+async function assertPdfAnchorCanRenderMultipleOverlaySegmentsAcrossPages() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="1">
+				<div class="textLayer">
+					<span>Cross-page PDF selection starts here.</span>
+				</div>
+			</div>
+			<div class="page" data-page-number="2">
+				<div class="textLayer">
+					<span>Cross-page PDF selection continues here.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+			pageCount: 2,
+		},
+		pageNumber: 1,
+		matchedText: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		textQuote: {
+			exact: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		},
+		rects: [
+			{ pageNumber: 1, x: 0.1, y: 0.1, width: 0.4, height: 0.04, coordinateSpace: "page-normalized" },
+			{ pageNumber: 1, x: 0.1, y: 0.16, width: 0.36, height: 0.04, coordinateSpace: "page-normalized" },
+			{ pageNumber: 2, x: 0.14, y: 0.12, width: 0.48, height: 0.04, coordinateSpace: "page-normalized" },
+		],
+	};
+	const restored = await toolkit.highlightText(pdfAnchor.matchedText, {
+		scrollIntoView: false,
+		pdfAnchor,
+	});
+	assert.equal(restored.kind, "pdf");
+	assert.equal(restored.fallback, "pdf-anchor");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-pdf-segment-kind="highlight"]').length, 2);
+
+	const root = dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]');
+	const segments = Array.from(dom.window.document.querySelectorAll('[data-onhand-pdf-segment-kind="highlight"]'));
+	assert.equal(root.closest(".page")?.getAttribute("data-page-number"), "1");
+	assert.equal(segments[0].closest(".page")?.getAttribute("data-page-number"), "1");
+	assert.equal(segments[1].closest(".page")?.getAttribute("data-page-number"), "2");
+	assert.equal(segments[0].getAttribute("data-onhand-pdf-segment-for"), restored.annotationId);
+	assert.equal(segments[1].style.getPropertyPriority("width"), "important");
+
+	await toolkit.showNote(restored.annotationId, "A single Onhand note belongs to the multi-segment PDF anchor.", { scrollIntoView: false });
+	const captured = await toolkit.captureState();
+	assert.equal(captured.annotationCount, 1);
+	assert.equal(captured.annotations[0].annotationId, restored.annotationId);
+	assert.equal(captured.annotations[0].pdfAnchor.rects.length, 3);
+	assert.equal(captured.annotations[0].note.text, "A single Onhand note belongs to the multi-segment PDF anchor.");
+
+	const cleared = toolkit.clearAnnotations();
+	assert.equal(cleared.clearedPdf, 1);
+	assert.equal(cleared.clearedPdfSegments, 2);
+	assert.equal(cleared.clearedNotes, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"], [data-onhand-pdf-segment-kind="highlight"], [data-onhand-note-kind="card"]').length, 0);
+}
+
+async function assertPdfAnchorRehydratesVisibleSecondaryPageWhenPrimaryPageMissing() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="2">
+				<div class="textLayer">
+					<span>Only the secondary page is currently rendered.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+			pageCount: 2,
+		},
+		pageNumber: 1,
+		matchedText: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		textQuote: {
+			exact: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		},
+		rects: [
+			{ pageNumber: 1, x: 0.1, y: 0.1, width: 0.4, height: 0.04, coordinateSpace: "page-normalized" },
+			{ pageNumber: 2, x: 0.14, y: 0.12, width: 0.48, height: 0.04, coordinateSpace: "page-normalized" },
+		],
+	};
+	const restored = await toolkit.highlightText(pdfAnchor.matchedText, {
+		scrollIntoView: false,
+		pdfAnchor,
+	});
+	assert.equal(restored.kind, "pdf");
+	assert.equal(restored.fallback, "pdf-anchor");
+	assert.equal(restored.pdfAnchor.pageNumber, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-pdf-segment-kind="highlight"]').length, 0);
+	assert.equal(dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".page")?.getAttribute("data-page-number"), "2");
+
+	await toolkit.showNote(restored.annotationId, "The note can attach to the rendered segment while page 1 is virtualized.", { scrollIntoView: false });
+	const captured = await toolkit.captureState();
+	assert.equal(captured.annotationCount, 1);
+	assert.equal(captured.annotations[0].pdfAnchor.pageNumber, 1);
+	assert.equal(captured.annotations[0].pdfAnchor.rects.length, 2);
+	assert.equal(captured.annotations[0].note.text, "The note can attach to the rendered segment while page 1 is virtualized.");
+}
+
+async function assertPdfOverlayReprojectsAfterPageResize() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="8">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const page = dom.window.document.querySelector(".page");
+	const textLayer = dom.window.document.querySelector(".textLayer");
+	const pageRect = { left: 20, top: 40, width: 1000, height: 1200 };
+	const rectForPage = () => ({
+		x: pageRect.left,
+		y: pageRect.top,
+		top: pageRect.top,
+		left: pageRect.left,
+		right: pageRect.left + pageRect.width,
+		bottom: pageRect.top + pageRect.height,
+		width: pageRect.width,
+		height: pageRect.height,
+		toJSON() {
+			return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+		},
+	});
+	page.getBoundingClientRect = rectForPage;
+	textLayer.getBoundingClientRect = rectForPage;
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	const overlay = dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]');
+	assert.ok(overlay, "expected PDF overlay before resize");
+	assert.equal(overlay.style.width, "1000px");
+	assert.equal(overlay.style.height, "1200px");
+	overlay.getBoundingClientRect = () => ({
+		x: pageRect.left + Number.parseFloat(overlay.style.left || "0"),
+		y: pageRect.top + Number.parseFloat(overlay.style.top || "0"),
+		top: pageRect.top + Number.parseFloat(overlay.style.top || "0"),
+		left: pageRect.left + Number.parseFloat(overlay.style.left || "0"),
+		right: pageRect.left + Number.parseFloat(overlay.style.left || "0") + Number.parseFloat(overlay.style.width || "0"),
+		bottom: pageRect.top + Number.parseFloat(overlay.style.top || "0") + Number.parseFloat(overlay.style.height || "0"),
+		width: Number.parseFloat(overlay.style.width || "0"),
+		height: Number.parseFloat(overlay.style.height || "0"),
+		toJSON() {
+			return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+		},
+	});
+
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
+	assert.equal(note.style.width, "300px");
+
+	pageRect.width = 1200;
+	pageRect.height = 1500;
+	await toolkit.captureState();
+	assert.equal(overlay.style.width, "1200px");
+	assert.equal(overlay.style.height, "1500px");
+	assert.equal(note.style.width, "360px");
+}
+
+async function assertPdfAnnotationRehydratesAfterPageVirtualization() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="9">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	const originalPage = dom.window.document.querySelector(".page");
+	const replacementPage = dom.window.document.createElement("div");
+	replacementPage.className = "page";
+	replacementPage.setAttribute("data-page-number", "9");
+	replacementPage.innerHTML = `
+		<div class="textLayer">
+			<span>Recurrent neural networks preserve sequence state.</span>
+		</div>
+	`;
+	originalPage.replaceWith(replacementPage);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+
+	const captured = await toolkit.captureState();
+	assert.equal(captured.annotationCount, 1);
+	assert.equal(captured.annotations[0].annotationId, highlight.annotationId);
+	assert.equal(captured.annotations[0].kind, "pdf");
+	assert.equal(captured.annotations[0].pdfAnchor.pageNumber, 9);
+	assert.equal(captured.annotations[0].note.text, "RNNs carry state across a sequence.");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+
+	dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]').remove();
+	dom.window.document.querySelector('[data-onhand-note-kind="card"]').remove();
+	const scrolled = await toolkit.scrollToAnnotation(highlight.annotationId, { block: "center" });
+	assert.equal(scrolled.annotationId, highlight.annotationId);
+	assert.equal(scrolled.targetKind, "annotation");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+}
+
+async function assertPdfAnnotationRehydratesWhenPageMutatesAsync() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="6">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+	const originalPage = dom.window.document.querySelector(".page");
+	const replacementPage = dom.window.document.createElement("div");
+	replacementPage.className = "page";
+	replacementPage.setAttribute("data-page-number", "6");
+	replacementPage.innerHTML = `
+		<div class="textLayer">
+			<span>Recurrent neural networks preserve sequence state.</span>
+		</div>
+	`;
+	originalPage.replaceWith(replacementPage);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 50));
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+}
+
+async function assertPdfSourceJumpReportsNearestRenderedPageWhenTargetPageMissing() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="9">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+
+	const originalPage = dom.window.document.querySelector(".page");
+	const page8 = dom.window.document.createElement("div");
+	page8.className = "page";
+	page8.setAttribute("data-page-number", "8");
+	page8.innerHTML = `<div class="textLayer"><span>Previous rendered page.</span></div>`;
+	const page10 = dom.window.document.createElement("div");
+	page10.className = "page";
+	page10.setAttribute("data-page-number", "10");
+	page10.innerHTML = `<div class="textLayer"><span>Next rendered page.</span></div>`;
+	originalPage.replaceWith(page8, page10);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+
+	const scrolled = await toolkit.scrollToAnnotation(highlight.annotationId, { block: "center" });
+	assert.equal(scrolled.annotationId, highlight.annotationId);
+	assert.equal(scrolled.targetKind, "pdf-page-estimate");
+	assert.equal(scrolled.pageNumber, 9);
+	assert.equal(scrolled.nearestPageNumber, 8);
+	assert.equal(scrolled.virtualized, true);
+}
+
+async function assertPdfSourceJumpRehydratesVisibleSecondarySegmentWhenPrimaryPageMissing() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="1">
+				<div class="textLayer">
+					<span>Cross-page PDF selection starts here.</span>
+				</div>
+			</div>
+			<div class="page" data-page-number="2">
+				<div class="textLayer">
+					<span>Cross-page PDF selection continues here.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+			pageCount: 2,
+		},
+		pageNumber: 1,
+		matchedText: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		textQuote: {
+			exact: "Cross-page PDF selection starts here. Cross-page PDF selection continues here.",
+		},
+		rects: [
+			{ pageNumber: 1, x: 0.1, y: 0.1, width: 0.4, height: 0.04, coordinateSpace: "page-normalized" },
+			{ pageNumber: 2, x: 0.14, y: 0.12, width: 0.48, height: 0.04, coordinateSpace: "page-normalized" },
+		],
+	};
+	const restored = await toolkit.highlightText(pdfAnchor.matchedText, {
+		scrollIntoView: false,
+		pdfAnchor,
+	});
+	await toolkit.showNote(restored.annotationId, "Source should still jump to the rendered page 2 segment.", { scrollIntoView: false });
+	assert.equal(dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".page")?.getAttribute("data-page-number"), "1");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-pdf-segment-kind="highlight"]').length, 1);
+
+	dom.window.document.querySelector('[data-page-number="1"]').remove();
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 0);
+
+	const scrolled = await toolkit.scrollToAnnotation(restored.annotationId, { block: "center" });
+	assert.equal(scrolled.annotationId, restored.annotationId);
+	assert.equal(scrolled.targetKind, "annotation");
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-pdf-segment-kind="highlight"]').length, 0);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+	assert.equal(dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".page")?.getAttribute("data-page-number"), "2");
+}
+
+async function assertPdfSourceJumpRequestsViewerRenderForVirtualizedPage() {
+	const { dom, toolkit } = await createToolkit(`
+		<div role="toolbar" aria-label="PDF controls">
+			<label>Page <input type="number" aria-label="Page number" value="9"></label>
+		</div>
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="9">
+				<div class="textLayer">
+					<span>Recurrent neural networks preserve sequence state.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const document = dom.window.document;
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
+
+	const viewer = document.querySelector("#viewer");
+	const originalPage = document.querySelector(".page");
+	const page8 = document.createElement("div");
+	page8.className = "page";
+	page8.setAttribute("data-page-number", "8");
+	page8.innerHTML = `<div class="textLayer"><span>Previous rendered page.</span></div>`;
+	const page10 = document.createElement("div");
+	page10.className = "page";
+	page10.setAttribute("data-page-number", "10");
+	page10.innerHTML = `<div class="textLayer"><span>Next rendered page.</span></div>`;
+	originalPage.replaceWith(page8, page10);
+	assert.equal(document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+
+	let renderRequests = 0;
+	const pageInput = document.querySelector('[aria-label="Page number"]');
+	pageInput.value = "8";
+	pageInput.addEventListener("keydown", (event) => {
+		if (event.key !== "Enter" || pageInput.value !== "9") return;
+		renderRequests += 1;
+		if (document.querySelector('[data-page-number="9"]')) return;
+		const page9 = document.createElement("div");
+		page9.className = "page";
+		page9.setAttribute("data-page-number", "9");
+		page9.innerHTML = `
+			<div class="textLayer">
+				<span>Recurrent neural networks preserve sequence state.</span>
+			</div>
+		`;
+		viewer.insertBefore(page9, page10);
+	});
+
+	const scrolled = await toolkit.scrollToAnnotation(highlight.annotationId, { block: "center" });
+	assert.equal(renderRequests, 1, "expected source jump to request the target PDF page through the page control");
+	assert.equal(pageInput.value, "9");
+	assert.equal(scrolled.annotationId, highlight.annotationId);
+	assert.equal(scrolled.targetKind, "annotation");
+	assert.equal(document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 1);
+	assert.equal(document.querySelectorAll('[data-onhand-note-kind="card"]').length, 1);
+	assert.equal(document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".page")?.getAttribute("data-page-number"), "9");
+}
+
+async function assertGoogleScholarReaderSourceJumpUsesUnlabelledPageInput() {
+	const { dom, toolkit } = await createToolkitAtUrl(
+		`
+		<!doctype html>
+		<title>Google Scholar Reader</title>
+		<body>
+			<div class="gsr-root">
+				<div class="gsr-toolbar" role="toolbar" aria-label="Google Scholar PDF Reader toolbar">
+					<div class="gsr-tb-pn">
+						<button type="button" class="gsr-tb-pn-btn" aria-label="Previous page"></button>
+						<input class="gsr-tb-pn-input gsr-tb-input" type="text" value="13">
+						<span class="gsr-tb-pn-divider">/</span>
+						<span class="gsr-tb-pn-tp">20</span>
+						<button type="button" class="gsr-tb-pn-btn" aria-label="Next page"></button>
+					</div>
+				</div>
+				<div class="gsr-body">
+					<div class="gsr-content-wrapper">
+						<div class="gsr-page-wrapper">
+							<div class="gsr-page" data-pn="13">
+								<div class="gsr-text-ctn">
+									<span class="gsr-text" data-idx="0">Target Reader page text appears on the initially rendered page.</span>
+								</div>
+							</div>
+						</div>
+						<div class="gsr-comment-wrapper"></div>
+					</div>
+				</div>
+			</div>
+		</body>
+		`,
+		"chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html",
+	);
+	const document = dom.window.document;
+	const pageWrapper = document.querySelector(".gsr-page-wrapper");
+	const pageInput = document.querySelector(".gsr-tb-pn-input");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "google-scholar",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Google Scholar Reader",
+			pageCount: 20,
+		},
+		pageNumber: 13,
+		matchedText: "Target Reader page text",
+		textQuote: {
+			exact: "Target Reader page text",
+		},
+		rects: [{ pageNumber: 13, x: 0.12, y: 0.18, width: 0.42, height: 0.04, coordinateSpace: "page-normalized" }],
+	};
+
+	const restored = await toolkit.highlightText(pdfAnchor.matchedText, {
+		scrollIntoView: false,
+		pdfAnchor,
+	});
+	assert.equal(restored.kind, "pdf");
+	assert.equal(document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".gsr-page")?.getAttribute("data-pn"), "13");
+	const page12 = document.createElement("div");
+	page12.className = "gsr-page";
+	page12.setAttribute("data-pn", "12");
+	page12.innerHTML = `
+		<div class="gsr-text-ctn">
+			<span class="gsr-text" data-idx="0">The currently rendered Reader page.</span>
+		</div>
+	`;
+	document.querySelector(".gsr-page").replaceWith(page12);
+	pageInput.value = "12";
+	assert.equal(document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0);
+
+	let renderRequests = 0;
+	pageInput.addEventListener("change", () => {
+		if (pageInput.value !== "13" || document.querySelector('[data-pn="13"]')) return;
+		renderRequests += 1;
+		const page13 = document.createElement("div");
+		page13.className = "gsr-page";
+		page13.setAttribute("data-pn", "13");
+		page13.innerHTML = `
+			<div class="gsr-text-ctn">
+				<span class="gsr-text" data-idx="0">Target Reader page text appears after Reader navigation.</span>
+			</div>
+		`;
+		pageWrapper.appendChild(page13);
+	});
+
+	const scrolled = await toolkit.scrollToAnnotation(restored.annotationId, { block: "center" });
+	assert.equal(renderRequests, 1, "expected source jump to use Google Scholar Reader's unlabelled page input");
+	assert.equal(pageInput.value, "13");
+	assert.equal(scrolled.annotationId, restored.annotationId);
+	assert.equal(scrolled.targetKind, "annotation");
+	assert.equal(scrolled.requestedPageRender, "page-control");
+	assert.equal(document.querySelector('[data-onhand-highlight-kind="pdf"]').closest(".gsr-page")?.getAttribute("data-pn"), "13");
+}
+
+async function assertPdfHighlightPrefersVisiblePageMatch() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="1" data-testid="page-1">
+				<div class="textLayer">
+					<span>Lecture 4: Recurrent Neural Networks</span>
+				</div>
+			</div>
+			<div class="page" data-page-number="2" data-testid="page-2">
+				<div class="textLayer">
+					<span>The important phrase is recurrent neural networks in sequence models.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const page1 = dom.window.document.querySelector('[data-testid="page-1"]');
+	const page2 = dom.window.document.querySelector('[data-testid="page-2"]');
+	page1.getBoundingClientRect = () => ({
+		x: 16,
+		y: -640,
+		top: -640,
+		left: 16,
+		right: 656,
+		bottom: -140,
+		width: 640,
+		height: 500,
+		toJSON() {
+			return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+		},
+	});
+	page2.getBoundingClientRect = () => ({
+		x: 16,
+		y: 80,
+		top: 80,
+		left: 16,
+		right: 656,
+		bottom: 580,
+		width: 640,
+		height: 500,
+		toJSON() {
+			return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+		},
+	});
+
+	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
+	assert.equal(highlight.kind, "pdf");
+	assert.equal(highlight.pdfAnchor.pageNumber, 2);
+	assert.equal(highlight.pdfAnchor.textQuote.exact, "recurrent neural networks");
+}
+
+async function assertPdfSelectionIncludesAnchor() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="7">
+				<div class="textLayer">
+					<span>The selected phrase is </span>
+					<span data-testid="phrase">recurrent neural networks</span>
+					<span> in the slide text.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const document = dom.window.document;
+	const phraseNode = document.querySelector('[data-testid="phrase"]').firstChild;
+	const range = document.createRange();
+	range.setStart(phraseNode, 0);
+	range.setEnd(phraseNode, phraseNode.textContent.length);
+	const selection = dom.window.getSelection();
+	selection.removeAllRanges();
+	selection.addRange(range);
+
+	const selectionInfo = toolkit.getSelectionInfo();
+	assert.equal(selectionInfo.text, "recurrent neural networks");
+	assert.equal(selectionInfo.surface, "pdf");
+	assert.equal(selectionInfo.viewer, "pdfjs");
+	assert.equal(selectionInfo.pageNumber, 7);
+	assert.equal(selectionInfo.container.pageNumber, 7);
+	assert.equal(selectionInfo.pdfAnchor.pageNumber, 7);
+	assert.equal(selectionInfo.pdfAnchor.textQuote.exact, "recurrent neural networks");
+	assert.equal(selectionInfo.pdfAnchor.rects[0].coordinateSpace, "page-normalized");
+}
+
 async function main() {
+	await assertPdfViewerHandoffHelpers();
+	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
+
 	await assertHighlight({
 		name: "curly quote exact projection",
 		html: `<main><p>Use “steady state” proposals when the base sampler rejects too often.</p></main>`,
@@ -248,6 +1605,32 @@ async function main() {
 	await assertHighlightTextPreservesExistingAnnotationsByDefault();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
+	await assertPdfTextLayerVisibleTextUsesPdfSurface();
+	await assertPdfDocumentIdentityUsesEmbeddedPdfUrl();
+	await assertPdfDocumentIdentityUsesViewerFileParameter();
+	await assertLikelyPdfTabUrlCoversContentTypePdfRoutes();
+	await assertReaderFrameFallbackDiagnosticsSurviveDebuggerFallback();
+	await assertGenericPdfReaderPageRegionUsesPdfSurfaceOnlyWithPdfSignal();
+	await assertGenericPdfReaderFallbackIgnoresOnhandOverlayText();
+	await assertScholarNativeAnnotationsStaySeparateFromOnhandPdfState();
+	await assertControlledScholarPdfFixtureMatchesAdapterContract();
+	await assertGoogleScholarReaderDomMatchesAdapterContract();
+	await assertGenericPageRegionWithoutPdfSignalStaysHtmlSurface();
+	await assertPdfEmbedWithoutTextLayerReturnsUnsupportedInsteadOfHtmlFallback();
+	await assertGoogleScholarReaderFrameUsesTopTabUrlForPdfIdentity();
+	await assertPdfHighlightAndNoteUseOverlayAnchors();
+	await assertOnhandPdfViewerSurfaceAndAnchorRestore();
+	await assertPdfAnchorCanRenderMultipleOverlaySegmentsAcrossPages();
+	await assertPdfAnchorRehydratesVisibleSecondaryPageWhenPrimaryPageMissing();
+	await assertPdfOverlayReprojectsAfterPageResize();
+	await assertPdfAnnotationRehydratesAfterPageVirtualization();
+	await assertPdfAnnotationRehydratesWhenPageMutatesAsync();
+	await assertPdfSourceJumpRequestsViewerRenderForVirtualizedPage();
+	await assertGoogleScholarReaderSourceJumpUsesUnlabelledPageInput();
+	await assertPdfSourceJumpRehydratesVisibleSecondarySegmentWhenPrimaryPageMissing();
+	await assertPdfSourceJumpReportsNearestRenderedPageWhenTargetPageMissing();
+	await assertPdfHighlightPrefersVisiblePageMatch();
+	await assertPdfSelectionIncludesAnchor();
 
 	console.log("Page toolkit regressions: PASS");
 }

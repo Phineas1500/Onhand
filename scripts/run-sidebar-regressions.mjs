@@ -279,6 +279,23 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						restoredCount: 0,
 					};
 				}
+				if (message?.type === "sidebar:open-pdf-viewer") {
+					if (typeof options.openPdfViewerResponse === "function") {
+						return options.openPdfViewerResponse(message);
+					}
+					return {
+						ok: true,
+						result: {
+							tab: {
+								id: 44,
+								title: "onhand-viewer.pdf - Onhand PDF Viewer",
+								url: "chrome-extension://extension-id/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
+							},
+							pdfUrl: "https://example.test/paper.pdf",
+							opened: true,
+						},
+					};
+				}
 				if (message?.type === "sidebar:activate-action") {
 					if (typeof options.activateActionResponse === "function") {
 						return options.activateActionResponse(message);
@@ -450,6 +467,59 @@ async function assertTranscriptActionButtonsActivateDirectly() {
 	);
 
 	dom.window.close();
+}
+
+async function assertOpenPdfViewerMenuActionTargetsPdfTabs() {
+	const nonPdfRuntimeMessages = [];
+	const nonPdfState = createState();
+	nonPdfState.tab = {
+		id: 7,
+		title: "Ordinary page",
+		url: "https://example.test/article",
+	};
+	const nonPdfDom = await renderSidebar(nonPdfState, nonPdfRuntimeMessages);
+	const nonPdfHost = nonPdfDom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const nonPdfButton = nonPdfHost.shadowRoot.getElementById("openPdfViewerButton");
+	assert.ok(nonPdfButton, "expected Open PDF menu button");
+	assert.equal(nonPdfButton.disabled, true, "expected Open PDF to be disabled on non-PDF pages");
+	nonPdfDom.window.close();
+
+	const pdfRuntimeMessages = [];
+	const pdfState = createState();
+	pdfState.tab = {
+		id: 8,
+		title: "Direct PDF",
+		url: "https://example.test/pdf/onhand-viewer",
+	};
+	const pdfDom = await renderSidebar(pdfState, pdfRuntimeMessages);
+	const pdfHost = pdfDom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const pdfButton = pdfHost.shadowRoot.getElementById("openPdfViewerButton");
+	assert.ok(pdfButton, "expected Open PDF menu button on PDF page");
+	assert.equal(pdfButton.disabled, false, "expected Open PDF to be enabled on PDF-like routes");
+	assert.match(pdfButton.title, /Onhand's viewer/);
+	pdfButton.dispatchEvent(new pdfDom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => pdfDom.window.setTimeout(resolve, 0));
+	assert.equal(
+		pdfRuntimeMessages.some((message) => message?.type === "sidebar:open-pdf-viewer" && message.windowId === 1),
+		true,
+		"expected Open PDF button to send sidebar handoff message",
+	);
+	pdfDom.window.close();
+
+	const failedCaptureRuntimeMessages = [];
+	const failedCaptureState = createState();
+	failedCaptureState.pageCaptureError = "Onhand page tools only run on http/https tabs, not native PDF";
+	failedCaptureState.tab = {
+		id: 9,
+		title: "Native PDF",
+		url: "https://example.test/paper.pdf",
+	};
+	const failedCaptureDom = await renderSidebar(failedCaptureState, failedCaptureRuntimeMessages);
+	const failedCaptureHost = failedCaptureDom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const failedCaptureButton = failedCaptureHost.shadowRoot.getElementById("openPdfViewerButton");
+	assert.ok(failedCaptureButton, "expected Open PDF button when PDF capture fails");
+	assert.equal(failedCaptureButton.disabled, false, "expected Open PDF to stay enabled from tab URL after PDF capture fails");
+	failedCaptureDom.window.close();
 }
 
 async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
@@ -1199,6 +1269,7 @@ async function assertLearningSessionPanelHidesOutsideLearningState() {
 
 await assertSessionWideCitationNumbers();
 await assertTranscriptActionButtonsActivateDirectly();
+await assertOpenPdfViewerMenuActionTargetsPdfTabs();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertReviewViewRendersSavedSnapshot();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();

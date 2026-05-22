@@ -10,7 +10,7 @@
     "48": "icons/onhand-48.png",
     "128": "icons/onhand-128.png"
   },
-  "permissions": ["tabs", "storage", "debugger", "sidePanel", "offscreen", "scripting"],
+  "permissions": ["tabs", "storage", "debugger", "sidePanel", "offscreen", "scripting", "webNavigation"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background.js",
@@ -31,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["vendor/*", "fonts/*"],
+      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*"],
       "matches": ["<all_urls>"]
     }
   ]

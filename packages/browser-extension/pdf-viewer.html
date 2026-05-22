@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Onhand PDF Viewer</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--onhand-bg: #3a3936;
+				--onhand-paper: #f7f3ea;
+				--onhand-text: #2f2c28;
+				--onhand-line: rgba(47, 44, 40, 0.16);
+				--onhand-blue: #2b6f89;
+			}
+
+			html,
+			body {
+				margin: 0;
+				min-height: 100%;
+				background: var(--onhand-bg);
+				color: var(--onhand-text);
+				font-family:
+					-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+
+			.onhand-pdf-toolbar {
+				position: sticky;
+				top: 0;
+				z-index: 20;
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				min-height: 48px;
+				padding: 0 16px;
+				background: #2f2e2b;
+				color: #f6efe3;
+				box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
+			}
+
+			.onhand-pdf-title {
+				flex: 1;
+				min-width: 0;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+				font-size: 14px;
+				font-weight: 650;
+			}
+
+			.onhand-pdf-status {
+				color: #d8d0c3;
+				font-size: 12px;
+				white-space: nowrap;
+			}
+
+			.onhand-pdf-controls {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+
+			.onhand-pdf-controls button,
+			.onhand-pdf-controls input {
+				height: 28px;
+				border: 1px solid rgba(255, 255, 255, 0.24);
+				border-radius: 4px;
+				background: #45433f;
+				color: #fff8ed;
+				font: inherit;
+			}
+
+			.onhand-pdf-controls button {
+				min-width: 30px;
+				padding: 0 9px;
+				cursor: pointer;
+			}
+
+			.onhand-pdf-controls input {
+				width: 58px;
+				padding: 0 6px;
+				text-align: center;
+			}
+
+			.pdfViewer {
+				display: grid;
+				gap: 16px;
+				justify-content: center;
+				padding: 16px 24px 32px;
+			}
+
+			.page {
+				position: relative;
+				overflow: hidden;
+				background: var(--onhand-paper);
+				box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+			}
+
+			.canvasWrapper,
+			.canvasWrapper canvas {
+				display: block;
+			}
+
+			.textLayer {
+				position: absolute;
+				inset: 0;
+				z-index: 2;
+				overflow: hidden;
+				line-height: 1;
+				text-align: initial;
+				transform-origin: 0 0;
+			}
+
+			.textLayer span,
+			.textLayer br {
+				position: absolute;
+				color: transparent;
+				white-space: pre;
+				cursor: text;
+				transform-origin: 0% 0%;
+			}
+
+			.textLayer ::selection {
+				background: rgba(43, 111, 137, 0.32);
+			}
+
+			.onhand-pdf-error {
+				max-width: 720px;
+				margin: 48px auto;
+				padding: 20px;
+				border: 1px solid var(--onhand-line);
+				border-radius: 6px;
+				background: var(--onhand-paper);
+				line-height: 1.45;
+			}
+
+			[data-onhand-note-part="header"] {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+				margin-bottom: 6px;
+			}
+
+			[data-onhand-note-toggle] {
+				width: 22px;
+				height: 22px;
+				border: 1px solid #cac1b9;
+				border-radius: 3px;
+				background: rgba(255, 255, 255, 0.35);
+				color: #286983;
+				cursor: pointer;
+				font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				padding: 0;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-note-collapsed="true"] [data-onhand-note-part="label"],
+			[data-onhand-note-kind="card"][data-onhand-note-collapsed="true"] [data-onhand-note-part="body"] {
+				display: none;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-note-collapsed="true"] [data-onhand-note-part="header"] {
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-note-collapsed="true"] {
+				opacity: 0.48;
+			}
+
+			[data-onhand-note-kind="card"][data-onhand-note-collapsed="true"] [data-onhand-note-toggle] {
+				width: 100%;
+				height: 100%;
+				border: 0;
+				background: transparent;
+			}
+		</style>
+	</head>
+	<body data-onhand-pdf-viewer="true">
+		<header class="onhand-pdf-toolbar">
+			<div class="onhand-pdf-title" id="onhand-pdf-title">Onhand PDF Viewer</div>
+			<div class="onhand-pdf-controls" aria-label="PDF controls">
+				<button id="onhand-pdf-zoom-out" type="button" title="Zoom out">-</button>
+				<input id="onhand-pdf-page" type="number" min="1" value="1" aria-label="Page number" />
+				<span id="onhand-pdf-page-count" class="onhand-pdf-status">/ -</span>
+				<button id="onhand-pdf-zoom-in" type="button" title="Zoom in">+</button>
+			</div>
+			<div class="onhand-pdf-status" id="onhand-pdf-status">Loading...</div>
+		</header>
+		<main id="viewer" class="pdfViewer" data-onhand-pdf-viewer-root></main>
+		<script type="module" src="pdf-viewer.bundle.js"></script>
+	</body>
+</html>

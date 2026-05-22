@@ -105,6 +105,7 @@
 	let pendingSessionPath = "";
 	let creatingSession = false;
 	let restoringSession = false;
+	let openingPdfViewer = false;
 	let lastRestoreResult = null;
 	let stoppingRequest = false;
 	let sidebarTheme = "system";
@@ -2567,6 +2568,7 @@
 							</label>
 								<div class="onhand-menu-actions">
 									<button id="newSessionButton" class="session-button" type="button">New</button>
+									<button id="openPdfViewerButton" class="session-button" type="button">Open PDF</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
 									<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
 									<button id="closeButton" class="session-button" type="button">Close</button>
@@ -2632,6 +2634,7 @@
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
 	const learningModeToggle = shadow.getElementById("learningModeToggle");
 	const newSessionButton = shadow.getElementById("newSessionButton");
+	const openPdfViewerButton = shadow.getElementById("openPdfViewerButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
 	const stopButton = shadow.getElementById("stopButton");
 	const messagesEl = shadow.getElementById("messages");
@@ -2757,6 +2760,12 @@
 		learningModeLabel.classList.toggle("on", learningMode);
 		composer.classList.toggle("learning", learningMode);
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
+		openPdfViewerButton.disabled =
+			openingPdfViewer || creatingSession || sessionSwitching || activeRequest || !canOpenCurrentPdfInViewer(state);
+		openPdfViewerButton.textContent = openingPdfViewer ? "Opening PDF..." : "Open PDF";
+		openPdfViewerButton.title = canOpenCurrentPdfInViewer(state)
+			? "Open this PDF in Onhand's viewer"
+			: "Open a PDF tab to use Onhand's PDF viewer";
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
 		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
@@ -2892,6 +2901,31 @@
 			});
 		} finally {
 			restoringSession = false;
+			renderState(currentState || {});
+		}
+	}
+
+	async function openCurrentPdfInViewer() {
+		openingPdfViewer = true;
+		lastRestoreResult = null;
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:open-pdf-viewer",
+				windowId: await ensureCurrentWindowId(),
+			});
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not open this PDF in Onhand's viewer.");
+			}
+			setMenuOpen(false);
+			await requestState();
+			renderState({
+				...(currentState || {}),
+				status: response.result?.alreadyOpen ? "This PDF is already open in Onhand's viewer." : "Opened PDF in Onhand viewer.",
+			});
+			return response.result;
+		} finally {
+			openingPdfViewer = false;
 			renderState(currentState || {});
 		}
 	}
@@ -3457,6 +3491,35 @@
 			sessionOverview?.currentSession?.sessionId ||
 			""
 		);
+	}
+
+	function isLikelyPdfUrl(value) {
+		try {
+			const url = new URL(String(value || ""));
+			const path = decodeURIComponent(url.pathname || "").toLowerCase();
+			const search = decodeURIComponent(url.search || "").toLowerCase();
+			return (
+				path.endsWith(".pdf") ||
+				path.includes(".pdf/") ||
+				path.includes("/pdf/") ||
+				path.endsWith("/pdf") ||
+				path.endsWith("pdf-viewer.html") ||
+				search.includes(".pdf") ||
+				search.includes("format=pdf") ||
+				search.includes("contenttype=pdf") ||
+				search.includes("content-type=application/pdf")
+			);
+		} catch {
+			return false;
+		}
+	}
+
+	function canOpenCurrentPdfInViewer(state = currentState) {
+		if (!state || typeof state !== "object") return false;
+		const page = state.page && typeof state.page === "object" ? state.page : null;
+		const tab = state.tab && typeof state.tab === "object" ? state.tab : null;
+		if (page?.surface === "pdf" || page?.pdfUrl || page?.viewerUrl) return true;
+		return isLikelyPdfUrl(tab?.url || page?.url || "");
 	}
 
 	function resetReplayState(partial = {}) {
@@ -4487,6 +4550,15 @@
 
 	newSessionButton.addEventListener("click", () => {
 		void createNewSession().catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
+	openPdfViewerButton.addEventListener("click", () => {
+		void openCurrentPdfInViewer().catch((error) => {
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),

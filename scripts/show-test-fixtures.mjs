@@ -124,6 +124,90 @@ export const PRIMARY_FIXTURES = [
 		],
 	},
 	{
+		id: "controlled_pdf_adapter_fixture",
+		title: "Controlled PDF Adapter Fixture",
+		category: "Local PDF.js-style text-layer fixture",
+		url: "http://127.0.0.1:8765/pdf.html",
+		why: [
+			"deterministic PDF adapter fixture served by npm run serve:fixture",
+			"uses PDF.js-style page and textLayer DOM without relying on remote PDFs",
+			"good for validating Onhand-owned PDF overlay highlights, notes, capture, and restore",
+		],
+		prompts: [
+			"explain the recurrent neural networks phrase on this PDF page and add a short note",
+			"highlight recurrent neural networks and tell me why the phrase matters",
+		],
+		risks: [
+			"PDF text-layer detection",
+			"page-numbered visible text",
+			"PDF overlay highlight and note anchoring",
+			"PDF capture/restore from normalized rect anchors",
+		],
+	},
+	{
+		id: "onhand_pdf_viewer_fixture",
+		title: "Onhand PDF Viewer Fixture",
+		category: "Local real-PDF viewer fixture",
+		url: "http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+		why: [
+			"renders an actual PDF file through the Onhand-owned PDF.js viewer",
+			"exposes page DOM, text layers, and normalized geometry without depending on Chrome's native PDF viewer",
+			"best deterministic fixture for the intended PDF product path",
+		],
+		prompts: [
+			"explain the recurrent neural networks phrase in this PDF and add a note",
+			"highlight recurrent neural networks in this PDF viewer and save the page state",
+		],
+		risks: [
+			"extension-owned PDF viewer loading and worker assets",
+			"real PDF text-layer extraction",
+			"PDF overlay highlight and note anchoring in the product viewer",
+			"restore behavior after closing and reopening the viewer",
+		],
+	},
+	{
+		id: "direct_pdf_handoff_fixture",
+		title: "Direct PDF Handoff Fixture",
+		category: "Local real-PDF handoff fixture",
+		url: "http://127.0.0.1:8765/pdf/onhand-viewer",
+		why: [
+			"starts from a direct content-type PDF URL instead of an already-open Onhand viewer",
+			"verifies Onhand can infer the PDF source and open the extension-owned viewer",
+			"covers the native/direct PDF product path without depending on a .pdf suffix or Chrome's opaque PDF viewer internals for annotation",
+		],
+		prompts: [
+			"open this PDF in Onhand's viewer and explain recurrent neural networks",
+			"use the Onhand PDF viewer for this PDF, then highlight recurrent neural networks and save the page state",
+		],
+		risks: [
+			"direct/native PDF handoff into the Onhand viewer",
+			"preserving the original PDF URL inside pdf-viewer.html?url=...",
+			"normal visible-text, highlight, note, and capture tools still work after the handoff",
+		],
+	},
+	{
+		id: "controlled_scholar_pdf_fixture",
+		title: "Controlled Scholar-like PDF Fixture",
+		category: "Local Google Scholar-style PDF fixture",
+		url: "http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf",
+		why: [
+			"deterministic PDF fixture served by npm run serve:fixture",
+			"uses actual Reader-like .gsr-page[data-pn], .gsr-text-ctn, and .gsr-text[data-idx] DOM",
+			"includes selectable text and native-looking Scholar highlight/comment UI",
+			"good for validating that Onhand-owned overlays coexist with another PDF annotation layer",
+		],
+		prompts: [
+			"read the visible PDF text and confirm native Scholar comments are not source text",
+			"highlight recurrent neural networks and add an Onhand note without using the Scholar comment popup",
+		],
+		risks: [
+			"Google Scholar-style PDF surface detection",
+			"excluding native PDF viewer comment and toolbar UI from source text",
+			"keeping Onhand highlights and notes separate from Scholar Reader annotations",
+			"PDF capture/restore when the viewer URL differs from the underlying PDF document URL",
+		],
+	},
+	{
 		id: "onhand_github_repo",
 		title: "Onhand GitHub Repository",
 		category: "Repository landing page with README and code-navigation chrome",
@@ -314,11 +398,19 @@ export const SCENARIO_MAP = {
 	},
 	pdf: {
 		label: "PDF behavior regressions",
-		fixtures: ["practice_midterm_pdf"],
+		fixtures: ["controlled_pdf_adapter_fixture", "onhand_pdf_viewer_fixture", "controlled_scholar_pdf_fixture", "practice_midterm_pdf"],
 	},
 	multi_tab: {
 		label: "Multi-tab synthesis regressions",
-		fixtures: ["sets", "bayesian_dl", "cnns", "practice_midterm_pdf"],
+		fixtures: [
+			"sets",
+			"bayesian_dl",
+			"cnns",
+			"controlled_pdf_adapter_fixture",
+			"onhand_pdf_viewer_fixture",
+			"controlled_scholar_pdf_fixture",
+			"practice_midterm_pdf",
+		],
 	},
 	repo_docs: {
 		label: "Repository and docs-hosting page regressions",
