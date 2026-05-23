@@ -164,6 +164,85 @@ Avoid using:
 - PDF-grounded tutoring flows
 - switching between HTML notes and PDF tabs
 
+### 6a. Controlled PDF Adapter Fixture
+
+**URL**
+- `http://127.0.0.1:8765/pdf.html` after running `npm run serve:fixture`
+
+**Why this is in the set**
+- deterministic PDF adapter fixture for local and CI-adjacent validation
+- uses PDF.js-style `.pdfViewer`, `.page[data-page-number]`, and `.textLayer` DOM
+- avoids depending on remote PDF loading or Google Scholar PDF Reader internals
+
+**Best test prompts**
+- `explain the recurrent neural networks phrase on this PDF page and add a short note`
+- `highlight recurrent neural networks and tell me why the phrase matters`
+
+**Main product risks covered**
+- PDF text-layer detection
+- page-numbered visible text
+- Onhand-owned PDF overlay highlights and notes
+- PDF capture/restore from normalized page-rect anchors
+
+### 6b. Onhand PDF Viewer Fixture
+
+**URL**
+- `http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf` after running `npm run serve:fixture`
+
+**Why this is in the set**
+- renders an actual PDF file through the Onhand-owned PDF.js viewer
+- exposes page DOM, text layers, and normalized geometry without depending on Chrome's native PDF viewer
+- best deterministic fixture for the intended PDF product path
+
+**Best test prompts**
+- `explain the recurrent neural networks phrase in this PDF and add a note`
+- `highlight recurrent neural networks in this PDF viewer and save the page state`
+
+**Main product risks covered**
+- extension-owned PDF viewer loading and worker assets
+- real PDF text-layer extraction
+- PDF overlay highlight and note anchoring in the product viewer
+- restore behavior after closing and reopening the viewer
+
+### 6c. Direct PDF Handoff Fixture
+
+**URL**
+- `http://127.0.0.1:8765/pdf/onhand-viewer` after running `npm run serve:fixture`
+
+**Why this is in the set**
+- starts from a direct content-type PDF URL instead of an already-open Onhand viewer
+- verifies `browser_open_pdf_in_onhand_viewer` can infer the PDF source and open the extension-owned viewer
+- covers the native/direct PDF product path without depending on a `.pdf` suffix or Chrome's opaque PDF viewer internals for annotation
+
+**Best test prompts**
+- `open this PDF in Onhand's viewer and explain recurrent neural networks`
+- `use the Onhand PDF viewer for this PDF, then highlight recurrent neural networks and save the page state`
+
+**Main product risks covered**
+- direct/native PDF handoff into the Onhand viewer
+- preserving the original PDF URL inside `pdf-viewer.html?url=...`
+- continuing with normal visible-text, highlight, note, and capture tools after the handoff
+
+### 6d. Controlled Scholar-like PDF Fixture
+
+**URL**
+- `http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf` after running `npm run serve:fixture`
+
+**Why this is in the set**
+- deterministic Google Scholar-style PDF fixture for local validation
+- includes actual Reader-like `.gsr-page[data-pn]`, `.gsr-text-ctn`, and `.gsr-text[data-idx]` nodes, plus selectable PDF text and native-looking Scholar highlight/comment UI
+- verifies Onhand does not treat Scholar's native comments, color controls, or toolbars as PDF source text
+
+**Best test prompts**
+- `read the visible PDF text and confirm native Scholar comments are not source text`
+- `highlight recurrent neural networks and add an Onhand note without using the Scholar comment popup`
+
+**Main product risks covered**
+- Google Scholar-style PDF surface detection
+- coexistence with another PDF annotation layer
+- excluding native PDF viewer UI from source extraction
+- PDF capture/restore when viewer URL and document URL differ
+
 ### 7. Repository Landing Page With README and GitHub Chrome
 
 **URL**
@@ -332,6 +411,9 @@ Use:
 ### PDF behavior regressions
 
 Use:
+- `controlled_pdf_adapter_fixture`
+- `onhand_pdf_viewer_fixture`
+- `controlled_scholar_pdf_fixture`
 - `practice_midterm_2025.pdf`
 
 ### Multi-tab synthesis regressions
@@ -340,6 +422,8 @@ Use:
 - `sets`
 - `BayesianDL`
 - `CNNs`
+- `onhand_pdf_viewer_fixture`
+- `controlled_scholar_pdf_fixture`
 - `practice_midterm_2025.pdf`
 
 ### Repository / docs-hosting regressions

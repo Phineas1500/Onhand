@@ -79,6 +79,41 @@ Run these in Chrome, not Helium, after reloading the unpacked extension from `pa
 - prompt: ask Onhand to inspect the page and confirm what section is visible
 - verify: network reload/debug tools work, headings and DOM collection are coherent
 
+### Controlled PDF Adapter Fixture
+
+- start the local fixture with `npm run serve:fixture`
+- URL: `http://127.0.0.1:8765/pdf.html`
+- prompt: `Explain the recurrent neural networks phrase on this PDF page and add a short note.`
+- verify: visible PDF text is reported with page numbers, Onhand creates a PDF overlay highlight, the note is anchored in the PDF overlay layer, capture/restore brings the highlight and note back
+
+### Onhand PDF Viewer Fixture
+
+- start the local fixture with `npm run serve:fixture`
+- URL: `http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf`
+- prompt: `Explain the recurrent neural networks phrase in this PDF and add a note.`
+- verify: a real PDF file renders in the Onhand-owned PDF viewer, visible text comes from the PDF text layer, and Onhand highlight/note/restore works without using Google Scholar's annotation UI
+
+### Direct PDF Handoff Fixture
+
+- start the local fixture with `npm run serve:fixture`
+- URL: `http://127.0.0.1:8765/pdf/onhand-viewer`
+- prompt: `Open this PDF in Onhand's viewer, then explain and highlight recurrent neural networks.`
+- verify: either the menu's `Open PDF` action or the agent tool `browser_open_pdf_in_onhand_viewer` changes the active tab to the Onhand PDF viewer URL, and the normal highlight/note/capture tools work on that viewer tab
+
+### Controlled Scholar-like PDF Fixture
+
+- start the local fixture with `npm run serve:fixture`
+- URL: `http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf`
+- prompt: `Read the visible PDF text, confirm native Scholar comments are not source text, then highlight recurrent neural networks and add an Onhand note.`
+- verify: visible PDF text uses page numbers, the native Scholar comment popup and toolbar are not treated as source text, and Onhand highlights/notes remain separate from the native Scholar-style annotation UI
+
+### Native Chrome PDF Diagnostic
+
+- URL: a direct PDF route such as `https://arxiv.org/pdf/2509.03345`
+- prompt: `Use browser_get_visible_text on this PDF tab and report whether a readable PDF text layer is available.`
+- verify: if Chrome exposes no scriptable text layer, Onhand reports an unsupported PDF surface and does not claim an HTML highlight/note path
+- next product path: open the PDF in an Onhand-owned PDF.js-style viewer, then run the controlled PDF highlight/note/restore checks there
+
 ## Merge-Readiness Checklist
 
 ```sh

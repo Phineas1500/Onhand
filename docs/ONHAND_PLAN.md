@@ -135,10 +135,12 @@ This means:
 ## 5.4 Core adapters
 Onhand should be built around adapters:
 - **Browser adapter**: current Chromium extension tools, called directly from the extension runtime
-- **PDF adapter**: controlled PDF viewer (PDF.js recommended for v1/v2)
+- **PDF adapter**: Onhand-owned PDF.js-style viewer as the durable path, with compatibility for other text-layer PDF viewers when available
 - **File/editor adapter**: file path + selected text + line/section anchors
 - **Workspace adapter**: browser window/tab/session awareness first; native desktop awareness is no longer a v1 target
 - **Computer-use fallback**: later, for unsupported apps and edge cases, outside the browser-only core
+
+Chrome's native PDF viewer can visibly render a PDF while exposing no scriptable DOM text layer to the extension. Treat that surface as an unsupported diagnostic for now. Google Scholar PDF Reader can be a compatibility target when its text-layer frame is reachable, but it should not be Onhand's source of truth. The product path for reliable PDF annotation is to open PDFs in an Onhand viewer that exposes page DOM, text layers, and normalized page geometry to the existing PDF adapter. The browser runtime now has a dedicated `browser_open_pdf_in_onhand_viewer` handoff so direct/native PDF tabs can move into that reliable surface before using the normal annotation tools.
 
 ---
 
@@ -355,8 +357,15 @@ Add:
 Do **not** rely on generic computer-use for PDFs as the primary approach.
 
 Use a dedicated PDF surface, ideally:
-- **PDF.js** inside the app or a controlled web surface for v1/v2
+- a PDF annotation adapter under the existing browser tool surface
+- an Onhand-owned **PDF.js-style extension viewer** as the reliable product path
+- a direct/native PDF handoff into the Onhand viewer before annotation work
+- controlled PDF.js-style fixtures for deterministic tests until the viewer exists
+- Google Scholar PDF Reader compatibility when its text layer and page geometry are available, with Onhand-owned overlays kept separate from Scholar's native comments/highlights
+- unsupported diagnostics for Chrome's native PDF viewer when it exposes no scriptable text layer
 - optional native PDFKit integration later if needed
+
+See `docs/PDF_ANNOTATION_STRATEGY.md` for the current implementation direction.
 
 ## 10.2 Why
 You need:
@@ -368,7 +377,10 @@ You need:
 
 These are much easier in a semantic PDF layer than through generic UI automation.
 
-## 10.3 PDF tools to add later
+## 10.3 PDF internals to add later
+
+Keep the user-facing browser tool names unchanged when possible. Add PDF-specific helpers internally only where the browser tools need to dispatch to the PDF adapter:
+
 - `pdf_open`
 - `pdf_get_visible_text`
 - `pdf_find_text`

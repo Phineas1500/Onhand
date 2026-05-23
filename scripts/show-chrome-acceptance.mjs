@@ -113,6 +113,199 @@ const suites = {
 			},
 		],
 	},
+	pdf: {
+		label: "PDF annotation matrix",
+		setup: [
+			"npm run build:extension",
+			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"npm run serve:fixture",
+			"start a fresh Onhand side-panel session named Chrome PDF acceptance {runId}",
+			"use the controlled PDF.js-style fixture and Scholar-like fixture first, then run the native Chrome PDF unsupported diagnostic and the real Google Scholar PDF Reader cases when available",
+		],
+		cases: [
+			{
+				id: "pdf-controlled-visible",
+				title: "Controlled PDF visible text and page numbers",
+				url: "http://127.0.0.1:8765/pdf.html",
+				prompt:
+					'CHROME PDF CONTROLLED VISIBLE {runId}: Use browser_get_visible_text and browser_get_selection on this PDF fixture page. Answer only a compact PASS/FAIL checklist. Include the page-numbered visible text prefix for page 2 and the exact phrase "recurrent neural networks" if available. Do not include [object Object].',
+				expected: [
+					"PASS for visible PDF text and selection",
+					"answer includes page-numbered PDF text such as [p. 2]",
+					"answer includes recurrent neural networks",
+					"answer does not include [object Object]",
+				],
+			},
+			{
+				id: "pdf-controlled-scholar-visible",
+				title: "Controlled Scholar-like PDF visible text excludes native UI",
+				url: "http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf",
+				prompt:
+					'CHROME PDF CONTROLLED SCHOLAR VISIBLE {runId}: Use browser_get_visible_text on this Scholar-like PDF fixture page. Answer only a compact PASS/FAIL checklist. Include viewer google-scholar if available, page-numbered text for page 4, and the exact phrase "Recurrent neural networks preserve sequence state". Confirm the native Scholar note text is not included.',
+				expected: [
+					"PASS for Scholar-like PDF visible text",
+					"answer includes page-numbered PDF text such as [p. 4]",
+					"answer includes Recurrent neural networks preserve sequence state",
+					"answer confirms the native Scholar note/comment text is not included as source text",
+					"answer does not include toolbar/comment controls as source text",
+				],
+			},
+			{
+				id: "pdf-controlled-highlight-note",
+				title: "Controlled PDF overlay highlight and note",
+				url: "http://127.0.0.1:8765/pdf.html",
+				prompt:
+					'CHROME PDF CONTROLLED HIGHLIGHT {runId}: Use browser_highlight_text for "recurrent neural networks" with clearExisting true, then use browser_show_note on that highlight with note "RNNs preserve sequence state across tokens." Answer only: CHROME_PDF_CONTROLLED_HIGHLIGHT highlighted_and_noted.',
+				expected: [
+					"answer is CHROME_PDF_CONTROLLED_HIGHLIGHT highlighted_and_noted",
+					"the PDF fixture shows an Onhand-owned overlay highlight on the phrase",
+					"the Onhand note card appears anchored near the PDF highlight",
+					"clicking the source/page action jumps back to the PDF highlight or note without duplicate flashes",
+				],
+			},
+			{
+				id: "pdf-controlled-scholar-highlight-note",
+				title: "Controlled Scholar-like PDF overlay coexists with native annotations",
+				url: "http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf",
+				prompt:
+					'CHROME PDF CONTROLLED SCHOLAR HIGHLIGHT {runId}: Use browser_highlight_text for "Recurrent neural networks" with clearExisting true, then use browser_show_note on that highlight with note "Onhand note stays separate from native Scholar comments." Then use browser_capture_state with persist false. Answer only: CHROME_PDF_CONTROLLED_SCHOLAR highlighted_and_noted.',
+				expected: [
+					"answer is CHROME_PDF_CONTROLLED_SCHOLAR highlighted_and_noted",
+					"the Scholar-like fixture shows an Onhand-owned overlay highlight on the phrase",
+					"the Onhand note card appears without deleting or replacing the native Scholar comment popup",
+					"browser_capture_state captures the Onhand annotation, not the native Scholar comment text",
+				],
+			},
+			{
+				id: "pdf-controlled-capture-restore",
+				title: "Controlled PDF capture and restore",
+				url: "http://127.0.0.1:8765/pdf.html",
+				prompt:
+					'CHROME PDF CONTROLLED RESTORE {runId}: Use browser_capture_state with persist true, includeHtml true, includeScreenshot true, and label "pdf controlled artifact {runId}". Then use browser_restore_state on that artifact with clearExisting true. Answer only: CHROME_PDF_CONTROLLED_RESTORE <saved artifact id> restored.',
+				expected: [
+					"answer starts with CHROME_PDF_CONTROLLED_RESTORE artifact_",
+					"Restore pages or browser_restore_state reports one restored PDF page",
+					"the restored PDF highlight and note reappear from saved normalized PDF anchor metadata",
+				],
+			},
+			{
+				id: "pdf-controlled-selected-passage",
+				title: "Controlled PDF selected-passage prompt",
+				url: "http://127.0.0.1:8765/pdf.html",
+				steps: [
+					'Before submitting, drag-select the phrase "recurrent neural networks" on page 2 of the controlled PDF fixture.',
+				],
+				prompt:
+					'CHROME PDF CONTROLLED SELECTION {runId}: Explain the selected PDF text in one sentence, highlight the selected text, and add a short note. Answer only: CHROME_PDF_CONTROLLED_SELECTION selected_anchor_reused.',
+				expected: [
+					"answer is CHROME_PDF_CONTROLLED_SELECTION selected_anchor_reused",
+					"the highlight lands on the selected PDF text, not a nearby repeated phrase",
+					"the source/page action jumps to the selected PDF highlight",
+					"Review/capture metadata shows a PDF anchor with page number and normalized rects",
+				],
+			},
+			{
+				id: "pdf-onhand-viewer-highlight-note",
+				title: "Onhand PDF viewer real-PDF highlight and note",
+				url: "http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+				prompt:
+					'CHROME PDF ONHAND VIEWER {runId}: Use browser_get_visible_text, then use browser_highlight_text for "recurrent neural networks" with clearExisting true, then use browser_show_note on that highlight with note "Onhand viewer PDF note." Then use browser_capture_state with persist true and restore it with clearExisting true. Answer only: CHROME_PDF_ONHAND_VIEWER highlighted_noted_restored.',
+				expected: [
+					"answer is CHROME_PDF_ONHAND_VIEWER highlighted_noted_restored",
+					"visible text comes from an actual PDF file rendered in the Onhand-owned viewer",
+					"the Onhand overlay highlight and note appear in the viewer, not in Google Scholar's native annotation UI",
+					"capture/restore recreates the PDF highlight and note from normalized PDF anchor metadata",
+				],
+			},
+			{
+				id: "pdf-open-onhand-viewer-handoff",
+				title: "Direct PDF handoff into Onhand viewer",
+				url: "http://127.0.0.1:8765/pdf/onhand-viewer",
+				steps: [
+					"Start from the direct content-type PDF URL rather than the Onhand viewer URL.",
+					"Let Onhand open the PDF in its own viewer before reading or annotating.",
+				],
+				prompt:
+					'CHROME PDF VIEWER HANDOFF {runId}: Use browser_open_pdf_in_onhand_viewer for this PDF, then use browser_get_visible_text, highlight "recurrent neural networks" with clearExisting true, add note "Opened through Onhand viewer.", capture state with persist true, and answer only: CHROME_PDF_VIEWER_HANDOFF opened_highlighted_saved.',
+				expected: [
+					"answer is CHROME_PDF_VIEWER_HANDOFF opened_highlighted_saved",
+					"the active tab becomes an Onhand PDF viewer URL with the original PDF URL encoded",
+					"visible text, highlight, note, and capture all run on the Onhand viewer tab",
+					"the original direct PDF/native viewer is not treated as an ordinary HTML page",
+				],
+			},
+			{
+				id: "pdf-chrome-native-unsupported",
+				title: "Chrome native PDF viewer unsupported diagnostic",
+				url: "https://arxiv.org/pdf/2509.03345",
+				steps: [
+					"Open the PDF in Chrome's native PDF viewer, not a text-layer fixture.",
+					"Do not create highlights or notes in this case; it is a read-only diagnostic.",
+				],
+				prompt:
+					"CHROME PDF NATIVE VIEWER {runId}: Use browser_get_visible_text and browser_get_selection on this PDF tab. If the PDF viewer exposes no readable page text layer to Onhand, answer only: CHROME_PDF_NATIVE_VIEWER unsupported_pdf_surface. If page-numbered PDF text is available, answer a compact PASS checklist and include the viewer label.",
+				expected: [
+					"Chrome's native PDF viewer may display readable pages while exposing no scriptable DOM/text layer to Onhand",
+					"unsupported result is acceptable when no readable text layer is exposed",
+					"Onhand must not silently fall back to HTML matching or claim a source-grounded highlight on a bare native PDF shell",
+				],
+			},
+			{
+				id: "pdf-google-scholar-visible",
+				title: "Google Scholar PDF Reader visible text diagnostic",
+				url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+				steps: [
+					"Open the URL in Chrome with Google Scholar PDF Reader enabled.",
+					"If Chrome blocks the direct PDF URL in automation, open the PDF manually and continue from the rendered Scholar PDF tab.",
+					"Confirm the tab shows the Google Scholar PDF Reader toolbar or native annotation controls before submitting the prompt.",
+				],
+				prompt:
+					'CHROME PDF SCHOLAR VISIBLE {runId}: Use browser_get_visible_text and browser_get_selection on this real Google Scholar PDF Reader tab. Answer only a compact PASS/FAIL checklist. Include whether page-numbered PDF text is visible, whether a viewer/surface label is available, and whether native Scholar comment/highlight UI is excluded from source text. If no readable PDF text layer is available, answer CHROME_PDF_SCHOLAR_VISIBLE unsupported_pdf_surface.',
+				expected: [
+					"answer is a compact PASS/FAIL checklist or CHROME_PDF_SCHOLAR_VISIBLE unsupported_pdf_surface",
+					"PASS answer includes page-numbered PDF text",
+					"PASS answer does not include native Scholar comment/highlight toolbar text as source text",
+					"unsupported answer identifies whether the Reader-frame fallback was attempted and why it failed",
+				],
+			},
+			{
+				id: "pdf-google-scholar-selection",
+				title: "Google Scholar PDF Reader selected-passage prompt",
+				url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+				steps: [
+					"Continue from a PASS result in pdf-google-scholar-visible.",
+					"Select a visible phrase on page 1 or 2 before submitting the prompt.",
+				],
+				prompt:
+					"CHROME PDF SCHOLAR SELECTION {runId}: Explain the selected PDF text in one sentence, highlight it, and add one short Onhand note. Answer only: CHROME_PDF_SCHOLAR_SELECTION selected_anchor_reused.",
+				expected: [
+					"answer is CHROME_PDF_SCHOLAR_SELECTION selected_anchor_reused",
+					"Onhand creates its own overlay highlight/note and does not invoke Scholar Reader's native highlight/comment toolbar",
+					"clicking Onhand source/page action jumps to the selected PDF passage",
+					"Scholar Reader native annotations, if present, remain visually separate from Onhand annotations",
+				],
+			},
+			{
+				id: "pdf-google-scholar-restore",
+				title: "Google Scholar PDF Reader restore",
+				url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+				steps: [
+					"Continue in the same session as pdf-google-scholar-selection.",
+					"Close or reload the PDF tab, then reopen the same PDF in Scholar Reader.",
+					"Use Restore pages from the Onhand menu or browser_restore_state from the prompt.",
+				],
+				prompt:
+					"CHROME PDF SCHOLAR RESTORE {runId}: Restore the saved PDF page state for this session and answer only: CHROME_PDF_SCHOLAR_RESTORE restored.",
+				expected: [
+					"answer is CHROME_PDF_SCHOLAR_RESTORE restored",
+					"the saved Onhand PDF highlight and note reappear on the PDF page",
+					"source/page actions jump to the restored PDF annotation",
+					"restore does not depend on Scholar Reader's native saved comment/highlight state",
+				],
+			},
+		],
+	},
 	"real-pages": {
 		label: "Real page matrix",
 		setup: [
@@ -278,9 +471,9 @@ function parseArgs(argv) {
 }
 
 function selectedSuites(name) {
-	if (name === "all") return [suites.oauth, suites.fixture, suites["real-pages"], suites.learning];
+	if (name === "all") return [suites.oauth, suites.fixture, suites.pdf, suites["real-pages"], suites.learning];
 	if (suites[name]) return [suites[name]];
-	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, real-pages, or learning.`);
+	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, pdf, real-pages, or learning.`);
 }
 
 function hydrate(value, runId) {
@@ -298,13 +491,14 @@ function buildPlan(args) {
 				...testCase,
 				prompt: hydrate(testCase.prompt, args.runId),
 				expected: testCase.expected.map((line) => hydrate(line, args.runId)),
+				steps: Array.isArray(testCase.steps) ? testCase.steps.map((line) => hydrate(line, args.runId)) : testCase.steps,
 			})),
 		})),
 	};
 }
 
 function printHelp() {
-	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|real-pages|learning] [--run-id=<id>] [--json]");
+	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|pdf|real-pages|learning] [--run-id=<id>] [--json]");
 }
 
 function printPlan(plan) {

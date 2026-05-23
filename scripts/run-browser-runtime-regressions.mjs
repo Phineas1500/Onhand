@@ -63,6 +63,34 @@ function createReplayHost(options = {}) {
 				else tabs.push(navigatedTab);
 				return { tab: navigatedTab };
 			}
+			if (name === "open_pdf_in_onhand_viewer") {
+				const pdfUrl = String(args.pdfUrl || tab.url || "https://example.test/replay-smoke.pdf");
+				const viewerUrl = String(options.pdfViewerUrl || `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`);
+				const preservedSourceUrl = options.preservePdfSourceUrl !== false && /^https?:\/\//i.test(pdfUrl);
+				const viewerTab = {
+					id: Number(options.pdfViewerTabId || 120),
+					windowId: Number(options.pdfViewerWindowId || tab.windowId || 3),
+					active: true,
+					title: options.pdfViewerTitle || "Onhand PDF Viewer",
+					url: preservedSourceUrl ? pdfUrl : viewerUrl,
+				};
+				for (const candidate of tabs) {
+					if (candidate.windowId === viewerTab.windowId) candidate.active = false;
+				}
+				const existingIndex = tabs.findIndex((candidate) => candidate.id === viewerTab.id);
+				if (existingIndex >= 0) tabs[existingIndex] = viewerTab;
+				else tabs.push(viewerTab);
+				return {
+					tab: viewerTab,
+					sourceTab: tab,
+					pdfUrl,
+					viewerUrl,
+					alreadyOpen: false,
+					opened: true,
+					replacedCurrentTab: args.newTab !== true,
+					preservedSourceUrl,
+				};
+			}
 			if (name === "activate_tab") return { tab };
 			if (name === "clear_annotations") return { tab, cleared: true };
 			if (name === "scroll_to_annotation") {
@@ -88,11 +116,16 @@ function createReplayHost(options = {}) {
 					annotation: {
 						annotationId,
 						matchedText: String(args.text || "Alpha smoke content"),
+						...(args.pdfAnchor ? { pdfAnchor: args.pdfAnchor } : {}),
 					},
 				};
 			}
 			if (name === "show_note") return { tab, note: { annotationId: String(args.annotationId || "replay-highlight"), note: String(args.note || "") } };
-			if (name === "get_selection") return { selection: { text: "" } };
+			if (name === "run_js") {
+				if (options.rejectRunJs) throw new Error(typeof options.rejectRunJs === "string" ? options.rejectRunJs : "run_js failed");
+				return { tab, result: true };
+			}
+			if (name === "get_selection") return { selection: options.selection || { text: "" } };
 			if (name === "get_visible_text") {
 				return {
 					tab,
@@ -188,6 +221,36 @@ async function assertSelectionFormatting() {
 	const selectedText = formatToolResultForModel("browser_get_selection", { selection: { text: " Alpha smoke content " } });
 	assert.equal(selectedText, "Selected text:\nAlpha smoke content");
 
+	const selectedPdfText = formatToolResultForModel("browser_get_selection", {
+		selection: {
+			text: " recurrent neural networks ",
+			surface: "pdf",
+			viewer: "pdfjs",
+			pageNumber: 7,
+			pdfAnchor: {
+				surface: "pdf",
+				viewer: "pdfjs",
+				pageNumber: 7,
+			},
+		},
+	});
+	assert.equal(selectedPdfText, "Selected text (PDF, p. 7, pdfjs):\nrecurrent neural networks");
+	const emptyPdfSelectionWithFallback = formatToolResultForModel("browser_get_selection", {
+		selection: {
+			hasSelection: false,
+			surface: "pdf",
+			viewer: "google-scholar",
+			readerFrameFallback: {
+				attempted: true,
+				ok: false,
+				error: "No Google Scholar PDF Reader frame context found",
+			},
+		},
+	});
+	assert.match(emptyPdfSelectionWithFallback, /No selected text/);
+	assert.match(emptyPdfSelectionWithFallback, /Reader-frame fallback: failed/);
+	assert.match(emptyPdfSelectionWithFallback, /No Google Scholar PDF Reader frame context found/);
+
 	const visibleText = formatVisibleTextForModel({
 		blocks: [
 			{ tag: "h2", text: "You will learn" },
@@ -196,6 +259,19 @@ async function assertSelectionFormatting() {
 		],
 	});
 	assert.equal(visibleText, "## You will learn\n- How to create and nest components\n- How to add markup and styles");
+	const unsupportedPdfVisibleText = formatVisibleTextForModel({
+		surface: "pdf",
+		unsupported: true,
+		text: "This PDF viewer does not expose selectable page text to Onhand yet.",
+		readerFrameFallback: {
+			attempted: true,
+			ok: false,
+			error: "No Google Scholar PDF Reader frame context found",
+		},
+	});
+	assert.match(unsupportedPdfVisibleText, /does not expose selectable page text/);
+	assert.match(unsupportedPdfVisibleText, /Reader-frame fallback: failed/);
+	assert.match(unsupportedPdfVisibleText, /No Google Scholar PDF Reader frame context found/);
 	assert.match(
 		formatToolResultForModel("browser_extract_content", {
 			tab: replaySmokeTab(),
@@ -809,7 +885,68 @@ async function assertSessionReplayRestore() {
 	assert.equal(
 		restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7 && call.args.text === "Alpha smoke content" && call.args.clearExisting === false),
 		true,
-	);
+		);
+	}
+
+async function assertSelectedPdfAnchorIsReusedForPromptHighlight() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+			pageCount: 12,
+		},
+		pageNumber: 2,
+		matchedText: "Alpha smoke content",
+		textQuote: {
+			exact: "Alpha smoke content",
+		},
+		rects: [
+			{
+				pageNumber: 2,
+				x: 0.24,
+				y: 0.36,
+				width: 0.18,
+				height: 0.04,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		selection: {
+			text: "Alpha smoke content",
+			surface: "pdf",
+			viewer: "pdfjs",
+			pageNumber: 2,
+			pdfAnchor,
+		},
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "Explain the selected PDF text.",
+		displayPrompt: "selected PDF smoke",
+		attachments: [],
+		learningMode: false,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete selected-PDF regression");
+	const highlightCalls = host.calls.filter((call) => call.name === "highlight_text");
+	assert.equal(highlightCalls.length >= 1, true);
+	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	const highlightAction = session.pageActions.find((action) => action.type === "annotation");
+	assert.deepEqual(highlightAction?.pdfAnchor, pdfAnchor);
 }
 
 async function assertSessionReplayDoesNotTrustStaleTabIds() {
@@ -1096,6 +1233,553 @@ async function assertArtifactRestoreUsesStrictReusableMatchingForShortMath() {
 	assert.equal(highlightCalls.at(-1)?.args.allowApproximate, false);
 	assert.equal(highlightCalls.at(-1)?.args.reuseExisting, true);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "replay-highlight"), true);
+}
+
+async function assertArtifactRestorePassesPdfAnchorToHighlight() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+			pageCount: 12,
+		},
+		pageNumber: 4,
+		matchedText: "recurrent neural networks",
+		textQuote: {
+			exact: "recurrent neural networks",
+		},
+		rects: [
+			{
+				pageNumber: 4,
+				x: 0.2,
+				y: 0.3,
+				width: 0.18,
+				height: 0.03,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "pdf-restored-anchor" : "text-restored-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_pdf_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_pdf_restore: {
+				id: "artifact_pdf_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "pdf restore",
+				tab: replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" }),
+				page: {
+					title: "Lecture PDF",
+					url: "https://example.test/lecture.pdf",
+					annotations: [
+						{
+							annotationId: "ann-pdf",
+							kind: "pdf",
+							matchedText: "recurrent neural networks",
+							pdfAnchor,
+							note: { text: "RNNs keep sequence state.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restored.restoredPages[0].restoredNotes, 1);
+	assert.equal(highlightCalls.length, 1);
+	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
+	assert.equal(highlightCalls[0].args.exactOnly, true);
+	assert.equal(highlightCalls[0].args.allowApproximate, false);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "pdf-restored-anchor"), true);
+}
+
+async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: {
+			url: "https://example.test/lecture.pdf",
+			pdfUrl: "https://example.test/lecture.pdf",
+			viewerUrl: "https://example.test/lecture.pdf",
+			title: "Lecture PDF",
+		},
+		pageNumber: 1,
+		matchedText: "recurrent neural networks",
+		textQuote: {
+			exact: "recurrent neural networks",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.2,
+				y: 0.3,
+				width: 0.24,
+				height: 0.03,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		rejectScrollToAnnotation: () => true,
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "pdf-source-restored" : "text-source-restored"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:pdf-source",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Lecture PDF",
+			url: "https://example.test/lecture.pdf",
+			label: "Highlighted text",
+			citationText: "recurrent neural networks",
+			annotationId: "stale-pdf-source",
+			pdfAnchor,
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	await runtime.activateAction("highlight:pdf-source");
+	const openPdfIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const scrollIndex = host.calls.findIndex((call) => call.name === "scroll_to_annotation");
+	const highlightIndex = host.calls.findIndex((call) => call.name === "highlight_text");
+	assert.notEqual(openPdfIndex, -1, "PDF source activation should hand off to Onhand's PDF viewer surface");
+	assert.notEqual(scrollIndex, -1, "expected source activation to try the saved annotation before replay fallback");
+	assert.notEqual(highlightIndex, -1, "expected source activation to replay the PDF highlight after stale annotation miss");
+	assert.ok(openPdfIndex < scrollIndex, "PDF source activation should prepare the PDF surface before scrolling to an annotation");
+	assert.ok(openPdfIndex < highlightIndex, "PDF source activation should prepare the PDF surface before replaying a highlight");
+	assert.deepEqual(host.calls[highlightIndex].args.pdfAnchor, pdfAnchor);
+}
+
+async function assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const viewerUrl = "https://reader.example.test/viewer.html?file=https%3A%2F%2Fexample.test%2Flecture.pdf";
+	const pdfUrl = "https://example.test/lecture.pdf";
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "google-scholar-pdf-reader",
+		document: {
+			url: pdfUrl,
+			viewerUrl,
+			title: "Lecture PDF",
+			pageCount: 48,
+		},
+		pageNumber: 1,
+		matchedText: "natural language processing",
+		textQuote: {
+			exact: "natural language processing",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.12,
+				y: 0.32,
+				width: 0.36,
+				height: 0.04,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [],
+		navigateTabId: 77,
+		navigateTitle: "Lecture PDF",
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "pdf-viewer-restored-anchor" : "text-restored-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_pdf_viewer_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_pdf_viewer_restore: {
+				id: "artifact_pdf_viewer_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "pdf viewer restore",
+				tab: replaySmokeTab({ title: "Lecture PDF", url: viewerUrl }),
+				page: {
+					title: "Lecture PDF",
+					url: viewerUrl,
+					annotations: [
+						{
+							annotationId: "ann-pdf-viewer",
+							kind: "pdf",
+							matchedText: "natural language processing",
+							pdfAnchor,
+							note: { text: "NLP studies models for language data.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const navigateCalls = restoreCalls.filter((call) => call.name === "navigate");
+	const waitCalls = restoreCalls.filter((call) => call.name === "wait_for_selector");
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].url, viewerUrl);
+	assert.equal(restored.restored[0].tab?.url, viewerUrl);
+	assert.equal(navigateCalls.length, 1);
+	assert.equal(navigateCalls[0].args.url, viewerUrl);
+	assert.notEqual(navigateCalls[0].args.url, pdfUrl);
+	assert.equal(waitCalls.length, 1);
+	assert.match(waitCalls[0].args.selector, /data-onhand-pdf-rendered/);
+	assert.equal(highlightCalls.length, 1);
+	assert.ok(
+		restoreCalls.findIndex((call) => call.name === "wait_for_selector") < restoreCalls.findIndex((call) => call.name === "highlight_text"),
+		"expected PDF restore to wait for the viewer surface before highlighting",
+	);
+	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "pdf-viewer-restored-anchor"), true);
+}
+
+async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "http://127.0.0.1:8765/pdf/onhand-viewer";
+	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: {
+			url: pdfUrl,
+			viewerUrl,
+			title: "onhand-viewer",
+			pageCount: 1,
+		},
+		pageNumber: 1,
+		matchedText: "recurrent neural networks",
+		textQuote: {
+			exact: "recurrent neural networks",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.31,
+				y: 0.23,
+				width: 0.24,
+				height: 0.03,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [],
+		navigateTabId: 88,
+		navigateTitle: "onhand-viewer - Onhand PDF Viewer",
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "own-pdf-viewer-restored-anchor" : "text-restored-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_own_pdf_viewer_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_own_pdf_viewer_restore: {
+				id: "artifact_own_pdf_viewer_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "own pdf viewer restore",
+				tab: replaySmokeTab({ title: "onhand-viewer - Onhand PDF Viewer", url: viewerUrl }),
+				page: {
+					title: "onhand-viewer - Onhand PDF Viewer",
+					url: viewerUrl,
+					annotations: [
+						{
+							annotationId: "ann-own-pdf-viewer",
+							kind: "pdf",
+							matchedText: "recurrent neural networks",
+							pdfAnchor,
+							note: { text: "Live Onhand PDF viewer note.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const navigateCalls = restoreCalls.filter((call) => call.name === "navigate");
+	const waitCalls = restoreCalls.filter((call) => call.name === "wait_for_selector");
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restored.restoredPages[0].restoredNotes, 1);
+	assert.equal(navigateCalls.length, 1);
+	assert.equal(navigateCalls[0].args.url, viewerUrl);
+	assert.equal(waitCalls.length, 1);
+	assert.match(waitCalls[0].args.selector, /data-onhand-pdf-rendered/);
+	assert.equal(highlightCalls.length, 1);
+	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "own-pdf-viewer-restored-anchor"), true);
+}
+
+async function assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "https://arxiv.org/pdf/2509.03345";
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: {
+			url: pdfUrl,
+			pdfUrl,
+			viewerUrl: pdfUrl,
+			title: "2509.03345",
+			pageCount: 12,
+		},
+		pageNumber: 1,
+		matchedText: "language models",
+		textQuote: {
+			exact: "language models",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.18,
+				y: 0.2,
+				width: 0.16,
+				height: 0.025,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 42,
+				windowId: 5,
+				active: true,
+				title: "2509.03345",
+				url: pdfUrl,
+			}),
+		],
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "direct-pdf-inline-restored-anchor" : "text-restored-anchor"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_direct_pdf_inline_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_direct_pdf_inline_restore: {
+				id: "artifact_direct_pdf_inline_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "direct pdf inline restore",
+				tab: replaySmokeTab({ id: 42, windowId: 5, title: "2509.03345", url: pdfUrl }),
+				page: {
+					title: "2509.03345",
+					url: pdfUrl,
+					annotations: [
+						{
+							annotationId: "ann-direct-pdf",
+							kind: "pdf",
+							matchedText: "language models",
+							pdfAnchor,
+							note: { text: "Direct PDF inline note.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const openPdfIndex = restoreCalls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const waitIndex = restoreCalls.findIndex((call) => call.name === "wait_for_selector");
+	const highlightIndex = restoreCalls.findIndex((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].url, pdfUrl);
+	assert.ok(openPdfIndex >= 0, "expected restore to install the inline PDF viewer before annotation restore");
+	assert.equal(restoreCalls[openPdfIndex].args.tabId, 42);
+	assert.equal(restoreCalls[openPdfIndex].args.newTab, false);
+	assert.equal(waitIndex > openPdfIndex, true);
+	assert.equal(highlightIndex > waitIndex, true);
+	assert.match(restoreCalls[waitIndex].args.selector, /data-onhand-inline-pdf-viewer/);
+	assert.deepEqual(restoreCalls[highlightIndex].args.pdfAnchor, pdfAnchor);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "direct-pdf-inline-restored-anchor"), true);
+}
+
+async function assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "http://127.0.0.1:8765/pdf/onhand-viewer";
+	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: {
+			url: pdfUrl,
+			viewerUrl,
+			title: "onhand-viewer",
+			pageCount: 1,
+		},
+		pageNumber: 1,
+		matchedText: "recurrent neural networks",
+		textQuote: {
+			exact: "recurrent neural networks",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.31,
+				y: 0.23,
+				width: 0.24,
+				height: 0.03,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "onhand-viewer - Onhand PDF Viewer", url: viewerUrl })],
+		highlightAnnotationId: "fresh-pdf-anchor",
+		rejectRunJs: `Cannot access contents of url "${viewerUrl}". Extension manifest must request permission to access this host.`,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_fresh_pdf_restore"];
+	session.pageActions = [
+		{
+			key: "highlight:fresh-pdf-anchor",
+			type: "annotation",
+			tabId: 7,
+			title: "onhand-viewer - Onhand PDF Viewer",
+			url: viewerUrl,
+			annotationId: "fresh-pdf-anchor",
+			label: "Highlighted text",
+			detail: "recurrent neural networks",
+			citationText: "recurrent neural networks",
+			pdfAnchor,
+		},
+		{
+			key: "note:fresh-pdf-anchor",
+			type: "note",
+			tabId: 7,
+			title: "onhand-viewer - Onhand PDF Viewer",
+			url: viewerUrl,
+			annotationId: "fresh-pdf-anchor",
+			label: "Added note",
+			detail: "Fresh PDF restore note.",
+			citationText: "Fresh PDF restore note.",
+			pdfAnchor,
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_fresh_pdf_restore: {
+				id: "artifact_fresh_pdf_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "fresh pdf restore",
+				tab: replaySmokeTab({ title: "onhand-viewer - Onhand PDF Viewer", url: viewerUrl }),
+				page: {
+					title: "onhand-viewer - Onhand PDF Viewer",
+					url: viewerUrl,
+					scrollY: 120,
+					annotations: [
+						{
+							annotationId: "fresh-pdf-anchor",
+							kind: "pdf",
+							matchedText: "recurrent neural networks",
+							pdfAnchor,
+							note: { text: "Fresh PDF restore note.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].source, "browser-artifact");
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restored.restoredPages[0].restoredNotes, 1);
+	assert.equal(restored.restoredPages[0].failedCount, 0);
+	assert.equal(restoreCalls.filter((call) => call.name === "highlight_text").length, 1);
+	assert.equal(restoreCalls.some((call) => call.name === "run_js"), true);
 }
 
 async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets() {
@@ -2104,6 +2788,135 @@ async function assertReplayNoteActivationUsesRepairedPairedHighlightAnchor() {
 	assert.equal(savedAction.annotationId, "current-ann");
 }
 
+async function assertPdfReplayActionActivationRepairsWithPdfAnchor() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "google-scholar",
+		document: {
+			url: "https://arxiv.org/pdf/1706.03762",
+			viewerUrl: "https://arxiv.org/pdf/1706.03762",
+			pdfUrl: "https://arxiv.org/pdf/1706.03762",
+			title: "Attention Is All You Need",
+		},
+		pageNumber: 2,
+		matchedText: "Scaled dot-product attention",
+		textQuote: { exact: "Scaled dot-product attention" },
+		rects: [{ pageNumber: 2, x: 0.12, y: 0.18, width: 0.42, height: 0.04, coordinateSpace: "page-normalized" }],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Attention Is All You Need", url: "https://arxiv.org/pdf/1706.03762" })],
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-pdf-source",
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "repaired-pdf-source" : "repaired-text-source"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:old-pdf-source",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "Attention Is All You Need",
+			url: "https://arxiv.org/pdf/1706.03762",
+			annotationId: "old-pdf-source",
+			label: "Highlighted text",
+			detail: "Scaled dot-product attention",
+			citationText: "Scaled dot-product attention",
+			pdfAnchor,
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:old-pdf-source");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	assert.equal(highlightCalls.length, 1);
+	assert.equal(highlightCalls[0]?.args.text, "Scaled dot-product attention");
+	assert.deepEqual(highlightCalls[0]?.args.pdfAnchor, pdfAnchor);
+	assert.equal(highlightCalls[0]?.args.exactOnly, true);
+	assert.equal(highlightCalls[0]?.args.allowApproximate, false);
+	assert.equal(highlightCalls[0]?.args.reuseExisting, true);
+
+	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	assert.equal(savedAction.annotationId, "repaired-pdf-source");
+	assert.deepEqual(savedAction.pdfAnchor, pdfAnchor);
+}
+
+async function assertPdfNoteReplayActionActivationRepairsWithPdfAnchor() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "google-scholar",
+		document: {
+			url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+			viewerUrl: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+			pdfUrl: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+			title: "CS 577 Lecture 4",
+		},
+		pageNumber: 1,
+		matchedText: "NATURAL LANGUAGE",
+		textQuote: { exact: "NATURAL LANGUAGE" },
+		rects: [{ pageNumber: 1, x: 0.12, y: 0.2, width: 0.28, height: 0.06, coordinateSpace: "page-normalized" }],
+	};
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "CS 577 Lecture 4", url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf" })],
+		rejectScrollToAnnotation: (annotationId) => annotationId === "old-pdf-note",
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "repaired-pdf-note" : "repaired-text-note"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "note:old-pdf-note",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "CS 577 Lecture 4",
+			url: "https://asaparov.org/assets/cs577_fall2025/lecture4.pdf",
+			annotationId: "old-pdf-note",
+			label: "Added note",
+			detail: "This note is anchored to the PDF selection.",
+			citationText: "This note is anchored to the PDF selection.",
+			pdfAnchor,
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("note:old-pdf-note");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	const highlightCalls = activateCalls.filter((call) => call.name === "highlight_text");
+	const noteCalls = activateCalls.filter((call) => call.name === "show_note");
+	assert.equal(highlightCalls.length, 1);
+	assert.equal(highlightCalls[0]?.args.text, "NATURAL LANGUAGE");
+	assert.deepEqual(highlightCalls[0]?.args.pdfAnchor, pdfAnchor);
+	assert.equal(noteCalls.length, 1);
+	assert.equal(noteCalls[0]?.args.annotationId, "repaired-pdf-note");
+	assert.equal(noteCalls[0]?.args.note, "This note is anchored to the PDF selection.");
+
+	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	assert.equal(savedAction.annotationId, "repaired-pdf-note");
+	assert.deepEqual(savedAction.pdfAnchor, pdfAnchor);
+}
+
 async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -2193,8 +3006,144 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "highlight_text" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 3), false);
+	assert.equal(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer" && call.args.windowId === 3), false);
+}
+
+async function assertExplicitPdfHandoffRunsBeforeAgentContext() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	assert.deepEqual(
+		__browserRuntimeTest.parseExplicitPdfHandoffParams(
+			'Use browser_open_pdf_in_onhand_viewer with pdfUrl "https://example.test/download?id=paper-123", then read it.',
+		),
+		{ pdfUrl: "https://example.test/download?id=paper-123" },
+	);
+	assert.equal(__browserRuntimeTest.parseExplicitPdfHandoffParams("Open this PDF in the viewer."), null);
+
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 8,
+				windowId: 3,
+				active: true,
+				title: "Direct PDF wrapper",
+				url: "https://example.test/article",
+			}),
+		],
+		pdfViewerTabId: 44,
+		pdfViewerTitle: "paper.pdf - Onhand PDF Viewer",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt:
+			'Use browser_open_pdf_in_onhand_viewer with pdfUrl "https://example.test/paper.pdf", then answer only: PDF handoff done.',
+		displayPrompt: "explicit pdf handoff",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete explicit PDF handoff regression");
+	const handoffIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const firstContextReadIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
+	assert.ok(handoffIndex >= 0, "expected explicit PDF handoff command to run");
+	assert.ok(firstContextReadIndex >= 0, "expected browser context read after PDF handoff");
+	assert.ok(handoffIndex < firstContextReadIndex, "expected PDF handoff before browser context read");
+	assert.equal(host.calls[handoffIndex].args.pdfUrl, "https://example.test/paper.pdf");
+	assert.equal(host.calls[handoffIndex].args.windowId, 3);
+	const state = await runtime.getState();
+	const pdfAction = state.pageActions.find((action) => action?.label === "Opened PDF viewer" && /paper\.pdf/.test(action.detail || action.url || ""));
+	assert.ok(pdfAction, "expected the pre-agent PDF handoff to appear as a page action");
+	assert.equal(pdfAction.url, "https://example.test/paper.pdf");
+	assert.equal(
+		state.pageActions.some((action) => action?.label === "Opened PDF viewer" && action.url === "https://example.test/paper.pdf"),
+		true,
+		"expected the PDF handoff action to keep the original PDF URL",
+	);
+	assert.equal(
+		state.activities.some((activity) => activity?.toolName === "browser_open_pdf_in_onhand_viewer" && activity.state === "complete"),
+		true,
+		"expected the pre-agent PDF handoff to appear in the activity log",
+	);
+}
+
+async function assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("https://arxiv.org/pdf/2509.03345"), true);
+	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("https://example.test/article"), false);
+	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf"), false);
+	assert.equal(
+		__browserRuntimeTest.isOnhandPdfViewerUrl(
+			"http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+		),
+		true,
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldAutoOpenPdfViewerForTab({
+			id: 8,
+			url: "http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+		}),
+		false,
+	);
+
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 8,
+				windowId: 3,
+				active: true,
+				title: "Do Language Models Follow Occam's Razor?",
+				url: "https://arxiv.org/pdf/2509.03345",
+			}),
+		],
+		pdfViewerTabId: 8,
+		pdfViewerTitle: "2509.03345 - Onhand PDF Viewer",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "What are the findings of this paper?",
+		displayPrompt: "automatic pdf handoff",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete automatic PDF handoff regression");
+	const handoffIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const firstContextReadIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
+	assert.ok(handoffIndex >= 0, "expected automatic PDF handoff command to run for direct PDF route");
+	assert.ok(firstContextReadIndex >= 0, "expected browser context read after automatic PDF handoff");
+	assert.ok(handoffIndex < firstContextReadIndex, "expected automatic PDF handoff before browser context read");
+	assert.equal(host.calls[handoffIndex].args.windowId, 3);
+	assert.equal(host.calls[handoffIndex].args.newTab, false);
+	assert.equal(host.calls[handoffIndex].args.waitForLoad, true);
+	const state = await runtime.getState();
+	assert.equal(
+		state.activities.some((activity) => activity?.toolName === "browser_open_pdf_in_onhand_viewer" && activity.state === "complete"),
+		true,
+		"expected automatic PDF handoff to appear in the activity log",
+	);
+	assert.equal(
+		state.pageActions.some((action) => action?.label === "Opened PDF viewer" && action.url === "https://arxiv.org/pdf/2509.03345"),
+		true,
+		"expected automatic PDF handoff action to keep the original PDF URL",
+	);
 }
 
 async function assertFixtureResponses() {
@@ -2203,6 +3152,63 @@ async function assertFixtureResponses() {
 		const pageResponse = await fetch(fixture.url, { headers: { "Cache-Control": "no-store" } });
 		assert.equal(pageResponse.status, 200);
 		assert.match(await pageResponse.text(), /Alpha smoke content/);
+
+		const pdfResponse = await fetch(new URL("/pdf.html", fixture.url), { headers: { "Cache-Control": "no-store" } });
+		assert.equal(pdfResponse.status, 200);
+		const pdfHtml = await pdfResponse.text();
+		assert.match(pdfHtml, /Onhand PDF Adapter Fixture/);
+		assert.match(pdfHtml, /class="pdfViewer"/);
+		assert.match(pdfHtml, /class="textLayer"/);
+		assert.match(pdfHtml, /data-page-number="2"/);
+		assert.match(pdfHtml, /recurrent neural networks/);
+
+		const scholarPdfResponse = await fetch(new URL("/scholar-pdf.html?file=/fixtures/scholar-reader.pdf", fixture.url), {
+			headers: { "Cache-Control": "no-store" },
+		});
+		assert.equal(scholarPdfResponse.status, 200);
+		const scholarPdfHtml = await scholarPdfResponse.text();
+		assert.match(scholarPdfHtml, /Google Scholar PDF Reader/);
+		assert.match(scholarPdfHtml, /class="scholar-selectable-text gsr-text-ctn"/);
+		assert.match(scholarPdfHtml, /class="scholar-page gsr-page"/);
+		assert.match(scholarPdfHtml, /class="gsr-text" data-idx="2"/);
+		assert.match(scholarPdfHtml, /class="scholar-native-comment-popup"/);
+		assert.match(scholarPdfHtml, /data-page-index="3"/);
+		assert.match(scholarPdfHtml, /data-pn="4"/);
+		assert.match(scholarPdfHtml, /Recurrent neural networks preserve sequence state across tokens/);
+		assert.match(scholarPdfHtml, /Native Scholar note should not become source PDF text/);
+
+		const samplePdfResponse = await fetch(new URL("/fixtures/onhand-viewer.pdf", fixture.url), {
+			headers: { "Cache-Control": "no-store" },
+		});
+		assert.equal(samplePdfResponse.status, 200);
+		assert.equal(samplePdfResponse.headers.get("content-type"), "application/pdf");
+		const samplePdfBytes = new Uint8Array(await samplePdfResponse.arrayBuffer());
+		assert.equal(new TextDecoder().decode(samplePdfBytes.slice(0, 8)), "%PDF-1.4");
+		assert.ok(samplePdfBytes.length > 500, "expected a non-empty generated PDF fixture");
+
+		const routePdfResponse = await fetch(new URL("/pdf/onhand-viewer", fixture.url), {
+			headers: { "Cache-Control": "no-store" },
+		});
+		assert.equal(routePdfResponse.status, 200);
+		assert.equal(routePdfResponse.headers.get("content-type"), "application/pdf");
+		const routePdfBytes = new Uint8Array(await routePdfResponse.arrayBuffer());
+		assert.equal(new TextDecoder().decode(routePdfBytes.slice(0, 8)), "%PDF-1.4");
+
+		const onhandViewerResponse = await fetch(
+			new URL("/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf", fixture.url),
+			{ headers: { "Cache-Control": "no-store" } },
+		);
+		assert.equal(onhandViewerResponse.status, 200);
+		const onhandViewerHtml = await onhandViewerResponse.text();
+		assert.match(onhandViewerHtml, /Onhand PDF Viewer/);
+		assert.match(onhandViewerHtml, /data-onhand-pdf-viewer-root/);
+
+		const onhandViewerBundleResponse = await fetch(new URL("/pdf-viewer.bundle.js", fixture.url), {
+			headers: { "Cache-Control": "no-store" },
+		});
+		assert.equal(onhandViewerBundleResponse.status, 200);
+		assert.match(onhandViewerBundleResponse.headers.get("content-type") || "", /text\/javascript/);
+		assert.ok((await onhandViewerBundleResponse.text()).includes("data-onhand-pdf-rendered"));
 
 		const jsonResponse = await fetch(new URL("/fixture.json?source=regression", fixture.url), { headers: { "Cache-Control": "no-store" } });
 		assert.equal(jsonResponse.status, 200);
@@ -2224,10 +3230,17 @@ async function main() {
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertSessionReplayRestore();
+	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
 	await assertArtifactRestoreUsesStrictReusableMatchingForShortMath();
+	await assertArtifactRestorePassesPdfAnchorToHighlight();
+	await assertPdfActionActivationHandsOffBeforeSourceFallback();
+	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
+	await assertOwnPdfViewerArtifactRestoreIsRestorable();
+	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();
+	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();
 	await assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets();
 	await assertArtifactActionActivationPreservesExistingAnnotations();
 	await assertCrossPageLearningSourceActivationOpensMissingPage();
@@ -2241,8 +3254,11 @@ async function main() {
 	await assertReplayNoteActivationDoesNotRegenerateExistingNote();
 	await assertReplayNoteActivationRegeneratesMissingNote();
 	await assertReplayNoteActivationUsesRepairedPairedHighlightAnchor();
+	await assertPdfReplayActionActivationRepairsWithPdfAnchor();
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
+	await assertExplicitPdfHandoffRunsBeforeAgentContext();
+	await assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext();
 	await assertFixtureResponses();
 	console.log("Browser runtime regressions: PASS");
 }

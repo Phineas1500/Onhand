@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs",
-    "build:extension": "npm run build:browser-runtime",
+    "build:pdf-viewer": "node ./scripts/build-pdf-viewer.mjs",
+    "build:extension": "npm run build:browser-runtime && npm run build:pdf-viewer",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
@@ -28,6 +29,7 @@
     "@mariozechner/pi-ai": "^0.70.0",
     "@mozilla/readability": "^0.6.0",
     "jsdom": "^26.1.0",
+    "pdfjs-dist": "^4.10.38",
     "turndown": "^7.2.0",
     "turndown-plugin-gfm": "^1.0.2"
   },

@@ -118248,6 +118248,7 @@ Default answer mode:
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be a brief guide to what the annotations show: one to three short paragraphs for ordinary questions, with citations, not a detached summary of the page.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
+- For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer, then continue with browser_get_visible_text, browser_highlight_text, browser_show_note, capture, and restore as usual.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
@@ -118286,6 +118287,13 @@ var NAVIGATE_SCHEMA = typebox_exports.Object({
   url: typebox_exports.String({ description: "URL to navigate to" }),
   newTab: typebox_exports.Optional(typebox_exports.Boolean({ description: "Open in a new tab instead of navigating the current or matched tab" })),
   waitForLoad: typebox_exports.Optional(typebox_exports.Boolean({ description: "Wait for the tab to finish loading" })),
+  timeoutMs: typebox_exports.Optional(typebox_exports.Number({ description: "Navigation timeout in milliseconds" }))
+});
+var OPEN_PDF_VIEWER_SCHEMA = typebox_exports.Object({
+  ...TAB_MATCH_SCHEMA,
+  pdfUrl: typebox_exports.Optional(typebox_exports.String({ description: "Direct http(s) PDF URL. Omit this to infer it from the target tab URL." })),
+  newTab: typebox_exports.Optional(typebox_exports.Boolean({ description: "Open the Onhand viewer in a new tab instead of replacing the target tab" })),
+  waitForLoad: typebox_exports.Optional(typebox_exports.Boolean({ description: "Wait for the Onhand PDF viewer tab to finish loading" })),
   timeoutMs: typebox_exports.Optional(typebox_exports.Number({ description: "Navigation timeout in milliseconds" }))
 });
 var VISIBLE_TEXT_SCHEMA = typebox_exports.Object({
@@ -118441,7 +118449,7 @@ var CORE_READ_TOOL_NAMES = [
   "browser_get_scroll_state"
 ];
 var VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
-var TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate"];
+var TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
 var INTERACTION_TOOL_NAMES = [
   "browser_find_elements",
   "browser_wait_for_selector",
@@ -118469,23 +118477,33 @@ function truncateStructuredText(value, maxChars = 1200) {
   return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 function visibleBlockPrefix(block) {
+  if (block?.tag === "pdf-page" && block?.pageNumber) return `[p. ${block.pageNumber}] `;
   const tag = String(block?.tag || "").toLowerCase();
   if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag.slice(1)) || 2)} `;
   if (tag === "li") return "- ";
   if (tag === "blockquote") return "> ";
   return "";
 }
+function formatReaderFrameFallbackForModel(value) {
+  const fallback = value?.readerFrameFallback;
+  if (!fallback || typeof fallback !== "object" || fallback.attempted !== true) return "";
+  const status = fallback.ok === true ? "ok" : "failed";
+  const error48 = String(fallback.error || "").trim();
+  return `Reader-frame fallback: ${status}${error48 ? ` (${truncate(error48, 300)})` : ""}`;
+}
 function formatVisibleTextForModel(visible, maxChars = VISIBLE_TEXT_TOOL_MAX_CHARS) {
+  const diagnostics = [formatReaderFrameFallbackForModel(visible)].filter(Boolean);
   const blocks = Array.isArray(visible?.blocks) ? visible.blocks : [];
   if (blocks.length) {
     const lines = blocks.map((block) => {
-      const text = String(block?.text || "").replace(/\s+/g, " ").trim();
-      if (!text) return "";
-      return `${visibleBlockPrefix(block)}${text}`;
+      const text2 = String(block?.text || "").replace(/\s+/g, " ").trim();
+      if (!text2) return "";
+      return `${visibleBlockPrefix(block)}${text2}`;
     }).filter(Boolean);
-    if (lines.length) return truncateStructuredText(lines.join("\n"), maxChars);
+    if (lines.length) return truncateStructuredText([...lines, ...diagnostics].join("\n"), maxChars);
   }
-  return truncateStructuredText(visible?.text || "", maxChars);
+  const text = String(visible?.text || "").trim();
+  return truncateStructuredText([text, ...diagnostics].filter(Boolean).join("\n"), maxChars);
 }
 function normalizeHighlightRetryCandidate(value) {
   return String(value || "").replace(/\r\n?/g, "\n").replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, "").replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+/g, " ").trim();
@@ -118513,6 +118531,25 @@ function getSelectionText(selection) {
     return selection.text.trim();
   }
   return "";
+}
+function getSelectionSourceLabel(selection) {
+  if (!selection || typeof selection !== "object") return "";
+  const details = selection;
+  if (details.surface !== "pdf" && details.pdfAnchor?.surface !== "pdf") return "";
+  const pageNumber = details.pageNumber || details.pdfAnchor?.pageNumber;
+  const viewer = typeof details.viewer === "string" ? details.viewer : typeof details.pdfAnchor?.viewer === "string" ? details.pdfAnchor.viewer : "";
+  const parts = ["PDF"];
+  if (pageNumber) parts.push(`p. ${pageNumber}`);
+  if (viewer && viewer !== "unknown-pdf") parts.push(viewer);
+  return parts.join(", ");
+}
+function selectionMatchesHighlightText(selection, text) {
+  if (!selection || typeof selection !== "object") return false;
+  const details = selection;
+  if (!details.pdfAnchor || details.surface !== "pdf" && details.pdfAnchor?.surface !== "pdf") return false;
+  const selectedText = compactActionText(details.text).toLowerCase();
+  const highlightText = compactActionText(text).toLowerCase();
+  return Boolean(selectedText && highlightText && selectedText === highlightText);
 }
 function compactActionText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -118964,6 +119001,11 @@ function getSmokeModel(modelId) {
           newTab: true,
           waitForLoad: true
         }),
+        fauxToolCall("browser_open_pdf_in_onhand_viewer", {
+          pdfUrl: "https://example.com/onhand-smoke.pdf",
+          newTab: true,
+          waitForLoad: true
+        }),
         fauxToolCall("browser_get_visible_text", { maxChars: 400 }),
         fauxToolCall("browser_extract_content", { maxChars: 800 }),
         fauxToolCall("browser_get_selection", {}),
@@ -119213,7 +119255,8 @@ function artifactReplayAnnotations(artifact) {
       noteLabel: note ? compactActionText(note.label || "Onhand") : "",
       rect: annotation.rect || null,
       noteRect: note?.rect || null,
-      container: annotation.container || null
+      container: annotation.container || null,
+      ...annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {}
     };
   }).filter(Boolean);
 }
@@ -119295,9 +119338,10 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
     const existing = annotations.get(key);
     if (existing) {
       mergeReplayTarget(existing, action);
+      if (!existing.pdfAnchor && action.pdfAnchor) existing.pdfAnchor = action.pdfAnchor;
       continue;
     }
-    annotations.set(key, {
+    const replayAnnotation = {
       key,
       actionKeys: action.key ? [action.key] : [],
       tabId: typeof action.tabId === "number" ? action.tabId : null,
@@ -119306,7 +119350,9 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
       url: action.url,
       annotationId: action.annotationId || null,
       matchedText
-    });
+    };
+    if (action.pdfAnchor) replayAnnotation.pdfAnchor = action.pdfAnchor;
+    annotations.set(key, replayAnnotation);
   }
   for (const [key, note] of notes) {
     const annotation = annotations.get(key);
@@ -119801,10 +119847,39 @@ function pickActiveTab(state, targetWindowId) {
 function isPrivilegedUrl(url2) {
   return /^(?:chrome|edge|brave|about):\/\//i.test(String(url2 || ""));
 }
+function isOnhandPdfViewerUrl(url2) {
+  try {
+    const parsed = new URL(String(url2 || ""));
+    if (parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname)) return true;
+    return /\/onhand-pdf-viewer\.html$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+function isLikelyPdfUrlForAutoHandoff(url2) {
+  try {
+    const parsed = new URL(String(url2 || ""));
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const path4 = decodeURIComponent(parsed.pathname || "").toLowerCase();
+    const search = decodeURIComponent(parsed.search || "").toLowerCase();
+    return path4.endsWith(".pdf") || path4.includes(".pdf/") || path4.includes("/pdf/") || path4.endsWith("/pdf") || search.includes(".pdf") || search.includes("format=pdf") || search.includes("contenttype=pdf") || search.includes("content-type=application/pdf");
+  } catch {
+    return false;
+  }
+}
+function shouldAutoOpenPdfViewerForTab(tab) {
+  if (typeof tab?.id !== "number") return false;
+  const url2 = String(tab?.url || "");
+  return Boolean(url2 && !isPrivilegedUrl(url2) && !isOnhandPdfViewerUrl(url2) && isLikelyPdfUrlForAutoHandoff(url2));
+}
+function isOnhandPdfViewerAccessError(error48) {
+  const message = String(error48?.message || error48 || "");
+  return /Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message);
+}
 function isRestorablePageUrl(url2) {
   try {
     const protocol = new URL(String(url2 || "")).protocol;
-    return protocol === "http:" || protocol === "https:";
+    return protocol === "http:" || protocol === "https:" || isOnhandPdfViewerUrl(url2);
   } catch {
     return false;
   }
@@ -119832,7 +119907,7 @@ function summarizeOpenTabs(state, activeTab, limit2 = 8) {
     url: tab.url || ""
   }));
 }
-async function renderBrowserContext(host, options = {}) {
+async function renderBrowserContextDetails(host, options = {}) {
   try {
     const state = await host.snapshotState();
     const activeTab = pickActiveTab(state, options.targetWindowId);
@@ -119871,22 +119946,55 @@ async function renderBrowserContext(host, options = {}) {
       }
     }
     const selectionText = getSelectionText(selection?.selection);
-    if (selectionText) lines.push(`Selected text: ${JSON.stringify(truncate(selectionText, 800))}`);
+    const selectionSourceLabel = getSelectionSourceLabel(selection?.selection);
+    if (selectionText) {
+      lines.push(`Selected text${selectionSourceLabel ? ` (${selectionSourceLabel})` : ""}: ${JSON.stringify(truncate(selectionText, 800))}`);
+    }
     const visibleText = formatVisibleTextForModel(visible?.visible || visible, BROWSER_CONTEXT_MAX_CHARS);
     if (visibleText) {
       lines.push("Visible text snapshot:");
       lines.push(visibleText);
     }
     if (warning) lines.push(`Warning: ${warning}`);
-    return lines.join("\n") || "Browser context was unavailable.";
+    return {
+      text: lines.join("\n") || "Browser context was unavailable.",
+      activeTab,
+      selection: selection?.selection || null,
+      visible: visible?.visible || visible || null,
+      warning
+    };
   } catch (error48) {
-    return `Browser context was unavailable.
-Reason: ${error48?.message || String(error48)}`;
+    return {
+      text: `Browser context was unavailable.
+Reason: ${error48?.message || String(error48)}`,
+      activeTab: null,
+      selection: null,
+      visible: null,
+      warning: error48?.message || String(error48)
+    };
   }
 }
 function textHasAny(text, pattern) {
   pattern.lastIndex = 0;
   return pattern.test(text);
+}
+function parseExplicitPdfHandoffParams(prompt) {
+  const text = String(prompt || "");
+  if (!/\bbrowser_open_pdf_in_onhand_viewer\b/.test(text)) return null;
+  const urlMatch = text.match(/\bpdfUrl\s*[:=]?\s*["'`]?(https?:\/\/[^\s"'`)]+)/i) || text.match(/\burl\s*[:=]?\s*["'`]?(https?:\/\/[^\s"'`)]+)/i);
+  const params = {};
+  if (urlMatch?.[1]) {
+    params.pdfUrl = urlMatch[1].replace(/[),.;]+$/g, "");
+  }
+  return params;
+}
+function withTargetWindowId(params = {}, targetWindowId) {
+  if (typeof targetWindowId !== "number" || !Number.isFinite(targetWindowId)) return params;
+  if (typeof params.tabId === "number" || params.titleContains || params.urlContains || typeof params.windowId === "number") return params;
+  return {
+    ...params,
+    windowId: targetWindowId
+  };
 }
 function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode = false, learnerState = null) {
   const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
@@ -119909,6 +120017,9 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     add([...explicitToolNames]);
     if (textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|url|across tabs|multiple tabs|all tabs)\b/)) {
       add(TAB_TOOL_NAMES);
+    }
+    if (textHasAny(text, /\bpdfs?\b|\bpdf viewer\b|\bnative pdf\b|\bunsupported_pdf_surface\b/)) {
+      add(["browser_open_pdf_in_onhand_viewer"]);
     }
     if (learningMode) {
       add(["browser_list_tabs"]);
@@ -120041,6 +120152,12 @@ ${lines.join("\n")}` : "No browser tabs found.";
       return `Activated tab: ${formatCompactTab(tab)}`;
     case "browser_navigate":
       return `Navigated to: ${formatCompactTab(tab)}`;
+    case "browser_open_pdf_in_onhand_viewer": {
+      const alreadyOpen = details.alreadyOpen ? "Already open" : "Opened";
+      const pdfUrl = details.pdfUrl ? `
+PDF source: ${details.pdfUrl}` : "";
+      return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}`;
+    }
     case "browser_get_visible_text": {
       const visible = details.visible || {};
       const text = formatVisibleTextForModel(visible, VISIBLE_TEXT_TOOL_MAX_CHARS);
@@ -120058,9 +120175,15 @@ ${truncateStructuredText(text, 8e3)}` : `${heading}
 (No readable content returned.)`;
     }
     case "browser_get_selection": {
-      const selectionText = getSelectionText(details.selection);
-      return selectionText ? `Selected text:
-${truncate(selectionText, 1200)}` : "No selected text.";
+      const selection = details.selection || {};
+      const selectionText = getSelectionText(selection);
+      const sourceLabel = getSelectionSourceLabel(selection);
+      const diagnostics = formatReaderFrameFallbackForModel(selection);
+      if (selectionText) {
+        return [`Selected text${sourceLabel ? ` (${sourceLabel})` : ""}:
+${truncate(selectionText, 1200)}`, diagnostics].filter(Boolean).join("\n");
+      }
+      return ["No selected text.", diagnostics].filter(Boolean).join("\n");
     }
     case "browser_get_viewport_headings": {
       const headings = details.headings || {};
@@ -120155,6 +120278,10 @@ var __browserRuntimeTest = {
   getReplayHighlightCandidates,
   getPublicActivities,
   getSelectionText,
+  isOnhandPdfViewerUrl,
+  parseExplicitPdfHandoffParams,
+  isLikelyPdfUrlForAutoHandoff,
+  shouldAutoOpenPdfViewerForTab,
   normalizeLearnerState,
   getPromptContractForTest() {
     const learnerState = applyLearningEvent(
@@ -120285,7 +120412,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     async execute(_toolCallId, params) {
       let result;
       try {
-        result = await host.runCommand(commandName, prepareCommandParams(params));
+        result = await host.runCommand(commandName, prepareCommandParams(params, commandName));
       } catch (error48) {
         if (commandName !== "highlight_text") throw error48;
         const candidates = buildHighlightRetryCandidates(params?.text);
@@ -120294,7 +120421,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           try {
             result = await host.runCommand(
               commandName,
-              prepareCommandParams({ ...params, text: candidate })
+              prepareCommandParams({ ...params, text: candidate }, commandName)
             );
             result = {
               ...result,
@@ -120346,6 +120473,14 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       "Navigate the current or matched tab, or open a new tab when explicitly useful.",
       NAVIGATE_SCHEMA,
       "navigate",
+      { sequential: true }
+    ),
+    commandTool(
+      "browser_open_pdf_in_onhand_viewer",
+      "Browser Open PDF In Onhand Viewer",
+      "Open a direct PDF or PDF-reader tab in Onhand's PDF viewer when the current PDF surface has no readable text layer. After this, use the normal visible-text, highlight, note, capture, and restore tools on the viewer tab.",
+      OPEN_PDF_VIEWER_SCHEMA,
+      "open_pdf_in_onhand_viewer",
       { sequential: true }
     ),
     commandTool(
@@ -120422,7 +120557,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       parameters: CAPTURE_STATE_SCHEMA,
       executionMode: "sequential",
       async execute(_toolCallId, params) {
-        const result = await artifactHooks.captureArtifact(prepareCommandParams(params));
+        const result = await artifactHooks.captureArtifact(prepareCommandParams(params, "capture_state"));
         return {
           content: [{ type: "text", text: toolResultTextForModel("browser_capture_state", result) }],
           details: result
@@ -120450,7 +120585,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       parameters: RESTORE_ARTIFACT_SCHEMA,
       executionMode: "sequential",
       async execute(_toolCallId, params) {
-        const result = await artifactHooks.restoreArtifact(prepareCommandParams(params));
+        const result = await artifactHooks.restoreArtifact(prepareCommandParams(params, "restore_state"));
         return {
           content: [{ type: "text", text: toolResultTextForModel("browser_restore_state", result) }],
           details: result
@@ -120558,6 +120693,8 @@ function getToolStatusMessage(toolName) {
       return "Switching tabs...";
     case "browser_navigate":
       return "Navigating...";
+    case "browser_open_pdf_in_onhand_viewer":
+      return "Opening PDF in Onhand viewer...";
     case "browser_get_selection":
       return "Reading your current selection...";
     case "browser_get_visible_text":
@@ -120637,6 +120774,18 @@ function buildPageAction(toolName, result) {
         detail
       };
     }
+    case "browser_open_pdf_in_onhand_viewer": {
+      const detail = truncate(details.pdfUrl || tab?.title || tab?.url || "PDF", 72);
+      return {
+        key: `tab:${tab?.id || detail}:pdf-viewer`,
+        type: "tab",
+        tabId: tab?.id || null,
+        windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
+        label: details.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
+        detail
+      };
+    }
     case "browser_highlight_text": {
       const matchedTextFull = String(details.annotation?.matchedText || "").trim();
       const matchedText = truncate(matchedTextFull || "Relevant passage", 72);
@@ -120649,7 +120798,8 @@ function buildPageAction(toolName, result) {
         annotationId: details.annotation?.annotationId || null,
         label: "Highlighted text",
         detail: matchedText,
-        citationText: matchedTextFull || matchedText
+        citationText: matchedTextFull || matchedText,
+        ...details.annotation?.pdfAnchor ? { pdfAnchor: details.annotation.pdfAnchor } : {}
       };
     }
     case "browser_show_note": {
@@ -120664,7 +120814,8 @@ function buildPageAction(toolName, result) {
         annotationId: details.note?.annotationId || null,
         label: "Added note",
         detail: noteText,
-        citationText: noteTextFull || noteText
+        citationText: noteTextFull || noteText,
+        ...details.note?.pdfAnchor ? { pdfAnchor: details.note.pdfAnchor } : {}
       };
     }
     case "browser_scroll_to_annotation":
@@ -120847,6 +120998,86 @@ function createOnhandBrowserRuntime(host) {
       appendUniquePageAction(request.pageActions, buildPageAction("browser_capture_state", { details: result }));
     } catch (error48) {
       host.log?.("automatic review snapshot capture failed", error48);
+    }
+  }
+  async function runPdfHandoffPreflight(params, targetWindowId, options = { activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer" }) {
+    if (!activeRequest) return null;
+    const commandName = "open_pdf_in_onhand_viewer";
+    const toolName = "browser_open_pdf_in_onhand_viewer";
+    const activityId = options.activityId;
+    appendActivity({
+      id: activityId,
+      kind: "tool",
+      label: getToolStatusMessage(toolName),
+      toolName,
+      state: "running"
+    });
+    await publishState({ status: getToolStatusMessage(toolName) });
+    try {
+      const result = await host.runCommand(commandName, withTargetWindowId(params, targetWindowId));
+      appendActivity({
+        id: activityId,
+        kind: "tool",
+        label: getToolStatusMessage(toolName),
+        toolName,
+        state: "complete"
+      });
+      appendUniquePageAction(activeRequest.pageActions, buildPageAction(toolName, result));
+      await publishState({
+        pageActions: [...activeRequest.pageActions],
+        status: "Reading the opened PDF..."
+      });
+      return result;
+    } catch (error48) {
+      appendActivity({
+        id: activityId,
+        kind: "tool",
+        label: getToolStatusMessage(toolName),
+        toolName,
+        state: "error"
+      });
+      await publishState({ status: "Could not open PDF in Onhand viewer." });
+      if (options.failRequest === false) return null;
+      throw error48;
+    }
+  }
+  async function runExplicitPdfHandoffIfRequested(prompt, targetWindowId) {
+    const params = parseExplicitPdfHandoffParams(prompt);
+    if (!params || !activeRequest) return null;
+    return await runPdfHandoffPreflight(params, targetWindowId, {
+      activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer:explicit",
+      failRequest: true
+    });
+  }
+  async function runAutomaticPdfHandoffIfNeeded(targetWindowId) {
+    if (!activeRequest) return null;
+    let activeTab = null;
+    try {
+      const state = await host.snapshotState();
+      activeTab = pickActiveTab(state, targetWindowId);
+    } catch (error48) {
+      host.log?.("automatic PDF handoff snapshot failed", error48);
+      return null;
+    }
+    if (!shouldAutoOpenPdfViewerForTab(activeTab)) return null;
+    try {
+      return await runPdfHandoffPreflight(
+        {
+          active: true,
+          newTab: false,
+          waitForLoad: true,
+          timeoutMs: 2e4
+        },
+        targetWindowId,
+        {
+          activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer:auto",
+          failRequest: false
+        }
+      );
+    } catch (error48) {
+      host.log?.("automatic PDF handoff failed", error48);
+      await publishState({ status: "Could not open PDF in Onhand viewer; reading the current page..." });
+      return null;
     }
   }
   function beginRequest(session, settings2, requestId, displayPrompt) {
@@ -121032,6 +121263,16 @@ function createOnhandBrowserRuntime(host) {
       windowId: targetWindowId
     };
   }
+  function withRequestBrowserContext(params = {}, commandName = "") {
+    const targetedParams = withDefaultBrowserTarget(params);
+    if (commandName !== "highlight_text" || targetedParams?.pdfAnchor) return targetedParams;
+    const initialSelection = activeRequest?.initialSelection;
+    if (!selectionMatchesHighlightText(initialSelection, targetedParams?.text)) return targetedParams;
+    return {
+      ...targetedParams || {},
+      pdfAnchor: initialSelection.pdfAnchor
+    };
+  }
   async function clearActivePageAnnotations(targetWindowId) {
     try {
       const state = await host.snapshotState();
@@ -121138,6 +121379,45 @@ function createOnhandBrowserRuntime(host) {
     }
     return [...latestByTarget.values()];
   }
+  function artifactHasPdfAnnotations(artifact, annotations) {
+    return annotations.some((annotation) => annotation?.pdfAnchor?.surface === "pdf" || annotation?.kind === "pdf");
+  }
+  function artifactLooksLikePdfViewer(artifact) {
+    const url2 = String(artifact.page?.url || artifact.tab?.url || "");
+    return /\/pdf-viewer\.html(?:[?#]|$)/i.test(url2) || /[?&](?:url|file|pdf|src)=[^#]*\.pdf/i.test(url2);
+  }
+  async function waitForPdfRestoreSurface(tabId, artifact, annotations) {
+    if (!artifactHasPdfAnnotations(artifact, annotations) && !artifactLooksLikePdfViewer(artifact)) return;
+    try {
+      await host.runCommand("open_pdf_in_onhand_viewer", {
+        tabId,
+        active: true,
+        newTab: false,
+        waitForLoad: true,
+        timeoutMs: 2e4
+      });
+    } catch (error48) {
+      host.log?.("PDF restore viewer handoff failed", error48);
+    }
+    const selector = [
+      '[data-onhand-inline-pdf-viewer="true"]',
+      'body[data-onhand-pdf-rendered="true"]',
+      '[data-onhand-pdf-page="true"]',
+      '[data-onhand-pdf-text-layer="true"]',
+      ".pdfViewer .page[data-page-number] .textLayer",
+      ".gsr-page[data-pn] .gsr-text-ctn"
+    ].join(", ");
+    try {
+      await host.runCommand("wait_for_selector", {
+        tabId,
+        selector,
+        timeoutMs: 12e3,
+        visible: false
+      });
+    } catch (error48) {
+      host.log?.("PDF restore surface readiness wait failed", error48);
+    }
+  }
   async function restoreArtifact(params = {}) {
     const artifact = await getBrowserArtifact(params.artifactId);
     if (!artifact) throw new Error(`Could not find Onhand artifact: ${params.artifactId || "(blank)"}`);
@@ -121162,6 +121442,7 @@ function createOnhandBrowserRuntime(host) {
     if (typeof tabId !== "number") throw new Error("Could not resolve a tab for artifact restore.");
     const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
     const failures = [];
+    await waitForPdfRestoreSurface(tabId, artifact, annotations);
     if (params.clearExisting !== false && annotations.length > 0) {
       try {
         await host.runCommand("clear_annotations", { tabId });
@@ -121176,7 +121457,7 @@ function createOnhandBrowserRuntime(host) {
       const text = String(annotation?.matchedText || "").trim();
       if (!text) continue;
       try {
-        const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false });
+        const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false, pdfAnchor: annotation?.pdfAnchor });
         restoredAnnotations += 1;
         const noteText = String(annotation?.note?.text || "").trim();
         const annotationId = highlighted?.annotation?.annotationId;
@@ -121208,6 +121489,7 @@ function createOnhandBrowserRuntime(host) {
         expression: `window.scrollTo(${Number(artifact.page?.scrollX || 0)}, ${Number(artifact.page?.scrollY || 0)}); true;`
       }).catch((error48) => {
         host.log?.("artifact scroll restore failed", error48);
+        if (isOnhandPdfViewerAccessError(error48)) return;
         failures.push(error48?.message || String(error48));
       });
     }
@@ -121266,6 +121548,7 @@ function createOnhandBrowserRuntime(host) {
         url: tab?.url || first.url || "",
         annotations: annotations.map((annotation) => ({
           matchedText: annotation.matchedText,
+          ...annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {},
           note: annotation.noteText ? { text: annotation.noteText, label: annotation.noteLabel || "Onhand" } : null
         }))
       }
@@ -121273,6 +121556,22 @@ function createOnhandBrowserRuntime(host) {
   }
   async function highlightTextWithReplayCandidates(tabId, text, options = {}) {
     let lastError = null;
+    if (options.pdfAnchor) {
+      try {
+        return await host.runCommand("highlight_text", {
+          tabId,
+          text: compactActionText(text || options.pdfAnchor?.matchedText || options.pdfAnchor?.textQuote?.exact || ""),
+          clearExisting: false,
+          scrollIntoView: options.scrollIntoView !== false,
+          exactOnly: true,
+          allowApproximate: false,
+          reuseExisting: true,
+          pdfAnchor: options.pdfAnchor
+        });
+      } catch (error48) {
+        lastError = error48;
+      }
+    }
     const candidates = [];
     addReplayExactCandidate(candidates, compactActionText(text));
     for (const candidate of getReplayHighlightCandidates(text)) {
@@ -121310,7 +121609,8 @@ function createOnhandBrowserRuntime(host) {
           scrollIntoView: options.scrollIntoView !== false,
           exactOnly: true,
           allowApproximate: false,
-          reuseExisting: true
+          reuseExisting: true,
+          ...options.pdfAnchor ? { pdfAnchor: options.pdfAnchor } : {}
         });
       } catch (error48) {
       }
@@ -121388,7 +121688,8 @@ function createOnhandBrowserRuntime(host) {
     return compactActionText(paired?.citationText || paired?.detail);
   }
   function activationSourceText(action, actions = []) {
-    return findPairedHighlightSourceText(action, actions) || compactActionText(action.citationText || action.detail);
+    const pdfAnchorSource = compactActionText(action.pdfAnchor?.matchedText || action.pdfAnchor?.textQuote?.exact);
+    return findPairedHighlightSourceText(action, actions) || pdfAnchorSource || compactActionText(action.citationText || action.detail);
   }
   function updateReplayActionArray(actions, annotation, tab, restoredAnnotation) {
     if (!Array.isArray(actions)) return false;
@@ -121523,7 +121824,10 @@ function createOnhandBrowserRuntime(host) {
       let restoredNotes = 0;
       for (const annotation of annotations) {
         try {
-          const highlighted = await highlightTextWithReplayCandidates(tabId, annotation.matchedText, { scrollIntoView: false });
+          const highlighted = await highlightTextWithReplayCandidates(tabId, annotation.matchedText, {
+            scrollIntoView: false,
+            pdfAnchor: annotation.pdfAnchor
+          });
           restoredAnnotations += 1;
           const annotationId = highlighted?.annotation?.annotationId;
           updateSessionReplayActionTargets(session, annotation, tab, highlighted?.annotation);
@@ -121604,7 +121908,6 @@ function createOnhandBrowserRuntime(host) {
   function restoredArtifactNeedsReplayFallback(result) {
     const annotations = Array.isArray(result?.artifact?.page?.annotations) ? result.artifact.page.annotations : [];
     if (!annotations.length) return false;
-    if (Array.isArray(result?.failures) && result.failures.length) return true;
     const expectedAnnotations = annotations.filter((annotation) => String(annotation?.matchedText || "").trim()).length;
     const expectedNotes = annotations.filter((annotation) => String(annotation?.note?.text || "").trim()).length;
     return Number(result?.restoredAnnotations || 0) < expectedAnnotations || Number(result?.restoredNotes || 0) < expectedNotes;
@@ -121860,7 +122163,6 @@ function createOnhandBrowserRuntime(host) {
       const requestId = crypto.randomUUID();
       const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
       const model = await getConfiguredModel(store.settings);
-      const browserContext = await renderBrowserContext(host, { targetWindowId });
       const recentConversation = buildRecentConversationContext(session);
       const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
       const requestSettings = {
@@ -121870,18 +122172,6 @@ function createOnhandBrowserRuntime(host) {
       };
       session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
       const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
-      const tools = selectToolsForPrompt(
-        createTools(
-          host,
-          artifactHooks,
-          withDefaultBrowserTarget,
-          (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer")
-        ),
-        prompt,
-        attachments,
-        learningMode,
-        session.learnerState
-      );
       if (!session.name && session.messages.length === 0) {
         session.name = buildSessionTitleFromPrompt(displayPrompt);
       }
@@ -121894,38 +122184,62 @@ function createOnhandBrowserRuntime(host) {
         artifactIds: [],
         createdAt: nowIso(),
         aborted: false,
-        targetWindowId
+        targetWindowId,
+        initialSelection: null
       };
       await publishState({ status: "Starting Onhand..." });
-      activeAgent = new Agent({
-        initialState: {
-          systemPrompt: ONHAND_SYSTEM_PROMPT,
-          model,
-          tools,
-          messages: [],
-          thinkingLevel: "off"
-        },
-        getApiKey: (provider) => resolveApiKey2(provider),
-        streamFn: (streamModel, streamContext, streamOptions = {}) => streamOnhandFast(streamModel, streamContext, {
-          ...streamOptions,
-          onhandReasoningProfile: reasoningProfile
-        }),
-        toolExecution: "parallel"
-      });
-      activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
-      void activeAgent.prompt(
-        buildLauncherPrompt(
+      try {
+        const explicitPdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
+        if (!explicitPdfHandoff) {
+          await runAutomaticPdfHandoffIfNeeded(targetWindowId);
+        }
+        const browserContextDetails = await renderBrowserContextDetails(host, { targetWindowId });
+        const browserContext = browserContextDetails.text;
+        activeRequest.initialSelection = browserContextDetails.selection;
+        const tools = selectToolsForPrompt(
+          createTools(
+            host,
+            artifactHooks,
+            withRequestBrowserContext,
+            (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer")
+          ),
           prompt,
-          browserContext,
           attachments,
           learningMode,
-          reasoningProfile,
-          tools,
-          recentConversation,
           session.learnerState
-        ),
-        buildPromptImages(attachments)
-      ).catch((error48) => finalizeRequest(session, requestId, error48 instanceof Error ? error48 : new Error(String(error48))));
+        );
+        activeAgent = new Agent({
+          initialState: {
+            systemPrompt: ONHAND_SYSTEM_PROMPT,
+            model,
+            tools,
+            messages: [],
+            thinkingLevel: "off"
+          },
+          getApiKey: (provider) => resolveApiKey2(provider),
+          streamFn: (streamModel, streamContext, streamOptions = {}) => streamOnhandFast(streamModel, streamContext, {
+            ...streamOptions,
+            onhandReasoningProfile: reasoningProfile
+          }),
+          toolExecution: "parallel"
+        });
+        activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
+        void activeAgent.prompt(
+          buildLauncherPrompt(
+            prompt,
+            browserContext,
+            attachments,
+            learningMode,
+            reasoningProfile,
+            tools,
+            recentConversation,
+            session.learnerState
+          ),
+          buildPromptImages(attachments)
+        ).catch((error48) => finalizeRequest(session, requestId, error48 instanceof Error ? error48 : new Error(String(error48))));
+      } catch (error48) {
+        await finalizeRequest(session, requestId, error48 instanceof Error ? error48 : new Error(String(error48)));
+      }
       return { requestId };
     },
     async stop() {
@@ -121956,11 +122270,27 @@ function createOnhandBrowserRuntime(host) {
       action = action || stateActions.find((candidate) => candidate.key === actionKey);
       if (!action) throw new Error("Could not find that Onhand page action.");
       const pairedHighlight = findPairedHighlightAction(action, allActions);
+      const actionPdfAnchor = action.pdfAnchor || pairedHighlight?.pdfAnchor || null;
       const tab = await resolveActionTab(action);
       const tabId = typeof tab?.id === "number" ? tab.id : void 0;
       let changed = false;
       if (action.artifactId) {
         await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: false });
+      }
+      if (actionPdfAnchor && typeof tabId === "number") {
+        const matchedText = activationSourceText(action, allActions) || actionPdfAnchor.matchedText || actionPdfAnchor.textQuote?.exact || "";
+        await waitForPdfRestoreSurface(
+          tabId,
+          {
+            tab,
+            page: {
+              title: action.title || pairedHighlight?.title || tab?.title || "",
+              url: action.url || pairedHighlight?.url || tab?.url || "",
+              annotations: [{ kind: "pdf", matchedText, pdfAnchor: actionPdfAnchor }]
+            }
+          },
+          [{ kind: "pdf", matchedText, pdfAnchor: actionPdfAnchor }]
+        );
       }
       if (action.annotationId || action.type === "note" && pairedHighlight?.annotationId) {
         if (typeof tabId !== "number") throw new Error("No matching browser tab is open for that citation.");
@@ -121983,7 +122313,7 @@ function createOnhandBrowserRuntime(host) {
         } catch (error48) {
           const citationText = activationSourceText(action, allActions);
           if (!citationText) throw error48;
-          const highlighted = await highlightExactReplaySource(tabId, citationText, { scrollIntoView: true });
+          const highlighted = await highlightExactReplaySource(tabId, citationText, { scrollIntoView: true, pdfAnchor: actionPdfAnchor });
           const annotationId = highlighted?.annotation?.annotationId;
           if (!annotationId) throw error48;
           const replayTarget = {

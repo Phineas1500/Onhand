@@ -96,6 +96,39 @@ This suite checks:
 - menu-based session restore UI
 - no-cache network reload
 
+### PDF Annotation Matrix
+
+Run `npm run serve:fixture`, open `http://127.0.0.1:8765/pdf.html`, `http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf`, `http://127.0.0.1:8765/pdf/onhand-viewer`, and `http://127.0.0.1:8765/scholar-pdf.html?file=/fixtures/scholar-reader.pdf`, then submit the controlled PDF prompts from:
+
+```sh
+npm run acceptance:chrome -- --suite=pdf
+```
+
+Then run the native Chrome PDF viewer diagnostic and the Google Scholar PDF Reader cases on real PDF tabs. The native Chrome viewer diagnostic is read-only and may validly return unsupported because Chrome can visibly render a PDF while exposing no scriptable DOM/text layer to Onhand. Run the Scholar Reader cases only if the PDF opens successfully in the current Chrome profile and the Google Scholar PDF Reader extension is installed/enabled. Start with the real-reader visible-text diagnostic before testing selection, highlighting, or restore. If direct `.pdf` navigation reports `ERR_BLOCKED_BY_CLIENT`, open the PDF manually in Chrome and continue from the rendered Scholar Reader tab; if the tab still cannot be rendered or the reader extension is not installed/enabled, record the Scholar Reader cases as environment-blocked instead of failed.
+
+The direct-PDF handoff case should use either the sidebar menu's `Open PDF` button or `browser_open_pdf_in_onhand_viewer` before any annotation work. After the handoff, verify the active tab is the Onhand viewer and that the regular visible-text, highlight, note, capture, restore, and source-jump tools work there.
+
+The real Google Scholar Reader currently renders inside an extension iframe. Onhand's normal page-tool path first detects the top PDF wrapper or injected Reader iframe; when that wrapper has no readable text layer, the runtime attempts the Reader-frame fallback before reporting an unsupported PDF surface.
+
+For the real-reader visible-text diagnostic, an unsupported answer should include whether the Reader-frame fallback was attempted and the failure reason. This keeps an environment/browser limitation distinct from a text-layer parsing bug.
+
+This suite checks:
+
+- page-numbered PDF visible text
+- real PDF rendering in the Onhand-owned PDF viewer
+- selected PDF text formatting without `[object Object]`
+- unsupported native Chrome PDF viewer behavior without silent HTML fallback
+- real Google Scholar PDF Reader text-layer availability before mutation
+- Reader-frame fallback coverage for direct `.pdf` URLs and content-type PDF routes such as `/pdf/...`
+- Onhand-owned PDF overlay highlights and notes
+- selected PDF anchor reuse instead of text-layer re-search
+- PDF capture/restore from normalized page-rect anchors
+- page reload followed by Restore pages recreating the saved PDF highlight and note
+- real Reader-frame captures preserve the top PDF tab URL/title instead of `chrome-extension://.../reader.html`
+- source jumps to restored Google Scholar Reader annotations, including annotations whose target page has been virtualized and must be rendered through the Reader page-number input
+- coexistence with Google Scholar PDF Reader's native highlights/comments without using Scholar's private annotation storage
+- exclusion of native Scholar-like comment popups, color controls, and toolbars from PDF source text
+
 ### Real Page Matrix
 
 Submit the real-page prompts from `npm run acceptance:chrome -- --suite=real-pages`.
@@ -152,6 +185,12 @@ Chrome acceptance <run id>: PASS
 - fixture-artifact: PASS (<artifact id>)
 - fixture-session-replay: PASS
 - fixture-network: PASS (<collected URL/status>)
+- pdf-controlled-visible: PASS
+- pdf-controlled-highlight-note: PASS
+- pdf-controlled-capture-restore: PASS (<artifact id>)
+- pdf-controlled-selected-passage: PASS
+- pdf-google-scholar-selection: PASS
+- pdf-google-scholar-restore: PASS
 - real-static-article: PASS
 - real-form-page: PASS
 - real-client-routed-page: PASS

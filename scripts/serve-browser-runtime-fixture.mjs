@@ -1,4 +1,5 @@
 import http from "node:http";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 export const DEFAULT_PORT = 8765;
@@ -104,6 +105,248 @@ export const html = `<!doctype html>
 </body>
 </html>`;
 
+export const pdfHtml = `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Onhand PDF Adapter Fixture</title>
+	<style>
+		body { margin: 0; background: #3f3f3f; color: #2f2d2a; font-family: system-ui, sans-serif; }
+		header { position: sticky; top: 0; z-index: 10; display: flex; gap: 18px; align-items: center; height: 54px; padding: 0 24px; background: #252525; color: #f5f1ea; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+		header strong { letter-spacing: .03em; }
+		.pdf-shell { max-width: 920px; margin: 0 auto; padding: 28px 24px 80px; }
+		.pdfViewer { display: grid; gap: 18px; }
+		.page { position: relative; width: 816px; min-height: 1056px; margin: 0 auto; background: #fffdfa; box-shadow: 0 3px 18px rgba(0,0,0,.32); overflow: hidden; }
+		.page::before { content: attr(data-page-number); position: absolute; right: 20px; bottom: 16px; color: #928a7e; font-size: 13px; }
+		.slide-title { position: absolute; left: 76px; top: 74px; font-size: 42px; line-height: 1.1; letter-spacing: .03em; color: #3d3b38; }
+		.slide-subtitle { position: absolute; left: 76px; top: 204px; font-size: 24px; color: #b88700; }
+		.slide-body { position: absolute; left: 76px; top: 118px; right: 76px; font-size: 26px; line-height: 1.45; color: #34322f; }
+		.slide-body h2 { margin: 0 0 22px; font-size: 38px; font-weight: 500; letter-spacing: .03em; }
+		.slide-body p { margin: 0 0 22px; }
+		.textLayer { position: absolute; inset: 0; color: transparent; user-select: text; }
+		.textLayer span { position: absolute; color: transparent; white-space: pre; transform-origin: 0 0; }
+		.textLayer ::selection { background: rgba(251, 191, 36, .35); }
+		#p1-title { left: 76px; top: 74px; font-size: 42px; }
+		#p1-subtitle { left: 76px; top: 204px; font-size: 24px; }
+		#p2-title { left: 76px; top: 118px; font-size: 38px; }
+		#p2-line-1 { left: 76px; top: 190px; font-size: 26px; }
+		#p2-line-2 { left: 76px; top: 232px; font-size: 26px; }
+		#p2-line-3 { left: 76px; top: 274px; font-size: 26px; }
+	</style>
+</head>
+<body>
+	<header>
+		<strong>Onhand PDF Adapter Fixture</strong>
+		<span>PDF.js-style text layer</span>
+	</header>
+	<main class="pdf-shell">
+		<div class="pdfViewer" data-onhand-fixture="pdf">
+			<section class="page" data-page-number="1" aria-label="Page 1">
+				<div class="slide-title">CS 577: Natural Language Processing</div>
+				<div class="slide-subtitle">Lecture 4: Recurrent Neural Networks</div>
+				<div class="textLayer" aria-hidden="false">
+					<span id="p1-title">CS 577: Natural Language Processing</span>
+					<span id="p1-subtitle">Lecture 4: Recurrent Neural Networks</span>
+				</div>
+			</section>
+			<section class="page" data-page-number="2" aria-label="Page 2">
+				<div class="slide-body">
+					<h2>Previously: Data Sparsity And Overfitting</h2>
+					<p>The important phrase is recurrent neural networks in sequence models.</p>
+					<p>Recurrent neural networks preserve sequence state across tokens.</p>
+					<p>This controlled fixture lets Onhand test PDF highlights, notes, capture, and restore.</p>
+				</div>
+				<div class="textLayer" aria-hidden="false">
+					<span id="p2-title">Previously: Data Sparsity And Overfitting</span>
+					<span id="p2-line-1">The important phrase is recurrent neural networks in sequence models.</span>
+					<span id="p2-line-2">Recurrent neural networks preserve sequence state across tokens.</span>
+					<span id="p2-line-3">This controlled fixture lets Onhand test PDF highlights, notes, capture, and restore.</span>
+				</div>
+			</section>
+		</div>
+	</main>
+</body>
+</html>`;
+
+export const scholarPdfHtml = `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Google Scholar PDF Reader</title>
+	<style>
+		body { margin: 0; background: #2f3033; color: #34322f; font-family: Arial, sans-serif; }
+		header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 18px; height: 58px; padding: 0 24px; background: #202124; color: #f1f3f4; box-shadow: 0 1px 3px rgba(0,0,0,.45); }
+		header button { border: 0; border-radius: 4px; background: #3c4043; color: #f1f3f4; font: inherit; padding: 6px 10px; }
+		.scholar-reader { display: grid; grid-template-columns: 190px minmax(760px, 1fr) 72px; gap: 18px; padding: 24px; }
+		.scholar-thumbs { color: #f1f3f4; font-size: 14px; }
+		.scholar-thumb { height: 104px; margin: 0 0 14px; background: #f8f5ef; border: 3px solid #5f6368; }
+		.scholar-document { display: grid; gap: 18px; }
+		.scholar-page { position: relative; width: 816px; min-height: 1056px; margin: 0 auto; background: #fffdfa; box-shadow: 0 3px 18px rgba(0,0,0,.34); overflow: hidden; }
+		.scholar-page::after { content: attr(aria-label); position: absolute; right: 20px; bottom: 16px; color: #9a948b; font-size: 13px; }
+		.scholar-slide-title { position: absolute; left: 78px; top: 84px; font-size: 42px; letter-spacing: .04em; line-height: 1.15; color: #3d3b38; }
+		.scholar-slide-subtitle { position: absolute; left: 78px; top: 232px; font-size: 28px; color: #b88700; }
+		.scholar-selectable-text { position: absolute; inset: 0; user-select: text; color: transparent; }
+		.scholar-selectable-text span { position: absolute; white-space: pre-wrap; color: transparent; transform-origin: 0 0; }
+		.scholar-selectable-text ::selection { background: rgba(251, 191, 36, .35); }
+		.scholar-selected-native { position: absolute; left: 76px; top: 80px; width: 416px; height: 64px; border-radius: 4px; background: rgba(251, 191, 36, .45); outline: 2px solid rgba(217, 143, 21, .8); pointer-events: none; }
+		.scholar-native-comment-popup { position: absolute; left: 474px; top: 196px; width: 280px; padding: 14px 16px 12px; background: #fff; border-radius: 3px; box-shadow: 0 2px 10px rgba(60,64,67,.35); color: #202124; font-size: 14px; line-height: 1.35; z-index: 5; }
+		.scholar-native-comment-popup strong { display: block; margin-bottom: 8px; }
+		.scholar-native-colors { display: flex; gap: 4px; margin-top: 10px; }
+		.scholar-native-colors span { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+		.scholar-toolbar { position: sticky; top: 82px; align-self: start; display: grid; gap: 10px; justify-items: center; padding: 12px 8px; border-radius: 28px; background: #fff; box-shadow: 0 2px 10px rgba(60,64,67,.35); }
+		.scholar-toolbar button { width: 36px; height: 36px; border: 1px solid #d0d3d7; border-radius: 50%; background: #fff; color: #5f6368; font-size: 16px; }
+		#gs-title { left: 78px; top: 84px; font-size: 42px; }
+		#gs-subtitle { left: 78px; top: 232px; font-size: 28px; }
+		#gs-line-1 { left: 78px; top: 378px; font-size: 26px; }
+		#gs-line-2 { left: 78px; top: 420px; font-size: 26px; }
+		#gs-line-3 { left: 78px; top: 462px; font-size: 26px; }
+	</style>
+</head>
+<body aria-label="Google Scholar PDF Reader">
+	<header role="toolbar" aria-label="Google Scholar PDF Reader toolbar">
+		<strong>Google Scholar PDF Reader</strong>
+		<button type="button" aria-label="Toggle sidebar">Sidebar</button>
+		<button type="button" aria-label="Highlight selected text">Highlight</button>
+		<button type="button" aria-label="Comment on selected text">Comment</button>
+		<span>Page 4 / 48</span>
+	</header>
+	<main class="scholar-reader" data-onhand-fixture="scholar-pdf">
+		<aside class="scholar-thumbs" aria-label="Page thumbnails">
+			<div class="scholar-thumb"></div>
+			<div class="scholar-thumb"></div>
+			<div class="scholar-thumb"></div>
+			<div class="scholar-thumb"></div>
+			<span>4</span>
+		</aside>
+		<div class="scholar-document">
+			<section class="scholar-page gsr-page" role="region" aria-label="Page 4" data-page-index="3" data-pn="4">
+				<div class="scholar-slide-title">CS 577: Natural Language Processing</div>
+				<div class="scholar-slide-subtitle">Lecture 4: Recurrent Neural Networks</div>
+				<p style="position:absolute;left:78px;top:372px;width:620px;font-size:26px;line-height:1.6;margin:0;color:#34322f;">
+					Recurrent neural networks preserve sequence state across tokens.
+					Scholar-compatible anchors should ignore native comments.
+					Onhand notes should stay separate from Scholar Library comments.
+				</p>
+				<div class="scholar-selectable-text gsr-text-ctn" data-testid="selectable-text-layer" aria-label="selectable text layer">
+					<span id="gs-title" class="gsr-text" data-idx="0">CS 577: Natural Language Processing</span>
+					<span id="gs-subtitle" class="gsr-text" data-idx="1">Lecture 4: Recurrent Neural Networks</span>
+					<span id="gs-line-1" class="gsr-text" data-idx="2">Recurrent neural networks preserve sequence state across tokens.</span>
+					<span id="gs-line-2" class="gsr-text" data-idx="3">Scholar-compatible anchors should ignore native comments.</span>
+					<span id="gs-line-3" class="gsr-text" data-idx="4">Onhand notes should stay separate from Scholar Library comments.</span>
+				</div>
+				<div class="scholar-selected-native" aria-hidden="true"></div>
+				<div class="scholar-native-comment-popup" role="dialog" aria-label="Scholar comment">
+					<strong>Native Scholar note</strong>
+					<span>Native Scholar note should not become source PDF text.</span>
+					<div class="scholar-native-colors" aria-label="Scholar annotation colors">
+						<span style="background:#fde293"></span>
+						<span style="background:#a7e8d3"></span>
+						<span style="background:#b7c7f3"></span>
+					</div>
+				</div>
+			</section>
+		</div>
+		<nav class="scholar-toolbar" role="toolbar" aria-label="Scholar annotation toolbar">
+			<button type="button" aria-label="Open comments">C</button>
+			<button type="button" aria-label="Yellow highlight">Y</button>
+			<button type="button" aria-label="Blue highlight">B</button>
+		</nav>
+	</main>
+</body>
+</html>`;
+
+function escapePdfText(value) {
+	return String(value).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function buildSimplePdfFixture() {
+	const lines = [
+		"Onhand PDF Viewer Fixture",
+		"The important phrase is recurrent neural networks.",
+		"Sequence models preserve state across tokens.",
+		"This real PDF validates Onhand PDF annotations.",
+	];
+	const textCommands = lines
+		.map((line, index) => `${index === 0 ? "0 0 Td" : "0 -34 Td"} (${escapePdfText(line)}) Tj`)
+		.join("\n");
+	const stream = `BT
+/F1 24 Tf
+72 720 Td
+${textCommands}
+ET`;
+	const objects = [
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		`<< /Length ${Buffer.byteLength(stream, "utf8")} >>
+stream
+${stream}
+endstream`,
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	];
+	let pdf = "%PDF-1.4\n";
+	const offsets = [0];
+	for (const [index, body] of objects.entries()) {
+		offsets.push(Buffer.byteLength(pdf, "utf8"));
+		pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+	}
+	const xrefOffset = Buffer.byteLength(pdf, "utf8");
+	pdf += `xref
+0 ${objects.length + 1}
+0000000000 65535 f
+`;
+	for (const offset of offsets.slice(1)) {
+		pdf += `${String(offset).padStart(10, "0")} 00000 n\n`;
+	}
+	pdf += `trailer
+<< /Size ${objects.length + 1} /Root 1 0 R >>
+startxref
+${xrefOffset}
+%%EOF
+`;
+	return Buffer.from(pdf, "utf8");
+}
+
+export const samplePdf = buildSimplePdfFixture();
+
+function extensionAssetContentType(pathname) {
+	if (pathname.endsWith(".html")) return "text/html; charset=utf-8";
+	if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+	if (pathname.endsWith(".css")) return "text/css; charset=utf-8";
+	if (pathname.endsWith(".bcmap")) return "application/octet-stream";
+	if (pathname.endsWith(".ttf")) return "font/ttf";
+	if (pathname.endsWith(".pfb")) return "application/octet-stream";
+	return "application/octet-stream";
+}
+
+async function readExtensionViewerAsset(urlPathname) {
+	const routeMap = new Map([
+		["/onhand-pdf-viewer.html", "pdf-viewer.html"],
+		["/pdf-viewer.bundle.js", "pdf-viewer.bundle.js"],
+		["/vendor/pdf.worker.mjs", "vendor/pdf.worker.mjs"],
+	]);
+	const mapped = routeMap.get(urlPathname);
+	if (mapped) {
+		return {
+			body: await readFile(new URL(`../packages/browser-extension/${mapped}`, import.meta.url)),
+			contentType: extensionAssetContentType(mapped),
+		};
+	}
+	for (const prefix of ["/vendor/cmaps/", "/vendor/standard_fonts/"]) {
+		if (!urlPathname.startsWith(prefix)) continue;
+		const suffix = urlPathname.slice(prefix.length);
+		if (!suffix || suffix.includes("..") || suffix.includes("/") || suffix.includes("\\")) return null;
+		const mappedPath = `${prefix.slice(1)}${suffix}`;
+		return {
+			body: await readFile(new URL(`../packages/browser-extension/${mappedPath}`, import.meta.url)),
+			contentType: extensionAssetContentType(mappedPath),
+		};
+	}
+	return null;
+}
+
 function send(req, res, status, headers, body = "") {
 	res.writeHead(status, {
 		"Connection": "close",
@@ -118,27 +361,48 @@ function send(req, res, status, headers, body = "") {
 }
 
 export function createFixtureServer({ host = "127.0.0.1", port = DEFAULT_PORT } = {}) {
-	const server = http.createServer((req, res) => {
+	const server = http.createServer(async (req, res) => {
 		const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
-		if (url.pathname === "/" || url.pathname === "/index.html") {
-			send(req, res, 200, { "Content-Type": "text/html; charset=utf-8" }, html);
-			return;
+		try {
+			if (url.pathname === "/" || url.pathname === "/index.html") {
+				send(req, res, 200, { "Content-Type": "text/html; charset=utf-8" }, html);
+				return;
+			}
+			if (url.pathname === "/pdf.html") {
+				send(req, res, 200, { "Content-Type": "text/html; charset=utf-8" }, pdfHtml);
+				return;
+			}
+			if (url.pathname === "/scholar-pdf.html") {
+				send(req, res, 200, { "Content-Type": "text/html; charset=utf-8" }, scholarPdfHtml);
+				return;
+			}
+			if (url.pathname === "/fixtures/onhand-viewer.pdf" || url.pathname === "/pdf/onhand-viewer") {
+				send(req, res, 200, { "Content-Type": "application/pdf", "Content-Length": String(samplePdf.length) }, samplePdf);
+				return;
+			}
+			const extensionAsset = await readExtensionViewerAsset(url.pathname);
+			if (extensionAsset) {
+				send(req, res, 200, { "Content-Type": extensionAsset.contentType }, extensionAsset.body);
+				return;
+			}
+			if (url.pathname === "/fixture.json") {
+				send(
+					req,
+					res,
+					200,
+					{ "Content-Type": "application/json; charset=utf-8" },
+					JSON.stringify({ ok: true, label: "fixture-json", now: new Date().toISOString() }),
+				);
+				return;
+			}
+			if (url.pathname === "/health") {
+				send(req, res, 200, { "Content-Type": "application/json; charset=utf-8" }, JSON.stringify({ ok: true }));
+				return;
+			}
+			send(req, res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not found");
+		} catch (error) {
+			send(req, res, 500, { "Content-Type": "text/plain; charset=utf-8" }, error?.message || String(error));
 		}
-		if (url.pathname === "/fixture.json") {
-			send(
-				req,
-				res,
-				200,
-				{ "Content-Type": "application/json; charset=utf-8" },
-				JSON.stringify({ ok: true, label: "fixture-json", now: new Date().toISOString() }),
-			);
-			return;
-		}
-		if (url.pathname === "/health") {
-			send(req, res, 200, { "Content-Type": "application/json; charset=utf-8" }, JSON.stringify({ ok: true }));
-			return;
-		}
-		send(req, res, 404, { "Content-Type": "text/plain; charset=utf-8" }, "Not found");
 	});
 
 	server.keepAliveTimeout = 0;
