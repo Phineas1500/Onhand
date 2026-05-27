@@ -1,16 +1,16 @@
 import { access, mkdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
 const execFileAsync = promisify(execFile);
 
-const PROJECT_ROOT = process.cwd();
 const FIXTURE_TEXT =
 	process.env.REALTIME_VOICE_FIXTURE_TEXT ||
 	"What does this page say about Alpha smoke content? Please answer briefly and point to the page.";
-const OUTPUT_PATH = join(PROJECT_ROOT, "packages/browser-extension/realtime-fixtures/voice-question.wav");
-const TEMP_CAF_PATH = join(PROJECT_ROOT, "packages/browser-extension/realtime-fixtures/voice-question.caf");
+const OUTPUT_PATH = process.env.REALTIME_VOICE_FIXTURE_OUTPUT || join(tmpdir(), "onhand-realtime-voice", "voice-question.wav");
+const TEMP_CAF_PATH = join(dirname(OUTPUT_PATH), "voice-question.caf");
 const ESPEAK_CANDIDATES = [
 	process.env.REALTIME_VOICE_ESPEAK_PATH,
 	"/opt/homebrew/bin/espeak",

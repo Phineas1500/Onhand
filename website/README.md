@@ -37,7 +37,7 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 
 ## What to customize
 
-- **Version badge:** `index.html`, the `<span class="tag">v0.2.0 · early access</span>` near the top of the hero.
+- **Version badge:** `index.html`, the `<span class="tag">v0.2.1 · early access</span>` near the top of the hero.
 - **Hero copy:** `index.html`, sections starting at `<h1 class="hero-h1">`.
 - **Feature card text:** `index.html`, the four `<div class="feat">` blocks.
 - **Add to Chrome link:** currently anchors to `#install` (since the store listing isn't live yet). When the Chrome Web Store listing ships, swap the two `href="#install"` instances on `.btn-primary` and `.nav-cta` for the Web Store URL.

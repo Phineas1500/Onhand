@@ -42,16 +42,15 @@ OPENAI_SAFETY_IDENTIFIER=onhand-local-dev
 
 Reload the unpacked extension from `packages/browser-extension/`, open the side panel, and click `Voice`.
 
-For deterministic voice-input acceptance, generate the local TTS fixture before rebuilding/reloading:
+For deterministic live-microphone acceptance, you can generate a local WAV prompt and play it through your normal or virtual microphone device:
 
 ```sh
 npm run generate:realtime-voice-fixture
-npm run build:extension
 ```
 
-The generator prefers `espeak`/`espeak-ng` when installed and falls back to macOS `say`/`afconvert`; it verifies that the output has audio samples before writing the acceptance fixture.
+The generator prefers `espeak`/`espeak-ng` when installed and falls back to macOS `say`/`afconvert`; it verifies that the output has audio samples before writing the fixture to the system temp directory, or to `REALTIME_VOICE_FIXTURE_OUTPUT` if set.
 
-Then Shift-click `Voice`. On the local smoke fixture at `http://127.0.0.1:8765/`, a normal `Voice` click also uses the generated fixture so Computer Use can run the path without keyboard modifiers. The side panel feeds `packages/browser-extension/realtime-fixtures/voice-question.wav` into the Realtime WebRTC input track instead of using the physical microphone.
+The shipped extension does not include or inject test audio. Click `Voice` normally, then speak or play the generated file through the microphone path selected in Chrome.
 
 ## Usage
 
@@ -61,7 +60,6 @@ Click `Voice` and wait until the status reads `Voice ready · ask, then pause`.
 - While voice is live, typing in the composer sends that text into the same realtime session and asks for an audio response.
 - Click `End` only when you want to disconnect the live voice session. It does not submit the current turn.
 - Voice disconnects automatically after a few idle minutes to avoid leaving an expensive realtime session open.
-- Shift-click `Voice` to run the generated test voice fixture instead of live microphone input. A normal click does the same only on the local smoke fixture URL.
 
 Useful status messages while testing:
 

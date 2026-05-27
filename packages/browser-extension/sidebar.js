@@ -20,7 +20,6 @@
 	const REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER = 3.2;
 	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
 	const REALTIME_MIC_SILENCE_DIAGNOSTIC_MS = 6500;
-	const REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH = "realtime-fixtures/voice-question.wav";
 	const CODEX_PROVIDER = "openai-codex";
 	const CODEX_MODEL = "gpt-5.5";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
@@ -161,7 +160,6 @@
 	let realtimeManualVoiceResponseTimer = null;
 	let realtimeTranscriptionFallbackTimer = null;
 	let realtimeIdleTimeoutTimer = null;
-	let realtimeSyntheticAudioPlayback = null;
 	let realtimeLocalSpeechActive = false;
 	let realtimeServerSpeechSeenAt = 0;
 	let realtimeManualVoiceCommitPending = false;
@@ -4942,64 +4940,6 @@
 		}
 	}
 
-	function stopRealtimeSyntheticAudioPlayback() {
-		if (!realtimeSyntheticAudioPlayback) return;
-		const playback = realtimeSyntheticAudioPlayback;
-		realtimeSyntheticAudioPlayback = null;
-		try {
-			playback.source?.stop?.();
-		} catch {}
-		try {
-			void playback.context?.close?.().catch(() => {});
-		} catch {}
-	}
-
-	function startRealtimeSyntheticAudioPlayback() {
-		const playback = realtimeSyntheticAudioPlayback;
-		if (!playback || playback.started) return false;
-		playback.started = true;
-		try {
-			void playback.context?.resume?.().catch(() => {});
-			playback.source.start(playback.context.currentTime + 0.35);
-			setRealtimeStatus("Playing test voice...");
-			return true;
-		} catch (error) {
-			setRealtimeStatus("Voice error", error?.message || String(error));
-			return false;
-		}
-	}
-
-	async function createRealtimeSyntheticAudioInputStream() {
-		const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-		if (!AudioContextCtor) {
-			throw new Error("Synthetic voice acceptance requires Web Audio support.");
-		}
-		stopRealtimeSyntheticAudioPlayback();
-		const fixtureUrl = extensionUrl(REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH);
-		const response = await fetch(fixtureUrl, { cache: "no-store" });
-		if (!response.ok) {
-			throw new Error(`Could not load ${REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH}. Run npm run generate:realtime-voice-fixture, rebuild, then reload the extension.`);
-		}
-		const context = new AudioContextCtor();
-		await context.resume().catch(() => {});
-		const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
-		const destination = context.createMediaStreamDestination();
-		const source = context.createBufferSource();
-		source.buffer = audioBuffer;
-		source.connect(destination);
-		source.onended = () => {
-			if (realtimeConnected && !realtimeResponseInProgress) {
-				setRealtimeStatus("Test voice ended · waiting for API");
-			}
-		};
-		realtimeSyntheticAudioPlayback = {
-			context,
-			source,
-			started: false,
-		};
-		return destination.stream;
-	}
-
 	function getRealtimeMicDeviceLabel(deviceId) {
 		const normalized = normalizeRealtimeMicDeviceId(deviceId);
 		if (normalized === "default") {
@@ -5084,16 +5024,7 @@
 		}
 	}
 
-	function isRealtimeSyntheticFixtureContext(state = currentState) {
-		const tabUrl = String(state?.tab?.url || state?.page?.url || "").trim();
-		return /^https?:\/\/127\.0\.0\.1:8765\/?$/.test(tabUrl);
-	}
-
-	async function createRealtimeInputMediaStream(options = {}) {
-		if (options.syntheticAudio) {
-			setRealtimeStatus("Loading test voice...");
-			return await createRealtimeSyntheticAudioInputStream();
-		}
+	async function createRealtimeInputMediaStream() {
 		if (!navigator.mediaDevices?.getUserMedia) {
 			throw new Error("Microphone capture is unavailable in this browser surface.");
 		}
@@ -5346,7 +5277,7 @@
 	function renderRealtimeControls() {
 		if (!realtimeVoiceButton || !realtimeStatusEl) return;
 		realtimeVoiceButton.textContent = realtimeConnecting ? "..." : realtimeConnected ? "End" : "Voice";
-		realtimeVoiceButton.title = realtimeConnected ? "End realtime voice tutor" : "Start realtime voice tutor. Shift-click to run the generated test voice fixture.";
+		realtimeVoiceButton.title = realtimeConnected ? "End realtime voice tutor" : "Start realtime voice tutor.";
 		realtimeVoiceButton.setAttribute("aria-label", realtimeVoiceButton.title);
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
@@ -6375,7 +6306,7 @@
 		}
 	}
 
-	async function startRealtimeVoice(options = {}) {
+	async function startRealtimeVoice() {
 		if (realtimeConnecting || realtimeConnected) return;
 		realtimeConnecting = true;
 		realtimeError = "";
@@ -6383,7 +6314,7 @@
 		renderRealtimeControls();
 		try {
 			await ensureRealtimePdfSurfaceForVoice();
-			realtimeMediaStream = await createRealtimeInputMediaStream(options);
+			realtimeMediaStream = await createRealtimeInputMediaStream();
 			const audioTracks = realtimeMediaStream.getAudioTracks();
 			if (!audioTracks.length) {
 				throw new Error("Chrome granted microphone access but returned no audio track.");
@@ -6419,11 +6350,6 @@
 				scheduleRealtimeIdleTimeout();
 				try {
 					sendRealtimeSessionUpdate();
-					if (options?.syntheticAudio) {
-						setTimeout(() => {
-							startRealtimeSyntheticAudioPlayback();
-						}, 650);
-					}
 				} catch (error) {
 					setRealtimeStatus("Voice error", error?.message || String(error));
 				}
@@ -6471,7 +6397,6 @@
 
 	function stopRealtimeVoice(status = "Voice idle") {
 		clearRealtimeIdleTimeout();
-		stopRealtimeSyntheticAudioPlayback();
 		stopRealtimeMicMonitor();
 		try {
 			realtimeDataChannel?.close();
@@ -6780,13 +6705,12 @@
 		fileInput.click();
 	});
 
-	realtimeVoiceButton.addEventListener("click", (event) => {
+	realtimeVoiceButton.addEventListener("click", () => {
 		if (realtimeConnected || realtimeConnecting) {
 			stopRealtimeVoice();
 			return;
 		}
-		const syntheticAudio = Boolean(event.shiftKey || event.altKey || isRealtimeSyntheticFixtureContext());
-		void startRealtimeVoice({ syntheticAudio }).catch((error) => {
+		void startRealtimeVoice().catch((error) => {
 			setRealtimeStatus("Voice error", error?.message || String(error));
 		});
 	});
@@ -6959,7 +6883,6 @@
 			requestRealtimeResponse,
 			requestState,
 			sendRealtimeTextPrompt,
-			startRealtimeSyntheticAudioPlayback,
 			getRealtimeDebugState() {
 				return {
 					connected: realtimeConnected,

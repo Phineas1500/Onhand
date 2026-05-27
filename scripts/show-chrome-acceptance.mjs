@@ -456,7 +456,7 @@ const suites = {
 	voice: {
 		label: "Realtime voice matrix",
 		setup: [
-			"npm run generate:realtime-voice-fixture",
+			"optional: npm run generate:realtime-voice-fixture, then play the generated WAV through Chrome's selected microphone or a virtual audio device",
 			"npm run build:extension",
 			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
 			"confirm extension options show an OpenAI API key or OpenAI Codex OAuth credentials; Realtime voice must be able to create /v1/realtime/calls sessions",
@@ -467,19 +467,20 @@ const suites = {
 		],
 		cases: [
 			{
-				id: "voice-generated-audio-fixture",
-				title: "Generated audio fixture drives Realtime voice input",
+				id: "voice-live-mic-question",
+				title: "Live microphone drives Realtime voice input",
 				url: "http://127.0.0.1:8765/",
 				steps: [
-					"Click the Voice button on the local smoke fixture. Shift-click works on any page; the smoke fixture also uses generated audio on a normal click. This feeds packages/browser-extension/realtime-fixtures/voice-question.wav into the Realtime WebRTC input track instead of using the physical microphone.",
+					"Click the Voice button on the local smoke fixture.",
+					"Ask aloud, or play through the selected microphone: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
 					"Do not type into the composer during this case.",
-					"Wait up to 60 seconds for the status to move through Playing test voice, Listening or Mic heard a pause, Transcribing, Using Onhand, and Speaking Onhand answer.",
+					"Wait up to 60 seconds for the status to move through Mic hears you, Listening or Mic heard a pause, Transcribing, Using Onhand, and Speaking Onhand answer.",
 				],
 				prompt:
-					"No typed prompt. The generated audio says: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
+					"No typed prompt. The spoken prompt is: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
 				expected: [
-					"Voice starts without a microphone permission prompt",
-					"status shows Playing test voice or Mic hears you before any typed input",
+					"Voice starts with the selected Chrome microphone device",
+					"status shows Mic hears you before any typed input",
 					"OpenAI server VAD or the manual fallback submits the audio turn",
 					"the sidebar receives an Onhand Page-grounded answer without clicking Ask",
 					"the spoken/sidebar answer mentions Alpha smoke content or the fixture page content and preserves the Onhand answer in the sidebar",
@@ -492,14 +493,15 @@ const suites = {
 				url: "http://127.0.0.1:8765/",
 				steps: [
 					"Turn Learning Mode on before starting this case.",
-					"Click the Voice button on the local smoke fixture. The generated audio fixture asks about Alpha smoke content.",
+					"Click the Voice button on the local smoke fixture.",
+					"Ask aloud, or play through the selected microphone: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
 					"Do not type into the composer during the first voice turn.",
 					"Wait up to 60 seconds for the status to move through Transcribing, Planning tutor move, and Speaking tutor prompt.",
 					"Answer the spoken prompt aloud, or type a short answer in the composer while Voice remains live.",
 					"Wait for Checking answer and Speaking tutor feedback.",
 				],
 				prompt:
-					"No typed first prompt. The generated audio says: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
+					"No typed first prompt. The spoken prompt is: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
 				expected: [
 					"the first Learning Mode voice turn asks a question or nudge instead of giving a full direct answer",
 					"the Alpha smoke content source sentence is highlighted",

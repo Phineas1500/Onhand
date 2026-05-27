@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Onhand",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Runs the Onhand contextual tutor directly inside the browser extension.",
   "minimum_chrome_version": "116",
   "icons": {
@@ -31,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*", "realtime-fixtures/*"],
+      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*"],
       "matches": ["<all_urls>"]
     }
   ]
