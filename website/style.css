@@ -50,6 +50,7 @@
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:var(--font-serif);font-size:18px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+img,svg,video,canvas{max-width:100%}
 a{color:var(--rp-pine);text-decoration:none}
 a:hover{color:var(--rp-foam);text-decoration:underline}
 ::selection{background:rgba(234,157,52,0.4);color:var(--fg)}
@@ -86,10 +87,23 @@ section:first-of-type{border-top:0}
 .theme-toggle{width:34px;height:34px;display:grid;place-items:center;padding:0;font-size:15px}
 .theme-toggle .mc{color:var(--rp-gold)}
 @media (max-width:780px){.nav-links{display:none}}
+@media (max-width:640px){
+  .nav-inner{height:58px;padding:0 16px;gap:8px;width:100%;max-width:390px;margin:0}
+  .nav-brand{gap:8px;font-size:18px;min-width:0}
+  .nav-brand img{width:24px;height:24px;flex:0 0 auto}
+  .nav-spacer{min-width:0}
+  .theme-toggle{display:none}
+  .nav-ghost{padding:8px 10px}
+  .nav-github{display:none}
+  .nav-cta{padding:8px 10px;gap:6px;white-space:nowrap;flex:0 0 auto}
+  .nav-cta-label{font-size:0}
+  .nav-cta-label::after{content:"Chrome";font-size:11.5px}
+}
 
 /* HERO */
 .hero{padding:clamp(56px,8vw,96px) 0 clamp(32px,5vw,48px);border-top:0}
 .hero-grid{display:grid;grid-template-columns:1.05fr 0.95fr;gap:60px;align-items:center}
+.hero-grid > *{min-width:0}
 @media (max-width:880px){.hero-grid{grid-template-columns:1fr;gap:36px}}
 
 .hero-eyebrow{display:inline-flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:12px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:22px;flex-wrap:wrap}
@@ -113,7 +127,7 @@ section:first-of-type{border-top:0}
 .btn-secondary{display:inline-flex;align-items:center;gap:8px;padding:14px 20px;background:transparent;color:var(--fg);font-family:var(--font-serif);font-size:17px;font-weight:500;border-radius:3px;border:1px solid var(--border);cursor:pointer;text-decoration:none}
 .btn-secondary:hover{background:var(--bg-elev);color:var(--fg);text-decoration:none;border-color:var(--rp-pine)}
 
-.hero-install{display:flex;align-items:center;gap:0;background:var(--bg-deep);border:1px solid var(--border);border-radius:3px;overflow:hidden;font-family:var(--font-mono);font-size:13px;max-width:560px}
+.hero-install{display:flex;align-items:center;gap:0;background:var(--bg-deep);border:1px solid var(--border);border-radius:3px;overflow:hidden;font-family:var(--font-mono);font-size:13px;max-width:560px;width:100%}
 .hero-install .prompt{padding:11px 12px 11px 14px;color:var(--rp-foam);user-select:none}
 .hero-install code{flex:1;padding:11px 0;color:var(--fg);font-family:var(--font-mono);background:transparent;overflow-x:auto;white-space:nowrap;min-width:0}
 .hero-install code .ar{color:var(--rp-gold);margin:0 4px}
@@ -129,6 +143,22 @@ section:first-of-type{border-top:0}
 .hero-mark .corner.tr{top:14px;right:16px;text-align:right}
 .hero-mark .corner.bl{bottom:14px;left:16px}
 .hero-mark .corner.br{bottom:14px;right:16px;text-align:right;color:var(--rp-pine)}
+
+@media (max-width:640px){
+  .hero{padding:48px 0 28px}
+  .hero-grid{gap:28px}
+  .hero-eyebrow{gap:8px;margin-bottom:20px;max-width:min(350px,calc(100vw - 40px))}
+  .hero-h1{font-size:46px;line-height:1.04;max-width:10ch;margin-bottom:24px}
+  .hero-lede{font-size:18px;line-height:1.55;margin-bottom:28px;max-width:min(350px,calc(100vw - 40px))}
+  .hero-ctas{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:28px;max-width:min(350px,calc(100vw - 40px))}
+  .btn-primary,.btn-secondary{width:100%;justify-content:center;padding:13px 16px}
+  .hero-install{max-width:min(350px,calc(100vw - 40px))}
+  .hero-install .prompt{padding-left:12px;padding-right:8px}
+  .hero-install code{font-size:12px;overflow:hidden;text-overflow:ellipsis}
+  .hero-install .copy{padding-left:10px;padding-right:10px}
+  .hero-mark{aspect-ratio:1;min-height:330px;max-width:min(350px,calc(100vw - 40px))}
+  .hero-mark .glyph{font-size:132px}
+}
 
 /* SCREENSHOT */
 .shot{padding:clamp(20px,4vw,40px) 0 clamp(64px,9vw,96px);border-top:0}
