@@ -10,6 +10,19 @@
 	const HOST_ID = "onhand-extension-sidebar-host";
 	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
 	const SIDEBAR_THEME_STORAGE_KEY = "onhandSidebarTheme";
+	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
+	const REALTIME_SESSION_URL = "http://127.0.0.1:8787/session";
+	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
+	const REALTIME_TRANSCRIPTION_FALLBACK_MS = 1800;
+	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
+	const REALTIME_LOCAL_SPEECH_RMS = 0.002;
+	const REALTIME_LOCAL_SPEECH_MIN_RMS = 0.00085;
+	const REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER = 3.2;
+	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
+	const REALTIME_MIC_SILENCE_DIAGNOSTIC_MS = 6500;
+	const REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH = "realtime-fixtures/voice-question.wav";
+	const CODEX_PROVIDER = "openai-codex";
+	const CODEX_MODEL = "gpt-5.5";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
 	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
 	const IS_NATIVE_SIDE_PANEL =
@@ -108,12 +121,65 @@
 	let openingPdfViewer = false;
 	let lastRestoreResult = null;
 	let stoppingRequest = false;
+	let authSigningIn = false;
+	let authStatusText = "";
+	let authStatusKind = "";
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
 	let learnerSourceFeedback = null;
 	let learnerSourceFeedbackSequence = 0;
 	let learnerPanelCollapsed = false;
 	let learnerGridScrollTop = 0;
+	let realtimePeerConnection = null;
+	let realtimeDataChannel = null;
+	let realtimeMediaStream = null;
+	let realtimeAudio = null;
+	let realtimeConnecting = false;
+	let realtimeConnected = false;
+	let realtimeStatus = "Voice idle";
+	let realtimeError = "";
+	let realtimeAnswer = null;
+	let realtimeTranscriptBuffer = "";
+	let realtimeRestartAfterMicPermission = false;
+	let realtimeMicPermissionTabId = null;
+	let realtimeAudioContext = null;
+	let realtimeMicMonitorSource = null;
+	let realtimeMicMonitorAnalyser = null;
+	let realtimeMicMonitorTimer = null;
+	let realtimeMicCurrentRms = 0;
+	let realtimeMicPeakRms = 0;
+	let realtimeMicLastIdleStatusAt = 0;
+	let realtimeMicNoiseFloorRms = 0;
+	let realtimeMicMonitorStartedAt = 0;
+	let realtimeMicMonitorFrames = 0;
+	let realtimeMicDeviceId = "default";
+	let realtimeMicDevices = [];
+	let realtimeActiveMicLabel = "";
+	let realtimeMicTrackDetails = "";
+	let realtimeMicSelectSignature = "";
+	let realtimeVoiceFallbackTimer = null;
+	let realtimeManualVoiceResponseTimer = null;
+	let realtimeTranscriptionFallbackTimer = null;
+	let realtimeIdleTimeoutTimer = null;
+	let realtimeSyntheticAudioPlayback = null;
+	let realtimeLocalSpeechActive = false;
+	let realtimeServerSpeechSeenAt = 0;
+	let realtimeManualVoiceCommitPending = false;
+	let realtimePendingTranscriptionItemId = "";
+	let realtimeResponseInProgress = false;
+	let realtimeResponseCreateQueued = false;
+	let realtimeResponseVoiceTurnId = "";
+	let realtimePendingDirectAnswerRequestId = "";
+	let realtimePendingDirectAnswerPrompt = "";
+	let realtimePendingDirectAnswerVoiceTurnId = "";
+	let realtimePendingSocraticMove = null;
+	let realtimeSocraticTurnCounter = 0;
+	let realtimeVoiceTurnCounter = 0;
+	let realtimeActiveVoiceTurn = null;
+	const realtimeNarratedDirectAnswerRequestIds = new Set();
+	const realtimePersistedVoiceTurnIds = new Set();
+	const realtimeHandledCallIds = new Set();
+	const realtimeAudioFallbackItemIds = new Set();
 	let replayArtifactsScrollLeft = 0;
 	let replayState = {
 		open: false,
@@ -217,6 +283,24 @@
 
 	async function saveSidebarThemePreference(nextTheme) {
 		await chrome.storage.local.set({ [SIDEBAR_THEME_STORAGE_KEY]: normalizeSidebarTheme(nextTheme) });
+	}
+
+	function normalizeRealtimeMicDeviceId(value) {
+		const normalized = String(value || "default").trim();
+		return normalized || "default";
+	}
+
+	async function loadRealtimeMicDevicePreference() {
+		try {
+			const stored = await chrome.storage.local.get({ [REALTIME_MIC_DEVICE_STORAGE_KEY]: "default" });
+			return normalizeRealtimeMicDeviceId(stored[REALTIME_MIC_DEVICE_STORAGE_KEY]);
+		} catch {
+			return "default";
+		}
+	}
+
+	async function saveRealtimeMicDevicePreference(deviceId) {
+		await chrome.storage.local.set({ [REALTIME_MIC_DEVICE_STORAGE_KEY]: normalizeRealtimeMicDeviceId(deviceId) });
 	}
 
 	function isTextAttachment(file) {
@@ -654,6 +738,7 @@
 	}
 
 	sidebarTheme = await loadSidebarThemePreference();
+	realtimeMicDeviceId = await loadRealtimeMicDevicePreference();
 
 	const host = document.createElement("div");
 	host.id = HOST_ID;
@@ -1582,6 +1667,57 @@
 				color: var(--rm-love);
 				border-color: color-mix(in srgb, var(--rm-love) 38%, var(--rm-surface-2));
 			}
+			.onhand-auth-panel[hidden] {
+				display: none;
+			}
+			.onhand-auth-panel {
+				border-bottom: 1px solid var(--rm-surface-1);
+				padding: 14px 18px;
+				background: color-mix(in srgb, var(--rm-gold) 10%, transparent);
+			}
+			.onhand-auth-title {
+				color: var(--rm-text);
+				font: 700 13px/1.3 var(--rm-font-mono);
+				margin-bottom: 5px;
+			}
+			.onhand-auth-copy {
+				color: var(--rm-subtext);
+				font: 12.5px/1.45 var(--rm-font-serif);
+				margin: 0 0 10px;
+			}
+			.onhand-auth-actions {
+				display: flex;
+				align-items: center;
+				gap: 9px;
+				flex-wrap: wrap;
+			}
+			.onhand-auth-button {
+				border: 0;
+				border-radius: 3px;
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				font: 700 11px/1 var(--rm-font-mono);
+				padding: 8px 10px;
+				cursor: pointer;
+			}
+			.onhand-auth-button:hover {
+				background: var(--rm-foam);
+			}
+			.onhand-auth-button:disabled {
+				opacity: 0.62;
+				cursor: wait;
+			}
+			.onhand-auth-status {
+				min-width: 0;
+				color: var(--rm-subtext);
+				font: 10.5px/1.35 var(--rm-font-mono);
+			}
+			.onhand-auth-status.error {
+				color: var(--rm-love);
+			}
+			.onhand-auth-status.ok {
+				color: var(--rm-pine);
+			}
 			.onhand-hotkeys {
 				color: var(--rm-subtext);
 				font: 10px/1.45 var(--rm-font-mono);
@@ -2437,6 +2573,51 @@
 				background: var(--rm-mantle);
 				color: var(--rm-text);
 			}
+			.onhand-row .voice {
+				min-width: 56px;
+				border: 1px solid transparent;
+				font: 10.5px var(--rm-font-mono);
+			}
+			.onhand-row .voice.on {
+				color: var(--rm-base);
+				background: var(--rm-love);
+				border-color: var(--rm-love);
+			}
+			.onhand-row .voice.connecting {
+				color: var(--rm-base);
+				background: var(--rm-gold);
+				border-color: var(--rm-gold);
+			}
+			.onhand-row .voice.error {
+				color: var(--rm-love);
+				border-color: color-mix(in srgb, var(--rm-love) 45%, transparent);
+			}
+			.onhand-realtime-status {
+				max-width: 128px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.onhand-realtime-status.error {
+				color: var(--rm-love);
+			}
+			.onhand-row .mic {
+				max-width: 132px;
+				border: 1px solid var(--rm-overlay);
+				border-radius: 2px;
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				font: 10.5px var(--rm-font-mono);
+				padding: 2px 4px;
+			}
+			.onhand-row .mic:disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-realtime-answer {
+				border-bottom: 1px solid var(--rm-surface-1);
+				background: color-mix(in srgb, var(--rm-pine) 7%, transparent);
+			}
 			.onhand-row .learn {
 				display: inline-flex;
 				align-items: center;
@@ -2580,6 +2761,7 @@
 					</header>
 					<div id="scroll" class="onhand-scroll">
 					<section id="replayView" class="onhand-replay" hidden></section>
+					<section id="authPanel" class="onhand-auth-panel" hidden></section>
 					<section id="pageIndex" class="onhand-index" hidden></section>
 					<div id="messages" class="message-list"></div>
 				<div id="activity" hidden></div>
@@ -2599,6 +2781,9 @@
 						</svg>
 					</button>
 					<input id="fileInput" type="file" multiple hidden />
+					<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor">Voice</button>
+					<span id="realtimeStatus" class="onhand-realtime-status">Voice idle</span>
+					<select id="realtimeMicSelect" class="mic" aria-label="Realtime microphone input" title="Realtime microphone input" hidden></select>
 					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
 						<span class="sw"></span>
 						<input id="learningModeToggle" type="checkbox" hidden />
@@ -2629,6 +2814,7 @@
 	const restoreResultEl = shadow.getElementById("restoreResult");
 	const pageIndexEl = shadow.getElementById("pageIndex");
 	const replayViewEl = shadow.getElementById("replayView");
+	const authPanelEl = shadow.getElementById("authPanel");
 	const sessionSelect = shadow.getElementById("sessionSelect");
 	const themeSelect = shadow.getElementById("themeSelect");
 	const learningModeLabel = shadow.getElementById("learningModeLabel");
@@ -2646,6 +2832,9 @@
 	const composer = shadow.getElementById("composer");
 	const attachButton = shadow.getElementById("attachButton");
 	const fileInput = shadow.getElementById("fileInput");
+	const realtimeVoiceButton = shadow.getElementById("realtimeVoiceButton");
+	const realtimeStatusEl = shadow.getElementById("realtimeStatus");
+	const realtimeMicSelect = shadow.getElementById("realtimeMicSelect");
 	const attachmentList = shadow.getElementById("attachmentList");
 	const input = shadow.getElementById("input");
 	const helper = shadow.getElementById("helper");
@@ -2689,6 +2878,10 @@
 		return state?.currentSession?.sessionFile || state?.currentSession?.sessionId || "current";
 	}
 
+	function getStateSessionPath(state) {
+		return state?.currentSession?.sessionFile || state?.currentSession?.sessionId || "";
+	}
+
 	function renderMeta(state) {
 		const sessionKey = getSessionDraftKey(state);
 		const sessionName = sessionTitleDrafts.get(sessionKey) || state?.currentSession?.sessionName || "Current session";
@@ -2713,8 +2906,7 @@
 
 	function getCurrentSessionPath(state) {
 		return (
-			state?.currentSession?.sessionFile ||
-			state?.currentSession?.sessionId ||
+			getStateSessionPath(state) ||
 			sessionOverview?.currentSession?.sessionFile ||
 			sessionOverview?.currentSession?.sessionId ||
 			""
@@ -2771,6 +2963,31 @@
 		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
 		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
 		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
+	}
+
+	function hasUsableOnhandAuth(state) {
+		const preferences = state?.preferences || {};
+		return Boolean(preferences.hasAiApiKey || preferences.hasOAuthCredentials);
+	}
+
+	function renderAuthPanel(state) {
+		if (!(authPanelEl instanceof HTMLElement)) return;
+		const hiddenByView = replayState.open || pageIndexEl.hidden === false;
+		const needsAuth = !hasUsableOnhandAuth(state);
+		authPanelEl.hidden = hiddenByView || !needsAuth;
+		if (authPanelEl.hidden) {
+			authPanelEl.innerHTML = "";
+			return;
+		}
+		const statusClass = authStatusKind ? ` ${escapeAttribute(authStatusKind)}` : "";
+		authPanelEl.innerHTML = `
+			<div class="onhand-auth-title">Sign in to Onhand</div>
+			<p class="onhand-auth-copy">Use OpenAI Codex sign-in from here instead of opening options.</p>
+			<div class="onhand-auth-actions">
+				<button id="authSignInButton" class="onhand-auth-button" type="button" ${authSigningIn ? "disabled" : ""}>${authSigningIn ? "Signing in..." : "Sign in with OpenAI"}</button>
+				${authStatusText ? `<span class="onhand-auth-status${statusClass}">${escapeHtml(authStatusText)}</span>` : ""}
+			</div>
+		`;
 	}
 
 	function renderAttachmentDrafts() {
@@ -3522,6 +3739,35 @@
 		return isLikelyPdfUrl(tab?.url || page?.url || "");
 	}
 
+	function hasUsablePdfVoiceSurface(state = currentState) {
+		if (!state || typeof state !== "object") return false;
+		const page = state.page && typeof state.page === "object" ? state.page : null;
+		const tab = state.tab && typeof state.tab === "object" ? state.tab : null;
+		const pageText = String(page?.text || "").trim();
+		const viewer = String(page?.viewer || "").trim();
+		if (page?.surface === "pdf" && page?.unsupported !== true && (pageText || viewer === "onhand-pdf-viewer" || viewer === "google-scholar")) {
+			return true;
+		}
+		const tabUrl = String(tab?.url || page?.url || "");
+		return /\/pdf-viewer\.html(?:[?#]|$)|\/onhand-pdf-viewer\.html(?:[?#]|$)/i.test(tabUrl);
+	}
+
+	function shouldOpenPdfViewerForRealtime(state = currentState) {
+		if (!canOpenCurrentPdfInViewer(state)) return false;
+		if (hasUsablePdfVoiceSurface(state)) return false;
+		const page = state?.page && typeof state.page === "object" ? state.page : null;
+		const tab = state?.tab && typeof state.tab === "object" ? state.tab : null;
+		return Boolean(page?.unsupported === true || state?.pageCaptureError || isLikelyPdfUrl(tab?.url || page?.url || ""));
+	}
+
+	async function ensureRealtimePdfSurfaceForVoice() {
+		if (!shouldOpenPdfViewerForRealtime(currentState)) return { opened: false };
+		setRealtimeStatus("Opening PDF in Onhand viewer...");
+		const result = await openCurrentPdfInViewer();
+		await requestState();
+		return { opened: true, result };
+	}
+
 	function resetReplayState(partial = {}) {
 		replayArtifactsScrollLeft = 0;
 		replayState = {
@@ -4194,7 +4440,32 @@
 		activityEl.innerHTML = "";
 	}
 
-	function renderLatestReply() {
+	function renderLatestReply(state) {
+		const sessionPath = getStateSessionPath(state);
+		const answerSessionPath = String(realtimeAnswer?.sessionPath || "").trim();
+		const answerBelongsToSession = !answerSessionPath || !sessionPath || answerSessionPath === sessionPath;
+		if (answerBelongsToSession && (realtimeAnswer?.markdown || realtimeAnswer?.pending)) {
+			const markdown = String(realtimeAnswer.markdown || "").trim();
+			replySectionEl.hidden = false;
+			replyEl.innerHTML = `
+				<article class="onhand-entry onhand-realtime-answer">
+					<div class="onhand-eyebrow">
+						<time>${escapeHtml(formatEntryTime(realtimeAnswer.updatedAt || new Date().toISOString()))}</time>
+						<span class="dot"></span>
+						<span>Realtime tutor</span>
+						${realtimeAnswer.status ? `<span class="dot"></span><span>${escapeHtml(realtimeAnswer.status)}</span>` : ""}
+					</div>
+					${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
+					<div class="onhand-a">
+						<div class="onhand-response">
+							${markdown ? renderReplyMarkdown(markdown) : '<p class="reply-placeholder">Listening...</p>'}
+							${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
+						</div>
+					</div>
+				</article>
+			`;
+			return;
+		}
 		replySectionEl.hidden = true;
 		replyEl.innerHTML = "";
 	}
@@ -4211,6 +4482,11 @@
 		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
 			progressExpanded = null;
 		}
+		const previousSessionPath = getStateSessionPath(currentState);
+		const nextSessionPath = getStateSessionPath(state);
+		if (previousSessionPath && nextSessionPath && previousSessionPath !== nextSessionPath) {
+			clearRealtimeSessionLocalState();
+		}
 		lastActiveRequestId = state?.activeRequestId || null;
 		const archivedTurns = Array.isArray(state?.turns) ? state.turns : [];
 		const currentTurn = deriveCurrentTurn(state);
@@ -4219,11 +4495,14 @@
 			displayTurns.push(currentTurn);
 		}
 		currentState = state;
+		maybeSpeakCompletedRealtimeDirectAnswer(state);
 		renderMeta(state);
 		renderSessionControls(state);
+		renderRealtimeControls();
 		renderAttachmentDrafts();
 		renderRestoreResult();
 		renderReplayView();
+		renderAuthPanel(state);
 		renderLearnerPanel(state, false);
 		pageIndexEl.hidden = true;
 		messagesEl.hidden = false;
@@ -4241,6 +4520,8 @@
 		fileInput.disabled = activeRequest || sending;
 		helper.textContent = activeRequest
 			? "Onhand is responding · use Stop from the menu"
+			: realtimeConnected
+				? "voice is live · speak then pause, or type here"
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
 				: "esc dismiss · cmd+n new entry";
@@ -4274,6 +4555,11 @@
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
 		const learningMode = Boolean(currentState?.preferences?.learningMode);
+		if (realtimeConnected && realtimeDataChannel?.readyState === "open" && trimmedPrompt && !attachments.length) {
+			await sendRealtimeTextPrompt(trimmedPrompt);
+			input.value = "";
+			return;
+		}
 		sending = true;
 		lastRestoreResult = null;
 		resetReplayState();
@@ -4454,6 +4740,1815 @@
 		});
 	}
 
+	async function signInWithOpenAICodexFromSidebar() {
+		if (authSigningIn) return;
+		authSigningIn = true;
+		authStatusKind = "";
+		authStatusText = "Opening OpenAI sign-in...";
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "browser-runtime:oauth-sign-in",
+				providerId: CODEX_PROVIDER,
+				aiModel: CODEX_MODEL,
+			});
+			if (!response?.ok) {
+				throw new Error(response?.error || "OpenAI sign-in failed.");
+			}
+			authStatusKind = "ok";
+			authStatusText = "Signed in";
+			currentState = {
+				...(currentState || {}),
+				preferences: {
+					...(currentState?.preferences || {}),
+					...(response.settings || {}),
+				},
+			};
+			await Promise.all([requestState(), requestSessions()]);
+		} catch (error) {
+			authStatusKind = "error";
+			authStatusText = error?.message || String(error);
+			renderState(currentState || {});
+		} finally {
+			authSigningIn = false;
+			renderState(currentState || {});
+		}
+	}
+
+	function setRealtimeStatus(status, error = "") {
+		realtimeStatus = status || "Voice idle";
+		realtimeError = error || "";
+		renderRealtimeControls();
+	}
+
+	function isRealtimeMicDiagnosticStatus(status = realtimeStatus) {
+		return /^(Voice ready · (checking mic|mic silent|mic level)|Chrome mic silent|Mic monitor suspended|Mic monitor unavailable|Mic monitor failed)/i.test(
+			String(status || ""),
+		);
+	}
+
+	function setRealtimeReadyStatus(status = "Voice ready · ask, then pause") {
+		if (isRealtimeMicDiagnosticStatus()) {
+			renderRealtimeControls();
+			return;
+		}
+		setRealtimeStatus(status);
+	}
+
+	function clearRealtimeSessionLocalState() {
+		clearRealtimeTranscriptionFallback();
+		realtimeAnswer = null;
+		realtimeTranscriptBuffer = "";
+		realtimePendingDirectAnswerRequestId = "";
+		realtimePendingDirectAnswerPrompt = "";
+		realtimePendingDirectAnswerVoiceTurnId = "";
+		realtimePendingSocraticMove = null;
+		realtimeActiveVoiceTurn = null;
+		realtimeResponseVoiceTurnId = "";
+		realtimeAudioFallbackItemIds.clear();
+	}
+
+	function beginRealtimeVoiceTurn(kind, prompt) {
+		const text = String(prompt || "").trim();
+		const turn = {
+			id: `voice_turn_${++realtimeVoiceTurnCounter}`,
+			kind: String(kind || "voice").trim() || "voice",
+			prompt: text,
+			createdAt: new Date().toISOString(),
+		};
+		realtimeActiveVoiceTurn = turn;
+		realtimeTranscriptBuffer = "";
+		return turn;
+	}
+
+	function isRealtimeVoiceTurnCurrent(turnOrId) {
+		const id = typeof turnOrId === "string" ? turnOrId : turnOrId?.id;
+		return Boolean(id && realtimeActiveVoiceTurn?.id === id);
+	}
+
+	function markRealtimeVoiceTurnStale(reason = "interrupted") {
+		if (!realtimeActiveVoiceTurn) return null;
+		const staleTurn = {
+			...realtimeActiveVoiceTurn,
+			staleReason: reason,
+		};
+		realtimeActiveVoiceTurn = null;
+		return staleTurn;
+	}
+
+	function updateRealtimeAnswerForTurn(turn, partial) {
+		if (turn && !isRealtimeVoiceTurnCurrent(turn)) return false;
+		updateRealtimeAnswer({
+			voiceTurnId: turn?.id || realtimeAnswer?.voiceTurnId || "",
+			...(turn?.prompt ? { userPrompt: turn.prompt } : {}),
+			...partial,
+		});
+		return true;
+	}
+
+	async function persistRealtimeVoiceTurn(turn, reply, options = {}) {
+		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return false;
+		const text = String(reply || "").trim();
+		if (!text || realtimePersistedVoiceTurnIds.has(turn.id)) return false;
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-record-turn",
+			voiceTurnId: turn.id,
+			kind: turn.kind,
+			userPrompt: `[Voice] ${turn.prompt || "Voice turn"}`,
+			reply: text,
+			status: String(options.status || "Voice answer").trim(),
+			pageActions: Array.isArray(options.pageActions) ? options.pageActions : [],
+			windowId: await ensureCurrentWindowId(),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not save the voice turn.");
+		realtimePersistedVoiceTurnIds.add(turn.id);
+		await Promise.all([requestState(), requestSessions()]);
+		return true;
+	}
+
+	function clearRealtimeIdleTimeout() {
+		if (!realtimeIdleTimeoutTimer) return;
+		clearTimeout(realtimeIdleTimeoutTimer);
+		realtimeIdleTimeoutTimer = null;
+	}
+
+	function expireRealtimeIdleTimeout() {
+		if (!realtimeConnected) return false;
+		if (realtimeResponseInProgress) {
+			scheduleRealtimeIdleTimeout();
+			return false;
+		}
+		stopRealtimeVoice("Voice ended after idle");
+		return true;
+	}
+
+	function scheduleRealtimeIdleTimeout() {
+		clearRealtimeIdleTimeout();
+		if (!realtimeConnected) return;
+		realtimeIdleTimeoutTimer = setTimeout(() => {
+			realtimeIdleTimeoutTimer = null;
+			expireRealtimeIdleTimeout();
+		}, REALTIME_IDLE_TIMEOUT_MS);
+	}
+
+	function noteRealtimeActivity() {
+		if (realtimeConnected) scheduleRealtimeIdleTimeout();
+	}
+
+	function isRealtimeMicrophonePermissionError(error) {
+		const name = String(error?.name || "");
+		const message = String(error?.message || error || "");
+		return /notallowed|permissiondenied/i.test(name) || /permission.*(dismissed|denied|disallowed|blocked)/i.test(message);
+	}
+
+	function realtimeMicrophoneErrorMessage(error) {
+		const message = String(error?.message || error || "").trim();
+		if (/permission dismissed/i.test(message)) {
+			return "Chrome dismissed the side-panel mic prompt. I opened an Onhand mic permission tab; click Allow there, then this will retry.";
+		}
+		if (/permission denied by system/i.test(message)) {
+			return "macOS is blocking Chrome microphone access. Enable Chrome in System Settings > Privacy & Security > Microphone.";
+		}
+		return message || "Could not access the microphone.";
+	}
+
+	function stopRealtimeMicMonitor() {
+		if (realtimeMicMonitorTimer) {
+			clearInterval(realtimeMicMonitorTimer);
+			realtimeMicMonitorTimer = null;
+		}
+		if (realtimeVoiceFallbackTimer) {
+			clearTimeout(realtimeVoiceFallbackTimer);
+			realtimeVoiceFallbackTimer = null;
+		}
+		if (realtimeManualVoiceResponseTimer) {
+			clearTimeout(realtimeManualVoiceResponseTimer);
+			realtimeManualVoiceResponseTimer = null;
+		}
+		clearRealtimeTranscriptionFallback();
+		realtimeLocalSpeechActive = false;
+		realtimeManualVoiceCommitPending = false;
+		realtimeMicCurrentRms = 0;
+		realtimeMicPeakRms = 0;
+		realtimeMicNoiseFloorRms = 0;
+		realtimeMicMonitorStartedAt = 0;
+		realtimeMicMonitorFrames = 0;
+		realtimeMicLastIdleStatusAt = 0;
+		realtimeMicMonitorSource = null;
+		realtimeMicMonitorAnalyser = null;
+		if (realtimeAudioContext) {
+			void realtimeAudioContext.close().catch(() => {});
+			realtimeAudioContext = null;
+		}
+	}
+
+	function stopRealtimeSyntheticAudioPlayback() {
+		if (!realtimeSyntheticAudioPlayback) return;
+		const playback = realtimeSyntheticAudioPlayback;
+		realtimeSyntheticAudioPlayback = null;
+		try {
+			playback.source?.stop?.();
+		} catch {}
+		try {
+			void playback.context?.close?.().catch(() => {});
+		} catch {}
+	}
+
+	function startRealtimeSyntheticAudioPlayback() {
+		const playback = realtimeSyntheticAudioPlayback;
+		if (!playback || playback.started) return false;
+		playback.started = true;
+		try {
+			void playback.context?.resume?.().catch(() => {});
+			playback.source.start(playback.context.currentTime + 0.35);
+			setRealtimeStatus("Playing test voice...");
+			return true;
+		} catch (error) {
+			setRealtimeStatus("Voice error", error?.message || String(error));
+			return false;
+		}
+	}
+
+	async function createRealtimeSyntheticAudioInputStream() {
+		const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+		if (!AudioContextCtor) {
+			throw new Error("Synthetic voice acceptance requires Web Audio support.");
+		}
+		stopRealtimeSyntheticAudioPlayback();
+		const fixtureUrl = extensionUrl(REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH);
+		const response = await fetch(fixtureUrl, { cache: "no-store" });
+		if (!response.ok) {
+			throw new Error(`Could not load ${REALTIME_SYNTHETIC_AUDIO_FIXTURE_PATH}. Run npm run generate:realtime-voice-fixture, rebuild, then reload the extension.`);
+		}
+		const context = new AudioContextCtor();
+		await context.resume().catch(() => {});
+		const audioBuffer = await context.decodeAudioData(await response.arrayBuffer());
+		const destination = context.createMediaStreamDestination();
+		const source = context.createBufferSource();
+		source.buffer = audioBuffer;
+		source.connect(destination);
+		source.onended = () => {
+			if (realtimeConnected && !realtimeResponseInProgress) {
+				setRealtimeStatus("Test voice ended · waiting for API");
+			}
+		};
+		realtimeSyntheticAudioPlayback = {
+			context,
+			source,
+			started: false,
+		};
+		return destination.stream;
+	}
+
+	function getRealtimeMicDeviceLabel(deviceId) {
+		const normalized = normalizeRealtimeMicDeviceId(deviceId);
+		if (normalized === "default") {
+			const defaultDevice = realtimeMicDevices.find((device) => device.deviceId === "default");
+			return defaultDevice?.label ? defaultDevice.label.replace(/^Default\s*[-:]\s*/i, "Default: ") : "Default mic";
+		}
+		const device = realtimeMicDevices.find((candidate) => candidate.deviceId === normalized);
+		return device?.label || (normalized === realtimeMicDeviceId && realtimeActiveMicLabel) || "Selected mic";
+	}
+
+	function getRealtimeMicSelectOptions() {
+		const options = [];
+		const seen = new Set();
+		const pushOption = (deviceId, label) => {
+			const normalized = normalizeRealtimeMicDeviceId(deviceId);
+			if (seen.has(normalized)) return;
+			seen.add(normalized);
+			options.push({
+				deviceId: normalized,
+				label: String(label || "").trim() || (normalized === "default" ? "Default mic" : "Microphone"),
+			});
+		};
+		pushOption("default", getRealtimeMicDeviceLabel("default"));
+		for (const device of realtimeMicDevices) {
+			if (device.kind !== "audioinput" || !device.deviceId || device.deviceId === "default") continue;
+			pushOption(device.deviceId, device.label || `Mic ${options.length}`);
+		}
+		if (!seen.has(realtimeMicDeviceId)) {
+			pushOption(realtimeMicDeviceId, realtimeActiveMicLabel || "Selected mic");
+		}
+		return options;
+	}
+
+	function renderRealtimeMicDeviceSelect() {
+		if (!(realtimeMicSelect instanceof HTMLSelectElement)) return;
+		const supportsMicSelection = Boolean(navigator.mediaDevices?.getUserMedia);
+		realtimeMicSelect.hidden = !supportsMicSelection;
+		if (!supportsMicSelection) return;
+		const options = getRealtimeMicSelectOptions();
+		const selectedId = options.some((option) => option.deviceId === realtimeMicDeviceId) ? realtimeMicDeviceId : "default";
+		const signature = JSON.stringify({ options, selectedId });
+		if (signature !== realtimeMicSelectSignature) {
+			realtimeMicSelect.innerHTML = options
+				.map((option) => {
+					const selected = option.deviceId === selectedId ? " selected" : "";
+					return `<option value="${escapeAttribute(option.deviceId)}"${selected}>${escapeHtml(option.label)}</option>`;
+				})
+				.join("");
+			realtimeMicSelectSignature = signature;
+		}
+		realtimeMicSelect.value = selectedId;
+		realtimeMicSelect.disabled = realtimeConnecting;
+		const selectedLabel = getRealtimeMicDeviceLabel(selectedId);
+		realtimeMicSelect.title = realtimeConnected
+			? `Realtime microphone: ${selectedLabel}. Change to restart voice with another input.`
+			: `Realtime microphone: ${selectedLabel}`;
+	}
+
+	async function refreshRealtimeMicDevices() {
+		if (!navigator.mediaDevices?.enumerateDevices) {
+			realtimeMicDevices = [];
+			renderRealtimeMicDeviceSelect();
+			return [];
+		}
+		try {
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			realtimeMicDevices = devices
+				.filter((device) => device?.kind === "audioinput")
+				.map((device) => ({
+					kind: "audioinput",
+					deviceId: String(device.deviceId || ""),
+					label: String(device.label || ""),
+					groupId: String(device.groupId || ""),
+				}))
+				.filter((device) => device.deviceId);
+			renderRealtimeMicDeviceSelect();
+			return realtimeMicDevices;
+		} catch {
+			realtimeMicDevices = [];
+			renderRealtimeMicDeviceSelect();
+			return [];
+		}
+	}
+
+	function isRealtimeSyntheticFixtureContext(state = currentState) {
+		const tabUrl = String(state?.tab?.url || state?.page?.url || "").trim();
+		return /^https?:\/\/127\.0\.0\.1:8765\/?$/.test(tabUrl);
+	}
+
+	async function createRealtimeInputMediaStream(options = {}) {
+		if (options.syntheticAudio) {
+			setRealtimeStatus("Loading test voice...");
+			return await createRealtimeSyntheticAudioInputStream();
+		}
+		if (!navigator.mediaDevices?.getUserMedia) {
+			throw new Error("Microphone capture is unavailable in this browser surface.");
+		}
+		setRealtimeStatus("Requesting mic...");
+		const selectedDeviceId = normalizeRealtimeMicDeviceId(realtimeMicDeviceId);
+		const audio = {
+			echoCancellation: true,
+			noiseSuppression: true,
+			autoGainControl: true,
+		};
+		if (selectedDeviceId !== "default") {
+			audio.deviceId = { exact: selectedDeviceId };
+		}
+		try {
+			return await navigator.mediaDevices.getUserMedia({ audio });
+		} catch (error) {
+			if (selectedDeviceId !== "default" && /notfound|overconstrained/i.test(String(error?.name || error?.message || ""))) {
+				realtimeMicDeviceId = "default";
+				void saveRealtimeMicDevicePreference(realtimeMicDeviceId).catch(() => {});
+				renderRealtimeMicDeviceSelect();
+				setRealtimeStatus("Selected mic unavailable · using default");
+				const fallbackAudio = { ...audio };
+				delete fallbackAudio.deviceId;
+				return await navigator.mediaDevices.getUserMedia({ audio: fallbackAudio });
+			}
+			throw error;
+		}
+	}
+
+	function clearRealtimeVoiceFallback() {
+		if (realtimeVoiceFallbackTimer) {
+			clearTimeout(realtimeVoiceFallbackTimer);
+			realtimeVoiceFallbackTimer = null;
+		}
+		if (realtimeManualVoiceResponseTimer) {
+			clearTimeout(realtimeManualVoiceResponseTimer);
+			realtimeManualVoiceResponseTimer = null;
+		}
+		clearRealtimeTranscriptionFallback();
+		realtimeManualVoiceCommitPending = false;
+	}
+
+	function clearRealtimeTranscriptionFallback() {
+		if (realtimeTranscriptionFallbackTimer) {
+			clearTimeout(realtimeTranscriptionFallbackTimer);
+			realtimeTranscriptionFallbackTimer = null;
+		}
+		realtimePendingTranscriptionItemId = "";
+	}
+
+	function startRealtimeAudioResponseFallback(itemId = "", reason = "response_for_voice_pause") {
+		clearRealtimeTranscriptionFallback();
+		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
+		const audioItemId = String(itemId || "").trim();
+		if (audioItemId) realtimeAudioFallbackItemIds.add(audioItemId);
+		const voiceTurn = beginRealtimeVoiceTurn("realtime_response", "Voice question");
+		voiceTurn.audioItemId = audioItemId;
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: "",
+			status: "Thinking",
+			pending: true,
+			published: false,
+		});
+		setRealtimeStatus("Thinking...");
+		requestRealtimeResponse(reason);
+		return true;
+	}
+
+	function scheduleRealtimeTranscriptionFallbackResponse(itemId = "") {
+		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		clearRealtimeTranscriptionFallback();
+		realtimePendingTranscriptionItemId = String(itemId || "").trim();
+		realtimeTranscriptionFallbackTimer = setTimeout(() => {
+			const fallbackItemId = realtimePendingTranscriptionItemId;
+			startRealtimeAudioResponseFallback(fallbackItemId, "response_for_voice_pause");
+		}, REALTIME_TRANSCRIPTION_FALLBACK_MS);
+	}
+
+	function noteRealtimeTranscriptHandledByAudioFallback(itemId, transcript) {
+		const audioItemId = String(itemId || "").trim();
+		if (!audioItemId || !realtimeAudioFallbackItemIds.has(audioItemId)) return false;
+		const text = String(transcript || "").trim();
+		if (text && realtimeActiveVoiceTurn?.audioItemId === audioItemId) {
+			realtimeActiveVoiceTurn.prompt = text;
+			updateRealtimeAnswerForTurn(realtimeActiveVoiceTurn, {});
+		}
+		return true;
+	}
+
+	function scheduleRealtimeVoiceFallbackCommit() {
+		if (!realtimeConnected || realtimeResponseInProgress || realtimeManualVoiceCommitPending) return;
+		const serverVadElapsed = realtimeServerSpeechSeenAt ? Date.now() - realtimeServerSpeechSeenAt : Number.POSITIVE_INFINITY;
+		const serverVadGraceDelay = Number.isFinite(serverVadElapsed) ? Math.max(0, REALTIME_SERVER_VAD_GRACE_MS - serverVadElapsed) : 0;
+		if (realtimeVoiceFallbackTimer) clearTimeout(realtimeVoiceFallbackTimer);
+		realtimeVoiceFallbackTimer = setTimeout(() => {
+			realtimeVoiceFallbackTimer = null;
+			commitRealtimeVoiceFallback();
+		}, 650 + serverVadGraceDelay);
+	}
+
+	function commitRealtimeVoiceFallback() {
+		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
+		if (realtimeServerSpeechSeenAt && Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
+			scheduleRealtimeVoiceFallbackCommit();
+			return false;
+		}
+		try {
+			realtimeManualVoiceCommitPending = true;
+			setRealtimeStatus("Submitting voice...");
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_voice_commit"),
+				type: "input_audio_buffer.commit",
+			});
+			realtimeManualVoiceResponseTimer = setTimeout(() => {
+				realtimeManualVoiceResponseTimer = null;
+				if (!realtimeManualVoiceCommitPending || realtimeResponseInProgress) return;
+				realtimeManualVoiceCommitPending = false;
+				requestRealtimeResponse("response_for_voice_pause");
+			}, 900);
+			return true;
+		} catch (error) {
+			realtimeManualVoiceCommitPending = false;
+			setRealtimeStatus("Voice error", error?.message || String(error));
+			return false;
+		}
+	}
+
+	function formatRealtimeMicLevel(rms) {
+		return String(Math.min(99, Math.max(0, Math.round(Number(rms || 0) * 1000))));
+	}
+
+	function realtimeLocalSpeechThreshold() {
+		const noiseFloor = Number(realtimeMicNoiseFloorRms || 0);
+		const dynamicThreshold = noiseFloor > 0 ? noiseFloor * REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER : REALTIME_LOCAL_SPEECH_RMS;
+		return Math.max(REALTIME_LOCAL_SPEECH_MIN_RMS, Math.min(REALTIME_LOCAL_SPEECH_RMS, dynamicThreshold));
+	}
+
+	function describeRealtimeMicTrack(track) {
+		if (!track) return "";
+		const settings = typeof track.getSettings === "function" ? track.getSettings() || {} : {};
+		const details = [
+			track.label ? `Track: ${track.label}` : "",
+			track.readyState ? `State: ${track.readyState}` : "",
+			track.muted ? "Muted" : "",
+			settings.sampleRate ? `Rate: ${settings.sampleRate}` : "",
+			settings.channelCount ? `Channels: ${settings.channelCount}` : "",
+			settings.echoCancellation === false ? "Echo cancellation off" : "",
+			settings.noiseSuppression === false ? "Noise suppression off" : "",
+			settings.autoGainControl === false ? "Auto gain off" : "",
+		].filter(Boolean);
+		return details.join(" · ");
+	}
+
+	function canUpdateRealtimeMicIdleStatus() {
+		return (
+			realtimeConnected &&
+			!realtimeError &&
+			!realtimeResponseInProgress &&
+			/^(Voice ready|Mic idle|Mic silent|Mic level|Mic active|Chrome mic silent|Mic monitor suspended|Mic monitor unavailable|Mic monitor failed)/i.test(
+				realtimeStatus,
+			)
+		);
+	}
+
+	function startRealtimeMicMonitor(stream) {
+		stopRealtimeMicMonitor();
+		const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+		if (!AudioContextCtor) {
+			setRealtimeStatus("Mic monitor unavailable");
+			return;
+		}
+		try {
+			const context = new AudioContextCtor();
+			const analyser = context.createAnalyser();
+			analyser.fftSize = 1024;
+			realtimeMicMonitorSource = context.createMediaStreamSource(stream);
+			realtimeMicMonitorSource.connect(analyser);
+			realtimeMicMonitorAnalyser = analyser;
+			const samples = new Uint8Array(analyser.fftSize);
+			let loudFrames = 0;
+			let quietFrames = 0;
+			realtimeMicMonitorStartedAt = Date.now();
+			realtimeMicMonitorFrames = 0;
+			realtimeMicNoiseFloorRms = 0;
+			realtimeAudioContext = context;
+			void context.resume().catch(() => {});
+			realtimeMicMonitorTimer = setInterval(() => {
+				if (!realtimeConnected || realtimeResponseInProgress) return;
+				if (context.state === "suspended") {
+					void context.resume().catch(() => {});
+					if (Date.now() - realtimeMicMonitorStartedAt > 3000 && canUpdateRealtimeMicIdleStatus()) {
+						setRealtimeStatus("Mic monitor suspended · click Voice again");
+					}
+				}
+				analyser.getByteTimeDomainData(samples);
+				realtimeMicMonitorFrames += 1;
+				let sum = 0;
+				for (const sample of samples) {
+					const centered = (sample - 128) / 128;
+					sum += centered * centered;
+				}
+				const rms = Math.sqrt(sum / samples.length);
+				realtimeMicCurrentRms = rms;
+				realtimeMicPeakRms = Math.max(rms, realtimeMicPeakRms * 0.94);
+				if (!realtimeLocalSpeechActive) {
+					realtimeMicNoiseFloorRms = realtimeMicNoiseFloorRms ? realtimeMicNoiseFloorRms * 0.96 + rms * 0.04 : rms;
+				}
+				if (rms > realtimeLocalSpeechThreshold()) {
+					loudFrames += 1;
+					quietFrames = 0;
+					if (realtimeVoiceFallbackTimer) {
+						clearTimeout(realtimeVoiceFallbackTimer);
+						realtimeVoiceFallbackTimer = null;
+					}
+					if (loudFrames >= 2 && !realtimeLocalSpeechActive) {
+						realtimeLocalSpeechActive = true;
+						if (Date.now() - realtimeServerSpeechSeenAt > REALTIME_SERVER_VAD_GRACE_MS) {
+							setRealtimeStatus(`Mic hears you · level ${formatRealtimeMicLevel(realtimeMicPeakRms)}`);
+						}
+					}
+					return;
+				}
+				if (!realtimeLocalSpeechActive && canUpdateRealtimeMicIdleStatus() && Date.now() - realtimeMicLastIdleStatusAt > REALTIME_MIC_IDLE_STATUS_MS) {
+					realtimeMicLastIdleStatusAt = Date.now();
+					const level = formatRealtimeMicLevel(realtimeMicPeakRms);
+					if (Date.now() - realtimeMicMonitorStartedAt > REALTIME_MIC_SILENCE_DIAGNOSTIC_MS && level === "0") {
+						setRealtimeStatus("Chrome mic silent · choose input");
+					} else {
+						setRealtimeStatus(level === "0" ? "Voice ready · mic silent" : `Voice ready · mic level ${level}`);
+					}
+				}
+				if (!realtimeLocalSpeechActive) return;
+				quietFrames += 1;
+				if (quietFrames >= 7) {
+					realtimeLocalSpeechActive = false;
+					loudFrames = 0;
+					quietFrames = 0;
+					setRealtimeStatus("Mic heard a pause · waiting for API");
+					scheduleRealtimeVoiceFallbackCommit();
+					if (Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
+						realtimeMicLastIdleStatusAt = Date.now();
+					}
+				}
+			}, 100);
+		} catch {
+			setRealtimeStatus("Mic monitor failed");
+		}
+	}
+
+	function renderRealtimeControls() {
+		if (!realtimeVoiceButton || !realtimeStatusEl) return;
+		realtimeVoiceButton.textContent = realtimeConnecting ? "..." : realtimeConnected ? "End" : "Voice";
+		realtimeVoiceButton.title = realtimeConnected ? "End realtime voice tutor" : "Start realtime voice tutor. Shift-click to run the generated test voice fixture.";
+		realtimeVoiceButton.setAttribute("aria-label", realtimeVoiceButton.title);
+		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
+		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
+		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
+		realtimeVoiceButton.disabled = realtimeConnecting;
+		realtimeStatusEl.textContent = realtimeError || realtimeStatus;
+		const micLabel = realtimeActiveMicLabel || getRealtimeMicDeviceLabel(realtimeMicDeviceId);
+		const micDiagnostics =
+			realtimeConnected || realtimeConnecting
+				? `Level: ${formatRealtimeMicLevel(realtimeMicCurrentRms)} · peak ${formatRealtimeMicLevel(realtimeMicPeakRms)} · threshold ${formatRealtimeMicLevel(
+						realtimeLocalSpeechThreshold(),
+					)}`
+				: "";
+		realtimeStatusEl.title = [realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
+			.filter(Boolean)
+			.join("\n");
+		realtimeStatusEl.classList.toggle("error", Boolean(realtimeError));
+		renderRealtimeMicDeviceSelect();
+	}
+
+	async function openRealtimeMicPermissionPage() {
+		const url = chrome.runtime.getURL("mic-permission.html");
+		if (typeof realtimeMicPermissionTabId === "number") {
+			try {
+				await chrome.tabs.update(realtimeMicPermissionTabId, { active: true });
+				return;
+			} catch {
+				realtimeMicPermissionTabId = null;
+			}
+		}
+		const tab = await chrome.tabs.create({ url, active: true });
+		realtimeMicPermissionTabId = tab?.id ?? null;
+	}
+
+	function realtimeEventId(prefix) {
+		const suffix = typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`;
+		return `${prefix}_${suffix}`;
+	}
+
+	function waitForRealtimeIceGathering(peerConnection, timeoutMs = 1200) {
+		if (!peerConnection || peerConnection.iceGatheringState === "complete") return Promise.resolve();
+		return new Promise((resolve) => {
+			let settled = false;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				peerConnection.removeEventListener("icegatheringstatechange", onChange);
+				resolve();
+			};
+			const onChange = () => {
+				if (peerConnection.iceGatheringState === "complete") finish();
+			};
+			const timer = setTimeout(finish, timeoutMs);
+			peerConnection.addEventListener("icegatheringstatechange", onChange);
+		});
+	}
+
+	function validateRealtimeSdpOffer(sdp) {
+		const text = String(sdp || "");
+		const normalized = text.replace(/\r\n/g, "\n");
+		if (!normalized.startsWith("v=0")) {
+			return `Realtime SDP offer was empty or invalid before session setup (${text.length} chars).`;
+		}
+		if (!/\nm=audio\s/i.test(normalized)) {
+			return `Realtime SDP offer did not include an audio media section (${text.length} chars).`;
+		}
+		if (!/\nm=application\s/i.test(normalized)) {
+			return `Realtime SDP offer did not include the oai-events data channel section (${text.length} chars).`;
+		}
+		return "";
+	}
+
+	function sendRealtimeEvent(event) {
+		if (!realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
+			throw new Error("Realtime voice is not connected.");
+		}
+		realtimeDataChannel.send(JSON.stringify(event));
+	}
+
+	function requestRealtimeResponse(reason = "response", responseOptions = {}) {
+		if (!realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		if (realtimeResponseInProgress) {
+			realtimeResponseCreateQueued = true;
+			setRealtimeStatus("Finishing current response...");
+			noteRealtimeActivity();
+			return;
+		}
+		realtimeResponseInProgress = true;
+		realtimeResponseCreateQueued = false;
+		realtimeResponseVoiceTurnId = realtimeActiveVoiceTurn?.id || "";
+		noteRealtimeActivity();
+		sendRealtimeEvent({
+			event_id: realtimeEventId(`onhand_${reason}`),
+			type: "response.create",
+			response: {
+				output_modalities: ["audio"],
+				...responseOptions,
+			},
+		});
+	}
+
+	function realtimeToolDefinitions() {
+		return [
+			{
+				type: "function",
+				name: "check_calendar",
+				description: "Check whether a requested tutoring time is available.",
+				parameters: {
+					type: "object",
+					properties: {
+						date: { type: "string", description: "Requested date, for example 2026-05-23." },
+						time: { type: "string", description: "Requested local time, for example 15:30." },
+					},
+					required: ["date", "time"],
+				},
+			},
+			{
+				type: "function",
+				name: "get_current_learning_context",
+				description: "Read compact context from the current Onhand page, selection, visible text, and Learning Mode state for lightweight follow-up or clarification. For a user's substantive page question, prefer answer_directly.",
+				parameters: {
+					type: "object",
+					properties: {},
+					required: [],
+				},
+			},
+			{
+				type: "function",
+				name: "annotate_page",
+				description: "Highlight exact visible page text and optionally attach short tutor notes. Use this before or alongside page-grounded spoken explanations.",
+				parameters: {
+					type: "object",
+					properties: {
+						anchors: {
+							type: "array",
+							items: {
+								type: "object",
+								properties: {
+									text: { type: "string", description: "Exact visible text to highlight." },
+									note: { type: "string", maxLength: 80, description: "Short marginal note to attach to the highlight." },
+									label: { type: "string", description: "Short note label." },
+									conceptLabel: { type: "string", description: "Reviewable learning concept introduced by this anchor." },
+									checkKind: { type: "string", enum: ["prediction", "retrieval"] },
+									checkPrompt: { type: "string", maxLength: 180, description: "Optional prediction or retrieval prompt shown as learner state." },
+								},
+								required: ["text"],
+							},
+						},
+					},
+					required: ["anchors"],
+				},
+			},
+			{
+				type: "function",
+				name: "open_pdf_in_onhand_viewer",
+				description:
+					"Open the current direct or unsupported PDF tab in Onhand's PDF viewer before reading, highlighting, or tutoring from it. Use when PDF context is unavailable or marked unsupported.",
+				parameters: {
+					type: "object",
+					properties: {},
+					required: [],
+				},
+			},
+			{
+				type: "function",
+				name: "publish_sidebar_answer",
+				description: "Publish the concise final answer in the Onhand sidebar while you speak it.",
+				parameters: {
+					type: "object",
+					properties: {
+						markdown: { type: "string", description: "Concise sidebar answer in markdown." },
+						status: { type: "string", description: "Short status label." },
+					},
+					required: ["markdown"],
+				},
+			},
+			{
+				type: "function",
+				name: "answer_directly",
+				description: "Start Onhand's gpt-5.5-backed page-grounded answer flow. Use this first for any substantive question about the current page, selection, passage, concept, equation, chart, or document.",
+				parameters: {
+					type: "object",
+					properties: {
+						prompt: { type: "string", description: "Prompt to answer with Onhand's page-grounded runtime." },
+					},
+					required: ["prompt"],
+				},
+			},
+			{
+				type: "function",
+				name: "plan_pedagogical_move",
+				description:
+					"Ask Onhand's gpt-5.5-backed planner for one Socratic Learning Mode move. Use for new conceptual page questions when Learning Mode is on. The result has no answer field: it returns an anchor, a short voice prompt, sidebar copy, expected concepts, and fallback nudges.",
+				parameters: {
+					type: "object",
+					properties: {
+						user_question: { type: "string", description: "The student's page-grounded conceptual question." },
+					},
+					required: ["user_question"],
+				},
+			},
+			{
+				type: "function",
+				name: "evaluate_response",
+				description:
+					"Ask Onhand's gpt-5.5-backed evaluator to assess the student's answer to the previous Socratic move. Use when Learning Mode has an open voice prompt and the user responds aloud.",
+				parameters: {
+					type: "object",
+					properties: {
+						user_response: { type: "string", description: "The student's spoken answer or typed response." },
+						previous_move: {
+							type: "object",
+							description: "The previous plan_pedagogical_move result, including anchor and voice_script.",
+							properties: {
+								anchor: {
+									type: "object",
+									properties: {
+										text_excerpt: { type: "string", description: "Required page anchor from the previous move." },
+									},
+									required: ["text_excerpt"],
+								},
+								voice_script: { type: "string" },
+								expected_concepts: { type: "array", items: { type: "string" } },
+							},
+							required: ["anchor", "voice_script"],
+						},
+					},
+					required: ["user_response", "previous_move"],
+				},
+			},
+		];
+	}
+
+	function realtimeTutorInstructions() {
+		const learningMode = Boolean(currentState?.preferences?.learningMode);
+		return [
+			"You are Onhand's realtime voice tutor for a student reading the current browser page.",
+			"Answer quickly and pedagogically. Keep spoken answers short enough to follow, usually two to five sentences.",
+			"For substantive questions about the page, passage, selection, document, concept, equation, or chart, call answer_directly before answering. Do not answer those questions from realtime context alone.",
+			"Use get_current_learning_context only for lightweight orientation or clarification; it is not enough to answer a page-material question.",
+			"If the current document is a PDF and context is missing or unsupported, call open_pdf_in_onhand_viewer before tutoring from it.",
+			"Use annotate_page for the key source passage when the answer depends on page content. Prefer one strong highlight and one short note.",
+			"Use publish_sidebar_answer whenever you give a substantive answer so the sidebar mirrors the spoken explanation.",
+			learningMode
+				? "Learning Mode is on: call plan_pedagogical_move for new conceptual page questions, then use annotate_page and speak the returned voice_script. If the student answers a previous Socratic prompt, call evaluate_response."
+				: "Learning Mode is off: answer directly, but still ground page-specific claims.",
+			"If answer_directly is running, briefly tell the student that Onhand is grounding the answer in the page and that the sidebar will update.",
+		].join(" ");
+	}
+
+	function realtimeInputAudioConfig() {
+		return {
+			noise_reduction: { type: "far_field" },
+			transcription: { model: "gpt-4o-mini-transcribe" },
+			turn_detection: {
+				type: "server_vad",
+				threshold: 0.35,
+				prefix_padding_ms: 300,
+				silence_duration_ms: 650,
+				create_response: false,
+				interrupt_response: true,
+			},
+		};
+	}
+
+	function sendRealtimeSessionUpdate() {
+		sendRealtimeEvent({
+			event_id: realtimeEventId("onhand_session_update"),
+			type: "session.update",
+			session: {
+				type: "realtime",
+				output_modalities: ["audio"],
+				audio: { input: realtimeInputAudioConfig() },
+				instructions: realtimeTutorInstructions(),
+				tools: realtimeToolDefinitions(),
+				tool_choice: "auto",
+			},
+		});
+	}
+
+	async function requestRealtimeContext() {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-context",
+			windowId: await ensureCurrentWindowId(),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not read current Onhand context.");
+		return response.context;
+	}
+
+	async function createRealtimeSessionAnswer(browserSdp) {
+		const sdp = String(browserSdp || "");
+		const sdpError = validateRealtimeSdpOffer(sdp);
+		if (sdpError) throw new Error(sdpError);
+		const errors = [];
+		let authMissing = false;
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:realtime-session",
+				sdp,
+			});
+			if (response?.ok && response.result?.sdp) return response.result.sdp;
+			const errorText = response?.error || "Extension auth setup failed.";
+			authMissing = /sign in|api key|auth/i.test(errorText);
+			errors.push(errorText);
+		} catch (error) {
+			const errorText = error?.message || String(error);
+			authMissing = /sign in|api key|auth/i.test(errorText);
+			errors.push(errorText);
+		}
+
+		if (!authMissing) {
+			try {
+				const secretResponse = await chrome.runtime.sendMessage({
+					type: "sidebar:realtime-client-secret",
+				});
+				if (!secretResponse?.ok || !secretResponse.result?.value) {
+					throw new Error(secretResponse?.error || "Could not create Realtime client secret.");
+				}
+				const directResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${secretResponse.result.value}`,
+						"Content-Type": "application/sdp",
+					},
+					body: sdp,
+				});
+				const answerSdp = await directResponse.text();
+				if (directResponse.ok) return answerSdp;
+				errors.push(answerSdp || `OpenAI direct Realtime call setup failed with ${directResponse.status}.`);
+			} catch (error) {
+				errors.push(error?.message || String(error));
+			}
+		}
+
+		try {
+			const response = await fetch(REALTIME_SESSION_URL, {
+				method: "POST",
+				headers: { "Content-Type": "application/sdp" },
+				body: sdp,
+			});
+			const answerSdp = await response.text();
+			if (response.ok) return answerSdp;
+			errors.push(answerSdp || `Local Realtime session server returned ${response.status}.`);
+		} catch (error) {
+			errors.push(error?.message || String(error));
+		}
+
+		throw new Error(`Could not create Realtime session. ${errors.filter(Boolean).join(" ")}`);
+	}
+
+	function updateRealtimeAnswer(partial) {
+		realtimeAnswer = {
+			...(realtimeAnswer || {}),
+			sessionPath: getStateSessionPath(currentState) || realtimeAnswer?.sessionPath || "",
+			updatedAt: new Date().toISOString(),
+			...partial,
+		};
+		renderState(currentState || {});
+	}
+
+	function hasRealtimePageMaterialContext(state = currentState) {
+		const pageUrl = String(state?.page?.url || "").trim();
+		const tabUrl = String(state?.tab?.url || "").trim();
+		const pageText = String(state?.page?.text || state?.page?.selectedText || state?.page?.selection || "").trim();
+		const candidateUrl = pageUrl || tabUrl;
+		if (pageText) return true;
+		if (!candidateUrl) return false;
+		try {
+			const protocol = new URL(candidateUrl).protocol;
+			return protocol === "http:" || protocol === "https:" || protocol === "chrome-extension:";
+		} catch {
+			return false;
+		}
+	}
+
+	function isRealtimeCalendarRequest(prompt) {
+		return /\b(calendar|schedule|appointment|available|availability|book|meeting|slot)\b/i.test(String(prompt || ""));
+	}
+
+	function shouldRouteRealtimePromptThroughOnhand(prompt, state = currentState) {
+		const text = String(prompt || "").trim();
+		if (!text) return false;
+		if (isRealtimeCalendarRequest(text)) return false;
+		if (shouldRouteRealtimePromptThroughSocraticPlan(text, state) || shouldRouteRealtimePromptThroughSocraticEvaluation(text, state)) return false;
+		return hasRealtimePageMaterialContext(state);
+	}
+
+	function shouldRouteRealtimePromptThroughSocraticPlan(prompt, state = currentState) {
+		const text = String(prompt || "").trim();
+		if (!text) return false;
+		if (!Boolean(state?.preferences?.learningMode)) return false;
+		if (isRealtimeCalendarRequest(text)) return false;
+		if (!hasRealtimePageMaterialContext(state)) return false;
+		return !realtimePendingSocraticMove;
+	}
+
+	function looksLikeNewRealtimeQuestion(prompt) {
+		const text = String(prompt || "").trim();
+		if (!text) return false;
+		if (/[?]\s*$/.test(text)) return true;
+		return /^(what|why|how|where|when|which|who|can you|could you|would you|explain|tell me|show me)\b/i.test(text);
+	}
+
+	function shouldRouteRealtimePromptThroughSocraticEvaluation(prompt, state = currentState) {
+		const text = String(prompt || "").trim();
+		if (!text || !realtimePendingSocraticMove) return false;
+		if (!Boolean(state?.preferences?.learningMode)) return false;
+		if (isRealtimeCalendarRequest(text)) return false;
+		return !looksLikeNewRealtimeQuestion(text);
+	}
+
+	function compactRealtimeTutorText(value, maxLength = 240) {
+		const text = String(value || "").replace(/\s+/g, " ").trim();
+		return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…` : text;
+	}
+
+	function normalizeRealtimePedagogicalMove(value, fallbackPrompt = "") {
+		const raw = value?.move && typeof value.move === "object" ? value.move : value && typeof value === "object" ? value : {};
+		const rawAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
+		const anchorText = compactRealtimeTutorText(rawAnchor.text_excerpt || rawAnchor.text || raw.text_excerpt || fallbackPrompt, 220);
+		const voiceScript =
+			compactRealtimeTutorText(raw.voice_script || raw.question || raw.prompt, 220) ||
+			"Looking at the highlighted line, what do you think it is saying in your own words?";
+		const expectedConcepts = Array.isArray(raw.expected_concepts)
+			? raw.expected_concepts.map((entry) => compactRealtimeTutorText(entry, 80)).filter(Boolean).slice(0, 4)
+			: [];
+		return {
+			anchor: {
+				text_excerpt: anchorText,
+				kind: compactRealtimeTutorText(rawAnchor.kind || "question_anchor", 40) || "question_anchor",
+				note: compactRealtimeTutorText(rawAnchor.note || raw.note || "Look here first", 80),
+			},
+			move_type: compactRealtimeTutorText(raw.move_type || "prediction_prompt", 40) || "prediction_prompt",
+			voice_script: voiceScript,
+			sidebar_markdown: compactRealtimeTutorText(raw.sidebar_markdown || `**Your turn:** ${voiceScript}`, 360),
+			expected_concepts: expectedConcepts.length ? expectedConcepts : ["Page concept"],
+			stuck_fallback: compactRealtimeTutorText(raw.stuck_fallback || "Focus on the highlighted wording.", 180),
+			misconceptions: Array.isArray(raw.misconceptions) ? raw.misconceptions.slice(0, 3) : [],
+		};
+	}
+
+	function normalizeRealtimePedagogicalEvaluation(value) {
+		const raw = value?.evaluation && typeof value.evaluation === "object" ? value.evaluation : value && typeof value === "object" ? value : {};
+		const feedback = compactRealtimeTutorText(raw.feedback_summary || raw.voice_script || raw.sidebar_markdown, 220) || "Good start. Tie that back to the highlighted line.";
+		return {
+			correct_points: Array.isArray(raw.correct_points) ? raw.correct_points.slice(0, 3) : [],
+			missed_points: Array.isArray(raw.missed_points) ? raw.missed_points.slice(0, 3) : [],
+			next_move: ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "nudge",
+			feedback_summary: feedback,
+			voice_script: compactRealtimeTutorText(raw.voice_script || feedback, 220),
+			sidebar_markdown: compactRealtimeTutorText(raw.sidebar_markdown || feedback, 420),
+			assessment: compactRealtimeTutorText(raw.assessment || "partial", 24) || "partial",
+			evidence: compactRealtimeTutorText(raw.evidence || feedback, 260),
+		};
+	}
+
+	function findRealtimeOpenedCheck(learnerState, promptText) {
+		const target = compactRealtimeTutorText(promptText, 180).toLowerCase();
+		const checks = Array.isArray(learnerState?.openChecks) ? learnerState.openChecks : [];
+		if (!checks.length) return null;
+		return (
+			[...checks]
+				.reverse()
+				.find((check) => target && compactRealtimeTutorText(check?.promptText, 180).toLowerCase() === target) ||
+			checks.at(-1) ||
+			null
+		);
+	}
+
+	function speakRealtimeTutorText(kind, prompt, instructions) {
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		sendRealtimeEvent({
+			event_id: realtimeEventId(`onhand_${kind}`),
+			type: "conversation.item.create",
+			item: {
+				type: "message",
+				role: "user",
+				content: [{ type: "input_text", text: prompt }],
+			},
+		});
+		requestRealtimeResponse(kind, {
+			instructions,
+			tool_choice: "none",
+		});
+	}
+
+	async function requestRealtimePedagogicalMove(prompt, voiceTurn = null) {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-plan-pedagogical-move",
+			userQuestion: prompt,
+			voiceTurnId: voiceTurn?.id || "",
+			windowId: await ensureCurrentWindowId(),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not plan a Learning Mode voice move.");
+		return normalizeRealtimePedagogicalMove(response.result?.move || response.result, prompt);
+	}
+
+	async function requestRealtimePedagogicalEvaluation(userResponse, previousMove, voiceTurn = null) {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-evaluate-response",
+			userResponse,
+			previousMove,
+			voiceTurnId: voiceTurn?.id || "",
+			windowId: await ensureCurrentWindowId(),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not evaluate the Learning Mode voice response.");
+		return normalizeRealtimePedagogicalEvaluation(response.result?.evaluation || response.result);
+	}
+
+	async function annotateRealtimePedagogicalMove(move) {
+		const anchorText = compactRealtimeTutorText(move?.anchor?.text_excerpt, 220);
+		if (!anchorText) return null;
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-annotate",
+			windowId: await ensureCurrentWindowId(),
+			anchors: [
+				{
+					text: anchorText,
+					note: compactRealtimeTutorText(move?.anchor?.note || "Look here first", 80),
+					label: "Tutor prompt",
+					conceptLabel: compactRealtimeTutorText(move?.expected_concepts?.[0] || "Page concept", 80),
+					checkKind: move?.move_type === "retrieval_prompt" ? "retrieval" : "prediction",
+					checkPrompt: compactRealtimeTutorText(move?.voice_script, 180),
+				},
+			],
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not annotate the Socratic prompt.");
+		await requestState();
+		return response.result || null;
+	}
+
+	async function recordRealtimePedagogicalEvaluation(evaluation, pendingMove) {
+		const checkId = compactRealtimeTutorText(pendingMove?.checkId, 120);
+		if (!checkId) return null;
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-record-learning-event",
+			event: {
+				kind: "check_resolved",
+				checkId,
+				assessment: evaluation.assessment,
+				evidence: evaluation.evidence || evaluation.feedback_summary,
+			},
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not update learner state.");
+		await requestState();
+		return response.result || null;
+	}
+
+	async function startRealtimeSocraticPlan(prompt, existingVoiceTurn = null) {
+		const text = String(prompt || "").trim();
+		if (!text) throw new Error("A Learning Mode voice question is required.");
+		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("socratic_plan", text);
+		const voiceTurnId = voiceTurn.id || `voice_turn_${++realtimeSocraticTurnCounter}`;
+		realtimePendingDirectAnswerRequestId = "";
+		realtimePendingDirectAnswerPrompt = "";
+		realtimePendingDirectAnswerVoiceTurnId = "";
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: "Planning a page-grounded tutor prompt...",
+			status: "Planning",
+			pending: true,
+			published: true,
+		});
+		await ensureRealtimePdfSurfaceForVoice();
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
+		setRealtimeStatus("Planning tutor move...");
+		const move = await requestRealtimePedagogicalMove(text, voiceTurn);
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
+		const annotationResult = await annotateRealtimePedagogicalMove(move);
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
+		const openedCheck = findRealtimeOpenedCheck(annotationResult?.learnerState, move.voice_script);
+		realtimePendingSocraticMove = {
+			voiceTurnId,
+			userQuestion: text,
+			move,
+			checkId: openedCheck?.checkId || "",
+			createdAt: new Date().toISOString(),
+		};
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: move.sidebar_markdown || `**Your turn:** ${move.voice_script}`,
+			status: "Tutor prompt",
+			pending: false,
+			published: true,
+		});
+		await persistRealtimeVoiceTurn(voiceTurn, move.sidebar_markdown || move.voice_script, { status: "Tutor prompt" });
+		speakRealtimeTutorText(
+			"speak_socratic_prompt",
+			[
+				"Speak this Socratic prompt exactly enough for the student to answer. Do not answer it.",
+				`Socratic prompt: ${move.voice_script}`,
+			].join("\n\n"),
+			"Speak the Socratic prompt concisely. Do not answer it and do not call tools.",
+		);
+		setRealtimeStatus("Speaking tutor prompt...");
+		return { planned: true, voiceTurnId, move, checkId: openedCheck?.checkId || "", responseAlreadyRequested: true };
+	}
+
+	async function startRealtimeSocraticEvaluation(userResponse, existingVoiceTurn = null) {
+		const text = String(userResponse || "").trim();
+		if (!text) throw new Error("A student response is required.");
+		const pendingMove = realtimePendingSocraticMove;
+		if (!pendingMove) return await startRealtimeSocraticPlan(text, existingVoiceTurn);
+		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("socratic_evaluation", text);
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: "Checking your answer against the page...",
+			status: "Checking answer",
+			pending: true,
+			published: true,
+		});
+		await ensureRealtimePdfSurfaceForVoice();
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+		setRealtimeStatus("Checking answer...");
+		const evaluation = await requestRealtimePedagogicalEvaluation(text, pendingMove.move, voiceTurn);
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+		await recordRealtimePedagogicalEvaluation(evaluation, pendingMove);
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+		realtimePendingSocraticMove = null;
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: evaluation.sidebar_markdown || evaluation.feedback_summary,
+			status: "Tutor feedback",
+			pending: false,
+			published: true,
+		});
+		await persistRealtimeVoiceTurn(voiceTurn, evaluation.sidebar_markdown || evaluation.feedback_summary, { status: "Tutor feedback" });
+		speakRealtimeTutorText(
+			"speak_socratic_feedback",
+			[
+				"Speak this brief Learning Mode feedback to the student.",
+				"Do not add new page claims or call tools.",
+				`Feedback: ${evaluation.voice_script || evaluation.feedback_summary}`,
+			].join("\n\n"),
+			"Narrate the Learning Mode feedback concisely. Do not call tools.",
+		);
+		setRealtimeStatus("Speaking tutor feedback...");
+		return { evaluated: true, evaluation, responseAlreadyRequested: true };
+	}
+
+	function stripRealtimeVoiceDisplayPrefix(value) {
+		return String(value || "").replace(/^\[Voice\]\s*/i, "").trim();
+	}
+
+	function findRealtimeDirectAnswerTurn(state, requestId) {
+		const id = String(requestId || "").trim();
+		if (!id) return null;
+		const turns = Array.isArray(state?.turns) ? state.turns : [];
+		return turns.find((turn) => turn?.id === id) || null;
+	}
+
+	async function startRealtimeDirectAnswer(prompt, existingVoiceTurn = null) {
+		const text = String(prompt || "").trim();
+		if (!text) throw new Error("answer_directly requires a prompt.");
+		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("direct_answer", text);
+		realtimePendingSocraticMove = null;
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: "Grounding this with Onhand...",
+			status: "Using Onhand",
+			pending: true,
+			published: true,
+		});
+		await ensureRealtimePdfSurfaceForVoice();
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+		setRealtimeStatus("Using Onhand...");
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:submit-prompt",
+			prompt: text,
+			displayPrompt: `[Voice] ${text}`,
+			attachments: [],
+			learningMode: Boolean(currentState?.preferences?.learningMode),
+			source: "realtime-voice-direct-answer",
+			windowId: await ensureCurrentWindowId(),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not start Onhand's direct answer flow.");
+		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, requestId: response.requestId || "", responseAlreadyRequested: true };
+		realtimePendingDirectAnswerRequestId = String(response.requestId || "");
+		realtimePendingDirectAnswerPrompt = text;
+		realtimePendingDirectAnswerVoiceTurnId = voiceTurn.id;
+		await requestState();
+		return { started: true, requestId: response.requestId || "" };
+	}
+
+	function maybeSpeakCompletedRealtimeDirectAnswer(state = currentState) {
+		const requestId = realtimePendingDirectAnswerRequestId;
+		if (!requestId || realtimeNarratedDirectAnswerRequestIds.has(requestId)) return;
+		if (realtimePendingDirectAnswerVoiceTurnId && !isRealtimeVoiceTurnCurrent(realtimePendingDirectAnswerVoiceTurnId)) {
+			realtimePendingDirectAnswerRequestId = "";
+			realtimePendingDirectAnswerPrompt = "";
+			realtimePendingDirectAnswerVoiceTurnId = "";
+			return;
+		}
+		const turn = findRealtimeDirectAnswerTurn(state, requestId);
+		if (!turn || turn.pending || turn.error || state?.activeRequestId === requestId) return;
+		const reply = String(turn.reply || "").trim();
+		if (!reply) return;
+		realtimeNarratedDirectAnswerRequestIds.add(requestId);
+		realtimePendingDirectAnswerRequestId = "";
+		realtimePendingDirectAnswerVoiceTurnId = "";
+		const prompt = realtimePendingDirectAnswerPrompt || stripRealtimeVoiceDisplayPrefix(turn.userPrompt);
+		realtimePendingDirectAnswerPrompt = "";
+		updateRealtimeAnswer({
+			userPrompt: prompt,
+			markdown: reply,
+			status: "Onhand answer",
+			pending: false,
+			published: true,
+		});
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		const voicePrompt = [
+			"Speak a concise version of this completed Onhand page-grounded answer to the student.",
+			"Use only the provided answer, keep it under 45 words when possible, and do not call tools.",
+			`Student question: ${prompt}`,
+			`Onhand answer: ${reply}`,
+		].join("\n\n");
+		try {
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_direct_answer_ready"),
+				type: "conversation.item.create",
+				item: {
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text: voicePrompt }],
+				},
+			});
+			requestRealtimeResponse("speak_onhand_answer", {
+				instructions: "Narrate the completed Onhand answer concisely. Do not call tools or add new page claims.",
+				tool_choice: "none",
+			});
+			setRealtimeStatus("Speaking Onhand answer...");
+		} catch (error) {
+			setRealtimeStatus("Voice ready · ask, then pause", error?.message || String(error));
+		}
+	}
+
+	function appendRealtimeTranscript(delta) {
+		const text = String(delta || "");
+		if (!text) return;
+		const activeTurn = realtimeActiveVoiceTurn;
+		if (!activeTurn) return;
+		realtimeTranscriptBuffer += text;
+		updateRealtimeAnswerForTurn(activeTurn, {
+			markdown: realtimeTranscriptBuffer,
+			status: "Speaking",
+			pending: true,
+		});
+	}
+
+	function noteRealtimeResponseDone() {
+		realtimeResponseInProgress = false;
+		if (!realtimeResponseCreateQueued) return false;
+		realtimeResponseCreateQueued = false;
+		queueMicrotask(() => {
+			try {
+				requestRealtimeResponse("queued_response");
+			} catch (error) {
+				setRealtimeStatus("Voice error", error?.message || String(error));
+			}
+		});
+		return true;
+	}
+
+	function extractRealtimeResponseText(response) {
+		const parts = [];
+		for (const item of Array.isArray(response?.output) ? response.output : []) {
+			for (const content of Array.isArray(item?.content) ? item.content : []) {
+				const text = content?.text || content?.transcript || content?.audio_transcript || "";
+				if (text) parts.push(text);
+			}
+		}
+		return parts.join("\n").trim();
+	}
+
+	function parseRealtimeArguments(value) {
+		if (!value) return {};
+		if (typeof value === "object") return value;
+		try {
+			return JSON.parse(String(value));
+		} catch {
+			return {};
+		}
+	}
+
+	function collectRealtimeFunctionCalls(event) {
+		const calls = [];
+		const pushCall = (item) => {
+			if (!item || item.type !== "function_call") return;
+			const callId = item.call_id || item.callId || item.id || "";
+			if (!callId || realtimeHandledCallIds.has(callId)) return;
+			calls.push({
+				callId,
+				name: item.name || "",
+				arguments: item.arguments || "{}",
+			});
+		};
+		if (event?.type === "response.function_call_arguments.done" && event.name) {
+			pushCall({
+				type: "function_call",
+				call_id: event.call_id,
+				name: event.name,
+				arguments: event.arguments,
+			});
+		}
+		pushCall(event?.item);
+		for (const item of Array.isArray(event?.response?.output) ? event.response.output : []) {
+			pushCall(item);
+		}
+		return calls;
+	}
+
+	async function executeRealtimeTool(name, args) {
+		switch (name) {
+			case "check_calendar": {
+				const date = String(args?.date || "").trim();
+				const time = String(args?.time || "").trim();
+				const unavailable = /^(12:00|15:00|3:00)/.test(time);
+				return {
+					date,
+					time,
+					available: Boolean(date && time && !unavailable),
+					message: unavailable ? "That tutoring slot is already booked." : "That tutoring slot is available.",
+				};
+			}
+			case "get_current_learning_context":
+				return await requestRealtimeContext();
+			case "annotate_page": {
+				const response = await chrome.runtime.sendMessage({
+					type: "sidebar:realtime-annotate",
+					windowId: await ensureCurrentWindowId(),
+					anchors: Array.isArray(args?.anchors) ? args.anchors : [],
+				});
+				if (!response?.ok) throw new Error(response?.error || "Could not annotate the page.");
+				await requestState();
+				return response.result;
+			}
+			case "open_pdf_in_onhand_viewer": {
+				const result = await ensureRealtimePdfSurfaceForVoice();
+				return {
+					opened: Boolean(result?.opened),
+					result: result?.result || null,
+				};
+			}
+			case "publish_sidebar_answer": {
+				const activeTurn = realtimeActiveVoiceTurn;
+				updateRealtimeAnswerForTurn(activeTurn, {
+					markdown: String(args?.markdown || "").trim(),
+					status: String(args?.status || "Voice answer").trim(),
+					pending: false,
+					published: true,
+				});
+				if (activeTurn?.kind === "realtime_response") {
+					await persistRealtimeVoiceTurn(activeTurn, args?.markdown || "", { status: args?.status || "Voice answer" });
+				}
+				return { published: true };
+			}
+			case "answer_directly": {
+				return await startRealtimeDirectAnswer(args?.prompt);
+			}
+			case "plan_pedagogical_move": {
+				return await startRealtimeSocraticPlan(args?.user_question || args?.userQuestion || args?.prompt);
+			}
+			case "evaluate_response": {
+				return await startRealtimeSocraticEvaluation(args?.user_response || args?.userResponse || args?.response);
+			}
+			default:
+				throw new Error(`Unknown realtime tool: ${name || "(blank)"}`);
+		}
+	}
+
+	async function handleRealtimeFunctionCall(call) {
+		realtimeHandledCallIds.add(call.callId);
+		let output = null;
+		try {
+			output = await executeRealtimeTool(call.name, parseRealtimeArguments(call.arguments));
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_tool_result"),
+				type: "conversation.item.create",
+				item: {
+					type: "function_call_output",
+					call_id: call.callId,
+					output: JSON.stringify(output),
+				},
+			});
+		} catch (error) {
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_tool_error"),
+				type: "conversation.item.create",
+				item: {
+					type: "function_call_output",
+					call_id: call.callId,
+					output: JSON.stringify({ error: error?.message || String(error) }),
+				},
+			});
+		}
+		if (!output?.responseAlreadyRequested) requestRealtimeResponse("response_after_tool");
+	}
+
+	async function handleRealtimeServerEvent(rawEvent) {
+		let event;
+		try {
+			event = JSON.parse(rawEvent?.data || rawEvent);
+		} catch {
+			return;
+		}
+		noteRealtimeActivity();
+
+		if (event.type === "error") {
+			const message = event.error?.message || event.message || "Realtime API error";
+			if (/active response in progress/i.test(message)) {
+				realtimeResponseCreateQueued = true;
+				setRealtimeStatus("Waiting for response to finish...");
+				return;
+			}
+			if (/input audio buffer.*empty|buffer is empty/i.test(message)) {
+				clearRealtimeVoiceFallback();
+				setRealtimeStatus("OpenAI received no mic audio");
+				return;
+			}
+			stopRealtimeVoice();
+			setRealtimeStatus("Voice error", message);
+			return;
+		}
+		if (event.type === "session.updated") {
+			setRealtimeReadyStatus();
+			return;
+		}
+		if (event.type === "input_audio_buffer.speech_started") {
+			clearRealtimeVoiceFallback();
+			realtimeServerSpeechSeenAt = Date.now();
+			if (realtimeActiveVoiceTurn) markRealtimeVoiceTurnStale("user_interrupted");
+			setRealtimeStatus("Listening...");
+			return;
+		}
+		if (event.type === "input_audio_buffer.speech_stopped") {
+			clearRealtimeVoiceFallback();
+			realtimeServerSpeechSeenAt = Date.now();
+			setRealtimeStatus("Transcribing...");
+			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
+			return;
+		}
+		if (event.type === "input_audio_buffer.committed") {
+			clearRealtimeVoiceFallback();
+			realtimeServerSpeechSeenAt = Date.now();
+			setRealtimeStatus("Transcribing...");
+			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
+			return;
+		}
+		if (event.type === "conversation.item.input_audio_transcription.failed") {
+			if (startRealtimeAudioResponseFallback(event.item_id, "response_after_transcription_failed")) {
+				setRealtimeStatus("Thinking from audio...");
+			} else {
+				setRealtimeReadyStatus();
+			}
+			return;
+		}
+		if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
+			const transcript = String(event.transcript || "").trim();
+			if (noteRealtimeTranscriptHandledByAudioFallback(event.item_id, transcript)) return;
+			clearRealtimeTranscriptionFallback();
+			if (shouldRouteRealtimePromptThroughSocraticEvaluation(transcript)) {
+				await startRealtimeSocraticEvaluation(transcript, beginRealtimeVoiceTurn("socratic_evaluation", transcript));
+			} else if (shouldRouteRealtimePromptThroughSocraticPlan(transcript)) {
+				await startRealtimeSocraticPlan(transcript, beginRealtimeVoiceTurn("socratic_plan", transcript));
+			} else if (shouldRouteRealtimePromptThroughOnhand(transcript)) {
+				await startRealtimeDirectAnswer(transcript, beginRealtimeVoiceTurn("direct_answer", transcript));
+			} else {
+				const voiceTurn = beginRealtimeVoiceTurn("realtime_response", transcript);
+				updateRealtimeAnswerForTurn(voiceTurn, {
+					markdown: "",
+					status: "Thinking",
+					pending: true,
+					published: false,
+				});
+				sendRealtimeSessionUpdate();
+				requestRealtimeResponse("response_for_voice_transcript");
+				setRealtimeStatus("Thinking...");
+			}
+			return;
+		}
+		if (event.type === "response.created") {
+			clearRealtimeVoiceFallback();
+			realtimeResponseInProgress = true;
+			realtimeTranscriptBuffer = "";
+			setRealtimeStatus("Thinking...");
+			return;
+		}
+		if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
+			setRealtimeStatus("Speaking...");
+			return;
+		}
+		if (
+			event.type === "response.output_audio_transcript.delta" ||
+			event.type === "response.audio_transcript.delta" ||
+			event.type === "response.text.delta" ||
+			event.type === "response.output_text.delta"
+		) {
+			appendRealtimeTranscript(event.delta || event.text || "");
+			return;
+		}
+		if ((event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") && event.transcript) {
+			updateRealtimeAnswer({ markdown: event.transcript, status: "Voice answer", pending: false });
+		}
+
+		for (const call of collectRealtimeFunctionCalls(event)) {
+			await handleRealtimeFunctionCall(call);
+		}
+
+		if (event.type === "response.done") {
+			const text = extractRealtimeResponseText(event.response);
+			const responseVoiceTurnId = realtimeResponseVoiceTurnId;
+			const activeTurn = responseVoiceTurnId && isRealtimeVoiceTurnCurrent(responseVoiceTurnId) ? realtimeActiveVoiceTurn : null;
+			const continuingAfterTool = noteRealtimeResponseDone();
+			if (text && !realtimeAnswer?.published && activeTurn) {
+				updateRealtimeAnswerForTurn(activeTurn, { markdown: text, status: "Voice answer", pending: false });
+			} else if (continuingAfterTool && realtimeAnswer?.pending && activeTurn) {
+				updateRealtimeAnswerForTurn(activeTurn, { status: "Using page context...", pending: true });
+			} else if (realtimeAnswer?.pending && activeTurn) {
+				updateRealtimeAnswerForTurn(activeTurn, { pending: false });
+			}
+			if (activeTurn?.kind === "realtime_response" && !continuingAfterTool) {
+				const finalText = text || realtimeAnswer?.markdown || realtimeTranscriptBuffer;
+				await persistRealtimeVoiceTurn(activeTurn, finalText, { status: "Voice answer" });
+			}
+			if (activeTurn?.audioItemId) realtimeAudioFallbackItemIds.delete(activeTurn.audioItemId);
+			if (!continuingAfterTool) realtimeResponseVoiceTurnId = "";
+			if (!continuingAfterTool && !activeTurn && realtimeActiveVoiceTurn) return;
+			if (continuingAfterTool) setRealtimeStatus("Using page context...");
+			else setRealtimeReadyStatus();
+		}
+	}
+
+	async function startRealtimeVoice(options = {}) {
+		if (realtimeConnecting || realtimeConnected) return;
+		realtimeConnecting = true;
+		realtimeError = "";
+		realtimeTranscriptBuffer = "";
+		renderRealtimeControls();
+		try {
+			await ensureRealtimePdfSurfaceForVoice();
+			realtimeMediaStream = await createRealtimeInputMediaStream(options);
+			const audioTracks = realtimeMediaStream.getAudioTracks();
+			if (!audioTracks.length) {
+				throw new Error("Chrome granted microphone access but returned no audio track.");
+			}
+			realtimeActiveMicLabel = String(audioTracks[0]?.label || getRealtimeMicDeviceLabel(realtimeMicDeviceId) || "").trim();
+			realtimeMicTrackDetails = describeRealtimeMicTrack(audioTracks[0]);
+			void refreshRealtimeMicDevices();
+			startRealtimeMicMonitor(realtimeMediaStream);
+
+			const pc = new RTCPeerConnection();
+			const dc = pc.createDataChannel("oai-events");
+			const audio = new Audio();
+			audio.autoplay = true;
+			realtimePeerConnection = pc;
+			realtimeDataChannel = dc;
+			realtimeAudio = audio;
+
+			pc.ontrack = (event) => {
+				audio.srcObject = event.streams[0];
+				void audio.play().catch((playError) => {
+					setRealtimeStatus("Audio playback blocked", playError?.message || "Click Voice again to enable audio playback.");
+				});
+			};
+			pc.onconnectionstatechange = () => {
+				if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+					setRealtimeStatus("Voice disconnected", "Realtime connection ended.");
+				}
+			};
+			dc.onopen = () => {
+				realtimeConnecting = false;
+				realtimeConnected = true;
+				setRealtimeStatus("Voice ready");
+				scheduleRealtimeIdleTimeout();
+				try {
+					sendRealtimeSessionUpdate();
+					if (options?.syntheticAudio) {
+						setTimeout(() => {
+							startRealtimeSyntheticAudioPlayback();
+						}, 650);
+					}
+				} catch (error) {
+					setRealtimeStatus("Voice error", error?.message || String(error));
+				}
+			};
+			dc.onclose = () => {
+				realtimeConnected = false;
+				if (!realtimeConnecting && !realtimeError) setRealtimeStatus("Voice idle");
+			};
+			dc.onmessage = (event) => {
+				void handleRealtimeServerEvent(event).catch((error) => setRealtimeStatus("Voice error", error?.message || String(error)));
+			};
+
+			for (const track of audioTracks) {
+				track.onmute = () => setRealtimeStatus("Mic muted");
+				track.onunmute = () => {
+					if (realtimeConnected) setRealtimeReadyStatus();
+					else setRealtimeStatus("Mic unmuted");
+				};
+				track.onended = () => {
+					if (realtimeConnected) setRealtimeStatus("Mic ended", "Chrome ended the microphone track.");
+				};
+				pc.addTrack(track, realtimeMediaStream);
+			}
+
+			await pc.setLocalDescription(await pc.createOffer());
+			await waitForRealtimeIceGathering(pc);
+			const offerSdp = pc.localDescription?.sdp || "";
+			const answerSdp = await createRealtimeSessionAnswer(offerSdp);
+			await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+			setRealtimeStatus("Connecting...");
+		} catch (error) {
+			stopRealtimeVoice();
+			realtimeConnecting = false;
+			if (isRealtimeMicrophonePermissionError(error)) {
+				realtimeRestartAfterMicPermission = true;
+				try {
+					await openRealtimeMicPermissionPage();
+				} catch {}
+				setRealtimeStatus("Mic permission needed", realtimeMicrophoneErrorMessage(error));
+				return;
+			}
+			setRealtimeStatus("Voice error", error?.message || String(error));
+		}
+	}
+
+	function stopRealtimeVoice(status = "Voice idle") {
+		clearRealtimeIdleTimeout();
+		stopRealtimeSyntheticAudioPlayback();
+		stopRealtimeMicMonitor();
+		try {
+			realtimeDataChannel?.close();
+		} catch {}
+		try {
+			realtimePeerConnection?.close();
+		} catch {}
+		try {
+			for (const track of realtimeMediaStream?.getTracks?.() || []) track.stop();
+		} catch {}
+		if (realtimeAudio) {
+			realtimeAudio.pause();
+			realtimeAudio.srcObject = null;
+		}
+		realtimePeerConnection = null;
+		realtimeDataChannel = null;
+		realtimeMediaStream = null;
+		realtimeAudio = null;
+		realtimeMicTrackDetails = "";
+		realtimeConnecting = false;
+		realtimeConnected = false;
+		realtimeHandledCallIds.clear();
+		realtimeRestartAfterMicPermission = false;
+		realtimeResponseInProgress = false;
+		realtimeResponseCreateQueued = false;
+		realtimeResponseVoiceTurnId = "";
+		realtimeServerSpeechSeenAt = 0;
+		realtimePendingDirectAnswerRequestId = "";
+		realtimePendingDirectAnswerPrompt = "";
+		realtimePendingDirectAnswerVoiceTurnId = "";
+		realtimePendingSocraticMove = null;
+		realtimeActiveVoiceTurn = null;
+		realtimePendingTranscriptionItemId = "";
+		realtimeAudioFallbackItemIds.clear();
+		setRealtimeStatus(status);
+	}
+
+	async function sendRealtimeTextPrompt(prompt) {
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
+			throw new Error("Start Voice before sending a voice-chat message.");
+		}
+		const text = String(prompt || "").trim();
+		if (!text) return;
+		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
+			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
+			return;
+		}
+		if (shouldRouteRealtimePromptThroughSocraticPlan(text)) {
+			await startRealtimeSocraticPlan(text, beginRealtimeVoiceTurn("socratic_plan", text));
+			return;
+		}
+		if (shouldRouteRealtimePromptThroughOnhand(text)) {
+			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
+			return;
+		}
+		noteRealtimeActivity();
+		const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
+		updateRealtimeAnswerForTurn(voiceTurn, {
+			markdown: "",
+			status: "Thinking",
+			pending: true,
+			published: false,
+		});
+		sendRealtimeSessionUpdate();
+		sendRealtimeEvent({
+			event_id: realtimeEventId("onhand_user_text"),
+			type: "conversation.item.create",
+			item: {
+				type: "message",
+				role: "user",
+				content: [{ type: "input_text", text }],
+			},
+		});
+		requestRealtimeResponse("response_for_text");
+		setRealtimeStatus("Thinking...");
+	}
+
 	function setMenuOpen(nextOpen) {
 		menuPanel.hidden = !nextOpen;
 		menuButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
@@ -4493,6 +6588,7 @@
 	});
 
 	closeButton.addEventListener("click", () => {
+		stopRealtimeVoice();
 		setOpen(false);
 		void ensureCurrentWindowId()
 			.then((windowId) => chrome.runtime.sendMessage({ type: "sidebar:close", windowId }))
@@ -4535,6 +6631,41 @@
 
 	themeSelect.addEventListener("input", updateSidebarThemeFromSelect);
 	themeSelect.addEventListener("change", updateSidebarThemeFromSelect);
+
+	function updateRealtimeMicFromSelect() {
+		if (!(realtimeMicSelect instanceof HTMLSelectElement)) return;
+		const previousDeviceId = realtimeMicDeviceId;
+		const nextDeviceId = normalizeRealtimeMicDeviceId(realtimeMicSelect.value);
+		if (nextDeviceId === previousDeviceId) return;
+		realtimeMicDeviceId = nextDeviceId;
+		realtimeActiveMicLabel = getRealtimeMicDeviceLabel(nextDeviceId);
+		realtimeMicSelectSignature = "";
+		renderRealtimeMicDeviceSelect();
+		void saveRealtimeMicDevicePreference(nextDeviceId).catch(() => {
+			realtimeMicDeviceId = previousDeviceId;
+			realtimeActiveMicLabel = getRealtimeMicDeviceLabel(previousDeviceId);
+			realtimeMicSelectSignature = "";
+			renderRealtimeMicDeviceSelect();
+		});
+		if (realtimeConnected || realtimeConnecting) {
+			stopRealtimeVoice("Switching mic...");
+			setTimeout(() => {
+				void startRealtimeVoice();
+			}, 250);
+		}
+	}
+
+	if (realtimeMicSelect instanceof HTMLSelectElement) {
+		realtimeMicSelect.addEventListener("input", updateRealtimeMicFromSelect);
+		realtimeMicSelect.addEventListener("change", updateRealtimeMicFromSelect);
+		void refreshRealtimeMicDevices();
+	}
+
+	if (navigator.mediaDevices?.addEventListener) {
+		navigator.mediaDevices.addEventListener("devicechange", () => {
+			void refreshRealtimeMicDevices();
+		});
+	}
 
 	learningModeToggle.addEventListener("change", () => {
 		const nextValue = Boolean(learningModeToggle.checked);
@@ -4649,6 +6780,17 @@
 		fileInput.click();
 	});
 
+	realtimeVoiceButton.addEventListener("click", (event) => {
+		if (realtimeConnected || realtimeConnecting) {
+			stopRealtimeVoice();
+			return;
+		}
+		const syntheticAudio = Boolean(event.shiftKey || event.altKey || isRealtimeSyntheticFixtureContext());
+		void startRealtimeVoice({ syntheticAudio }).catch((error) => {
+			setRealtimeStatus("Voice error", error?.message || String(error));
+		});
+	});
+
 	fileInput.addEventListener("change", () => {
 		const files = Array.from(fileInput.files || []);
 		if (!files.length) return;
@@ -4673,6 +6815,12 @@
 		if (!(button instanceof HTMLElement)) return;
 		removeAttachmentDraft(button.dataset.attachmentId || "");
 		renderState(currentState || {});
+	});
+
+	authPanelEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		if (!target?.closest("#authSignInButton")) return;
+		void signInWithOpenAICodexFromSidebar();
 	});
 
 	pageIndexEl.addEventListener("click", (event) => {
@@ -4749,6 +6897,96 @@
 			});
 		});
 	});
+
+	chrome.runtime.onMessage.addListener((message) => {
+		if (message?.type === "browser-runtime:auth-progress") {
+			authStatusKind = "";
+			authStatusText = message.detail || message.status || "Signing in...";
+			renderState(currentState || {});
+			return;
+		}
+		if (message?.type !== "sidebar:mic-permission-result") return;
+		if (typeof realtimeMicPermissionTabId === "number") {
+			chrome.tabs.remove(realtimeMicPermissionTabId).catch(() => {});
+			realtimeMicPermissionTabId = null;
+		}
+		if (!message.ok) {
+			setRealtimeStatus("Mic permission needed", message.error || "Microphone permission was not granted.");
+			return;
+		}
+		setRealtimeStatus("Mic allowed");
+		if (realtimeRestartAfterMicPermission) {
+			realtimeRestartAfterMicPermission = false;
+			setTimeout(() => {
+				void startRealtimeVoice();
+			}, 300);
+		}
+	});
+
+	if (globalThis.__onhandSidebarExposeTestHooks) {
+		globalThis.__onhandSidebarTestHooks = {
+			setRealtimeDataChannel(channel) {
+				realtimeDataChannel = channel;
+			},
+			setRealtimeConnected(connected = true) {
+				realtimeConnected = Boolean(connected);
+				realtimeConnecting = false;
+				renderRealtimeControls();
+			},
+			setRealtimeMicDeviceId(deviceId = "default") {
+				realtimeMicDeviceId = normalizeRealtimeMicDeviceId(deviceId);
+				realtimeMicSelectSignature = "";
+				renderRealtimeMicDeviceSelect();
+			},
+			createRealtimeInputMediaStream,
+			refreshRealtimeMicDevices,
+			setRealtimeResponseInProgress(inProgress = true) {
+				realtimeResponseInProgress = Boolean(inProgress);
+			},
+			setRealtimeManualVoiceCommitPending(pending = true) {
+				realtimeManualVoiceCommitPending = Boolean(pending);
+			},
+			setRealtimeServerSpeechSeenAt(value = Date.now()) {
+				realtimeServerSpeechSeenAt = Number(value) || 0;
+			},
+			clearRealtimeVoiceFallback,
+			commitRealtimeVoiceFallback,
+			scheduleRealtimeVoiceFallbackCommit,
+			expireRealtimeIdleTimeout,
+			getRealtimeToolDefinitions: realtimeToolDefinitions,
+			handleRealtimeServerEvent,
+			ensureRealtimePdfSurfaceForVoice,
+			requestRealtimeResponse,
+			requestState,
+			sendRealtimeTextPrompt,
+			startRealtimeSyntheticAudioPlayback,
+			getRealtimeDebugState() {
+				return {
+					connected: realtimeConnected,
+					connecting: realtimeConnecting,
+					status: realtimeStatus,
+					error: realtimeError,
+					responseInProgress: realtimeResponseInProgress,
+					responseCreateQueued: realtimeResponseCreateQueued,
+					manualVoiceCommitPending: realtimeManualVoiceCommitPending,
+					pendingTranscriptionItemId: realtimePendingTranscriptionItemId,
+					audioFallbackItemIds: Array.from(realtimeAudioFallbackItemIds),
+					micCurrentRms: realtimeMicCurrentRms,
+					micPeakRms: realtimeMicPeakRms,
+					micNoiseFloorRms: realtimeMicNoiseFloorRms,
+					micSpeechThresholdRms: realtimeLocalSpeechThreshold(),
+					micMonitorFrames: realtimeMicMonitorFrames,
+					micDeviceId: realtimeMicDeviceId,
+					micDevices: realtimeMicDevices,
+					activeMicLabel: realtimeActiveMicLabel,
+					micTrackDetails: realtimeMicTrackDetails,
+					pendingDirectAnswerRequestId: realtimePendingDirectAnswerRequestId,
+					pendingSocraticMove: realtimePendingSocraticMove,
+					activeVoiceTurn: realtimeActiveVoiceTurn,
+				};
+			},
+		};
+	}
 
 	if (!IS_NATIVE_SIDE_PANEL) {
 		chrome.runtime.onMessage.addListener((message) => {

@@ -167,6 +167,13 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 		url: "chrome-extension://extension-id/sidepanel.html",
 	});
 	const { window } = dom;
+	window.__onhandSidebarExposeTestHooks = true;
+	if (options.mediaDevices) {
+		Object.defineProperty(window.navigator, "mediaDevices", {
+			configurable: true,
+			value: options.mediaDevices,
+		});
+	}
 	window.chrome = {
 		runtime: {
 			getURL(path) {
@@ -295,6 +302,128 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 							opened: true,
 						},
 					};
+				}
+				if (message?.type === "sidebar:submit-prompt") {
+					if (typeof options.submitPromptResponse === "function") {
+						return options.submitPromptResponse(message, state);
+					}
+					return { ok: true, requestId: options.submitPromptRequestId || "request-sidebar-test" };
+				}
+				if (message?.type === "sidebar:realtime-plan-pedagogical-move") {
+					if (typeof options.realtimePlanResponse === "function") {
+						return options.realtimePlanResponse(message, state);
+					}
+					return {
+						ok: true,
+						result: {
+							move: {
+								anchor: {
+									text_excerpt: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+									kind: "question_anchor",
+									note: "Look here first",
+								},
+								move_type: "prediction_prompt",
+								voice_script: "What does this line say Alpha smoke content is checking?",
+								sidebar_markdown: "**Your turn:** What does this line say Alpha smoke content is checking?",
+								expected_concepts: ["Alpha smoke content"],
+								stuck_fallback: "Focus on the verb after Alpha smoke content.",
+								misconceptions: [],
+							},
+						},
+					};
+				}
+				if (message?.type === "sidebar:realtime-evaluate-response") {
+					if (typeof options.realtimeEvaluateResponse === "function") {
+						return options.realtimeEvaluateResponse(message, state);
+					}
+					return {
+						ok: true,
+						result: {
+							evaluation: {
+								correct_points: [{ concept: "Alpha smoke content", anchor_text: "confirms readable extraction" }],
+								missed_points: [],
+								next_move: "move_on",
+								feedback_summary: "Yes. It says the fixture confirms extraction and annotations work.",
+								voice_script: "Yes. It says the fixture confirms extraction and annotations work.",
+								sidebar_markdown: "Yes. It says the fixture confirms extraction and annotations work.",
+								assessment: "correct",
+								evidence: "The student connected Alpha smoke content to fixture validation.",
+							},
+						},
+					};
+				}
+				if (message?.type === "sidebar:realtime-annotate") {
+					if (typeof options.realtimeAnnotateResponse === "function") {
+						return options.realtimeAnnotateResponse(message, state);
+					}
+					state.learnerState = state.learnerState || { mode: "learning", conceptsIntroduced: [], openChecks: [], responses: [] };
+					const anchor = Array.isArray(message.anchors) ? message.anchors[0] : null;
+					const check = {
+						checkId: "check-realtime-alpha",
+						kind: anchor?.checkKind || "prediction",
+						conceptId: "concept_alpha_smoke_content",
+						promptText: anchor?.checkPrompt || "What does this line say Alpha smoke content is checking?",
+						annotationId: "ann-realtime-alpha",
+						askedAt: "2026-05-12T10:05:00.000Z",
+					};
+					state.learnerState.conceptsIntroduced = [
+						...(state.learnerState.conceptsIntroduced || []),
+						{
+							conceptId: "concept_alpha_smoke_content",
+							label: anchor?.conceptLabel || "Alpha smoke content",
+							firstSeenAt: "2026-05-12T10:05:00.000Z",
+							lastSeenAt: "2026-05-12T10:05:00.000Z",
+							sources: [{ tabTitle: state.tab?.title || "Alpha smoke fixture", url: state.tab?.url || "", annotationId: "ann-realtime-alpha" }],
+						},
+					];
+					state.learnerState.openChecks = [...(state.learnerState.openChecks || []), check];
+					return {
+						ok: true,
+						result: {
+							annotations: [{ annotationId: "ann-realtime-alpha", text: anchor?.text || "", conceptLabel: anchor?.conceptLabel || "" }],
+							learnerState: state.learnerState,
+						},
+					};
+				}
+				if (message?.type === "sidebar:realtime-record-learning-event") {
+					if (typeof options.realtimeRecordLearningEventResponse === "function") {
+						return options.realtimeRecordLearningEventResponse(message, state);
+					}
+					state.learnerState = state.learnerState || { mode: "learning", conceptsIntroduced: [], openChecks: [], responses: [] };
+					const event = message.event || {};
+					state.learnerState.openChecks = (state.learnerState.openChecks || []).filter((check) => check.checkId !== event.checkId);
+					state.learnerState.responses = [
+						...(state.learnerState.responses || []).filter((response) => response.checkId !== event.checkId),
+						{
+							checkId: event.checkId,
+							assessment: event.assessment || "partial",
+							evidence: event.evidence || "",
+							resolvedAt: "2026-05-12T10:06:00.000Z",
+						},
+					];
+					return { ok: true, result: { learnerState: state.learnerState } };
+				}
+				if (message?.type === "sidebar:realtime-record-turn") {
+					if (typeof options.realtimeRecordTurnResponse === "function") {
+						return options.realtimeRecordTurnResponse(message, state);
+					}
+					const turn = {
+						id: message.voiceTurnId || `voice-turn-${state.turns.length + 1}`,
+						userPrompt: message.userPrompt || "",
+						reply: message.reply || "",
+						activities: [],
+						pageActions: Array.isArray(message.pageActions) ? message.pageActions : [],
+						pending: false,
+						error: false,
+						createdAt: "2026-05-12T10:07:00.000Z",
+					};
+					const existingIndex = state.turns.findIndex((candidate) => candidate.id === turn.id);
+					if (existingIndex >= 0) {
+						state.turns.splice(existingIndex, 1, turn);
+					} else {
+						state.turns.push(turn);
+					}
+					return { ok: true, result: { turn } };
 				}
 				if (message?.type === "sidebar:activate-action") {
 					if (typeof options.activateActionResponse === "function") {
@@ -1267,6 +1396,964 @@ async function assertLearningSessionPanelHidesOutsideLearningState() {
 	emptyDom.window.close();
 }
 
+function createRealtimeTestDataChannel(events) {
+	return {
+		readyState: "open",
+		send(payload) {
+			events.push(JSON.parse(payload));
+		},
+		close() {
+			this.readyState = "closed";
+		},
+	};
+}
+
+function getRealtimeTestHooks(dom) {
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	assert.ok(hooks, "expected realtime sidebar test hooks");
+	return hooks;
+}
+
+async function waitForSidebarTick(dom) {
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+}
+
+function createDeferred() {
+	let resolve;
+	let reject;
+	const promise = new Promise((promiseResolve, promiseReject) => {
+		resolve = promiseResolve;
+		reject = promiseReject;
+	});
+	return { promise, resolve, reject };
+}
+
+async function assertRealtimeMicPickerConstrainsSelectedDevice() {
+	const runtimeMessages = [];
+	const mediaRequests = [];
+	const mediaDevices = {
+		async enumerateDevices() {
+			return [
+				{ kind: "audioinput", deviceId: "default", label: "Default - Built-in Mic", groupId: "group-default" },
+				{ kind: "audioinput", deviceId: "studio-mic", label: "Studio Mic", groupId: "group-studio" },
+				{ kind: "videoinput", deviceId: "camera", label: "Camera", groupId: "group-camera" },
+			];
+		},
+		async getUserMedia(constraints) {
+			mediaRequests.push(constraints);
+			return {
+				getAudioTracks() {
+					return [{ label: "Studio Mic" }];
+				},
+			};
+		},
+		addEventListener() {},
+	};
+	const dom = await renderSidebar(createState(), runtimeMessages, { mediaDevices });
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const micSelect = host.shadowRoot.getElementById("realtimeMicSelect");
+	assert.ok(micSelect, "expected realtime mic picker");
+	assert.equal(micSelect.hidden, false, "expected realtime mic picker to be visible when mic capture is available");
+	assert.match(micSelect.textContent, /Studio Mic/);
+
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeMicDeviceId("studio-mic");
+	await hooks.refreshRealtimeMicDevices();
+	await hooks.createRealtimeInputMediaStream();
+
+	assert.equal(mediaRequests.length, 1);
+	assert.equal(mediaRequests[0].audio.deviceId.exact, "studio-mic");
+	assert.equal(hooks.getRealtimeDebugState().micDeviceId, "studio-mic");
+	dom.window.close();
+}
+
+async function assertRealtimeResponseCreateQueuesUntilDone() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	hooks.requestRealtimeResponse("first_response");
+	hooks.requestRealtimeResponse("second_response");
+
+	assert.equal(events.filter((event) => event.type === "response.create").length, 1, "expected active response to suppress duplicate response.create");
+	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, true, "expected second response to be queued");
+	assert.equal(hooks.getRealtimeDebugState().status, "Finishing current response...");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.filter((event) => event.type === "response.create").length, 2, "expected queued response after response.done");
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true, "expected queued response to become active");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, false, "expected final response.done to clear active response");
+	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, false);
+	assert.equal(hooks.getRealtimeDebugState().status, "Voice ready · ask, then pause");
+
+	dom.window.close();
+}
+
+async function assertRealtimeActiveResponseErrorIsRecoverable() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+	hooks.setRealtimeResponseInProgress(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "error",
+			error: {
+				message: "Conversation already has an active response in progress: resp_test. Wait until the response is finished before creating a new one.",
+			},
+		}),
+	);
+
+	const queuedState = hooks.getRealtimeDebugState();
+	assert.equal(queuedState.connected, true, "expected active-response error not to disconnect voice");
+	assert.equal(queuedState.responseCreateQueued, true, "expected active-response error to queue a retry");
+	assert.equal(queuedState.status, "Waiting for response to finish...");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.filter((event) => event.type === "response.create").length, 1, "expected recoverable error to retry after response.done");
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true);
+
+	dom.window.close();
+}
+
+async function assertRealtimeManualVoiceCommitCreatesResponse() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	assert.equal(hooks.commitRealtimeVoiceFallback(), true, "expected local speech fallback to commit realtime input buffer");
+	assert.equal(events.at(-1).type, "input_audio_buffer.commit");
+	assert.equal(hooks.getRealtimeDebugState().manualVoiceCommitPending, true);
+	assert.equal(hooks.getRealtimeDebugState().status, "Submitting voice...");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.committed" }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected committed fallback audio to wait for transcription");
+	assert.equal(hooks.getRealtimeDebugState().manualVoiceCommitPending, false);
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, false);
+	assert.equal(hooks.getRealtimeDebugState().status, "Transcribing...");
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "Can you check whether my calendar is available tomorrow at 3?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), true, "expected non-page transcript to create a realtime response");
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true);
+	assert.equal(hooks.getRealtimeDebugState().status, "Thinking...");
+
+	dom.window.close();
+}
+
+async function assertRealtimeRecentServerSpeechDoesNotDropLocalFallback() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	hooks.setRealtimeServerSpeechSeenAt(Date.now() - 1100);
+	hooks.scheduleRealtimeVoiceFallbackCommit();
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 300));
+	await waitForSidebarTick(dom);
+	assert.equal(events.some((event) => event.type === "input_audio_buffer.commit"), false, "expected recent server VAD to delay fallback commit");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 700));
+	await waitForSidebarTick(dom);
+	assert.equal(events.some((event) => event.type === "input_audio_buffer.commit"), true, "expected delayed local fallback commit after server VAD grace");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 950));
+	await waitForSidebarTick(dom);
+	assert.equal(events.some((event) => event.type === "response.create"), true, "expected delayed local fallback to create a response if no API commit arrives");
+
+	dom.window.close();
+}
+
+async function assertRealtimeCommittedAudioFallsBackWhenTranscriptIsMissing() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "input_audio_buffer.committed",
+			item_id: "item-audio-only",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected committed audio to wait briefly for transcription");
+	assert.equal(hooks.getRealtimeDebugState().pendingTranscriptionItemId, "item-audio-only");
+	assert.equal(hooks.getRealtimeDebugState().status, "Transcribing...");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 1900));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), true, "expected missing transcript to fall back to an audio response");
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true);
+	assert.equal(hooks.getRealtimeDebugState().activeVoiceTurn?.prompt, "Voice question");
+	assert.equal(hooks.getRealtimeDebugState().audioFallbackItemIds.join(","), "item-audio-only");
+
+	dom.window.close();
+}
+
+async function assertRealtimeSpeechStoppedFallsBackWhenCommitIsMissing() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected stopped speech to wait briefly for commit/transcript");
+	assert.equal(hooks.getRealtimeDebugState().status, "Transcribing...");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 1900));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), true, "expected missing commit/transcript to fall back to an audio response");
+	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true);
+	assert.equal(hooks.getRealtimeDebugState().activeVoiceTurn?.prompt, "Voice question");
+
+	dom.window.close();
+}
+
+async function assertRealtimeTranscriptCancelsCommittedAudioFallback() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-transcribed-voice" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "input_audio_buffer.committed",
+			item_id: "item-transcribed",
+		}),
+	);
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			item_id: "item-transcribed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(hooks.getRealtimeDebugState().pendingTranscriptionItemId, "");
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-transcribed-voice");
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected transcript routing to cancel the audio fallback");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 1900));
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected no late fallback response after transcript routing");
+
+	dom.window.close();
+}
+
+async function assertRealtimeEmptyInputBufferDoesNotDisconnect() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel([]));
+	hooks.setRealtimeConnected(true);
+	hooks.setRealtimeManualVoiceCommitPending(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "error",
+			error: { message: "Input audio buffer is empty. Commit requires audio." },
+		}),
+	);
+
+	const state = hooks.getRealtimeDebugState();
+	assert.equal(state.connected, true, "expected empty input-buffer error not to disconnect voice");
+	assert.equal(state.manualVoiceCommitPending, false);
+	assert.equal(state.status, "OpenAI received no mic audio");
+	assert.equal(state.error, "");
+
+	dom.window.close();
+}
+
+async function assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	const dataChannel = createRealtimeTestDataChannel(events);
+	hooks.setRealtimeDataChannel(dataChannel);
+	hooks.setRealtimeConnected(true);
+	hooks.setRealtimeResponseInProgress(true);
+
+	assert.equal(hooks.expireRealtimeIdleTimeout(), false, "expected idle timeout not to disconnect during an active response");
+	assert.equal(hooks.getRealtimeDebugState().connected, true);
+
+	hooks.setRealtimeResponseInProgress(false);
+	assert.equal(hooks.expireRealtimeIdleTimeout(), true, "expected idle timeout to disconnect once no response is active");
+	assert.equal(hooks.getRealtimeDebugState().connected, false);
+	assert.equal(hooks.getRealtimeDebugState().status, "Voice ended after idle");
+	assert.equal(dataChannel.readyState, "closed");
+
+	dom.window.close();
+}
+
+async function assertRealtimeToolSurfaceUsesExplicitAnswerDirectly() {
+	const runtimeMessages = [];
+	const events = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	const tools = hooks.getRealtimeToolDefinitions();
+	const toolNames = tools.map((tool) => tool.name);
+	assert.equal(toolNames.includes("answer_directly"), true, "expected explicit direct-answer tool");
+	assert.equal(toolNames.includes("plan_pedagogical_move"), true, "expected explicit Socratic planner tool");
+	assert.equal(toolNames.includes("evaluate_response"), true, "expected explicit Socratic evaluator tool");
+	assert.equal(toolNames.includes("open_pdf_in_onhand_viewer"), true, "expected explicit PDF viewer handoff tool");
+	assert.equal(toolNames.includes("delegate_to_onhand"), false, "expected ambiguous delegate tool to be removed");
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "answer_directly")?.parameters?.required || []), ["prompt"]);
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "plan_pedagogical_move")?.parameters?.required || []), ["user_question"]);
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "evaluate_response")?.parameters?.required || []), ["user_response", "previous_move"]);
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "open_pdf_in_onhand_viewer")?.parameters?.required || []), []);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "response.function_call_arguments.done",
+			call_id: "call-answer-directly",
+			name: "answer_directly",
+			arguments: JSON.stringify({ prompt: "Explain the highlighted passage directly." }),
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:submit-prompt" &&
+				message.prompt === "Explain the highlighted passage directly." &&
+				message.source === "realtime-voice-direct-answer",
+		),
+		true,
+		"expected answer_directly to route through explicit realtime direct-answer source",
+	);
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				event.item?.type === "function_call_output" &&
+				event.item?.call_id === "call-answer-directly",
+		),
+		true,
+		"expected answer_directly to return a realtime function output",
+	);
+	assert.equal(events.some((event) => event.type === "response.create"), true, "expected answer_directly tool output to continue the realtime response");
+
+	dom.window.close();
+}
+
+async function assertRealtimeVoiceTranscriptRoutesPageQuestionsThroughOnhand() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-voice-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:submit-prompt" &&
+				message.prompt === "What does Alpha smoke content mean here?" &&
+				message.displayPrompt === "[Voice] What does Alpha smoke content mean here?" &&
+				message.source === "realtime-voice-direct-answer",
+		),
+		true,
+		"expected substantive voice transcript to route through Onhand direct answer",
+	);
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected no direct realtime answer before Onhand grounding");
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-voice-direct");
+	assert.equal(hooks.getRealtimeDebugState().status, "Using Onhand...");
+
+	state.turns.push({
+		id: "request-voice-direct",
+		userPrompt: "[Voice] What does Alpha smoke content mean here?",
+		reply: "The fixture says Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+		activities: [],
+		pageActions: [
+			{
+				key: "highlight:alpha",
+				type: "annotation",
+				annotationId: "ann-alpha",
+				label: "Highlighted text",
+				title: "Alpha smoke fixture",
+				url: "http://127.0.0.1:8765/",
+				detail: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+			},
+		],
+		pending: false,
+		error: false,
+		createdAt: "2026-05-12T10:04:00.000Z",
+	});
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				event.item?.role === "user" &&
+				String(event.item?.content?.[0]?.text || "").includes("Speak a concise version of this completed Onhand page-grounded answer"),
+		),
+		true,
+		"expected completed Onhand answer to be sent back to realtime for concise narration",
+	);
+	assert.equal(
+		events.some((event) => event.type === "response.create" && event.response?.tool_choice === "none"),
+		true,
+		"expected narrated Onhand answer response to disable tool calls",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeVoicePdfPromptOpensViewerBeforeOnhandRouting() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 9,
+		title: "Native PDF",
+		url: "https://example.test/paper.pdf",
+	};
+	state.page = null;
+	state.pageCaptureError = "Onhand page tools only run on http/https tabs, not native PDF";
+	const dom = await renderSidebar(state, runtimeMessages, {
+		openPdfViewerResponse() {
+			state.tab = {
+				id: 9,
+				title: "paper.pdf - Onhand PDF Viewer",
+				url: "chrome-extension://extension-id/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
+			};
+			state.page = {
+				surface: "pdf",
+				viewer: "onhand-pdf-viewer",
+				url: "https://example.test/paper.pdf",
+				title: "paper.pdf - Onhand PDF Viewer",
+				text: "Recurrent neural networks preserve sequence state across tokens.",
+			};
+			state.pageCaptureError = "";
+			return {
+				ok: true,
+				result: {
+					tab: state.tab,
+					pdfUrl: "https://example.test/paper.pdf",
+					opened: true,
+				},
+			};
+		},
+	});
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.sendRealtimeTextPrompt("What does this PDF say about recurrent neural networks?");
+	await waitForSidebarTick(dom);
+
+	const openIndex = runtimeMessages.findIndex((message) => message?.type === "sidebar:open-pdf-viewer");
+	const submitIndex = runtimeMessages.findIndex((message) => message?.type === "sidebar:submit-prompt");
+	assert.ok(openIndex >= 0, "expected realtime PDF prompt to open the PDF viewer first");
+	assert.ok(submitIndex >= 0, "expected realtime PDF prompt to route through Onhand after handoff");
+	assert.ok(openIndex < submitIndex, "expected PDF viewer handoff before Onhand direct-answer routing");
+	assert.equal(runtimeMessages[submitIndex]?.prompt, "What does this PDF say about recurrent neural networks?");
+
+	dom.window.close();
+}
+
+async function assertRealtimeLearningVoiceTranscriptPlansSocraticMove() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createLearningState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) => message?.type === "sidebar:realtime-plan-pedagogical-move" && message.userQuestion === "What does Alpha smoke content mean here?",
+		),
+		true,
+		"expected Learning Mode voice transcript to call the Socratic planner",
+	);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:submit-prompt"),
+		false,
+		"expected planner-first Learning Mode voice not to use direct answer submit-prompt",
+	);
+	const annotateMessage = runtimeMessages.find((message) => message?.type === "sidebar:realtime-annotate");
+	assert.ok(annotateMessage, "expected Socratic move to annotate the page");
+	assert.equal(annotateMessage.anchors[0].text, "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.");
+	assert.equal(annotateMessage.anchors[0].note.length <= 80, true, "expected note to respect marginalia cap");
+	assert.equal(annotateMessage.anchors[0].checkPrompt, "What does this line say Alpha smoke content is checking?");
+	assert.equal(hooks.getRealtimeDebugState().pendingSocraticMove?.checkId, "check-realtime-alpha");
+	assert.equal(hooks.getRealtimeDebugState().status, "Speaking tutor prompt...");
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("Socratic prompt: What does this line say Alpha smoke content is checking?"),
+		),
+		true,
+		"expected Socratic prompt to be sent to realtime for narration",
+	);
+	assert.equal(
+		events.some((event) => event.type === "response.create" && event.response?.tool_choice === "none"),
+		true,
+		"expected Socratic narration response to disable tool calls",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createLearningState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+	assert.ok(hooks.getRealtimeDebugState().pendingSocraticMove, "expected a pending Socratic move after planner turn");
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "It checks that extraction and highlighting work.",
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:realtime-evaluate-response" &&
+				message.userResponse === "It checks that extraction and highlighting work." &&
+				message.previousMove?.voice_script === "What does this line say Alpha smoke content is checking?",
+		),
+		true,
+		"expected answer to an open Socratic prompt to call evaluator",
+	);
+	assert.equal(
+		runtimeMessages.some(
+			(message) =>
+				message?.type === "sidebar:realtime-record-learning-event" &&
+				message.event?.kind === "check_resolved" &&
+				message.event?.checkId === "check-realtime-alpha" &&
+				message.event?.assessment === "correct",
+		),
+		true,
+		"expected evaluator result to resolve the open learner check",
+	);
+	assert.equal(hooks.getRealtimeDebugState().pendingSocraticMove, null);
+	assert.equal(hooks.getRealtimeDebugState().status, "Speaking tutor feedback...");
+	assert.equal(state.learnerState.openChecks.some((check) => check.checkId === "check-realtime-alpha"), false);
+	assert.equal(state.learnerState.responses.some((response) => response.checkId === "check-realtime-alpha" && response.assessment === "correct"), true);
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("Speak this brief Learning Mode feedback"),
+		),
+		true,
+		"expected evaluator feedback to be sent to realtime for narration",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeStandaloneVoiceAnswerPersistsToSession() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.sendRealtimeTextPrompt("Can you check whether my calendar is available tomorrow at 3?");
+	await waitForSidebarTick(dom);
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "response.done",
+			response: {
+				output: [{ content: [{ text: "That tutoring slot is available." }] }],
+			},
+		}),
+	);
+	await waitForSidebarTick(dom);
+
+	const recordTurnMessage = runtimeMessages.find((message) => message?.type === "sidebar:realtime-record-turn");
+	assert.ok(recordTurnMessage, "expected standalone realtime voice answer to be persisted as a session turn");
+	assert.equal(recordTurnMessage.userPrompt, "[Voice] Can you check whether my calendar is available tomorrow at 3?");
+	assert.equal(recordTurnMessage.reply, "That tutoring slot is available.");
+	assert.equal(
+		state.turns.some(
+			(turn) =>
+				turn.userPrompt === "[Voice] Can you check whether my calendar is available tomorrow at 3?" &&
+				turn.reply === "That tutoring slot is available.",
+		),
+		true,
+		"expected saved voice prompt and answer to remain in session turns",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeAnswerClearsWhenSessionChanges() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.sendRealtimeTextPrompt("Can you check whether my calendar is available tomorrow at 4?");
+	await waitForSidebarTick(dom);
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "response.done",
+			response: {
+				output: [{ content: [{ text: "That tutoring slot is available." }] }],
+			},
+		}),
+	);
+	await waitForSidebarTick(dom);
+	assert.match(dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent, /That tutoring slot is available/);
+
+	state.currentSession = {
+		sessionId: "session-fresh",
+		sessionName: "Fresh session",
+	};
+	state.turns = [];
+	state.pageActions = [];
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	assert.equal(shadow.getElementById("replySection").hidden, true, "expected stale realtime answer card to hide after session switch");
+	assert.doesNotMatch(shadow.textContent, /That tutoring slot is available/, "expected previous voice answer not to appear in a fresh session");
+
+	dom.window.close();
+}
+
+async function assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-stale-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.sendRealtimeTextPrompt("What does Alpha smoke content mean here?");
+	await waitForSidebarTick(dom);
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-stale-direct");
+
+	await hooks.sendRealtimeTextPrompt("Can you check whether my calendar is available tomorrow at 3?");
+	await waitForSidebarTick(dom);
+	state.turns.push({
+		id: "request-stale-direct",
+		userPrompt: "[Voice] What does Alpha smoke content mean here?",
+		reply: "Old page-grounded answer that should not be narrated after interruption.",
+		activities: [],
+		pageActions: [],
+		pending: false,
+		error: false,
+		createdAt: "2026-05-12T10:08:00.000Z",
+	});
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("Old page-grounded answer that should not be narrated"),
+		),
+		false,
+		"expected stale direct-answer result not to trigger realtime narration",
+	);
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "");
+
+	dom.window.close();
+}
+
+async function assertRealtimeStalePlannerResultDoesNotAnnotateOrPersist() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createLearningState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const firstPlan = createDeferred();
+	const secondMove = {
+		anchor: {
+			text_excerpt: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+			kind: "question_anchor",
+			note: "Look here first",
+		},
+		move_type: "prediction_prompt",
+		voice_script: "What does the second question ask you to notice?",
+		sidebar_markdown: "**Your turn:** What does the second question ask you to notice?",
+		expected_concepts: ["Second question"],
+		stuck_fallback: "Focus on the highlighted wording.",
+		misconceptions: [],
+	};
+	const dom = await renderSidebar(state, runtimeMessages, {
+		realtimePlanResponse(message) {
+			if (message.userQuestion.includes("first")) return firstPlan.promise;
+			return { ok: true, result: { move: secondMove } };
+		},
+	});
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	const stalePlanPromise = hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does the first question mean?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+	const currentPlanPromise = hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does the second question mean?",
+		}),
+	);
+	await currentPlanPromise;
+	firstPlan.resolve({
+		ok: true,
+		result: {
+			move: {
+				...secondMove,
+				voice_script: "This stale first prompt should not be used.",
+				sidebar_markdown: "**Your turn:** This stale first prompt should not be used.",
+			},
+		},
+	});
+	await stalePlanPromise;
+	await waitForSidebarTick(dom);
+
+	const annotateMessages = runtimeMessages.filter((message) => message?.type === "sidebar:realtime-annotate");
+	const recordTurnMessages = runtimeMessages.filter((message) => message?.type === "sidebar:realtime-record-turn");
+	assert.equal(annotateMessages.length, 1, "expected only the newer planner result to annotate the page");
+	assert.equal(recordTurnMessages.length, 1, "expected only the newer planner result to persist a voice turn");
+	assert.equal(recordTurnMessages[0].userPrompt, "[Voice] What does the second question mean?");
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("This stale first prompt should not be used"),
+		),
+		false,
+		"expected stale planner result not to be narrated",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeStaleEvaluatorResultDoesNotResolveLearnerState() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createLearningState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const evaluation = createDeferred();
+	const dom = await renderSidebar(state, runtimeMessages, {
+		realtimeEvaluateResponse() {
+			return evaluation.promise;
+		},
+	});
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await waitForSidebarTick(dom);
+	assert.ok(hooks.getRealtimeDebugState().pendingSocraticMove, "expected an open Socratic move before evaluator test");
+	const recordsBefore = runtimeMessages.filter((message) => message?.type === "sidebar:realtime-record-learning-event").length;
+
+	const staleEvaluationPromise = hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "It checks extraction.",
+		}),
+	);
+	await waitForSidebarTick(dom);
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+	evaluation.resolve({
+		ok: true,
+		result: {
+			evaluation: {
+				correct_points: [],
+				missed_points: [],
+				next_move: "move_on",
+				feedback_summary: "This stale evaluator feedback should not be applied.",
+				voice_script: "This stale evaluator feedback should not be applied.",
+				sidebar_markdown: "This stale evaluator feedback should not be applied.",
+				assessment: "correct",
+				evidence: "stale",
+			},
+		},
+	});
+	await staleEvaluationPromise;
+	await waitForSidebarTick(dom);
+
+	const recordsAfter = runtimeMessages.filter((message) => message?.type === "sidebar:realtime-record-learning-event").length;
+	assert.equal(recordsAfter, recordsBefore, "expected stale evaluator result not to resolve learner state");
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("This stale evaluator feedback should not be applied"),
+		),
+		false,
+		"expected stale evaluator feedback not to be narrated",
+	);
+
+	dom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
@@ -1282,4 +2369,24 @@ await assertLearningSessionPanelPrefersPairedNoteSourceOverExactBroadSource();
 await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
+await assertRealtimeMicPickerConstrainsSelectedDevice();
+await assertRealtimeResponseCreateQueuesUntilDone();
+await assertRealtimeActiveResponseErrorIsRecoverable();
+await assertRealtimeManualVoiceCommitCreatesResponse();
+await assertRealtimeRecentServerSpeechDoesNotDropLocalFallback();
+await assertRealtimeCommittedAudioFallsBackWhenTranscriptIsMissing();
+await assertRealtimeSpeechStoppedFallsBackWhenCommitIsMissing();
+await assertRealtimeTranscriptCancelsCommittedAudioFallback();
+await assertRealtimeEmptyInputBufferDoesNotDisconnect();
+await assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle();
+await assertRealtimeToolSurfaceUsesExplicitAnswerDirectly();
+await assertRealtimeVoiceTranscriptRoutesPageQuestionsThroughOnhand();
+await assertRealtimeVoicePdfPromptOpensViewerBeforeOnhandRouting();
+await assertRealtimeLearningVoiceTranscriptPlansSocraticMove();
+await assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove();
+await assertRealtimeStandaloneVoiceAnswerPersistsToSession();
+await assertRealtimeAnswerClearsWhenSessionChanges();
+await assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn();
+await assertRealtimeStalePlannerResultDoesNotAnnotateOrPersist();
+await assertRealtimeStaleEvaluatorResultDoesNotResolveLearnerState();
 console.log("sidebar regressions passed");

@@ -31,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*"],
+      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*", "realtime-fixtures/*"],
       "matches": ["<all_urls>"]
     }
   ]

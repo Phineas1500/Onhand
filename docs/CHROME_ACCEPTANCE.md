@@ -12,6 +12,20 @@ Print the current acceptance plan:
 npm run acceptance:chrome -- --suite=all
 ```
 
+The local fixture suite includes a visual-region case that calls `browser_get_visible_region_image` on the controlled SVG chart before anchoring the nearby caption text.
+
+Realtime voice has a separate suite because it creates a live Realtime session and uses a generated audio fixture:
+
+```sh
+npm run generate:realtime-voice-fixture
+npm run acceptance:chrome -- --suite=voice
+```
+
+On the local smoke fixture URL, a normal `Voice` click uses the generated audio fixture. On other pages, use Shift-click for the fixture path.
+The voice suite also includes a direct-PDF handoff case: start from the controlled PDF URL, let Voice open the Onhand PDF viewer, then submit the typed voice-live PDF prompt.
+It also includes a visual-region case: scroll the local fixture's Visual Section chart into view, ask the typed voice-live chart question, and verify Onhand captures a visible-region image before making any visual claim.
+For Phase 5 hardening, also verify that interrupting or starting a newer voice turn while Onhand is still planning/evaluating does not let the older result overwrite the sidebar, speak stale content, or resolve learner state incorrectly. Voice prompts and final text answers should remain visible in the restored session transcript.
+
 Use a stable run id when recording results:
 
 ```sh

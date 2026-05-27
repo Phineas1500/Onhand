@@ -36,6 +36,9 @@ export const html = `<!doctype html>
 		body { font-family: system-ui, sans-serif; margin: 0; background: #f8f7f3; color: #24211c; }
 		main { max-width: 860px; margin: 0 auto; padding: 40px 24px 120px; }
 		section { background: white; border: 1px solid #ded9cf; border-radius: 8px; margin: 24px 0; padding: 24px; }
+		.visual-fixture { display: grid; gap: 10px; }
+		.visual-fixture svg { width: min(100%, 520px); height: auto; border: 1px solid #d4cec3; background: #fffdfa; }
+		.visual-fixture text { font: 13px system-ui, sans-serif; fill: #24211c; }
 		button { appearance: none; border: 0; border-radius: 6px; background: #07566a; color: white; font: inherit; padding: 8px 12px; }
 		label { display: block; margin: 14px 0 6px; font-weight: 600; }
 		input { border: 1px solid #bcb6aa; border-radius: 6px; font: inherit; padding: 10px; width: 180px; }
@@ -53,6 +56,23 @@ export const html = `<!doctype html>
 			<h2>Readable Section</h2>
 			<p>Bravo section text appears near the top of the viewport for heading and scroll-state tests.</p>
 			<p>Charlie reference content is here so Onhand can verify DOM and extract-content ports.</p>
+		</section>
+
+		<section class="visual-fixture" aria-label="Validation chart fixture">
+			<h2>Visual Section</h2>
+			<p>The chart below is intentionally visual: the orange series ends above the blue series.</p>
+			<svg id="validationChart" viewBox="0 0 560 300" role="img" aria-label="Validation chart showing orange ending above blue">
+				<line x1="60" y1="240" x2="520" y2="240" stroke="#6f675d" stroke-width="2" />
+				<line x1="60" y1="40" x2="60" y2="240" stroke="#6f675d" stroke-width="2" />
+				<text x="60" y="275">Epoch</text>
+				<text x="14" y="36">Accuracy</text>
+				<polyline points="80,215 170,178 260,142 350,102 500,68" fill="none" stroke="#d56b2a" stroke-width="5" />
+				<polyline points="80,226 170,196 260,172 350,148 500,126" fill="none" stroke="#286983" stroke-width="5" />
+				<circle cx="500" cy="68" r="7" fill="#d56b2a" />
+				<circle cx="500" cy="126" r="7" fill="#286983" />
+				<text x="390" y="62">orange validation</text>
+				<text x="390" y="122">blue baseline</text>
+			</svg>
 		</section>
 
 		<section>

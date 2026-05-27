@@ -20,6 +20,7 @@ const REQUIRED_FILES = [
 	"scripts/run-page-toolkit-regressions.mjs",
 	"scripts/run-sidebar-regressions.mjs",
 	"scripts/run-browser-runtime-smoke.mjs",
+	"scripts/generate-realtime-voice-fixture.mjs",
 	"scripts/show-chrome-acceptance.mjs",
 ];
 
@@ -35,6 +36,7 @@ const REQUIRED_SCRIPTS = [
 	"build:browser-runtime",
 	"build:extension",
 	"acceptance:chrome",
+	"generate:realtime-voice-fixture",
 	"serve:fixture",
 	"test:fixtures",
 	"test:preflight",

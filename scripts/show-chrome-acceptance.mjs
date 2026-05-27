@@ -77,6 +77,19 @@ const suites = {
 				],
 			},
 			{
+				id: "fixture-visual-region",
+				title: "Fixture visible-region image capture",
+				url: "http://127.0.0.1:8765/",
+				steps: ["Scroll the Visual Section chart into view before submitting."],
+				prompt:
+					'CHROME ACCEPTANCE VISUAL REGION {runId}: Use browser_get_visible_region_image for selector "#validationChart", then use browser_highlight_text for "orange series ends above the blue series" with clearExisting true. Answer only: CHROME_ACCEPTANCE_VISUAL_REGION captured_and_anchored.',
+				expected: [
+					"answer is CHROME_ACCEPTANCE_VISUAL_REGION captured_and_anchored",
+					"the visual-region tool captures the chart selector as an image",
+					"the answer also has an exact nearby text anchor for the visual claim",
+				],
+			},
+			{
 				id: "fixture-artifact",
 				title: "Fixture artifact persistence",
 				url: "http://127.0.0.1:8765/",
@@ -440,6 +453,116 @@ const suites = {
 			},
 		],
 	},
+	voice: {
+		label: "Realtime voice matrix",
+		setup: [
+			"npm run generate:realtime-voice-fixture",
+			"npm run build:extension",
+			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
+			"confirm extension options show an OpenAI API key or OpenAI Codex OAuth credentials; Realtime voice must be able to create /v1/realtime/calls sessions",
+			"npm run serve:fixture",
+			"open http://127.0.0.1:8765/ in Chrome",
+			"open the Onhand side panel with Computer Use",
+			"start a fresh Onhand side-panel session named Chrome realtime voice acceptance {runId}",
+		],
+		cases: [
+			{
+				id: "voice-generated-audio-fixture",
+				title: "Generated audio fixture drives Realtime voice input",
+				url: "http://127.0.0.1:8765/",
+				steps: [
+					"Click the Voice button on the local smoke fixture. Shift-click works on any page; the smoke fixture also uses generated audio on a normal click. This feeds packages/browser-extension/realtime-fixtures/voice-question.wav into the Realtime WebRTC input track instead of using the physical microphone.",
+					"Do not type into the composer during this case.",
+					"Wait up to 60 seconds for the status to move through Playing test voice, Listening or Mic heard a pause, Transcribing, Using Onhand, and Speaking Onhand answer.",
+				],
+				prompt:
+					"No typed prompt. The generated audio says: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
+				expected: [
+					"Voice starts without a microphone permission prompt",
+					"status shows Playing test voice or Mic hears you before any typed input",
+					"OpenAI server VAD or the manual fallback submits the audio turn",
+					"the sidebar receives an Onhand Page-grounded answer without clicking Ask",
+					"the spoken/sidebar answer mentions Alpha smoke content or the fixture page content and preserves the Onhand answer in the sidebar",
+					"status does not end at OpenAI received no mic audio",
+				],
+			},
+			{
+				id: "voice-learning-socratic-fixture",
+				title: "Learning Mode voice asks a grounded Socratic prompt",
+				url: "http://127.0.0.1:8765/",
+				steps: [
+					"Turn Learning Mode on before starting this case.",
+					"Click the Voice button on the local smoke fixture. The generated audio fixture asks about Alpha smoke content.",
+					"Do not type into the composer during the first voice turn.",
+					"Wait up to 60 seconds for the status to move through Transcribing, Planning tutor move, and Speaking tutor prompt.",
+					"Answer the spoken prompt aloud, or type a short answer in the composer while Voice remains live.",
+					"Wait for Checking answer and Speaking tutor feedback.",
+				],
+				prompt:
+					"No typed first prompt. The generated audio says: What does this page say about Alpha smoke content? Please answer briefly and point to the page.",
+				expected: [
+					"the first Learning Mode voice turn asks a question or nudge instead of giving a full direct answer",
+					"the Alpha smoke content source sentence is highlighted",
+					"the This session learner panel records an open check after the first turn",
+					"the follow-up student answer resolves that check or records feedback in This session",
+					"Realtime speaks both the Socratic prompt and the feedback without a Conversation already has an active response error",
+				],
+			},
+			{
+				id: "voice-visual-region-fixture",
+				title: "Learning Mode voice captures visible chart region",
+				url: "http://127.0.0.1:8765/",
+				steps: [
+					"Scroll the Visual Section chart into view.",
+					"Turn Learning Mode on.",
+					"Click Voice, then type the visual prompt into the composer and click Ask while Voice remains live.",
+					"Wait for Planning tutor move and Speaking tutor prompt.",
+				],
+				prompt: "What does this chart show about accuracy?",
+				expected: [
+					"the planner captures a visible-region image before making visual claims",
+					"the tutor prompt refers to the visible chart region and does not invent unsupported chart details",
+					"if exact chart text is available, Onhand also highlights a nearby text anchor such as the Visual Section caption",
+					"if exact text anchoring is unavailable, the sidebar says what visual context or selection is needed instead of pretending to annotate the figure",
+				],
+			},
+			{
+				id: "voice-pdf-viewer-handoff",
+				title: "Realtime voice opens direct PDFs in Onhand viewer before answering",
+				url: "http://127.0.0.1:8765/pdf/onhand-viewer",
+				steps: [
+					"Start from the direct content-type PDF URL, not the Onhand viewer URL.",
+					"Click Voice and wait for any Opening PDF in Onhand viewer status to complete.",
+					"With Voice still live, type the prompt into the composer and click Ask.",
+					"Wait up to 60 seconds for Using Onhand and Speaking Onhand answer.",
+				],
+				prompt: "What does this PDF say about recurrent neural networks?",
+				expected: [
+					"the active tab is opened through the Onhand PDF viewer or inline Onhand PDF viewer bridge before the answer runs",
+					"the answer routes through Onhand rather than realtime-only context",
+					"the phrase recurrent neural networks is highlighted on the PDF page",
+					"the sidebar preserves a concise answer and the spoken answer does not report unsupported_pdf_surface",
+				],
+			},
+			{
+				id: "voice-stale-turn-and-session-persistence",
+				title: "Voice interruptions ignore stale results and preserve final text turns",
+				url: "http://127.0.0.1:8765/",
+				steps: [
+					"Turn Learning Mode on and start Voice on the local smoke fixture.",
+					"Ask a Learning Mode question, then interrupt or type a newer voice-live question before the first planner/evaluator result finishes.",
+					"Wait for the newer turn to finish, then use the session menu to review or restore the current session.",
+				],
+				prompt: "First ask: What does Alpha smoke content mean? Then interrupt with: What should I notice in the highlighted sentence?",
+				expected: [
+					"the older planner/evaluator result does not replace the newer sidebar answer",
+					"the older result is not spoken after the newer turn starts",
+					"learner checks are not resolved by stale evaluator feedback",
+					"the completed voice prompts and text answers remain visible in the saved session transcript",
+				],
+			},
+		],
+	},
 };
 
 function parseArgs(argv) {
@@ -473,7 +596,7 @@ function parseArgs(argv) {
 function selectedSuites(name) {
 	if (name === "all") return [suites.oauth, suites.fixture, suites.pdf, suites["real-pages"], suites.learning];
 	if (suites[name]) return [suites[name]];
-	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, pdf, real-pages, or learning.`);
+	throw new Error(`Unknown suite: ${name}. Expected all, oauth, fixture, pdf, real-pages, learning, or voice.`);
 }
 
 function hydrate(value, runId) {
@@ -498,7 +621,7 @@ function buildPlan(args) {
 }
 
 function printHelp() {
-	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|pdf|real-pages|learning] [--run-id=<id>] [--json]");
+	console.log("Usage: npm run acceptance:chrome -- [--suite=all|oauth|fixture|pdf|real-pages|learning|voice] [--run-id=<id>] [--json]");
 }
 
 function printPlan(plan) {

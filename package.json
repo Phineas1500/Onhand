@@ -16,6 +16,8 @@
     "build:pdf-viewer": "node ./scripts/build-pdf-viewer.mjs",
     "build:extension": "npm run build:browser-runtime && npm run build:pdf-viewer",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
+    "generate:realtime-voice-fixture": "node ./scripts/generate-realtime-voice-fixture.mjs",
+    "serve:realtime": "node ./scripts/serve-realtime-session.mjs",
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",

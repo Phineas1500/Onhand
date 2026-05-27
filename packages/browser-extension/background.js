@@ -6,6 +6,10 @@ const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const PDF_READER_FRAME_EXECUTION_TIMEOUT_MS = 6000;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
+const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
+const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
+const OPENAI_REALTIME_VOICE = "marin";
 const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
 const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
@@ -5910,6 +5914,16 @@ async function captureTabScreenshot(tabId, options = {}) {
 		format === "jpeg" && typeof options.quality === "number"
 			? clampNumber(options.quality, 80, { min: 0, max: 100 })
 			: undefined;
+	const clip =
+		options.clip && typeof options.clip === "object" && Number(options.clip.width) > 0 && Number(options.clip.height) > 0
+			? {
+					x: Number(options.clip.x) || 0,
+					y: Number(options.clip.y) || 0,
+					width: Number(options.clip.width),
+					height: Number(options.clip.height),
+					scale: Number(options.clip.scale) > 0 ? Number(options.clip.scale) : 1,
+				}
+			: undefined;
 
 		try {
 			const base64 = await withDebugger(focusedTab.id, async ({ send }) => {
@@ -5918,6 +5932,7 @@ async function captureTabScreenshot(tabId, options = {}) {
 					format,
 					quality,
 					fromSurface: true,
+					...(clip ? { clip } : {}),
 				});
 				if (!response?.data) {
 					throw new Error("Page.captureScreenshot returned no image data");
@@ -5946,6 +5961,78 @@ async function captureTabScreenshot(tabId, options = {}) {
 				throw new Error(`Could not capture screenshot via debugger (${debuggerMessage}) or tabs.captureVisibleTab (${tabsMessage})`);
 			}
 		}
+}
+
+async function getVisibleRegionSnapshot(tabId, options = {}) {
+	const focusedTab = await focusTab(tabId);
+	const viewport = await executeScriptInTab(
+		focusedTab.id,
+		(selector) => {
+			const viewport = {
+				width: Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1)),
+				height: Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1)),
+				devicePixelRatio: Number(window.devicePixelRatio || 1),
+				scrollX: Math.round(window.scrollX || 0),
+				scrollY: Math.round(window.scrollY || 0),
+			};
+			let selectorRegion = null;
+			const rawSelector = String(selector || "").trim();
+			if (rawSelector) {
+				const element = document.querySelector(rawSelector);
+				if (!element) throw new Error(`No element matched selector: ${rawSelector}`);
+				const rect = element.getBoundingClientRect();
+				selectorRegion = {
+					x: Math.round(rect.left),
+					y: Math.round(rect.top),
+					width: Math.round(rect.width),
+					height: Math.round(rect.height),
+					selector: rawSelector,
+				};
+			}
+			return { viewport, selectorRegion };
+		},
+		[String(options.selector || "")],
+	);
+	const viewportInfo = viewport?.viewport || { width: 1, height: 1, devicePixelRatio: 1, scrollX: 0, scrollY: 0 };
+	const selectorRegion = viewport?.selectorRegion || null;
+	const rawRegion = selectorRegion || {
+		x: typeof options.x === "number" ? options.x : 0,
+		y: typeof options.y === "number" ? options.y : 0,
+		width: typeof options.width === "number" ? options.width : viewportInfo.width,
+		height: typeof options.height === "number" ? options.height : viewportInfo.height,
+	};
+	const x = clampNumber(rawRegion.x, 0, { min: 0, max: Math.max(0, viewportInfo.width - 1) });
+	const y = clampNumber(rawRegion.y, 0, { min: 0, max: Math.max(0, viewportInfo.height - 1) });
+	const width = clampNumber(rawRegion.width, viewportInfo.width - x, { min: 1, max: Math.max(1, viewportInfo.width - x) });
+	const height = clampNumber(rawRegion.height, viewportInfo.height - y, { min: 1, max: Math.max(1, viewportInfo.height - y) });
+	const region = {
+		x,
+		y,
+		width,
+		height,
+		coordinateSystem: "viewport-css-pixels",
+		...(selectorRegion?.selector ? { selector: selectorRegion.selector } : {}),
+	};
+	const screenshot = await captureTabScreenshot(focusedTab.id, {
+		...options,
+		clip: {
+			x,
+			y,
+			width,
+			height,
+			scale: 1,
+		},
+	});
+	return {
+		tab: focusedTab,
+		dataUrl: screenshot.dataUrl,
+		method: screenshot.method,
+		mimeType: options.format === "jpeg" ? "image/jpeg" : "image/png",
+		label: String(options.label || selectorRegion?.selector || "visible region").trim().slice(0, 80) || "visible region",
+		region,
+		viewport: viewportInfo,
+		capturedAt: new Date().toISOString(),
+	};
 }
 
 function extractReadableContentInPage(options = {}) {
@@ -6531,6 +6618,24 @@ async function handleCommand(name, args = {}) {
 				};
 			});
 		}
+		case "get_visible_region_image": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const image = await getVisibleRegionSnapshot(tab.id, args);
+				const data = typeof image.dataUrl === "string" && image.dataUrl.includes(",") ? image.dataUrl.split(",")[1] : "";
+				return {
+					tab: simplifyTab(image.tab),
+					dataUrl: image.dataUrl,
+					data,
+					mimeType: image.mimeType,
+					method: image.method,
+					label: image.label,
+					region: image.region,
+					viewport: image.viewport,
+					capturedAt: image.capturedAt,
+				};
+			});
+		}
 		case "get_selection": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
@@ -6793,6 +6898,290 @@ chrome.runtime.onConnect.addListener((port) => {
 	});
 });
 
+function normalizeRealtimeAnchors(value) {
+	const anchors = Array.isArray(value) ? value : [];
+	return anchors
+		.map((anchor) => ({
+			text: typeof anchor?.text === "string" ? anchor.text.trim() : "",
+			note: typeof anchor?.note === "string" ? anchor.note.trim() : "",
+			label: typeof anchor?.label === "string" ? anchor.label.trim() : "",
+			conceptLabel: typeof anchor?.conceptLabel === "string" ? anchor.conceptLabel.trim() : "",
+			checkKind: typeof anchor?.checkKind === "string" ? anchor.checkKind.trim() : "",
+			checkPrompt: typeof anchor?.checkPrompt === "string" ? anchor.checkPrompt.trim() : "",
+		}))
+		.filter((anchor) => anchor.text);
+}
+
+function summarizeRealtimePdfContext({ tab, page, selection, visible, errors } = {}) {
+	const tabUrl = String(tab?.url || page?.url || visible?.url || selection?.url || "");
+	const pageSurface = page && typeof page === "object" ? page : null;
+	const visibleSurface = visible && typeof visible === "object" ? visible : null;
+	const selectionSurface = selection && typeof selection === "object" ? selection : null;
+	const isPdf =
+		pageSurface?.surface === "pdf" ||
+		visibleSurface?.surface === "pdf" ||
+		selectionSurface?.surface === "pdf" ||
+		isLikelyPdfResourceUrl(tabUrl) ||
+		isOnhandPdfViewerLikeUrl(tabUrl);
+	if (!isPdf) return null;
+	const text =
+		String(selectionSurface?.text || "").trim() ||
+		String(visibleSurface?.text || "").trim() ||
+		String(pageSurface?.text || "").trim();
+	const unsupported =
+		pageSurface?.unsupported === true ||
+		visibleSurface?.unsupported === true ||
+		selectionSurface?.unsupported === true ||
+		Boolean((errors?.capture || errors?.visible || errors?.selection) && isLikelyPdfResourceUrl(tabUrl) && !text);
+	return {
+		surface: "pdf",
+		viewer: pageSurface?.viewer || visibleSurface?.viewer || selectionSurface?.viewer || (isOnhandPdfViewerLikeUrl(tabUrl) ? "onhand-pdf-viewer" : ""),
+		url: tabUrl,
+		supported: Boolean(text && !unsupported),
+		unsupported,
+		handoffAvailable: Boolean(!isOnhandPdfViewerLikeUrl(tabUrl) && isLikelyPdfResourceUrl(tabUrl)),
+		message: unsupported
+			? "PDF context is not readable in this surface yet. Open it in Onhand's PDF viewer before tutoring from it."
+			: text
+				? "PDF text context is available."
+				: "PDF detected; text context is still loading or unavailable.",
+	};
+}
+
+function buildRealtimeSessionConfig() {
+	return {
+		type: "realtime",
+		model: OPENAI_REALTIME_MODEL,
+		output_modalities: ["audio"],
+		audio: {
+			input: {
+				noise_reduction: { type: "far_field" },
+				transcription: { model: "gpt-4o-mini-transcribe" },
+				turn_detection: {
+					type: "server_vad",
+					threshold: 0.35,
+					prefix_padding_ms: 300,
+					silence_duration_ms: 650,
+					create_response: true,
+					interrupt_response: true,
+				},
+			},
+			output: { voice: OPENAI_REALTIME_VOICE },
+		},
+		instructions: [
+			"You are Onhand's realtime voice tutor.",
+			"Keep spoken answers concise, pedagogical, and grounded in the current page.",
+			"Before making page-specific claims, use the available tools to inspect or annotate the page.",
+			"Prefer one clear highlight and one short marginal note over broad annotation.",
+		].join(" "),
+	};
+}
+
+function createRealtimeMultipartBody(sdp, session) {
+	const boundary = `onhand-realtime-${crypto.randomUUID()}`;
+	const delimiter = `--${boundary}`;
+	const body = [
+		delimiter,
+		'Content-Disposition: form-data; name="sdp"',
+		"Content-Type: application/sdp",
+		"",
+		sdp,
+		delimiter,
+		'Content-Disposition: form-data; name="session"',
+		"Content-Type: application/json",
+		"",
+		JSON.stringify(session),
+		`${delimiter}--`,
+		"",
+	].join("\r\n");
+	return {
+		body,
+		contentType: `multipart/form-data; boundary=${boundary}`,
+	};
+}
+
+async function createRealtimeCallWithStoredApiKey(browserSdp) {
+	const sdp = typeof browserSdp === "string" ? browserSdp : "";
+	const normalizedSdp = sdp.replace(/\r\n/g, "\n");
+	if (!normalizedSdp.startsWith("v=0") || !/\nm=audio\s/i.test(normalizedSdp) || !/\nm=application\s/i.test(normalizedSdp)) {
+		throw new Error(`Browser SDP is missing required audio/data-channel media sections (${sdp.length} chars received).`);
+	}
+	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
+	const apiKey = String(credential?.apiKey || "").trim();
+	if (!apiKey) throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
+
+	const multipart = createRealtimeMultipartBody(sdp, buildRealtimeSessionConfig());
+
+	const response = await fetch(OPENAI_REALTIME_CALLS_URL, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": multipart.contentType,
+			"OpenAI-Safety-Identifier": "onhand-browser-extension",
+		},
+		body: multipart.body,
+	});
+	const answerSdp = await response.text();
+	if (!response.ok) {
+		throw new Error(answerSdp || `OpenAI Realtime call setup failed with ${response.status}.`);
+	}
+	return {
+		sdp: answerSdp,
+		model: OPENAI_REALTIME_MODEL,
+		voice: OPENAI_REALTIME_VOICE,
+		source: credential?.source || "extension-auth",
+	};
+}
+
+async function createRealtimeClientSecret() {
+	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
+	const apiKey = String(credential?.apiKey || "").trim();
+	if (!apiKey) throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
+	const session = buildRealtimeSessionConfig();
+	const attempts = [
+		{ label: "nested-session", body: { session } },
+		{ label: "top-level-session", body: session },
+	];
+	const errors = [];
+	let payload = null;
+	for (const attempt of attempts) {
+		const response = await fetch(OPENAI_REALTIME_CLIENT_SECRETS_URL, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				"Content-Type": "application/json",
+				"OpenAI-Safety-Identifier": "onhand-browser-extension",
+			},
+			body: JSON.stringify(attempt.body),
+		});
+		const text = await response.text();
+		try {
+			payload = text ? JSON.parse(text) : null;
+		} catch {
+			payload = null;
+		}
+		if (response.ok) break;
+		errors.push(`${attempt.label}: ${text || `HTTP ${response.status}`}`);
+		payload = null;
+	}
+	if (!payload) {
+		throw new Error(errors.join(" "));
+	}
+	const value = payload?.value || payload?.client_secret?.value || payload?.client_secret || "";
+	if (!value) throw new Error("OpenAI Realtime client secret response did not include a value.");
+	return {
+		value,
+		model: OPENAI_REALTIME_MODEL,
+		voice: OPENAI_REALTIME_VOICE,
+		source: credential?.source || "extension-auth",
+	};
+}
+
+async function getRealtimeLearningContext(windowId) {
+	const args = typeof windowId === "number" ? { windowId } : {};
+	const runtime = getOnhandBrowserRuntime();
+	const [state, captured, selection, visible] = await Promise.all([
+		runtime.getState().catch((error) => ({ error: error?.message || String(error) })),
+		handleCommand("capture_state", args).catch((error) => ({ error: error?.message || String(error) })),
+		handleCommand("get_selection", args).catch((error) => ({ error: error?.message || String(error) })),
+		handleCommand("get_visible_text", { ...args, maxChars: 5000, maxBlocks: 32 }).catch((error) => ({
+			error: error?.message || String(error),
+		})),
+	]);
+	const tab = captured?.tab || visible?.tab || selection?.tab || null;
+	const errors = {
+		state: state?.error || "",
+		capture: captured?.error || "",
+		selection: selection?.error || "",
+		visible: visible?.error || "",
+	};
+	return {
+		tab,
+		page: captured?.page || null,
+		selection: selection?.selection || null,
+		visible: visible?.visible || null,
+		pdf: summarizeRealtimePdfContext({
+			tab,
+			page: captured?.page || null,
+			selection: selection?.selection || null,
+			visible: visible?.visible || null,
+			errors,
+		}),
+		learnerState: state?.learnerState || null,
+		currentSession: state?.currentSession || null,
+		preferences: state?.preferences || null,
+		errors,
+	};
+}
+
+async function annotateRealtimePage(message) {
+	const windowId = typeof message.windowId === "number" ? message.windowId : undefined;
+	const baseArgs = typeof windowId === "number" ? { windowId } : {};
+	const anchors = normalizeRealtimeAnchors(message.anchors);
+	if (!anchors.length) throw new Error("At least one anchor with text is required.");
+
+	const runtime = getOnhandBrowserRuntime();
+	const results = [];
+	for (let index = 0; index < anchors.length; index += 1) {
+		const anchor = anchors[index];
+		const highlighted = await handleCommand("highlight_text", {
+			...baseArgs,
+			text: anchor.text,
+			clearExisting: false,
+			scrollIntoView: index === 0,
+			reuseExisting: true,
+			allowApproximate: true,
+		});
+		const annotationId = highlighted?.annotation?.annotationId || "";
+		let note = null;
+		if (annotationId && anchor.note) {
+			note = await handleCommand("show_note", {
+				...baseArgs,
+				annotationId,
+				note: anchor.note,
+				label: anchor.label || "Tutor note",
+				scrollIntoView: index === 0,
+			});
+		}
+
+		if (anchor.conceptLabel) {
+			await runtime.recordLearningEvent({
+				kind: "concept_introduced",
+				conceptLabel: anchor.conceptLabel,
+				annotationId,
+				url: highlighted?.tab?.url || "",
+				tabTitle: highlighted?.tab?.title || "",
+			});
+		}
+		if (anchor.checkPrompt) {
+			await runtime.recordLearningEvent({
+				kind: "check_opened",
+				checkKind: anchor.checkKind === "retrieval" ? "retrieval" : "prediction",
+				conceptLabel: anchor.conceptLabel || "Page concept",
+				promptText: anchor.checkPrompt,
+				annotationId,
+				url: highlighted?.tab?.url || "",
+				tabTitle: highlighted?.tab?.title || "",
+			});
+		}
+
+		results.push({
+			text: anchor.text,
+			note: anchor.note,
+			label: anchor.label,
+			conceptLabel: anchor.conceptLabel,
+			annotationId,
+			tab: highlighted?.tab || null,
+			matchedText: highlighted?.annotation?.matchedText || highlighted?.annotation?.text || "",
+			noteAnnotationId: note?.note?.annotationId || "",
+		});
+	}
+	return {
+		annotations: results,
+		learnerState: (await runtime.getState())?.learnerState || null,
+	};
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	(async () => {
 		if (message?.type === "get-status") {
@@ -6856,6 +7245,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "mic-permission:result") {
+			chrome.runtime
+				.sendMessage({
+					type: "sidebar:mic-permission-result",
+					ok: Boolean(message.ok),
+					error: typeof message.error === "string" ? message.error : "",
+				})
+				.catch(() => {});
+			sendResponse({ ok: true });
+			return;
+		}
+
 		if (message?.type === "offscreen-heartbeat") {
 			sendResponse({ ok: true });
 			return;
@@ -6898,6 +7299,88 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			sendResponse({
 				ok: true,
 				state,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-context") {
+			sendResponse({
+				ok: true,
+				context: await getRealtimeLearningContext(typeof message.windowId === "number" ? message.windowId : undefined),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-plan-pedagogical-move") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.planRealtimePedagogicalMove({
+					userQuestion: message.userQuestion,
+					targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+				}),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-evaluate-response") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.evaluateRealtimePedagogicalResponse({
+					userResponse: message.userResponse,
+					previousMove: message.previousMove,
+					targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+				}),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-session") {
+			sendResponse({
+				ok: true,
+				result: await createRealtimeCallWithStoredApiKey(message.sdp),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-client-secret") {
+			sendResponse({
+				ok: true,
+				result: await createRealtimeClientSecret(),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-annotate") {
+			sendResponse({
+				ok: true,
+				result: await annotateRealtimePage(message),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-record-learning-event") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.recordLearningEvent(message.event || {}),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-record-turn") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.recordRealtimeVoiceTurn({
+					voiceTurnId: message.voiceTurnId,
+					kind: message.kind,
+					userPrompt: message.userPrompt,
+					reply: message.reply,
+					status: message.status,
+					pageActions: Array.isArray(message.pageActions) ? message.pageActions : [],
+				}),
 			});
 			return;
 		}
@@ -7021,7 +7504,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				prompt: message.prompt,
 				displayPrompt: message.displayPrompt,
 				attachments: Array.isArray(message.attachments) ? message.attachments : [],
-				source: "sidebar",
+				source: typeof message.source === "string" ? message.source : "sidebar",
 				learningMode: Boolean(message.learningMode),
 				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});

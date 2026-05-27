@@ -37,6 +37,7 @@ The broader product plan lives in:
 
 - `docs/ONHAND_CONSTITUTION.md`
 - `docs/ONHAND_PLAN.md`
+- `docs/VOICE_ARCHITECTURE.md`
 
 ## Current repository layout
 
@@ -111,6 +112,16 @@ For the repeatable Chrome/OAuth acceptance gate, see `docs/CHROME_ACCEPTANCE.md`
 ```sh
 npm run acceptance:chrome -- --suite=all
 ```
+
+## Experimental Realtime Voice Tutor
+
+This branch includes an experimental `gpt-realtime-2` WebRTC voice tutor for the side panel. Start the local session endpoint with:
+
+```sh
+OPENAI_API_KEY=... npm run serve:realtime
+```
+
+If an OpenAI API key is already saved in the Onhand options page, the side panel can use that directly and the local endpoint is only a fallback. Reload the extension and click `Voice` in the side panel. Details are in `docs/REALTIME_VOICE.md`.
 
 ## Browser Runtime Tools
 

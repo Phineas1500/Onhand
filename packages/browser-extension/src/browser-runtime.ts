@@ -233,6 +233,8 @@ const SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
 const SMOKE_LEARNING_MODEL = "onhand-smoke-learning-1";
 const BROWSER_CONTEXT_MAX_CHARS = 1800;
 const BROWSER_CONTEXT_MAX_BLOCKS = 8;
+const REALTIME_READABLE_CONTEXT_MAX_CHARS = 9000;
+const REALTIME_ANCHOR_CONTEXT_MAX_CHARS = 4200;
 const TOOL_RESULT_MAX_CHARS = 1800;
 const VISIBLE_TEXT_TOOL_MAX_CHARS = 2400;
 const RECENT_CONTEXT_TURN_LIMIT = 4;
@@ -471,6 +473,19 @@ const SCREENSHOT_SCHEMA = Type.Object({
 	delayMs: Type.Optional(Type.Number({ description: "Delay before screenshot capture" })),
 });
 
+const VISIBLE_REGION_IMAGE_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	x: Type.Optional(Type.Number({ description: "Viewport x coordinate in CSS pixels. Defaults to 0." })),
+	y: Type.Optional(Type.Number({ description: "Viewport y coordinate in CSS pixels. Defaults to 0." })),
+	width: Type.Optional(Type.Number({ description: "Region width in CSS pixels. Defaults to the visible viewport width." })),
+	height: Type.Optional(Type.Number({ description: "Region height in CSS pixels. Defaults to the visible viewport height." })),
+	selector: Type.Optional(Type.String({ description: "Optional CSS selector to capture its visible bounding box instead of explicit coordinates." })),
+	label: Type.Optional(Type.String({ description: "Short human-readable region label." })),
+	format: Type.Optional(Type.String({ description: "Image format: png or jpeg" })),
+	quality: Type.Optional(Type.Number({ description: "JPEG quality from 0 to 100" })),
+	delayMs: Type.Optional(Type.Number({ description: "Delay before image capture" })),
+});
+
 const LIST_ARTIFACTS_SCHEMA = Type.Object({
 	query: Type.Optional(Type.String({ description: "Search artifact id, label, title, or URL" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum artifacts to return" })),
@@ -507,6 +522,7 @@ const CORE_READ_TOOL_NAMES = [
 	"browser_get_scroll_state",
 ];
 
+const VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
 const VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
 const TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
 const INTERACTION_TOOL_NAMES = [
@@ -1154,6 +1170,10 @@ function getSmokeModel(modelId: string) {
 				fauxToolCall("browser_get_selection", {}),
 				fauxToolCall("browser_get_viewport_headings", { maxHeadings: 8 }),
 				fauxToolCall("browser_get_scroll_state", {}),
+				fauxToolCall("browser_get_visible_region_image", {
+					label: "ports smoke viewport",
+					format: "png",
+				}),
 				fauxToolCall("browser_highlight_text", {
 					text: "Alpha smoke content",
 					clearExisting: true,
@@ -2090,6 +2110,25 @@ function buildPromptImages(attachments: any[] = []) {
 		}));
 }
 
+function imageAttachmentFromDataUrl(dataUrl: unknown, name = "visible-region.png") {
+	const text = String(dataUrl || "").trim();
+	const match = text.match(/^data:([^;,]+);base64,(.+)$/s);
+	if (!match) return null;
+	return {
+		kind: "image",
+		name,
+		data: match[2],
+		mimeType: match[1] || "image/png",
+	};
+}
+
+function buildVisualRegionPromptImages(visualRegion: unknown) {
+	const region = visualRegion && typeof visualRegion === "object" ? (visualRegion as any) : null;
+	const label = compactInternalText(region?.label || "visible region", 60).replace(/[^a-z0-9._-]+/gi, "-") || "visible-region";
+	const attachment = imageAttachmentFromDataUrl(region?.dataUrl, `${label}.png`);
+	return attachment ? buildPromptImages([attachment]) : [];
+}
+
 function flattenTabs(state: any) {
 	const windows = Array.isArray(state?.windows) ? state.windows : [];
 	return windows.flatMap((windowInfo: any) =>
@@ -2194,13 +2233,25 @@ function summarizeOpenTabs(state: any, activeTab: any, limit = 8) {
 		}));
 }
 
-async function renderBrowserContextDetails(host: RuntimeHost, options: { targetWindowId?: number } = {}) {
+function extractReadableContentText(extracted: any) {
+	const content = extracted?.content || extracted?.extracted || extracted || {};
+	if (typeof content === "string") return content.trim();
+	if (content && typeof content === "object") return String(content.markdown || content.text || "").trim();
+	return String(content || "").trim();
+}
+
+async function renderBrowserContextDetails(
+	host: RuntimeHost,
+	options: { targetWindowId?: number; includeReadableContent?: boolean; readableMaxChars?: number; includeVisualRegionImage?: boolean } = {},
+) {
 	try {
 		const state = await host.snapshotState();
 		const activeTab = pickActiveTab(state, options.targetWindowId);
 		const openTabs = summarizeOpenTabs(state, activeTab);
 		let selection = null;
 		let visible = null;
+		let extracted = null;
+		let visualRegion = null;
 		let warning = null;
 
 		if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
@@ -2217,6 +2268,27 @@ async function renderBrowserContextDetails(host: RuntimeHost, options: { targetW
 				});
 			} catch (error: any) {
 				warning ||= error?.message || String(error);
+			}
+			if (options.includeReadableContent) {
+				try {
+					extracted = await host.runCommand("extract_content", {
+						tabId: activeTab.id,
+						maxChars: options.readableMaxChars || REALTIME_READABLE_CONTEXT_MAX_CHARS,
+					});
+				} catch (error: any) {
+					warning ||= error?.message || String(error);
+				}
+			}
+			if (options.includeVisualRegionImage) {
+				try {
+					visualRegion = await host.runCommand("get_visible_region_image", {
+						tabId: activeTab.id,
+						label: "current visible region",
+						format: "png",
+					});
+				} catch (error: any) {
+					warning ||= error?.message || String(error);
+				}
 			}
 		} else if (activeTab?.url) {
 			warning = `Interactive page context is unavailable on privileged pages like ${activeTab.url}`;
@@ -2244,12 +2316,29 @@ async function renderBrowserContextDetails(host: RuntimeHost, options: { targetW
 			lines.push("Visible text snapshot:");
 			lines.push(visibleText);
 		}
-			if (warning) lines.push(`Warning: ${warning}`);
+		const readableText = extractReadableContentText(extracted);
+		if (options.includeReadableContent && readableText) {
+			lines.push("Readable page excerpt:");
+			lines.push(truncateStructuredText(readableText, REALTIME_ANCHOR_CONTEXT_MAX_CHARS));
+		}
+		if (visualRegion?.region) {
+			const region = visualRegion.region;
+			const viewport = visualRegion.viewport || {};
+			lines.push(
+				`Visible region image captured: ${visualRegion.label || "current visible region"} (${region.width}x${region.height} CSS px at ${region.x},${region.y}; viewport ${viewport.width || "?"}x${viewport.height || "?"}; method ${visualRegion.method || "unknown"}).`,
+			);
+			lines.push(
+				"Use the attached visible-region image only for visual questions. Anchor visual claims to this captured region and to exact page text when available; if neither is enough, say what visual context is missing.",
+			);
+		}
+		if (warning) lines.push(`Warning: ${warning}`);
 		return {
 			text: lines.join("\n") || "Browser context was unavailable.",
 			activeTab,
 			selection: selection?.selection || null,
 			visible: visible?.visible || visible || null,
+			extracted: extracted?.content || extracted?.extracted || extracted || null,
+			visualRegion,
 			warning,
 		};
 	} catch (error: any) {
@@ -2258,6 +2347,8 @@ async function renderBrowserContextDetails(host: RuntimeHost, options: { targetW
 			activeTab: null,
 			selection: null,
 			visible: null,
+			extracted: null,
+			visualRegion: null,
 			warning: error?.message || String(error),
 		};
 	}
@@ -2265,6 +2356,54 @@ async function renderBrowserContextDetails(host: RuntimeHost, options: { targetW
 
 async function renderBrowserContext(host: RuntimeHost, options: { targetWindowId?: number } = {}) {
 	return (await renderBrowserContextDetails(host, options)).text;
+}
+
+function promptAsksAboutVisualRegion(prompt: unknown) {
+	return /\b(image|figure|diagram|chart|plot|graph|equation|formula|math|visual|screenshot|picture|table|axis|axes|curve|arrow|box|region|shown|see here|look at)\b/i.test(
+		String(prompt || ""),
+	);
+}
+
+function browserContextHasUsableText(details: any) {
+	const selectionText = getSelectionText(details?.selection);
+	const visibleText = formatVisibleTextForModel(details?.visible, 1200);
+	const readableText = extractReadableContentText(details?.extracted);
+	return Boolean(selectionText || visibleText || readableText);
+}
+
+function shouldCaptureVisualRegionForPrompt(prompt: unknown, details?: any) {
+	if (promptAsksAboutVisualRegion(prompt)) return true;
+	if (details && !browserContextHasUsableText(details)) return true;
+	return false;
+}
+
+async function runRealtimePdfHandoffIfNeeded(host: RuntimeHost, targetWindowId?: number) {
+	let activeTab = null;
+	try {
+		const state = await host.snapshotState();
+		activeTab = pickActiveTab(state, targetWindowId);
+	} catch (error) {
+		host.log?.("realtime PDF handoff snapshot failed", error);
+		return null;
+	}
+	if (!shouldAutoOpenPdfViewerForTab(activeTab)) return null;
+	try {
+		return await host.runCommand(
+			"open_pdf_in_onhand_viewer",
+			withTargetWindowId(
+				{
+					active: true,
+					newTab: false,
+					waitForLoad: true,
+					timeoutMs: 20000,
+				},
+				targetWindowId,
+			),
+		);
+	} catch (error) {
+		host.log?.("realtime PDF handoff failed", error);
+		return null;
+	}
 }
 
 function textHasAny(text: string, pattern: RegExp) {
@@ -2323,6 +2462,9 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 		}
 		if (textHasAny(text, /\bpdfs?\b|\bpdf viewer\b|\bnative pdf\b|\bunsupported_pdf_surface\b/)) {
 			add(["browser_open_pdf_in_onhand_viewer"]);
+		}
+		if (promptAsksAboutVisualRegion(text)) {
+			add(VISUAL_CONTEXT_TOOL_NAMES);
 		}
 		if (learningMode) {
 			add(["browser_list_tabs"]);
@@ -2400,10 +2542,341 @@ function buildLauncherPrompt(
 		"- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
 		"- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
 		"- Do not call browser_extract_content more than once unless the first result is unusable.",
+		"- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
+		"- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
 		"- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
 		...(toolInventory ? ["", "Available browser tools for this request:", toolInventory] : []),
 		"Use markdown emphasis sparingly and only for short phrases that really matter.",
 		...(learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []),
+	].join("\n");
+}
+
+function extractJsonObjectText(value: unknown) {
+	const text = String(value || "").trim();
+	if (!text) return "";
+	const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+	const candidate = (fenced ? fenced[1] : text).trim();
+	const first = candidate.indexOf("{");
+	const last = candidate.lastIndexOf("}");
+	if (first < 0 || last <= first) return "";
+	return candidate.slice(first, last + 1);
+}
+
+function parseJsonObject(value: unknown) {
+	const jsonText = extractJsonObjectText(value);
+	if (!jsonText) return {};
+	try {
+		const parsed = JSON.parse(jsonText);
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function compactInternalText(value: unknown, maxLength = 240) {
+	return truncate(String(value || "").replace(/\s+/g, " ").trim(), maxLength);
+}
+
+function firstSentenceLike(value: unknown, maxLength = 220) {
+	const text = compactInternalText(value, maxLength);
+	if (!text) return "";
+	const match = text.match(/^(.+?[.!?])(?:\s|$)/);
+	return compactInternalText(match ? match[1] : text, maxLength);
+}
+
+type PlannerAnchorCandidate = {
+	text: string;
+	source: "selection" | "page_match" | "visible";
+	score: number;
+};
+
+function normalizePlannerAnchorCandidateText(value: unknown) {
+	return String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/^\s*\[[^\]]{1,40}\]\s*/u, "")
+		.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, "")
+		.replace(/^\s{0,3}#{1,6}\s+/u, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function splitPlannerAnchorText(value: unknown) {
+	const text = String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/[ \t\f\v]+/g, " ")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+	if (!text) return [];
+	const candidates: string[] = [];
+	const addCandidate = (candidate: unknown) => {
+		const normalized = normalizePlannerAnchorCandidateText(candidate);
+		if (normalized.length < 24 || normalized.length > 320) return;
+		if (/^(active tab|open tabs|visible text snapshot|readable page excerpt|warning):/i.test(normalized)) return;
+		if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
+	};
+	for (const block of text.split(/\n+/)) {
+		const normalizedBlock = normalizePlannerAnchorCandidateText(block);
+		if (!normalizedBlock) continue;
+		if (normalizedBlock.length <= 320) {
+			addCandidate(normalizedBlock);
+			continue;
+		}
+		for (const sentence of normalizedBlock.split(/(?<=[.!?])\s+/u)) addCandidate(sentence);
+	}
+	return candidates;
+}
+
+function questionTokenPhrases(userQuestion: string) {
+	const tokens = tokenizeLearnerConceptMatchText(userQuestion);
+	const phrases = new Set<string>();
+	for (let size = Math.min(5, tokens.length); size >= 2; size--) {
+		for (let index = 0; index + size <= tokens.length; index++) {
+			phrases.add(tokens.slice(index, index + size).join(" "));
+		}
+	}
+	return phrases;
+}
+
+function scorePlannerAnchorText(text: string, userQuestion: string, source: PlannerAnchorCandidate["source"] = "page_match") {
+	const promptTokens = new Set(tokenizeLearnerConceptMatchText(userQuestion));
+	if (!promptTokens.size) return source === "selection" ? 100 : 0;
+	const normalizedText = normalizeLearnerConceptMatchText(text);
+	const tokens = tokenizeLearnerConceptMatchText(text);
+	const overlap = new Set(tokens.filter((token) => promptTokens.has(token))).size;
+	let score = overlap * 4;
+	for (const phrase of questionTokenPhrases(userQuestion)) {
+		if (normalizedText.includes(phrase)) score += Math.min(20, phrase.split(" ").length * 5);
+	}
+	if (source === "selection") score += 100;
+	if (source === "visible") score -= 1;
+	return score;
+}
+
+function buildPlannerAnchorCandidates(input: {
+	userQuestion: string;
+	selection?: unknown;
+	visible?: unknown;
+	extracted?: unknown;
+	browserContext?: string;
+}) {
+	const candidates: PlannerAnchorCandidate[] = [];
+	const addCandidate = (text: unknown, source: PlannerAnchorCandidate["source"]) => {
+		const normalized = firstSentenceLike(normalizePlannerAnchorCandidateText(text), 260);
+		if (!normalized) return;
+		const score = scorePlannerAnchorText(normalized, input.userQuestion, source);
+		if (source !== "selection" && score < 4) return;
+		const existing = candidates.find((candidate) => candidate.text.toLowerCase() === normalized.toLowerCase());
+		if (existing) {
+			existing.score = Math.max(existing.score, score);
+			if (existing.source !== "selection" && source === "selection") existing.source = source;
+			return;
+		}
+		candidates.push({ text: normalized, source, score });
+	};
+	const selectionText = getSelectionText(input.selection);
+	if (selectionText) addCandidate(selectionText, "selection");
+
+	const readableText = extractReadableContentText(input.extracted);
+	for (const candidate of splitPlannerAnchorText(readableText)) addCandidate(candidate, "page_match");
+
+	const visibleText = formatVisibleTextForModel(input.visible, BROWSER_CONTEXT_MAX_CHARS);
+	for (const candidate of splitPlannerAnchorText(visibleText)) addCandidate(candidate, "visible");
+
+	if (!candidates.length && input.browserContext) {
+		for (const candidate of splitPlannerAnchorText(input.browserContext)) addCandidate(candidate, "page_match");
+	}
+
+	return candidates.sort((left, right) => right.score - left.score || left.text.length - right.text.length).slice(0, 5);
+}
+
+function formatPlannerAnchorCandidatesForPrompt(candidates: PlannerAnchorCandidate[]) {
+	if (!candidates.length) return "";
+	return candidates
+		.map((candidate, index) => `${index + 1}. (${candidate.source}) ${candidate.text}`)
+		.join("\n");
+}
+
+function choosePlannerAnchorText(rawAnchorText: string, fallback: { userQuestion: string; browserContext: string; anchorCandidates?: PlannerAnchorCandidate[] }) {
+	const candidates = Array.isArray(fallback.anchorCandidates) ? fallback.anchorCandidates : [];
+	const bestCandidate = candidates[0];
+	if (!bestCandidate) return rawAnchorText || pickPlannerFallbackAnchor(fallback.browserContext, fallback.userQuestion) || compactInternalText(fallback.userQuestion, 180);
+	if (!rawAnchorText) return bestCandidate.text;
+
+	const rawAnchor = compactInternalText(rawAnchorText, 260);
+	const rawLower = rawAnchor.toLowerCase();
+	for (const candidate of candidates) {
+		const candidateLower = candidate.text.toLowerCase();
+		if (rawLower.includes(candidateLower) || candidateLower.includes(rawLower)) {
+			if (candidate.score + 4 >= bestCandidate.score) return rawAnchor;
+			break;
+		}
+	}
+
+	const rawScore = scorePlannerAnchorText(rawAnchor, fallback.userQuestion, "page_match");
+	if (bestCandidate.score >= 8 && rawScore + 4 < bestCandidate.score) return bestCandidate.text;
+	return rawAnchor;
+}
+
+function pickPlannerFallbackAnchor(browserContext: string, userQuestion: string, anchorCandidates: PlannerAnchorCandidate[] = []) {
+	if (anchorCandidates.length) return anchorCandidates[0].text;
+	const lines = String(browserContext || "")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length >= 24 && !/^[-*]?\s*(tab|url|title|visible|selection|captured|browser context)/i.test(line));
+	const promptTokens = new Set(tokenizeLearnerConceptMatchText(userQuestion));
+	const scored = lines
+		.map((line) => {
+			const tokens = tokenizeLearnerConceptMatchText(line);
+			const overlap = tokens.filter((token) => promptTokens.has(token)).length;
+			return { line, score: overlap };
+		})
+		.sort((left, right) => right.score - left.score);
+	return firstSentenceLike(scored[0]?.line || lines[0] || "", 220);
+}
+
+function normalizePlannerMove(rawValue: unknown, fallback: { userQuestion: string; browserContext: string; anchorCandidates?: PlannerAnchorCandidate[] }) {
+	const raw = parseJsonObject(rawValue) as any;
+	const rawAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
+	const rawAnchorText = compactInternalText(rawAnchor.text_excerpt || rawAnchor.text || raw.text_excerpt, 260);
+	const anchorText = choosePlannerAnchorText(rawAnchorText, fallback);
+	const voiceScript =
+		compactInternalText(raw.voice_script || raw.question || raw.prompt, 220) ||
+		`Looking at the highlighted line, what do you think it is saying in your own words?`;
+	const expectedConcepts = Array.isArray(raw.expected_concepts)
+		? raw.expected_concepts.map((entry: unknown) => compactInternalText(entry, 80)).filter(Boolean).slice(0, 4)
+		: [];
+	return {
+		anchor: {
+			text_excerpt: anchorText,
+			kind: compactInternalText(rawAnchor.kind || "question_anchor", 40) || "question_anchor",
+			note: compactInternalText(rawAnchor.note || raw.note || "Look here first", 80),
+		},
+		move_type: compactInternalText(raw.move_type || "prediction_prompt", 40) || "prediction_prompt",
+		voice_script: voiceScript,
+		sidebar_markdown:
+			compactInternalText(raw.sidebar_markdown || `**Your turn:** ${voiceScript}`, 360) || `**Your turn:** ${voiceScript}`,
+		expected_concepts: expectedConcepts.length ? expectedConcepts : ["Page concept"],
+		stuck_fallback:
+			compactInternalText(raw.stuck_fallback || "Focus on the highlighted wording and say what relation it describes.", 180) ||
+			"Focus on the highlighted wording.",
+		misconceptions: Array.isArray(raw.misconceptions)
+			? raw.misconceptions
+					.map((entry: any) => ({
+						wrong_idea: compactInternalText(entry?.wrong_idea, 120),
+						nudge: compactInternalText(entry?.nudge, 180),
+					}))
+					.filter((entry: any) => entry.wrong_idea || entry.nudge)
+					.slice(0, 3)
+			: [],
+	};
+}
+
+function normalizeEvaluatorMove(rawValue: unknown, fallback: { userResponse: string; previousMove: any }) {
+	const raw = parseJsonObject(rawValue) as any;
+	const previousVoice = compactInternalText(fallback.previousMove?.voice_script || fallback.previousMove?.question, 180);
+	const correctPoints = Array.isArray(raw.correct_points)
+		? raw.correct_points
+				.map((entry: any) => ({
+					concept: compactInternalText(entry?.concept || entry, 100),
+					anchor_text: compactInternalText(entry?.anchor_text, 180),
+				}))
+				.filter((entry: any) => entry.concept || entry.anchor_text)
+				.slice(0, 3)
+		: [];
+	const missedPoints = Array.isArray(raw.missed_points)
+		? raw.missed_points
+				.map((entry: any) => ({
+					concept: compactInternalText(entry?.concept || entry, 100),
+					anchor_text: compactInternalText(entry?.anchor_text, 180),
+					nudge: compactInternalText(entry?.nudge, 180),
+				}))
+				.filter((entry: any) => entry.concept || entry.anchor_text || entry.nudge)
+				.slice(0, 3)
+		: [];
+	const nextMove = ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "nudge";
+	const feedback =
+		compactInternalText(raw.feedback_summary || raw.voice_script || raw.sidebar_markdown, 220) ||
+		(previousVoice
+			? `Good start. Now tie that back to the highlighted line: ${previousVoice}`
+			: "Good start. Tie your answer back to the highlighted wording.");
+	return {
+		correct_points: correctPoints,
+		missed_points: missedPoints,
+		next_move: nextMove,
+		feedback_summary: feedback,
+		voice_script: compactInternalText(raw.voice_script || feedback, 220) || feedback,
+		sidebar_markdown: compactInternalText(raw.sidebar_markdown || feedback, 420) || feedback,
+		assessment: compactInternalText(raw.assessment || (missedPoints.length ? "partial" : "correct"), 24) || "partial",
+		evidence: compactInternalText(raw.evidence || fallback.userResponse, 260),
+	};
+}
+
+function buildRealtimePlannerPrompt(options: {
+	userQuestion: string;
+	browserContext: string;
+	anchorCandidates?: PlannerAnchorCandidate[];
+	recentConversation: string;
+	learnerState: LearnerState;
+}) {
+	const learnerStateSummary = buildLearnerStatePromptSummary(options.learnerState, options.userQuestion);
+	const anchorCandidateText = formatPlannerAnchorCandidatesForPrompt(options.anchorCandidates || []);
+	return [
+		`${ONHAND_INTERNAL_PROMPT_PREFIX} Realtime Learning Mode planner.`,
+		"Return only JSON. Do not wrap it in markdown.",
+		"You are planning one Socratic voice tutoring move for a student reading the current browser page.",
+		"Do not answer the user's question. Produce a question or nudge that helps the student reason from the page.",
+		"Required output shape:",
+		`{"anchor":{"text_excerpt":"exact visible text from the page","kind":"question_anchor","note":"max 80 chars"},"move_type":"prediction_prompt|retrieval_prompt|clarifying_question","voice_script":"one short spoken question, max 35 words","sidebar_markdown":"written mirror, max 280 chars","expected_concepts":["short concept labels"],"stuck_fallback":"one hint, max 25 words","misconceptions":[{"wrong_idea":"...","nudge":"..."}]}`,
+		"Hard constraints:",
+		"- anchor.text_excerpt is required and must be copied from the captured page context when possible.",
+		"- If Question-matched anchor candidates are present, choose anchor.text_excerpt from those candidates unless the user clearly asks about a different page area.",
+		"- If a visible-region image is attached, use it only for the visual part of the move and keep the page anchor tied to exact text when exact text is available.",
+		"- If the visual region is necessary but no exact text anchor is available, set anchor.kind to visual_region and make voice_script ask the student to identify or select the relevant visual part instead of inventing an explanation.",
+		"- Do not include an answer field.",
+		"- The voice_script should be one question or one hint, not an explanation.",
+		"- The note must be local marginalia, not a summary.",
+		...(options.recentConversation ? ["", "Recent conversation:", options.recentConversation] : []),
+		"",
+		learnerStateSummary,
+		"",
+		`User question:\n${options.userQuestion}`,
+		...(anchorCandidateText ? ["", "Question-matched anchor candidates:", anchorCandidateText] : []),
+		"",
+		"Captured browser context:",
+		options.browserContext,
+	].join("\n");
+}
+
+function buildRealtimeEvaluatorPrompt(options: {
+	userResponse: string;
+	previousMove: any;
+	browserContext: string;
+	recentConversation: string;
+	learnerState: LearnerState;
+}) {
+	const previousMoveText = JSON.stringify(options.previousMove || {}, null, 2);
+	return [
+		`${ONHAND_INTERNAL_PROMPT_PREFIX} Realtime Learning Mode evaluator.`,
+		"Return only JSON. Do not wrap it in markdown.",
+		"Evaluate the student's spoken response to the previous Socratic move. Nudge before correcting.",
+		"Required output shape:",
+		`{"correct_points":[{"concept":"...","anchor_text":"exact page text if relevant"}],"missed_points":[{"concept":"...","anchor_text":"exact page text if relevant","nudge":"..."}],"next_move":"nudge|deeper|move_on|direct_answer_escape","feedback_summary":"under 30 words","voice_script":"under 35 words","sidebar_markdown":"brief durable mirror","assessment":"correct|partial|incorrect|skipped","evidence":"brief model-visible rationale"}`,
+		"Hard constraints:",
+		"- Keep feedback short enough for voice.",
+		"- Anchor page-material feedback to the previous move or captured page context.",
+		"- If feedback depends on an attached visible-region image, refer to the visual region explicitly and avoid unsupported claims when the image or text anchor is insufficient.",
+		"- If the user asks for the direct answer or seems frustrated, set next_move to direct_answer_escape.",
+		...(options.recentConversation ? ["", "Recent conversation:", options.recentConversation] : []),
+		"",
+		buildLearnerStatePromptSummary(options.learnerState, options.userResponse),
+		"",
+		"Previous pedagogical move:",
+		previousMoveText,
+		"",
+		`Student response:\n${options.userResponse}`,
+		"",
+		"Captured browser context:",
+		options.browserContext,
 	].join("\n");
 }
 
@@ -2486,6 +2959,16 @@ function toolResultTextForModel(toolName: string, result: any) {
 			const text = formatVisibleTextForModel(visible, VISIBLE_TEXT_TOOL_MAX_CHARS);
 			const heading = `Visible text from ${formatCompactTab(tab || visible)}:`;
 			return text ? `${heading}\n${text}` : `${heading}\n(No visible text returned.)`;
+		}
+		case "browser_get_visible_region_image": {
+			const region = details.region || {};
+			const viewport = details.viewport || {};
+			const label = details.label || "visible region";
+			return [
+				`Captured visible region image from ${formatCompactTab(tab)}.`,
+				`Region: ${label}; ${region.width || "?"}x${region.height || "?"} CSS px at ${region.x || 0},${region.y || 0}; viewport ${viewport.width || "?"}x${viewport.height || "?"}.`,
+				"Use this image for visual grounding only; cite exact page text too when text is available.",
+			].join("\n");
 		}
 		case "browser_extract_content": {
 			const content = details.content || details.extracted || {};
@@ -2595,6 +3078,7 @@ export const __browserRuntimeTest = {
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildHighlightRetryCandidates,
+	buildPlannerAnchorCandidates,
 	buildReplayAnnotationsFromPageActions,
 	classifyPromptForReasoning,
 	createEmptyLearnerState,
@@ -2606,7 +3090,9 @@ export const __browserRuntimeTest = {
 	isOnhandPdfViewerUrl,
 	parseExplicitPdfHandoffParams,
 	isLikelyPdfUrlForAutoHandoff,
+	runRealtimePdfHandoffIfNeeded,
 	shouldAutoOpenPdfViewerForTab,
+	normalizePlannerMove,
 	normalizeLearnerState,
 	getPromptContractForTest() {
 		const learnerState = applyLearningEvent(
@@ -2832,6 +3318,29 @@ function createTools(
 			VISIBLE_TEXT_SCHEMA,
 			"get_visible_text",
 		),
+		{
+			name: "browser_get_visible_region_image",
+			label: "Browser Visible Region Image",
+			description:
+				"Capture the visible viewport, a CSS-selector bounding box, or viewport coordinates as an image for equations, charts, diagrams, figures, screenshots, and weak text extraction. Use this before making visual claims when text tools are insufficient.",
+			parameters: VISIBLE_REGION_IMAGE_SCHEMA,
+			async execute(_toolCallId, params: any) {
+				const result = await host.runCommand("get_visible_region_image", prepareCommandParams(params, "get_visible_region_image") as Record<string, unknown>);
+				const attachment = imageAttachmentFromDataUrl(result?.dataUrl, "visible-region.png");
+				const content: any[] = [{ type: "text", text: toolResultTextForModel("browser_get_visible_region_image", result) }];
+				if (attachment) {
+					content.push({
+						type: "image",
+						data: attachment.data,
+						mimeType: attachment.mimeType,
+					});
+				}
+				return {
+					content,
+					details: result,
+				};
+			},
+		},
 		commandTool(
 			"browser_extract_content",
 			"Browser Extract Content",
@@ -3042,6 +3551,8 @@ function getToolStatusMessage(toolName: string) {
 			return "Reading your current selection...";
 		case "browser_get_visible_text":
 			return "Reading the visible part of the page...";
+		case "browser_get_visible_region_image":
+			return "Capturing the visible region...";
 		case "browser_extract_content":
 			return "Extracting readable page content...";
 		case "browser_get_viewport_headings":
@@ -3129,6 +3640,19 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				...pageActionTabFields(tab),
 				label: details.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
 				detail,
+			};
+		}
+		case "browser_get_visible_region_image": {
+			const region = details.region || {};
+			const label = truncate(details.label || "Visible region", 72);
+			return {
+				key: `visual:${tab?.id || "tab"}:${region.x || 0}:${region.y || 0}:${region.width || 0}:${region.height || 0}`,
+				type: "visual",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: "Captured visual region",
+				detail: label,
 			};
 		}
 		case "browser_highlight_text": {
@@ -3321,6 +3845,203 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			learnerState: storedSession.learnerState,
 		});
 		return storedSession.learnerState;
+	}
+
+	async function recordRealtimeVoiceTurn(request: any = {}) {
+		const store = await loadStore();
+		const session = store.sessions[store.currentSessionId] as RuntimeSession;
+		const voiceTurnId = String(request.voiceTurnId || crypto.randomUUID()).trim();
+		const userPrompt = truncate(String(request.userPrompt || "").trim(), RECENT_CONTEXT_PROMPT_MAX_CHARS);
+		const reply = truncate(String(request.reply || "").trim(), RECENT_CONTEXT_REPLY_MAX_CHARS);
+		if (!userPrompt && !reply) throw new Error("Voice turn needs a prompt or answer.");
+		const createdAt = typeof request.createdAt === "string" && request.createdAt.trim() ? request.createdAt : nowIso();
+		const pageActions = (Array.isArray(request.pageActions) ? request.pageActions : []).filter(
+			(action: any) => action && typeof action === "object" && String(action.key || action.label || action.detail || "").trim(),
+		) as PageAction[];
+		const turn: UiTurn = {
+			id: voiceTurnId || crypto.randomUUID(),
+			userPrompt,
+			reply,
+			activities: [],
+			pageActions,
+			pending: false,
+			error: false,
+			createdAt,
+		};
+		const existingIndex = (session.turns || []).findIndex((candidate) => candidate?.id === turn.id);
+		if (existingIndex >= 0) {
+			session.turns = (session.turns || []).map((candidate, index) => (index === existingIndex ? { ...candidate, ...turn } : candidate));
+		} else {
+			session.turns = [...(session.turns || []), turn];
+		}
+		session.messages = createStoredConversationMessages(session.turns);
+		if (!session.name && userPrompt) {
+			session.name = buildSessionTitleFromPrompt(userPrompt);
+		}
+		await replaceCurrentSession(session);
+		await publishState({
+			currentSession: buildSessionState(session),
+			turns: session.turns,
+			messages: buildConversationMessages(session.messages),
+			pageActions: session.pageActions || [],
+			status: "Voice turn saved",
+			activeRequestId: null,
+		});
+		return {
+			currentSession: buildSessionState(session),
+			turn,
+		};
+	}
+
+	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = []) {
+		const model = await getConfiguredModel(settings);
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: [
+					ONHAND_SYSTEM_PROMPT,
+					"Internal structured tool mode: return only the requested JSON object. No markdown, no prose outside JSON.",
+				].join("\n\n"),
+				model,
+				tools: [],
+				messages: [],
+				thinkingLevel: "off",
+			},
+			getApiKey: (provider) => resolveApiKey(provider),
+			streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
+				streamOnhandFast(streamModel, streamContext, {
+					...streamOptions,
+					onhandReasoningProfile: {
+						mode: "balanced",
+						setting: "auto",
+						reason: "Internal realtime tutor structured tool.",
+						reasoningEffort: "none",
+						textVerbosity: "low",
+						maxTokens,
+						promptPolicy: "Return compact JSON only.",
+					},
+				}),
+			toolExecution: "parallel",
+		});
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		let timedOut = false;
+		const timeout = new Promise<void>((resolve) => {
+			timer = setTimeout(() => {
+				timedOut = true;
+				agent.abort();
+				resolve();
+			}, timeoutMs);
+		});
+		await Promise.race([agent.prompt(prompt, images), timeout]);
+		if (timer) clearTimeout(timer);
+		if (timedOut) throw new Error("Internal realtime tutor planner timed out.");
+		const failure = extractAssistantFailure(agent.state.messages);
+		if (failure) throw failure;
+		return extractAssistantText(agent.state.messages);
+	}
+
+	async function runRealtimePedagogicalPlanner(request: any) {
+		const store = await loadStore();
+		const session = store.sessions[store.currentSessionId] as RuntimeSession;
+		const userQuestion = compactInternalText(request?.userQuestion || request?.user_question || request?.prompt, 600);
+		if (!userQuestion) throw new Error("userQuestion is required.");
+		const targetWindowId =
+			typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
+		await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
+		let browserContextDetails = await renderBrowserContextDetails(host, {
+			targetWindowId,
+			includeReadableContent: true,
+			readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
+			includeVisualRegionImage: promptAsksAboutVisualRegion(userQuestion),
+		});
+		if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userQuestion, browserContextDetails)) {
+			browserContextDetails = await renderBrowserContextDetails(host, {
+				targetWindowId,
+				includeReadableContent: true,
+				readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
+				includeVisualRegionImage: true,
+			});
+		}
+		const browserContext = browserContextDetails.text;
+		const anchorCandidates = buildPlannerAnchorCandidates({
+			userQuestion,
+			selection: browserContextDetails.selection,
+			visible: browserContextDetails.visible,
+			extracted: browserContextDetails.extracted,
+			browserContext,
+		});
+		const recentConversation = buildRecentConversationContext(session);
+		const learnerState = setLearnerStateMode(session.learnerState, "learning");
+		let raw = "";
+		try {
+			raw = await runInternalTutorJsonPrompt(
+				buildRealtimePlannerPrompt({
+					userQuestion,
+					browserContext,
+					anchorCandidates,
+					recentConversation,
+					learnerState,
+				}),
+				store.settings,
+				850,
+				15000,
+				buildVisualRegionPromptImages(browserContextDetails.visualRegion),
+			);
+		} catch (error) {
+			host.log?.("internal realtime planner failed; using fallback", error);
+			raw = "";
+		}
+		return {
+			move: normalizePlannerMove(raw, { userQuestion, browserContext, anchorCandidates }),
+			raw,
+			model: store.settings.aiModel,
+			provider: store.settings.aiProvider,
+		};
+	}
+
+	async function runRealtimePedagogicalEvaluator(request: any) {
+		const store = await loadStore();
+		const session = store.sessions[store.currentSessionId] as RuntimeSession;
+		const userResponse = compactInternalText(request?.userResponse || request?.user_response || request?.response, 800);
+		if (!userResponse) throw new Error("userResponse is required.");
+		const previousMove = request?.previousMove || request?.previous_move || {};
+		const targetWindowId =
+			typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
+		await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
+		let browserContextDetails = await renderBrowserContextDetails(host, {
+			targetWindowId,
+			includeVisualRegionImage: promptAsksAboutVisualRegion(userResponse),
+		});
+		if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userResponse, browserContextDetails)) {
+			browserContextDetails = await renderBrowserContextDetails(host, { targetWindowId, includeVisualRegionImage: true });
+		}
+		const browserContext = browserContextDetails.text;
+		const recentConversation = buildRecentConversationContext(session);
+		const learnerState = setLearnerStateMode(session.learnerState, "learning");
+		let raw = "";
+		try {
+			raw = await runInternalTutorJsonPrompt(
+				buildRealtimeEvaluatorPrompt({
+					userResponse,
+					previousMove,
+					browserContext,
+					recentConversation,
+					learnerState,
+				}),
+				store.settings,
+				850,
+				15000,
+				buildVisualRegionPromptImages(browserContextDetails.visualRegion),
+			);
+		} catch (error) {
+			host.log?.("internal realtime evaluator failed; using fallback", error);
+			raw = "";
+		}
+		return {
+			evaluation: normalizeEvaluatorMove(raw, { userResponse, previousMove }),
+			raw,
+			model: store.settings.aiModel,
+			provider: store.settings.aiProvider,
+		};
 	}
 
 	function updateAssistantDraft(requestId: string, text: string, extra: Record<string, unknown> = {}) {
@@ -4395,8 +5116,57 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			};
 		},
 
+		async recordRealtimeVoiceTurn(request: any) {
+			return await recordRealtimeVoiceTurn(request);
+		},
+
+		async planRealtimePedagogicalMove(request: any) {
+			return await runRealtimePedagogicalPlanner(request);
+		},
+
+		async evaluateRealtimePedagogicalResponse(request: any) {
+			return await runRealtimePedagogicalEvaluator(request);
+		},
+
 		async getSettings() {
 			return await getPublicSettings();
+		},
+
+		async getOpenAIRealtimeCredential() {
+			const store = await loadStore();
+			const settings = store.settings as RuntimeSettings;
+			if (settings.aiApiKey) {
+				return {
+					apiKey: settings.aiApiKey,
+					source: "openai-api-key",
+				};
+			}
+			const providerId = settings.authMode === "oauth" ? settings.aiProvider : OPENAI_CODEX_PROVIDER;
+			const credentials = settings.oauthCredentials?.[providerId];
+			if (!credentials || !isBrowserOAuthProvider(providerId)) {
+				throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
+			}
+			const result = await getBrowserOAuthApiKey(providerId, credentials, {
+				onProgress: (event) => host.notifyAuthProgress?.(event),
+			});
+			if (JSON.stringify(result.credentials) !== JSON.stringify(credentials)) {
+				settings.oauthCredentials = {
+					...(settings.oauthCredentials || {}),
+					[providerId]: result.credentials,
+				};
+				store.settings = settings;
+				await saveStore(store);
+				await publishState({
+					preferences: {
+						runtime: "browser-extension",
+						...buildPublicSettings(settings),
+					},
+				});
+			}
+			return {
+				apiKey: result.apiKey,
+				source: providerId,
+			};
 		},
 
 		async updateSettings(partial: Partial<RuntimeSettings>) {

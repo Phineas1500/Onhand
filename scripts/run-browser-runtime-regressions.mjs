@@ -130,7 +130,16 @@ function createReplayHost(options = {}) {
 				return {
 					tab,
 					visible: {
-						text: "Replay smoke page with Alpha smoke content available for highlighting.",
+						text: options.visibleText || "Replay smoke page with Alpha smoke content available for highlighting.",
+					},
+				};
+			}
+			if (name === "extract_content") {
+				return {
+					tab,
+					content: {
+						markdown: options.extractedMarkdown || "Replay smoke page with Alpha smoke content available for highlighting.",
+						text: options.extractedText || options.extractedMarkdown || "Replay smoke page with Alpha smoke content available for highlighting.",
 					},
 				};
 			}
@@ -160,6 +169,17 @@ function createReplayHost(options = {}) {
 			}
 			if (name === "capture_screenshot") {
 				return { tab, method: "debugger", dataUrl: "data:image/png;base64,UkVQTEFZ" };
+			}
+			if (name === "get_visible_region_image") {
+				return {
+					tab,
+					method: "debugger",
+					dataUrl: "data:image/png;base64,VklTVUFM",
+					mimeType: "image/png",
+					label: String(args.label || "visible region"),
+					region: { x: 0, y: 0, width: 640, height: 360, coordinateSystem: "viewport-css-pixels" },
+					viewport: { width: 1280, height: 720, devicePixelRatio: 2, scrollX: 0, scrollY: 0 },
+				};
 			}
 			return { tab, ok: true };
 		},
@@ -193,12 +213,23 @@ async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
 
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { buildHighlightRetryCandidates, buildReplayAnnotationsFromPageActions, formatToolResultForModel, formatVisibleTextForModel, getSelectionText, summarizeRestoredArtifact } = __browserRuntimeTest || {};
+	const {
+		buildHighlightRetryCandidates,
+		buildPlannerAnchorCandidates,
+		buildReplayAnnotationsFromPageActions,
+		formatToolResultForModel,
+		formatVisibleTextForModel,
+		getSelectionText,
+		normalizePlannerMove,
+		summarizeRestoredArtifact,
+	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
+	assert.equal(typeof buildPlannerAnchorCandidates, "function", "browser runtime planner anchor export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof formatVisibleTextForModel, "function", "browser runtime visible formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
+	assert.equal(typeof normalizePlannerMove, "function", "browser runtime planner normalizer export is missing");
 	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
 
 	const emptyCases = [
@@ -283,6 +314,34 @@ async function assertSelectionFormatting() {
 		"How to create and nest components",
 		"How to add markup and styles",
 	]);
+	const scrolledPagePlannerCandidates = buildPlannerAnchorCandidates({
+		userQuestion: "What does this page say about Alpha smoke content?",
+		visible: {
+			text: "Lower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
+		},
+		extracted: {
+			markdown:
+				"Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore on this local page.\n\nLower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
+		},
+	});
+	assert.match(scrolledPagePlannerCandidates[0]?.text || "", /^Alpha smoke content confirms readable extraction/);
+	const repairedPlannerMove = normalizePlannerMove(
+		JSON.stringify({
+			anchor: {
+				text_excerpt: "Delta lower content gives scroll and scroll-to-annotation tests enough page height.",
+				kind: "question_anchor",
+				note: "Look here first",
+			},
+			voice_script: "What does this lower section tell you?",
+		}),
+		{
+			userQuestion: "What does this page say about Alpha smoke content?",
+			browserContext: "Visible text snapshot:\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
+			anchorCandidates: scrolledPagePlannerCandidates,
+		},
+	);
+	assert.match(repairedPlannerMove.anchor.text_excerpt, /^Alpha smoke content confirms readable extraction/);
+	assert.doesNotMatch(repairedPlannerMove.anchor.text_excerpt, /^Delta lower content/);
 
 	const restored = summarizeRestoredArtifact({
 		tab: { id: 42, title: "Restored tab", url: "https://example.test/page" },
@@ -436,6 +495,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
+	assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
+	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
 	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
@@ -472,9 +533,11 @@ async function assertConstitutionPromptContract() {
 	assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
 	const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);
 	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
+	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
+	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
@@ -3004,12 +3067,99 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 	const completedState = await waitForRuntimeCompletion(runtime);
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete target-window regression");
 	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "get_visible_region_image" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "highlight_text" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 3), false);
+	assert.equal(host.calls.some((call) => call.name === "get_visible_region_image" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer" && call.args.windowId === 3), false);
+}
+
+async function assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		visibleText: "Lower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
+		extractedMarkdown:
+			"Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore on this local page.\n\nLower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const result = await runtime.planRealtimePedagogicalMove({
+		userQuestion: "What does this page say about Alpha smoke content?",
+		targetWindowId: 3,
+	});
+	assert.match(result.move.anchor.text_excerpt, /^Alpha smoke content confirms readable extraction/);
+	assert.doesNotMatch(result.move.anchor.text_excerpt, /^Delta lower content/);
+	assert.equal(host.calls.some((call) => call.name === "extract_content" && call.args.tabId === 7), true);
+}
+
+async function assertRealtimePlannerOpensDirectPdfBeforePlanning() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 17,
+				windowId: 3,
+				active: true,
+				title: "paper.pdf",
+				url: "https://example.test/paper.pdf",
+			}),
+		],
+		visibleText: "[p. 2] Recurrent neural networks preserve sequence state across tokens.",
+		extractedMarkdown: "Recurrent neural networks preserve sequence state across tokens.",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const result = await runtime.planRealtimePedagogicalMove({
+		userQuestion: "What does this PDF say about recurrent neural networks?",
+		targetWindowId: 3,
+	});
+	const openIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const visibleIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
+	assert.ok(openIndex >= 0, "expected realtime planner to open direct PDFs in the Onhand viewer first");
+	assert.ok(visibleIndex >= 0, "expected realtime planner to read visible PDF text after handoff");
+	assert.ok(openIndex < visibleIndex, "expected PDF handoff before context reads");
+	assert.match(result.move.anchor.text_excerpt, /Recurrent neural networks preserve sequence state/);
+}
+
+async function assertRealtimePlannerCapturesVisualRegionForVisualQuestions() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		visibleText: "Validation chart",
+		extractedMarkdown: "Validation chart",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.planRealtimePedagogicalMove({
+		userQuestion: "What does this chart show about accuracy?",
+		targetWindowId: 3,
+	});
+	const visualIndex = host.calls.findIndex((call) => call.name === "get_visible_region_image");
+	const visibleIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
+	assert.ok(visualIndex >= 0, "expected realtime planner to capture a visible-region image for visual questions");
+	assert.ok(visibleIndex >= 0, "expected realtime planner to still read text context");
+	assert.equal(host.calls[visualIndex].args.tabId, 7);
+	assert.equal(host.calls[visualIndex].args.label, "current visible region");
 }
 
 async function assertExplicitPdfHandoffRunsBeforeAgentContext() {
@@ -3151,7 +3301,9 @@ async function assertFixtureResponses() {
 	try {
 		const pageResponse = await fetch(fixture.url, { headers: { "Cache-Control": "no-store" } });
 		assert.equal(pageResponse.status, 200);
-		assert.match(await pageResponse.text(), /Alpha smoke content/);
+		const pageHtml = await pageResponse.text();
+		assert.match(pageHtml, /Alpha smoke content/);
+		assert.match(pageHtml, /validationChart/);
 
 		const pdfResponse = await fetch(new URL("/pdf.html", fixture.url), { headers: { "Cache-Control": "no-store" } });
 		assert.equal(pdfResponse.status, 200);
@@ -3257,6 +3409,9 @@ async function main() {
 	await assertPdfReplayActionActivationRepairsWithPdfAnchor();
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
+	await assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled();
+	await assertRealtimePlannerOpensDirectPdfBeforePlanning();
+	await assertRealtimePlannerCapturesVisualRegionForVisualQuestions();
 	await assertExplicitPdfHandoffRunsBeforeAgentContext();
 	await assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext();
 	await assertFixtureResponses();
