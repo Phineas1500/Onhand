@@ -48,7 +48,7 @@
     <div class="hero-grid">
       <div>
         <div class="hero-eyebrow">
-          <span class="tag">v0.2.1 · early access</span>
+          <span class="tag"><span data-onhand-version-label></span> · early access</span>
           <span class="dot"></span>
           <span>Apache 2.0</span>
           <span class="dot"></span>
@@ -87,7 +87,7 @@
 
       <div class="hero-mark" aria-hidden="true">
         <span class="corner tl">Onhand</span>
-        <span class="corner tr">v0.2.1</span>
+        <span class="corner tr" data-onhand-version-label></span>
         <span class="glyph">☞</span>
         <span class="corner bl">Apache 2.0</span>
         <span class="corner br">☞ note this</span>
@@ -214,18 +214,18 @@
     <div class="install-wrap">
       <div>
         <div class="release-card">
-          <div class="release-kicker">Current release · v0.2.1</div>
+          <div class="release-kicker">Current release · <span data-onhand-version-label></span></div>
           <h3>Download Onhand for Chromium.</h3>
           <p>
             The ZIP contains the built extension with <code>manifest.json</code> at
             the package root. Chrome still asks you to unzip it before loading.
           </p>
           <div class="release-actions">
-            <a class="release-download" href="https://github.com/Phineas1500/Onhand/releases/download/v0.2.1/onhand-v0.2.1-chrome.zip">
+            <a class="release-download" href="#" data-onhand-release-download>
               <span class="mc">☞</span>
               <span>Download ZIP</span>
             </a>
-            <a class="release-notes" href="https://github.com/Phineas1500/Onhand/releases/tag/v0.2.1" target="_blank" rel="noopener">
+            <a class="release-notes" href="#" target="_blank" rel="noopener" data-onhand-release-notes>
               Release notes ↗
             </a>
           </div>
@@ -246,7 +246,7 @@
 
 <span class="c"># Verify the build</span>
 <span class="prompt">$</span> npm run smoke:browser-runtime
-<span class="ok">✓ </span>browser runtime ready · <span class="n">v0.2.1</span>
+<span class="ok">✓ </span>browser runtime ready · <span class="n" data-onhand-version-label></span>
 
 <span class="c"># For a real provider call</span>
 <span class="prompt">$</span> OPENAI_API_KEY=<span class="s">…</span> npm run smoke:browser-runtime -- --real-openai
@@ -256,7 +256,7 @@
       </div>
 
       <ol class="install-steps">
-        <li>Download <strong>onhand-v0.2.1-chrome.zip</strong> from the GitHub release.</li>
+        <li>Download <strong data-onhand-release-file></strong> from the GitHub release.</li>
         <li>Unzip it. The folder you load should contain <code>manifest.json</code> at the top level.</li>
         <li>Open your Chromium browser's <strong>Extensions</strong> page and turn on <em>developer mode</em>.</li>
         <li>Click <strong>Load unpacked</strong> and choose the unzipped Onhand folder.</li>

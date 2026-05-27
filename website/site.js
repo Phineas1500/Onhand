@@ -1,5 +1,32 @@
 // site.js — small bits of vanilla JS for the Onhand landing page.
 
+const ONHAND_RELEASE = {
+  version: '0.2.1',
+  repo: 'https://github.com/Phineas1500/Onhand',
+};
+
+// 0) Release metadata: keep visible version labels and release links in sync.
+(function(){
+  const version = ONHAND_RELEASE.version.replace(/^v/i, '');
+  const versionLabel = `v${version}`;
+  const fileName = `onhand-${versionLabel}-chrome.zip`;
+  const releaseUrl = `${ONHAND_RELEASE.repo}/releases/tag/${versionLabel}`;
+  const downloadUrl = `${ONHAND_RELEASE.repo}/releases/download/${versionLabel}/${fileName}`;
+
+  document.querySelectorAll('[data-onhand-version-label]').forEach((node) => {
+    node.textContent = versionLabel;
+  });
+  document.querySelectorAll('[data-onhand-release-file]').forEach((node) => {
+    node.textContent = fileName;
+  });
+  document.querySelectorAll('[data-onhand-release-download]').forEach((node) => {
+    node.href = downloadUrl;
+  });
+  document.querySelectorAll('[data-onhand-release-notes]').forEach((node) => {
+    node.href = releaseUrl;
+  });
+})();
+
 // 1) Theme toggle: cycles light → dark → auto. Persisted in localStorage.
 (function(){
   const root = document.documentElement;
