@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Onhand — a reading companion that points</title>
+<meta name="description" content="Onhand is a contextual AI for learning and research. It highlights the line, leaves a note in the margin, and explains it in the page you're already reading." />
+<meta property="og:title" content="Onhand — a reading companion that points" />
+<meta property="og:description" content="A contextual AI for learning and research. Highlights, margin notes, and answers grounded in the page you're already reading." />
+<meta property="og:image" content="./screenshots/promo/attention-screenshot.png" />
+<meta property="og:type" content="website" />
+<link rel="icon" type="image/png" href="./icons/onhand-128.png" />
+<link rel="apple-touch-icon" href="./icons/onhand-128.png" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="./">
+      <img src="./icons/onhand-128.png" alt="" />
+      <span>Onhand</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="#features">Features</a>
+      <a class="nav-link" href="#how">How it works</a>
+      <a class="nav-link" href="#install">Install</a>
+      <a class="nav-link" href="#tools">Tools</a>
+      <a class="nav-link" href="#docs">Docs</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <button class="nav-ghost theme-toggle" data-theme-toggle data-mode="auto" aria-label="Toggle theme" title="Toggle theme">
+      <span class="mc">◐</span>
+    </button>
+    <a class="nav-ghost" href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">
+      <span>GitHub</span>
+      <span style="font-size:13px;opacity:0.7">↗</span>
+    </a>
+    <a class="nav-cta" href="#install">
+      <span class="mc" style="font-size:14px">☞</span>
+      <span>Add to Chrome</span>
+    </a>
+  </div>
+</nav>
+
+<section class="hero" id="top">
+  <div class="container">
+    <div class="hero-grid">
+      <div>
+        <div class="hero-eyebrow">
+          <span class="tag">v0.2.0 · early access</span>
+          <span class="dot"></span>
+          <span>Apache 2.0</span>
+          <span class="dot"></span>
+          <span>For Chromium</span>
+          <span class="dot"></span>
+          <span>OpenAI Codex · gpt-5.5 · gpt-realtime-2</span>
+        </div>
+
+        <h1 class="hero-h1">
+          A reading companion that <em>points.</em><span class="mc" style="color:var(--rp-gold);font-size:0.95em">☞</span>
+        </h1>
+
+        <p class="hero-lede">
+          Onhand is a contextual AI for learning and research. Ask about the page
+          you already have open — it highlights the line, leaves a note in the margin,
+          and explains it <em>where you are</em>. No second window, no copy-paste.
+        </p>
+
+        <div class="hero-ctas">
+          <a class="btn-primary" href="#install">
+            <span class="mc" style="font-size:20px">☞</span>
+            <span>Add to Chrome</span>
+          </a>
+          <a class="btn-secondary" href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">
+            <span>Read the source</span>
+            <span style="opacity:0.6">↗</span>
+          </a>
+        </div>
+
+        <div class="hero-install" role="group" aria-label="Install command">
+          <span class="prompt">$</span>
+          <code id="hero-install-cmd">git clone <span class="ar">https://github.com/Phineas1500/Onhand</span> &amp;&amp; npm install &amp;&amp; npm run build:extension</code>
+          <button class="copy" data-copy="#hero-install-cmd">copy</button>
+        </div>
+      </div>
+
+      <div class="hero-mark" aria-hidden="true">
+        <span class="corner tl">Onhand</span>
+        <span class="corner tr">v0.2.0</span>
+        <span class="glyph">☞</span>
+        <span class="corner bl">Apache 2.0</span>
+        <span class="corner br">☞ note this</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="shot" aria-label="Onhand in action">
+  <div class="container">
+    <div class="shot-frame">
+      <img src="./screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention. The page on the left shows a highlighted line and a margin note; the sidebar on the right shows the question, the answer with inline citations, and the equation rendered." />
+    </div>
+    <div class="shot-cap">
+      <span class="mc">☞</span>
+      <span>Explaining scaled dot-product attention — highlight, margin note, sidebar answer.</span>
+    </div>
+  </div>
+</section>
+
+<section class="meta-quote">
+  <div class="meta-quote-inner">
+    <span class="big-mc" aria-hidden="true">☞</span>
+    <blockquote>
+      The <strong>manicule</strong> — a small pointing hand in the margin — has meant
+      <em> "look here, this part matters" </em> in books since the twelfth century.
+      Onhand brings the gesture back, with the model holding the pen.
+    </blockquote>
+    <cite>The pointing hand · a brief defense of <em>marginalia</em></cite>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>What it does</span></div>
+    <h2 class="section-title">A small set of careful gestures.</h2>
+    <p class="section-lede">
+      Onhand stays out of the way until you ask. When you do, it does four things —
+      the four a good study partner would.
+    </p>
+
+    <div class="features-grid">
+      <div class="feat">
+        <div class="ico">☞</div>
+        <h3>Points to the answer</h3>
+        <p>Highlights the exact phrase or paragraph that answers your question, in gold, and scrolls the page to bring it into view. Block-level highlights for whole paragraphs, inline highlights for phrases.</p>
+        <div class="meta">background.js · highlight_text · scroll_to_annotation</div>
+      </div>
+
+      <div class="feat">
+        <div class="ico">✎</div>
+        <h3>Leaves a note in the margin</h3>
+        <p>Drops a margin note next to the highlight — a sentence or two, written in the article's own voice, so you can keep reading without losing context.</p>
+        <div class="meta">show_note · pine-barred editorial callout</div>
+      </div>
+
+      <div class="feat">
+        <div class="ico">⎘</div>
+        <h3>Replay artifacts</h3>
+        <p>Every session is saved with its highlights, notes, transcript, and a snapshot of the page. Come back tomorrow to the exact state you left.</p>
+        <div class="meta">chrome.storage.local · sessions + screenshots</div>
+      </div>
+
+      <div class="feat">
+        <div class="ico">◔</div>
+        <h3>Voice tutor</h3>
+        <p>Press <span class="kbd">Voice</span> in the side panel and talk through a paper. The realtime model can see your highlights and the visible text.</p>
+        <div class="meta"><span class="badge">★ </span>gpt-realtime-2 · WebRTC · experimental</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>How it works</span></div>
+    <h2 class="section-title">Three steps. No second window.</h2>
+
+    <div class="steps">
+      <div class="step">
+        <div class="num">01 · OPEN</div>
+        <h4>The page you're already reading.</h4>
+        <p>Wikipedia, an arXiv paper, a Google Doc, a Substack — anything Chromium can render. Onhand attaches to the active tab.</p>
+        <div class="demo">
+          <div class="label">tab — active</div>
+          <span class="url">arxiv.org/abs/1706.03762</span><br/>
+          <span class="muted">Attention is all you need · pdf</span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="num">02 · ASK</div>
+        <h4>A question in the side panel.</h4>
+        <p>Plain language. Onhand reads the page, the selection, the visible headings — whatever it needs to ground the answer.</p>
+        <div class="demo">
+          <div class="label">side panel</div>
+          <span class="it">Explain the scaled dot-product attention<br/>and why we divide by √d_k.</span>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="num">03 · POINT</div>
+        <h4><span class="mc" style="font-size:20px">☞</span>Onhand points at the answer.</h4>
+        <p>Highlights the line, drops a margin note, answers in the side panel with citations back to the page. Then saves it all.</p>
+        <div class="demo">
+          <div class="label">on the page</div>
+          <span class="hl">We call our particular attention</span><span class="muted"> "Scaled Dot-Product Attention"…</span><br/>
+          <span class="pine">● ONHAND</span> <span class="muted">margin note added</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>Install</span></div>
+    <h2 class="section-title">Until the store listing ships — load it unpacked.</h2>
+    <p class="section-lede">
+      The extension is a normal unpacked Chromium extension. Build it once and load
+      it from <code style="font-family:var(--font-mono);font-size:14px;background:var(--bg-deep);padding:1px 5px;border-radius:2px;color:var(--rp-love)">packages/browser-extension</code>.
+    </p>
+
+    <div class="install-wrap">
+      <div class="code-block">
+        <div class="head">
+          <span class="mc" style="font-size:11px">☞</span>
+          <span>terminal · build the extension</span>
+        </div>
+<pre><span class="c"># Clone and build</span>
+<span class="prompt">$</span> git clone https://github.com/<span class="s">Phineas1500/Onhand</span>
+<span class="prompt">$</span> cd Onhand
+<span class="prompt">$</span> npm install
+<span class="prompt">$</span> npm run build:extension
+
+<span class="c"># Verify the build</span>
+<span class="prompt">$</span> npm run smoke:browser-runtime
+<span class="ok">✓ </span>browser runtime ready · <span class="n">v0.2.0</span>
+
+<span class="c"># For a real provider call</span>
+<span class="prompt">$</span> OPENAI_API_KEY=<span class="s">…</span> npm run smoke:browser-runtime -- --real-openai
+</pre>
+      </div>
+
+      <ol class="install-steps">
+        <li>Open your Chromium browser's <strong>Extensions</strong> page and turn on <em>developer mode</em>.</li>
+        <li>Click <strong>Load unpacked</strong> and choose the <code>packages/browser-extension/</code> folder from your clone.</li>
+        <li>Open the Onhand <strong>options page</strong>. Either sign in with <em>OpenAI Codex</em> (recommended), or paste an <em>OpenAI API key</em>.</li>
+        <li>Pin the extension, open any page, and click the icon to launch the <strong>side panel</strong>. Press <code>Cmd/Ctrl+K</code> in the panel to focus the composer.</li>
+        <li>That's it <span class="mc" style="color:var(--rp-gold);font-size:15px">☞</span>. Highlight a passage, type a question, and let Onhand <em>point</em>.</li>
+      </ol>
+    </div>
+
+    <div class="license-note">
+      <span class="mc">☞</span>
+      <p>
+        <strong>Apache 2.0.</strong> Onhand is open source.
+        Sessions stay on your machine in <code>chrome.storage.local</code>;
+        provider keys never leave your device. Helium and other Chromium-based browsers
+        that support <code>chrome.debugger</code> work too.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="tools">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>The runtime</span></div>
+    <h2 class="section-title">Twenty-five small tools that act on the page.</h2>
+    <p class="section-lede">
+      Each tool is a single, auditable operation against the active tab. Onhand
+      composes them; you read the script in the side panel after every turn.
+    </p>
+
+    <div class="tools-wrap">
+      <div class="tool-col">
+        <h5>☞ Read the page</h5>
+        <ul>
+          <li><span class="verb">browser_</span>extract_content</li>
+          <li><span class="verb">browser_</span>get_visible_text</li>
+          <li><span class="verb">browser_</span>get_selection</li>
+          <li><span class="verb">browser_</span>get_viewport_headings</li>
+          <li><span class="verb">browser_</span>get_scroll_state</li>
+          <li><span class="verb">browser_</span>get_dom</li>
+        </ul>
+      </div>
+
+      <div class="tool-col">
+        <h5>✎ Annotate &amp; navigate</h5>
+        <ul>
+          <li><span class="verb">browser_</span>highlight_text</li>
+          <li><span class="verb">browser_</span>show_note</li>
+          <li><span class="verb">browser_</span>scroll_to_annotation</li>
+          <li><span class="verb">browser_</span>clear_annotations</li>
+          <li><span class="verb">browser_</span>list_tabs</li>
+          <li><span class="verb">browser_</span>activate_tab</li>
+          <li><span class="verb">browser_</span>navigate</li>
+        </ul>
+      </div>
+
+      <div class="tool-col">
+        <h5>◔ Act &amp; interact</h5>
+        <ul>
+          <li><span class="verb">browser_</span>click</li>
+          <li><span class="verb">browser_</span>type</li>
+          <li><span class="verb">browser_</span>click_text</li>
+          <li><span class="verb">browser_</span>type_by_label</li>
+          <li><span class="verb">browser_</span>find_elements</li>
+          <li><span class="verb">browser_</span>wait_for_selector</li>
+          <li><span class="verb">browser_</span>pick_elements</li>
+        </ul>
+      </div>
+
+      <div class="tool-col">
+        <h5>⎘ Debug &amp; capture</h5>
+        <ul>
+          <li><span class="verb">browser_</span>capture_screenshot</li>
+          <li><span class="verb">browser_</span>capture_state</li>
+          <li><span class="verb">browser_</span>list_artifacts</li>
+          <li><span class="verb">browser_</span>restore_state</li>
+          <li><span class="verb">browser_</span>collect_console</li>
+          <li><span class="verb">browser_</span>collect_network</li>
+          <li><span class="verb">browser_</span>run_js</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>Read further</span></div>
+    <h2 class="section-title">The thinking behind it.</h2>
+
+    <div class="docs-grid">
+      <a class="doc" href="https://github.com/Phineas1500/Onhand/blob/main/docs/ONHAND_CONSTITUTION.md" target="_blank" rel="noopener">
+        <div class="eyebrow">★ Foundations</div>
+        <h4>Constitution</h4>
+        <p>What Onhand is, what it isn't, and the principles that decide every UX call. Read this first.</p>
+        <span class="arrow">Open doc ↗</span>
+      </a>
+      <a class="doc" href="https://github.com/Phineas1500/Onhand/blob/main/docs/ONHAND_PLAN.md" target="_blank" rel="noopener">
+        <div class="eyebrow">▸ Roadmap</div>
+        <h4>Product &amp; implementation plan</h4>
+        <p>What's shipped, what's next, and the sequencing for PDFs, search, and richer session restore.</p>
+        <span class="arrow">Open doc ↗</span>
+      </a>
+      <a class="doc" href="https://github.com/Phineas1500/Onhand/blob/main/docs/VOICE_ARCHITECTURE.md" target="_blank" rel="noopener">
+        <div class="eyebrow">◔ Experimental</div>
+        <h4>Voice architecture</h4>
+        <p>How the gpt-realtime-2 WebRTC voice tutor works against the same page-grounded toolset.</p>
+        <span class="arrow">Open doc ↗</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <span class="mc">☞</span>
+      <span>Onhand</span>
+    </div>
+    <div class="foot-meta">
+      <a href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">github.com/Phineas1500/Onhand</a>
+      ·
+      <a href="https://github.com/Phineas1500/Onhand/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0</a>
+      ·
+      <a href="./privacy.html">Privacy</a>
+      ·
+      <a href="./support.html">Support</a>
+      ·
+      themed on <em>Rosé Pine Dawn</em>
+      ·
+      © 2026
+    </div>
+  </div>
+</footer>
+
+<script src="./site.js"></script>
+</body>
+</html>

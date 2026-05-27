@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Privacy Policy — Onhand</title>
+<meta name="description" content="Privacy policy for Onhand, a contextual browser extension for page-grounded learning and research." />
+<meta property="og:title" content="Privacy Policy — Onhand" />
+<meta property="og:description" content="How Onhand handles page content, prompts, voice input, API keys, and local session data." />
+<meta property="og:type" content="website" />
+<link rel="icon" type="image/png" href="./icons/onhand-128.png" />
+<link rel="apple-touch-icon" href="./icons/onhand-128.png" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="./">
+      <img src="./icons/onhand-128.png" alt="" />
+      <span>Onhand</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="./#features">Features</a>
+      <a class="nav-link" href="./#install">Install</a>
+      <a class="nav-link" href="./support.html">Support</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <button class="nav-ghost theme-toggle" data-theme-toggle data-mode="auto" aria-label="Toggle theme" title="Toggle theme">
+      <span class="mc">◐</span>
+    </button>
+    <a class="nav-ghost" href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">
+      <span>GitHub</span>
+      <span style="font-size:13px;opacity:0.7">↗</span>
+    </a>
+  </div>
+</nav>
+
+<main class="legal-page">
+  <section class="legal-hero">
+    <div class="container">
+      <div class="section-eyebrow"><span class="mc">☞</span><span>Privacy</span></div>
+      <h1>Privacy Policy</h1>
+      <p>
+        Onhand is a browser extension that helps you ask questions about the page
+        you are reading. It is designed to keep sessions on your device and to send
+        content to an AI provider only when you ask Onhand to help.
+      </p>
+      <p class="legal-updated">Last updated: May 27, 2026</p>
+    </div>
+  </section>
+
+  <section class="legal-body">
+    <div class="container legal-grid">
+      <aside class="legal-toc" aria-label="Privacy sections">
+        <a href="#summary">Summary</a>
+        <a href="#data">Data Onhand Handles</a>
+        <a href="#storage">Local Storage</a>
+        <a href="#providers">AI Providers</a>
+        <a href="#permissions">Permissions</a>
+        <a href="#choices">Your Choices</a>
+        <a href="#contact">Contact</a>
+      </aside>
+
+      <article class="legal-card">
+        <section id="summary" class="legal-section">
+          <h2>Summary</h2>
+          <p>
+            Onhand does not run an analytics service, does not sell personal
+            information, and does not operate a separate hosted account database.
+            The extension stores its settings and saved study sessions in
+            <code>chrome.storage.local</code> on your device.
+          </p>
+          <p>
+            When you ask Onhand a question, the extension may send the relevant
+            page content, your prompt, selected text, screenshots, voice input,
+            or generated transcript to the AI provider you configured so the model
+            can answer in context.
+          </p>
+        </section>
+
+        <section id="data" class="legal-section">
+          <h2>Data Onhand Handles</h2>
+          <ul>
+            <li>Questions and instructions you type into the Onhand side panel.</li>
+            <li>Voice input and transcripts when you start the voice tutor.</li>
+            <li>Visible page text, selected passages, headings, URLs, and page titles.</li>
+            <li>Optional screenshots or visible-region captures used for visual grounding.</li>
+            <li>Highlights, margin notes, saved sessions, and replay artifacts.</li>
+            <li>OpenAI Codex sign-in state or an OpenAI API key if you choose to save one.</li>
+          </ul>
+        </section>
+
+        <section id="storage" class="legal-section">
+          <h2>Local Storage</h2>
+          <p>
+            Onhand saves extension settings, provider configuration, sessions,
+            highlights, notes, transcripts, and captured artifacts locally in
+            browser extension storage. Removing the extension or clearing its
+            extension storage removes this local data.
+          </p>
+          <p>
+            Onhand does not intentionally upload saved sessions to an Onhand server.
+            Provider credentials are stored by the extension so it can make
+            user-requested model calls.
+          </p>
+        </section>
+
+        <section id="providers" class="legal-section">
+          <h2>AI Providers</h2>
+          <p>
+            Onhand uses the provider you configure in the extension options page.
+            Current OpenAI-backed modes include OpenAI Codex sign-in, direct OpenAI
+            API key calls, and the experimental Realtime voice path.
+          </p>
+          <p>
+            Content sent to an AI provider is handled under that provider's terms
+            and privacy policy. Do not use Onhand on pages whose contents you do
+            not want sent to your configured provider.
+          </p>
+        </section>
+
+        <section id="permissions" class="legal-section">
+          <h2>Browser Permissions</h2>
+          <p>
+            Onhand requests browser permissions so it can work inside the page you
+            are reading. These permissions support the side panel, active-tab
+            reading, page annotation, PDF support, page screenshots, navigation,
+            and user-invoked browser tools.
+          </p>
+          <p>
+            The extension uses powerful browser APIs, including debugging and
+            scripting APIs, because Onhand needs to inspect and annotate the page
+            directly. The extension should be used only when you want this
+            page-grounded assistance.
+          </p>
+        </section>
+
+        <section id="choices" class="legal-section">
+          <h2>Your Choices</h2>
+          <ul>
+            <li>You choose when to open the side panel and ask Onhand a question.</li>
+            <li>You choose when to start or stop the voice tutor.</li>
+            <li>You can delete saved sessions from the extension UI or by clearing extension storage.</li>
+            <li>You can remove provider credentials from the Onhand options page.</li>
+            <li>You can uninstall the extension at any time from your browser's extensions page.</li>
+          </ul>
+        </section>
+
+        <section id="contact" class="legal-section">
+          <h2>Contact</h2>
+          <p>
+            For privacy questions or support requests, open an issue in the
+            <a href="https://github.com/Phineas1500/Onhand/issues" target="_blank" rel="noopener">Onhand GitHub repository</a>.
+          </p>
+        </section>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <span class="mc">☞</span>
+      <span>Onhand</span>
+    </div>
+    <div class="foot-meta">
+      <a href="./">Home</a>
+      ·
+      <a href="./support.html">Support</a>
+      ·
+      <a href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">GitHub</a>
+      ·
+      © 2026
+    </div>
+  </div>
+</footer>
+
+<script src="./site.js"></script>
+</body>
+</html>

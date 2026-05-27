@@ -44,6 +44,7 @@ The broader product plan lives in:
 - `docs/ONHAND_PLAN.md` - product and implementation plan
 - `packages/browser-extension/` - unpacked Chromium extension and browser-hosted Pi runtime
 - `scripts/` - browser-runtime build, smoke, fixture, preflight, and Chrome acceptance helpers
+- `website/` - static landing site, privacy policy, support page, and Chrome Web Store links
 
 ## Security model
 

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Support — Onhand</title>
+<meta name="description" content="Support, setup, and troubleshooting for the Onhand browser extension." />
+<meta property="og:title" content="Support — Onhand" />
+<meta property="og:description" content="Install, authentication, voice tutor, and troubleshooting notes for Onhand." />
+<meta property="og:type" content="website" />
+<link rel="icon" type="image/png" href="./icons/onhand-128.png" />
+<link rel="apple-touch-icon" href="./icons/onhand-128.png" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="./">
+      <img src="./icons/onhand-128.png" alt="" />
+      <span>Onhand</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="./#features">Features</a>
+      <a class="nav-link" href="./#install">Install</a>
+      <a class="nav-link" href="./privacy.html">Privacy</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <button class="nav-ghost theme-toggle" data-theme-toggle data-mode="auto" aria-label="Toggle theme" title="Toggle theme">
+      <span class="mc">◐</span>
+    </button>
+    <a class="nav-ghost" href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">
+      <span>GitHub</span>
+      <span style="font-size:13px;opacity:0.7">↗</span>
+    </a>
+  </div>
+</nav>
+
+<main class="legal-page">
+  <section class="legal-hero">
+    <div class="container">
+      <div class="section-eyebrow"><span class="mc">☞</span><span>Support</span></div>
+      <h1>Support</h1>
+      <p>
+        Onhand is early access software. This page covers the setup path,
+        common browser issues, and where to report bugs.
+      </p>
+    </div>
+  </section>
+
+  <section class="legal-body">
+    <div class="container legal-grid">
+      <aside class="legal-toc" aria-label="Support sections">
+        <a href="#install">Install</a>
+        <a href="#auth">Sign In</a>
+        <a href="#voice">Voice Tutor</a>
+        <a href="#pdfs">PDFs</a>
+        <a href="#report">Report A Bug</a>
+      </aside>
+
+      <article class="legal-card">
+        <section id="install" class="legal-section">
+          <h2>Install Onhand</h2>
+          <p>
+            Until the Chrome Web Store listing is live, install Onhand as an
+            unpacked Chromium extension from the repository.
+          </p>
+          <ol>
+            <li>Clone the repository from <a href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">GitHub</a>.</li>
+            <li>Run <code>npm install</code>, then <code>npm run build:extension</code>.</li>
+            <li>Open your browser's extensions page and enable developer mode.</li>
+            <li>Choose <strong>Load unpacked</strong> and select <code>packages/browser-extension/</code>.</li>
+            <li>Pin Onhand, open a normal web page, and click the extension icon to open the side panel.</li>
+          </ol>
+        </section>
+
+        <section id="auth" class="legal-section">
+          <h2>Sign In Or Add A Key</h2>
+          <p>
+            Open the Onhand options page and choose one provider path:
+          </p>
+          <ul>
+            <li><strong>OpenAI Codex sign-in:</strong> recommended for normal browser tutoring.</li>
+            <li><strong>OpenAI API key:</strong> useful for direct API calls and the Realtime voice tutor.</li>
+          </ul>
+          <p>
+            If Onhand says credentials are missing, open the options page,
+            sign in again or paste your key, save, then reopen the side panel.
+          </p>
+        </section>
+
+        <section id="voice" class="legal-section">
+          <h2>Voice Tutor</h2>
+          <p>
+            Press <strong>Voice</strong> in the side panel to start the experimental
+            realtime tutor. Your browser and macOS both need microphone access.
+          </p>
+          <ul>
+            <li>If Chrome never reaches listening, check the site microphone permission and macOS Privacy &amp; Security settings.</li>
+            <li>If Onhand cannot create a Realtime session, confirm an OpenAI API key is saved or run the local session endpoint with <code>OPENAI_API_KEY=... npm run serve:realtime</code>.</li>
+            <li>If voice works in one Chromium browser but not another, switch the microphone device in that browser and reload the extension.</li>
+          </ul>
+        </section>
+
+        <section id="pdfs" class="legal-section">
+          <h2>PDFs And Visual Pages</h2>
+          <p>
+            Onhand works best when it can read page text directly. For PDFs,
+            use the Onhand PDF viewer path when available. For equations,
+            charts, and diagrams, Onhand may use a visible-region capture to
+            ground the answer.
+          </p>
+        </section>
+
+        <section id="report" class="legal-section">
+          <h2>Report A Bug</h2>
+          <p>
+            Please open a GitHub issue with the browser, page type, what you
+            asked Onhand to do, and any visible error message.
+          </p>
+          <p>
+            <a class="inline-action" href="https://github.com/Phineas1500/Onhand/issues/new" target="_blank" rel="noopener">Open a GitHub issue ↗</a>
+          </p>
+        </section>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <span class="mc">☞</span>
+      <span>Onhand</span>
+    </div>
+    <div class="foot-meta">
+      <a href="./">Home</a>
+      ·
+      <a href="./privacy.html">Privacy</a>
+      ·
+      <a href="https://github.com/Phineas1500/Onhand" target="_blank" rel="noopener">GitHub</a>
+      ·
+      © 2026
+    </div>
+  </div>
+</footer>
+
+<script src="./site.js"></script>
+</body>
+</html>
