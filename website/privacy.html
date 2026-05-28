@@ -11,6 +11,14 @@
 <link rel="icon" type="image/png" href="./icons/onhand-128.png" />
 <link rel="apple-touch-icon" href="./icons/onhand-128.png" />
 <link rel="stylesheet" href="./style.css" />
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-JQ159C5BGF"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-JQ159C5BGF');
+</script>
+<script defer src="https://umami.purduehackers.com/script.js" data-website-id="520b31f1-a9de-470f-80aa-0a47bccd12e1"></script>
 </head>
 <body>
 
@@ -46,7 +54,7 @@
         you are reading. Sessions stay on your device, and content only goes to an
         AI provider when you ask Onhand to help.
       </p>
-      <p class="legal-updated">Last updated: May 27, 2026</p>
+      <p class="legal-updated">Last updated: May 28, 2026</p>
     </div>
   </section>
 
@@ -54,6 +62,7 @@
     <div class="container legal-grid">
       <aside class="legal-toc" aria-label="Privacy sections">
         <a href="#summary">Summary</a>
+        <a href="#analytics">Site analytics</a>
         <a href="#data">Data Onhand handles</a>
         <a href="#storage">Local storage</a>
         <a href="#providers">AI providers</a>
@@ -66,16 +75,32 @@
         <section id="summary" class="legal-section">
           <h2>Summary</h2>
           <p>
-            Onhand does not run an analytics service, does not sell personal
-            information, and does not operate a separate hosted account database.
-            The extension stores its settings and saved study sessions in
-            <code>chrome.storage.local</code> on your device.
+            Onhand does not sell personal information and does not operate a
+            separate hosted account database. The extension stores its settings
+            and saved study sessions in <code>chrome.storage.local</code> on
+            your device.
           </p>
           <p>
             When you ask Onhand a question, the extension may send the relevant
             page content, your prompt, selected text, screenshots, voice input,
             or generated transcript to the AI provider you configured so the model
             can answer in context.
+          </p>
+        </section>
+
+        <section id="analytics" class="legal-section">
+          <h2>Site analytics</h2>
+          <p>
+            The public Onhand website uses Google Analytics and Umami to
+            understand aggregate site traffic, such as page views, referrers,
+            browser/device information, and approximate location derived from
+            network data.
+          </p>
+          <p>
+            These website analytics tools are separate from the Onhand browser
+            extension. Onhand does not send extension prompts, page content,
+            voice input, transcripts, saved sessions, highlights, notes, or
+            provider credentials to Google Analytics or Umami.
           </p>
         </section>
 
