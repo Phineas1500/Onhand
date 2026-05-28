@@ -13,7 +13,9 @@
 	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
 	const REALTIME_SESSION_URL = "http://127.0.0.1:8787/session";
 	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
+	const REALTIME_BACKEND_PREAMBLE_DELAY_MS = 1200;
 	const REALTIME_TRANSCRIPTION_FALLBACK_MS = 1800;
+	const REALTIME_TRANSCRIPT_FINALIZE_DELAY_MS = 1000;
 	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
 	const REALTIME_LOCAL_SPEECH_RMS = 0.002;
 	const REALTIME_LOCAL_SPEECH_MIN_RMS = 0.00085;
@@ -159,6 +161,9 @@
 	let realtimeVoiceFallbackTimer = null;
 	let realtimeManualVoiceResponseTimer = null;
 	let realtimeTranscriptionFallbackTimer = null;
+	let realtimePendingTranscriptTimer = null;
+	let realtimePendingTranscriptSegments = [];
+	let realtimeBackendPreambleTimer = null;
 	let realtimeIdleTimeoutTimer = null;
 	let realtimeLocalSpeechActive = false;
 	let realtimeServerSpeechSeenAt = 0;
@@ -166,7 +171,10 @@
 	let realtimePendingTranscriptionItemId = "";
 	let realtimeResponseInProgress = false;
 	let realtimeResponseCreateQueued = false;
+	let realtimeQueuedResponseRequest = null;
 	let realtimeResponseVoiceTurnId = "";
+	let realtimeSuppressTranscriptForResponse = false;
+	let realtimeResponseAfterDoneStatus = "";
 	let realtimePendingDirectAnswerRequestId = "";
 	let realtimePendingDirectAnswerPrompt = "";
 	let realtimePendingDirectAnswerVoiceTurnId = "";
@@ -390,12 +398,19 @@
 	function tokenizeCitationText(value) {
 		return normalizeCitationText(value)
 			.split(" ")
+			.map(normalizeCitationToken)
 			.filter((token) => {
 				if (!token) return false;
 				if (CITATION_STOP_WORDS.has(token)) return false;
 				if (/^\d+$/.test(token)) return token.length >= 3;
 				return token.length >= 3;
 			});
+	}
+
+	function normalizeCitationToken(token) {
+		const value = String(token || "").trim();
+		if (/^[a-z]{5,}s$/.test(value) && !/(?:ss|us|is)$/.test(value)) return value.slice(0, -1);
+		return value;
 	}
 
 	function buildCitationSnippets(value) {
@@ -577,7 +592,7 @@
 
 			const score = overlap + numericOverlap * 1.5 + phraseBonus;
 			const minimumOverlap = numericOverlap > 0 ? 1 : 2;
-			const minimumScore = numericOverlap > 0 ? 2.5 : 3;
+			const minimumScore = numericOverlap > 0 ? 2.5 : blockTokens.size <= 18 ? 2 : 3;
 			const matchedCurrentEvidence = group.current && overlap >= minimumOverlap && score >= minimumScore;
 			if (phraseBonus >= 4 || matchedCurrentEvidence) {
 				matches.push({
@@ -2616,6 +2631,13 @@
 				border-bottom: 1px solid var(--rm-surface-1);
 				background: color-mix(in srgb, var(--rm-pine) 7%, transparent);
 			}
+			.onhand-realtime-sources {
+				margin-top: 10px;
+			}
+			.onhand-realtime-sources .onhand-label {
+				display: block;
+				margin-bottom: 4px;
+			}
 			.onhand-row .learn {
 				display: inline-flex;
 				align-items: center;
@@ -4121,7 +4143,8 @@
 			.map((turn) => {
 				const citationGroups = citationGroupsByTurnId.get(turn?.id) || buildCitationGroups(turn?.pageActions);
 				const reply = String(turn?.reply || "").trim();
-				const supportMarkup = `${renderProgressDetails(turn)}${renderActionButtons(turn?.pageActions)}`;
+				const sourceActions = getTurnSourceActions(turn);
+				const supportMarkup = renderProgressDetails(turn);
 				return `
 					<article class="onhand-entry ${turn?.error ? "error" : ""}">
 						<div class="onhand-eyebrow">
@@ -4136,6 +4159,7 @@
 							<div class="onhand-response">
 								${reply ? renderReplyMarkdown(reply, citationGroups, citationNumbering) : '<p class="reply-placeholder">Thinking...</p>'}
 								${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
+								${renderRealtimeSourceButtons(sourceActions)}
 							</div>
 						</div>
 					</article>
@@ -4438,12 +4462,89 @@
 		activityEl.innerHTML = "";
 	}
 
+	function findTurnForRealtimeAnswer(state, sourceTurnId) {
+		const id = String(sourceTurnId || "").trim();
+		if (!id) return null;
+		return (Array.isArray(state?.turns) ? state.turns : []).find((turn) => String(turn?.id || "") === id) || null;
+	}
+
+	function collectActionsThroughTurn(state, sourceTurnId = "") {
+		const turns = Array.isArray(state?.turns) ? state.turns : [];
+		const actions = [];
+		const id = String(sourceTurnId || "").trim();
+		for (const turn of turns) {
+			actions.push(...(Array.isArray(turn?.pageActions) ? turn.pageActions : []));
+			if (id && String(turn?.id || "") === id) break;
+		}
+		if (!id) actions.push(...(Array.isArray(state?.pageActions) ? state.pageActions : []));
+		return dedupePageActions(actions);
+	}
+
+	function scoreCitationActionAgainstText(action, text) {
+		if (!action || (action.type !== "annotation" && action.type !== "note")) return 0;
+		const actionText = [action.citationText, action.detail, action.label].filter(Boolean).join(" ");
+		const actionTokens = new Set(tokenizeCitationText(actionText));
+		const textTokens = new Set(tokenizeCitationText(text));
+		if (!actionTokens.size || !textTokens.size) return 0;
+		let score = 0;
+		for (const token of actionTokens) {
+			if (textTokens.has(token)) score += /^\d+$/.test(token) ? 2 : 1;
+		}
+		const actionPhrase = normalizeCitationText(action.citationText || action.detail || "");
+		const textPhrase = normalizeCitationText(text);
+		if (actionPhrase && actionPhrase.length >= 18 && textPhrase.includes(actionPhrase)) score += 6;
+		return score;
+	}
+
+	function selectRelevantCitationActions(actions, text, limit = 3) {
+		return dedupePageActions(
+			(Array.isArray(actions) ? actions : [])
+				.map((action) => ({ action, score: scoreCitationActionAgainstText(action, text) }))
+				.filter((entry) => entry.score >= 2)
+				.sort((left, right) => right.score - left.score)
+				.map((entry) => entry.action),
+		).slice(0, limit);
+	}
+
+	function getRealtimeAnswerSourceActions(state, sourceTurn, markdown) {
+		const directActions = dedupePageActions([
+			...(Array.isArray(realtimeAnswer?.pageActions) ? realtimeAnswer.pageActions : []),
+			...(Array.isArray(sourceTurn?.pageActions) ? sourceTurn.pageActions : []),
+		]);
+		if (directActions.length) return directActions;
+		const sourceText = [sourceTurn?.userPrompt, realtimeAnswer?.userPrompt, markdown].filter(Boolean).join(" ");
+		const priorActions = collectActionsThroughTurn(state, sourceTurn?.id || "");
+		return selectRelevantCitationActions(priorActions, sourceText);
+	}
+
+	function renderRealtimeSourceButtons(actions) {
+		const items = Array.isArray(actions) ? actions : [];
+		if (!items.length) return "";
+		return `
+			<div class="onhand-realtime-sources">
+				<span class="onhand-label">Sources</span>
+				${renderActionButtons(items, "onhand-actions onhand-realtime-source-actions")}
+			</div>
+		`;
+	}
+
+	function getTurnSourceActions(turn) {
+		return dedupePageActions(Array.isArray(turn?.pageActions) ? turn.pageActions : []).filter(
+			(action) => action?.type === "annotation" || action?.type === "note" || action?.type === "visual" || action?.type === "tab",
+		);
+	}
+
 	function renderLatestReply(state) {
 		const sessionPath = getStateSessionPath(state);
 		const answerSessionPath = String(realtimeAnswer?.sessionPath || "").trim();
 		const answerBelongsToSession = !answerSessionPath || !sessionPath || answerSessionPath === sessionPath;
 		if (answerBelongsToSession && (realtimeAnswer?.markdown || realtimeAnswer?.pending)) {
 			const markdown = String(realtimeAnswer.markdown || "").trim();
+			const sourceTurn = findTurnForRealtimeAnswer(state, realtimeAnswer?.sourceTurnId);
+			const sourceActions = getRealtimeAnswerSourceActions(state, sourceTurn, markdown);
+			const citationGroups = buildCitationGroups(sourceActions);
+			const status =
+				realtimeAnswer.status || (sourceActions.length ? "Page-grounded" : "");
 			replySectionEl.hidden = false;
 			replyEl.innerHTML = `
 				<article class="onhand-entry onhand-realtime-answer">
@@ -4451,17 +4552,19 @@
 						<time>${escapeHtml(formatEntryTime(realtimeAnswer.updatedAt || new Date().toISOString()))}</time>
 						<span class="dot"></span>
 						<span>Realtime tutor</span>
-						${realtimeAnswer.status ? `<span class="dot"></span><span>${escapeHtml(realtimeAnswer.status)}</span>` : ""}
+						${status ? `<span class="dot"></span><span>${escapeHtml(status)}</span>` : ""}
 					</div>
 					${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
 					<div class="onhand-a">
 						<div class="onhand-response">
-							${markdown ? renderReplyMarkdown(markdown) : '<p class="reply-placeholder">Listening...</p>'}
+							${markdown ? renderReplyMarkdown(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
 							${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
+							${renderRealtimeSourceButtons(sourceActions)}
 						</div>
 					</div>
 				</article>
 			`;
+			bindActionButtons(replyEl);
 			return;
 		}
 		replySectionEl.hidden = true;
@@ -4795,6 +4898,8 @@
 
 	function clearRealtimeSessionLocalState() {
 		clearRealtimeTranscriptionFallback();
+		clearRealtimePendingTranscript();
+		clearRealtimeBackendPreamble();
 		realtimeAnswer = null;
 		realtimeTranscriptBuffer = "";
 		realtimePendingDirectAnswerRequestId = "";
@@ -4803,6 +4908,8 @@
 		realtimePendingSocraticMove = null;
 		realtimeActiveVoiceTurn = null;
 		realtimeResponseVoiceTurnId = "";
+		realtimeSuppressTranscriptForResponse = false;
+		realtimeResponseAfterDoneStatus = "";
 		realtimeAudioFallbackItemIds.clear();
 	}
 
@@ -4813,6 +4920,7 @@
 			kind: String(kind || "voice").trim() || "voice",
 			prompt: text,
 			createdAt: new Date().toISOString(),
+			pageActions: [],
 		};
 		realtimeActiveVoiceTurn = turn;
 		realtimeTranscriptBuffer = "";
@@ -4830,6 +4938,7 @@
 			...realtimeActiveVoiceTurn,
 			staleReason: reason,
 		};
+		clearRealtimeBackendPreamble();
 		realtimeActiveVoiceTurn = null;
 		return staleTurn;
 	}
@@ -4844,10 +4953,22 @@
 		return true;
 	}
 
+	function clearRealtimeAnswerForTurn(turn = null) {
+		if (!realtimeAnswer) return;
+		if (!turn?.id || realtimeAnswer.voiceTurnId === turn.id) {
+			realtimeAnswer = null;
+		}
+	}
+
 	async function persistRealtimeVoiceTurn(turn, reply, options = {}) {
 		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return false;
 		const text = String(reply || "").trim();
 		if (!text || realtimePersistedVoiceTurnIds.has(turn.id)) return false;
+		const pageActions = Array.isArray(options.pageActions)
+			? options.pageActions
+			: Array.isArray(turn.pageActions)
+				? turn.pageActions
+				: [];
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:realtime-record-turn",
 			voiceTurnId: turn.id,
@@ -4855,11 +4976,12 @@
 			userPrompt: `[Voice] ${turn.prompt || "Voice turn"}`,
 			reply: text,
 			status: String(options.status || "Voice answer").trim(),
-			pageActions: Array.isArray(options.pageActions) ? options.pageActions : [],
+			pageActions,
 			windowId: await ensureCurrentWindowId(),
 		});
 		if (!response?.ok) throw new Error(response?.error || "Could not save the voice turn.");
 		realtimePersistedVoiceTurnIds.add(turn.id);
+		if (options.clearLiveAnswer !== false) clearRealtimeAnswerForTurn(turn);
 		await Promise.all([requestState(), requestSessions()]);
 		return true;
 	}
@@ -4924,6 +5046,8 @@
 			realtimeManualVoiceResponseTimer = null;
 		}
 		clearRealtimeTranscriptionFallback();
+		clearRealtimePendingTranscript();
+		clearRealtimeBackendPreamble();
 		realtimeLocalSpeechActive = false;
 		realtimeManualVoiceCommitPending = false;
 		realtimeMicCurrentRms = 0;
@@ -5075,6 +5199,28 @@
 		realtimePendingTranscriptionItemId = "";
 	}
 
+	function clearRealtimePendingTranscript() {
+		if (realtimePendingTranscriptTimer) {
+			clearTimeout(realtimePendingTranscriptTimer);
+			realtimePendingTranscriptTimer = null;
+		}
+		realtimePendingTranscriptSegments = [];
+	}
+
+	function pauseRealtimePendingTranscriptFlush() {
+		if (!realtimePendingTranscriptTimer) return;
+		clearTimeout(realtimePendingTranscriptTimer);
+		realtimePendingTranscriptTimer = null;
+	}
+
+	function clearRealtimeBackendPreamble(turn = null) {
+		if (turn && !isRealtimeVoiceTurnCurrent(turn)) return;
+		if (realtimeBackendPreambleTimer) {
+			clearTimeout(realtimeBackendPreambleTimer);
+			realtimeBackendPreambleTimer = null;
+		}
+	}
+
 	function startRealtimeAudioResponseFallback(itemId = "", reason = "response_for_voice_pause") {
 		clearRealtimeTranscriptionFallback();
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
@@ -5111,6 +5257,57 @@
 			realtimeActiveVoiceTurn.prompt = text;
 			updateRealtimeAnswerForTurn(realtimeActiveVoiceTurn, {});
 		}
+		return true;
+	}
+
+	async function processRealtimeVoiceTranscript(transcript) {
+		const text = String(transcript || "").replace(/\s+/g, " ").trim();
+		if (!text) return false;
+		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
+			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
+		} else if (shouldRouteRealtimePromptThroughSocraticPlan(text)) {
+			await startRealtimeSocraticPlan(text, beginRealtimeVoiceTurn("socratic_plan", text));
+		} else if (shouldRouteRealtimePromptThroughOnhand(text)) {
+			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
+		} else {
+			const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
+			updateRealtimeAnswerForTurn(voiceTurn, {
+				markdown: "",
+				status: "Thinking",
+				pending: true,
+				published: false,
+			});
+			sendRealtimeSessionUpdate();
+			requestRealtimeResponse("response_for_voice_transcript");
+			setRealtimeStatus("Thinking...");
+		}
+		return true;
+	}
+
+	async function flushRealtimePendingTranscript() {
+		pauseRealtimePendingTranscriptFlush();
+		const transcript = realtimePendingTranscriptSegments.join(" ").replace(/\s+/g, " ").trim();
+		realtimePendingTranscriptSegments = [];
+		if (!transcript) return false;
+		return await processRealtimeVoiceTranscript(transcript);
+	}
+
+	function scheduleRealtimePendingTranscriptFlush() {
+		pauseRealtimePendingTranscriptFlush();
+		realtimePendingTranscriptTimer = setTimeout(() => {
+			realtimePendingTranscriptTimer = null;
+			void flushRealtimePendingTranscript().catch((error) => {
+				setRealtimeStatus("Voice error", error?.message || String(error));
+			});
+		}, REALTIME_TRANSCRIPT_FINALIZE_DELAY_MS);
+	}
+
+	function queueRealtimeVoiceTranscript(transcript) {
+		const text = String(transcript || "").trim();
+		if (!text) return false;
+		realtimePendingTranscriptSegments.push(text);
+		setRealtimeStatus("Heard you · waiting for a pause...");
+		scheduleRealtimePendingTranscriptFlush();
 		return true;
 	}
 
@@ -5358,17 +5555,26 @@
 		realtimeDataChannel.send(JSON.stringify(event));
 	}
 
-	function requestRealtimeResponse(reason = "response", responseOptions = {}) {
+	function requestRealtimeResponse(reason = "response", responseOptions = {}, controlOptions = {}) {
 		if (!realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		if (realtimeResponseInProgress) {
 			realtimeResponseCreateQueued = true;
+			realtimeQueuedResponseRequest = {
+				reason,
+				responseOptions,
+				controlOptions,
+			};
 			setRealtimeStatus("Finishing current response...");
 			noteRealtimeActivity();
 			return;
 		}
 		realtimeResponseInProgress = true;
 		realtimeResponseCreateQueued = false;
-		realtimeResponseVoiceTurnId = realtimeActiveVoiceTurn?.id || "";
+		realtimeQueuedResponseRequest = null;
+		realtimeResponseVoiceTurnId =
+			controlOptions.trackVoiceTurn === false ? "" : String(controlOptions.voiceTurnId || realtimeActiveVoiceTurn?.id || "");
+		realtimeSuppressTranscriptForResponse = Boolean(controlOptions.suppressTranscript);
+		realtimeResponseAfterDoneStatus = String(controlOptions.afterDoneStatus || "").trim();
 		noteRealtimeActivity();
 		sendRealtimeEvent({
 			event_id: realtimeEventId(`onhand_${reason}`),
@@ -5537,7 +5743,7 @@
 				type: "server_vad",
 				threshold: 0.35,
 				prefix_padding_ms: 300,
-				silence_duration_ms: 650,
+				silence_duration_ms: 1300,
 				create_response: false,
 				interrupt_response: true,
 			},
@@ -5695,6 +5901,77 @@
 		return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…` : text;
 	}
 
+	function canonicalRealtimeSpeechText(value) {
+		return String(value || "")
+			.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+			.replace(/<br\s*\/?>/gi, "\n")
+			.replace(/<\/?[^>]+>/g, "")
+			.replace(/^\s{0,3}#{1,6}\s+/gm, "")
+			.replace(/^\s{0,3}>\s?/gm, "")
+			.replace(/[*_`~]/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+	}
+
+	function buildExactRealtimeSpeechPrompt(label, value) {
+		const text = canonicalRealtimeSpeechText(value);
+		return [
+			`Speak this ${label} exactly as written below.`,
+			"Do not paraphrase, summarize, add examples, omit clauses, or change the meaning.",
+			"Read symbols naturally, but keep the same words as the sidebar text.",
+			"Text:",
+			text,
+		].join("\n\n");
+	}
+
+	function buildRealtimeAnnotationPageActions(result) {
+		const annotations = Array.isArray(result?.annotations) ? result.annotations : [];
+		const actions = [];
+		for (const annotation of annotations) {
+			if (!annotation || typeof annotation !== "object") continue;
+			const tab = annotation.tab && typeof annotation.tab === "object" ? annotation.tab : {};
+			const annotationId = String(annotation.annotationId || annotation.noteAnnotationId || "").trim();
+			const matchedText = compactRealtimeTutorText(annotation.matchedText || annotation.text, 240);
+			const noteText = compactRealtimeTutorText(annotation.note, 240);
+			const base = {
+				tabId: typeof tab.id === "number" ? tab.id : null,
+				windowId: typeof tab.windowId === "number" ? tab.windowId : null,
+				title: String(tab.title || "").trim(),
+				url: String(tab.url || "").trim(),
+			};
+			if (matchedText) {
+				actions.push({
+					key: `highlight:${annotationId || matchedText}`,
+					type: "annotation",
+					...base,
+					annotationId: annotationId || null,
+					label: "Highlighted text",
+					detail: compactRealtimeTutorText(matchedText, 72),
+					citationText: matchedText,
+				});
+			}
+			if (noteText) {
+				actions.push({
+					key: `note:${annotationId || noteText}`,
+					type: "note",
+					...base,
+					annotationId: annotationId || null,
+					label: "Added note",
+					detail: compactRealtimeTutorText(noteText, 72),
+					citationText: noteText,
+				});
+			}
+		}
+		return dedupePageActions(actions);
+	}
+
+	function appendRealtimeTurnPageActions(turn, actions) {
+		const items = dedupePageActions(actions);
+		if (!turn || !items.length) return [];
+		turn.pageActions = dedupePageActions([...(Array.isArray(turn.pageActions) ? turn.pageActions : []), ...items]);
+		return turn.pageActions;
+	}
+
 	function normalizeRealtimePedagogicalMove(value, fallbackPrompt = "") {
 		const raw = value?.move && typeof value.move === "object" ? value.move : value && typeof value === "object" ? value : {};
 		const rawAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
@@ -5748,7 +6025,7 @@
 		);
 	}
 
-	function speakRealtimeTutorText(kind, prompt, instructions) {
+	function speakRealtimeTutorText(kind, prompt, instructions, controlOptions = {}) {
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		sendRealtimeEvent({
 			event_id: realtimeEventId(`onhand_${kind}`),
@@ -5759,10 +6036,69 @@
 				content: [{ type: "input_text", text: prompt }],
 			},
 		});
-		requestRealtimeResponse(kind, {
-			instructions,
-			tool_choice: "none",
-		});
+		requestRealtimeResponse(
+			kind,
+			{
+				instructions,
+				tool_choice: "none",
+			},
+			controlOptions,
+		);
+	}
+
+	function realtimeBackendPreambleLine(kind) {
+		if (kind === "socratic_plan") return "Let me find the right line first.";
+		if (kind === "socratic_evaluation") return "Let me check that against the page.";
+		return "Let me ground that in the page.";
+	}
+
+	function buildRealtimeBackendPreamblePrompt(kind) {
+		const line = realtimeBackendPreambleLine(kind);
+		return [
+			`Say exactly this sentence, with no extra words: "${line}"`,
+			"Do not answer, evaluate, summarize, cite the page, or say whether the student is correct.",
+		]
+			.filter(Boolean)
+			.join("\n");
+	}
+
+	function realtimeBackendPreambleStatus(kind) {
+		if (kind === "socratic_plan") return "Planning tutor move...";
+		if (kind === "socratic_evaluation") return "Checking answer...";
+		return "Using Onhand...";
+	}
+
+	function scheduleRealtimeBackendPreamble(turn, kind) {
+		clearRealtimeBackendPreamble();
+		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return;
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		realtimeBackendPreambleTimer = setTimeout(() => {
+			realtimeBackendPreambleTimer = null;
+			if (!isRealtimeVoiceTurnCurrent(turn)) return;
+			if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_backend_preamble"),
+				type: "conversation.item.create",
+				item: {
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text: buildRealtimeBackendPreamblePrompt(kind) }],
+				},
+			});
+			requestRealtimeResponse(
+				"backend_preamble",
+				{
+					instructions: "Speak only the exact sentence provided. Do not answer, evaluate, call tools, or add page claims.",
+					tool_choice: "none",
+				},
+				{
+					trackVoiceTurn: false,
+					suppressTranscript: true,
+					afterDoneStatus: realtimeBackendPreambleStatus(kind),
+				},
+			);
+			setRealtimeStatus("Starting answer...");
+		}, REALTIME_BACKEND_PREAMBLE_DELAY_MS);
 	}
 
 	async function requestRealtimePedagogicalMove(prompt, voiceTurn = null) {
@@ -5807,7 +6143,11 @@
 		});
 		if (!response?.ok) throw new Error(response?.error || "Could not annotate the Socratic prompt.");
 		await requestState();
-		return response.result || null;
+		const result = response.result || null;
+		if (result && typeof result === "object" && !Array.isArray(result.pageActions)) {
+			result.pageActions = buildRealtimeAnnotationPageActions(result);
+		}
+		return result;
 	}
 
 	async function recordRealtimePedagogicalEvaluation(evaluation, pendingMove) {
@@ -5841,35 +6181,47 @@
 			pending: true,
 			published: true,
 		});
-		await ensureRealtimePdfSurfaceForVoice();
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
-		setRealtimeStatus("Planning tutor move...");
-		const move = await requestRealtimePedagogicalMove(text, voiceTurn);
+		scheduleRealtimeBackendPreamble(voiceTurn, "socratic_plan");
+		let move;
+		try {
+			await ensureRealtimePdfSurfaceForVoice();
+			if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
+			setRealtimeStatus("Planning tutor move...");
+			move = await requestRealtimePedagogicalMove(text, voiceTurn);
+		} finally {
+			clearRealtimeBackendPreamble(voiceTurn);
+		}
 		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
 		const annotationResult = await annotateRealtimePedagogicalMove(move);
 		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
 		const openedCheck = findRealtimeOpenedCheck(annotationResult?.learnerState, move.voice_script);
+		const pageActions = dedupePageActions(Array.isArray(annotationResult?.pageActions) ? annotationResult.pageActions : []);
+		appendRealtimeTurnPageActions(voiceTurn, pageActions);
 		realtimePendingSocraticMove = {
 			voiceTurnId,
 			userQuestion: text,
 			move,
 			checkId: openedCheck?.checkId || "",
+			pageActions,
 			createdAt: new Date().toISOString(),
 		};
+		const sidebarText = move.sidebar_markdown || `**Your turn:** ${move.voice_script}`;
 		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: move.sidebar_markdown || `**Your turn:** ${move.voice_script}`,
+			markdown: sidebarText,
 			status: "Tutor prompt",
 			pending: false,
 			published: true,
 		});
-		await persistRealtimeVoiceTurn(voiceTurn, move.sidebar_markdown || move.voice_script, { status: "Tutor prompt" });
+		await persistRealtimeVoiceTurn(voiceTurn, sidebarText, { status: "Tutor prompt", pageActions });
 		speakRealtimeTutorText(
 			"speak_socratic_prompt",
-			[
-				"Speak this Socratic prompt exactly enough for the student to answer. Do not answer it.",
-				`Socratic prompt: ${move.voice_script}`,
-			].join("\n\n"),
-			"Speak the Socratic prompt concisely. Do not answer it and do not call tools.",
+			buildExactRealtimeSpeechPrompt("Socratic prompt", sidebarText),
+			"Speak only the provided text. Do not paraphrase, summarize, add or remove words, answer the prompt, or call tools.",
+			{
+				trackVoiceTurn: false,
+				suppressTranscript: true,
+				afterDoneStatus: "Voice ready · ask, then pause",
+			},
 		);
 		setRealtimeStatus("Speaking tutor prompt...");
 		return { planned: true, voiceTurnId, move, checkId: openedCheck?.checkId || "", responseAlreadyRequested: true };
@@ -5887,29 +6239,39 @@
 			pending: true,
 			published: true,
 		});
-		await ensureRealtimePdfSurfaceForVoice();
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
-		setRealtimeStatus("Checking answer...");
-		const evaluation = await requestRealtimePedagogicalEvaluation(text, pendingMove.move, voiceTurn);
+		scheduleRealtimeBackendPreamble(voiceTurn, "socratic_evaluation");
+		let evaluation;
+		try {
+			await ensureRealtimePdfSurfaceForVoice();
+			if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+			setRealtimeStatus("Checking answer...");
+			evaluation = await requestRealtimePedagogicalEvaluation(text, pendingMove.move, voiceTurn);
+		} finally {
+			clearRealtimeBackendPreamble(voiceTurn);
+		}
 		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
 		await recordRealtimePedagogicalEvaluation(evaluation, pendingMove);
 		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
 		realtimePendingSocraticMove = null;
+		const pageActions = dedupePageActions(Array.isArray(pendingMove.pageActions) ? pendingMove.pageActions : []);
+		appendRealtimeTurnPageActions(voiceTurn, pageActions);
+		const sidebarText = evaluation.sidebar_markdown || evaluation.feedback_summary;
 		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: evaluation.sidebar_markdown || evaluation.feedback_summary,
+			markdown: sidebarText,
 			status: "Tutor feedback",
 			pending: false,
 			published: true,
 		});
-		await persistRealtimeVoiceTurn(voiceTurn, evaluation.sidebar_markdown || evaluation.feedback_summary, { status: "Tutor feedback" });
+		await persistRealtimeVoiceTurn(voiceTurn, sidebarText, { status: "Tutor feedback", pageActions });
 		speakRealtimeTutorText(
 			"speak_socratic_feedback",
-			[
-				"Speak this brief Learning Mode feedback to the student.",
-				"Do not add new page claims or call tools.",
-				`Feedback: ${evaluation.voice_script || evaluation.feedback_summary}`,
-			].join("\n\n"),
-			"Narrate the Learning Mode feedback concisely. Do not call tools.",
+			buildExactRealtimeSpeechPrompt("Learning Mode feedback", sidebarText),
+			"Speak only the provided text. Do not paraphrase, summarize, add or remove words, call tools, or add page claims.",
+			{
+				trackVoiceTurn: false,
+				suppressTranscript: true,
+				afterDoneStatus: "Voice ready · ask, then pause",
+			},
 		);
 		setRealtimeStatus("Speaking tutor feedback...");
 		return { evaluated: true, evaluation, responseAlreadyRequested: true };
@@ -5937,25 +6299,31 @@
 			pending: true,
 			published: true,
 		});
-		await ensureRealtimePdfSurfaceForVoice();
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
-		setRealtimeStatus("Using Onhand...");
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:submit-prompt",
-			prompt: text,
-			displayPrompt: `[Voice] ${text}`,
-			attachments: [],
-			learningMode: Boolean(currentState?.preferences?.learningMode),
-			source: "realtime-voice-direct-answer",
-			windowId: await ensureCurrentWindowId(),
-		});
+		scheduleRealtimeBackendPreamble(voiceTurn, "direct_answer");
+		let response;
+		try {
+			await ensureRealtimePdfSurfaceForVoice();
+			if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
+			setRealtimeStatus("Using Onhand...");
+			response = await chrome.runtime.sendMessage({
+				type: "sidebar:submit-prompt",
+				prompt: text,
+				displayPrompt: `[Voice] ${text}`,
+				attachments: [],
+				learningMode: Boolean(currentState?.preferences?.learningMode),
+				source: "realtime-voice-direct-answer",
+				windowId: await ensureCurrentWindowId(),
+			});
+		} finally {
+			clearRealtimeBackendPreamble(voiceTurn);
+		}
 		if (!response?.ok) throw new Error(response?.error || "Could not start Onhand's direct answer flow.");
 		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, requestId: response.requestId || "", responseAlreadyRequested: true };
 		realtimePendingDirectAnswerRequestId = String(response.requestId || "");
 		realtimePendingDirectAnswerPrompt = text;
 		realtimePendingDirectAnswerVoiceTurnId = voiceTurn.id;
 		await requestState();
-		return { started: true, requestId: response.requestId || "" };
+		return { started: true, requestId: response.requestId || "", responseAlreadyRequested: true };
 	}
 
 	function maybeSpeakCompletedRealtimeDirectAnswer(state = currentState) {
@@ -5982,14 +6350,11 @@
 			status: "Onhand answer",
 			pending: false,
 			published: true,
+			sourceTurnId: turn.id || requestId,
+			pageActions: Array.isArray(turn.pageActions) ? turn.pageActions : [],
 		});
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
-		const voicePrompt = [
-			"Speak a concise version of this completed Onhand page-grounded answer to the student.",
-			"Use only the provided answer, keep it under 45 words when possible, and do not call tools.",
-			`Student question: ${prompt}`,
-			`Onhand answer: ${reply}`,
-		].join("\n\n");
+		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand answer", reply);
 		try {
 			sendRealtimeEvent({
 				event_id: realtimeEventId("onhand_direct_answer_ready"),
@@ -6000,10 +6365,18 @@
 					content: [{ type: "input_text", text: voicePrompt }],
 				},
 			});
-			requestRealtimeResponse("speak_onhand_answer", {
-				instructions: "Narrate the completed Onhand answer concisely. Do not call tools or add new page claims.",
-				tool_choice: "none",
-			});
+			requestRealtimeResponse(
+				"speak_onhand_answer",
+				{
+					instructions: "Speak only the provided Onhand answer text. Do not paraphrase, summarize, add or remove words, call tools, or add new page claims.",
+					tool_choice: "none",
+				},
+				{
+					trackVoiceTurn: false,
+					suppressTranscript: true,
+					afterDoneStatus: "Voice ready · ask, then pause",
+				},
+			);
 			setRealtimeStatus("Speaking Onhand answer...");
 		} catch (error) {
 			setRealtimeStatus("Voice ready · ask, then pause", error?.message || String(error));
@@ -6011,6 +6384,7 @@
 	}
 
 	function appendRealtimeTranscript(delta) {
+		if (realtimeSuppressTranscriptForResponse) return;
 		const text = String(delta || "");
 		if (!text) return;
 		const activeTurn = realtimeActiveVoiceTurn;
@@ -6024,12 +6398,15 @@
 	}
 
 	function noteRealtimeResponseDone() {
+		const queuedRequest = realtimeQueuedResponseRequest || (realtimeResponseCreateQueued ? { reason: "queued_response", responseOptions: {}, controlOptions: {} } : null);
 		realtimeResponseInProgress = false;
-		if (!realtimeResponseCreateQueued) return false;
+		realtimeResponseAfterDoneStatus = "";
+		if (!queuedRequest) return false;
 		realtimeResponseCreateQueued = false;
+		realtimeQueuedResponseRequest = null;
 		queueMicrotask(() => {
 			try {
-				requestRealtimeResponse("queued_response");
+				requestRealtimeResponse(queuedRequest.reason || "queued_response", queuedRequest.responseOptions || {}, queuedRequest.controlOptions || {});
 			} catch (error) {
 				setRealtimeStatus("Voice error", error?.message || String(error));
 			}
@@ -6108,7 +6485,17 @@
 				});
 				if (!response?.ok) throw new Error(response?.error || "Could not annotate the page.");
 				await requestState();
-				return response.result;
+				const result = response.result || {};
+				const pageActions = Array.isArray(result.pageActions) ? result.pageActions : buildRealtimeAnnotationPageActions(result);
+				const activeTurn = realtimeActiveVoiceTurn;
+				if (activeTurn) {
+					appendRealtimeTurnPageActions(activeTurn, pageActions);
+					updateRealtimeAnswerForTurn(activeTurn, { pageActions: activeTurn.pageActions });
+				}
+				return {
+					...result,
+					pageActions,
+				};
 			}
 			case "open_pdf_in_onhand_viewer": {
 				const result = await ensureRealtimePdfSurfaceForVoice();
@@ -6124,9 +6511,13 @@
 					status: String(args?.status || "Voice answer").trim(),
 					pending: false,
 					published: true,
+					pageActions: Array.isArray(activeTurn?.pageActions) ? activeTurn.pageActions : [],
 				});
 				if (activeTurn?.kind === "realtime_response") {
-					await persistRealtimeVoiceTurn(activeTurn, args?.markdown || "", { status: args?.status || "Voice answer" });
+					await persistRealtimeVoiceTurn(activeTurn, args?.markdown || "", {
+						status: args?.status || "Voice answer",
+						pageActions: activeTurn.pageActions,
+					});
 				}
 				return { published: true };
 			}
@@ -6203,6 +6594,7 @@
 		}
 		if (event.type === "input_audio_buffer.speech_started") {
 			clearRealtimeVoiceFallback();
+			pauseRealtimePendingTranscriptFlush();
 			realtimeServerSpeechSeenAt = Date.now();
 			if (realtimeActiveVoiceTurn) markRealtimeVoiceTurnStale("user_interrupted");
 			setRealtimeStatus("Listening...");
@@ -6234,24 +6626,7 @@
 			const transcript = String(event.transcript || "").trim();
 			if (noteRealtimeTranscriptHandledByAudioFallback(event.item_id, transcript)) return;
 			clearRealtimeTranscriptionFallback();
-			if (shouldRouteRealtimePromptThroughSocraticEvaluation(transcript)) {
-				await startRealtimeSocraticEvaluation(transcript, beginRealtimeVoiceTurn("socratic_evaluation", transcript));
-			} else if (shouldRouteRealtimePromptThroughSocraticPlan(transcript)) {
-				await startRealtimeSocraticPlan(transcript, beginRealtimeVoiceTurn("socratic_plan", transcript));
-			} else if (shouldRouteRealtimePromptThroughOnhand(transcript)) {
-				await startRealtimeDirectAnswer(transcript, beginRealtimeVoiceTurn("direct_answer", transcript));
-			} else {
-				const voiceTurn = beginRealtimeVoiceTurn("realtime_response", transcript);
-				updateRealtimeAnswerForTurn(voiceTurn, {
-					markdown: "",
-					status: "Thinking",
-					pending: true,
-					published: false,
-				});
-				sendRealtimeSessionUpdate();
-				requestRealtimeResponse("response_for_voice_transcript");
-				setRealtimeStatus("Thinking...");
-			}
+			queueRealtimeVoiceTranscript(transcript);
 			return;
 		}
 		if (event.type === "response.created") {
@@ -6274,7 +6649,11 @@
 			appendRealtimeTranscript(event.delta || event.text || "");
 			return;
 		}
-		if ((event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") && event.transcript) {
+		if (
+			(event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") &&
+			event.transcript &&
+			!realtimeSuppressTranscriptForResponse
+		) {
 			updateRealtimeAnswer({ markdown: event.transcript, status: "Voice answer", pending: false });
 		}
 
@@ -6285,6 +6664,7 @@
 		if (event.type === "response.done") {
 			const text = extractRealtimeResponseText(event.response);
 			const responseVoiceTurnId = realtimeResponseVoiceTurnId;
+			const responseAfterDoneStatus = realtimeResponseAfterDoneStatus;
 			const activeTurn = responseVoiceTurnId && isRealtimeVoiceTurnCurrent(responseVoiceTurnId) ? realtimeActiveVoiceTurn : null;
 			const continuingAfterTool = noteRealtimeResponseDone();
 			if (text && !realtimeAnswer?.published && activeTurn) {
@@ -6300,7 +6680,10 @@
 			}
 			if (activeTurn?.audioItemId) realtimeAudioFallbackItemIds.delete(activeTurn.audioItemId);
 			if (!continuingAfterTool) realtimeResponseVoiceTurnId = "";
-			if (!continuingAfterTool && !activeTurn && realtimeActiveVoiceTurn) return;
+			if (!continuingAfterTool && !activeTurn && realtimeActiveVoiceTurn) {
+				if (responseAfterDoneStatus) setRealtimeStatus(responseAfterDoneStatus);
+				return;
+			}
 			if (continuingAfterTool) setRealtimeStatus("Using page context...");
 			else setRealtimeReadyStatus();
 		}
@@ -6422,7 +6805,10 @@
 		realtimeRestartAfterMicPermission = false;
 		realtimeResponseInProgress = false;
 		realtimeResponseCreateQueued = false;
+		realtimeQueuedResponseRequest = null;
 		realtimeResponseVoiceTurnId = "";
+		realtimeSuppressTranscriptForResponse = false;
+		realtimeResponseAfterDoneStatus = "";
 		realtimeServerSpeechSeenAt = 0;
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerPrompt = "";
@@ -6881,6 +7267,7 @@
 			handleRealtimeServerEvent,
 			ensureRealtimePdfSurfaceForVoice,
 			requestRealtimeResponse,
+			flushRealtimePendingTranscript,
 			requestState,
 			sendRealtimeTextPrompt,
 			getRealtimeDebugState() {
@@ -6891,6 +7278,8 @@
 					error: realtimeError,
 					responseInProgress: realtimeResponseInProgress,
 					responseCreateQueued: realtimeResponseCreateQueued,
+					queuedResponseReason: realtimeQueuedResponseRequest?.reason || "",
+					suppressTranscriptForResponse: realtimeSuppressTranscriptForResponse,
 					manualVoiceCommitPending: realtimeManualVoiceCommitPending,
 					pendingTranscriptionItemId: realtimePendingTranscriptionItemId,
 					audioFallbackItemIds: Array.from(realtimeAudioFallbackItemIds),

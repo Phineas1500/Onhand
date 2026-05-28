@@ -380,7 +380,21 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					return {
 						ok: true,
 						result: {
-							annotations: [{ annotationId: "ann-realtime-alpha", text: anchor?.text || "", conceptLabel: anchor?.conceptLabel || "" }],
+							annotations: [
+								{
+									annotationId: "ann-realtime-alpha",
+									text: anchor?.text || "",
+									matchedText: anchor?.text || "",
+									note: anchor?.note || "",
+									conceptLabel: anchor?.conceptLabel || "",
+									tab: {
+										id: state.tab?.id || 42,
+										title: state.tab?.title || "Alpha smoke fixture",
+										url: state.tab?.url || "",
+										windowId: 1,
+									},
+								},
+							],
 							learnerState: state.learnerState,
 						},
 					};
@@ -593,6 +607,58 @@ async function assertTranscriptActionButtonsActivateDirectly() {
 		runtimeMessages.filter((message) => message?.type === "sidebar:activate-action" && message.key === "note:first").length,
 		4,
 		"expected delayed browser click after pointerup to be deduped across citation rerenders",
+	);
+
+	dom.window.close();
+}
+
+async function assertTurnSourceButtonsExposeAllPageActions() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.turns = [
+		{
+			id: "turn-source-strip",
+			userPrompt: "Explain the page evidence.",
+			reply: "This is a grounded answer that intentionally does not repeat either saved page source.",
+			activities: [],
+			pageActions: [
+				{
+					key: "highlight:source-strip",
+					type: "annotation",
+					annotationId: "ann-source-strip",
+					label: "Highlighted text",
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					detail: "Monte Carlo uses samples to estimate an expectation.",
+					citationText: "Monte Carlo uses samples to estimate an expectation.",
+				},
+				{
+					key: "note:source-strip",
+					type: "note",
+					annotationId: "ann-source-strip",
+					label: "Added note",
+					title: "BayesianDL",
+					url: "https://example.test/bayesian-dl",
+					detail: "Connect this note back to the Monte Carlo explanation.",
+					citationText: "Connect this note back to the Monte Carlo explanation.",
+				},
+			],
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:03:00.000Z",
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	assert.equal(shadow.querySelectorAll(".onhand-cite").length, 0, "expected no inline citation when reply text does not quote sources");
+	assert.ok(
+		shadow.querySelector('.onhand-realtime-sources [data-action-key="highlight:source-strip"]'),
+		"expected saved turn source strip to expose highlighted source",
+	);
+	assert.ok(
+		shadow.querySelector('.onhand-realtime-sources [data-action-key="note:source-strip"]'),
+		"expected saved turn source strip to expose note source",
 	);
 
 	dom.window.close();
@@ -1418,6 +1484,15 @@ async function waitForSidebarTick(dom) {
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 }
 
+async function waitForRealtimePreambleDelay(dom) {
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 1260));
+}
+
+async function flushRealtimeTranscript(hooks, dom) {
+	await hooks.flushRealtimePendingTranscript();
+	await waitForSidebarTick(dom);
+}
+
 function createDeferred() {
 	let resolve;
 	let reject;
@@ -1557,7 +1632,7 @@ async function assertRealtimeManualVoiceCommitCreatesResponse() {
 			transcript: "Can you check whether my calendar is available tomorrow at 3?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 
 	assert.equal(events.some((event) => event.type === "response.create"), true, "expected non-page transcript to create a realtime response");
 	assert.equal(hooks.getRealtimeDebugState().responseInProgress, true);
@@ -1678,7 +1753,7 @@ async function assertRealtimeTranscriptCancelsCommittedAudioFallback() {
 			transcript: "What does Alpha smoke content mean here?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 
 	assert.equal(hooks.getRealtimeDebugState().pendingTranscriptionItemId, "");
 	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-transcribed-voice");
@@ -1788,7 +1863,11 @@ async function assertRealtimeToolSurfaceUsesExplicitAnswerDirectly() {
 		true,
 		"expected answer_directly to return a realtime function output",
 	);
-	assert.equal(events.some((event) => event.type === "response.create"), true, "expected answer_directly tool output to continue the realtime response");
+	assert.equal(
+		events.some((event) => event.type === "response.create"),
+		false,
+		"expected answer_directly to avoid a second realtime response while Onhand owns the answer",
+	);
 
 	dom.window.close();
 }
@@ -1818,7 +1897,7 @@ async function assertRealtimeVoiceTranscriptRoutesPageQuestionsThroughOnhand() {
 			transcript: "What does Alpha smoke content mean here?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 
 	assert.equal(
 		runtimeMessages.some(
@@ -1863,15 +1942,231 @@ async function assertRealtimeVoiceTranscriptRoutesPageQuestionsThroughOnhand() {
 			(event) =>
 				event.type === "conversation.item.create" &&
 				event.item?.role === "user" &&
-				String(event.item?.content?.[0]?.text || "").includes("Speak a concise version of this completed Onhand page-grounded answer"),
+				String(event.item?.content?.[0]?.text || "").includes("Speak this Onhand answer exactly as written below.") &&
+				String(event.item?.content?.[0]?.text || "").includes(
+					"The fixture says Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+				),
 		),
 		true,
-		"expected completed Onhand answer to be sent back to realtime for concise narration",
+		"expected completed Onhand answer to be sent back to realtime for exact narration",
 	);
 	assert.equal(
 		events.some((event) => event.type === "response.create" && event.response?.tool_choice === "none"),
 		true,
 		"expected narrated Onhand answer response to disable tool calls",
+	);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const realtimeAnswer = host.shadowRoot.querySelector(".onhand-realtime-answer");
+	assert.ok(realtimeAnswer, "expected completed direct answer to render in the realtime answer card");
+	assert.ok(
+		realtimeAnswer.querySelector('.onhand-cite[data-action-key="highlight:alpha"]'),
+		"expected realtime answer transcript to render the completed Onhand turn citation",
+	);
+	assert.ok(
+		realtimeAnswer.querySelector('.onhand-realtime-sources [data-action-key="highlight:alpha"]'),
+		"expected realtime answer transcript to expose source buttons",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeVoiceTranscriptMergesShortPauseContinuations() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-merged-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke",
+		}),
+	);
+	await waitForSidebarTick(dom);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:submit-prompt"),
+		false,
+		"expected partial transcript not to route before the settle window flushes",
+	);
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "content mean here?",
+		}),
+	);
+	await flushRealtimeTranscript(hooks, dom);
+
+	const submitMessages = runtimeMessages.filter((message) => message?.type === "sidebar:submit-prompt");
+	assert.equal(submitMessages.length, 1, "expected merged transcript to route once");
+	assert.equal(submitMessages[0].prompt, "What does Alpha smoke content mean here?");
+	assert.equal(submitMessages[0].displayPrompt, "[Voice] What does Alpha smoke content mean here?");
+
+	dom.window.close();
+}
+
+async function assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+	};
+	state.page = {
+		title: "BayesianDL",
+		url: "https://example.test/bayesian-dl",
+		text: "Monte Carlo uses samples to estimate an expectation.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-prior-source-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "The expectation bit?",
+		}),
+	);
+	await flushRealtimeTranscript(hooks, dom);
+
+	state.turns.push({
+		id: "request-prior-source-direct",
+		userPrompt: "[Voice] The expectation bit?",
+		reply: "Monte Carlo uses samples to estimate an expectation.",
+		activities: [
+			{
+				kind: "tool",
+				toolName: "browser_highlight_text",
+				label: "Highlighting the relevant passage...",
+				state: "error",
+			},
+		],
+		pageActions: [],
+		pending: false,
+		error: false,
+		createdAt: "2026-05-12T10:05:00.000Z",
+	});
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const realtimeAnswer = host.shadowRoot.querySelector(".onhand-realtime-answer");
+	assert.ok(realtimeAnswer, "expected realtime answer card after completed direct answer");
+	assert.ok(
+		realtimeAnswer.querySelector('.onhand-cite[data-action-key="highlight:second"]'),
+		"expected realtime card to cite the earlier source when the current highlight failed",
+	);
+	assert.ok(
+		realtimeAnswer.querySelector('.onhand-realtime-sources [data-action-key="highlight:second"]'),
+		"expected realtime card to expose the earlier source button",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const submit = createDeferred();
+	const dom = await renderSidebar(state, runtimeMessages, {
+		submitPromptResponse(message) {
+			if (message?.type === "sidebar:submit-prompt") return submit.promise;
+			return { ok: true };
+		},
+	});
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	const turnPromise = hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await turnPromise;
+	const flushPromise = hooks.flushRealtimePendingTranscript();
+	await waitForSidebarTick(dom);
+
+	assert.equal(events.some((event) => event.type === "response.create"), false, "expected no preamble before the latency threshold");
+	await waitForRealtimePreambleDelay(dom);
+
+	const preamblePrompt = events.find(
+		(event) =>
+			event.type === "conversation.item.create" &&
+			String(event.item?.content?.[0]?.text || "").includes('Say exactly this sentence, with no extra words: "Let me ground that in the page."'),
+	);
+	assert.ok(preamblePrompt, "expected a delayed fixed preamble prompt while direct answer is pending");
+	const preambleResponse = events.find((event) => event.type === "response.create" && event.event_id?.includes("backend_preamble"));
+	assert.ok(preambleResponse, "expected delayed preamble to create a realtime response");
+	assert.equal(preambleResponse.response?.tool_choice, "none", "expected preamble to disable tool calls");
+	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected preamble transcript to be suppressed");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.audio_transcript.delta", delta: "Let me anchor that first." }));
+	await waitForSidebarTick(dom);
+	assert.doesNotMatch(
+		dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent,
+		/Let me anchor that first/,
+		"expected preamble transcript not to overwrite the pending Onhand answer card",
+	);
+
+	submit.resolve({ ok: true, requestId: "request-preamble-direct" });
+	await flushPromise;
+	state.turns.push({
+		id: "request-preamble-direct",
+		userPrompt: "[Voice] What does Alpha smoke content mean here?",
+		reply: "Alpha smoke content is a fixture sentence that confirms extraction and annotation behavior.",
+		activities: [],
+		pageActions: [],
+		pending: false,
+		error: false,
+		createdAt: "2026-05-12T10:09:00.000Z",
+	});
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, true, "expected final narration to queue behind the preamble");
+	assert.equal(hooks.getRealtimeDebugState().queuedResponseReason, "speak_onhand_answer");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
+	await waitForSidebarTick(dom);
+
+	const finalResponse = events.filter((event) => event.type === "response.create").at(-1);
+	assert.equal(finalResponse.event_id.includes("speak_onhand_answer"), true, "expected queued final response to keep its reason");
+	assert.equal(finalResponse.response?.tool_choice, "none", "expected queued final response to preserve tool_choice");
+	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected final narration transcript to be suppressed");
+	assert.match(
+		String(finalResponse.response?.instructions || ""),
+		/Speak only the provided Onhand answer text/,
+		"expected queued final response to preserve exact narration instructions",
 	);
 
 	dom.window.close();
@@ -1955,7 +2250,7 @@ async function assertRealtimeLearningVoiceTranscriptPlansSocraticMove() {
 			transcript: "What does Alpha smoke content mean here?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 
 	assert.equal(
 		runtimeMessages.some(
@@ -1974,16 +2269,38 @@ async function assertRealtimeLearningVoiceTranscriptPlansSocraticMove() {
 	assert.equal(annotateMessage.anchors[0].text, "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.");
 	assert.equal(annotateMessage.anchors[0].note.length <= 80, true, "expected note to respect marginalia cap");
 	assert.equal(annotateMessage.anchors[0].checkPrompt, "What does this line say Alpha smoke content is checking?");
+	const recordTurnMessage = runtimeMessages.find((message) => message?.type === "sidebar:realtime-record-turn");
+	assert.ok(recordTurnMessage, "expected Socratic tutor prompt to persist a saved voice turn");
+	assert.equal(
+		recordTurnMessage.pageActions.some((action) => action?.key === "highlight:ann-realtime-alpha"),
+		true,
+		"expected saved Socratic turn to include the highlight source",
+	);
+	assert.equal(
+		recordTurnMessage.pageActions.some((action) => action?.key === "note:ann-realtime-alpha"),
+		true,
+		"expected saved Socratic turn to include the note source",
+	);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	assert.ok(
+		shadow.querySelector('.onhand-realtime-sources [data-action-key="highlight:ann-realtime-alpha"]'),
+		"expected saved Socratic turn source strip to expose the highlight",
+	);
+	assert.ok(
+		shadow.querySelector('.onhand-realtime-sources [data-action-key="note:ann-realtime-alpha"]'),
+		"expected saved Socratic turn source strip to expose the note",
+	);
 	assert.equal(hooks.getRealtimeDebugState().pendingSocraticMove?.checkId, "check-realtime-alpha");
 	assert.equal(hooks.getRealtimeDebugState().status, "Speaking tutor prompt...");
 	assert.equal(
 		events.some(
 			(event) =>
 				event.type === "conversation.item.create" &&
-				String(event.item?.content?.[0]?.text || "").includes("Socratic prompt: What does this line say Alpha smoke content is checking?"),
+				String(event.item?.content?.[0]?.text || "").includes("Speak this Socratic prompt exactly as written below.") &&
+				String(event.item?.content?.[0]?.text || "").includes("Your turn: What does this line say Alpha smoke content is checking?"),
 		),
 		true,
-		"expected Socratic prompt to be sent to realtime for narration",
+		"expected canonical Socratic prompt text to be sent to realtime for narration",
 	);
 	assert.equal(
 		events.some((event) => event.type === "response.create" && event.response?.tool_choice === "none"),
@@ -2008,7 +2325,25 @@ async function assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove() {
 		url: "http://127.0.0.1:8765/",
 		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
 	};
-	const dom = await renderSidebar(state, runtimeMessages);
+	const dom = await renderSidebar(state, runtimeMessages, {
+		realtimeEvaluateResponse() {
+			return {
+				ok: true,
+				result: {
+					evaluation: {
+						correct_points: [{ concept: "Alpha smoke content", anchor_text: "confirms readable extraction" }],
+						missed_points: [],
+						next_move: "move_on",
+						feedback_summary: "Correct: it says the fixture confirms extraction and annotations work.",
+						voice_script: "Short alternate narration that should not be used.",
+						sidebar_markdown: "Correct: it says the fixture confirms extraction and annotations work.",
+						assessment: "correct",
+						evidence: "The student connected Alpha smoke content to fixture validation.",
+					},
+				},
+			};
+		},
+	});
 	const hooks = getRealtimeTestHooks(dom);
 	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
 	hooks.setRealtimeConnected(true);
@@ -2019,7 +2354,7 @@ async function assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove() {
 			transcript: "What does Alpha smoke content mean here?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 	assert.ok(hooks.getRealtimeDebugState().pendingSocraticMove, "expected a pending Socratic move after planner turn");
 
 	await hooks.handleRealtimeServerEvent(
@@ -2028,7 +2363,7 @@ async function assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove() {
 			transcript: "It checks that extraction and highlighting work.",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 
 	assert.equal(
 		runtimeMessages.some(
@@ -2059,11 +2394,31 @@ async function assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove() {
 		events.some(
 			(event) =>
 				event.type === "conversation.item.create" &&
-				String(event.item?.content?.[0]?.text || "").includes("Speak this brief Learning Mode feedback"),
+				String(event.item?.content?.[0]?.text || "").includes("Speak this Learning Mode feedback exactly as written below.") &&
+				String(event.item?.content?.[0]?.text || "").includes("Correct: it says the fixture confirms extraction and annotations work."),
 		),
 		true,
-		"expected evaluator feedback to be sent to realtime for narration",
+		"expected canonical evaluator feedback to be sent to realtime for narration",
 	);
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("Short alternate narration that should not be used"),
+		),
+		false,
+		"expected evaluator voice_script not to replace the saved sidebar feedback",
+	);
+	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected saved tutor feedback narration transcript to be suppressed");
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.audio_transcript.delta", delta: "DUPLICATE NARRATION TEXT" }));
+	await waitForSidebarTick(dom);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	assert.doesNotMatch(
+		shadow.textContent,
+		/DUPLICATE NARRATION TEXT/,
+		"expected narration transcript not to create a second visible answer",
+	);
+	assert.equal(shadow.querySelector(".onhand-realtime-answer"), null, "expected saved tutor feedback not to leave a duplicate realtime answer card");
 
 	dom.window.close();
 }
@@ -2234,19 +2589,21 @@ async function assertRealtimeStalePlannerResultDoesNotAnnotateOrPersist() {
 	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
 	hooks.setRealtimeConnected(true);
 
-	const stalePlanPromise = hooks.handleRealtimeServerEvent(
+	await hooks.handleRealtimeServerEvent(
 		JSON.stringify({
 			type: "conversation.item.input_audio_transcription.completed",
 			transcript: "What does the first question mean?",
 		}),
 	);
+	const stalePlanPromise = hooks.flushRealtimePendingTranscript();
 	await waitForSidebarTick(dom);
-	const currentPlanPromise = hooks.handleRealtimeServerEvent(
+	await hooks.handleRealtimeServerEvent(
 		JSON.stringify({
 			type: "conversation.item.input_audio_transcription.completed",
 			transcript: "What does the second question mean?",
 		}),
 	);
+	const currentPlanPromise = hooks.flushRealtimePendingTranscript();
 	await currentPlanPromise;
 	firstPlan.resolve({
 		ok: true,
@@ -2309,16 +2666,17 @@ async function assertRealtimeStaleEvaluatorResultDoesNotResolveLearnerState() {
 			transcript: "What does Alpha smoke content mean here?",
 		}),
 	);
-	await waitForSidebarTick(dom);
+	await flushRealtimeTranscript(hooks, dom);
 	assert.ok(hooks.getRealtimeDebugState().pendingSocraticMove, "expected an open Socratic move before evaluator test");
 	const recordsBefore = runtimeMessages.filter((message) => message?.type === "sidebar:realtime-record-learning-event").length;
 
-	const staleEvaluationPromise = hooks.handleRealtimeServerEvent(
+	await hooks.handleRealtimeServerEvent(
 		JSON.stringify({
 			type: "conversation.item.input_audio_transcription.completed",
 			transcript: "It checks extraction.",
 		}),
 	);
+	const staleEvaluationPromise = hooks.flushRealtimePendingTranscript();
 	await waitForSidebarTick(dom);
 	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
 	evaluation.resolve({
@@ -2356,6 +2714,7 @@ async function assertRealtimeStaleEvaluatorResultDoesNotResolveLearnerState() {
 
 await assertSessionWideCitationNumbers();
 await assertTranscriptActionButtonsActivateDirectly();
+await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertReviewViewRendersSavedSnapshot();
@@ -2381,6 +2740,9 @@ await assertRealtimeEmptyInputBufferDoesNotDisconnect();
 await assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle();
 await assertRealtimeToolSurfaceUsesExplicitAnswerDirectly();
 await assertRealtimeVoiceTranscriptRoutesPageQuestionsThroughOnhand();
+await assertRealtimeVoiceTranscriptMergesShortPauseContinuations();
+await assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations();
+await assertRealtimeDirectAnswerPreambleQueuesFinalNarration();
 await assertRealtimeVoicePdfPromptOpensViewerBeforeOnhandRouting();
 await assertRealtimeLearningVoiceTranscriptPlansSocraticMove();
 await assertRealtimeLearningVoiceResponseEvaluatesOpenSocraticMove();

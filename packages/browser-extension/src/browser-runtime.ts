@@ -270,6 +270,7 @@ Onhand's constitution:
 Default answer mode:
 - For questions about page material, first ground the answer in exact visible/open-page text: highlight the key passage(s), add a short orienting note only when it helps the user read or remember the passage, and scroll the first relevant anchor into view.
 - If captured context already contains the needed text, use it to choose the anchor and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
+- For follow-up questions that refer to an already-highlighted idea, reuse the existing session anchor when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
 - Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
 - Do not add notes that merely paraphrase the highlight. A note should name the role of the passage, explain a hard step, or leave useful marginalia for session replay.
 - Only successful highlight/note tool results count as anchors. If a highlight attempt fails, retry with a smaller exact visible span or omit/qualify that claim in chat.
@@ -621,6 +622,9 @@ function buildHighlightRetryCandidates(value: unknown) {
 
 	for (const line of raw.split(/\r?\n/)) addCandidate(line);
 	for (const part of raw.split(/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+/u)) addCandidate(part);
+	if (!candidates.length) {
+		for (const candidate of getReplayHighlightCandidates(raw)) addCandidate(candidate);
+	}
 
 	return candidates.slice(0, 8);
 }
@@ -2016,7 +2020,7 @@ function buildLearnerStatePromptSummary(rawState: unknown, latestPrompt = "") {
 			}
 			lines.push(
 				"- For likely repeated concepts, keep the turn lightweight: start with a brief reminder that it came up earlier, use the existing source anchor when possible, and avoid re-running the full teaching flow.",
-				"- Page-work budget for repeated concepts: jump/scroll to the existing anchor if available; if that fails, use at most one fallback read and at most one replacement highlight, not a broad search. Do not annotate nearby examples or add notes unless the user explicitly asks for a deeper pass.",
+				"- Page-work budget for repeated concepts: jump/scroll to the existing anchor if available; if that fails, use at most one fallback read and at most one replacement highlight copied from visible/readable page text, not from your explanation. Do not annotate nearby examples or add notes unless the user explicitly asks for a deeper pass.",
 				"- If one of these concepts already has an open check listed above, do not call onhand_record_learning_event with check_opened for it. Point to the existing check instead.",
 				"- If there is no open check for the concept, ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
 				"- Do not treat a likely repeated concept as brand-new. When recording learning events for it, reuse the existing conceptId.",
@@ -3372,7 +3376,7 @@ function createTools(
 		commandTool(
 			"browser_highlight_text",
 			"Browser Highlight Text",
-			"Create an anchor by highlighting exact visible text that supports a material claim. Use short, distinctive spans. Avoid heading-only anchors unless the heading alone answers the user's question. If the answer names multiple roadmap/list/navigation items, create one highlight per item or one exact visible span covering the items. For list items, send the item words, not a heading-plus-list block; Markdown markers in tool output are structure cues. If an item cannot be highlighted successfully, do not claim it as page-supported. For simple non-list questions, use this at most once before answering.",
+			"Create an anchor by highlighting exact visible text that supports a material claim. The text argument must be copied from visible/readable page text, not paraphrased from your answer. Use short, distinctive spans. Avoid heading-only anchors unless the heading alone answers the user's question. If the answer names multiple roadmap/list/navigation items, create one highlight per item or one exact visible span covering the items. For list items, send the item words, not a heading-plus-list block; Markdown markers in tool output are structure cues. If an item cannot be highlighted successfully, do not claim it as page-supported. For simple non-list questions, use this at most once before answering.",
 			HIGHLIGHT_TEXT_SCHEMA,
 			"highlight_text",
 			{ sequential: true },
