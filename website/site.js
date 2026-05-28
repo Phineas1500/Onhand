@@ -5,6 +5,10 @@ const ONHAND_RELEASE = {
   repo: 'https://github.com/Phineas1500/Onhand',
 };
 
+const ONHAND_ANALYTICS = {
+  releaseDownloadEvent: 'download_zip_click',
+};
+
 // 0) Release metadata: keep visible version labels and release links in sync.
 (function(){
   const version = ONHAND_RELEASE.version.replace(/^v/i, '');
@@ -12,6 +16,44 @@ const ONHAND_RELEASE = {
   const fileName = `onhand-${versionLabel}-chrome.zip`;
   const releaseUrl = `${ONHAND_RELEASE.repo}/releases/tag/${versionLabel}`;
   const downloadUrl = `${ONHAND_RELEASE.repo}/releases/download/${versionLabel}/${fileName}`;
+  const downloadEventName = ONHAND_ANALYTICS.releaseDownloadEvent;
+
+  function releaseDownloadData(node){
+    return {
+      release_version: versionLabel,
+      file_name: fileName,
+      link_url: downloadUrl,
+      link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  function trackReleaseDownload(node, onTracked){
+    const data = releaseDownloadData(node);
+
+    if (typeof window.gtag === 'function') {
+      const gaData = {
+        ...data,
+        event_category: 'release',
+        event_label: fileName,
+        transport_type: 'beacon',
+      };
+      if (onTracked) gaData.event_callback = onTracked;
+      window.gtag('event', downloadEventName, gaData);
+    }
+
+    if (window.umami && typeof window.umami.track === 'function') {
+      window.umami.track(downloadEventName, data);
+    }
+  }
+
+  function isPlainLeftClick(event){
+    return event.button === 0
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !event.shiftKey
+      && !event.currentTarget.target;
+  }
 
   document.querySelectorAll('[data-onhand-version-label]').forEach((node) => {
     node.textContent = versionLabel;
@@ -21,6 +63,20 @@ const ONHAND_RELEASE = {
   });
   document.querySelectorAll('[data-onhand-release-download]').forEach((node) => {
     node.href = downloadUrl;
+    node.setAttribute('data-onhand-analytics-event', downloadEventName);
+    node.addEventListener('click', (event) => {
+      const shouldDelayNavigation = isPlainLeftClick(event);
+      let didNavigate = false;
+      const navigate = () => {
+        if (didNavigate) return;
+        didNavigate = true;
+        window.location.href = node.href;
+      };
+
+      if (shouldDelayNavigation) event.preventDefault();
+      trackReleaseDownload(node, shouldDelayNavigation ? navigate : undefined);
+      if (shouldDelayNavigation) setTimeout(navigate, 250);
+    });
   });
   document.querySelectorAll('[data-onhand-release-notes]').forEach((node) => {
     node.href = releaseUrl;
