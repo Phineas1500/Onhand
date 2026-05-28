@@ -2606,7 +2606,9 @@
 				border-color: color-mix(in srgb, var(--rm-love) 45%, transparent);
 			}
 			.onhand-realtime-status {
-				max-width: 128px;
+				flex: 1 1 110px;
+				min-width: 72px;
+				max-width: none;
 				overflow: hidden;
 				text-overflow: ellipsis;
 				white-space: nowrap;
@@ -2615,13 +2617,19 @@
 				color: var(--rm-love);
 			}
 			.onhand-row .mic {
-				max-width: 132px;
+				flex: 0 1 88px;
+				width: 88px;
+				min-width: 58px;
+				max-width: 88px;
 				border: 1px solid var(--rm-overlay);
 				border-radius: 2px;
 				background: var(--rm-mantle);
 				color: var(--rm-text);
 				font: 10.5px var(--rm-font-mono);
 				padding: 2px 4px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
 			}
 			.onhand-row .mic:disabled {
 				opacity: 0.55;
@@ -5074,6 +5082,21 @@
 		return device?.label || (normalized === realtimeMicDeviceId && realtimeActiveMicLabel) || "Selected mic";
 	}
 
+	function getRealtimeMicCompactLabel(label, deviceId) {
+		const normalized = normalizeRealtimeMicDeviceId(deviceId);
+		const raw = String(label || "").trim();
+		if (!raw) return normalized === "default" ? "Default" : "Mic";
+		if (normalized === "default") return "Default";
+		return raw
+			.replace(/^Default\s*[-:]\s*/i, "")
+			.replace(/\s*\([^)]*\)\s*$/g, "")
+			.replace(/\bMicrophone\b/gi, "Mic")
+			.replace(/\bBuilt-in\b/gi, "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 18) || "Mic";
+	}
+
 	function getRealtimeMicSelectOptions() {
 		const options = [];
 		const seen = new Set();
@@ -5109,7 +5132,8 @@
 			realtimeMicSelect.innerHTML = options
 				.map((option) => {
 					const selected = option.deviceId === selectedId ? " selected" : "";
-					return `<option value="${escapeAttribute(option.deviceId)}"${selected}>${escapeHtml(option.label)}</option>`;
+					const compactLabel = getRealtimeMicCompactLabel(option.label, option.deviceId);
+					return `<option value="${escapeAttribute(option.deviceId)}" title="${escapeAttribute(option.label)}"${selected}>${escapeHtml(compactLabel)}</option>`;
 				})
 				.join("");
 			realtimeMicSelectSignature = signature;
