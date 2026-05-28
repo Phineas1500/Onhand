@@ -135,14 +135,11 @@ section:first-of-type{border-top:0}
 .hero-install .copy:hover{color:var(--rp-pine);background:var(--bg-elev)}
 .hero-install .copy.ok{color:var(--rp-foam)}
 
-.hero-mark{position:relative;display:grid;place-items:center;aspect-ratio:1;background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:0 1px 2px rgba(87,82,121,0.06),0 8px 24px rgba(87,82,121,0.08)}
-.hero-mark::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 30%, color-mix(in srgb,var(--rp-gold) 18%,transparent),transparent 60%);pointer-events:none}
-.hero-mark .glyph{font-family:var(--font-symbol);font-size:clamp(140px,18vw,260px);color:var(--rp-text);line-height:1;position:relative;z-index:1;transform:translateX(-2%) translateY(-2%)}
-.hero-mark .corner{position:absolute;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.08em}
-.hero-mark .corner.tl{top:14px;left:16px}
-.hero-mark .corner.tr{top:14px;right:16px;text-align:right}
-.hero-mark .corner.bl{bottom:14px;left:16px}
-.hero-mark .corner.br{bottom:14px;right:16px;text-align:right;color:var(--rp-pine)}
+.hero-demo{margin:0;align-self:center}
+.hero-demo-card{background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:10px;box-shadow:0 1px 2px rgba(87,82,121,0.06),0 8px 24px rgba(87,82,121,0.08)}
+.hero-demo video{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--bg-deep);border-radius:4px}
+.hero-demo figcaption{display:flex;justify-content:space-between;gap:12px;margin-top:10px;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.08em}
+.hero-demo figcaption span:first-child{color:var(--rp-pine);font-weight:700}
 
 @media (max-width:640px){
   .hero{padding:48px 0 28px}
@@ -156,8 +153,9 @@ section:first-of-type{border-top:0}
   .hero-install .prompt{padding-left:12px;padding-right:8px}
   .hero-install code{font-size:12px;overflow:hidden;text-overflow:ellipsis}
   .hero-install .copy{padding-left:10px;padding-right:10px}
-  .hero-mark{aspect-ratio:1;min-height:330px;max-width:min(350px,calc(100vw - 40px))}
-  .hero-mark .glyph{font-size:132px}
+  .hero-demo{max-width:min(350px,calc(100vw - 40px))}
+  .hero-demo-card{padding:7px}
+  .hero-demo figcaption{display:grid;gap:4px}
 }
 
 /* SCREENSHOT */
