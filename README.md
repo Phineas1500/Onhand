@@ -129,12 +129,14 @@ If an OpenAI API key is already saved in the Onhand options page, the side panel
 - `browser_list_tabs`
 - `browser_activate_tab`
 - `browser_navigate`
+- `browser_open_pdf_in_onhand_viewer`
 - `browser_extract_content`
 - `browser_highlight_text`
 - `browser_show_note`
 - `browser_scroll_to_annotation`
 - `browser_clear_annotations`
 - `browser_get_visible_text`
+- `browser_get_visible_region_image`
 - `browser_get_selection`
 - `browser_get_viewport_headings`
 - `browser_get_scroll_state`
