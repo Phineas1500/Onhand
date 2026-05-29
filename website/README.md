@@ -7,7 +7,7 @@ Static landing page. No build step. This directory is self-contained:
 - `support.html` — support and troubleshooting page
 - `404.html` — fallback page
 - `style.css` — Ramaway Dawn (auto dark via `prefers-color-scheme`, manual override via `data-theme` attribute + theme toggle in nav)
-- `site.js` — release metadata, theme toggle persistence, copy-install-button
+- `site.js` — Chrome Web Store URL, release metadata, analytics events, theme toggle persistence, copy buttons
 
 Plus assets:
 
@@ -37,10 +37,11 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 
 ## What to customize
 
-- **Release version:** `site.js`, the `ONHAND_RELEASE.version` value near the top of the file. This drives the visible version badges, the release ZIP filename, and the GitHub release/download URLs.
+- **Store URL and status:** `site.js`, the `ONHAND_STORE` values near the top of the file. These drive the Chrome Web Store links and the approved/pending version labels.
+- **Release version:** `site.js`, the `ONHAND_RELEASE.version` value near the top of the file. This drives the visible GitHub release version badges, the release ZIP filename, and the GitHub release/download URLs.
 - **Hero copy:** `index.html`, sections starting at `<h1 class="hero-h1">`.
 - **Feature card text:** `index.html`, the four `<div class="feat">` blocks.
-- **Add to Chrome link:** currently anchors to `#install` (since the store listing isn't live yet). When the Chrome Web Store listing ships, swap the two `href="#install"` instances on `.btn-primary` and `.nav-cta` for the Web Store URL.
+- **Add to Chrome link:** generated from `ONHAND_STORE.url` for elements with `data-onhand-store-link`.
 - **Open Graph image:** `<meta property="og:image">` — currently the attention screenshot. Replace with a 1200×630 dedicated card when you have one.
 
 ## Asset replacement

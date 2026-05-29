@@ -6,7 +6,14 @@ const ONHAND_RELEASE = {
 };
 
 const ONHAND_ANALYTICS = {
+  chromeStoreEvent: 'chrome_store_click',
   releaseDownloadEvent: 'download_zip_click',
+};
+
+const ONHAND_STORE = {
+  url: 'https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb',
+  approvedVersion: '0.2.1',
+  pendingVersion: '0.2.3',
 };
 
 // 0) Release metadata: keep visible version labels and release links in sync.
@@ -17,6 +24,7 @@ const ONHAND_ANALYTICS = {
   const releaseUrl = `${ONHAND_RELEASE.repo}/releases/tag/${versionLabel}`;
   const downloadUrl = `${ONHAND_RELEASE.repo}/releases/download/${versionLabel}/${fileName}`;
   const downloadEventName = ONHAND_ANALYTICS.releaseDownloadEvent;
+  const chromeStoreEventName = ONHAND_ANALYTICS.chromeStoreEvent;
 
   function releaseDownloadData(node){
     return {
@@ -80,6 +88,35 @@ const ONHAND_ANALYTICS = {
   });
   document.querySelectorAll('[data-onhand-release-notes]').forEach((node) => {
     node.href = releaseUrl;
+  });
+  document.querySelectorAll('[data-onhand-store-link]').forEach((node) => {
+    node.href = ONHAND_STORE.url;
+    node.setAttribute('data-onhand-analytics-event', chromeStoreEventName);
+    node.addEventListener('click', () => {
+      const data = {
+        store_version: ONHAND_STORE.approvedVersion,
+        pending_version: ONHAND_STORE.pendingVersion,
+        link_url: ONHAND_STORE.url,
+        link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+      };
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', chromeStoreEventName, {
+          ...data,
+          event_category: 'install',
+          event_label: ONHAND_STORE.url,
+          transport_type: 'beacon',
+        });
+      }
+      if (window.umami && typeof window.umami.track === 'function') {
+        window.umami.track(chromeStoreEventName, data);
+      }
+    });
+  });
+  document.querySelectorAll('[data-onhand-store-version]').forEach((node) => {
+    node.textContent = `v${ONHAND_STORE.approvedVersion}`;
+  });
+  document.querySelectorAll('[data-onhand-pending-version]').forEach((node) => {
+    node.textContent = `v${ONHAND_STORE.pendingVersion}`;
   });
 })();
 

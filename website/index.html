@@ -44,7 +44,7 @@
       <span class="nav-label">GitHub</span>
       <span style="font-size:13px;opacity:0.7">↗</span>
     </a>
-    <a class="nav-cta" href="#install">
+    <a class="nav-cta" href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-onhand-store-link>
       <span class="mc" style="font-size:14px">☞</span>
       <span class="nav-cta-label">Add to Chrome</span>
     </a>
@@ -56,7 +56,9 @@
     <div class="hero-grid">
       <div>
         <div class="hero-eyebrow">
-          <span class="tag"><span data-onhand-version-label></span> · early access</span>
+          <span class="tag">Chrome Web Store live</span>
+          <span class="dot"></span>
+          <span>Store <span data-onhand-store-version></span> · latest build <span data-onhand-version-label></span></span>
           <span class="dot"></span>
           <span>Apache 2.0</span>
           <span class="dot"></span>
@@ -76,7 +78,7 @@
         </p>
 
         <div class="hero-ctas">
-          <a class="btn-primary" href="#install">
+          <a class="btn-primary" href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-onhand-store-link>
             <span class="mc" style="font-size:20px">☞</span>
             <span>Add to Chrome</span>
           </a>
@@ -86,10 +88,10 @@
           </a>
         </div>
 
-        <div class="hero-install" role="group" aria-label="Install command">
-          <span class="prompt">$</span>
-          <code id="hero-install-cmd">git clone <span class="ar">https://github.com/Phineas1500/Onhand</span> &amp;&amp; npm install &amp;&amp; npm run build:extension</code>
-          <button class="copy" data-copy="#hero-install-cmd">copy</button>
+        <div class="hero-install" role="group" aria-label="Chrome Web Store listing">
+          <span class="prompt">↗</span>
+          <code id="hero-store-url"><span class="ar">chromewebstore.google.com</span>/detail/ogjmncmkpgdkkcibdiacmagaehjohljb</code>
+          <button class="copy" data-copy="#hero-store-url">copy</button>
         </div>
       </div>
 
@@ -217,25 +219,30 @@
 <section id="install">
   <div class="container">
     <div class="section-eyebrow"><span class="mc">☞</span><span>Install</span></div>
-    <h2 class="section-title">Until the store listing ships, install the release ZIP.</h2>
+    <h2 class="section-title">Onhand is on the Chrome Web Store.</h2>
     <p class="section-lede">
-      Download the packaged Chromium build from GitHub, unzip it, then load the
-      unzipped folder in <code style="font-family:var(--font-mono);font-size:14px;background:var(--bg-deep);padding:1px 5px;border-radius:2px;color:var(--rp-love)">chrome://extensions</code>.
+      Install the approved Chrome Web Store build in one click. The store is
+      currently serving <span data-onhand-store-version></span>; <span data-onhand-pending-version></span>
+      has been submitted and is pending review.
     </p>
 
     <div class="install-wrap">
       <div>
         <div class="release-card">
-          <div class="release-kicker">Current release · <span data-onhand-version-label></span></div>
-          <h3>Download Onhand for Chromium.</h3>
+          <div class="release-kicker">Chrome Web Store · live now</div>
+          <h3>Add Onhand to Chrome.</h3>
           <p>
-            The ZIP contains the built extension with <code>manifest.json</code> at
-            the package root. Chrome still asks you to unzip it before loading.
+            The approved store build installs normally and updates through Chrome.
+            Use the GitHub ZIP only if you need the newest <span data-onhand-version-label></span>
+            build before store review finishes.
           </p>
           <div class="release-actions">
-            <a class="release-download" href="#" data-onhand-release-download>
+            <a class="release-download" href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-onhand-store-link>
               <span class="mc">☞</span>
-              <span>Download ZIP</span>
+              <span>Add to Chrome</span>
+            </a>
+            <a class="release-notes" href="#" data-onhand-release-download>
+              Download latest ZIP
             </a>
             <a class="release-notes" href="#" target="_blank" rel="noopener" data-onhand-release-notes>
               Release notes ↗
@@ -268,12 +275,11 @@
       </div>
 
       <ol class="install-steps">
-        <li>Download <strong data-onhand-release-file></strong> from the GitHub release.</li>
-        <li>Unzip it. The folder you load should contain <code>manifest.json</code> at the top level.</li>
-        <li>Open your Chromium browser's <strong>Extensions</strong> page and turn on <em>developer mode</em>.</li>
-        <li>Click <strong>Load unpacked</strong> and choose the unzipped Onhand folder.</li>
+        <li>Open the <strong>Chrome Web Store listing</strong> and click <strong>Add to Chrome</strong>.</li>
+        <li>Chrome is currently serving <strong data-onhand-store-version></strong>; <strong data-onhand-pending-version></strong> is pending approval.</li>
         <li>Open the Onhand <strong>options page</strong>. Either sign in with <em>OpenAI Codex</em> (recommended), or paste an <em>OpenAI API key</em>.</li>
         <li>Pin the extension, open any page, and click the icon to launch the <strong>side panel</strong>. Press <code>Cmd/Ctrl+K</code> in the panel to focus the composer.</li>
+        <li>Need the newest build today? Download <strong data-onhand-release-file></strong>, unzip it, then load the folder from <code>chrome://extensions</code> with <em>developer mode</em> enabled.</li>
         <li>That's it <span class="mc" style="color:var(--rp-gold);font-size:15px">☞</span>. Highlight a passage, type a question, and let Onhand <em>point</em>.</li>
       </ol>
     </div>
@@ -406,6 +412,6 @@
   </div>
 </footer>
 
-<script src="./site.js?v=0.2.3-release"></script>
+<script src="./site.js?v=0.2.3-store-live"></script>
 </body>
 </html>
