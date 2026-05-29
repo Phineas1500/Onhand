@@ -161,6 +161,8 @@ function createLearningState() {
 }
 
 async function renderSidebar(state, runtimeMessages, options = {}) {
+	const runtimeMessageListeners = [];
+	const storageValues = { ...(options.storage || {}) };
 	const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 		pretendToBeVisual: true,
 		runScripts: "outside-only",
@@ -179,7 +181,11 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 			getURL(path) {
 				return `chrome-extension://extension-id/${path}`;
 			},
-			onMessage: { addListener() {} },
+			onMessage: {
+				addListener(listener) {
+					runtimeMessageListeners.push(listener);
+				},
+			},
 			async sendMessage(message) {
 				runtimeMessages.push(message);
 				if (message?.type === "sidebar:fetch-state") return { ok: true, state };
@@ -457,9 +463,22 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 		storage: {
 			local: {
 				async get(defaults) {
-					return { ...defaults };
+					if (typeof defaults === "string") {
+						return { [defaults]: storageValues[defaults] };
+					}
+					if (Array.isArray(defaults)) {
+						return Object.fromEntries(defaults.map((key) => [key, storageValues[key]]));
+					}
+					return { ...defaults, ...Object.fromEntries(Object.keys(defaults || {}).map((key) => [key, storageValues[key] ?? defaults[key]])) };
 				},
-				async set() {},
+				async set(items) {
+					Object.assign(storageValues, items || {});
+				},
+				async remove(keys) {
+					for (const key of Array.isArray(keys) ? keys : [keys]) {
+						delete storageValues[key];
+					}
+				},
 			},
 			onChanged: { addListener() {} },
 		},
@@ -471,6 +490,13 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	};
 	window.eval(await readFile(SIDEBAR_PATH, "utf8"));
 	await new Promise((resolve) => window.setTimeout(resolve, 50));
+	dom.dispatchRuntimeMessage = async (message) => {
+		for (const listener of runtimeMessageListeners) {
+			listener(message, {}, () => {});
+		}
+		await new Promise((resolve) => window.setTimeout(resolve, 50));
+	};
+	dom.getStorageValue = (key) => storageValues[key];
 	return dom;
 }
 
@@ -948,6 +974,48 @@ async function assertPageIndexHighlightWithNoteJumpsToAnnotation() {
 		true,
 	);
 
+	dom.window.close();
+}
+
+async function assertPageIndexDoesNotShowStalePageActions() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.tab = {
+		id: 99,
+		title: "onhand-viewer.pdf - Onhand PDF Viewer",
+		url: "http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",
+	};
+	state.page = { annotations: [] };
+	state.pageActions = [
+		{
+			key: "highlight:stale-pdf",
+			type: "annotation",
+			annotationId: "stale-pdf",
+			tabId: 42,
+			title: "Onhand PDF Adapter Fixture",
+			url: "http://127.0.0.1:8765/pdf.html",
+			label: "Highlighted text",
+			detail: "Recurrent Neural Networks",
+			citationText: "Recurrent Neural Networks",
+		},
+		{
+			key: "note:stale-pdf",
+			type: "note",
+			annotationId: "stale-pdf",
+			tabId: 42,
+			title: "Onhand PDF Adapter Fixture",
+			url: "http://127.0.0.1:8765/pdf.html",
+			label: "Added note",
+			detail: "RNNs preserve sequence state.",
+			citationText: "RNNs preserve sequence state.",
+		},
+	];
+
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const pageIndex = host.shadowRoot.getElementById("pageIndex");
+	assert.equal(pageIndex.hidden, true, "expected stale annotations from another tab/page to stay out of the current page index");
+	assert.equal(pageIndex.textContent.trim(), "", "expected stale annotation text not to render under ON THIS PAGE");
 	dom.window.close();
 }
 
@@ -2712,7 +2780,54 @@ async function assertRealtimeStaleEvaluatorResultDoesNotResolveLearnerState() {
 	dom.window.close();
 }
 
+async function assertQuickOpenFocusesComposer() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const menuButton = shadow.getElementById("menuButton");
+	const menuPanel = shadow.getElementById("menuPanel");
+	const input = shadow.getElementById("input");
+	const request = {
+		id: "quick-open-test",
+		windowId: 1,
+		target: "composer",
+		createdAt: Date.now(),
+	};
+
+	menuButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(menuPanel.hidden, false, "expected menu to be open before quick-open message");
+	await dom.dispatchRuntimeMessage({ type: "sidebar:quick-open", request });
+
+	assert.equal(menuPanel.hidden, true, "expected quick open to close the menu");
+	assert.equal(shadow.activeElement, input, "expected quick open to focus the composer input");
+	assert.equal(dom.getStorageValue("onhandSidebarQuickOpenRequest"), undefined, "expected handled quick-open request to be cleared");
+
+	dom.window.close();
+
+	const startupRequest = {
+		id: "quick-open-startup-test",
+		windowId: 1,
+		target: "composer",
+		createdAt: Date.now(),
+	};
+	const startupDom = await renderSidebar(createState(), [], {
+		storage: { onhandSidebarQuickOpenRequest: startupRequest },
+	});
+	const startupHost = startupDom.window.document.getElementById("onhand-extension-sidebar-host");
+	const startupShadow = startupHost.shadowRoot;
+	const startupInput = startupShadow.getElementById("input");
+	await new Promise((resolve) => startupDom.window.setTimeout(resolve, 150));
+	assert.equal(startupShadow.activeElement, startupInput, "expected startup quick open to survive initial state render");
+	assert.equal(startupDom.getStorageValue("onhandSidebarQuickOpenRequest"), undefined, "expected startup quick-open request to be cleared");
+	startupInput.blur();
+	startupDom.window.dispatchEvent(new startupDom.window.KeyboardEvent("keydown", { key: "x", bubbles: true }));
+	assert.equal(startupInput.value, "x", "expected quick-open key capture to route document typing into the composer");
+	startupDom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
+await assertQuickOpenFocusesComposer();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
@@ -2720,6 +2835,7 @@ await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertReviewViewRendersSavedSnapshot();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();
+await assertPageIndexDoesNotShowStalePageActions();
 await assertLearningSessionPanelRendersState();
 await assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale();
 await assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote();

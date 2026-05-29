@@ -29,6 +29,14 @@
       "128": "icons/onhand-128.png"
     }
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
+      }
+    }
+  },
   "web_accessible_resources": [
     {
       "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*"],

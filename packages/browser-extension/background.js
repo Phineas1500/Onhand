@@ -6,6 +6,8 @@ const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const PDF_READER_FRAME_EXECUTION_TIMEOUT_MS = 6000;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
+const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
+const SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS = [0, 80, 240, 600];
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
@@ -163,6 +165,35 @@ async function openSidebarForWindow(windowId) {
 	}
 	await setSidebarWindowOpen(windowId, true);
 	return { windowId, open: true };
+}
+
+function createQuickOpenRequest(windowId) {
+	const randomId =
+		typeof globalThis.crypto?.randomUUID === "function"
+			? globalThis.crypto.randomUUID()
+			: `quick-open-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	return {
+		id: randomId,
+		windowId,
+		target: "composer",
+		createdAt: Date.now(),
+	};
+}
+
+async function requestSidebarQuickOpen(windowId) {
+	const request = createQuickOpenRequest(windowId);
+	await chrome.storage.local.set({ [SIDEBAR_QUICK_OPEN_REQUEST_KEY]: request });
+	for (const delayMs of SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS) {
+		setTimeout(() => {
+			chrome.runtime
+				.sendMessage({
+					type: "sidebar:quick-open",
+					request,
+				})
+				.catch(() => {});
+		}, delayMs);
+	}
+	return request;
 }
 
 async function closeSidebarForWindow(windowId) {
@@ -2193,12 +2224,25 @@ const createPageToolkit = (options = {}) => {
 		};
 	};
 
-	const denormalizePdfRect = (rect, pageRect) => ({
-		left: rect.x * pageRect.width,
-		top: rect.y * pageRect.height,
-		width: rect.width * pageRect.width,
-		height: rect.height * pageRect.height,
-	});
+	const getPdfPageLayoutSize = (page, pageRect = null) => {
+		const rect = pageRect || page?.getBoundingClientRect?.() || {};
+		const width = Number(page?.clientWidth || page?.offsetWidth || rect.width || 1) || 1;
+		const height = Number(page?.clientHeight || page?.offsetHeight || rect.height || 1) || 1;
+		return {
+			width: Math.max(1, width),
+			height: Math.max(1, height),
+		};
+	};
+
+	const denormalizePdfRect = (rect, page, pageRect = null) => {
+		const size = getPdfPageLayoutSize(page, pageRect);
+		return {
+			left: rect.x * size.width,
+			top: rect.y * size.height,
+			width: rect.width * size.width,
+			height: rect.height * size.height,
+		};
+	};
 
 	const parsePdfAnchorFromElement = (annotationElement) => {
 		try {
@@ -2465,7 +2509,7 @@ const createPageToolkit = (options = {}) => {
 
 	const positionPdfVisualRect = (element, page, rect) => {
 		if (!(element instanceof HTMLElement) || !(page instanceof HTMLElement) || !rect) return false;
-		const positioned = denormalizePdfRect(rect, page.getBoundingClientRect());
+		const positioned = denormalizePdfRect(rect, page, page.getBoundingClientRect());
 		setPdfOverlayStyle(element, "left", `${positioned.left}px`);
 		setPdfOverlayStyle(element, "top", `${positioned.top}px`);
 		setPdfOverlayStyle(element, "width", `${Math.max(1, positioned.width)}px`);
@@ -2511,29 +2555,111 @@ const createPageToolkit = (options = {}) => {
 		return created;
 	};
 
+	const toPdfPageRect = (rect, page, pageRect) => {
+		const size = getPdfPageLayoutSize(page, pageRect);
+		const scaleX = pageRect.width ? size.width / pageRect.width : 1;
+		const scaleY = pageRect.height ? size.height / pageRect.height : 1;
+		const left = (rect.left - pageRect.left) * scaleX;
+		const top = (rect.top - pageRect.top) * scaleY;
+		const width = rect.width * scaleX;
+		const height = rect.height * scaleY;
+		return {
+			left,
+			top,
+			right: left + width,
+			bottom: top + height,
+			width,
+			height,
+		};
+	};
+
+	const pdfRectOverlapArea = (a, b) => {
+		const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+		const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+		return width * height;
+	};
+
+	const getPdfTextRectsForPage = (page, pageRect) =>
+		Array.from(page.querySelectorAll(".textLayer span, [data-onhand-pdf-text-layer] span"))
+			.map((element) => {
+				const rect = element.getBoundingClientRect();
+				if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+				return toPdfPageRect(rect, page, pageRect);
+			})
+			.filter(Boolean);
+
+	const scorePdfNoteCandidate = (candidate, textRects, anchorRect) => {
+		const candidateRect = {
+			left: candidate.left,
+			top: candidate.top,
+			right: candidate.left + candidate.width,
+			bottom: candidate.top + candidate.height,
+			width: candidate.width,
+			height: candidate.height,
+		};
+		const textOverlap = textRects.reduce((sum, rect) => sum + pdfRectOverlapArea(candidateRect, rect), 0);
+		const anchorOverlap = pdfRectOverlapArea(candidateRect, anchorRect);
+		const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
+		return textOverlap * 1000 + anchorOverlap * 1200 + anchorDistance * 0.01 + candidate.order;
+	};
+
+	const choosePdfNotePosition = (page, pageRect, anchorRect, noteWidth, noteHeight) => {
+		const { width: pageWidth, height: pageHeight } = getPdfPageLayoutSize(page, pageRect);
+		const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
+		const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
+		const clamp = (value, min, max) => {
+			if (max < min) return min;
+			return Math.max(min, Math.min(max, value));
+		};
+		const maxLeft = Math.max(margin, pageWidth - noteWidth - margin);
+		const maxTop = Math.max(margin, pageHeight - noteHeight - margin);
+		const rightOfAnchor = clamp(anchorRect.right + gap, margin, maxLeft);
+		const leftOfAnchor = clamp(anchorRect.left - noteWidth - gap, margin, maxLeft);
+		const alignedWithAnchor = clamp(anchorRect.left, margin, maxLeft);
+		const rightEdge = maxLeft;
+		const leftEdge = margin;
+		const aboveAnchor = anchorRect.top - noteHeight - gap;
+		const belowAnchor = anchorRect.bottom + gap;
+		const alignedTop = anchorRect.top;
+		const candidates = [
+			[rightOfAnchor, aboveAnchor],
+			[rightEdge, aboveAnchor],
+			[alignedWithAnchor, aboveAnchor],
+			[leftOfAnchor, aboveAnchor],
+			[rightOfAnchor, belowAnchor],
+			[rightEdge, belowAnchor],
+			[alignedWithAnchor, belowAnchor],
+			[leftOfAnchor, belowAnchor],
+			[rightEdge, alignedTop],
+			[leftEdge, alignedTop],
+			[rightEdge, margin],
+			[rightEdge, maxTop],
+			[leftEdge, maxTop],
+		].map(([left, top], order) => ({
+			left: clamp(left, margin, maxLeft),
+			top: clamp(top, margin, maxTop),
+			width: noteWidth,
+			height: noteHeight,
+			order,
+		}));
+		const textRects = getPdfTextRectsForPage(page, pageRect);
+		return candidates.reduce((best, candidate) => {
+			const score = scorePdfNoteCandidate(candidate, textRects, anchorRect);
+			return !best || score < best.score ? { ...candidate, score } : best;
+		}, null);
+	};
+
 	const positionPdfNoteElement = (note, annotationElement, page) => {
 		if (!(note instanceof HTMLElement) || !(annotationElement instanceof HTMLElement) || !(page instanceof HTMLElement)) return false;
 		const wasCollapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
 		if (!wasCollapsed && hasStaleCollapsedPdfNoteStyle(note)) setPdfNoteCollapsed(note, false);
 		const pageRect = page.getBoundingClientRect();
 		const anchorRect = annotationElement.getBoundingClientRect();
-		const normalized = normalizePdfRect(anchorRect, pageRect, getPdfPageNumber(page));
-		const positioned = denormalizePdfRect(
-			{
-				...normalized,
-				x: Math.min(0.68, normalized.x + normalized.width + 0.015),
-				y: Math.min(0.88, normalized.y + normalized.height + 0.015),
-				width: 0.3,
-				height: 0.12,
-			},
-			pageRect,
-		);
-		const noteWidth = `${Math.max(220, Math.min(360, pageRect.width * 0.3))}px`;
+		const pageSize = getPdfPageLayoutSize(page, pageRect);
+		const noteWidthPx = Math.max(220, Math.min(360, pageSize.width * 0.3));
 		setPdfOverlayStyle(note, "position", "absolute");
-		setPdfOverlayStyle(note, "left", `${positioned.left}px`);
-		setPdfOverlayStyle(note, "top", `${positioned.top}px`);
-		setPdfOverlayStyle(note, "width", noteWidth);
-		setPdfOverlayStyle(note, "inline-size", noteWidth);
+		setPdfOverlayStyle(note, "width", `${noteWidthPx}px`);
+		setPdfOverlayStyle(note, "inline-size", `${noteWidthPx}px`);
 		if (!wasCollapsed) {
 			setPdfOverlayStyle(note, "display", "block");
 			setPdfOverlayStyle(note, "height", "auto");
@@ -2546,6 +2672,13 @@ const createPageToolkit = (options = {}) => {
 			setPdfOverlayStyle(note, "justify-content", "normal");
 			setPdfOverlayStyle(note, "cursor", "auto");
 			setPdfOverlayStyle(note, "border-radius", "0 4px 4px 0");
+		}
+		const measuredHeight = note.getBoundingClientRect().height || note.offsetHeight || 0;
+		const noteHeightPx = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
+		const positioned = choosePdfNotePosition(page, pageRect, toPdfPageRect(anchorRect, page, pageRect), noteWidthPx, noteHeightPx);
+		if (positioned) {
+			setPdfOverlayStyle(note, "left", `${positioned.left}px`);
+			setPdfOverlayStyle(note, "top", `${positioned.top}px`);
 		}
 		setPdfOverlayStyle(note, "margin", "0");
 		setPdfOverlayStyle(note, "pointer-events", "auto");
@@ -2665,6 +2798,78 @@ const createPageToolkit = (options = {}) => {
 		return rects;
 	};
 
+	let pdfTextMeasureCanvas = null;
+
+	const getPdfTextMeasureContext = () => {
+		if (!pdfTextMeasureCanvas) pdfTextMeasureCanvas = document.createElement("canvas");
+		return pdfTextMeasureCanvas.getContext?.("2d") || null;
+	};
+
+	const measurePdfText = (element, text) => {
+		if (!(element instanceof HTMLElement)) return 0;
+		const context = getPdfTextMeasureContext();
+		if (!context) return 0;
+		const style = window.getComputedStyle(element);
+		context.font =
+			style.font && style.font !== ""
+				? style.font
+				: `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${style.fontSize || "16px"} ${style.fontFamily || "sans-serif"}`;
+		return context.measureText(String(text || "")).width;
+	};
+
+	const rangeIntersectsPdfTextNode = (range, node) => {
+		try {
+			return typeof range.intersectsNode === "function" ? range.intersectsNode(node) : true;
+		} catch {
+			return false;
+		}
+	};
+
+	const getPdfTextSegmentClientRects = (range, page) => {
+		if (!range || !(page instanceof HTMLElement)) return [];
+		const textLayer = getPdfTextLayer(page, { allowPageFallback: true });
+		if (!(textLayer instanceof Element)) return [];
+		const rects = [];
+		const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			const node = walker.currentNode;
+			if (!rangeIntersectsPdfTextNode(range, node)) continue;
+			const text = node.nodeValue || "";
+			const startOffset = node === range.startContainer ? range.startOffset : 0;
+			const endOffset = node === range.endContainer ? range.endOffset : text.length;
+			if (endOffset <= startOffset) continue;
+			const segmentText = text.slice(startOffset, endOffset);
+			if (!normalizeText(segmentText)) continue;
+			const element = node.parentElement;
+			if (!(element instanceof HTMLElement)) continue;
+			const spanRect = element.getBoundingClientRect();
+			if (!spanRect || spanRect.width <= 0 || spanRect.height <= 0) continue;
+			const fullWidth = measurePdfText(element, text);
+			const segmentWidth = measurePdfText(element, segmentText);
+			if (!fullWidth || !segmentWidth) continue;
+			const prefixWidth = measurePdfText(element, text.slice(0, startOffset));
+			const left = spanRect.left + (prefixWidth / fullWidth) * spanRect.width;
+			const width = Math.min(spanRect.right, left + (segmentWidth / fullWidth) * spanRect.width) - left;
+			if (width <= 0) continue;
+			rects.push({
+				x: left,
+				y: spanRect.top,
+				left,
+				top: spanRect.top,
+				right: left + width,
+				bottom: spanRect.bottom,
+				width,
+				height: spanRect.height,
+			});
+		}
+		return rects;
+	};
+
+	const getPdfRangeClientRects = (range, page, fallbackRect) => {
+		const textSegmentRects = getPdfTextSegmentClientRects(range, page);
+		return textSegmentRects.length ? textSegmentRects : getRangeClientRects(range, fallbackRect);
+	};
+
 	const ensurePdfOverlayLayer = (page) => {
 		if (!(page instanceof HTMLElement)) return null;
 		let layer = page.querySelector(":scope > [data-onhand-pdf-overlay-layer]");
@@ -2733,7 +2938,7 @@ const createPageToolkit = (options = {}) => {
 		if (surface.surface !== "pdf") return null;
 		const fallbackLayer = getPdfTextLayer(fallbackPage, { allowPageFallback: surface.likelyPdfDocument });
 		const fallbackRect = fallbackLayer?.getBoundingClientRect?.() || fallbackPage.getBoundingClientRect();
-		const normalizedRects = getRangeClientRects(range, fallbackRect)
+		const normalizedRects = getPdfRangeClientRects(range, fallbackPage, fallbackRect)
 			.map((rect) => {
 				const page = findPdfPageForViewportRect(rect, fallbackPage);
 				if (!(page instanceof Element)) return null;
@@ -3059,7 +3264,7 @@ const createPageToolkit = (options = {}) => {
 			const pageNumber = getPdfPageNumber(page, index);
 			const pageRect = page.getBoundingClientRect();
 			const fallbackRect = textLayer.getBoundingClientRect();
-			const rects = getRangeClientRects(match.range, fallbackRect).map((rect) => normalizePdfRect(rect, pageRect, pageNumber));
+			const rects = getPdfRangeClientRects(match.range, page, fallbackRect).map((rect) => normalizePdfRect(rect, pageRect, pageNumber));
 			if (!rects.length) continue;
 			const overlayLayer = ensurePdfOverlayLayer(page);
 			if (!overlayLayer) continue;
@@ -6862,6 +7067,7 @@ if (chrome.sidePanel?.onOpened?.addListener) {
 	chrome.sidePanel.onOpened.addListener(async (info) => {
 		if (typeof info?.windowId === "number") {
 			await setSidebarWindowOpen(info.windowId, true);
+			await requestSidebarQuickOpen(info.windowId);
 		}
 	});
 }
@@ -7590,6 +7796,7 @@ chrome.action.onClicked.addListener((tab) => {
 			return;
 		}
 		await openSidebarForWindow(windowId);
+		await requestSidebarQuickOpen(windowId);
 	})().catch((error) => log("Could not toggle Onhand sidebar from toolbar action", error?.message || String(error)));
 });
 

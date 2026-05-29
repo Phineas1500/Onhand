@@ -239,15 +239,85 @@ function ensureAnnotationLayer(page: HTMLElement) {
 	return layer;
 }
 
-function rangeRectsForPage(range: Range, page: HTMLElement) {
+let textMeasureCanvas: HTMLCanvasElement | null = null;
+
+function getTextMeasureContext() {
+	if (!textMeasureCanvas) textMeasureCanvas = document.createElement("canvas");
+	return textMeasureCanvas.getContext("2d");
+}
+
+function measureElementText(element: HTMLElement, text: string) {
+	const context = getTextMeasureContext();
+	if (!context) return 0;
+	const style = window.getComputedStyle(element);
+	context.font =
+		style.font && style.font !== ""
+			? style.font
+			: `${style.fontStyle || "normal"} ${style.fontWeight || "400"} ${style.fontSize || "16px"} ${style.fontFamily || "sans-serif"}`;
+	return context.measureText(text).width;
+}
+
+function rangeIntersectsTextNode(range: Range, node: Text) {
+	try {
+		return typeof range.intersectsNode === "function" ? range.intersectsNode(node) : true;
+	} catch {
+		return false;
+	}
+}
+
+function textSegmentRectsForPage(range: Range, page: HTMLElement) {
+	const textLayer = page.querySelector<HTMLElement>(".textLayer, [data-onhand-pdf-text-layer]");
+	if (!textLayer) return [];
 	const pageRect = page.getBoundingClientRect();
+	const size = getPageLayoutSize(page, pageRect);
+	const scaleX = pageRect.width ? size.width / pageRect.width : 1;
+	const scaleY = pageRect.height ? size.height / pageRect.height : 1;
+	const rects: PdfRect[] = [];
+	const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+	while (walker.nextNode()) {
+		const node = walker.currentNode as Text;
+		if (!rangeIntersectsTextNode(range, node)) continue;
+		const text = node.nodeValue || "";
+		const startOffset = node === range.startContainer ? range.startOffset : 0;
+		const endOffset = node === range.endContainer ? range.endOffset : text.length;
+		if (endOffset <= startOffset) continue;
+		const segmentText = text.slice(startOffset, endOffset);
+		if (!normalizeText(segmentText)) continue;
+		const element = node.parentElement;
+		if (!(element instanceof HTMLElement)) continue;
+		const spanRect = element.getBoundingClientRect();
+		if (!spanRect || spanRect.width <= 0 || spanRect.height <= 0) continue;
+		const fullWidth = measureElementText(element, text);
+		const segmentWidth = measureElementText(element, segmentText);
+		if (!fullWidth || !segmentWidth) continue;
+		const prefixWidth = measureElementText(element, text.slice(0, startOffset));
+		const left = spanRect.left + (prefixWidth / fullWidth) * spanRect.width;
+		const width = Math.min(spanRect.right, left + (segmentWidth / fullWidth) * spanRect.width) - left;
+		if (width <= 0) continue;
+		rects.push({
+			left: (left - pageRect.left) * scaleX,
+			top: (spanRect.top - pageRect.top) * scaleY,
+			width: width * scaleX,
+			height: spanRect.height * scaleY,
+		});
+	}
+	return rects;
+}
+
+function rangeRectsForPage(range: Range, page: HTMLElement) {
+	const textSegmentRects = textSegmentRectsForPage(range, page);
+	if (textSegmentRects.length) return textSegmentRects;
+	const pageRect = page.getBoundingClientRect();
+	const size = getPageLayoutSize(page, pageRect);
+	const scaleX = pageRect.width ? size.width / pageRect.width : 1;
+	const scaleY = pageRect.height ? size.height / pageRect.height : 1;
 	return Array.from(range.getClientRects())
 		.filter((rect) => rect.width > 0 && rect.height > 0)
 		.map((rect) => ({
-			left: rect.left - pageRect.left,
-			top: rect.top - pageRect.top,
-			width: rect.width,
-			height: rect.height,
+			left: (rect.left - pageRect.left) * scaleX,
+			top: (rect.top - pageRect.top) * scaleY,
+			width: rect.width * scaleX,
+			height: rect.height * scaleY,
 		}));
 }
 
@@ -463,6 +533,113 @@ function setImportantStyle(element: HTMLElement, property: string, value: string
 	element.style.setProperty(property, value, "important");
 }
 
+type PageRect = {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+	width: number;
+	height: number;
+};
+
+function getPageLayoutSize(page: HTMLElement, pageRect = page.getBoundingClientRect()) {
+	const width = Number(page.clientWidth || page.offsetWidth || pageRect.width || 1) || 1;
+	const height = Number(page.clientHeight || page.offsetHeight || pageRect.height || 1) || 1;
+	return {
+		width: Math.max(1, width),
+		height: Math.max(1, height),
+	};
+}
+
+function toPageRect(rect: DOMRect, page: HTMLElement, pageRect: DOMRect): PageRect {
+	const size = getPageLayoutSize(page, pageRect);
+	const scaleX = pageRect.width ? size.width / pageRect.width : 1;
+	const scaleY = pageRect.height ? size.height / pageRect.height : 1;
+	const left = (rect.left - pageRect.left) * scaleX;
+	const top = (rect.top - pageRect.top) * scaleY;
+	const width = rect.width * scaleX;
+	const height = rect.height * scaleY;
+	return {
+		left,
+		top,
+		right: left + width,
+		bottom: top + height,
+		width,
+		height,
+	};
+}
+
+function rectOverlapArea(a: PageRect, b: PageRect) {
+	const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+	const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+	return width * height;
+}
+
+function getPdfTextRects(page: HTMLElement, pageRect: DOMRect) {
+	return Array.from(page.querySelectorAll<HTMLElement>(".textLayer span, [data-onhand-pdf-text-layer] span"))
+		.map((element) => {
+			const rect = element.getBoundingClientRect();
+			if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+			return toPageRect(rect, page, pageRect);
+		})
+		.filter((rect): rect is PageRect => Boolean(rect));
+}
+
+function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRects: PageRect[], anchorRect: PageRect) {
+	const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0);
+	const anchorOverlap = rectOverlapArea(candidate, anchorRect);
+	const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
+	return textOverlap * 1000 + anchorOverlap * 1200 + anchorDistance * 0.01 + candidate.order;
+}
+
+function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect: PageRect, noteWidth: number, noteHeight: number) {
+	const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
+	const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
+	const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
+	const clamp = (value: number, min: number, max: number) => {
+		if (max < min) return min;
+		return Math.max(min, Math.min(max, value));
+	};
+	const maxLeft = Math.max(margin, pageWidth - noteWidth - margin);
+	const maxTop = Math.max(margin, pageHeight - noteHeight - margin);
+	const rightOfAnchor = clamp(anchorRect.right + gap, margin, maxLeft);
+	const leftOfAnchor = clamp(anchorRect.left - noteWidth - gap, margin, maxLeft);
+	const alignedWithAnchor = clamp(anchorRect.left, margin, maxLeft);
+	const rightEdge = maxLeft;
+	const leftEdge = margin;
+	const aboveAnchor = anchorRect.top - noteHeight - gap;
+	const belowAnchor = anchorRect.bottom + gap;
+	const alignedTop = anchorRect.top;
+	const candidates = [
+		[rightOfAnchor, aboveAnchor],
+		[rightEdge, aboveAnchor],
+		[alignedWithAnchor, aboveAnchor],
+		[leftOfAnchor, aboveAnchor],
+		[rightOfAnchor, belowAnchor],
+		[rightEdge, belowAnchor],
+		[alignedWithAnchor, belowAnchor],
+		[leftOfAnchor, belowAnchor],
+		[rightEdge, alignedTop],
+		[leftEdge, alignedTop],
+		[rightEdge, margin],
+		[rightEdge, maxTop],
+		[leftEdge, maxTop],
+	].map(([left, top], order) => ({
+		left: clamp(left, margin, maxLeft),
+		top: clamp(top, margin, maxTop),
+		right: clamp(left, margin, maxLeft) + noteWidth,
+		bottom: clamp(top, margin, maxTop) + noteHeight,
+		width: noteWidth,
+		height: noteHeight,
+		order,
+	}));
+	const textRects = getPdfTextRects(page, pageRect);
+	return candidates.reduce<(PageRect & { order: number; score: number }) | null>((best, candidate) => {
+		const score = scorePdfNoteCandidate(candidate, textRects, anchorRect);
+		return !best || score < best.score ? { ...candidate, score } : best;
+	}, null);
+}
+
 function setPdfNoteCollapsed(note: HTMLElement, collapsed: boolean) {
 	const body = note.querySelector<HTMLElement>("[data-onhand-note-part='body']");
 	const label = note.querySelector<HTMLElement>("[data-onhand-note-part='label']");
@@ -522,14 +699,10 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 	if (!wasCollapsed) setPdfNoteCollapsed(note, false);
 	const annotationRect = annotation.getBoundingClientRect();
 	const pageRect = page.getBoundingClientRect();
-	const maxWidth = Math.min(420, Math.max(220, page.clientWidth - 32));
-	const left = Math.min(Math.max(annotationRect.left - pageRect.left, 16), Math.max(16, page.clientWidth - maxWidth - 16));
-	let top = annotationRect.bottom - pageRect.top + 10;
-	if (top > page.clientHeight - 90) top = Math.max(16, annotationRect.top - pageRect.top - 108);
+	const pageSize = getPageLayoutSize(page, pageRect);
+	const maxWidth = Math.min(420, Math.max(220, pageSize.width - 32));
 	Object.assign(note.style, {
 		position: "absolute",
-		left: `${left}px`,
-		top: `${top}px`,
 		maxWidth: `${maxWidth}px`,
 		minWidth: "220px",
 		minHeight: "76px",
@@ -546,6 +719,13 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 		scrollMarginTop: "22vh",
 		scrollMarginBottom: "22vh",
 	});
+	const measuredHeight = note.getBoundingClientRect().height || note.offsetHeight || 0;
+	const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
+	const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), maxWidth, noteHeight);
+	if (positioned) {
+		note.style.left = `${positioned.left}px`;
+		note.style.top = `${positioned.top}px`;
+	}
 	if (wasCollapsed) setPdfNoteCollapsed(note, true);
 }
 
@@ -995,6 +1175,7 @@ async function renderPage(pageNumber: number, sequence: number) {
 	const textLayer = document.createElement("div");
 	textLayer.className = "textLayer";
 	textLayer.setAttribute("data-onhand-pdf-text-layer", "true");
+	textLayer.style.setProperty("--scale-factor", String(currentScale));
 	pageElement.append(canvasWrapper, textLayer);
 	viewer.append(pageElement);
 

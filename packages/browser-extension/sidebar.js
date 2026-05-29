@@ -10,6 +10,10 @@
 	const HOST_ID = "onhand-extension-sidebar-host";
 	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
 	const SIDEBAR_THEME_STORAGE_KEY = "onhandSidebarTheme";
+	const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
+	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
+	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
+	const SIDEBAR_QUICK_OPEN_KEY_CAPTURE_MS = 15 * 1000;
 	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
 	const REALTIME_SESSION_URL = "http://127.0.0.1:8787/session";
 	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
@@ -127,6 +131,9 @@
 	let authStatusKind = "";
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
+	let quickOpenFocusGeneration = 0;
+	let quickOpenFocusUntil = 0;
+	let quickOpenKeyCaptureUntil = 0;
 	let learnerSourceFeedback = null;
 	let learnerSourceFeedbackSequence = 0;
 	let learnerPanelCollapsed = false;
@@ -2870,6 +2877,7 @@
 	themeSelect.value = sidebarTheme;
 
 	function setOpen(nextOpen) {
+		const wasOpen = open;
 		open = Boolean(nextOpen);
 		if (IS_NATIVE_SIDE_PANEL) {
 			host.style.display = open ? "block" : "none";
@@ -2884,6 +2892,7 @@
 			startPolling();
 			void requestState();
 			void requestSessions().catch(() => {});
+			if (!wasOpen) schedulePanelComposerFocus();
 		} else {
 			stopPolling();
 		}
@@ -3924,8 +3933,44 @@
 		return [];
 	}
 
+	function normalizePageTargetUrl(value) {
+		return String(value || "").trim().split("#")[0];
+	}
+
+	function pageTargetUrls(target) {
+		return [
+			target?.url,
+			target?.pdfAnchor?.document?.viewerUrl,
+			target?.pdfAnchor?.document?.url,
+			target?.pdfAnchor?.document?.pdfUrl,
+		]
+			.map(normalizePageTargetUrl)
+			.filter(Boolean);
+	}
+
+	function pageTargetTitle(target) {
+		return normalizeCitationText(target?.title || target?.pdfAnchor?.document?.title || "");
+	}
+
+	function belongsToCurrentPageTarget(target, state) {
+		if (!target || typeof target !== "object") return false;
+		const currentTabId = typeof state?.tab?.id === "number" ? state.tab.id : null;
+		const targetTabId = typeof target?.tabId === "number" ? target.tabId : null;
+		if (currentTabId !== null && targetTabId !== null) return currentTabId === targetTabId;
+
+		const currentUrl = normalizePageTargetUrl(state?.tab?.url);
+		const targetUrls = pageTargetUrls(target);
+		if (currentUrl && targetUrls.length) return targetUrls.includes(currentUrl);
+
+		const currentTitle = normalizeCitationText(state?.tab?.title || "");
+		const targetTitle = pageTargetTitle(target);
+		if (currentTitle && targetTitle) return currentTitle === targetTitle;
+
+		return targetTabId === null && !targetUrls.length && !targetTitle;
+	}
+
 	function buildAnnotationIndexItems(state) {
-		const actions = Array.isArray(state?.pageActions) ? state.pageActions : [];
+		const actions = (Array.isArray(state?.pageActions) ? state.pageActions : []).filter((action) => belongsToCurrentPageTarget(action, state));
 		const actionGroups = new Map();
 		for (const action of actions) {
 			if (!action?.annotationId) continue;
@@ -3947,6 +3992,7 @@
 		const seen = new Set();
 		const items = [];
 		for (const annotation of getCapturedAnnotations(state)) {
+			if (!belongsToCurrentPageTarget(annotation, state)) continue;
 			const annotationId = String(annotation?.annotationId || "").trim();
 			if (!annotationId || seen.has(annotationId)) continue;
 			seen.add(annotationId);
@@ -4627,6 +4673,7 @@
 		sendButton.disabled = activeRequest || sending;
 		attachButton.disabled = activeRequest || sending;
 		fileInput.disabled = activeRequest || sending;
+		refocusQuickAskComposerAfterRender();
 		helper.textContent = activeRequest
 			? "Onhand is responding · use Stop from the menu"
 			: realtimeConnected
@@ -6889,8 +6936,162 @@
 		menuButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
 	}
 
+	function isQuickOpenRequestCurrent(request, windowId) {
+		if (!request || typeof request !== "object") return false;
+		if (typeof request.windowId === "number" && typeof windowId === "number" && request.windowId !== windowId) return false;
+		const createdAt = Number(request.createdAt) || 0;
+		return !createdAt || Date.now() - createdAt <= SIDEBAR_QUICK_OPEN_MAX_AGE_MS;
+	}
+
+	function isQuickOpenRequestStale(request) {
+		const createdAt = Number(request?.createdAt) || 0;
+		return Boolean(createdAt && Date.now() - createdAt > SIDEBAR_QUICK_OPEN_MAX_AGE_MS);
+	}
+
+	async function clearQuickOpenRequest(request) {
+		try {
+			const stored = await chrome.storage.local.get({ [SIDEBAR_QUICK_OPEN_REQUEST_KEY]: null });
+			const pending = stored?.[SIDEBAR_QUICK_OPEN_REQUEST_KEY];
+			if (pending?.id && request?.id && pending.id !== request.id) return;
+			await chrome.storage.local.remove(SIDEBAR_QUICK_OPEN_REQUEST_KEY);
+		} catch {
+			// Best-effort cleanup only; focus should still work if storage cleanup fails.
+		}
+	}
+
+	function focusQuickAskComposer({ ensureOpen = false } = {}) {
+		if (ensureOpen) setOpen(true);
+		setMenuOpen(false);
+		if (input instanceof HTMLTextAreaElement) {
+			const isJsdom = /jsdom/i.test(String(globalThis.navigator?.userAgent || ""));
+			if (!isJsdom) {
+				try {
+					globalThis.focus();
+				} catch {
+					// Some embedded browser surfaces do not expose window focus.
+				}
+			}
+			try {
+				input.click();
+			} catch {
+				// Click is only used to mirror a user-targeted focus; focus below is authoritative.
+			}
+			input.focus({ preventScroll: true });
+			const insertionPoint = input.value.length;
+			try {
+				input.setSelectionRange(insertionPoint, insertionPoint);
+			} catch {
+				// Some browser surfaces may not support text selection while focus is settling.
+			}
+		}
+	}
+
+	function queueQuickAskComposerFocus(delayMs, generation) {
+		setTimeout(() => {
+			if (generation !== quickOpenFocusGeneration || Date.now() > quickOpenFocusUntil) return;
+			focusQuickAskComposer();
+		}, delayMs);
+	}
+
+	function scheduleQuickAskComposerFocus({ ensureOpen = true } = {}) {
+		quickOpenFocusGeneration += 1;
+		quickOpenFocusUntil = Date.now() + Math.max(...SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS) + 250;
+		quickOpenKeyCaptureUntil = Date.now() + SIDEBAR_QUICK_OPEN_KEY_CAPTURE_MS;
+		const generation = quickOpenFocusGeneration;
+		focusQuickAskComposer({ ensureOpen });
+		for (const delayMs of SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS) {
+			queueQuickAskComposerFocus(delayMs, generation);
+		}
+	}
+
+	function schedulePanelComposerFocus() {
+		if (!IS_NATIVE_SIDE_PANEL && !open) return;
+		scheduleQuickAskComposerFocus({ ensureOpen: false });
+	}
+
+	function refocusQuickAskComposerAfterRender() {
+		if (!quickOpenFocusUntil || Date.now() > quickOpenFocusUntil || input.disabled) return;
+		queueQuickAskComposerFocus(0, quickOpenFocusGeneration);
+	}
+
+	function isEditableTarget(target) {
+		if (!(target instanceof Element)) return false;
+		if (target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']")) return true;
+		return false;
+	}
+
+	function insertComposerText(text) {
+		if (!(input instanceof HTMLTextAreaElement) || input.disabled) return;
+		const start = Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
+		const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : start;
+		input.value = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+		const nextPosition = start + text.length;
+		try {
+			input.setSelectionRange(nextPosition, nextPosition);
+		} catch {
+			// Ignore selection failures in embedded test/browser surfaces.
+		}
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+	}
+
+	async function handleQuickOpenRequest(request) {
+		const windowId = await ensureCurrentWindowId();
+		if (!isQuickOpenRequestCurrent(request, windowId)) {
+			if (isQuickOpenRequestStale(request)) await clearQuickOpenRequest(request);
+			return;
+		}
+		await clearQuickOpenRequest(request);
+		scheduleQuickAskComposerFocus();
+	}
+
+	async function consumePendingQuickOpenRequest() {
+		try {
+			const stored = await chrome.storage.local.get({ [SIDEBAR_QUICK_OPEN_REQUEST_KEY]: null });
+			const request = stored?.[SIDEBAR_QUICK_OPEN_REQUEST_KEY];
+			if (request) await handleQuickOpenRequest(request);
+		} catch {
+			// The direct runtime message path still handles shortcut focus if storage is unavailable.
+		}
+	}
+
 	menuButton.addEventListener("click", () => {
 		setMenuOpen(Boolean(menuPanel.hidden));
+	});
+
+	globalThis.addEventListener("keydown", (event) => {
+		if (!quickOpenKeyCaptureUntil || Date.now() > quickOpenKeyCaptureUntil) return;
+		if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+		if (!(input instanceof HTMLTextAreaElement) || input.disabled || shadow.activeElement === input) return;
+		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+		const target = path[0] || event.target;
+		if (isEditableTarget(target)) return;
+		if (event.key === "Backspace") {
+			event.preventDefault();
+			focusQuickAskComposer();
+			const start = Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
+			const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : start;
+			if (start !== end) {
+				input.value = `${input.value.slice(0, start)}${input.value.slice(end)}`;
+				try {
+					input.setSelectionRange(start, start);
+				} catch {
+					// Ignore selection failures in embedded test/browser surfaces.
+				}
+			} else if (start > 0) {
+				input.value = `${input.value.slice(0, start - 1)}${input.value.slice(start)}`;
+				try {
+					input.setSelectionRange(start - 1, start - 1);
+				} catch {
+					// Ignore selection failures in embedded test/browser surfaces.
+				}
+			}
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+			return;
+		}
+		if (event.key.length !== 1) return;
+		event.preventDefault();
+		focusQuickAskComposer();
+		insertComposerText(event.key);
 	});
 
 	sessionTitleInput.addEventListener("keydown", (event) => {
@@ -7239,6 +7440,10 @@
 			renderState(currentState || {});
 			return;
 		}
+		if (message?.type === "sidebar:quick-open") {
+			void handleQuickOpenRequest(message.request || message);
+			return;
+		}
 		if (message?.type !== "sidebar:mic-permission-result") return;
 		if (typeof realtimeMicPermissionTabId === "number") {
 			chrome.tabs.remove(realtimeMicPermissionTabId).catch(() => {});
@@ -7345,12 +7550,14 @@
 		if (IS_NATIVE_SIDE_PANEL) {
 			await ensureCurrentWindowId();
 			setOpen(true);
+			void consumePendingQuickOpenRequest();
 		} else {
 			const response = await chrome.runtime.sendMessage({
 				type: "sidebar:get-window-state",
 				windowId: await ensureCurrentWindowId(),
 			});
 			setOpen(Boolean(response?.open));
+			void consumePendingQuickOpenRequest();
 		}
 	} catch {
 		setOpen(false);
