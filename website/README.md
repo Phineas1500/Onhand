@@ -7,7 +7,7 @@ Static landing page. No build step. This directory is self-contained:
 - `support.html` — support and troubleshooting page
 - `404.html` — fallback page
 - `style.css` — Ramaway Dawn (auto dark via `prefers-color-scheme`, manual override via `data-theme` attribute + theme toggle in nav)
-- `site.js` — Chrome Web Store URL, release metadata, analytics events, theme toggle persistence, copy buttons
+- `site.js` — Chrome Web Store URL, release metadata, analytics events, theme toggle persistence
 
 Plus assets:
 
