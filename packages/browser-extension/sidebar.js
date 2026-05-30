@@ -26,6 +26,8 @@
 	const REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER = 3.2;
 	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
 	const REALTIME_MIC_SILENCE_DIAGNOSTIC_MS = 6500;
+	const REALTIME_API_KEY_SETUP_MESSAGE =
+		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 	const CODEX_PROVIDER = "openai-codex";
 	const CODEX_MODEL = "gpt-5.5";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
@@ -4937,6 +4939,26 @@
 		renderRealtimeControls();
 	}
 
+	function isRealtimeApiKeySetupError(message) {
+		return /openai api key|platform key|realtime api access|invalid_api_key|incorrect api key|unauthorized|forbidden/i.test(
+			String(message || ""),
+		);
+	}
+
+	function realtimeVoiceErrorMessage(error) {
+		const message = String(error?.message || error || "").trim();
+		if (isRealtimeApiKeySetupError(message)) return REALTIME_API_KEY_SETUP_MESSAGE;
+		return message || "Could not start Voice.";
+	}
+
+	async function openOnhandOptionsPage() {
+		if (chrome.runtime?.openOptionsPage) {
+			await chrome.runtime.openOptionsPage();
+			return;
+		}
+		throw new Error("Open chrome://extensions, find Onhand, click Details, then Extension options.");
+	}
+
 	function isRealtimeMicDiagnosticStatus(status = realtimeStatus) {
 		return /^(Voice ready · (checking mic|mic silent|mic level)|Chrome mic silent|Mic monitor suspended|Mic monitor unavailable|Mic monitor failed)/i.test(
 			String(status || ""),
@@ -5544,8 +5566,13 @@
 
 	function renderRealtimeControls() {
 		if (!realtimeVoiceButton || !realtimeStatusEl) return;
-		realtimeVoiceButton.textContent = realtimeConnecting ? "..." : realtimeConnected ? "End" : "Voice";
-		realtimeVoiceButton.title = realtimeConnected ? "End realtime voice tutor" : "Start realtime voice tutor.";
+		const needsApiKeySetup = Boolean(realtimeError && isRealtimeApiKeySetupError(realtimeError));
+		realtimeVoiceButton.textContent = realtimeConnecting ? "..." : realtimeConnected ? "End" : needsApiKeySetup ? "Setup" : "Voice";
+		realtimeVoiceButton.title = realtimeConnected
+			? "End realtime voice tutor"
+			: needsApiKeySetup
+				? "Open Onhand options to add an OpenAI platform API key for Voice."
+				: "Start realtime voice tutor.";
 		realtimeVoiceButton.setAttribute("aria-label", realtimeVoiceButton.title);
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
@@ -5857,11 +5884,11 @@
 				sdp,
 			});
 			if (response?.ok && response.result?.sdp) return response.result.sdp;
-			const errorText = response?.error || "Extension auth setup failed.";
+			const errorText = realtimeVoiceErrorMessage(response?.error || "Extension auth setup failed.");
 			authMissing = /sign in|api key|auth/i.test(errorText);
 			errors.push(errorText);
 		} catch (error) {
-			const errorText = error?.message || String(error);
+			const errorText = realtimeVoiceErrorMessage(error);
 			authMissing = /sign in|api key|auth/i.test(errorText);
 			errors.push(errorText);
 		}
@@ -6845,7 +6872,8 @@
 				setRealtimeStatus("Mic permission needed", realtimeMicrophoneErrorMessage(error));
 				return;
 			}
-			setRealtimeStatus("Voice error", error?.message || String(error));
+			const errorMessage = realtimeVoiceErrorMessage(error);
+			setRealtimeStatus(isRealtimeApiKeySetupError(errorMessage) ? "Voice setup needed" : "Voice error", errorMessage);
 		}
 	}
 
@@ -7321,8 +7349,15 @@
 			stopRealtimeVoice();
 			return;
 		}
+		if (realtimeError && isRealtimeApiKeySetupError(realtimeError)) {
+			void openOnhandOptionsPage().catch((error) => {
+				setRealtimeStatus("Voice setup needed", `${REALTIME_API_KEY_SETUP_MESSAGE} ${error?.message || String(error)}`);
+			});
+			return;
+		}
 		void startRealtimeVoice().catch((error) => {
-			setRealtimeStatus("Voice error", error?.message || String(error));
+			const errorMessage = realtimeVoiceErrorMessage(error);
+			setRealtimeStatus(isRealtimeApiKeySetupError(errorMessage) ? "Voice setup needed" : "Voice error", errorMessage);
 		});
 	});
 
@@ -7472,6 +7507,7 @@
 				realtimeConnecting = false;
 				renderRealtimeControls();
 			},
+			setRealtimeStatus,
 			setRealtimeMicDeviceId(deviceId = "default") {
 				realtimeMicDeviceId = normalizeRealtimeMicDeviceId(deviceId);
 				realtimeMicSelectSignature = "";

@@ -77,11 +77,12 @@ npm run build:extension
   - finish the opened OpenAI login tab
   - confirm Authentication is set to `OpenAI Codex sign-in`
   - confirm the model is `gpt-5.5`
-- Fallback: use an OpenAI API key:
-  - set Authentication to `OpenAI API key`
-  - enter the OpenAI API key
-  - choose an OpenAI API model if needed
-  - Save
+  - Fallback: use an OpenAI API key for text chat:
+    - set Authentication to `OpenAI API key`
+    - enter the OpenAI API key
+    - choose an OpenAI API model if needed
+    - Save
+- Voice mode requires an OpenAI platform API key with Realtime API access. You can paste this key in the options page while keeping Authentication set to OpenAI Codex sign-in for text chat.
 
 If Helium supports Chromium extensions and the `chrome.debugger` API, the same unpacked extension should work there too.
 
@@ -122,7 +123,7 @@ This branch includes an experimental `gpt-realtime-2` WebRTC voice tutor for the
 OPENAI_API_KEY=... npm run serve:realtime
 ```
 
-If an OpenAI API key is already saved in the Onhand options page, the side panel can use that directly and the local endpoint is only a fallback. Reload the extension and click `Voice` in the side panel. Details are in `docs/REALTIME_VOICE.md`.
+Voice requires an OpenAI platform API key saved in the Onhand options page. Open the options page, paste a platform key with Realtime API access in the OpenAI platform API key field, save, reload the extension, and click `Voice` in the side panel. You can keep Authentication set to OpenAI Codex sign-in for text chat. The local endpoint is only a fallback/dev path. Details are in `docs/REALTIME_VOICE.md`.
 
 ## Browser Runtime Tools
 

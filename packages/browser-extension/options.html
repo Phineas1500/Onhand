@@ -152,15 +152,16 @@
 
       <div class="inline-grid">
         <div class="field">
-          <label for="aiApiKey">OpenAI API key</label>
-          <input id="aiApiKey" type="password" autocomplete="off" placeholder="Stored in extension local storage" />
+          <label for="aiApiKey">OpenAI platform API key</label>
+          <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          <p id="apiKeyHelp" class="help">Optional while Codex sign-in is selected. Voice uses this key for <code>gpt-realtime-2</code>.</p>
         </div>
       </div>
     </section>
 
     <section>
       <h2>OpenAI Codex Sign-In</h2>
-      <p class="help">Use your ChatGPT Plus/Pro Codex login. This path uses provider <code>openai-codex</code> and model <code>gpt-5.5</code>; it does not use an OpenAI API key.</p>
+      <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat. Voice can still use the OpenAI platform API key above for <code>gpt-realtime-2</code>.</p>
 
       <div class="auth-grid">
         <div class="auth-card">

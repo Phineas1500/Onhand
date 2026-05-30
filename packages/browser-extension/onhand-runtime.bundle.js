@@ -128549,32 +128549,7 @@ function createOnhandBrowserRuntime(host) {
           source: "openai-api-key"
         };
       }
-      const providerId = settings2.authMode === "oauth" ? settings2.aiProvider : OPENAI_CODEX_PROVIDER;
-      const credentials = settings2.oauthCredentials?.[providerId];
-      if (!credentials || !isBrowserOAuthProvider(providerId)) {
-        throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
-      }
-      const result = await getBrowserOAuthApiKey(providerId, credentials, {
-        onProgress: (event) => host.notifyAuthProgress?.(event)
-      });
-      if (JSON.stringify(result.credentials) !== JSON.stringify(credentials)) {
-        settings2.oauthCredentials = {
-          ...settings2.oauthCredentials || {},
-          [providerId]: result.credentials
-        };
-        store.settings = settings2;
-        await saveStore(store);
-        await publishState({
-          preferences: {
-            runtime: "browser-extension",
-            ...buildPublicSettings(settings2)
-          }
-        });
-      }
-      return {
-        apiKey: result.apiKey,
-        source: providerId
-      };
+      throw new Error("Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.");
     },
     async updateSettings(partial2) {
       const store = await loadStore();

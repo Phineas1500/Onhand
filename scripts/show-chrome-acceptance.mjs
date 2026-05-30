@@ -459,7 +459,7 @@ const suites = {
 			"optional: npm run generate:realtime-voice-fixture, then play the generated WAV through Chrome's selected microphone or a virtual audio device",
 			"npm run build:extension",
 			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
-			"confirm extension options show an OpenAI API key or OpenAI Codex OAuth credentials; Realtime voice must be able to create /v1/realtime/calls sessions",
+			"confirm extension options show an OpenAI platform API key with Realtime API access; Codex OAuth can stay selected for text chat but is not enough for Realtime voice",
 			"npm run serve:fixture",
 			"open http://127.0.0.1:8765/ in Chrome",
 			"open the Onhand side panel with Computer Use",

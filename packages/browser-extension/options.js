@@ -8,6 +8,7 @@ const aiModelInput = document.getElementById("aiModel");
 const modelHelpEl = document.getElementById("modelHelp");
 const authModeInput = document.getElementById("authMode");
 const aiApiKeyInput = document.getElementById("aiApiKey");
+const apiKeyHelpEl = document.getElementById("apiKeyHelp");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 
@@ -40,8 +41,9 @@ function syncAuthModeFields() {
 	if (isCodexSignInMode()) {
 		aiModelInput.value = CODEX_MODEL;
 		aiModelInput.disabled = true;
-		aiApiKeyInput.disabled = true;
-		modelHelpEl.textContent = "Codex sign-in uses OpenAI Codex with GPT-5.5 and does not use the API key field.";
+		aiApiKeyInput.disabled = false;
+		modelHelpEl.textContent = "Codex sign-in uses OpenAI Codex with GPT-5.5 for text chat.";
+		apiKeyHelpEl.textContent = "Optional while Codex sign-in is selected. Voice uses this OpenAI platform API key for gpt-realtime-2; text chat continues to use Codex sign-in.";
 		return;
 	}
 	aiModelInput.disabled = false;
@@ -50,6 +52,7 @@ function syncAuthModeFields() {
 		aiModelInput.value = API_MODEL;
 	}
 	modelHelpEl.textContent = "API key mode uses the OpenAI API provider. Change the model only if you know the API model is available.";
+	apiKeyHelpEl.textContent = "Used for text chat in API-key mode and for Voice/gpt-realtime-2. Stored only in extension local storage.";
 }
 
 function selectedProvider() {

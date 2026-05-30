@@ -170,6 +170,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	});
 	const { window } = dom;
 	window.__onhandSidebarExposeTestHooks = true;
+	let openOptionsCalls = 0;
 	if (options.mediaDevices) {
 		Object.defineProperty(window.navigator, "mediaDevices", {
 			configurable: true,
@@ -180,6 +181,10 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 		runtime: {
 			getURL(path) {
 				return `chrome-extension://extension-id/${path}`;
+			},
+			async openOptionsPage() {
+				openOptionsCalls += 1;
+				if (typeof options.openOptionsPage === "function") return options.openOptionsPage();
 			},
 			onMessage: {
 				addListener(listener) {
@@ -497,6 +502,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 		await new Promise((resolve) => window.setTimeout(resolve, 50));
 	};
 	dom.getStorageValue = (key) => storageValues[key];
+	dom.getOpenOptionsCalls = () => openOptionsCalls;
 	return dom;
 }
 
@@ -1607,6 +1613,31 @@ async function assertRealtimeMicPickerConstrainsSelectedDevice() {
 	assert.equal(mediaRequests.length, 1);
 	assert.equal(mediaRequests[0].audio.deviceId.exact, "studio-mic");
 	assert.equal(hooks.getRealtimeDebugState().micDeviceId, "studio-mic");
+	dom.window.close();
+}
+
+async function assertRealtimeApiKeyErrorOpensOptions() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const voiceButton = shadow.getElementById("realtimeVoiceButton");
+	const status = shadow.getElementById("realtimeStatus");
+	const hooks = getRealtimeTestHooks(dom);
+
+	hooks.setRealtimeStatus(
+		"Voice setup needed",
+		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.",
+	);
+
+	assert.equal(voiceButton.textContent, "Setup", "expected Voice button to become a setup button after API-key auth failure");
+	assert.match(status.textContent, /OpenAI platform API key/);
+	assert.match(status.title, /Onhand options/);
+
+	voiceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(dom.getOpenOptionsCalls(), 1, "expected setup click to open extension options");
 	dom.window.close();
 }
 
@@ -2845,6 +2876,7 @@ await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
+await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeResponseCreateQueuesUntilDone();
 await assertRealtimeActiveResponseErrorIsRecoverable();
 await assertRealtimeManualVoiceCommitCreatesResponse();

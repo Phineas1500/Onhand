@@ -12,6 +12,8 @@ const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
 const OPENAI_REALTIME_VOICE = "marin";
+const REALTIME_API_KEY_SETUP_MESSAGE =
+	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
 const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
@@ -7214,7 +7216,7 @@ async function createRealtimeCallWithStoredApiKey(browserSdp) {
 	}
 	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
 	const apiKey = String(credential?.apiKey || "").trim();
-	if (!apiKey) throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
+	if (!apiKey) throw new Error(REALTIME_API_KEY_SETUP_MESSAGE);
 
 	const multipart = createRealtimeMultipartBody(sdp, buildRealtimeSessionConfig());
 
@@ -7229,6 +7231,9 @@ async function createRealtimeCallWithStoredApiKey(browserSdp) {
 	});
 	const answerSdp = await response.text();
 	if (!response.ok) {
+		if (response.status === 401 || response.status === 403) {
+			throw new Error(`${REALTIME_API_KEY_SETUP_MESSAGE} OpenAI rejected the saved key.`);
+		}
 		throw new Error(answerSdp || `OpenAI Realtime call setup failed with ${response.status}.`);
 	}
 	return {
@@ -7242,7 +7247,7 @@ async function createRealtimeCallWithStoredApiKey(browserSdp) {
 async function createRealtimeClientSecret() {
 	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
 	const apiKey = String(credential?.apiKey || "").trim();
-	if (!apiKey) throw new Error("Sign in with OpenAI Codex or save an OpenAI API key before using Realtime voice.");
+	if (!apiKey) throw new Error(REALTIME_API_KEY_SETUP_MESSAGE);
 	const session = buildRealtimeSessionConfig();
 	const attempts = [
 		{ label: "nested-session", body: { session } },
@@ -7267,6 +7272,11 @@ async function createRealtimeClientSecret() {
 			payload = null;
 		}
 		if (response.ok) break;
+		if (response.status === 401 || response.status === 403) {
+			errors.push(`${attempt.label}: ${REALTIME_API_KEY_SETUP_MESSAGE} OpenAI rejected the saved key.`);
+			payload = null;
+			break;
+		}
 		errors.push(`${attempt.label}: ${text || `HTTP ${response.status}`}`);
 		payload = null;
 	}

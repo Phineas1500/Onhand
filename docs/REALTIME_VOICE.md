@@ -23,7 +23,7 @@ Build the extension:
 npm run build:extension
 ```
 
-If you already saved an OpenAI API key in the Onhand options page, reload the extension and click `Voice`. The sidebar will ask the extension background to create the Realtime call with that stored key.
+Voice requires an OpenAI platform API key in the Onhand options page. Open the extension options page, paste a platform key with Realtime API access in the OpenAI platform API key field, save, reload the extension, and click `Voice`. You can keep Authentication set to OpenAI Codex sign-in for text chat; `gpt-realtime-2` uses the platform API key.
 
 The local session server is still available as a fallback/dev path:
 
@@ -97,7 +97,7 @@ The voice model is intentionally narrow. It can ask for compact context, place h
 
 ## Notes
 
-- If using the options-page key, the key stays in extension local storage and is used only by the extension background to call `/v1/realtime/calls`.
+- The options-page API key stays in extension local storage and is used only by the extension background to call `/v1/realtime/calls`.
 - If using the local session server fallback, `OPENAI_API_KEY` stays in the local session server.
 - The server endpoint is fixed to `http://127.0.0.1:8787/session` for this prototype.
 - Chrome may ask for microphone permission after the first `Voice` click.
