@@ -144,24 +144,3 @@ const ONHAND_STORE = {
     apply(next);
   });
 })();
-
-// 2) Copy install command
-(function(){
-  document.querySelectorAll('[data-copy]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const sel = btn.getAttribute('data-copy');
-      const target = document.querySelector(sel);
-      if (!target) return;
-      const text = target.textContent.replace(/\s+/g, ' ').trim();
-      (navigator.clipboard?.writeText(text) || Promise.resolve()).then(() => {
-        btn.classList.add('ok');
-        const original = btn.textContent;
-        btn.textContent = 'copied';
-        setTimeout(() => {
-          btn.classList.remove('ok');
-          btn.textContent = original;
-        }, 1200);
-      });
-    });
-  });
-})();
