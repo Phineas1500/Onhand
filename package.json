@@ -19,6 +19,8 @@
     "generate:realtime-voice-fixture": "node ./scripts/generate-realtime-voice-fixture.mjs",
     "serve:realtime": "node ./scripts/serve-realtime-session.mjs",
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
+    "website:sync-store": "node ./scripts/sync-chrome-store-version.mjs",
+    "website:check-store": "node ./scripts/sync-chrome-store-version.mjs --check",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",

@@ -1,0 +1,45 @@
+name: Sync Chrome Web Store Version
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-chrome-store-version
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ONHAND_CHROME_STORE_ID: ogjmncmkpgdkkcibdiacmagaehjohljb
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sync website store version
+        run: npm run website:sync-store
+
+      - name: Commit website version update
+        run: |
+          if git diff --quiet -- website/site.js website/index.html website/support.html; then
+            echo "Website already matches Chrome Web Store."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/site.js website/index.html website/support.html
+          git commit -m "Sync website Chrome Web Store version"
+          git push

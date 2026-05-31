@@ -37,7 +37,8 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 
 ## What to customize
 
-- **Store URL and status:** `site.js`, the `ONHAND_STORE` values near the top of the file. These drive the Chrome Web Store links and the approved/pending version labels.
+- **Store URL and live version:** `site.js`, the `ONHAND_STORE` values near the top of the file. These drive the Chrome Web Store links and the approved store version labels. Run `npm run website:sync-store` from the repository root to refresh the live store version from Google's update endpoint and bump the `site.js` cache busters, or `npm run website:check-store` to fail when the site is stale.
+- **Automatic store sync:** `.github/workflows/sync-chrome-store-version.yml` runs every six hours and can be triggered manually from GitHub Actions. It commits only when the live Chrome Web Store version differs from the website.
 - **Release version:** `site.js`, the `ONHAND_RELEASE.version` value near the top of the file. This drives the visible GitHub release version badges, the release ZIP filename, and the GitHub release/download URLs.
 - **Hero copy:** `index.html`, sections starting at `<h1 class="hero-h1">`.
 - **Feature card text:** `index.html`, the four `<div class="feat">` blocks.

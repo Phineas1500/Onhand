@@ -12,8 +12,8 @@ const ONHAND_ANALYTICS = {
 
 const ONHAND_STORE = {
   url: 'https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb',
-  approvedVersion: '0.2.1',
-  pendingVersion: '0.2.3',
+  approvedVersion: '0.2.3',
+  pendingVersion: null,
 };
 
 // 0) Release metadata: keep visible version labels and release links in sync.
@@ -95,7 +95,7 @@ const ONHAND_STORE = {
     node.addEventListener('click', () => {
       const data = {
         store_version: ONHAND_STORE.approvedVersion,
-        pending_version: ONHAND_STORE.pendingVersion,
+        pending_version: ONHAND_STORE.pendingVersion || '',
         link_url: ONHAND_STORE.url,
         link_text: node.textContent.replace(/\s+/g, ' ').trim(),
       };
@@ -116,7 +116,7 @@ const ONHAND_STORE = {
     node.textContent = `v${ONHAND_STORE.approvedVersion}`;
   });
   document.querySelectorAll('[data-onhand-pending-version]').forEach((node) => {
-    node.textContent = `v${ONHAND_STORE.pendingVersion}`;
+    node.textContent = ONHAND_STORE.pendingVersion ? `v${ONHAND_STORE.pendingVersion}` : '';
   });
 })();
 
