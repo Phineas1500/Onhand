@@ -2511,6 +2511,8 @@
 				display: flex;
 				flex-direction: column;
 				gap: 8px;
+				box-sizing: border-box;
+				min-width: 0;
 			}
 			.onhand-compose.learning {
 				border-top-color: var(--rm-gold);
@@ -2555,6 +2557,9 @@
 				font: 15px/1.5 var(--rm-font-serif);
 				color: var(--rm-text);
 				min-height: 54px;
+				width: 100%;
+				min-width: 0;
+				box-sizing: border-box;
 				resize: vertical;
 				outline: none;
 			}
@@ -2567,9 +2572,14 @@
 				box-shadow: 0 0 0 2px color-mix(in srgb, var(--rm-pine) 18%, transparent);
 			}
 			.onhand-row {
-				display: flex;
+				display: grid;
+				grid-template-columns: auto auto minmax(0, 1fr) minmax(46px, 64px) auto auto;
 				align-items: center;
-				gap: 10px;
+				column-gap: 5px;
+				row-gap: 6px;
+				width: 100%;
+				min-width: 0;
+				overflow: visible;
 				font: 10.5px var(--rm-font-mono);
 				color: var(--rm-subtext);
 			}
@@ -2591,14 +2601,38 @@
 				flex: 0 0 auto;
 				stroke: currentColor;
 			}
+			.onhand-sr-only {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				padding: 0;
+				margin: -1px;
+				overflow: hidden;
+				clip: rect(0, 0, 0, 0);
+				white-space: nowrap;
+				border: 0;
+			}
 			.onhand-row .ctl:hover {
 				background: var(--rm-mantle);
 				color: var(--rm-text);
 			}
 			.onhand-row .voice {
-				min-width: 56px;
+				flex: 0 0 auto;
+				width: 30px;
+				min-width: 30px;
+				height: 28px;
+				padding: 3px 5px;
 				border: 1px solid transparent;
 				font: 10.5px var(--rm-font-mono);
+			}
+			.onhand-row .voice svg {
+				width: 18px;
+				height: 18px;
+				fill: none;
+				stroke: currentColor;
+				stroke-width: 2;
+				stroke-linecap: round;
+				stroke-linejoin: round;
 			}
 			.onhand-row .voice.on {
 				color: var(--rm-base);
@@ -2615,8 +2649,8 @@
 				border-color: color-mix(in srgb, var(--rm-love) 45%, transparent);
 			}
 			.onhand-realtime-status {
-				flex: 1 1 110px;
-				min-width: 72px;
+				flex: 1 1 82px;
+				min-width: 0;
 				max-width: none;
 				overflow: hidden;
 				text-overflow: ellipsis;
@@ -2626,10 +2660,9 @@
 				color: var(--rm-love);
 			}
 			.onhand-row .mic {
-				flex: 0 1 88px;
-				width: 88px;
-				min-width: 58px;
-				max-width: 88px;
+				width: 100%;
+				min-width: 0;
+				max-width: 64px;
 				border: 1px solid var(--rm-overlay);
 				border-radius: 2px;
 				background: var(--rm-mantle);
@@ -2658,10 +2691,11 @@
 			.onhand-row .learn {
 				display: inline-flex;
 				align-items: center;
-				gap: 6px;
+				gap: 4px;
 				cursor: pointer;
-				padding: 3px 6px;
+				padding: 3px 4px;
 				border-radius: 2px;
+				flex: 0 0 auto;
 			}
 			.onhand-row .learn .sw {
 				width: 22px;
@@ -2710,7 +2744,7 @@
 				cursor: not-allowed;
 			}
 			.onhand-row .spacer {
-				flex: 1;
+				display: none;
 			}
 			.onhand-send {
 				font: 11px var(--rm-font-mono);
@@ -2718,11 +2752,14 @@
 				color: var(--rm-base);
 				border: 0;
 				border-radius: 2px;
-				padding: 6px 12px;
+				padding: 6px 10px;
 				cursor: pointer;
 				display: inline-flex;
 				align-items: center;
 				gap: 6px;
+				justify-self: end;
+				margin-left: 0;
+				max-width: 100%;
 			}
 			.onhand-send:hover {
 				background: var(--rm-foam);
@@ -2738,6 +2775,58 @@
 				padding: 1px 4px;
 				border-radius: 2px;
 				font-size: 10px;
+			}
+			@media (max-width: 420px) {
+				.onhand-compose {
+					padding: 10px 10px 8px;
+					gap: 6px;
+				}
+				.onhand-row {
+					grid-template-columns: auto auto minmax(0, 1fr) auto;
+					column-gap: 4px;
+				}
+				.onhand-row .ctl {
+					padding: 3px 5px;
+				}
+				.onhand-row .voice {
+					width: 28px;
+					min-width: 28px;
+					padding-inline: 4px;
+				}
+				.onhand-row .learn {
+					grid-column: 4;
+					grid-row: 2;
+					justify-self: end;
+					padding: 3px;
+				}
+				.onhand-row .mic {
+					grid-column: 1 / 4;
+					grid-row: 2;
+					max-width: none;
+					width: 100%;
+				}
+				.onhand-realtime-status {
+					grid-column: 3;
+					min-width: 0;
+				}
+				.onhand-row .learn > span:last-of-type,
+				.onhand-send .kbd {
+					display: none;
+				}
+				.onhand-send {
+					grid-column: 4;
+					grid-row: 1;
+					padding: 5px 8px;
+				}
+			}
+			@media (max-width: 360px) {
+				.onhand-row {
+					grid-template-columns: auto auto minmax(0, 1fr) auto;
+					column-gap: 3px;
+				}
+				.onhand-send {
+					padding-inline: 7px;
+				}
 			}
 			.onhand-hint {
 				font: 10px var(--rm-font-mono);
@@ -2818,7 +2907,7 @@
 						</svg>
 					</button>
 					<input id="fileInput" type="file" multiple hidden />
-					<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor">Voice</button>
+					<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor"><svg class="onhand-voice-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /><path d="M12 19v3" /><path d="M8 22h8" /></svg><span class="onhand-sr-only">Voice</span></button>
 					<span id="realtimeStatus" class="onhand-realtime-status">Voice idle</span>
 					<select id="realtimeMicSelect" class="mic" aria-label="Realtime microphone input" title="Realtime microphone input" hidden></select>
 					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
@@ -3166,8 +3255,10 @@
 		lastRestoreResult = null;
 		renderState(currentState || {});
 		try {
+			const tabId = Number(currentState?.tab?.id);
 			const response = await chrome.runtime.sendMessage({
 				type: "sidebar:open-pdf-viewer",
+				tabId: Number.isFinite(tabId) ? tabId : undefined,
 				windowId: await ensureCurrentWindowId(),
 			});
 			if (!response?.ok) {
@@ -3175,9 +3266,12 @@
 			}
 			setMenuOpen(false);
 			await requestState();
+			const initialPageNumber = Number(response.result?.initialPageNumber);
+			const pageSuffix = Number.isFinite(initialPageNumber) && initialPageNumber > 0 ? ` at page ${initialPageNumber}` : "";
+			const sourceSuffix = response.result?.initialPageSource ? ` (${response.result.initialPageSource})` : "";
 			renderState({
 				...(currentState || {}),
-				status: response.result?.alreadyOpen ? "This PDF is already open in Onhand's viewer." : "Opened PDF in Onhand viewer.",
+				status: response.result?.alreadyOpen ? "This PDF is already open in Onhand's viewer." : `Opened PDF in Onhand viewer${pageSuffix}${sourceSuffix}.`,
 			});
 			return response.result;
 		} finally {
@@ -5567,7 +5661,10 @@
 	function renderRealtimeControls() {
 		if (!realtimeVoiceButton || !realtimeStatusEl) return;
 		const needsApiKeySetup = Boolean(realtimeError && isRealtimeApiKeySetupError(realtimeError));
-		realtimeVoiceButton.textContent = realtimeConnecting ? "..." : realtimeConnected ? "End" : needsApiKeySetup ? "Setup" : "Voice";
+		const buttonLabel = realtimeConnecting ? "..." : realtimeConnected ? "End" : needsApiKeySetup ? "Setup" : "Voice";
+		realtimeVoiceButton.dataset.state = realtimeConnecting ? "connecting" : realtimeConnected ? "connected" : needsApiKeySetup ? "setup" : "idle";
+		const hiddenLabel = realtimeVoiceButton.querySelector(".onhand-sr-only");
+		if (hiddenLabel) hiddenLabel.textContent = buttonLabel;
 		realtimeVoiceButton.title = realtimeConnected
 			? "End realtime voice tutor"
 			: needsApiKeySetup
@@ -5748,6 +5845,50 @@
 			},
 			{
 				type: "function",
+				name: "search_pdf",
+				description:
+					"Search the full extracted text of the current Onhand PDF viewer, including offscreen pages. Use this to find where a term, topic, slide section, or phrase appears in a PDF.",
+				parameters: {
+					type: "object",
+					properties: {
+						query: { type: "string", description: "Word or phrase to search for in the PDF." },
+						max_matches: { type: "number", description: "Maximum number of matches to return." },
+					},
+					required: ["query"],
+				},
+			},
+			{
+				type: "function",
+				name: "read_pdf_pages",
+				description: "Read extracted text from specific PDF pages or a page range in the current Onhand PDF viewer.",
+				parameters: {
+					type: "object",
+					properties: {
+						pages: { type: "string", description: "Comma-separated PDF page numbers, for example '8,9,10'." },
+						page_number: { type: "number", description: "Single PDF page number to read." },
+						start_page: { type: "number", description: "First PDF page in a range." },
+						end_page: { type: "number", description: "Last PDF page in a range." },
+						max_chars: { type: "number", description: "Maximum returned characters." },
+					},
+					required: [],
+				},
+			},
+			{
+				type: "function",
+				name: "jump_to_pdf_page",
+				description: "Scroll the current Onhand PDF viewer to a PDF page, optionally near exact text on that page.",
+				parameters: {
+					type: "object",
+					properties: {
+						page_number: { type: "number", description: "PDF page number to show." },
+						text: { type: "string", description: "Exact text on that page to scroll near." },
+						occurrence: { type: "number", description: "1-based occurrence of the text on the page." },
+					},
+					required: ["page_number"],
+				},
+			},
+			{
+				type: "function",
 				name: "publish_sidebar_answer",
 				description: "Publish the concise final answer in the Onhand sidebar while you speak it.",
 				parameters: {
@@ -5823,7 +5964,7 @@
 			"Answer quickly and pedagogically. Keep spoken answers short enough to follow, usually two to five sentences.",
 			"For substantive questions about the page, passage, selection, document, concept, equation, or chart, call answer_directly before answering. Do not answer those questions from realtime context alone.",
 			"Use get_current_learning_context only for lightweight orientation or clarification; it is not enough to answer a page-material question.",
-			"If the current document is a PDF and context is missing or unsupported, call open_pdf_in_onhand_viewer before tutoring from it.",
+			"If the current document is a PDF and context is missing or unsupported, call open_pdf_in_onhand_viewer before tutoring from it. For PDF questions about offscreen content, first use search_pdf to locate likely pages, then read_pdf_pages for the relevant pages, and jump_to_pdf_page when you need to show the student where it is.",
 			"Use annotate_page for the key source passage when the answer depends on page content. Prefer one strong highlight and one short note.",
 			"Use publish_sidebar_answer whenever you give a substantive answer so the sidebar mirrors the spoken explanation.",
 			learningMode
@@ -6601,6 +6742,49 @@
 					opened: Boolean(result?.opened),
 					result: result?.result || null,
 				};
+			}
+			case "search_pdf": {
+				const response = await chrome.runtime.sendMessage({
+					type: "sidebar:realtime-pdf-tool",
+					windowId: await ensureCurrentWindowId(),
+					tool: "pdf_search",
+					args: {
+						query: String(args?.query || "").trim(),
+						maxMatches: Number.isFinite(Number(args?.max_matches)) ? Number(args.max_matches) : undefined,
+					},
+				});
+				if (!response?.ok) throw new Error(response?.error || "Could not search the PDF.");
+				return response.result || {};
+			}
+			case "read_pdf_pages": {
+				const response = await chrome.runtime.sendMessage({
+					type: "sidebar:realtime-pdf-tool",
+					windowId: await ensureCurrentWindowId(),
+					tool: "pdf_read_pages",
+					args: {
+						pages: args?.pages,
+						pageNumber: Number.isFinite(Number(args?.page_number)) ? Number(args.page_number) : undefined,
+						startPage: Number.isFinite(Number(args?.start_page)) ? Number(args.start_page) : undefined,
+						endPage: Number.isFinite(Number(args?.end_page)) ? Number(args.end_page) : undefined,
+						maxChars: Number.isFinite(Number(args?.max_chars)) ? Number(args.max_chars) : undefined,
+					},
+				});
+				if (!response?.ok) throw new Error(response?.error || "Could not read PDF pages.");
+				return response.result || {};
+			}
+			case "jump_to_pdf_page": {
+				const response = await chrome.runtime.sendMessage({
+					type: "sidebar:realtime-pdf-tool",
+					windowId: await ensureCurrentWindowId(),
+					tool: "pdf_jump_to_page",
+					args: {
+						pageNumber: Number(args?.page_number),
+						text: typeof args?.text === "string" ? args.text : undefined,
+						occurrence: Number.isFinite(Number(args?.occurrence)) ? Number(args.occurrence) : undefined,
+					},
+				});
+				if (!response?.ok) throw new Error(response?.error || "Could not move to the PDF page.");
+				return response.result || {};
 			}
 			case "publish_sidebar_answer": {
 				const activeTurn = realtimeActiveVoiceTurn;

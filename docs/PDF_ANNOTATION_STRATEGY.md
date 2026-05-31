@@ -172,6 +172,7 @@ Current implementation is at the existing page-toolkit seam:
 - existing PDF overlays are reprojected from normalized page coordinates when Onhand scrolls/captures annotations, and observed PDF pages are resynced on resize so highlights and notes can survive zoom-like page-size changes.
 - PDF anchors and note text are kept in a page-local Onhand registry so overlays can be rehydrated when a viewer virtualizes and recreates a page DOM node. Onhand also observes page DOM mutations after a PDF annotation exists, so recreated pages can be rehydrated without waiting for a later explicit command.
 - source jumps first rehydrate from the PDF registry. For multi-page anchors, Onhand can jump to any currently rendered page represented by the saved rects. If none of the anchor pages are currently rendered, Onhand asks the viewer to render the original source page through common page-number controls or `#page=N`; if that still fails, Onhand returns a nearest-rendered-page jump result instead of incorrectly treating the source as missing.
+- the Onhand-owned viewer exposes PDF-specific retrieval tools for full-document work: search extracted text across rendered pages, read specific page ranges, jump to a page or matched text, and capture a page image for visual slide/equation grounding. These tools are additive to the normal highlight/note/capture surface, so a PDF answer can first locate offscreen evidence and then anchor it in the viewer.
 
 The extension-owned viewer milestone is now the primary product path:
 

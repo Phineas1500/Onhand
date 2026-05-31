@@ -127,6 +127,45 @@ function createHost() {
 					}),
 				};
 			}
+			if (name === "pdf_search") {
+				return {
+					tab,
+					search: {
+						query: String(args.query || "Alpha smoke content"),
+						matchCount: 1,
+						matches: [
+							{
+								pageNumber: 1,
+								occurrence: 1,
+								matchedText: "Alpha smoke content",
+								snippet: "Alpha smoke content is available in the smoke PDF.",
+							},
+						],
+					},
+				};
+			}
+			if (name === "pdf_read_pages") {
+				return {
+					tab,
+					pages: {
+						pageNumbers: [Number(args.pageNumber || 1)],
+						blocks: [{ pageNumber: Number(args.pageNumber || 1), text: "Alpha smoke content is available in the smoke PDF." }],
+					},
+				};
+			}
+			if (name === "pdf_jump_to_page") {
+				return { tab, jump: { pageNumber: Number(args.pageNumber || 1), matchedText: String(args.text || "Alpha smoke content") } };
+			}
+			if (name === "pdf_capture_page_image") {
+				return {
+					tab,
+					pageNumber: Number(args.pageNumber || 1),
+					mimeType: "image/png",
+					dataUrl: "data:image/png;base64,UE9SVFM=",
+					width: 100,
+					height: 120,
+				};
+			}
 			if (name === "highlight_text") {
 				return {
 					tab,
@@ -288,6 +327,11 @@ const EXPECTED_PORT_TOOLS = [
 	"browser_list_tabs",
 	"browser_activate_tab",
 	"browser_navigate",
+	"browser_open_pdf_in_onhand_viewer",
+	"browser_pdf_search",
+	"browser_pdf_read_pages",
+	"browser_pdf_jump_to_page",
+	"browser_pdf_capture_page_image",
 	"browser_get_visible_text",
 	"browser_extract_content",
 	"browser_get_selection",

@@ -1926,11 +1926,16 @@ async function assertRealtimeToolSurfaceUsesExplicitAnswerDirectly() {
 	assert.equal(toolNames.includes("plan_pedagogical_move"), true, "expected explicit Socratic planner tool");
 	assert.equal(toolNames.includes("evaluate_response"), true, "expected explicit Socratic evaluator tool");
 	assert.equal(toolNames.includes("open_pdf_in_onhand_viewer"), true, "expected explicit PDF viewer handoff tool");
+	assert.equal(toolNames.includes("search_pdf"), true, "expected explicit PDF search tool");
+	assert.equal(toolNames.includes("read_pdf_pages"), true, "expected explicit PDF page-read tool");
+	assert.equal(toolNames.includes("jump_to_pdf_page"), true, "expected explicit PDF page-jump tool");
 	assert.equal(toolNames.includes("delegate_to_onhand"), false, "expected ambiguous delegate tool to be removed");
 	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "answer_directly")?.parameters?.required || []), ["prompt"]);
 	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "plan_pedagogical_move")?.parameters?.required || []), ["user_question"]);
 	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "evaluate_response")?.parameters?.required || []), ["user_response", "previous_move"]);
 	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "open_pdf_in_onhand_viewer")?.parameters?.required || []), []);
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "search_pdf")?.parameters?.required || []), ["query"]);
+	assert.deepEqual(Array.from(tools.find((tool) => tool.name === "jump_to_pdf_page")?.parameters?.required || []), ["page_number"]);
 
 	await hooks.handleRealtimeServerEvent(
 		JSON.stringify({

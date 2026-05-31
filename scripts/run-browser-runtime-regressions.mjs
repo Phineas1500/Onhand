@@ -304,6 +304,32 @@ async function assertSelectionFormatting() {
 	assert.match(unsupportedPdfVisibleText, /Reader-frame fallback: failed/);
 	assert.match(unsupportedPdfVisibleText, /No Google Scholar PDF Reader frame context found/);
 	assert.match(
+		formatToolResultForModel("browser_pdf_search", {
+			search: {
+				query: "perceptron",
+				matchCount: 1,
+				matches: [
+					{
+						pageNumber: 8,
+						occurrence: 1,
+						matchedText: "perceptron",
+						snippet: "Simple method: perceptron input neurons...",
+					},
+				],
+			},
+		}),
+		/PDF search for "perceptron": 1 match/,
+	);
+	assert.match(
+		formatToolResultForModel("browser_pdf_read_pages", {
+			pages: {
+				pageNumbers: [8],
+				blocks: [{ pageNumber: 8, text: "SIMPLE METHOD: PERCEPTRON" }],
+			},
+		}),
+		/\[p\. 8\]\nSIMPLE METHOD: PERCEPTRON/,
+	);
+	assert.match(
 		formatToolResultForModel("browser_extract_content", {
 			tab: replaySmokeTab(),
 			content: { markdown: "## You will learn\n\n- How to create and nest components" },
@@ -535,9 +561,15 @@ async function assertConstitutionPromptContract() {
 	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
 	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
+	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
+	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
+	assert.equal(pdfContextToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
+	assert.equal(pdfContextToolNames.includes("browser_pdf_search"), true);
+	assert.equal(pdfContextToolNames.includes("browser_pdf_read_pages"), true);
+	assert.equal(pdfContextToolNames.includes("browser_pdf_jump_to_page"), true);
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
@@ -3232,6 +3264,33 @@ async function assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext() {
 	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("https://arxiv.org/pdf/2509.03345"), true);
 	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("https://example.test/article"), false);
 	assert.equal(__browserRuntimeTest.isLikelyPdfUrlForAutoHandoff("chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf"), false);
+	assert.equal(
+		__browserRuntimeTest.browserContextLooksLikePdf({
+			activeTab: { url: "https://example.test/paper.pdf" },
+			visible: { text: "Title slide" },
+		}),
+		true,
+		"expected direct PDF tabs to force PDF tool availability",
+	);
+	assert.equal(
+		__browserRuntimeTest.browserContextLooksLikePdf({
+			activeTab: { url: "https://example.test/article" },
+			visible: {
+				surface: "pdf",
+				blocks: [{ tag: "pdf-page", text: "Title slide" }],
+			},
+		}),
+		true,
+		"expected PDF visible-text surfaces to force PDF tool availability",
+	);
+	assert.equal(
+		__browserRuntimeTest.browserContextLooksLikePdf({
+			activeTab: { url: "https://example.test/article" },
+			visible: { text: "ordinary article text" },
+		}),
+		false,
+		"expected non-PDF pages to keep ordinary tool routing",
+	);
 	assert.equal(
 		__browserRuntimeTest.isOnhandPdfViewerUrl(
 			"http://127.0.0.1:8765/onhand-pdf-viewer.html?url=http%3A%2F%2F127.0.0.1%3A8765%2Ffixtures%2Fonhand-viewer.pdf",

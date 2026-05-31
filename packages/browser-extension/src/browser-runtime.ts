@@ -280,7 +280,7 @@ Default answer mode:
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be a brief guide to what the annotations show: one to three short paragraphs for ordinary questions, with citations, not a detached summary of the page.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
-- For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer, then continue with browser_get_visible_text, browser_highlight_text, browser_show_note, capture, and restore as usual.
+- For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to anchor the answer. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
@@ -335,6 +335,40 @@ const OPEN_PDF_VIEWER_SCHEMA = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "Navigation timeout in milliseconds" })),
 });
 
+const PDF_SEARCH_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	query: Type.String({ description: "Exact word or phrase to search across the full extracted PDF text" }),
+	maxMatches: Type.Optional(Type.Number({ description: "Maximum number of PDF text matches to return" })),
+	maxContextChars: Type.Optional(Type.Number({ description: "Context characters to include before and after each match" })),
+});
+
+const PDF_READ_PAGES_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	pages: Type.Optional(Type.String({ description: "Comma-separated PDF page numbers to read, for example '2,8,9'. Use this or startPage/endPage." })),
+	page: Type.Optional(Type.Number({ description: "Single PDF page number to read" })),
+	pageNumber: Type.Optional(Type.Number({ description: "Single PDF page number to read" })),
+	startPage: Type.Optional(Type.Number({ description: "First PDF page number in a page range to read" })),
+	endPage: Type.Optional(Type.Number({ description: "Last PDF page number in a page range to read" })),
+	maxPages: Type.Optional(Type.Number({ description: "Maximum number of pages to return" })),
+	maxChars: Type.Optional(Type.Number({ description: "Maximum total characters of PDF text to return" })),
+});
+
+const PDF_JUMP_TO_PAGE_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	page: Type.Optional(Type.Number({ description: "PDF page number to scroll into view" })),
+	pageNumber: Type.Optional(Type.Number({ description: "PDF page number to scroll into view" })),
+	text: Type.Optional(Type.String({ description: "Exact PDF text on the target page to scroll near when available" })),
+	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the text on the page" })),
+});
+
+const PDF_PAGE_IMAGE_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	page: Type.Optional(Type.Number({ description: "PDF page number to capture as an image" })),
+	pageNumber: Type.Number({ description: "PDF page number to capture as an image" }),
+	format: Type.Optional(Type.String({ description: "Image format, usually image/png or image/jpeg" })),
+	quality: Type.Optional(Type.Number({ description: "JPEG/webp image quality from 0 to 1" })),
+});
+
 const VISIBLE_TEXT_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of visible text to return" })),
@@ -361,7 +395,7 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 
 const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
-	text: Type.String({ description: "Visible text to highlight on the page" }),
+	text: Type.String({ description: "Exact visible or PDF-reader text to highlight on the page" }),
 	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the match to highlight" })),
 	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up anchors accumulate." })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Scroll the highlighted match into view" })),
@@ -526,6 +560,7 @@ const CORE_READ_TOOL_NAMES = [
 const VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
 const VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
 const TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
+const PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image"];
 const INTERACTION_TOOL_NAMES = [
 	"browser_find_elements",
 	"browser_wait_for_selector",
@@ -1168,6 +1203,22 @@ function getSmokeModel(modelId: string) {
 					pdfUrl: "https://example.com/onhand-smoke.pdf",
 					newTab: true,
 					waitForLoad: true,
+				}),
+				fauxToolCall("browser_pdf_search", {
+					query: "Alpha smoke content",
+					maxMatches: 3,
+				}),
+				fauxToolCall("browser_pdf_read_pages", {
+					pageNumber: 1,
+					maxChars: 800,
+				}),
+				fauxToolCall("browser_pdf_jump_to_page", {
+					pageNumber: 1,
+					text: "Alpha smoke content",
+				}),
+				fauxToolCall("browser_pdf_capture_page_image", {
+					pageNumber: 1,
+					format: "png",
 				}),
 				fauxToolCall("browser_get_visible_text", { maxChars: 400 }),
 				fauxToolCall("browser_extract_content", { maxChars: 800 }),
@@ -2437,7 +2488,28 @@ function withTargetWindowId(params: Record<string, unknown> = {}, targetWindowId
 	};
 }
 
-function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachments: any[] = [], learningMode = false, learnerState: unknown = null) {
+function browserContextLooksLikePdf(details: any) {
+	const activeUrl = String(details?.activeTab?.url || "");
+	const visible = details?.visible || {};
+	const selection = details?.selection || {};
+	const blocks = Array.isArray(visible?.blocks) ? visible.blocks : [];
+	return Boolean(
+		isOnhandPdfViewerUrl(activeUrl) ||
+			isLikelyPdfUrlForAutoHandoff(activeUrl) ||
+			visible?.surface === "pdf" ||
+			selection?.surface === "pdf" ||
+			blocks.some((block: any) => block?.tag === "pdf-page" || block?.surface === "pdf"),
+	);
+}
+
+function selectToolsForPrompt(
+	allTools: AgentTool[],
+	prompt: string,
+	_attachments: any[] = [],
+	learningMode = false,
+	learnerState: unknown = null,
+	options: { forcePdfTools?: boolean } = {},
+) {
 	const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
 	const selected = new Set<string>();
 	const text = String(prompt || "").toLowerCase();
@@ -2464,8 +2536,14 @@ function selectToolsForPrompt(allTools: AgentTool[], prompt: string, _attachment
 		if (textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|url|across tabs|multiple tabs|all tabs)\b/)) {
 			add(TAB_TOOL_NAMES);
 		}
-		if (textHasAny(text, /\bpdfs?\b|\bpdf viewer\b|\bnative pdf\b|\bunsupported_pdf_surface\b/)) {
-			add(["browser_open_pdf_in_onhand_viewer"]);
+		if (
+			options.forcePdfTools ||
+			textHasAny(
+				text,
+				/\bpdfs?\b|\bpdf viewer\b|\bnative pdf\b|\bunsupported_pdf_surface\b|\bslides?\b|\bslide deck\b|\blecture deck\b|\bpage\s+\d+\b|\bread through\b|\bfind\b|\blocating?\b|\bwhere\b/,
+			)
+		) {
+			add(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]);
 		}
 		if (promptAsksAboutVisualRegion(text)) {
 			add(VISUAL_CONTEXT_TOOL_NAMES);
@@ -2919,6 +2997,34 @@ function formatArtifactList(artifacts: BrowserArtifact[]) {
 		.join("\n");
 }
 
+function formatPdfSearchForModel(details: any) {
+	const search = details.search || details || {};
+	const query = String(search.query || "").trim();
+	const matches = Array.isArray(search.matches) ? search.matches : [];
+	if (!matches.length) return `No PDF matches found${query ? ` for "${truncate(query, 120)}"` : ""}.`;
+	const lines = matches.slice(0, 12).map((match: any, index: number) => {
+		const page = match.pageNumber || "?";
+		const anchorText = truncate(match.matchedText || match.text || query || "match", 120);
+		const snippet = truncateStructuredText(match.snippet || [match.before, match.matchedText, match.after].filter(Boolean).join(" "), 420);
+		const occurrence = typeof match.occurrence === "number" ? ` occurrence ${match.occurrence}` : "";
+		return `${index + 1}. [p. ${page}${occurrence}] ${anchorText}${snippet ? `\n   ${snippet}` : ""}`;
+	});
+	const count = typeof search.matchCount === "number" ? search.matchCount : matches.length;
+	const suffix = count > lines.length ? `\n${count - lines.length} more match(es) omitted.` : "";
+	return `PDF search${query ? ` for "${truncate(query, 120)}"` : ""}: ${count} match(es)\n${lines.join("\n")}${suffix}`;
+}
+
+function formatPdfPagesForModel(details: any) {
+	const pages = details.pages || details || {};
+	const blocks = Array.isArray(pages.blocks) ? pages.blocks : [];
+	if (!blocks.length) return "No PDF page text returned.";
+	const text = blocks
+		.map((block: any) => `[p. ${block.pageNumber || "?"}]\n${String(block.text || "").trim()}`)
+		.filter(Boolean)
+		.join("\n\n");
+	return text ? `PDF page text:\n${truncateStructuredText(text, 8000)}` : "No PDF page text returned.";
+}
+
 function toolResultTextForModel(toolName: string, result: any) {
 	const details = result?.details || result || {};
 	const tab = details.tab || null;
@@ -2957,6 +3063,21 @@ function toolResultTextForModel(toolName: string, result: any) {
 			const alreadyOpen = details.alreadyOpen ? "Already open" : "Opened";
 			const pdfUrl = details.pdfUrl ? `\nPDF source: ${details.pdfUrl}` : "";
 			return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}`;
+		}
+		case "browser_pdf_search":
+			return formatPdfSearchForModel(details);
+		case "browser_pdf_read_pages":
+			return formatPdfPagesForModel(details);
+		case "browser_pdf_jump_to_page": {
+			const jump = details.jump || details || {};
+			const page = jump.pageNumber || jump.pdfAnchor?.pageNumber || "?";
+			const matched = jump.matchedText ? ` near "${truncate(jump.matchedText, 160)}"` : "";
+			return `Jumped to PDF page ${page}${matched} on ${formatCompactTab(tab)}.`;
+		}
+		case "browser_pdf_capture_page_image": {
+			const page = details.pageNumber || details.page || "?";
+			const size = details.width && details.height ? ` (${details.width}x${details.height})` : "";
+			return `Captured PDF page ${page} image${size} from ${formatCompactTab(tab)}. Use this image for visual grounding; cite exact PDF text too when available.`;
 		}
 		case "browser_get_visible_text": {
 			const visible = details.visible || {};
@@ -3091,6 +3212,7 @@ export const __browserRuntimeTest = {
 	getReplayHighlightCandidates,
 	getPublicActivities,
 	getSelectionText,
+	browserContextLooksLikePdf,
 	isOnhandPdfViewerUrl,
 	parseExplicitPdfHandoffParams,
 	isLikelyPdfUrlForAutoHandoff,
@@ -3156,7 +3278,7 @@ export const __browserRuntimeTest = {
 			newConceptLearningPrompt,
 		};
 	},
-	getToolNamesForTest(prompt: string, learningMode = false, learnerState: unknown = null) {
+	getToolNamesForTest(prompt: string, learningMode = false, learnerState: unknown = null, options: { forcePdfTools?: boolean } = {}) {
 		const host: RuntimeHost = {
 			async runCommand() {
 				return {};
@@ -3176,7 +3298,7 @@ export const __browserRuntimeTest = {
 				return {};
 			},
 		};
-		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState).map((tool) => tool.name);
+		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState, options).map((tool) => tool.name);
 	},
 	setLearnerStateMode,
 	summarizeRestoredArtifact,
@@ -3315,6 +3437,51 @@ function createTools(
 			"open_pdf_in_onhand_viewer",
 			{ sequential: true },
 		),
+		commandTool(
+			"browser_pdf_search",
+			"Browser PDF Search",
+			"Search the full extracted text of the current Onhand PDF viewer, including pages that are not currently visible. Use this before answering PDF questions that ask where a topic is discussed.",
+			PDF_SEARCH_SCHEMA,
+			"pdf_search",
+		),
+		commandTool(
+			"browser_pdf_read_pages",
+			"Browser PDF Read Pages",
+			"Read extracted text from specific PDF page numbers or a page range in the current Onhand PDF viewer.",
+			PDF_READ_PAGES_SCHEMA,
+			"pdf_read_pages",
+		),
+		commandTool(
+			"browser_pdf_jump_to_page",
+			"Browser PDF Jump To Page",
+			"Scroll the current Onhand PDF viewer to a specific page, optionally near exact text from that page.",
+			PDF_JUMP_TO_PAGE_SCHEMA,
+			"pdf_jump_to_page",
+			{ sequential: true },
+		),
+		{
+			name: "browser_pdf_capture_page_image",
+			label: "Browser PDF Page Image",
+			description:
+				"Capture a specific PDF page as an image for visual grounding of slide layouts, figures, equations, charts, or scanned content. Use text tools too when text is available.",
+			parameters: PDF_PAGE_IMAGE_SCHEMA,
+			async execute(_toolCallId, params: any) {
+				const result = await host.runCommand("pdf_capture_page_image", prepareCommandParams(params, "pdf_capture_page_image") as Record<string, unknown>);
+				const attachment = imageAttachmentFromDataUrl(result?.dataUrl, `pdf-page-${result?.pageNumber || params?.pageNumber || "capture"}.png`);
+				const content: any[] = [{ type: "text", text: toolResultTextForModel("browser_pdf_capture_page_image", result) }];
+				if (attachment) {
+					content.push({
+						type: "image",
+						data: attachment.data,
+						mimeType: attachment.mimeType,
+					});
+				}
+				return {
+					content,
+					details: result,
+				};
+			},
+		},
 		commandTool(
 			"browser_get_visible_text",
 			"Browser Visible Text",
@@ -3551,6 +3718,14 @@ function getToolStatusMessage(toolName: string) {
 			return "Navigating...";
 		case "browser_open_pdf_in_onhand_viewer":
 			return "Opening PDF in Onhand viewer...";
+		case "browser_pdf_search":
+			return "Searching the PDF...";
+		case "browser_pdf_read_pages":
+			return "Reading PDF pages...";
+		case "browser_pdf_jump_to_page":
+			return "Moving to the PDF page...";
+		case "browser_pdf_capture_page_image":
+			return "Capturing PDF page image...";
 		case "browser_get_selection":
 			return "Reading your current selection...";
 		case "browser_get_visible_text":
@@ -3643,6 +3818,57 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				windowId: tab?.windowId || null,
 				...pageActionTabFields(tab),
 				label: details.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
+				detail,
+			};
+		}
+		case "browser_pdf_search": {
+			const search = details.search || details || {};
+			const detail = truncate(search.query || "PDF search", 72);
+			return {
+				key: `pdf-search:${tab?.id || "tab"}:${detail}`,
+				type: "read",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: "Searched PDF",
+				detail,
+			};
+		}
+		case "browser_pdf_read_pages": {
+			const pages = details.pages || details || {};
+			const pageList = Array.isArray(pages.pageNumbers) ? pages.pageNumbers.join(", ") : "pages";
+			return {
+				key: `pdf-read:${tab?.id || "tab"}:${pageList}`,
+				type: "read",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: "Read PDF",
+				detail: truncate(`p. ${pageList}`, 72),
+			};
+		}
+		case "browser_pdf_jump_to_page": {
+			const jump = details.jump || details || {};
+			const detail = `p. ${jump.pageNumber || jump.pdfAnchor?.pageNumber || "?"}`;
+			return {
+				key: `pdf-jump:${tab?.id || "tab"}:${detail}`,
+				type: "tab",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: "Moved PDF",
+				detail,
+			};
+		}
+		case "browser_pdf_capture_page_image": {
+			const detail = `p. ${details.pageNumber || details.page || "?"}`;
+			return {
+				key: `pdf-image:${tab?.id || "tab"}:${detail}`,
+				type: "visual",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: "Captured PDF page",
 				detail,
 			};
 		}
@@ -5419,13 +5645,14 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			await publishState({ status: "Starting Onhand..." });
 
 			try {
-				const explicitPdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
-				if (!explicitPdfHandoff) {
-					await runAutomaticPdfHandoffIfNeeded(targetWindowId);
+				let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
+				if (!pdfHandoff) {
+					pdfHandoff = await runAutomaticPdfHandoffIfNeeded(targetWindowId);
 				}
 				const browserContextDetails = await renderBrowserContextDetails(host, { targetWindowId });
 				const browserContext = browserContextDetails.text;
 				activeRequest.initialSelection = browserContextDetails.selection;
+				const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
 				const tools = selectToolsForPrompt(
 					createTools(host, artifactHooks, withRequestBrowserContext, (event) =>
 						recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
@@ -5434,6 +5661,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 					attachments,
 					learningMode,
 					session.learnerState,
+					{ forcePdfTools },
 				);
 
 				activeAgent = new Agent({

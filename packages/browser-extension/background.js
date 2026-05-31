@@ -19,6 +19,8 @@ const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const GOOGLE_SCHOLAR_READER_EXTENSION_ID = "dahenjhkoodjbpjheillcadbppiidmhp";
 const GOOGLE_SCHOLAR_READER_FRAME_PREFIX = `chrome-extension://${GOOGLE_SCHOLAR_READER_EXTENSION_ID}/reader.html`;
+const NATIVE_CHROME_PDF_VIEWER_EXTENSION_ID = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
+const NATIVE_CHROME_PDF_VIEWER_PREFIX = `chrome-extension://${NATIVE_CHROME_PDF_VIEWER_EXTENSION_ID}/`;
 const FONT_ASSET_PATHS = Object.freeze({
 	newYorkRegular: "fonts/NewYork.woff2",
 	newYorkItalic: "fonts/NewYorkItalic.woff2",
@@ -389,9 +391,98 @@ function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
 	);
 }
 
-function buildOnhandPdfViewerUrl(pdfUrl) {
+function normalizePdfPageNumber(value) {
+	const match = String(value ?? "").match(/\d+/);
+	if (!match) return null;
+	const pageNumber = Number.parseInt(match[0], 10);
+	if (!Number.isFinite(pageNumber) || pageNumber <= 0) return null;
+	return pageNumber;
+}
+
+function normalizePdfScrollRatio(value) {
+	const ratio = Number(value);
+	if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) return null;
+	return Math.max(0, Math.min(1, ratio));
+}
+
+function normalizePdfPageDetection(value, source = "") {
+	const rawPageNumber = value && typeof value === "object" ? value.pageNumber ?? value.page ?? value.currentPageNumber : value;
+	const pageNumber = normalizePdfPageNumber(rawPageNumber);
+	if (!pageNumber) return null;
+	return {
+		...(value && typeof value === "object" ? value : {}),
+		pageNumber,
+		source: String((value && typeof value === "object" ? value.source : "") || source || "pdf-page"),
+	};
+}
+
+function normalizeNonDefaultPdfPageDetection(value, source = "") {
+	const detection = normalizePdfPageDetection(value, source);
+	if (!detection || detection.pageNumber <= 1) return null;
+	return detection;
+}
+
+function inferPdfPageNumberFromUrl(value) {
+	if (!value) return null;
+	try {
+		const url = new URL(String(value));
+		for (const key of ["page", "pageNumber", "initialPage", "p"]) {
+			const pageNumber = normalizePdfPageNumber(url.searchParams.get(key));
+			if (pageNumber) return pageNumber;
+		}
+		const hash = String(url.hash || "").replace(/^#/, "");
+		if (!hash) return null;
+		const hashParams = new URLSearchParams(hash.includes("=") ? hash : `page=${hash}`);
+		for (const key of ["page", "pageNumber", "initialPage", "p"]) {
+			const pageNumber = normalizePdfPageNumber(hashParams.get(key));
+			if (pageNumber) return pageNumber;
+		}
+		return normalizePdfPageNumber(hash.match(/\bpage[=/:-](\d+)\b/i)?.[1]);
+	} catch {
+		return null;
+	}
+}
+
+function inferPdfPageNumberFromVisiblePayload(payload) {
+	if (!payload || typeof payload !== "object") return null;
+	const pages = (Array.isArray(payload.pages) && payload.pages.length ? payload.pages : payload.blocks) || [];
+	const pageCandidates = pages
+		.map((page) => {
+			const pageNumber = normalizePdfPageNumber(page?.pageNumber);
+			if (!pageNumber) return null;
+			const rect = page?.rect && typeof page.rect === "object" ? page.rect : {};
+			const top = Number.isFinite(Number(page?.top)) ? Number(page.top) : Number(rect.top);
+			const bottom = Number.isFinite(Number(page?.bottom)) ? Number(page.bottom) : Number(rect.bottom);
+			return {
+				pageNumber,
+				top: Number.isFinite(top) ? top : null,
+				bottom: Number.isFinite(bottom) ? bottom : null,
+			};
+		})
+		.filter(Boolean);
+	if (!pageCandidates.length) return null;
+
+	const viewportHeight = Number(payload.viewport?.height || 0);
+	if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return pageCandidates[0].pageNumber;
+	const centerY = viewportHeight / 2;
+	const scored = pageCandidates.map((page) => {
+		if (!Number.isFinite(page.top) || !Number.isFinite(page.bottom)) {
+			return { pageNumber: page.pageNumber, score: Number.MAX_SAFE_INTEGER };
+		}
+		if (page.top <= centerY && page.bottom >= centerY) return { pageNumber: page.pageNumber, score: 0 };
+		return { pageNumber: page.pageNumber, score: Math.min(Math.abs(page.top - centerY), Math.abs(page.bottom - centerY)) };
+	});
+	scored.sort((a, b) => a.score - b.score);
+	return scored[0]?.pageNumber || pageCandidates[0].pageNumber;
+}
+
+function buildOnhandPdfViewerUrl(pdfUrl, options = {}) {
 	const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
 	viewerUrl.searchParams.set("url", pdfUrl);
+	const pageNumber = normalizePdfPageNumber(options.pageNumber ?? options.page ?? options.initialPageNumber ?? options.initialPage);
+	if (pageNumber) viewerUrl.searchParams.set("page", String(pageNumber));
+	const scrollRatio = normalizePdfScrollRatio(options.scrollRatio ?? options.initialScrollRatio);
+	if (!pageNumber && scrollRatio) viewerUrl.searchParams.set("scrollRatio", String(Number(scrollRatio.toFixed(6))));
 	return viewerUrl.toString();
 }
 
@@ -461,8 +552,8 @@ async function ensureInlinePdfViewerBridgeToken(pdfUrl) {
 	return await setInlinePdfViewerBridgeToken(pdfUrl, createBridgeToken());
 }
 
-async function installInlineOnhandPdfViewer(tabId, pdfUrl) {
-	const viewerUrl = buildOnhandPdfViewerUrl(pdfUrl);
+async function installInlineOnhandPdfViewer(tabId, pdfUrl, options = {}) {
+	const viewerUrl = buildOnhandPdfViewerUrl(pdfUrl, options);
 	return await executeScriptInTab(
 		tabId,
 		(targetViewerUrl, targetPdfUrl) => {
@@ -517,6 +608,1086 @@ async function installInlineOnhandPdfViewer(tabId, pdfUrl) {
 		},
 		[viewerUrl, pdfUrl],
 	);
+}
+
+function stripUrlHash(value) {
+	try {
+		const url = new URL(String(value || ""));
+		url.hash = "";
+		return url.toString();
+	} catch {
+		return String(value || "").split("#")[0];
+	}
+}
+
+function shouldInferPdfPageNumberFromTab(tab, pdfUrl) {
+	const tabUrl = String(tab?.url || "");
+	if (!tabUrl) return false;
+	const pdfUrlWithoutHash = stripUrlHash(pdfUrl);
+	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
+	if (nestedPdfUrl && (!pdfUrlWithoutHash || stripUrlHash(nestedPdfUrl) === pdfUrlWithoutHash)) return true;
+	const directPdfUrl = normalizePdfUrlCandidate(tabUrl);
+	if (directPdfUrl && isLikelyPdfResourceUrl(directPdfUrl) && (!pdfUrlWithoutHash || stripUrlHash(directPdfUrl) === pdfUrlWithoutHash)) return true;
+	return false;
+}
+
+async function inferPdfPageNumberFromTabDom(tabId) {
+	const detectPageFromCurrentDocument = () => {
+		const normalizePageNumber = (value) => {
+			const match = String(value ?? "").match(/\d+/);
+			if (!match) return null;
+			const pageNumber = Number.parseInt(match[0], 10);
+			return Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : null;
+		};
+		const normalizePageIndex = (value) => {
+			const match = String(value ?? "").match(/\d+/);
+			if (!match) return null;
+			const pageIndex = Number.parseInt(match[0], 10);
+			return Number.isFinite(pageIndex) && pageIndex >= 0 ? pageIndex : null;
+		};
+		const readElementPageNumber = (element) => {
+			if (!(element instanceof Element)) return null;
+			const candidates = [
+				"value" in element ? element.value : "",
+				element.getAttribute("aria-valuenow"),
+				element.getAttribute("aria-valuetext"),
+				element.getAttribute("value"),
+				element.getAttribute("data-page-number"),
+				element.getAttribute("data-page"),
+				element.getAttribute("data-pn"),
+				element.textContent,
+			];
+			for (const candidate of candidates) {
+				const pageNumber = normalizePageNumber(candidate);
+				if (pageNumber) return pageNumber;
+			}
+			return null;
+		};
+		const isOnhandPdfViewerElement = (element) =>
+			Boolean(
+				element instanceof Element &&
+					element.closest?.(
+						"#onhand-inline-pdf-viewer-root, #onhand-inline-pdf-viewer-frame, [data-onhand-inline-pdf-viewer], [data-onhand-inline-pdf-frame], [data-onhand-pdf-page], [data-onhand-pdf-text-layer]",
+					),
+			);
+		const roots = [];
+		const collectRoots = (root) => {
+			if (!root || roots.includes(root) || roots.length > 120) return;
+			roots.push(root);
+			let elements = [];
+			try {
+				elements = Array.from(root.querySelectorAll("*")).slice(0, 6000);
+			} catch {
+				return;
+			}
+			for (const element of elements) {
+				if (element.shadowRoot) collectRoots(element.shadowRoot);
+			}
+		};
+		collectRoots(document);
+
+		const controlSelectors = [
+			'input[aria-label*="page" i]',
+			'input[title*="page" i]',
+			'input[name*="page" i]',
+			'input[id*="page" i]',
+			'[role="spinbutton"][aria-label*="page" i]',
+			'[aria-valuenow][aria-label*="page" i]',
+			'viewer-page-selector input',
+			'#pageSelector input',
+			'#page-selector input',
+			'#pageNumber',
+			'#page-number',
+		];
+		const controlCandidates = [];
+		for (const root of roots) {
+			for (const selector of controlSelectors) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll(selector));
+				} catch {
+					continue;
+				}
+				for (const element of matches) {
+					if (isOnhandPdfViewerElement(element)) continue;
+					const pageNumber = readElementPageNumber(element);
+					if (pageNumber) controlCandidates.push({ pageNumber, source: "page-control" });
+				}
+			}
+		}
+		const preferredControl = controlCandidates.find((candidate) => candidate.pageNumber > 1) || controlCandidates[0];
+		if (preferredControl) return preferredControl;
+
+		const propertyCandidates = [];
+		for (const root of roots) {
+			for (const selector of ["pdf-viewer", "viewer-page-selector", "viewer-toolbar", "viewer-viewport"]) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll(selector)).slice(0, 1000);
+				} catch {
+					continue;
+				}
+				propertyCandidates.push(...matches);
+			}
+		}
+		for (const candidate of propertyCandidates) {
+			if (isOnhandPdfViewerElement(candidate)) continue;
+			for (const path of [
+				["page"],
+				["pageNo"],
+				["pageNo_"],
+				["pageNumber"],
+				["pageNumber_"],
+				["currentPage"],
+				["currentPage_"],
+				["currentPageNumber"],
+				["currentPageNumber_"],
+				["index"],
+				["index_"],
+				["viewport", "page"],
+				["viewport", "position", "page"],
+				["viewport", "position_", "page"],
+				["viewport", "pageNo"],
+				["viewport_", "page"],
+				["viewport_", "pageNo"],
+				["viewport_", "position", "page"],
+				["viewport_", "position_", "page"],
+				["viewport_", "getMostVisiblePage"],
+			]) {
+				let value = candidate;
+				for (const key of path) value = typeof value?.[key] === "function" ? value[key]() : value?.[key];
+				const pageNumber = normalizePageNumber(value);
+				if (pageNumber) return { pageNumber, source: "native-pdf-viewer-property" };
+			}
+		}
+
+		const pageSelectors = [
+			".page[data-page-number]",
+			".gsr-page[data-pn]",
+			"[data-onhand-pdf-page]",
+			"[data-page-number]",
+			"[data-page-index]",
+			"[data-page]",
+			'[role="region"][aria-label*="page" i]',
+			'[aria-label^="Page "]',
+			'[aria-label^="page "]',
+		];
+		const candidates = [];
+		const seen = new Set();
+		for (const root of roots) {
+			for (const selector of pageSelectors) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll(selector));
+				} catch {
+					continue;
+				}
+				for (const element of matches) {
+					if (!(element instanceof Element) || seen.has(element)) continue;
+					if (isOnhandPdfViewerElement(element)) continue;
+					seen.add(element);
+					const rect = element.getBoundingClientRect();
+					if (rect.bottom <= 0 || rect.top >= window.innerHeight || rect.width <= 0 || rect.height <= 0) continue;
+					const pageIndex = normalizePageIndex(element.getAttribute("data-page-index"));
+					const pageNumber =
+						readElementPageNumber(element) ||
+						normalizePageNumber(element.getAttribute("aria-label")?.match(/\bpage\s+(\d+)\b/i)?.[1]) ||
+						(pageIndex !== null ? pageIndex + 1 : null);
+					if (!pageNumber) continue;
+					const centerY = window.innerHeight / 2;
+					const score = rect.top <= centerY && rect.bottom >= centerY ? 0 : Math.min(Math.abs(rect.top - centerY), Math.abs(rect.bottom - centerY));
+					candidates.push({ pageNumber, score });
+				}
+			}
+		}
+		if (!candidates.length) return null;
+		candidates.sort((a, b) => a.score - b.score);
+		return { pageNumber: candidates[0].pageNumber, source: "visible-page" };
+	};
+
+	try {
+		const result = await executeScriptInTabMainWorld(tabId, detectPageFromCurrentDocument);
+		if (result) return result;
+	} catch {
+	}
+	try {
+		const results = await executeScriptInAllFramesMainWorld(tabId, detectPageFromCurrentDocument);
+		const candidates = results.map((entry) => entry?.result).filter(Boolean);
+		return candidates.find((candidate) => normalizePdfPageNumber(candidate?.pageNumber) > 1) || candidates[0] || null;
+	} catch {}
+	return await executeScriptInTab(tabId, detectPageFromCurrentDocument);
+}
+
+async function inferPdfScrollRatioFromTabDom(tabId) {
+	const detectScrollFromCurrentDocument = () => {
+		const normalizeScrollRatio = (value) => {
+			const ratio = Number(value);
+			if (!Number.isFinite(ratio) || ratio <= 0 || ratio >= 1) return null;
+			return Math.max(0, Math.min(1, ratio));
+		};
+		const roots = [];
+		const collectRoots = (root) => {
+			if (!root || roots.includes(root) || roots.length > 120) return;
+			roots.push(root);
+			let elements = [];
+			try {
+				elements = Array.from(root.querySelectorAll("*")).slice(0, 6000);
+			} catch {
+				return;
+			}
+			for (const element of elements) {
+				if (element.shadowRoot) collectRoots(element.shadowRoot);
+			}
+		};
+		collectRoots(document);
+		const candidates = [];
+		const addCandidate = (element, source) => {
+			if (!element) return;
+			const scrollTop = Number(element.scrollTop || 0);
+			const scrollHeight = Number(element.scrollHeight || 0);
+			const clientHeight = Number(element.clientHeight || 0);
+			const maxScrollTop = scrollHeight - clientHeight;
+			const ratio = normalizeScrollRatio(maxScrollTop > 0 ? scrollTop / maxScrollTop : null);
+			if (ratio) candidates.push({ scrollRatio: ratio, source, scrollTop, scrollHeight, clientHeight });
+		};
+		addCandidate(document.scrollingElement, "document-scrolling-element");
+		addCandidate(document.documentElement, "document-element");
+		addCandidate(document.body, "document-body");
+		const windowMaxScroll = Math.max(
+			0,
+			Number(document.documentElement?.scrollHeight || document.body?.scrollHeight || 0) - Number(window.innerHeight || 0),
+		);
+		const windowRatio = normalizeScrollRatio(windowMaxScroll > 0 ? Number(window.scrollY || window.pageYOffset || 0) / windowMaxScroll : null);
+		if (windowRatio) {
+			candidates.push({
+				scrollRatio: windowRatio,
+				source: "window-scroll",
+				scrollTop: Number(window.scrollY || window.pageYOffset || 0),
+				scrollHeight: windowMaxScroll + Number(window.innerHeight || 0),
+				clientHeight: Number(window.innerHeight || 0),
+			});
+		}
+		for (const root of roots) {
+			for (const selector of [
+				"#viewerContainer",
+				"#viewer",
+				"#scroller",
+				"viewer-viewport",
+				"pdf-viewer",
+				".pdfViewer",
+				".viewer",
+				"[role='document']",
+			]) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll(selector)).slice(0, 1000);
+				} catch {
+					continue;
+				}
+				for (const element of matches) addCandidate(element, `scroll-container:${selector}`);
+			}
+		}
+		candidates.sort((a, b) => Math.max(b.scrollHeight || 0, b.clientHeight || 0) - Math.max(a.scrollHeight || 0, a.clientHeight || 0));
+		return candidates[0] || null;
+	};
+
+	for (const readScroll of [
+		() => executeScriptInTabMainWorld(tabId, detectScrollFromCurrentDocument),
+		async () => {
+			const results = await executeScriptInAllFramesMainWorld(tabId, detectScrollFromCurrentDocument);
+			return results.map((entry) => entry?.result).filter(Boolean)[0] || null;
+		},
+		() => executeScriptInTab(tabId, detectScrollFromCurrentDocument),
+		async () => {
+			const results = await executeScriptInAllFrames(tabId, detectScrollFromCurrentDocument);
+			return results.map((entry) => entry?.result).filter(Boolean)[0] || null;
+		},
+	]) {
+		try {
+			const result = await readScroll();
+			const scrollRatio = normalizePdfScrollRatio(result?.scrollRatio);
+			if (scrollRatio) return { ...result, scrollRatio };
+		} catch {}
+	}
+	return null;
+}
+
+function inferPdfPageNumberFromAccessibilityNodes(nodes, sourcePrefix = "accessibility") {
+	const readAxValue = (value) => {
+		if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "value")) {
+			return value.value;
+		}
+		return value;
+	};
+	const readAxProperty = (node, name) => {
+		if (!node || !name) return undefined;
+		if (Object.prototype.hasOwnProperty.call(node, name)) return readAxValue(node[name]);
+		const property = node.properties?.find((candidate) => candidate?.name === name);
+		return readAxValue(property?.value);
+	};
+	const readAxProperties = (node, names) => {
+		for (const name of names) {
+			const value = readAxProperty(node, name);
+			if (value !== undefined && value !== null && String(value).trim()) return value;
+		}
+		return undefined;
+	};
+	const isSelected = (node) =>
+		Boolean(
+			node?.selected === true ||
+				node?.properties?.some((property) => property?.name === "selected" && readAxValue(property?.value) === true),
+		);
+	const pageControlCandidates = [];
+	const thumbnailCandidates = [];
+	const nodeSummaries = [];
+	for (const node of nodes) {
+		const name = String(readAxProperties(node, ["name"]) || "");
+		const description = String(readAxProperties(node, ["description"]) || "");
+		const role = String(readAxProperties(node, ["role"]) || "");
+		const value = readAxProperties(node, ["value", "valuetext", "valuenow"]);
+		const label = `${name} ${description}`.trim();
+		nodeSummaries.push({ name, description, role, value, label });
+		const roleLooksLikePageControl = /text|spin|input/i.test(role);
+		if (!/page\s+number/i.test(label) && !(/page/i.test(label) && roleLooksLikePageControl) && !(/spin/i.test(role) && value != null)) continue;
+		const pageNumber = normalizePdfPageNumber(value);
+		if (pageNumber) pageControlCandidates.push({ pageNumber, source: `${sourcePrefix}-page-control` });
+	}
+	for (const node of nodes) {
+		const name = String(readAxProperties(node, ["name"]) || "");
+		const description = String(readAxProperties(node, ["description"]) || "");
+		const role = String(readAxProperties(node, ["role"]) || "");
+		if (!isSelected(node)) continue;
+		const label = `${name} ${description}`.trim();
+		if (!/thumbnail\s+for\s+page/i.test(label) && !/tab/i.test(role)) continue;
+		const pageNumber = normalizePdfPageNumber(label);
+		if (pageNumber) thumbnailCandidates.push({ pageNumber, source: `${sourcePrefix}-selected-thumbnail` });
+	}
+	const preferredThumbnail = thumbnailCandidates.find((candidate) => candidate.pageNumber > 1) || thumbnailCandidates[0];
+	if (preferredThumbnail) return preferredThumbnail;
+	const preferredControl = pageControlCandidates.find((candidate) => candidate.pageNumber > 1) || pageControlCandidates[0];
+	if (preferredControl) return preferredControl;
+	for (let index = 0; index < nodeSummaries.length; index += 1) {
+		const summary = nodeSummaries[index];
+		if (!/page\s+number/i.test(`${summary.label} ${summary.role}`)) continue;
+		for (const candidate of [summary, ...nodeSummaries.slice(index + 1, index + 6)]) {
+			const candidateText = String(candidate?.value ?? candidate?.label ?? "");
+			if (/^\s*\/\s*\d+\s*$/.test(candidateText)) continue;
+			const pageNumber = normalizePdfPageNumber(candidateText);
+			if (pageNumber) {
+				return { pageNumber, source: `${sourcePrefix}-nearby-page-control` };
+			}
+		}
+	}
+	return null;
+}
+
+function collectDebuggerFrameEntries(frameTreeResponse) {
+	const entries = [];
+	const visit = (frameTree) => {
+		const frame = frameTree?.frame;
+		if (frame?.id) entries.push({ frameId: frame.id, url: String(frame.url || "") });
+		for (const childFrame of frameTree?.childFrames || []) visit(childFrame);
+	};
+	visit(frameTreeResponse?.frameTree);
+	return entries;
+}
+
+function frameOrContextLooksLikeNativeChromePdfViewer(frame, context) {
+	const values = [
+		frame?.url,
+		frame?.urlFragment,
+		context?.origin,
+		context?.name,
+		context?.auxData?.name,
+	]
+		.filter(Boolean)
+		.map(String);
+	return values.some((value) => value.startsWith(NATIVE_CHROME_PDF_VIEWER_PREFIX));
+}
+
+function nativeChromePdfTargetId(targetInfo) {
+	return String(targetInfo?.id || targetInfo?.targetId || "");
+}
+
+function debuggerTargetLooksLikeNativeChromePdfViewer(targetInfo) {
+	return (
+		String(targetInfo?.url || "").startsWith(NATIVE_CHROME_PDF_VIEWER_PREFIX) ||
+		String(targetInfo?.extensionId || "") === NATIVE_CHROME_PDF_VIEWER_EXTENSION_ID
+	);
+}
+
+async function getNativeChromePdfViewerDebuggerTargets(tab = null) {
+	if (!chrome.debugger?.getTargets) return [];
+	const targets = await chrome.debugger.getTargets();
+	const tabId = typeof tab?.id === "number" ? tab.id : null;
+	const tabTitle = String(tab?.title || "");
+	const candidates = (Array.isArray(targets) ? targets : [])
+		.filter((targetInfo) => nativeChromePdfTargetId(targetInfo) && debuggerTargetLooksLikeNativeChromePdfViewer(targetInfo))
+		.map((targetInfo) => {
+			const targetTabId = typeof targetInfo.tabId === "number" ? targetInfo.tabId : null;
+			let score = 10;
+			if (tabId !== null && targetTabId === tabId) score = 0;
+			else if (tabTitle && String(targetInfo.title || "").includes(tabTitle)) score = 1;
+			else if (targetTabId === null) score = 4;
+			return { targetInfo, score };
+		})
+		.filter(({ score }) => score < 10)
+		.sort((a, b) => a.score - b.score);
+	return candidates.map(({ targetInfo }) => targetInfo);
+}
+
+function getNativeChromePdfViewerPageExpression() {
+	return `(() => {
+		const normalizePageNumber = (value) => {
+			const match = String(value ?? "").match(/\\d+/);
+			if (!match) return null;
+			const pageNumber = Number.parseInt(match[0], 10);
+			return Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : null;
+		};
+			const readElementPageNumber = (element) => {
+				if (!(element instanceof Element)) return null;
+				const candidates = [
+					"value" in element ? element.value : "",
+					element.getAttribute("aria-valuenow"),
+					element.getAttribute("aria-valuetext"),
+					element.getAttribute("value"),
+					element.getAttribute("data-page-number"),
+					element.getAttribute("data-page"),
+					element.getAttribute("title"),
+					element.getAttribute("aria-label"),
+				element.textContent,
+			];
+			for (const candidate of candidates) {
+				const pageNumber = normalizePageNumber(candidate);
+				if (pageNumber) return pageNumber;
+			}
+			return null;
+		};
+		const roots = [];
+		const collectRoots = (root) => {
+			if (!root || roots.includes(root) || roots.length > 120) return;
+			roots.push(root);
+			let elements = [];
+			try {
+				elements = Array.from(root.querySelectorAll("*")).slice(0, 6000);
+			} catch {
+				return;
+			}
+			for (const element of elements) {
+				if (element.shadowRoot) collectRoots(element.shadowRoot);
+			}
+		};
+		collectRoots(document);
+
+		const controlSelectors = [
+			'input[aria-label*="page" i]',
+			'input[title*="page" i]',
+			'input[name*="page" i]',
+			'input[id*="page" i]',
+			'[role="spinbutton"][aria-label*="page" i]',
+			'[aria-valuenow][aria-label*="page" i]',
+			'viewer-page-selector input',
+			'#pageSelector input',
+			'#page-selector input',
+				'#pageNumber',
+				'#page-number',
+			];
+			const pageControlCandidates = [];
+			for (const root of roots) {
+				for (const selector of controlSelectors) {
+					let matches = [];
+					try {
+						matches = Array.from(root.querySelectorAll(selector));
+					} catch {
+						continue;
+					}
+					for (const element of matches) {
+						const pageNumber = readElementPageNumber(element);
+						if (pageNumber) pageControlCandidates.push({ pageNumber, source: "native-pdf-viewer-page-control" });
+					}
+				}
+			}
+			const preferredPageControl = pageControlCandidates.find((candidate) => candidate.pageNumber > 1) || pageControlCandidates[0];
+			if (preferredPageControl) return preferredPageControl;
+
+			const pageFieldCandidates = [];
+			for (const root of roots) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll("input, [role='spinbutton'], [aria-valuenow]")).slice(0, 6000);
+				} catch {
+					continue;
+				}
+				for (const element of matches) {
+					const label = [
+						element.getAttribute("aria-label"),
+						element.getAttribute("aria-valuetext"),
+						element.getAttribute("title"),
+						element.getAttribute("name"),
+						element.id,
+						element.className,
+					]
+						.filter(Boolean)
+						.join(" ");
+					if (!/page/i.test(label)) continue;
+					const pageNumber = readElementPageNumber(element);
+					if (pageNumber) pageFieldCandidates.push({ pageNumber, source: "native-pdf-viewer-page-field" });
+				}
+			}
+			const preferredPageField = pageFieldCandidates.find((candidate) => candidate.pageNumber > 1) || pageFieldCandidates[0];
+			if (preferredPageField) return preferredPageField;
+
+			const thumbnailCandidates = [];
+			for (const root of roots) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll('[aria-selected="true"], [selected], .selected, [role="tab"][aria-selected="true"]')).slice(0, 1000);
+				} catch {
+					continue;
+				}
+				for (const element of matches) {
+					const label = [
+						element.getAttribute("aria-label"),
+						element.getAttribute("aria-valuetext"),
+						element.getAttribute("title"),
+						element.textContent,
+					]
+					.filter(Boolean)
+						.join(" ");
+					if (!/(thumbnail\\s+for\\s+page|\\bpage\\s+\\d+\\b)/i.test(label)) continue;
+					const pageNumber = normalizePageNumber(label);
+					if (pageNumber) thumbnailCandidates.push({ pageNumber, source: "native-pdf-viewer-selected-thumbnail" });
+				}
+			}
+			const preferredThumbnail = thumbnailCandidates.find((candidate) => candidate.pageNumber > 1) || thumbnailCandidates[0];
+			if (preferredThumbnail) return preferredThumbnail;
+
+		const propertyCandidates = [];
+		for (const root of roots) {
+			for (const selector of ["pdf-viewer", "viewer-page-selector", "viewer-toolbar"]) {
+				let matches = [];
+				try {
+					matches = Array.from(root.querySelectorAll(selector));
+				} catch {
+					continue;
+				}
+				propertyCandidates.push(...matches);
+			}
+		}
+		for (const candidate of propertyCandidates) {
+			for (const path of [
+				["page"],
+				["pageNo"],
+				["pageNo_"],
+				["pageNumber"],
+				["pageNumber_"],
+				["currentPage"],
+				["currentPage_"],
+				["currentPageNumber"],
+				["currentPageNumber_"],
+				["index"],
+				["index_"],
+				["viewport", "page"],
+				["viewport", "position", "page"],
+				["viewport", "position_", "page"],
+				["viewport", "pageNo"],
+				["viewport_", "page"],
+				["viewport_", "pageNo"],
+				["viewport_", "position", "page"],
+				["viewport_", "position_", "page"],
+				["viewport_", "getMostVisiblePage"],
+			]) {
+				let value = candidate;
+				for (const key of path) value = typeof value?.[key] === "function" ? value[key]() : value?.[key];
+				const pageNumber = normalizePageNumber(value);
+				if (pageNumber) return { pageNumber, source: "native-pdf-viewer-property" };
+			}
+		}
+
+		return null;
+	})()`;
+}
+
+async function inferPdfPageNumberFromNativeChromePdfViewerFrame(tabId) {
+	return await evaluateInMatchingFrame(
+		tabId,
+		frameOrContextLooksLikeNativeChromePdfViewer,
+		getNativeChromePdfViewerPageExpression(),
+		"No Chrome PDF viewer frame context found",
+	);
+}
+
+async function inferPdfPageNumberFromNativeChromePdfViewerTarget(tab) {
+	const targets = await getNativeChromePdfViewerDebuggerTargets(tab);
+	let lastError = null;
+	for (const targetInfo of targets) {
+		const targetId = nativeChromePdfTargetId(targetInfo);
+		if (!targetId) continue;
+		try {
+			const detection = await withDebuggerTarget({ targetId }, async ({ send }) => {
+				try {
+					await send("Runtime.enable");
+					const expressionResult = await evaluateDebuggerExpression(
+						send,
+						getNativeChromePdfViewerPageExpression(),
+						undefined,
+						"Could not infer PDF page from Chrome PDF viewer target",
+					);
+					const expressionDetection = normalizePdfPageDetection(expressionResult, "native-pdf-target-expression");
+					if (expressionDetection) {
+						return {
+							...expressionDetection,
+							source: `native-pdf-target:${expressionDetection.source}`,
+						};
+					}
+				} catch (error) {
+					lastError = error;
+				}
+				try {
+					await send("Accessibility.enable");
+					const tree = await send("Accessibility.getFullAXTree");
+					const nodes = Array.isArray(tree?.nodes) ? tree.nodes : [];
+					const accessibilityDetection = normalizePdfPageDetection(
+						inferPdfPageNumberFromAccessibilityNodes(nodes, "native-pdf-target-accessibility"),
+						"native-pdf-target-accessibility",
+					);
+					if (accessibilityDetection) {
+						return {
+							...accessibilityDetection,
+							source: `native-pdf-target:${accessibilityDetection.source}`,
+						};
+					}
+				} catch (error) {
+					lastError = error;
+				}
+				return null;
+			});
+			if (detection) return detection;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError) throw lastError;
+	return null;
+}
+
+async function inferPdfPageNumberFromRelatedDebuggerTargets(tabId) {
+	return await withDebugger(tabId, async ({ target, send }) => {
+		const sessions = [];
+		const seenSessionIds = new Set();
+		const sendToSession = async (sessionId, method, params = {}) => {
+			return await chrome.debugger.sendCommand({ ...target, sessionId }, method, params);
+		};
+		const addSession = (sessionId, targetInfo = {}, source = "target") => {
+			if (!sessionId || seenSessionIds.has(sessionId)) return;
+			seenSessionIds.add(sessionId);
+			sessions.push({ sessionId, targetInfo, source });
+		};
+		const onEvent = (source, method, params) => {
+			if (source.tabId !== target.tabId || method !== "Target.attachedToTarget") return;
+			const sessionId = params?.sessionId;
+			addSession(sessionId, params?.targetInfo, "attached-target");
+			if (!sessionId) return;
+			const sessionTarget = { ...source, sessionId };
+			chrome.debugger.sendCommand(sessionTarget, "Runtime.enable").catch(() => {});
+			chrome.debugger.sendCommand(sessionTarget, "Accessibility.enable").catch(() => {});
+			chrome.debugger
+				.sendCommand(sessionTarget, "Target.setAutoAttach", {
+					autoAttach: true,
+					waitForDebuggerOnStart: false,
+					flatten: true,
+				})
+				.catch(() => {});
+		};
+		chrome.debugger.onEvent.addListener(onEvent);
+		try {
+			await send("Target.setAutoAttach", {
+				autoAttach: true,
+				waitForDebuggerOnStart: false,
+				flatten: true,
+			});
+			await delay(350);
+			let lastError = null;
+			const rankedSessions = sessions
+				.map((session) => {
+					const url = String(session.targetInfo?.url || "");
+					const type = String(session.targetInfo?.type || "");
+					const title = String(session.targetInfo?.title || "");
+					let score = 5;
+					if (url.startsWith(NATIVE_CHROME_PDF_VIEWER_PREFIX)) score = 0;
+					else if (/pdf/i.test(`${type} ${title} ${url}`)) score = 1;
+					else if (/iframe|other/i.test(type)) score = 2;
+					return { ...session, score };
+				})
+				.sort((a, b) => a.score - b.score);
+			for (const session of rankedSessions) {
+				try {
+					const expressionResult = await evaluateDebuggerExpression(
+						(method, params = {}) => sendToSession(session.sessionId, method, params),
+						getNativeChromePdfViewerPageExpression(),
+						undefined,
+						"Could not infer PDF page from related PDF viewer target",
+					);
+					const expressionDetection = normalizeNonDefaultPdfPageDetection(
+						expressionResult,
+						`related-target:${session.targetInfo?.type || "target"}:expression`,
+					);
+					if (expressionDetection) return expressionDetection;
+				} catch (error) {
+					lastError = error;
+				}
+				try {
+					await sendToSession(session.sessionId, "Accessibility.enable");
+					const tree = await sendToSession(session.sessionId, "Accessibility.getFullAXTree");
+					const nodes = Array.isArray(tree?.nodes) ? tree.nodes : [];
+					const accessibilityDetection = normalizeNonDefaultPdfPageDetection(
+						inferPdfPageNumberFromAccessibilityNodes(
+							nodes,
+							`related-target:${session.targetInfo?.type || "target"}:accessibility`,
+						),
+					);
+					if (accessibilityDetection) return accessibilityDetection;
+				} catch (error) {
+					lastError = error;
+				}
+			}
+			if (lastError) throw lastError;
+			return null;
+		} finally {
+			chrome.debugger.onEvent.removeListener(onEvent);
+			try {
+				await send("Target.setAutoAttach", {
+					autoAttach: false,
+					waitForDebuggerOnStart: false,
+					flatten: true,
+				});
+			} catch {}
+		}
+	});
+}
+
+async function inferPdfPageNumberFromDebuggerDefaultContext(tabId) {
+	return await withDebugger(tabId, async ({ send }) => {
+		await send("Page.enable");
+		await send("Runtime.enable");
+		const response = await send("Runtime.evaluate", {
+			expression: getNativeChromePdfViewerPageExpression(),
+			awaitPromise: true,
+			returnByValue: true,
+			userGesture: true,
+		});
+		if (response.exceptionDetails) {
+			throw new Error(
+				response.exceptionDetails.exception?.description ||
+					response.exceptionDetails.text ||
+					"Could not infer PDF page from debugger default context",
+			);
+		}
+		return normalizeRemoteObject(response.result);
+	});
+}
+
+function getDebuggerDomNodeAttributes(node) {
+	const attrs = {};
+	const attributes = Array.isArray(node?.attributes) ? node.attributes : [];
+	for (let index = 0; index < attributes.length; index += 2) {
+		attrs[String(attributes[index] || "").toLowerCase()] = String(attributes[index + 1] ?? "");
+	}
+	return attrs;
+}
+
+async function readDebuggerDomNodeDetails(send, node) {
+	const attrs = getDebuggerDomNodeAttributes(node);
+	const staticDetails = {
+		nodeName: String(node?.nodeName || node?.localName || ""),
+		nodeValue: String(node?.nodeValue || ""),
+		...attrs,
+	};
+	try {
+		const resolved = await send("DOM.resolveNode", { nodeId: node.nodeId });
+		const objectId = resolved?.object?.objectId;
+		if (!objectId) return staticDetails;
+		try {
+			const response = await send("Runtime.callFunctionOn", {
+				objectId,
+				functionDeclaration: `function() {
+					return {
+						value: "value" in this ? this.value : "",
+						textContent: this.textContent || "",
+						ariaValueNow: this.getAttribute?.("aria-valuenow") || "",
+						ariaValueText: this.getAttribute?.("aria-valuetext") || "",
+						ariaLabel: this.getAttribute?.("aria-label") || "",
+						ariaSelected: this.getAttribute?.("aria-selected") || "",
+						title: this.getAttribute?.("title") || "",
+						name: this.getAttribute?.("name") || "",
+						id: this.id || "",
+						className: typeof this.className === "string" ? this.className : "",
+						role: this.getAttribute?.("role") || "",
+						selected: Boolean(this.selected),
+					};
+				}`,
+				returnByValue: true,
+			});
+			return {
+				...staticDetails,
+				...(normalizeRemoteObject(response?.result) || {}),
+			};
+		} finally {
+			try {
+				await send("Runtime.releaseObject", { objectId });
+			} catch {}
+		}
+	} catch {
+		return staticDetails;
+	}
+}
+
+function inferPdfPageNumberFromDebuggerDomDetails(details) {
+	const values = [
+		details?.value,
+		details?.ariaValueNow,
+		details?.ariaValueText,
+		details?.["aria-valuenow"],
+		details?.["aria-valuetext"],
+		details?.value,
+		details?.textContent,
+		details?.nodeValue,
+	];
+	for (const value of values) {
+		const pageNumber = normalizePdfPageNumber(value);
+		if (pageNumber) return pageNumber;
+	}
+	return null;
+}
+
+async function inferPdfScrollRatioFromDebuggerLayout(tabId) {
+	return await withDebugger(tabId, async ({ send }) => {
+		await send("Page.enable");
+		const metrics = await send("Page.getLayoutMetrics");
+		const visualViewport = metrics?.cssVisualViewport || metrics?.visualViewport || {};
+		const layoutViewport = metrics?.cssLayoutViewport || metrics?.layoutViewport || {};
+		const contentSize = metrics?.cssContentSize || metrics?.contentSize || {};
+		const pageY = Number(visualViewport.pageY ?? layoutViewport.pageY ?? 0);
+		const viewportHeight = Number(visualViewport.clientHeight ?? layoutViewport.clientHeight ?? 0);
+		const contentHeight = Number(contentSize.height ?? 0);
+		const maxScrollY = contentHeight - viewportHeight;
+		if (!Number.isFinite(pageY) || !Number.isFinite(maxScrollY) || maxScrollY <= 0) return null;
+		const scrollRatio = normalizePdfScrollRatio(pageY / maxScrollY);
+		if (!scrollRatio) return null;
+		return {
+			scrollRatio,
+			pageY,
+			viewportHeight,
+			contentHeight,
+			source: "debugger-layout-scroll",
+		};
+	});
+}
+
+function debuggerDomNodeLooksLikeOnhandPdfViewer(descriptor = "", details = {}) {
+	const haystack = [
+		descriptor,
+		details?.ariaLabel,
+		details?.["aria-label"],
+		details?.title,
+		details?.name,
+		details?.id,
+		details?.role,
+		details?.className,
+		details?.class,
+		details?.["data-onhand-inline-pdf-viewer"],
+		details?.["data-onhand-inline-pdf-frame"],
+		details?.["data-onhand-pdf-page"],
+		details?.["data-onhand-pdf-text-layer"],
+	]
+		.filter(Boolean)
+		.join(" ");
+	return /\bonhand-(?:inline-)?pdf\b/i.test(haystack) || /\bdata-onhand-pdf\b/i.test(haystack);
+}
+
+async function inferPdfPageNumberFromDebuggerDom(tabId) {
+	return await withDebugger(tabId, async ({ send }) => {
+		await send("Page.enable");
+		await send("Runtime.enable");
+		await send("DOM.enable");
+		const response = await send("DOM.getFlattenedDocument", {
+			depth: -1,
+			pierce: true,
+		});
+		const nodes = Array.isArray(response?.nodes) ? response.nodes : [];
+		const pageControlCandidates = [];
+		for (const node of nodes) {
+			if (!node?.nodeId) continue;
+			const attrs = getDebuggerDomNodeAttributes(node);
+			const descriptor = [
+				node.nodeName,
+				node.localName,
+				attrs["aria-label"],
+				attrs.title,
+				attrs.name,
+				attrs.id,
+				attrs.role,
+				attrs.class,
+			]
+				.filter(Boolean)
+				.join(" ");
+			const looksLikePageControl =
+				/\b(input|viewer-page-selector|viewer-toolbar|viewer-pdf-toolbar)\b/i.test(String(node.nodeName || node.localName || "")) ||
+				/page/i.test(descriptor) ||
+				/spinbutton/i.test(descriptor);
+			if (!looksLikePageControl) continue;
+			const details = await readDebuggerDomNodeDetails(send, node);
+			if (debuggerDomNodeLooksLikeOnhandPdfViewer(descriptor, details)) continue;
+			const detailsDescriptor = [
+				details.ariaLabel,
+				details["aria-label"],
+				details.title,
+				details.name,
+				details.id,
+				details.role,
+				details.className,
+				details.class,
+			]
+				.filter(Boolean)
+				.join(" ");
+			if (!/page|spinbutton|viewer-page-selector/i.test(`${descriptor} ${detailsDescriptor}`)) continue;
+			const pageNumber = inferPdfPageNumberFromDebuggerDomDetails(details);
+			if (pageNumber) pageControlCandidates.push({ pageNumber, source: "debugger-dom-page-control" });
+		}
+		const preferredPageControl = pageControlCandidates.find((candidate) => candidate.pageNumber > 1) || pageControlCandidates[0];
+		if (preferredPageControl) return preferredPageControl;
+
+		const thumbnailCandidates = [];
+		for (const node of nodes) {
+			if (!node?.nodeId) continue;
+			const attrs = getDebuggerDomNodeAttributes(node);
+			const selected =
+				/true/i.test(attrs["aria-selected"] || "") ||
+				Object.prototype.hasOwnProperty.call(attrs, "selected") ||
+				/\bselected\b/i.test(attrs.class || "");
+			if (!selected) continue;
+			const details = await readDebuggerDomNodeDetails(send, node);
+			if (debuggerDomNodeLooksLikeOnhandPdfViewer("", details)) continue;
+			const label = [
+				details.ariaLabel,
+				details["aria-label"],
+				details.title,
+				details.textContent,
+				details.nodeValue,
+			]
+				.filter(Boolean)
+				.join(" ");
+			if (!/(thumbnail\s+for\s+page|page\s+\d+)/i.test(label)) continue;
+			const pageNumber = normalizePdfPageNumber(label);
+			if (pageNumber) thumbnailCandidates.push({ pageNumber, source: "debugger-dom-selected-thumbnail" });
+		}
+		const preferredThumbnail = thumbnailCandidates.find((candidate) => candidate.pageNumber > 1) || thumbnailCandidates[0];
+		if (preferredThumbnail) return preferredThumbnail;
+		return null;
+	});
+}
+
+async function inferPdfPageNumberFromAccessibilityTree(tabId) {
+	return await withDebugger(tabId, async ({ send }) => {
+		try {
+			await send("Accessibility.enable");
+		} catch {}
+		const readTree = async (params = {}, sourcePrefix = "accessibility") => {
+			const tree = await send("Accessibility.getFullAXTree", params);
+			const nodes = Array.isArray(tree?.nodes) ? tree.nodes : [];
+			return inferPdfPageNumberFromAccessibilityNodes(nodes, sourcePrefix);
+		};
+
+		let frameEntries = [];
+		try {
+			await send("Page.enable");
+			frameEntries = collectDebuggerFrameEntries(await send("Page.getFrameTree"));
+		} catch {}
+
+		const ownExtensionRoot = chrome.runtime.getURL("");
+		const readableFrameEntries = frameEntries
+			.filter((entry) => entry.frameId && !entry.url.startsWith(ownExtensionRoot))
+			.sort((a, b) => {
+				const aIsNativePdfViewer = a.url.startsWith("chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/");
+				const bIsNativePdfViewer = b.url.startsWith("chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/");
+				return Number(bIsNativePdfViewer) - Number(aIsNativePdfViewer);
+			});
+		for (const entry of readableFrameEntries) {
+			try {
+				const result = await readTree({ frameId: entry.frameId }, "accessibility-frame");
+				if (result) return result;
+			} catch {}
+		}
+
+		return await readTree();
+	});
+}
+
+async function inferPdfPageNumberFromOpenOnhandPdfViewer(tabId) {
+	const statusCommand = { command: "status" };
+	for (const readStatus of [
+		() => callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found"),
+		() => callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found"),
+	]) {
+		try {
+			const status = await readStatus();
+			const pageNumber = normalizePdfPageNumber(status?.pageNumber ?? status?.currentPageNumber ?? status?.page);
+			if (pageNumber) return { pageNumber, source: "onhand-pdf-viewer-status" };
+		} catch {}
+	}
+	return null;
+}
+
+async function inferInitialPdfViewerPageLocation(args = {}, tab = null, pdfUrl = "") {
+	const explicitPageNumber = normalizePdfPageNumber(args.pageNumber ?? args.page ?? args.initialPageNumber ?? args.initialPage);
+	if (explicitPageNumber) return { pageNumber: explicitPageNumber, source: "explicit" };
+	for (const candidateUrl of [pdfUrl, args.pdfUrl]) {
+		const pageNumber = inferPdfPageNumberFromUrl(candidateUrl);
+		if (pageNumber) return { pageNumber, source: "url" };
+	}
+	if (!tab?.id || !shouldInferPdfPageNumberFromTab(tab, pdfUrl)) return null;
+
+	const tabUrlPageNumber = inferPdfPageNumberFromUrl(tab.url);
+	if (tabUrlPageNumber) return { pageNumber: tabUrlPageNumber, source: "tab-url" };
+	try {
+		const result = await inferPdfPageNumberFromOpenOnhandPdfViewer(tab.id);
+		const detection = normalizePdfPageDetection(result, "onhand-pdf-viewer-status");
+		if (detection) return detection;
+	} catch {}
+
+	const fallbackReaders = [
+		() => inferPdfPageNumberFromRelatedDebuggerTargets(tab.id),
+		() => inferPdfPageNumberFromNativeChromePdfViewerTarget(tab),
+		() => inferPdfPageNumberFromNativeChromePdfViewerFrame(tab.id),
+		() => inferPdfPageNumberFromDebuggerDefaultContext(tab.id),
+		() => inferPdfPageNumberFromDebuggerDom(tab.id),
+		() => inferPdfPageNumberFromAccessibilityTree(tab.id),
+		() => inferPdfPageNumberFromTabDom(tab.id),
+	];
+
+	for (const readFallback of fallbackReaders) {
+		try {
+			const detection = normalizeNonDefaultPdfPageDetection(await readFallback());
+			if (detection) return detection;
+		} catch {}
+	}
+
+	try {
+		const visible = await runPageToolkitMethod(tab.id, "getVisibleText", {
+			maxPages: 4,
+			maxBlocks: 8,
+			maxChars: 2000,
+		});
+		const pageNumber = inferPdfPageNumberFromVisiblePayload(visible);
+		if (pageNumber && pageNumber > 1) return { pageNumber, source: "visible-payload" };
+	} catch {}
+
+	return null;
+}
+
+async function inferInitialPdfViewerPageNumber(args = {}, tab = null, pdfUrl = "") {
+	const location = await inferInitialPdfViewerPageLocation(args, tab, pdfUrl);
+	return location?.pageNumber || null;
 }
 
 async function assertDebuggerEligibleTab(tabId) {
@@ -575,6 +1746,38 @@ async function withDebugger(tabId, fn) {
 	return await trackedTask;
 }
 
+async function withDebuggerTarget(target, fn) {
+	const targetKey = `target:${target?.targetId || target?.tabId || ""}`;
+	if (!target?.targetId && typeof target?.tabId !== "number") {
+		throw new Error("Missing debugger target");
+	}
+	const previousTask = debuggerTaskChains.get(targetKey) || Promise.resolve();
+	const scheduledTask = previousTask.catch(() => {}).then(async () => {
+		await attachDebuggerWithRetry(target);
+		try {
+			return await fn({
+				target,
+				send: async (method, params = {}) => {
+					return await chrome.debugger.sendCommand(target, method, params);
+				},
+			});
+		} finally {
+			try {
+				await chrome.debugger.detach(target);
+			} catch {}
+		}
+	});
+
+	const trackedTask = scheduledTask.finally(() => {
+		if (debuggerTaskChains.get(targetKey) === trackedTask) {
+			debuggerTaskChains.delete(targetKey);
+		}
+	});
+
+	debuggerTaskChains.set(targetKey, trackedTask);
+	return await trackedTask;
+}
+
 async function withTabCommand(tabId, fn) {
 	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = previousTask.catch(() => {}).then(fn);
@@ -620,6 +1823,19 @@ async function executeScriptInTab(tabId, func, args = []) {
 	});
 	if (!Array.isArray(results) || results.length === 0) {
 		throw new Error("No script result returned");
+	}
+	return results[0].result;
+}
+
+async function executeScriptInTabMainWorld(tabId, func, args = []) {
+	const results = await chrome.scripting.executeScript({
+		target: { tabId },
+		world: "MAIN",
+		func,
+		args,
+	});
+	if (!Array.isArray(results) || results.length === 0) {
+		throw new Error("No main-world script result returned");
 	}
 	return results[0].result;
 }
@@ -5350,6 +6566,16 @@ async function executeScriptInAllFrames(tabId, func, args = []) {
 	return Array.isArray(results) ? results : [];
 }
 
+async function executeScriptInAllFramesMainWorld(tabId, func, args = []) {
+	const results = await chrome.scripting.executeScript({
+		target: { tabId, allFrames: true },
+		world: "MAIN",
+		func,
+		args,
+	});
+	return Array.isArray(results) ? results : [];
+}
+
 async function evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, missingMessage) {
 	const frameIds = await getOnhandPdfViewerFrameIds(tabId);
 	if (!frameIds.length) throw new Error(missingMessage);
@@ -5656,30 +6882,73 @@ async function withDebuggerFrameContexts(tabId, findMatchingContexts, fn) {
 	});
 }
 
-async function evaluateInMatchingFrame(tabId, findMatchingContexts, expression, missingMessage) {
-	return await withDebuggerFrameContexts(tabId, findMatchingContexts, async ({ send, candidates }) => {
+async function evaluateDebuggerExpression(send, expression, contextId, missingMessage) {
+	const params = {
+		expression,
+		awaitPromise: true,
+		returnByValue: true,
+		userGesture: true,
+	};
+	if (typeof contextId === "number") params.contextId = contextId;
+	const response = await send("Runtime.evaluate", params);
+	if (response.exceptionDetails) {
+		throw new Error(
+			response.exceptionDetails.exception?.description ||
+				response.exceptionDetails.text ||
+				missingMessage,
+		);
+	}
+	return normalizeRemoteObject(response.result);
+}
+
+async function evaluateInMatchingDebuggerFrame(tabId, findMatchingContexts, expression, missingMessage) {
+	return await withDebugger(tabId, async ({ send }) => {
+		await send("Page.enable");
+		await send("Runtime.enable");
+		const frameTree = await send("Page.getFrameTree");
+		const frames = collectDebuggerFrameTree(frameTree?.frameTree);
+		const candidates = frames.filter((frame) => findMatchingContexts(frame, null));
 		if (!candidates.length) throw new Error(missingMessage);
+
 		let lastError = null;
-		for (const context of candidates) {
-			const response = await send("Runtime.evaluate", {
-				expression,
-				contextId: context.id,
-				awaitPromise: true,
-				returnByValue: true,
-				userGesture: true,
-			});
-			if (response.exceptionDetails) {
-				lastError = new Error(
-					response.exceptionDetails.exception?.description ||
-						response.exceptionDetails.text ||
-						missingMessage,
-				);
-				continue;
+		for (const frame of candidates) {
+			try {
+				const world = await send("Page.createIsolatedWorld", {
+					frameId: frame.id,
+					worldName: "onhand-frame-eval",
+					grantUniversalAccess: true,
+				});
+				if (!world?.executionContextId) throw new Error(missingMessage);
+				return await evaluateDebuggerExpression(send, expression, world.executionContextId, missingMessage);
+			} catch (error) {
+				lastError = error;
 			}
-			return normalizeRemoteObject(response.result);
 		}
 		throw lastError || new Error(missingMessage);
 	});
+}
+
+async function evaluateInMatchingFrame(tabId, findMatchingContexts, expression, missingMessage) {
+	try {
+		return await evaluateInMatchingDebuggerFrame(tabId, findMatchingContexts, expression, missingMessage);
+	} catch (frameError) {
+		try {
+			return await withDebuggerFrameContexts(tabId, findMatchingContexts, async ({ send, candidates }) => {
+				if (!candidates.length) throw frameError || new Error(missingMessage);
+				let lastError = null;
+				for (const context of candidates) {
+					try {
+						return await evaluateDebuggerExpression(send, expression, context.id, missingMessage);
+					} catch (error) {
+						lastError = error;
+					}
+				}
+				throw lastError || frameError || new Error(missingMessage);
+			});
+		} catch (contextError) {
+			throw contextError || frameError;
+		}
+	}
 }
 
 async function executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args = [], toolkitOptions = {}) {
@@ -5989,10 +7258,39 @@ async function navigateBrowser(args = {}) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
-	const viewerUrl = buildOnhandPdfViewerUrl(pdfUrl);
+	const initialPageLocation = await inferInitialPdfViewerPageLocation(args, sourceTab, pdfUrl);
+	const initialPageNumber = initialPageLocation?.pageNumber || null;
+	const initialPageSource = initialPageLocation?.source || null;
+	let initialScrollRatio = null;
+	if (!initialPageNumber && sourceTab?.id && shouldInferPdfPageNumberFromTab(sourceTab, pdfUrl)) {
+		try {
+			const tabLocation = await inferPdfScrollRatioFromTabDom(sourceTab.id);
+			initialScrollRatio = normalizePdfScrollRatio(tabLocation?.scrollRatio);
+		} catch {}
+		if (!initialScrollRatio) {
+			try {
+				const layoutLocation = await inferPdfScrollRatioFromDebuggerLayout(sourceTab.id);
+				initialScrollRatio = normalizePdfScrollRatio(layoutLocation?.scrollRatio);
+			} catch {}
+		}
+	}
+	const viewerOptions = initialPageNumber
+		? { pageNumber: initialPageNumber }
+		: initialScrollRatio
+			? { scrollRatio: initialScrollRatio }
+			: {};
+	const viewerUrl = buildOnhandPdfViewerUrl(pdfUrl, viewerOptions);
 	const waitForLoad = args.waitForLoad !== false;
 	const timeoutMs = clampNumber(args.timeoutMs, 15000, { min: 100, max: 120000 });
 	const sourceTabSnapshot = simplifyTab(sourceTab);
+	log("PDF viewer initial location", {
+		sourceTab: sourceTabSnapshot,
+		pdfUrl,
+		initialPageNumber,
+		initialPageSource,
+		initialScrollRatio,
+		viewerUrl,
+	});
 
 	if (!isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		let targetTab;
@@ -6012,13 +7310,16 @@ async function openPdfInOnhandViewer(args = {}) {
 		}
 		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
-		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl);
+		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
 		const viewerReady = waitForLoad ? await waitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs) : null;
 		return {
 			tab: simplifyTab(await chrome.tabs.get(finalTab.id)),
 			sourceTab: sourceTabSnapshot,
 			pdfUrl,
 			viewerUrl,
+			initialPageNumber,
+			initialPageSource,
+			initialScrollRatio,
 			viewerReady,
 			inlineViewer,
 			alreadyOpen: sourceTab.url === pdfUrl,
@@ -6036,6 +7337,9 @@ async function openPdfInOnhandViewer(args = {}) {
 			sourceTab: sourceTabSnapshot,
 			pdfUrl,
 			viewerUrl,
+			initialPageNumber,
+			initialPageSource,
+			initialScrollRatio,
 			viewerReady,
 			alreadyOpen: true,
 			opened: false,
@@ -6067,6 +7371,9 @@ async function openPdfInOnhandViewer(args = {}) {
 		sourceTab: sourceTabSnapshot,
 		pdfUrl,
 		viewerUrl,
+		initialPageNumber,
+		initialPageSource,
+		initialScrollRatio,
 		viewerReady,
 		alreadyOpen: false,
 		opened: true,
@@ -6825,6 +8132,71 @@ async function handleCommand(name, args = {}) {
 				};
 			});
 		}
+		case "pdf_search": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const search = await runPageToolkitMethod(tab.id, "searchPdf", {
+					query: args.query,
+					text: args.text,
+					maxMatches: args.maxMatches,
+					limit: args.limit,
+					maxContextChars: args.maxContextChars,
+				});
+				return {
+					tab: simplifyTab(tab),
+					search,
+				};
+			});
+		}
+		case "pdf_read_pages": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const pages = await runPageToolkitMethod(tab.id, "readPdfPages", {
+					pages: args.pages,
+					page: args.page,
+					pageNumber: args.pageNumber,
+					startPage: args.startPage,
+					endPage: args.endPage,
+					maxPages: args.maxPages,
+					maxChars: args.maxChars,
+				});
+				return {
+					tab: simplifyTab(tab),
+					pages,
+				};
+			});
+		}
+		case "pdf_jump_to_page": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const jump = await runPageToolkitMethod(tab.id, "jumpToPdfPage", {
+					pageNumber: args.pageNumber,
+					page: args.page,
+					text: args.text,
+					occurrence: args.occurrence,
+					pdfAnchor: args.pdfAnchor,
+				});
+				return {
+					tab: simplifyTab(tab),
+					jump,
+				};
+			});
+		}
+		case "pdf_capture_page_image": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const image = await runPageToolkitMethod(tab.id, "capturePdfPageImage", {
+					pageNumber: args.pageNumber,
+					page: args.page,
+					format: args.format,
+					quality: args.quality,
+				});
+				return {
+					tab: simplifyTab(tab),
+					...image,
+				};
+			});
+		}
 		case "get_visible_region_image": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
@@ -7568,6 +8940,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:realtime-pdf-tool") {
+			const tool = String(message.tool || "");
+			const allowedTools = new Set(["pdf_search", "pdf_read_pages", "pdf_jump_to_page"]);
+			if (!allowedTools.has(tool)) {
+				throw new Error(`Unsupported realtime PDF tool: ${tool || "(missing)"}`);
+			}
+			const result = await handleCommand(tool, {
+				...(message.args || {}),
+				windowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
+			sendResponse({
+				ok: true,
+				result,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:realtime-annotate") {
 			sendResponse({
 				ok: true,
@@ -7705,6 +9094,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:open-pdf-viewer") {
 			const result = await handleCommand("open_pdf_in_onhand_viewer", {
+				tabId: typeof message.tabId === "number" ? message.tabId : undefined,
 				windowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});
 			sendResponse({

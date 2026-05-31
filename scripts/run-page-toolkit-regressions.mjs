@@ -46,7 +46,10 @@ async function assertPdfViewerHandoffHelpers() {
 		"normalizePdfUrlCandidate",
 		"extractPdfSourceUrlFromViewerLikeUrl",
 		"resolvePdfSourceUrlForViewer",
+		"normalizePdfPageNumber",
+		"normalizePdfScrollRatio",
 		"buildOnhandPdfViewerUrl",
+		"inferPdfPageNumberFromAccessibilityNodes",
 	];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
 	const helpers = new Function(
@@ -89,6 +92,34 @@ async function assertPdfViewerHandoffHelpers() {
 		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
 	);
 	assert.equal(
+		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf", { pageNumber: 7 }),
+		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf&page=7",
+	);
+	assert.equal(
+		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf", { scrollRatio: 0.3076923 }),
+		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf&scrollRatio=0.307692",
+	);
+	assert.equal(
+		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf", { pageNumber: 7, scrollRatio: 0.3076923 }),
+		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf&page=7",
+	);
+	assert.deepEqual(
+		helpers.inferPdfPageNumberFromAccessibilityNodes([
+			{ role: "textbox", name: "Page number", value: "13" },
+		]),
+		{ pageNumber: 13, source: "accessibility-page-control" },
+	);
+	assert.deepEqual(
+		helpers.inferPdfPageNumberFromAccessibilityNodes([
+			{
+				role: { value: "tab" },
+				name: { value: "Thumbnail for page 13" },
+				properties: [{ name: "selected", value: true }],
+			},
+		]),
+		{ pageNumber: 13, source: "accessibility-selected-thumbnail" },
+	);
+	assert.equal(
 		helpers.resolvePdfSourceUrlForViewer({}, { url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fdownload%3Fid%3Dpaper-123" }),
 		"https://example.test/download?id=paper-123",
 	);
@@ -100,6 +131,49 @@ async function assertPdfViewerHandoffHelpers() {
 		/if \(!isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)\)/,
 		"Open PDF should not redirect an existing Onhand PDF viewer-like tab back to its raw PDF source",
 	);
+	assert.match(backgroundSource, /function inferInitialPdfViewerPageNumber/, "PDF handoff should infer the current page before opening Onhand's viewer");
+	assert.match(backgroundSource, /function inferPdfPageNumberFromNativeChromePdfViewerFrame/, "PDF handoff should read Chrome's native PDF viewer frame for the current page");
+	assert.match(backgroundSource, /function inferPdfPageNumberFromDebuggerDefaultContext/, "PDF handoff should fall back to the debugger default context for native PDF pages");
+	assert.match(backgroundSource, /function inferPdfPageNumberFromDebuggerDom/, "PDF handoff should inspect Chrome's native PDF viewer DOM controls for the current page");
+	assert.match(backgroundSource, /function evaluateInMatchingDebuggerFrame/, "PDF handoff should directly target existing PDF viewer frames");
+	assert.match(backgroundSource, /Page\.createIsolatedWorld/, "PDF handoff should evaluate in already-created Chrome PDF viewer frames");
+	assert.match(backgroundSource, /DOM\.getFlattenedDocument/, "PDF handoff should pierce Chrome PDF viewer DOM controls when page runtime probes fail");
+	assert.match(backgroundSource, /DOM\.resolveNode/, "PDF handoff should read live page-number input values from debugger DOM nodes");
+	assert.match(backgroundSource, /frameOrContextLooksLikeNativeChromePdfViewer/, "PDF handoff should locate Chrome's built-in PDF viewer runtime context");
+	assert.match(backgroundSource, /viewer-page-selector input/, "PDF handoff should inspect Chrome PDF viewer shadow-DOM page controls");
+	assert.match(backgroundSource, /Accessibility\.getFullAXTree/, "PDF handoff should use the accessibility tree to infer native Chrome PDF page controls");
+	assert.match(backgroundSource, /\/tab\/i\.test\(role\)/, "PDF handoff should accept Chrome PDF selected thumbnail tabs with numeric names");
+	assert.ok(
+		backgroundSource.indexOf("'viewer-page-selector input'") < backgroundSource.indexOf('"native-pdf-viewer-property"'),
+		"PDF handoff should prefer visible Chrome PDF page controls over stale viewer properties",
+	);
+	assert.match(backgroundSource, /Page\.getFrameTree/, "PDF handoff should inspect child frames for Chrome's native PDF viewer controls");
+	assert.match(backgroundSource, /chrome-extension:\/\/mhjfbmdgcfjbbpaeojofohoefgiehjai\//, "PDF handoff should prefer Chrome's native PDF viewer frame");
+	assert.match(backgroundSource, /chrome\.runtime\.getURL\(""\)/, "PDF handoff should avoid reading stale Onhand viewer frames when inferring the source PDF page");
+	assert.match(backgroundSource, /for \(const entry of readableFrameEntries\)[\s\S]*return await readTree\(\);/, "PDF handoff should read PDF viewer frames before falling back to the whole-tab accessibility tree");
+	assert.doesNotMatch(backgroundSource, /frameEntries\s*\.\s*slice\(1\)/, "PDF handoff should not skip the top frame when it may be Chrome's native PDF viewer");
+	assert.ok(
+		backgroundSource.indexOf("inferPdfPageNumberFromNativeChromePdfViewerFrame(tab.id)") <
+			backgroundSource.indexOf("inferPdfPageNumberFromDebuggerDefaultContext(tab.id)"),
+		"PDF handoff should try the matched native PDF frame before the debugger default context",
+	);
+	assert.ok(
+		backgroundSource.indexOf("inferPdfPageNumberFromDebuggerDefaultContext(tab.id)") <
+			backgroundSource.indexOf("inferPdfPageNumberFromDebuggerDom(tab.id)"),
+		"PDF handoff should try runtime controls before debugger DOM controls",
+	);
+	assert.ok(
+		backgroundSource.indexOf("inferPdfPageNumberFromDebuggerDom(tab.id)") <
+			backgroundSource.indexOf("inferPdfPageNumberFromAccessibilityTree(tab.id)"),
+		"PDF handoff should try debugger DOM controls before accessibility fallbacks",
+	);
+	assert.ok(
+		backgroundSource.indexOf("inferPdfPageNumberFromAccessibilityTree(tab.id)") <
+			backgroundSource.indexOf("inferPdfPageNumberFromTabDom(tab.id)"),
+		"PDF handoff should prefer Chrome's native PDF page number before DOM fallbacks",
+	);
+	assert.match(backgroundSource, /installInlineOnhandPdfViewer\(finalTab\.id,\s*pdfUrl,\s*viewerOptions\)/, "Inline PDF handoff should pass the inferred page into the viewer URL");
+	assert.match(backgroundSource, /tabId: typeof message\.tabId === "number"/, "Sidebar PDF handoff should preserve the current page tab id");
 }
 
 async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
@@ -129,6 +203,21 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /options\.reuseExisting === true/, "PDF viewer highlight replay should honor reuseExisting");
 	assert.match(source, /findExistingPdfHighlight/, "PDF viewer highlight replay should find existing PDF annotations before creating new ones");
 	assert.match(source, /removeDuplicatePdfHighlights/, "PDF viewer highlight replay should consolidate duplicate saved-artifact overlays");
+	assert.match(source, /function pdfSearch/, "PDF viewer should expose full-document text search");
+	assert.match(source, /function pdfReadPages/, "PDF viewer should expose page-specific text reads");
+	assert.match(source, /function pdfJumpToPage/, "PDF viewer should expose page navigation for found PDF matches");
+	assert.match(source, /function pdfCapturePageImage/, "PDF viewer should expose page image capture for visual PDF grounding");
+	assert.match(source, /const DEFAULT_SCALE = 1;/, "PDF viewer should not default to an over-zoomed fixed scale");
+	assert.match(source, /function computeFitScale/, "PDF viewer should calculate an initial fit scale from the rendered viewport");
+	assert.match(source, /function parseInitialPageNumber/, "PDF viewer should read an initial page from the viewer URL");
+	assert.match(source, /scrollToPage\(initialPageNumber\)/, "PDF viewer should scroll to the requested initial page after rendering");
+	assert.match(source, /function updateViewerPageUrl/, "PDF viewer should keep the current page in the viewer URL");
+	assert.match(source, /function capturePdfViewSnapshot/, "PDF viewer should snapshot page position and annotations before re-rendering");
+	assert.match(source, /function restorePdfViewSnapshot/, "PDF viewer should restore page position and annotations after re-rendering");
+	assert.match(source, /window\.addEventListener\("resize",\s*scheduleResizeRender/, "PDF viewer should handle resize without resetting the document");
+	assert.match(source, /renderDocument\(\{\s*preserveView:\s*true\s*\}\)/, "PDF viewer zoom/resize re-renders should preserve view state");
+	assert.match(source, /case "searchPdf":/, "PDF toolkit bridge should route full-document search");
+	assert.match(source, /case "readPdfPages":/, "PDF toolkit bridge should route page text reads");
 }
 
 function installLayoutShims(window) {
