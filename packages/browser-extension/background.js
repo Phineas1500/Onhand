@@ -2943,6 +2943,7 @@ const createPageToolkit = (options = {}) => {
 		"h5",
 		"h6",
 		"summary",
+		'[data-testid="tweetText"]',
 	].join(", ");
 
 	const MATH_CONTAINER_SELECTOR = [
@@ -5649,7 +5650,7 @@ const createPageToolkit = (options = {}) => {
 		const viewportBottom = window.innerHeight;
 		let totalChars = 0;
 
-		for (const element of document.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, code, figcaption, caption, summary, td, th")) {
+		for (const element of document.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, code, figcaption, caption, summary, td, th, [data-testid="tweetText"]')) {
 			if (!(element instanceof Element)) continue;
 			if (!isVisible(element)) continue;
 			const rect = element.getBoundingClientRect();

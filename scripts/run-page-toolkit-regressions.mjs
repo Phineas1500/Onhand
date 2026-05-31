@@ -394,6 +394,35 @@ async function assertHighlightTextPreservesExistingAnnotationsByDefault() {
 	assert.match(highlights[1].textContent, /aperiodic condition/);
 }
 
+async function assertTweetTextContainerCanBeHighlightedAcrossNodes() {
+	const target =
+		"current goal: fund better dev hardware, ideally a MacBook, so I can test more AI coding workflows and keep building OSS faster";
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<article role="article">
+				<div data-testid="tweetText" lang="en" dir="auto">
+					<span>updated my GitHub Sponsors page for Taste Skill :)</span>
+					<br>
+					<br>
+					<span>current goal:</span>
+					<span> fund better dev hardware, ideally a MacBook, so I can test more AI </span>
+					<span>coding workflows and keep building OSS faster</span>
+					<br>
+					<br>
+					<span>if Taste Skill helped you or you want to support, would mean a lot!!</span>
+				</div>
+			</article>
+		</main>
+	`);
+	const visible = toolkit.getVisibleText({ maxChars: 1000 });
+	assert.match(visible.text, /current goal: fund better dev hardware/, "tweet text should be readable as visible page text");
+
+	const highlight = await toolkit.highlightText(target, { scrollIntoView: false, exactOnly: true, allowApproximate: false });
+	assert.match(highlight.matchedText, /current goal: fund better dev hardware/);
+	assert.equal(highlight.fallback, undefined);
+	assert.equal(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]").length, 1);
+}
+
 async function assertExactMathSourceModeMatchesRenderedMathJax() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -1839,6 +1868,7 @@ async function main() {
 	await assertExactSourceModeDoesNotApproximate();
 	await assertExactSourceModeReusesExistingHighlight();
 	await assertHighlightTextPreservesExistingAnnotationsByDefault();
+	await assertTweetTextContainerCanBeHighlightedAcrossNodes();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 	await assertPdfTextLayerVisibleTextUsesPdfSurface();

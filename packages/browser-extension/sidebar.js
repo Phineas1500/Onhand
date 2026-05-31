@@ -148,6 +148,7 @@
 	let realtimeConnected = false;
 	let realtimeStatus = "Voice idle";
 	let realtimeError = "";
+	let realtimeErrorExpanded = false;
 	let realtimeAnswer = null;
 	let realtimeTranscriptBuffer = "";
 	let realtimeRestartAfterMicPermission = false;
@@ -2573,7 +2574,7 @@
 			}
 			.onhand-row {
 				display: grid;
-				grid-template-columns: auto auto minmax(0, 1fr) minmax(46px, 64px) auto auto;
+				grid-template-columns: auto auto minmax(0, 1fr) auto auto;
 				align-items: center;
 				column-gap: 5px;
 				row-gap: 6px;
@@ -2616,6 +2617,14 @@
 				background: var(--rm-mantle);
 				color: var(--rm-text);
 			}
+			.onhand-voice-control {
+				display: inline-flex;
+				align-items: center;
+				flex: 0 0 auto;
+				height: 28px;
+				border-radius: 4px;
+				overflow: hidden;
+			}
 			.onhand-row .voice {
 				flex: 0 0 auto;
 				width: 30px;
@@ -2623,6 +2632,7 @@
 				height: 28px;
 				padding: 3px 5px;
 				border: 1px solid transparent;
+				border-radius: 2px;
 				font: 10.5px var(--rm-font-mono);
 			}
 			.onhand-row .voice svg {
@@ -2648,6 +2658,10 @@
 				color: var(--rm-love);
 				border-color: color-mix(in srgb, var(--rm-love) 45%, transparent);
 			}
+			.onhand-row .voice.on.error,
+			.onhand-row .voice.connecting.error {
+				color: var(--rm-base);
+			}
 			.onhand-realtime-status {
 				flex: 1 1 82px;
 				min-width: 0;
@@ -2655,26 +2669,127 @@
 				overflow: hidden;
 				text-overflow: ellipsis;
 				white-space: nowrap;
+				padding: 0;
+				border: 0;
+				background: transparent;
+				color: inherit;
+				font: inherit;
+				text-align: left;
+				cursor: default;
 			}
 			.onhand-realtime-status.error {
 				color: var(--rm-love);
+				cursor: pointer;
 			}
-			.onhand-row .mic {
-				width: 100%;
-				min-width: 0;
-				max-width: 64px;
+			.onhand-realtime-status.error:hover,
+			.onhand-realtime-status.error:focus-visible {
+				text-decoration: underline;
+				text-underline-offset: 2px;
+			}
+			.onhand-realtime-error-bubble {
+				position: relative;
+				margin-top: -2px;
+				padding: 9px 10px;
+				border: 1px solid color-mix(in srgb, var(--rm-love) 34%, var(--rm-overlay));
+				border-radius: 4px;
+				background: color-mix(in srgb, var(--rm-love) 8%, var(--rm-base));
+				color: var(--rm-text);
+				box-shadow: 0 8px 24px color-mix(in srgb, var(--rm-shadow) 16%, transparent);
+				font: 10.5px/1.45 var(--rm-font-mono);
+			}
+			.onhand-realtime-error-bubble[hidden] {
+				display: none;
+			}
+			.onhand-realtime-error-bubble::before {
+				content: "";
+				position: absolute;
+				top: -6px;
+				left: 64px;
+				width: 10px;
+				height: 10px;
+				border-left: 1px solid color-mix(in srgb, var(--rm-love) 34%, var(--rm-overlay));
+				border-top: 1px solid color-mix(in srgb, var(--rm-love) 34%, var(--rm-overlay));
+				background: inherit;
+				transform: rotate(45deg);
+			}
+			.onhand-realtime-error-text {
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+			}
+			.onhand-realtime-error-actions {
+				display: flex;
+				justify-content: flex-end;
+				gap: 6px;
+				margin-top: 8px;
+			}
+			.onhand-realtime-error-actions button {
 				border: 1px solid var(--rm-overlay);
 				border-radius: 2px;
-				background: var(--rm-mantle);
+				background: var(--rm-base);
 				color: var(--rm-text);
 				font: 10.5px var(--rm-font-mono);
-				padding: 2px 4px;
-				overflow: hidden;
-				text-overflow: ellipsis;
-				white-space: nowrap;
+				padding: 4px 7px;
+				cursor: pointer;
+			}
+			.onhand-realtime-error-actions button:hover {
+				background: var(--rm-mantle);
+			}
+			.onhand-mic-picker {
+				position: relative;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				width: 24px;
+				min-width: 24px;
+				max-width: 24px;
+				height: 28px;
+				padding: 0;
+				box-sizing: border-box;
+				border: 1px solid transparent;
+				border-radius: 2px;
+				background: transparent;
+				color: var(--rm-subtext);
+				font: 10.5px var(--rm-font-mono);
+				cursor: pointer;
+			}
+			.onhand-mic-picker[hidden] {
+				display: none;
+			}
+			.onhand-mic-picker:hover {
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+			}
+			.onhand-mic-picker.disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-mic-picker svg {
+				width: 14px;
+				height: 14px;
+				flex: 0 0 auto;
+				fill: none;
+				stroke: currentColor;
+				stroke-width: 2;
+				stroke-linecap: round;
+				stroke-linejoin: round;
+			}
+			.onhand-mic-label {
+				display: none;
+			}
+			.onhand-row .mic {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				border: 0;
+				opacity: 0;
+				cursor: pointer;
+				-webkit-appearance: none;
+				appearance: none;
 			}
 			.onhand-row .mic:disabled {
-				opacity: 0.55;
 				cursor: not-allowed;
 			}
 			.onhand-realtime-answer {
@@ -2696,10 +2811,12 @@
 				padding: 3px 4px;
 				border-radius: 2px;
 				flex: 0 0 auto;
+				white-space: nowrap;
 			}
 			.onhand-row .learn .sw {
 				width: 22px;
 				height: 12px;
+				flex: 0 0 22px;
 				border-radius: 999px;
 				background: var(--rm-surface-2);
 				position: relative;
@@ -2799,12 +2916,6 @@
 					justify-self: end;
 					padding: 3px;
 				}
-				.onhand-row .mic {
-					grid-column: 1 / 4;
-					grid-row: 2;
-					max-width: none;
-					width: 100%;
-				}
 				.onhand-realtime-status {
 					grid-column: 3;
 					min-width: 0;
@@ -2878,10 +2989,10 @@
 									<button id="openPdfViewerButton" class="session-button" type="button">Open PDF</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
 									<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
-									<button id="closeButton" class="session-button" type="button">Close</button>
+									<button id="closeButton" class="session-button" type="button">Close Onhand</button>
 								</div>
 							<div id="restoreResult" class="onhand-menu-restore-result" hidden></div>
-							<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask</div>
+							<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask · shift+enter newline</div>
 						</div>
 					</div>
 					</header>
@@ -2907,9 +3018,15 @@
 						</svg>
 					</button>
 					<input id="fileInput" type="file" multiple hidden />
-					<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor"><svg class="onhand-voice-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /><path d="M12 19v3" /><path d="M8 22h8" /></svg><span class="onhand-sr-only">Voice</span></button>
-					<span id="realtimeStatus" class="onhand-realtime-status">Voice idle</span>
-					<select id="realtimeMicSelect" class="mic" aria-label="Realtime microphone input" title="Realtime microphone input" hidden></select>
+					<div id="realtimeVoiceControl" class="onhand-voice-control">
+						<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor"><svg class="onhand-voice-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /><path d="M12 19v3" /><path d="M8 22h8" /></svg><span class="onhand-sr-only">Voice</span></button>
+						<label id="realtimeMicPicker" class="onhand-mic-picker" title="Realtime microphone input" hidden>
+							<span id="realtimeMicLabel" class="onhand-mic-label">Mic</span>
+							<select id="realtimeMicSelect" class="mic" aria-label="Realtime microphone input" title="Realtime microphone input" hidden></select>
+							<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 6 4 4 4-4" /></svg>
+						</label>
+					</div>
+					<button id="realtimeStatus" class="onhand-realtime-status" type="button" aria-expanded="false">Voice idle</button>
 					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
 						<span class="sw"></span>
 						<input id="learningModeToggle" type="checkbox" hidden />
@@ -2918,7 +3035,14 @@
 					<span class="spacer"></span>
 					<button id="sendButton" class="onhand-send" type="submit">Ask <span class="kbd">&#8617;</span></button>
 				</div>
-				<div id="helper" class="onhand-hint">esc dismiss · cmd+n new entry</div>
+				<div id="realtimeErrorBubble" class="onhand-realtime-error-bubble" role="dialog" aria-label="Voice error details" hidden>
+					<div id="realtimeErrorText" class="onhand-realtime-error-text"></div>
+					<div class="onhand-realtime-error-actions">
+						<button id="realtimeErrorOptionsButton" type="button" hidden>Open options</button>
+						<button id="realtimeErrorDismissButton" type="button">Dismiss</button>
+					</div>
+				</div>
+				<div id="helper" class="onhand-hint">enter ask · shift+enter newline · cmd+n new entry</div>
 			</form>
 		</div>
 	`;
@@ -2960,6 +3084,12 @@
 	const fileInput = shadow.getElementById("fileInput");
 	const realtimeVoiceButton = shadow.getElementById("realtimeVoiceButton");
 	const realtimeStatusEl = shadow.getElementById("realtimeStatus");
+	const realtimeErrorBubble = shadow.getElementById("realtimeErrorBubble");
+	const realtimeErrorText = shadow.getElementById("realtimeErrorText");
+	const realtimeErrorOptionsButton = shadow.getElementById("realtimeErrorOptionsButton");
+	const realtimeErrorDismissButton = shadow.getElementById("realtimeErrorDismissButton");
+	const realtimeMicPicker = shadow.getElementById("realtimeMicPicker");
+	const realtimeMicLabel = shadow.getElementById("realtimeMicLabel");
 	const realtimeMicSelect = shadow.getElementById("realtimeMicSelect");
 	const attachmentList = shadow.getElementById("attachmentList");
 	const input = shadow.getElementById("input");
@@ -5030,6 +5160,7 @@
 	function setRealtimeStatus(status, error = "") {
 		realtimeStatus = status || "Voice idle";
 		realtimeError = error || "";
+		realtimeErrorExpanded = false;
 		renderRealtimeControls();
 	}
 
@@ -5286,6 +5417,9 @@
 	function renderRealtimeMicDeviceSelect() {
 		if (!(realtimeMicSelect instanceof HTMLSelectElement)) return;
 		const supportsMicSelection = Boolean(navigator.mediaDevices?.getUserMedia);
+		if (realtimeMicPicker instanceof HTMLElement) {
+			realtimeMicPicker.hidden = !supportsMicSelection;
+		}
 		realtimeMicSelect.hidden = !supportsMicSelection;
 		if (!supportsMicSelection) return;
 		const options = getRealtimeMicSelectOptions();
@@ -5304,9 +5438,17 @@
 		realtimeMicSelect.value = selectedId;
 		realtimeMicSelect.disabled = realtimeConnecting;
 		const selectedLabel = getRealtimeMicDeviceLabel(selectedId);
-		realtimeMicSelect.title = realtimeConnected
+		const pickerTitle = realtimeConnected
 			? `Realtime microphone: ${selectedLabel}. Change to restart voice with another input.`
 			: `Realtime microphone: ${selectedLabel}`;
+		realtimeMicSelect.title = pickerTitle;
+		if (realtimeMicPicker instanceof HTMLElement) {
+			realtimeMicPicker.title = pickerTitle;
+			realtimeMicPicker.classList.toggle("disabled", realtimeConnecting);
+		}
+		if (realtimeMicLabel instanceof HTMLElement) {
+			realtimeMicLabel.textContent = getRealtimeMicCompactLabel(selectedLabel, selectedId);
+		}
 	}
 
 	async function refreshRealtimeMicDevices() {
@@ -5676,6 +5818,9 @@
 		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
 		realtimeVoiceButton.disabled = realtimeConnecting;
 		realtimeStatusEl.textContent = realtimeError || realtimeStatus;
+		realtimeStatusEl.setAttribute("aria-expanded", realtimeErrorExpanded && realtimeError ? "true" : "false");
+		realtimeStatusEl.setAttribute("aria-controls", "realtimeErrorBubble");
+		realtimeStatusEl.tabIndex = realtimeError ? 0 : -1;
 		const micLabel = realtimeActiveMicLabel || getRealtimeMicDeviceLabel(realtimeMicDeviceId);
 		const micDiagnostics =
 			realtimeConnected || realtimeConnecting
@@ -5687,6 +5832,13 @@
 			.filter(Boolean)
 			.join("\n");
 		realtimeStatusEl.classList.toggle("error", Boolean(realtimeError));
+		if (realtimeErrorBubble instanceof HTMLElement && realtimeErrorText instanceof HTMLElement) {
+			realtimeErrorBubble.hidden = !(realtimeError && realtimeErrorExpanded);
+			realtimeErrorText.textContent = realtimeError || "";
+		}
+		if (realtimeErrorOptionsButton instanceof HTMLElement) {
+			realtimeErrorOptionsButton.hidden = !(realtimeError && isRealtimeApiKeySetupError(realtimeError));
+		}
 		renderRealtimeMicDeviceSelect();
 	}
 
@@ -7148,6 +7300,13 @@
 		menuButton.setAttribute("aria-expanded", nextOpen ? "true" : "false");
 	}
 
+	function eventTargetsMenu(event) {
+		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+		if (path.includes(menuPanel) || path.includes(menuButton)) return true;
+		const target = event.target instanceof Element ? event.target : null;
+		return Boolean(target?.closest?.("#menuPanel, #menuButton"));
+	}
+
 	function isQuickOpenRequestCurrent(request, windowId) {
 		if (!request || typeof request !== "object") return false;
 		if (typeof request.windowId === "number" && typeof windowId === "number" && request.windowId !== windowId) return false;
@@ -7268,6 +7427,18 @@
 
 	menuButton.addEventListener("click", () => {
 		setMenuOpen(Boolean(menuPanel.hidden));
+	});
+
+	shadow.addEventListener("pointerdown", (event) => {
+		if (menuPanel.hidden || eventTargetsMenu(event)) return;
+		setMenuOpen(false);
+	});
+
+	shadow.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape" || menuPanel.hidden) return;
+		event.preventDefault();
+		setMenuOpen(false);
+		menuButton.focus();
 	});
 
 	globalThis.addEventListener("keydown", (event) => {
@@ -7545,6 +7716,32 @@
 		});
 	});
 
+	realtimeStatusEl.addEventListener("click", () => {
+		if (!realtimeError) return;
+		realtimeErrorExpanded = !realtimeErrorExpanded;
+		renderRealtimeControls();
+	});
+
+	realtimeStatusEl.addEventListener("keydown", (event) => {
+		if (!realtimeError || event.key !== "Escape") return;
+		event.preventDefault();
+		realtimeErrorExpanded = false;
+		renderRealtimeControls();
+		realtimeStatusEl.focus();
+	});
+
+	realtimeErrorDismissButton.addEventListener("click", () => {
+		realtimeErrorExpanded = false;
+		renderRealtimeControls();
+		realtimeStatusEl.focus();
+	});
+
+	realtimeErrorOptionsButton.addEventListener("click", () => {
+		void openOnhandOptionsPage().catch((error) => {
+			setRealtimeStatus("Voice setup needed", `${REALTIME_API_KEY_SETUP_MESSAGE} ${error?.message || String(error)}`);
+		});
+	});
+
 	fileInput.addEventListener("change", () => {
 		const files = Array.from(fileInput.files || []);
 		if (!files.length) return;
@@ -7606,14 +7803,24 @@
 		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation", button.dataset.actionKey || "");
 	});
 
-	composer.addEventListener("submit", (event) => {
-		event.preventDefault();
+	function submitComposerInput() {
 		void submitPrompt(input.value).catch((error) => {
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
 			});
 		});
+	}
+
+	input.addEventListener("keydown", (event) => {
+		if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+		event.preventDefault();
+		submitComposerInput();
+	});
+
+	composer.addEventListener("submit", (event) => {
+		event.preventDefault();
+		submitComposerInput();
 	});
 
 	actionsEl.addEventListener("click", (event) => {

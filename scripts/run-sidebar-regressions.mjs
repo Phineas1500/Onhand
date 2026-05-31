@@ -1601,13 +1601,21 @@ async function assertRealtimeMicPickerConstrainsSelectedDevice() {
 	const dom = await renderSidebar(createState(), runtimeMessages, { mediaDevices });
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const micSelect = host.shadowRoot.getElementById("realtimeMicSelect");
+	const micPicker = host.shadowRoot.getElementById("realtimeMicPicker");
+	const micLabel = host.shadowRoot.getElementById("realtimeMicLabel");
+	const voiceControl = host.shadowRoot.getElementById("realtimeVoiceControl");
 	assert.ok(micSelect, "expected realtime mic picker");
-	assert.equal(micSelect.hidden, false, "expected realtime mic picker to be visible when mic capture is available");
+	assert.ok(micPicker, "expected realtime mic picker shell");
+	assert.equal(micPicker.parentElement, voiceControl, "expected mic picker to be attached to the voice control");
+	assert.equal(micPicker.hidden, false, "expected realtime mic picker to be visible when mic capture is available");
+	assert.equal(micSelect.hidden, false, "expected realtime mic select to be available when mic capture is available");
 	assert.match(micSelect.textContent, /Studio Mic/);
+	assert.equal(micLabel.textContent, "Default");
 
 	const hooks = getRealtimeTestHooks(dom);
 	hooks.setRealtimeMicDeviceId("studio-mic");
 	await hooks.refreshRealtimeMicDevices();
+	assert.equal(micLabel.textContent, "Studio Mic");
 	await hooks.createRealtimeInputMediaStream();
 
 	assert.equal(mediaRequests.length, 1);
@@ -1623,6 +1631,10 @@ async function assertRealtimeApiKeyErrorOpensOptions() {
 	const shadow = host.shadowRoot;
 	const voiceButton = shadow.getElementById("realtimeVoiceButton");
 	const status = shadow.getElementById("realtimeStatus");
+	const errorBubble = shadow.getElementById("realtimeErrorBubble");
+	const errorText = shadow.getElementById("realtimeErrorText");
+	const errorOptionsButton = shadow.getElementById("realtimeErrorOptionsButton");
+	const errorDismissButton = shadow.getElementById("realtimeErrorDismissButton");
 	const hooks = getRealtimeTestHooks(dom);
 
 	hooks.setRealtimeStatus(
@@ -1633,11 +1645,26 @@ async function assertRealtimeApiKeyErrorOpensOptions() {
 	assert.equal(voiceButton.textContent, "Setup", "expected Voice button to become a setup button after API-key auth failure");
 	assert.match(status.textContent, /OpenAI platform API key/);
 	assert.match(status.title, /Onhand options/);
+	assert.equal(status.getAttribute("aria-expanded"), "false");
+	assert.equal(errorBubble.hidden, true, "expected voice error details to start collapsed");
+
+	status.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(status.getAttribute("aria-expanded"), "true");
+	assert.equal(errorBubble.hidden, false, "expected clicking the status error to reveal details");
+	assert.match(errorText.textContent, /Realtime API access/);
+	assert.equal(errorOptionsButton.hidden, false, "expected API key setup errors to expose an options action");
+
+	errorDismissButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(errorBubble.hidden, true, "expected dismissing error details to collapse the bubble");
 
 	voiceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await waitForSidebarTick(dom);
 
 	assert.equal(dom.getOpenOptionsCalls(), 1, "expected setup click to open extension options");
+	status.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	errorOptionsButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(dom.getOpenOptionsCalls(), 2, "expected error bubble options click to open extension options");
 	dom.window.close();
 }
 
@@ -2862,8 +2889,60 @@ async function assertQuickOpenFocusesComposer() {
 	startupDom.window.close();
 }
 
+async function assertMenuClosesOnOutsidePointer() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const menuButton = shadow.getElementById("menuButton");
+	const menuPanel = shadow.getElementById("menuPanel");
+	const input = shadow.getElementById("input");
+
+	menuButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(menuPanel.hidden, false, "expected menu to open from menu button");
+
+	input.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+	assert.equal(menuPanel.hidden, true, "expected menu to close when clicking outside it");
+
+	menuButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(menuPanel.hidden, false, "expected menu to reopen from menu button");
+	menuPanel.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+	assert.equal(menuPanel.hidden, false, "expected menu to stay open when clicking inside it");
+
+	dom.window.close();
+}
+
+async function assertComposerEnterSubmitsAndShiftEnterDoesNot() {
+	const runtimeMessages = [];
+	const submissions = [];
+	const dom = await renderSidebar(createState(), runtimeMessages, {
+		submitPromptResponse(message) {
+			submissions.push(message);
+			return { ok: true, requestId: "request-enter-submit" };
+		},
+	});
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const input = shadow.getElementById("input");
+
+	input.value = "Explain this line";
+	input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(submissions.length, 1, "expected Enter to submit the composer");
+	assert.equal(submissions[0].prompt, "Explain this line");
+
+	input.value = "Keep editing";
+	input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(submissions.length, 1, "expected Shift+Enter not to submit the composer");
+
+	dom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
 await assertQuickOpenFocusesComposer();
+await assertMenuClosesOnOutsidePointer();
+await assertComposerEnterSubmitsAndShiftEnterDoesNot();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
