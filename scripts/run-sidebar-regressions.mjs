@@ -171,6 +171,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	const { window } = dom;
 	window.__onhandSidebarExposeTestHooks = true;
 	let openOptionsCalls = 0;
+	const createdTabs = [];
 	if (options.mediaDevices) {
 		Object.defineProperty(window.navigator, "mediaDevices", {
 			configurable: true,
@@ -561,6 +562,13 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 				return { ok: true };
 			},
 		},
+		tabs: {
+			async create(params) {
+				createdTabs.push(params);
+				if (typeof options.createTab === "function") return options.createTab(params);
+				return { id: createdTabs.length, ...params };
+			},
+		},
 		storage: {
 			local: {
 				async get(defaults) {
@@ -599,6 +607,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	};
 	dom.getStorageValue = (key) => storageValues[key];
 	dom.getOpenOptionsCalls = () => openOptionsCalls;
+	dom.getCreatedTabs = () => createdTabs.map((tab) => ({ ...tab }));
 	return dom;
 }
 
@@ -1911,6 +1920,38 @@ async function assertRealtimeApiKeyErrorOpensOptions() {
 	errorOptionsButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
 	await waitForSidebarTick(dom);
 	assert.equal(dom.getOpenOptionsCalls(), 2, "expected error bubble options click to open extension options");
+	dom.window.close();
+}
+
+async function assertRealtimeApiKeyErrorFallsBackToOptionsTab() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages, {
+		async openOptionsPage() {
+			throw new Error("Could not create an options page");
+		},
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const status = shadow.getElementById("realtimeStatus");
+	const errorOptionsButton = shadow.getElementById("realtimeErrorOptionsButton");
+	const hooks = getRealtimeTestHooks(dom);
+
+	hooks.setRealtimeStatus(
+		"Voice setup needed",
+		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.",
+	);
+
+	status.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	errorOptionsButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(dom.getOpenOptionsCalls(), 1, "expected native options API to be attempted first");
+	assert.deepEqual(dom.getCreatedTabs(), [
+		{
+			url: "chrome-extension://extension-id/options.html",
+			active: true,
+		},
+	]);
 	dom.window.close();
 }
 
@@ -3884,6 +3925,7 @@ await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeApiKeyErrorOpensOptions();
+await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
 await assertRealtimeResponseCreateQueuesUntilDone();
 await assertRealtimeActiveResponseErrorIsRecoverable();
 await assertRealtimeManualVoiceFallbackDisabled();

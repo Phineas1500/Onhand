@@ -5419,11 +5419,34 @@
 	}
 
 	async function openOnhandOptionsPage() {
+		const optionsUrl = extensionUrl("options.html");
+		const errors = [];
 		if (chrome.runtime?.openOptionsPage) {
-			await chrome.runtime.openOptionsPage();
-			return;
+			try {
+				await chrome.runtime.openOptionsPage();
+				return;
+			} catch (error) {
+				errors.push(error?.message || String(error));
+			}
 		}
-		throw new Error("Open chrome://extensions, find Onhand, click Details, then Extension options.");
+		if (chrome.tabs?.create) {
+			try {
+				await chrome.tabs.create({ url: optionsUrl, active: true });
+				return;
+			} catch (error) {
+				errors.push(error?.message || String(error));
+			}
+		}
+		if (typeof globalThis.open === "function") {
+			try {
+				const openedWindow = globalThis.open(optionsUrl, "_blank", "noopener");
+				if (openedWindow !== null) return;
+			} catch (error) {
+				errors.push(error?.message || String(error));
+			}
+		}
+		const details = errors.length ? ` Last error: ${errors[errors.length - 1]}.` : "";
+		throw new Error(`Open chrome://extensions, find Onhand, click Details, then Extension options.${details}`);
 	}
 
 	function isRealtimeMicDiagnosticStatus(status = realtimeStatus) {

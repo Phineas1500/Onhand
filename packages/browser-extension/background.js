@@ -71,6 +71,23 @@ function initializeExtensionSurface() {
 	});
 }
 
+async function openOnhandOptionsPage() {
+	const optionsUrl = chrome.runtime.getURL("options.html");
+	if (chrome.runtime?.openOptionsPage) {
+		try {
+			await chrome.runtime.openOptionsPage();
+			return;
+		} catch (error) {
+			log("Could not open extension options page with runtime API", error?.message || String(error));
+		}
+	}
+	if (chrome.tabs?.create) {
+		await chrome.tabs.create({ url: optionsUrl, active: true });
+		return;
+	}
+	throw new Error("Could not open Onhand options page.");
+}
+
 function delay(ms) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -9317,7 +9334,7 @@ chrome.action.onClicked.addListener((tab) => {
 		const windowId =
 			typeof tab?.windowId === "number" ? tab.windowId : await resolveSidebarWindowId({ windowId: tab?.windowId });
 		if (typeof windowId !== "number") {
-			chrome.runtime.openOptionsPage();
+			await openOnhandOptionsPage();
 			return;
 		}
 		if (await isSidebarOpenForWindow(windowId)) {
