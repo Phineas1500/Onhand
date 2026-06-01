@@ -1216,6 +1216,121 @@ async function assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStal
 	dom.window.close();
 }
 
+async function assertLearningSessionPanelResolvesEachConceptToItsOwnTurnSource() {
+	const state = createLearningState();
+	const pageUrl = "https://example.test/transformers";
+	state.tab = {
+		id: 42,
+		title: "Transformers",
+		url: pageUrl,
+	};
+	state.pageActions = [
+		{
+			key: "highlight:latest-visible",
+			type: "annotation",
+			annotationId: "latest-visible",
+			label: "Highlighted text",
+			title: "Transformers",
+			url: pageUrl,
+			detail: "Multi-head self-attention",
+			citationText: "Multi-head self-attention",
+		},
+	];
+	state.turns = [
+		{
+			id: "turn-attention-graph",
+			userPrompt: "[Voice] What exactly is an attention graph?",
+			reply: "An attention graph treats tokens as nodes and attention weights as directed, weighted edges.",
+			activities: [],
+			pageActions: [
+				{
+					key: "highlight:attention-graph",
+					type: "annotation",
+					annotationId: "attention-graph",
+					label: "Highlighted text",
+					title: "Transformers",
+					url: pageUrl,
+					detail: "self-attention graph",
+					citationText: "self-attention graph",
+				},
+				{
+					key: "note:attention-graph",
+					type: "note",
+					annotationId: "attention-graph",
+					label: "Added note",
+					title: "Transformers",
+					url: pageUrl,
+					detail: "Tokens are nodes, and attention weights are directed, weighted edges.",
+					citationText: "Tokens are nodes, and attention weights are directed, weighted edges.",
+				},
+			],
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:04:00.000Z",
+		},
+		{
+			id: "turn-multi-head",
+			userPrompt: "[Voice] Difference between single-headed and multi-headed attention?",
+			reply: "Single-head attention builds one attention graph; multi-head builds several graphs in parallel.",
+			activities: [],
+			pageActions: [
+				{
+					key: "highlight:multi-head",
+					type: "annotation",
+					annotationId: "multi-head",
+					label: "Highlighted text",
+					title: "Transformers",
+					url: pageUrl,
+					detail: "The multi-head self-attention mechanism constructs multiple weighted graphs in parallel",
+					citationText: "The multi-head self-attention mechanism constructs multiple weighted graphs in parallel",
+				},
+				{
+					key: "note:multi-head",
+					type: "note",
+					annotationId: "multi-head",
+					label: "Added note",
+					title: "Transformers",
+					url: pageUrl,
+					detail: "Read each head as its own attention graph; multi-head means several such graphs are computed side-by-side.",
+					citationText: "Read each head as its own attention graph; multi-head means several such graphs are computed side-by-side.",
+				},
+			],
+			pending: false,
+			error: false,
+			createdAt: "2026-05-12T10:05:00.000Z",
+		},
+	];
+	state.learnerState.conceptsIntroduced = [
+		{
+			conceptId: "concept_single_multi_head",
+			label: "Single-head vs multi-head attention",
+			firstSeenAt: "2026-05-12T10:05:00.000Z",
+			lastSeenAt: "2026-05-12T10:05:00.000Z",
+			sources: [{ tabTitle: "Transformers", url: pageUrl, annotationId: "stale-multi-head" }],
+		},
+		{
+			conceptId: "concept_attention_graph_meaning",
+			label: "Attention graph nodes and edges",
+			firstSeenAt: "2026-05-12T10:04:00.000Z",
+			lastSeenAt: "2026-05-12T10:04:00.000Z",
+			sources: [{ tabTitle: "Transformers", url: pageUrl, annotationId: "stale-attention-graph" }],
+		},
+	];
+	state.learnerState.openChecks = [];
+
+	const dom = await renderSidebar(state, []);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const multiHeadSource = learnerPanel.querySelector('[data-learner-annotation-id="stale-multi-head"]');
+	const graphSource = learnerPanel.querySelector('[data-learner-annotation-id="stale-attention-graph"]');
+	assert.ok(multiHeadSource, "expected multi-head concept source button");
+	assert.ok(graphSource, "expected attention graph concept source button");
+	assert.equal(multiHeadSource.dataset.actionKey, "highlight:multi-head");
+	assert.equal(graphSource.dataset.actionKey, "highlight:attention-graph");
+
+	dom.window.close();
+}
+
 async function assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote() {
 	const runtimeMessages = [];
 	const state = createLearningState();
@@ -2183,6 +2298,11 @@ async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletio
 	const shadowText = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent;
 	assert.match(shadowText, /Alpha smoke content is a fixture sentence/, "expected completed voice answer to render in the sidebar");
 	assert.equal(
+		dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-realtime-answer"),
+		null,
+		"expected completed direct voice answers to render only as saved Onhand turns",
+	);
+	assert.equal(
 		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer") && event.response?.tool_choice === "none"),
 		true,
 		"expected the persisted Onhand answer to be narrated after it appears in the sidebar",
@@ -2436,14 +2556,14 @@ async function assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations() {
 
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const realtimeAnswer = host.shadowRoot.querySelector(".onhand-realtime-answer");
-	assert.ok(realtimeAnswer, "expected realtime answer card after completed direct answer");
+	assert.equal(realtimeAnswer, null, "expected completed direct answer not to render a duplicate realtime card");
 	assert.ok(
-		realtimeAnswer.querySelector('.onhand-cite[data-action-key="highlight:second"]'),
-		"expected realtime card to cite the earlier source when the current highlight failed",
+		host.shadowRoot.querySelector('.onhand-entry:not(.onhand-realtime-answer) .onhand-cite[data-action-key="highlight:second"]'),
+		"expected saved direct answer to cite the earlier source when the current highlight failed",
 	);
 	assert.ok(
-		realtimeAnswer.querySelector('.onhand-realtime-sources [data-action-key="highlight:second"]'),
-		"expected realtime card to expose the earlier source button",
+		host.shadowRoot.querySelector('.onhand-entry:not(.onhand-realtime-answer) .onhand-response [data-action-key="highlight:second"]'),
+		"expected saved direct answer to expose a clickable earlier source citation",
 	);
 
 	dom.window.close();
@@ -3719,6 +3839,7 @@ await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertPageIndexDoesNotShowStalePageActions();
 await assertLearningSessionPanelRendersState();
 await assertLearningSessionPanelUsesPageActionWhenLearnerSourceIdIsStale();
+await assertLearningSessionPanelResolvesEachConceptToItsOwnTurnSource();
 await assertLearningSessionPanelCanResolveRestoredConceptThroughPairedNote();
 await assertLearningSessionPanelPrefersPairedNoteSourceOverGenericHeading();
 await assertLearningSessionPanelPrefersPairedNoteSourceOverExactBroadSource();

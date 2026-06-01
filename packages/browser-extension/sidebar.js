@@ -3853,8 +3853,7 @@
 		const exactCurrentPage = findActionForAnnotation(source?.annotationId, target, currentPageActions);
 		const actions = collectCurrentPageActions();
 		const candidates = actions.filter((action) => action?.key && actionMatchesLearnerSource(action, source));
-		const currentPageCandidates = currentPageActions.filter((action) => action?.key && actionMatchesLearnerSource(action, source));
-		const preferredCandidates = currentPageCandidates.length ? currentPageCandidates : candidates;
+		const preferredCandidates = candidates;
 		const hasContextText = learnerSourceContextHasText(source, context);
 		const semanticRanked = preferredCandidates
 			.map((action) => ({
@@ -3883,10 +3882,35 @@
 		if (!ranked.length || ranked[0].score < 4) return findActionForAnnotation(source?.annotationId, target);
 		if (target === "annotation") {
 			const topScore = ranked[0].score;
-			const topActions = ranked
-				.filter((entry) => entry.score === topScore)
+			const topEntries = ranked.filter((entry) => entry.score === topScore);
+			const topActions = topEntries
 				.map((entry) => findRelatedHighlightAction(entry.action, actions) || entry.action);
 			const topKeys = new Set(topActions.map((action) => String(action?.key || "")).filter(Boolean));
+			if (topKeys.size > 1) {
+				const topTextKeys = new Set(topActions.map((action) => learnerActionTextKey(action)).filter(Boolean));
+				if (topTextKeys.size === 1) {
+					const currentTopActions = topActions.filter((action) =>
+						currentPageActions.some((candidate) => String(candidate?.key || "") === String(action?.key || "")),
+					);
+					const currentTopKeys = new Set(currentTopActions.map((action) => String(action?.key || "")).filter(Boolean));
+					if (currentTopKeys.size === 1) return currentTopActions[0];
+				}
+				const turnTextRanked = topEntries
+					.map((entry) => ({
+						action: findRelatedHighlightAction(entry.action, actions) || entry.action,
+						score: scoreLearnerActionMatch(entry.action, actions, source, context, { includeAnnotationIdBonus: false, includeTurnText: true }),
+					}))
+					.filter((entry) => entry.score > 0)
+					.sort((left, right) => right.score - left.score);
+				const turnTextTopScore = turnTextRanked[0]?.score || 0;
+				const turnTextTopKeys = new Set(
+					turnTextRanked
+						.filter((entry) => entry.score === turnTextTopScore)
+						.map((entry) => String(entry.action?.key || ""))
+						.filter(Boolean),
+				);
+				if (turnTextTopScore > topScore && turnTextTopKeys.size === 1) return turnTextRanked[0].action;
+			}
 			if (topKeys.size > 1) return null;
 			return topActions[0] || null;
 		}
@@ -7889,20 +7913,14 @@
 		if (!turn || turn.pending || turn.error || state?.activeRequestId === requestId) return;
 		const reply = String(turn.reply || "").trim();
 		if (!reply) return;
+		const pendingVoiceTurnId = realtimePendingDirectAnswerVoiceTurnId;
 		realtimeNarratedDirectAnswerRequestIds.add(requestId);
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
-		const prompt = realtimePendingDirectAnswerPrompt || stripRealtimeVoiceDisplayPrefix(turn.userPrompt);
 		realtimePendingDirectAnswerPrompt = "";
-		updateRealtimeAnswer({
-			userPrompt: prompt,
-			markdown: reply,
-			status: "Onhand answer",
-			pending: false,
-			published: true,
-			sourceTurnId: turn.id || requestId,
-			pageActions: Array.isArray(turn.pageActions) ? turn.pageActions : [],
-		});
+		if (!pendingVoiceTurnId || realtimeAnswer?.voiceTurnId === pendingVoiceTurnId || realtimeAnswer?.sourceTurnId === turn.id) {
+			realtimeAnswer = null;
+		}
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand answer", reply);
 		try {
