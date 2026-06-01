@@ -501,6 +501,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do the page work before the chat answer/);
 	assert.match(contract.systemPrompt, /focused pass/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
+	assert.match(contract.systemPrompt, /explicitly asks to search online/);
 	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
@@ -512,6 +513,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do not replace missing list items with nearby headings/);
 	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
+	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong highlight/);
 	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not anchors/);
@@ -565,6 +567,7 @@ async function assertConstitutionPromptContract() {
 	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
+	const externalSourceToolNames = getToolNamesForTest("Could you take me to these sources and highlight the parts that discuss attention?", false);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
@@ -573,6 +576,9 @@ async function assertConstitutionPromptContract() {
 	assert.equal(pdfContextToolNames.includes("browser_pdf_search"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_read_pages"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_jump_to_page"), true);
+	assert.equal(externalSourceToolNames.includes("browser_navigate"), true);
+	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
+	assert.equal(externalSourceToolNames.includes("browser_click_text"), true);
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);

@@ -5485,6 +5485,26 @@
 		return REALTIME_VOICE_MODE === "realtime-only";
 	}
 
+	function realtimePromptAsksForExternalBrowsing(prompt) {
+		const text = String(prompt || "").toLowerCase();
+		return /\b(take me to|open (?:up )?(?:the |a |an )?(?:url|link|source|site|page|tab|article|paper|website|result|google|web|browser)|look up|search(?: up)?|google|web|online|external|outside sources?|other sources?|more sources?|find (?:me )?(?:some |a few |more )?sources?|go (?:on|to) google|url)\b/.test(
+			text,
+		);
+	}
+
+	function realtimeToolResultLooksLikeSearchPage(result) {
+		const tab = realtimeToolTab(result);
+		const url = String(tab?.url || "").toLowerCase();
+		const title = String(tab?.title || "").toLowerCase();
+		return (
+			/\bsearch\b/.test(title) ||
+			/google\.[^/]+\/search\b/.test(url) ||
+			/bing\.com\/search\b/.test(url) ||
+			/search\?/.test(url) ||
+			/[?&]q=/.test(url)
+		);
+	}
+
 	function shouldUseLocalRealtimeFallbackCommit() {
 		return REALTIME_VOICE_MODE === "local-fallback";
 	}
@@ -6652,6 +6672,8 @@
 				"For comparative questions, anchor the specific sentence or list item that names the comparison; for the current Transformers notes, the multi-head attention anchor should be the exact line about multiple weighted graphs in parallel when it supports the answer.",
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
+				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate or browser_activate_tab first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
+				"If a web search results page is only an intermediate step, do not highlight the search-results page as the source. Open the relevant result/source page first, then anchor there.",
 				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
 				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation.",
 				"If a highlight attempt fails, retry once with a smaller exact visible span. If it still fails, clearly say what source text you read but could not anchor.",
@@ -6707,13 +6729,16 @@
 
 	function realtimeInitialGroundedResponseOptions(prompt = "") {
 		const text = normalizeRealtimeTranscriptText(prompt);
+		const externalBrowsingRequest = realtimePromptAsksForExternalBrowsing(text);
 		return {
 			tools: realtimeToolDefinitions(),
-			tool_choice: REALTIME_FORCED_INITIAL_TOOL_CHOICE,
+			tool_choice: externalBrowsingRequest ? "auto" : REALTIME_FORCED_INITIAL_TOOL_CHOICE,
 			instructions: [
 				realtimeTutorInstructions(),
 				text ? `Student question: ${text}` : "",
-				"Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
+				externalBrowsingRequest
+					? "The student is asking you to browse or navigate to external sources. Do not start by anchoring the current page unless it is needed to form the search query. First call browser_navigate, browser_list_tabs, or browser_activate_tab to open/switch to the relevant source/search page. Do not speak a preamble or final answer before the navigation/tool work."
+					: "Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
 			]
 				.filter(Boolean)
 				.join("\n\n"),
@@ -7484,6 +7509,13 @@
 					realtimeBrowserToolReturnedReadableText(toolName, output?.result || {}) &&
 					!realtimeVoiceTurnHasAnchor()
 				) {
+				if (realtimePromptAsksForExternalBrowsing(realtimeActiveVoiceTurn?.prompt) && realtimeToolResultLooksLikeSearchPage(output?.result || {})) {
+					return {
+						tool_choice: "auto",
+						instructions:
+							"This looks like a search-results or intermediate discovery page. Open the most relevant source/result page with browser_navigate or browser_click_text before highlighting. Do not publish the final answer until you have inspected and highlighted exact text on the destination source page.",
+					};
+				}
 				return {
 					tool_choice: REALTIME_FORCED_HIGHLIGHT_TOOL_CHOICE,
 					instructions:
@@ -9492,6 +9524,7 @@
 				expireRealtimeIdleTimeout,
 					getRealtimeToolDefinitions: realtimeToolDefinitions,
 					getRealtimeTutorInstructions: realtimeTutorInstructions,
+					getRealtimeInitialGroundedResponseOptions: realtimeInitialGroundedResponseOptions,
 					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
 					isRealtimeOnlyVoiceMode,
 				sendRealtimeSessionUpdate,

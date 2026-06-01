@@ -124201,6 +124201,7 @@ Onhand's constitution:
 - Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
+- When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes.
 - Be concise by default and deep when warranted. A focused pass means one useful anchor and a short synthesis, not ungrounded prose. Thorough means covering the key relevant points, not annotating everything nearby.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
 - Stay unobtrusive. Notes should feel like marginalia: short, local, placed near what they explain, and useful when replayed later.
@@ -124218,6 +124219,7 @@ Default answer mode:
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be a brief guide to what the annotations show: one to three short paragraphs for ordinary questions, with citations, not a detached summary of the page.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
+- If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate or an already-open tab, inspect the destination, and anchor the answer on the destination page rather than the original page.
 - For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to anchor the answer. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
@@ -124478,6 +124480,12 @@ var DEBUG_TOOL_NAMES = ["browser_collect_console", "browser_collect_network", "b
 var ARTIFACT_TOOL_NAMES = ["browser_capture_state", "browser_list_artifacts", "browser_restore_state"];
 var LEARNING_TOOL_NAMES = ["onhand_record_learning_event"];
 var EXACT_TOOL_NAME_PATTERN = /\bbrowser_[a-z_]+\b/g;
+function promptAsksForExternalBrowsing(text) {
+  return textHasAny(
+    text,
+    /\b(take me to|open (?:up )?(?:the |a |an )?(?:url|link|source|site|page|tab|article|paper|website|result|google|web|browser)|look up|search(?: up)?|google|web|online|external|outside sources?|other sources?|more sources?|find (?:me )?(?:some |a few |more )?sources?|go (?:on|to) google|url)\b/
+  );
+}
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -126227,7 +126235,8 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     add(CORE_READ_TOOL_NAMES);
     add(VISUAL_GROUNDING_TOOL_NAMES);
     add([...explicitToolNames]);
-    if (textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|url|across tabs|multiple tabs|all tabs)\b/)) {
+    const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
+    if (wantsExternalBrowsing || textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/)) {
       add(TAB_TOOL_NAMES);
     }
     if (options.forcePdfTools || textHasAny(
@@ -126243,7 +126252,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       add(["browser_list_tabs"]);
       add(LEARNING_TOOL_NAMES);
     }
-    if (textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
+    if (wantsExternalBrowsing || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
       add(INTERACTION_TOOL_NAMES);
     }
     if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
@@ -126294,6 +126303,7 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "Constitution runtime contract:",
     "- Do page work before chat. Highlight, note only when useful, and scroll the first anchor before giving the synthesis.",
     "- Page-material claims need anchors. Use exact highlights and short notes for the major claims unless the user explicitly asked for no page changes.",
+    "- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use tab/navigation tools first and then anchor claims on the destination source pages.",
     "- Grounding budget: simple questions get one strong highlight and at most one note, then an answer. Do not annotate nearby examples just because they are related. Roadmap/list/navigation questions are not simple when the answer names multiple items.",
     "- Notes are not mini-summaries. Add one only when it explains how to read the highlighted passage or leaves useful marginalia for replay.",
     "- Failed highlight attempts are not anchors. Retry with a smaller exact visible span, or leave that claim out of the answer.",

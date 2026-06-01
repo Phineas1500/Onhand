@@ -2736,6 +2736,38 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	dom.window.close();
 }
 
+async function assertRealtimeExternalSourceRequestsCanNavigateFirst() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.page = null;
+	state.tab = {
+		id: 42,
+		title: "Blank tab",
+		url: "about:blank",
+	};
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	const options = hooks.getRealtimeInitialGroundedResponseOptions(
+		"Could you take me to these sources and highlight the parts that talk about attention?",
+	);
+	assert.equal(options.tool_choice, "auto", "expected external-source requests not to force the current-page read first");
+	assert.match(String(options.instructions || ""), /browse or navigate to external sources/i);
+	assert.match(String(options.instructions || ""), /browser_navigate/);
+	assert.doesNotMatch(String(options.instructions || ""), /Start by calling browser_get_visible_text/);
+
+	await hooks.sendRealtimeTextPrompt("Could you take me to these sources and highlight the parts that talk about attention?");
+	await waitForSidebarTick(dom);
+	const response = events.find((event) => event.type === "response.create" && event.event_id?.includes("response_for_text"));
+	assert.equal(response?.response?.tool_choice, "auto", "expected text prompt response to allow navigation as the first tool");
+	assert.match(String(response?.response?.instructions || ""), /browse or navigate to external sources/i);
+
+	dom.window.close();
+}
+
 async function assertRealtimeBrowserToolsCanAnnotateAndCite() {
 	const runtimeMessages = [];
 	const events = [];
@@ -3939,6 +3971,7 @@ await assertRealtimeEmptyInputBufferDoesNotDisconnect();
 await assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle();
 await assertRealtimeSessionUsesRuntimeAgentMode();
 await assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion();
+await assertRealtimeExternalSourceRequestsCanNavigateFirst();
 await assertRealtimeBrowserHighlightRepairsNearQuoteFromVisibleText();
 await assertRealtimeTranscriptMergeWindowSubmitsMergedRuntimePrompt();
 await assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations();
