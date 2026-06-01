@@ -168,6 +168,8 @@
 	let authStatusKind = "";
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
+	let lastMessagesMarkup = "";
+	let lastReplyMarkup = "";
 	let quickOpenFocusGeneration = 0;
 	let quickOpenFocusUntil = 0;
 	let quickOpenKeyCaptureUntil = 0;
@@ -2356,12 +2358,39 @@
 			.onhand-response > :first-child {
 				margin-top: 0;
 			}
-			.onhand-response > :last-child {
-				margin-bottom: 0;
-			}
-			.onhand-a p,
-			.onhand-a ul,
-			.onhand-a ol,
+				.onhand-response > :last-child {
+					margin-bottom: 0;
+				}
+				.onhand-copy-row {
+					display: flex;
+					justify-content: flex-start;
+					margin-top: 9px;
+				}
+				.onhand-copy-button {
+					border: 1px solid var(--rm-surface-2);
+					background: transparent;
+					color: var(--rm-subtext);
+					border-radius: 4px;
+					padding: 3px 7px;
+					font: 11px/1 var(--rm-font-mono);
+					cursor: pointer;
+					-webkit-user-select: none;
+					user-select: none;
+				}
+				.onhand-copy-button:hover,
+				.onhand-copy-button.copied {
+					border-color: var(--rm-pine);
+					color: var(--rm-pine);
+					background: color-mix(in srgb, var(--rm-pine) 8%, transparent);
+				}
+				.onhand-copy-button.failed {
+					border-color: var(--rm-love);
+					color: var(--rm-love);
+					background: color-mix(in srgb, var(--rm-love) 8%, transparent);
+				}
+				.onhand-a p,
+				.onhand-a ul,
+				.onhand-a ol,
 			.onhand-a pre,
 			.onhand-a blockquote,
 			.onhand-a h1,
@@ -4497,10 +4526,10 @@
 		`;
 	}
 
-	function renderTurnListMarkup(turns, emptyMarkup = "") {
-		const items = (Array.isArray(turns) ? turns : []).filter(Boolean);
-		if (!items.length) {
-			return emptyMarkup;
+		function renderTurnListMarkup(turns, emptyMarkup = "") {
+			const items = (Array.isArray(turns) ? turns : []).filter(Boolean);
+			if (!items.length) {
+				return emptyMarkup;
 		}
 
 		const citationGroupsByTurnId = buildTurnCitationGroups(items);
@@ -4523,14 +4552,15 @@
 						${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
 						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
-							<div class="onhand-response">
-								${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
-								${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
-								${renderRealtimeSourceButtons(sourceActions)}
+								<div class="onhand-response">
+									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
+									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
+									${renderRealtimeSourceButtons(sourceActions)}
+								</div>
+								${renderReplyCopyButton(turn, reply)}
 							</div>
-						</div>
-					</article>
-				`;
+						</article>
+					`;
 			})
 			.join("");
 	}
@@ -4642,25 +4672,144 @@
 				);
 			}
 		}
-		root.querySelectorAll("[data-action-key]").forEach((button) => {
-			if (!(button instanceof HTMLElement) || button.dataset.onhandActionBound === "true") return;
-			button.dataset.onhandActionBound = "true";
-		});
-	}
+			root.querySelectorAll("[data-action-key]").forEach((button) => {
+				if (!(button instanceof HTMLElement) || button.dataset.onhandActionBound === "true") return;
+				button.dataset.onhandActionBound = "true";
+			});
+		}
 
-	function renderMessages(turns, annotationCount = 0) {
-		const emptyMarkup = annotationCount
-			? ""
-			: `
+		function renderReplyCopyButton(turn, reply) {
+			const text = String(reply || "").trim();
+			if (!text || turn?.pending) return "";
+			const turnId = String(turn?.id || "").trim();
+			if (!turnId) return "";
+			return `
+				<div class="onhand-copy-row">
+					<button class="onhand-copy-button" data-copy-turn-id="${escapeAttribute(turnId)}" type="button" aria-label="Copy Onhand response">Copy</button>
+				</div>
+			`;
+		}
+
+		function renderRealtimeAnswerCopyButton(markdown) {
+			const text = String(markdown || "").trim();
+			if (!text || realtimeAnswer?.pending) return "";
+			return `
+				<div class="onhand-copy-row">
+					<button class="onhand-copy-button" data-copy-realtime-answer="true" type="button" aria-label="Copy Onhand response">Copy</button>
+				</div>
+			`;
+		}
+
+		function findCopyTurnById(turnId) {
+			const id = String(turnId || "").trim();
+			if (!id) return null;
+			const archivedTurns = Array.isArray(currentState?.turns) ? currentState.turns : [];
+			const currentTurn = deriveCurrentTurn(currentState || {});
+			return [...archivedTurns, currentTurn].filter(Boolean).find((turn) => String(turn?.id || "") === id) || null;
+		}
+
+		async function copyTextToClipboard(text) {
+			const value = String(text || "");
+			if (!value.trim()) throw new Error("Nothing to copy.");
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(value);
+				return;
+			}
+			const textarea = document.createElement("textarea");
+			textarea.value = value;
+			textarea.setAttribute("readonly", "");
+			textarea.style.position = "fixed";
+			textarea.style.left = "-9999px";
+			textarea.style.top = "0";
+			(document.body || document.documentElement).appendChild(textarea);
+			textarea.select();
+			const copied = document.execCommand?.("copy");
+			textarea.remove();
+			if (!copied) throw new Error("Clipboard is unavailable.");
+		}
+
+		function setCopyButtonState(button, state) {
+			button.classList.remove("copied", "failed");
+			button.classList.add(state);
+			button.textContent = state === "copied" ? "Copied" : "Copy failed";
+			clearTimeout(button.__onhandCopyResetTimer);
+			button.__onhandCopyResetTimer = setTimeout(() => {
+				button.classList.remove("copied", "failed");
+				button.textContent = "Copy";
+			}, 1600);
+		}
+
+		async function copyReplyFromButton(button) {
+			const turnId = button.dataset.copyTurnId || "";
+			const text =
+				button.dataset.copyRealtimeAnswer === "true"
+					? String(realtimeAnswer?.markdown || "").trim()
+					: String(findCopyTurnById(turnId)?.reply || "").trim();
+			try {
+				await copyTextToClipboard(text);
+				setCopyButtonState(button, "copied");
+			} catch {
+				setCopyButtonState(button, "failed");
+			}
+		}
+
+		function copyButtonFromEvent(root, event) {
+			const target = event.target instanceof Element ? event.target : null;
+			const button = target?.closest("[data-copy-turn-id], [data-copy-realtime-answer]");
+			return button instanceof HTMLElement && root.contains(button) ? button : null;
+		}
+
+		function consumeCopyButtonPointer(event) {
+			event.preventDefault();
+			event.stopPropagation();
+			if (typeof event.stopImmediatePropagation === "function") {
+				event.stopImmediatePropagation();
+			}
+		}
+
+		function bindCopyButtons(root) {
+			if (!(root instanceof Element) || root.dataset.onhandCopyDelegationBound === "true") return;
+			root.dataset.onhandCopyDelegationBound = "true";
+			for (const eventName of ["pointerdown", "mousedown"]) {
+				root.addEventListener(
+					eventName,
+					(event) => {
+						const button = copyButtonFromEvent(root, event);
+						if (!button) return;
+						consumeCopyButtonPointer(event);
+					},
+					true,
+				);
+			}
+			root.addEventListener(
+				"click",
+				(event) => {
+					const button = copyButtonFromEvent(root, event);
+					if (!button) return;
+					consumeCopyButtonPointer(event);
+					void copyReplyFromButton(button);
+				},
+				true,
+			);
+		}
+
+		function renderMessages(turns, annotationCount = 0) {
+			const emptyMarkup = annotationCount
+				? ""
+				: `
 				<div class="onhand-empty">
 					<div class="lede">Nothing on this page yet.</div>
 					<div class="empty-body">Ask about the article, highlight a passage, or resume one of yesterday's entries from the menu.</div>
-				</div>
-		`;
-		messagesEl.innerHTML = renderTurnListMarkup(turns, emptyMarkup);
-		bindProgressToggles(messagesEl);
-		bindActionButtons(messagesEl);
-	}
+					</div>
+			`;
+			const markup = renderTurnListMarkup(turns, emptyMarkup);
+			if (markup === lastMessagesMarkup) return;
+			lastMessagesMarkup = markup;
+			messagesEl.innerHTML = markup;
+			bindProgressToggles(messagesEl);
+			bindActionButtons(messagesEl);
+			bindCopyButtons(messagesEl);
+		}
 
 	function renderReplayAnnotations(annotations) {
 		const items = Array.isArray(annotations) ? annotations : [];
@@ -4913,30 +5062,36 @@
 			const status =
 				realtimeAnswer.status || (sourceActions.length ? "Page-grounded" : "");
 			replySectionEl.hidden = false;
-			replyEl.innerHTML = `
-				<article class="onhand-entry onhand-realtime-answer">
-					<div class="onhand-eyebrow">
-						<time>${escapeHtml(formatEntryTime(realtimeAnswer.updatedAt || new Date().toISOString()))}</time>
-						<span class="dot"></span>
+			const markup = `
+					<article class="onhand-entry onhand-realtime-answer">
+						<div class="onhand-eyebrow">
+							<time>${escapeHtml(formatEntryTime(realtimeAnswer.updatedAt || new Date().toISOString()))}</time>
+							<span class="dot"></span>
 						<span>Realtime tutor</span>
 						${status ? `<span class="dot"></span><span>${escapeHtml(status)}</span>` : ""}
 					</div>
-					${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
-					<div class="onhand-a">
-						<div class="onhand-response">
-							${markdown ? renderReplyMarkdownWithCitationFallback(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
-							${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
-							${renderRealtimeSourceButtons(sourceActions)}
+						${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
+						<div class="onhand-a">
+							<div class="onhand-response">
+								${markdown ? renderReplyMarkdownWithCitationFallback(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
+								${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
+								${renderRealtimeSourceButtons(sourceActions)}
+							</div>
+							${renderRealtimeAnswerCopyButton(markdown)}
 						</div>
-					</div>
-				</article>
-			`;
+					</article>
+				`;
+			if (replyEl.innerHTML === markup || markup === lastReplyMarkup) return;
+			lastReplyMarkup = markup;
+			replyEl.innerHTML = markup;
 			bindActionButtons(replyEl);
-			return;
+			bindCopyButtons(replyEl);
+				return;
+			}
+			replySectionEl.hidden = true;
+			lastReplyMarkup = "";
+			replyEl.innerHTML = "";
 		}
-		replySectionEl.hidden = true;
-		replyEl.innerHTML = "";
-	}
 
 	function renderActions() {
 		actionsEl.innerHTML = "";

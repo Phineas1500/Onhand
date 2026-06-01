@@ -641,6 +641,41 @@ async function assertSessionWideCitationNumbers() {
 	dom.window.close();
 }
 
+async function assertResponseCopyButtonAndStableMarkup() {
+	const runtimeMessages = [];
+	const state = createState();
+	const copied = [];
+	const dom = await renderSidebar(state, runtimeMessages);
+	Object.defineProperty(dom.window.navigator, "clipboard", {
+		configurable: true,
+		value: {
+			async writeText(text) {
+				copied.push(text);
+			},
+		},
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	const firstResponse = shadow.querySelector(".onhand-response");
+	const copyButton = shadow.querySelector('.onhand-copy-button[data-copy-turn-id="turn-1"]');
+	assert.ok(firstResponse, "expected an Onhand response to render");
+	assert.ok(copyButton, "expected completed responses to expose a copy button");
+
+	copyButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+	assert.deepEqual(copied, [state.turns[0].reply], "expected copy button to copy the raw reply text");
+	assert.equal(copyButton.textContent, "Copied", "expected copy button to acknowledge the copied response");
+
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(shadow.querySelector(".onhand-response"), firstResponse, "expected unchanged state polls to preserve response DOM");
+	assert.equal(shadow.querySelector('.onhand-copy-button[data-copy-turn-id="turn-1"]'), copyButton, "expected unchanged state polls to preserve copy button state");
+	assert.equal(copyButton.textContent, "Copied", "expected no-change rerenders not to overwrite local copy feedback");
+
+	dom.window.close();
+}
+
 async function assertTranscriptActionButtonsActivateDirectly() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -3826,6 +3861,7 @@ async function assertComposerEnterSubmitsAndShiftEnterDoesNot() {
 }
 
 await assertSessionWideCitationNumbers();
+await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();
 await assertComposerEnterSubmitsAndShiftEnterDoesNot();
