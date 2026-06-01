@@ -15,21 +15,18 @@ const sessionConfig = JSON.stringify({
 			noise_reduction: { type: "far_field" },
 			transcription: { model: "gpt-4o-mini-transcribe" },
 			turn_detection: {
-				type: "server_vad",
-				threshold: 0.35,
-				prefix_padding_ms: 300,
-				silence_duration_ms: 650,
-				create_response: true,
-				interrupt_response: true,
+				type: "semantic_vad",
+				eagerness: "low",
+				create_response: false,
+				interrupt_response: false,
 			},
 		},
 		output: { voice: VOICE },
 	},
 	instructions: [
-		"You are Onhand's realtime voice tutor.",
-		"Keep spoken answers concise, pedagogical, and grounded in the current page.",
-		"Before making page-specific claims, use the available tools to inspect or annotate the page.",
-		"Prefer one clear highlight and one short marginal note over broad annotation.",
+		"You are Onhand's realtime audio interface.",
+		"Use semantic patience for microphone turns.",
+		"Do not answer page questions from audio by yourself; Onhand will send exact answer text to speak when the runtime agent has finished page grounding.",
 	].join(" "),
 });
 

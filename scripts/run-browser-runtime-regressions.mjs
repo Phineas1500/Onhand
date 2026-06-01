@@ -356,7 +356,7 @@ async function assertSelectionFormatting() {
 			anchor: {
 				text_excerpt: "Delta lower content gives scroll and scroll-to-annotation tests enough page height.",
 				kind: "question_anchor",
-				note: "Look here first",
+				note: "Key evidence for this question.",
 			},
 			voice_script: "What does this lower section tell you?",
 		}),
@@ -525,7 +525,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
-	assert.match(contract.learningModeAppend, /ask one short page-anchored question/);
+	assert.match(contract.learningModeAppend, /give a concise anchored answer first/);
+	assert.match(contract.learningModeAppend, /Do not make the check the whole answer/);
 	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
 	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
 	assert.match(contract.learningModeAppend, /one reviewable learning unit/);
@@ -533,6 +534,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /prefer a lightweight refresher/);
 	assert.match(contract.learningModeAppend, /add at most one replacement highlight and no note/);
 	assert.match(contract.learningModeAppend, /do not open or record a second check/);
+	assert.match(contract.learningModeAppend, /Do not add fresh annotations for this meta\/follow-up turn/);
 	assert.match(contract.learningModeAppend, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.learningModeAppend, /call browser_list_tabs once only if the captured list is missing or ambiguous/);
 	assert.match(contract.learningModeAppend, /Do not switch to, read, highlight, or note a related tab unless the user explicitly asks/);
@@ -553,6 +555,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /If there is no open check for the concept/);
 	assert.match(contract.learningPrompt, /reuse the existing conceptId/);
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
+	assert.match(contract.learningPrompt, /reasonable paraphrase/);
 	assert.match(contract.learningPrompt, /Concept hygiene/);
 	assert.match(contract.learningPrompt, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
@@ -873,6 +876,46 @@ async function assertLearningModeToolLoopPersistsAgentEvents() {
 	const session = store.sessions[store.currentSessionId];
 	assert.equal(session.learnerState.conceptsIntroduced[0].label, "Alpha smoke content");
 	assert.equal(session.learnerState.openChecks[0].checkId, "check-alpha-smoke");
+}
+
+async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-learning-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		learningMode: true,
+	});
+	await runtime.submitPrompt({
+		prompt: "Teach this page concept in Learning Mode.",
+		displayPrompt: "learning smoke",
+		attachments: [],
+		learningMode: true,
+	});
+	await waitForRuntimeCompletion(runtime);
+	const highlightCallsBeforeAnswer = host.calls.filter((call) => call.name === "highlight_text").length;
+	await runtime.submitPrompt({
+		prompt: "I think it is saying this is the important page concept.",
+		displayPrompt: "[Voice] I think it is saying this is the important page concept.",
+		source: "realtime-voice-direct-answer",
+		attachments: [],
+		learningMode: true,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete voice check-answer regression");
+	assert.equal(completedState.learnerState.openChecks.length, 0, "voice answer should resolve the existing open check");
+	assert.equal(completedState.learnerState.responses[0].checkId, "check-alpha-smoke");
+	assert.equal(completedState.learnerState.responses[0].assessment, "correct");
+	assert.match(completedState.turns.at(-1)?.reply || "", /answers the check|right direction/i);
+	assert.equal(
+		host.calls.filter((call) => call.name === "highlight_text").length,
+		highlightCallsBeforeAnswer,
+		"answering an open check should not create a replacement highlight",
+	);
 }
 
 async function assertReplayHighlightCandidateGeneration() {
@@ -3438,6 +3481,7 @@ async function main() {
 	await assertConstitutionPromptContract();
 	await assertLearnerStateUpdates();
 	await assertLearningModeToolLoopPersistsAgentEvents();
+	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertSessionReplayRestore();

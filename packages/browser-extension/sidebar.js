@@ -16,10 +16,12 @@
 	const SIDEBAR_QUICK_OPEN_KEY_CAPTURE_MS = 15 * 1000;
 	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
 	const REALTIME_SESSION_URL = "http://127.0.0.1:8787/session";
+	const REALTIME_VOICE_MODE = "realtime-only";
 	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 	const REALTIME_BACKEND_PREAMBLE_DELAY_MS = 1200;
 	const REALTIME_TRANSCRIPTION_FALLBACK_MS = 1800;
 	const REALTIME_TRANSCRIPT_FINALIZE_DELAY_MS = 1000;
+	const REALTIME_ONLY_COMMIT_FALLBACK_MS = 1200;
 	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
 	const REALTIME_LOCAL_SPEECH_RMS = 0.002;
 	const REALTIME_LOCAL_SPEECH_MIN_RMS = 0.00085;
@@ -28,6 +30,39 @@
 	const REALTIME_MIC_SILENCE_DIAGNOSTIC_MS = 6500;
 	const REALTIME_API_KEY_SETUP_MESSAGE =
 		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
+	const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
+		browser_list_tabs: "list_tabs",
+		browser_activate_tab: "activate_tab",
+		browser_navigate: "navigate",
+		browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
+		browser_pdf_search: "pdf_search",
+		browser_pdf_read_pages: "pdf_read_pages",
+		browser_pdf_jump_to_page: "pdf_jump_to_page",
+		browser_pdf_capture_page_image: "pdf_capture_page_image",
+		browser_get_visible_text: "get_visible_text",
+		browser_get_visible_region_image: "get_visible_region_image",
+		browser_extract_content: "extract_content",
+		browser_get_selection: "get_selection",
+		browser_get_viewport_headings: "get_viewport_headings",
+		browser_get_scroll_state: "get_scroll_state",
+		browser_highlight_text: "highlight_text",
+		browser_show_note: "show_note",
+		browser_scroll_to_annotation: "scroll_to_annotation",
+		browser_clear_annotations: "clear_annotations",
+		browser_capture_state: "capture_state",
+		browser_find_elements: "find_elements",
+		browser_wait_for_selector: "wait_for_selector",
+		browser_click: "click",
+		browser_type: "type_text",
+		browser_click_text: "click_text",
+		browser_type_by_label: "type_by_label",
+		browser_pick_elements: "pick_elements",
+		browser_collect_console: "collect_console",
+		browser_collect_network: "collect_network",
+		browser_get_dom: "get_dom",
+		browser_capture_screenshot: "capture_screenshot",
+		browser_run_js: "run_js",
+	});
 	const CODEX_PROVIDER = "openai-codex";
 	const CODEX_MODEL = "gpt-5.5";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
@@ -173,6 +208,7 @@
 	let realtimeTranscriptionFallbackTimer = null;
 	let realtimePendingTranscriptTimer = null;
 	let realtimePendingTranscriptSegments = [];
+	let realtimeOnlyVoiceResponseTimer = null;
 	let realtimeBackendPreambleTimer = null;
 	let realtimeIdleTimeoutTimer = null;
 	let realtimeLocalSpeechActive = false;
@@ -184,6 +220,7 @@
 	let realtimeQueuedResponseRequest = null;
 	let realtimeResponseVoiceTurnId = "";
 	let realtimeSuppressTranscriptForResponse = false;
+	let realtimeResponseOutputModalities = ["audio"];
 	let realtimeResponseAfterDoneStatus = "";
 	let realtimePendingDirectAnswerRequestId = "";
 	let realtimePendingDirectAnswerPrompt = "";
@@ -192,10 +229,23 @@
 	let realtimeSocraticTurnCounter = 0;
 	let realtimeVoiceTurnCounter = 0;
 	let realtimeActiveVoiceTurn = null;
+	let realtimeLastReadableBrowserTool = "";
+	let realtimeLastReadableBrowserText = "";
 	const realtimeNarratedDirectAnswerRequestIds = new Set();
 	const realtimePersistedVoiceTurnIds = new Set();
 	const realtimeHandledCallIds = new Set();
 	const realtimeAudioFallbackItemIds = new Set();
+	const REALTIME_READ_TOOL_NAMES = new Set([
+		"browser_get_visible_text",
+		"browser_extract_content",
+		"browser_get_selection",
+		"browser_get_viewport_headings",
+		"browser_pdf_search",
+		"browser_pdf_read_pages",
+	]);
+	const REALTIME_FORCED_INITIAL_TOOL_CHOICE = { type: "function", name: "browser_get_visible_text" };
+	const REALTIME_FORCED_HIGHLIGHT_TOOL_CHOICE = { type: "function", name: "browser_highlight_text" };
+	const REALTIME_FORCED_PUBLISH_TOOL_CHOICE = { type: "function", name: "publish_sidebar_answer" };
 	let replayArtifactsScrollLeft = 0;
 	let replayState = {
 		open: false,
@@ -746,6 +796,18 @@
 		flushList();
 
 		return blockStore.restore(parts.join("")) || renderCitedBlock("p", source, citationGroups, citationNumbering);
+	}
+
+	function renderReplyMarkdownWithCitationFallback(text, citationGroups = [], citationNumbering = createCitationNumbering()) {
+		const groups = Array.isArray(citationGroups) ? citationGroups : [];
+		const html = renderReplyMarkdown(text, groups, citationNumbering);
+		if (!groups.length || html.includes("onhand-cite")) return html;
+		const citation = groups.find((group) => group.current) || groups[0];
+		const fallback = renderReplyCitations([{ ...citation, position: Number.POSITIVE_INFINITY, score: 0 }], citationNumbering);
+		if (!fallback) return html;
+		if (/<\/p>/.test(html)) return html.replace(/<\/p>/, `${fallback}</p>`);
+		if (/<\/li>/.test(html)) return html.replace(/<\/li>/, `${fallback}</li>`);
+		return `${html}<p>${fallback}</p>`;
 	}
 
 	function ensureKatexLoaded() {
@@ -4425,6 +4487,7 @@
 				const reply = String(turn?.reply || "").trim();
 				const sourceActions = getTurnSourceActions(turn);
 				const supportMarkup = renderProgressDetails(turn);
+				const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
 				return `
 					<article class="onhand-entry ${turn?.error ? "error" : ""}">
 						<div class="onhand-eyebrow">
@@ -4437,7 +4500,7 @@
 						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 							<div class="onhand-response">
-								${reply ? renderReplyMarkdown(reply, citationGroups, citationNumbering) : '<p class="reply-placeholder">Thinking...</p>'}
+								${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
 								${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 								${renderRealtimeSourceButtons(sourceActions)}
 							</div>
@@ -4837,7 +4900,7 @@
 					${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
 					<div class="onhand-a">
 						<div class="onhand-response">
-							${markdown ? renderReplyMarkdown(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
+							${markdown ? renderReplyMarkdownWithCitationFallback(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
 							${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
 							${renderRealtimeSourceButtons(sourceActions)}
 						</div>
@@ -5201,6 +5264,7 @@
 	function clearRealtimeSessionLocalState() {
 		clearRealtimeTranscriptionFallback();
 		clearRealtimePendingTranscript();
+		clearRealtimeOnlyVoiceResponse();
 		clearRealtimeBackendPreamble();
 		realtimeAnswer = null;
 		realtimeTranscriptBuffer = "";
@@ -5215,17 +5279,89 @@
 		realtimeAudioFallbackItemIds.clear();
 	}
 
+	function isRealtimeOnlyVoiceMode() {
+		return REALTIME_VOICE_MODE === "realtime-only";
+	}
+
+	function shouldUseLocalRealtimeFallbackCommit() {
+		return REALTIME_VOICE_MODE === "local-fallback";
+	}
+
 	function beginRealtimeVoiceTurn(kind, prompt) {
 		const text = String(prompt || "").trim();
+		realtimeLastReadableBrowserTool = "";
+		realtimeLastReadableBrowserText = "";
 		const turn = {
 			id: `voice_turn_${++realtimeVoiceTurnCounter}`,
 			kind: String(kind || "voice").trim() || "voice",
 			prompt: text,
 			createdAt: new Date().toISOString(),
 			pageActions: [],
+			userTranscriptSegments: text && text !== "Voice question" ? [text] : [],
+			groundingRetryCount: 0,
+			cancelledUngroundedResponse: false,
+			answerRetryCount: 0,
 		};
 		realtimeActiveVoiceTurn = turn;
 		realtimeTranscriptBuffer = "";
+		return turn;
+	}
+
+	function normalizeRealtimeTranscriptText(value) {
+		return String(value || "").replace(/\s+/g, " ").trim();
+	}
+
+	function appendRealtimeUserTranscriptToTurn(turn, transcript) {
+		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return "";
+		const text = normalizeRealtimeTranscriptText(transcript);
+		if (!text) return String(turn.prompt || "").trim();
+		const existing = Array.isArray(turn.userTranscriptSegments) ? turn.userTranscriptSegments : [];
+		const seeded =
+			existing.length || !turn.prompt || turn.prompt === "Voice question"
+				? existing
+				: [normalizeRealtimeTranscriptText(turn.prompt)].filter(Boolean);
+		const normalizedNew = normalizeCitationText(text);
+		const alreadyIncluded = seeded.some((segment) => {
+			const normalizedSegment = normalizeCitationText(segment);
+			return normalizedSegment === normalizedNew || normalizedSegment.includes(normalizedNew) || normalizedNew.includes(normalizedSegment);
+		});
+		turn.userTranscriptSegments = alreadyIncluded ? seeded : [...seeded, text];
+		turn.prompt = normalizeRealtimeTranscriptText(turn.userTranscriptSegments.join(" ")).replace(/\s+([,.;:!?])/g, "$1");
+		updateRealtimeAnswerForTurn(turn, {
+			markdown: realtimeTranscriptBuffer || realtimeAnswer?.markdown || "",
+			status: realtimeResponseInProgress ? "Speaking" : "Thinking",
+			pending: true,
+			published: false,
+		});
+		return turn.prompt;
+	}
+
+	function ensureRealtimeAudioVoiceTurn(itemId = "", prompt = "Voice question") {
+		const audioItemId = String(itemId || "").trim();
+		const promptText = String(prompt || "").trim() || "Voice question";
+		if (realtimeActiveVoiceTurn?.kind === "realtime_response") {
+			if (audioItemId && !realtimeActiveVoiceTurn.audioItemId) realtimeActiveVoiceTurn.audioItemId = audioItemId;
+			if (promptText && promptText !== "Voice question") {
+				appendRealtimeUserTranscriptToTurn(realtimeActiveVoiceTurn, promptText);
+			} else if (promptText && (!realtimeActiveVoiceTurn.prompt || realtimeActiveVoiceTurn.prompt === "Voice question")) {
+				realtimeActiveVoiceTurn.prompt = promptText;
+			}
+			updateRealtimeAnswerForTurn(realtimeActiveVoiceTurn, {
+				markdown: realtimeTranscriptBuffer || realtimeAnswer?.markdown || "",
+				status: realtimeResponseInProgress ? "Speaking" : "Thinking",
+				pending: true,
+				published: false,
+			});
+			return realtimeActiveVoiceTurn;
+		}
+		const turn = beginRealtimeVoiceTurn("realtime_response", promptText);
+		turn.audioItemId = audioItemId;
+		updateRealtimeAnswerForTurn(turn, {
+			markdown: "",
+			status: "Thinking",
+			pending: true,
+			published: false,
+		});
 		return turn;
 	}
 
@@ -5241,7 +5377,10 @@
 			staleReason: reason,
 		};
 		clearRealtimeBackendPreamble();
+		clearRealtimeOnlyVoiceResponse();
 		realtimeActiveVoiceTurn = null;
+		realtimeLastReadableBrowserTool = "";
+		realtimeLastReadableBrowserText = "";
 		return staleTurn;
 	}
 
@@ -5283,9 +5422,28 @@
 		});
 		if (!response?.ok) throw new Error(response?.error || "Could not save the voice turn.");
 		realtimePersistedVoiceTurnIds.add(turn.id);
-		if (options.clearLiveAnswer !== false) clearRealtimeAnswerForTurn(turn);
 		await Promise.all([requestState(), requestSessions()]);
+		if (options.clearLiveAnswer !== false && stateIncludesRealtimeVoiceTurn(turn, text)) {
+			clearRealtimeAnswerForTurn(turn);
+			renderState(currentState || {});
+		}
 		return true;
+	}
+
+	function stateIncludesRealtimeVoiceTurn(turn, reply = "") {
+		if (!turn) return false;
+		const turnId = String(turn.id || "").trim();
+		const expectedPrompt = `[Voice] ${turn.prompt || "Voice turn"}`;
+		const expectedReply = String(reply || "").trim();
+		return (Array.isArray(currentState?.turns) ? currentState.turns : []).some((candidate) => {
+			if (!candidate || typeof candidate !== "object") return false;
+			if (turnId && String(candidate.id || "") === turnId) return true;
+			return (
+				expectedPrompt &&
+				String(candidate.userPrompt || "") === expectedPrompt &&
+				(!expectedReply || String(candidate.reply || "").trim() === expectedReply)
+			);
+		});
 	}
 
 	function clearRealtimeIdleTimeout() {
@@ -5536,6 +5694,35 @@
 		realtimePendingTranscriptSegments = [];
 	}
 
+	function clearRealtimeOnlyVoiceResponse() {
+		if (realtimeOnlyVoiceResponseTimer) {
+			clearTimeout(realtimeOnlyVoiceResponseTimer);
+			realtimeOnlyVoiceResponseTimer = null;
+		}
+	}
+
+	function scheduleRealtimeOnlyVoiceCommitFallback(reason = "speech_stopped") {
+		if (!isRealtimeOnlyVoiceMode()) return false;
+		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
+		clearRealtimeOnlyVoiceResponse();
+		realtimeOnlyVoiceResponseTimer = setTimeout(() => {
+			realtimeOnlyVoiceResponseTimer = null;
+			if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+			try {
+				realtimeManualVoiceCommitPending = true;
+				setRealtimeStatus("Submitting voice...");
+				sendRealtimeEvent({
+					event_id: realtimeEventId(`onhand_realtime_commit_${reason}`),
+					type: "input_audio_buffer.commit",
+				});
+			} catch (error) {
+				realtimeManualVoiceCommitPending = false;
+				setRealtimeStatus("Voice error", error?.message || String(error));
+			}
+		}, REALTIME_ONLY_COMMIT_FALLBACK_MS);
+		return true;
+	}
+
 	function pauseRealtimePendingTranscriptFlush() {
 		if (!realtimePendingTranscriptTimer) return;
 		clearTimeout(realtimePendingTranscriptTimer);
@@ -5569,6 +5756,8 @@
 	}
 
 	function scheduleRealtimeTranscriptionFallbackResponse(itemId = "") {
+		if (isRealtimeOnlyVoiceMode()) return;
+		if (!shouldUseLocalRealtimeFallbackCommit()) return;
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		clearRealtimeTranscriptionFallback();
 		realtimePendingTranscriptionItemId = String(itemId || "").trim();
@@ -5592,6 +5781,31 @@
 	async function processRealtimeVoiceTranscript(transcript) {
 		const text = String(transcript || "").replace(/\s+/g, " ").trim();
 		if (!text) return false;
+		if (isRealtimeOnlyVoiceMode() && shouldRouteRealtimePromptThroughOnhand(text)) {
+			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
+			return true;
+		}
+		if (isRealtimeOnlyVoiceMode()) {
+			const voiceTurn =
+				realtimeActiveVoiceTurn?.kind === "realtime_response" && !realtimeResponseInProgress
+					? realtimeActiveVoiceTurn
+					: beginRealtimeVoiceTurn("realtime_response", text);
+			if (voiceTurn.prompt !== text) {
+				appendRealtimeUserTranscriptToTurn(voiceTurn, text);
+			}
+			updateRealtimeAnswerForTurn(voiceTurn, {
+				markdown: "",
+				status: "Reading page",
+				pending: true,
+				published: false,
+			});
+			sendRealtimeSessionUpdate();
+			requestRealtimeResponse("response_for_audio_transcript", realtimeInitialGroundedResponseOptions(voiceTurn.prompt || text), {
+				voiceTurnId: voiceTurn.id,
+			});
+			setRealtimeStatus("Reading page...");
+			return true;
+		}
 		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
 			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
 		} else if (shouldRouteRealtimePromptThroughSocraticPlan(text)) {
@@ -5641,6 +5855,8 @@
 	}
 
 	function scheduleRealtimeVoiceFallbackCommit() {
+		if (isRealtimeOnlyVoiceMode()) return;
+		if (!shouldUseLocalRealtimeFallbackCommit()) return;
 		if (!realtimeConnected || realtimeResponseInProgress || realtimeManualVoiceCommitPending) return;
 		const serverVadElapsed = realtimeServerSpeechSeenAt ? Date.now() - realtimeServerSpeechSeenAt : Number.POSITIVE_INFINITY;
 		const serverVadGraceDelay = Number.isFinite(serverVadElapsed) ? Math.max(0, REALTIME_SERVER_VAD_GRACE_MS - serverVadElapsed) : 0;
@@ -5652,6 +5868,8 @@
 	}
 
 	function commitRealtimeVoiceFallback() {
+		if (isRealtimeOnlyVoiceMode()) return false;
+		if (!shouldUseLocalRealtimeFallbackCommit()) return false;
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
 		if (realtimeServerSpeechSeenAt && Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
 			scheduleRealtimeVoiceFallbackCommit();
@@ -5788,8 +6006,13 @@
 					realtimeLocalSpeechActive = false;
 					loudFrames = 0;
 					quietFrames = 0;
-					setRealtimeStatus("Mic heard a pause · waiting for API");
-					scheduleRealtimeVoiceFallbackCommit();
+					if (isRealtimeOnlyVoiceMode() || !shouldUseLocalRealtimeFallbackCommit()) {
+						setRealtimeStatus("Mic heard a pause · waiting for transcript");
+						scheduleRealtimeOnlyVoiceCommitFallback("local_pause");
+					} else {
+						setRealtimeStatus("Mic heard a pause · waiting for API");
+						scheduleRealtimeVoiceFallbackCommit();
+					}
 					if (Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
 						realtimeMicLastIdleStatusAt = Date.now();
 					}
@@ -5922,226 +6145,348 @@
 			controlOptions.trackVoiceTurn === false ? "" : String(controlOptions.voiceTurnId || realtimeActiveVoiceTurn?.id || "");
 		realtimeSuppressTranscriptForResponse = Boolean(controlOptions.suppressTranscript);
 		realtimeResponseAfterDoneStatus = String(controlOptions.afterDoneStatus || "").trim();
+		const response = {
+			output_modalities: ["audio"],
+			...responseOptions,
+		};
+		realtimeResponseOutputModalities = Array.isArray(response.output_modalities)
+			? response.output_modalities.map((item) => String(item || "").trim()).filter(Boolean)
+			: [];
 		noteRealtimeActivity();
 		sendRealtimeEvent({
 			event_id: realtimeEventId(`onhand_${reason}`),
 			type: "response.create",
-			response: {
-				output_modalities: ["audio"],
-				...responseOptions,
-			},
+			response,
 		});
 	}
 
 	function realtimeToolDefinitions() {
+		const makeTool = (name, description, properties = {}, required = []) => ({
+			type: "function",
+			name,
+			description,
+			parameters: {
+				type: "object",
+				properties,
+				required,
+			},
+		});
+		const tabMatch = {
+			tabId: { type: "number", description: "Exact browser tab ID to target. Omit this to use the active tab." },
+			titleContains: { type: "string", description: "Case-insensitive substring to match in the tab title." },
+			urlContains: { type: "string", description: "Case-insensitive substring to match in the tab URL." },
+		};
+		const withTab = (properties = {}) => ({ ...tabMatch, ...properties });
 		return [
-			{
-				type: "function",
-				name: "check_calendar",
-				description: "Check whether a requested tutoring time is available.",
-				parameters: {
-					type: "object",
-					properties: {
-						date: { type: "string", description: "Requested date, for example 2026-05-23." },
-						time: { type: "string", description: "Requested local time, for example 15:30." },
+			makeTool("browser_list_tabs", "List open browser tabs and the active tab.", { onlyActive: { type: "boolean" } }),
+			makeTool("browser_activate_tab", "Switch to a tab by tabId, titleContains, or urlContains.", withTab(), []),
+			makeTool(
+				"browser_navigate",
+				"Navigate the current or matched tab, or open a new tab when explicitly useful.",
+				withTab({
+					url: { type: "string", description: "URL to navigate to." },
+					newTab: { type: "boolean", description: "Open in a new tab instead of navigating the current tab." },
+					waitForLoad: { type: "boolean" },
+					timeoutMs: { type: "number" },
+				}),
+				["url"],
+			),
+			makeTool(
+				"browser_open_pdf_in_onhand_viewer",
+				"Open a direct PDF or PDF-reader tab in Onhand's PDF viewer. Use this before full-PDF reading, searching, highlighting, or note-taking when the current PDF surface is limited.",
+				withTab({
+					pdfUrl: { type: "string", description: "Direct http(s) PDF URL. Omit this to infer it from the target tab URL." },
+					newTab: { type: "boolean" },
+					waitForLoad: { type: "boolean" },
+					timeoutMs: { type: "number" },
+				}),
+			),
+			makeTool(
+				"browser_pdf_search",
+				"Search the full extracted text of the current Onhand PDF viewer, including offscreen pages.",
+				withTab({
+					query: { type: "string", description: "Exact word or phrase to search across the full extracted PDF text." },
+					maxMatches: { type: "number" },
+					maxContextChars: { type: "number" },
+				}),
+				["query"],
+			),
+			makeTool(
+				"browser_pdf_read_pages",
+				"Read extracted text from specific PDF page numbers or a page range in the current Onhand PDF viewer.",
+				withTab({
+					pages: { type: "string", description: "Comma-separated page numbers, for example '2,8,9'." },
+					page: { type: "number" },
+					pageNumber: { type: "number" },
+					startPage: { type: "number" },
+					endPage: { type: "number" },
+					maxPages: { type: "number" },
+					maxChars: { type: "number" },
+				}),
+			),
+			makeTool(
+				"browser_pdf_jump_to_page",
+				"Scroll the current Onhand PDF viewer to a specific page, optionally near exact text from that page.",
+				withTab({
+					page: { type: "number" },
+					pageNumber: { type: "number" },
+					text: { type: "string" },
+					occurrence: { type: "number" },
+				}),
+			),
+			makeTool(
+				"browser_pdf_capture_page_image",
+				"Capture a specific PDF page image for visual grounding of slide layouts, figures, equations, charts, or scanned content. Use text tools too when text is available.",
+				withTab({
+					page: { type: "number" },
+					pageNumber: { type: "number" },
+					format: { type: "string" },
+					quality: { type: "number" },
+				}),
+				["pageNumber"],
+			),
+			makeTool(
+				"browser_get_visible_text",
+				"Read the text currently visible in a browser tab.",
+				withTab({ maxChars: { type: "number" }, maxBlocks: { type: "number" } }),
+			),
+			makeTool(
+				"browser_get_visible_region_image",
+				"Capture the visible viewport, selector box, or viewport coordinates for visual debugging. Prefer exact text tools for citations.",
+				withTab({
+					x: { type: "number" },
+					y: { type: "number" },
+					width: { type: "number" },
+					height: { type: "number" },
+					selector: { type: "string" },
+					label: { type: "string" },
+					format: { type: "string" },
+					quality: { type: "number" },
+					delayMs: { type: "number" },
+				}),
+			),
+			makeTool(
+				"browser_extract_content",
+				"Extract readable article or document text from the live page. Use at most once per response unless the first result is unusable.",
+				withTab({ maxChars: { type: "number" } }),
+			),
+			makeTool("browser_get_selection", "Read the user's current text selection in a browser tab.", withTab()),
+			makeTool("browser_get_viewport_headings", "Read the current and nearby headings for section context in a tab.", withTab({ maxHeadings: { type: "number" } })),
+			makeTool("browser_get_scroll_state", "Read scroll position and page progress for a tab.", withTab()),
+			makeTool(
+				"browser_highlight_text",
+				"Highlight exact visible or PDF-reader text that supports a material claim. The text argument must be copied from page/PDF text, not paraphrased. Use short, distinctive spans.",
+				withTab({
+					text: { type: "string", description: "Exact visible or PDF-reader text to highlight." },
+					occurrence: { type: "number" },
+					clearExisting: { type: "boolean" },
+					scrollIntoView: { type: "boolean" },
+					exactOnly: { type: "boolean" },
+					allowApproximate: { type: "boolean" },
+					reuseExisting: { type: "boolean" },
+				}),
+				["text"],
+			),
+			makeTool(
+				"browser_show_note",
+				"Attach a short marginal note to a highlight. Prefer one local orienting sentence over a summary or detached answer.",
+				withTab({
+					annotationId: { type: "string", description: "Annotation ID returned by browser_highlight_text." },
+					note: { type: "string", description: "Short explanatory note displayed near the highlight." },
+					label: { type: "string" },
+					scrollIntoView: { type: "boolean" },
+					block: { type: "string" },
+				}),
+				["annotationId", "note"],
+			),
+			makeTool(
+				"browser_scroll_to_annotation",
+				"Scroll the page to a previously created highlight or note.",
+				withTab({
+					annotationId: { type: "string" },
+					target: { type: "string" },
+					block: { type: "string" },
+				}),
+				["annotationId"],
+			),
+			makeTool("browser_clear_annotations", "Clear Onhand highlights and notes from the target tab.", withTab()),
+			makeTool(
+				"browser_capture_state",
+				"Capture page state and annotations. Set persist=true only when the state should be replayable later.",
+				withTab({
+					persist: { type: "boolean" },
+					includeHtml: { type: "boolean" },
+					includeScreenshot: { type: "boolean" },
+					label: { type: "string" },
+				}),
+			),
+			makeTool(
+				"browser_find_elements",
+				"Find visible or interactive page elements by text, label, placeholder, or aria-label.",
+				withTab({
+					text: { type: "string" },
+					interactiveOnly: { type: "boolean" },
+					exact: { type: "boolean" },
+					includeHidden: { type: "boolean" },
+					maxResults: { type: "number" },
+				}),
+				["text"],
+			),
+			makeTool(
+				"browser_wait_for_selector",
+				"Wait for a CSS selector to appear before a requested page interaction.",
+				withTab({
+					selector: { type: "string" },
+					visible: { type: "boolean" },
+					timeoutMs: { type: "number" },
+				}),
+				["selector"],
+			),
+			makeTool("browser_click", "Click an element by CSS selector only when the user asked Onhand to interact with the page.", withTab({ selector: { type: "string" } }), ["selector"]),
+			makeTool(
+				"browser_type",
+				"Type text into a field by CSS selector only when the user explicitly asked for page interaction.",
+				withTab({ selector: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, submit: { type: "boolean" } }),
+				["selector", "text"],
+			),
+			makeTool(
+				"browser_click_text",
+				"Click the best matching button, link, or control by visible text when the user asked Onhand to interact with the page.",
+				withTab({ text: { type: "string" }, exact: { type: "boolean" }, includeHidden: { type: "boolean" }, maxResults: { type: "number" } }),
+				["text"],
+			),
+			makeTool(
+				"browser_type_by_label",
+				"Type into a field by human-facing label or placeholder only when the user explicitly asked for page interaction.",
+				withTab({
+					labelText: { type: "string" },
+					text: { type: "string" },
+					clear: { type: "boolean" },
+					submit: { type: "boolean" },
+					exact: { type: "boolean" },
+					includeHidden: { type: "boolean" },
+				}),
+				["labelText", "text"],
+			),
+			makeTool("browser_pick_elements", "Show an element picker overlay so the user can identify ambiguous page elements.", withTab({ message: { type: "string" } }), ["message"]),
+			makeTool(
+				"browser_collect_console",
+				"Collect console messages, warnings, and exceptions from a tab for debugging.",
+				withTab({
+					durationMs: { type: "number" },
+					maxEntries: { type: "number" },
+					reload: { type: "boolean" },
+					ignoreCache: { type: "boolean" },
+					expression: { type: "string" },
+				}),
+			),
+			makeTool(
+				"browser_collect_network",
+				"Collect network requests and responses from a tab for debugging.",
+				withTab({
+					durationMs: { type: "number" },
+					maxEntries: { type: "number" },
+					reload: { type: "boolean" },
+					ignoreCache: { type: "boolean" },
+					onlyFailures: { type: "boolean" },
+					matchUrlContains: { type: "string" },
+					includeRequestHeaders: { type: "boolean" },
+					includeResponseHeaders: { type: "boolean" },
+					includeBodies: { type: "boolean" },
+					bodyMaxEntries: { type: "number" },
+					bodyMaxChars: { type: "number" },
+				}),
+			),
+			makeTool("browser_get_dom", "Fetch raw page HTML. Prefer readable extraction for ordinary content questions.", withTab({ maxChars: { type: "number" } })),
+			makeTool(
+				"browser_capture_screenshot",
+				"Capture a screenshot of the current or matched tab for visual debugging.",
+				withTab({ format: { type: "string" }, quality: { type: "number" }, delayMs: { type: "number" } }),
+			),
+			makeTool("browser_run_js", "Evaluate JavaScript in the target tab. Prefer readable browser tools before using this.", withTab({ expression: { type: "string" } }), ["expression"]),
+			makeTool(
+				"publish_sidebar_answer",
+				"Publish the complete final Realtime answer in the Onhand sidebar. Use after any needed browser/PDF tool calls so the spoken answer, citations, and saved turn match. The markdown must contain the actual answer, not a preamble, and should not include manual bracket citation markers.",
+				{
+					markdown: {
+						type: "string",
+						description:
+							"Complete concise sidebar answer in markdown. Do not use a lead-in without answering the student's question. Do not add manual citation markers like [1]; Onhand attaches citations from the highlighted source.",
 					},
-					required: ["date", "time"],
-				},
-			},
-			{
-				type: "function",
-				name: "get_current_learning_context",
-				description: "Read compact context from the current Onhand page, selection, visible text, and Learning Mode state for lightweight follow-up or clarification. For a user's substantive page question, prefer answer_directly.",
-				parameters: {
-					type: "object",
-					properties: {},
-					required: [],
-				},
-			},
-			{
-				type: "function",
-				name: "annotate_page",
-				description: "Highlight exact visible page text and optionally attach short tutor notes. Use this before or alongside page-grounded spoken explanations.",
-				parameters: {
-					type: "object",
-					properties: {
-						anchors: {
-							type: "array",
-							items: {
-								type: "object",
-								properties: {
-									text: { type: "string", description: "Exact visible text to highlight." },
-									note: { type: "string", maxLength: 80, description: "Short marginal note to attach to the highlight." },
-									label: { type: "string", description: "Short note label." },
-									conceptLabel: { type: "string", description: "Reviewable learning concept introduced by this anchor." },
-									checkKind: { type: "string", enum: ["prediction", "retrieval"] },
-									checkPrompt: { type: "string", maxLength: 180, description: "Optional prediction or retrieval prompt shown as learner state." },
-								},
-								required: ["text"],
-							},
-						},
-					},
-					required: ["anchors"],
-				},
-			},
-			{
-				type: "function",
-				name: "open_pdf_in_onhand_viewer",
-				description:
-					"Open the current direct or unsupported PDF tab in Onhand's PDF viewer before reading, highlighting, or tutoring from it. Use when PDF context is unavailable or marked unsupported.",
-				parameters: {
-					type: "object",
-					properties: {},
-					required: [],
-				},
-			},
-			{
-				type: "function",
-				name: "search_pdf",
-				description:
-					"Search the full extracted text of the current Onhand PDF viewer, including offscreen pages. Use this to find where a term, topic, slide section, or phrase appears in a PDF.",
-				parameters: {
-					type: "object",
-					properties: {
-						query: { type: "string", description: "Word or phrase to search for in the PDF." },
-						max_matches: { type: "number", description: "Maximum number of matches to return." },
-					},
-					required: ["query"],
-				},
-			},
-			{
-				type: "function",
-				name: "read_pdf_pages",
-				description: "Read extracted text from specific PDF pages or a page range in the current Onhand PDF viewer.",
-				parameters: {
-					type: "object",
-					properties: {
-						pages: { type: "string", description: "Comma-separated PDF page numbers, for example '8,9,10'." },
-						page_number: { type: "number", description: "Single PDF page number to read." },
-						start_page: { type: "number", description: "First PDF page in a range." },
-						end_page: { type: "number", description: "Last PDF page in a range." },
-						max_chars: { type: "number", description: "Maximum returned characters." },
-					},
-					required: [],
-				},
-			},
-			{
-				type: "function",
-				name: "jump_to_pdf_page",
-				description: "Scroll the current Onhand PDF viewer to a PDF page, optionally near exact text on that page.",
-				parameters: {
-					type: "object",
-					properties: {
-						page_number: { type: "number", description: "PDF page number to show." },
-						text: { type: "string", description: "Exact text on that page to scroll near." },
-						occurrence: { type: "number", description: "1-based occurrence of the text on the page." },
-					},
-					required: ["page_number"],
-				},
-			},
-			{
-				type: "function",
-				name: "publish_sidebar_answer",
-				description: "Publish the concise final answer in the Onhand sidebar while you speak it.",
-				parameters: {
-					type: "object",
-					properties: {
-						markdown: { type: "string", description: "Concise sidebar answer in markdown." },
-						status: { type: "string", description: "Short status label." },
-					},
-					required: ["markdown"],
-				},
-			},
-			{
-				type: "function",
-				name: "answer_directly",
-				description: "Start Onhand's gpt-5.5-backed page-grounded answer flow. Use this first for any substantive question about the current page, selection, passage, concept, equation, chart, or document.",
-				parameters: {
-					type: "object",
-					properties: {
-						prompt: { type: "string", description: "Prompt to answer with Onhand's page-grounded runtime." },
-					},
-					required: ["prompt"],
-				},
-			},
-			{
-				type: "function",
-				name: "plan_pedagogical_move",
-				description:
-					"Ask Onhand's gpt-5.5-backed planner for one Socratic Learning Mode move. Use for new conceptual page questions when Learning Mode is on. The result has no answer field: it returns an anchor, a short voice prompt, sidebar copy, expected concepts, and fallback nudges.",
-				parameters: {
-					type: "object",
-					properties: {
-						user_question: { type: "string", description: "The student's page-grounded conceptual question." },
-					},
-					required: ["user_question"],
-				},
-			},
-			{
-				type: "function",
-				name: "evaluate_response",
-				description:
-					"Ask Onhand's gpt-5.5-backed evaluator to assess the student's answer to the previous Socratic move. Use when Learning Mode has an open voice prompt and the user responds aloud.",
-				parameters: {
-					type: "object",
-					properties: {
-						user_response: { type: "string", description: "The student's spoken answer or typed response." },
-						previous_move: {
+					status: { type: "string", description: "Short status label." },
+					anchors: {
+						type: "array",
+						description: "Optional exact source anchors to highlight and cite if browser_highlight_text was not already called.",
+						items: {
 							type: "object",
-							description: "The previous plan_pedagogical_move result, including anchor and voice_script.",
 							properties: {
-								anchor: {
-									type: "object",
-									properties: {
-										text_excerpt: { type: "string", description: "Required page anchor from the previous move." },
-									},
-									required: ["text_excerpt"],
-								},
-								voice_script: { type: "string" },
-								expected_concepts: { type: "array", items: { type: "string" } },
+								text: { type: "string", description: "Exact visible page or PDF text to highlight and cite." },
+								note: { type: "string", maxLength: 80 },
+								label: { type: "string" },
+								conceptLabel: { type: "string" },
+								checkKind: { type: "string", enum: ["prediction", "retrieval"] },
+								checkPrompt: { type: "string", maxLength: 180 },
 							},
-							required: ["anchor", "voice_script"],
+							required: ["text"],
 						},
 					},
-					required: ["user_response", "previous_move"],
 				},
-			},
+				["markdown"],
+			),
 		];
 	}
 
-	function realtimeTutorInstructions() {
-		const learningMode = Boolean(currentState?.preferences?.learningMode);
-		return [
-			"You are Onhand's realtime voice tutor for a student reading the current browser page.",
-			"Answer quickly and pedagogically. Keep spoken answers short enough to follow, usually two to five sentences.",
-			"For substantive questions about the page, passage, selection, document, concept, equation, or chart, call answer_directly before answering. Do not answer those questions from realtime context alone.",
-			"Use get_current_learning_context only for lightweight orientation or clarification; it is not enough to answer a page-material question.",
-			"If the current document is a PDF and context is missing or unsupported, call open_pdf_in_onhand_viewer before tutoring from it. For PDF questions about offscreen content, first use search_pdf to locate likely pages, then read_pdf_pages for the relevant pages, and jump_to_pdf_page when you need to show the student where it is.",
-			"Use annotate_page for the key source passage when the answer depends on page content. Prefer one strong highlight and one short note.",
-			"Use publish_sidebar_answer whenever you give a substantive answer so the sidebar mirrors the spoken explanation.",
-			learningMode
-				? "Learning Mode is on: call plan_pedagogical_move for new conceptual page questions, then use annotate_page and speak the returned voice_script. If the student answers a previous Socratic prompt, call evaluate_response."
-				: "Learning Mode is off: answer directly, but still ground page-specific claims.",
-			"If answer_directly is running, briefly tell the student that Onhand is grounding the answer in the page and that the sidebar will update.",
-		].join(" ");
-	}
+		function realtimeTutorInstructions() {
+			return [
+				"You are Onhand's realtime voice tutor and page-grounded browser agent for a student reading the current browser page.",
+				"You are the only model for this voice turn: handle audio, page grounding, analysis, browser/PDF actions, citations, annotations, and final answer yourself.",
+				"The typed GPT-5.5 Onhand agent and this Realtime agent must follow the same product behavior. The only differences are audio input/output and voice patience.",
+				"Do not delegate to GPT-5.5, OpenAI Codex, or any separate model.",
+				"Use semantic patience: if the user pauses but sounds mid-thought, wait instead of answering immediately.",
+				"Onhand's constitution: the page is the canvas. Do the page work before the spoken answer: anchored highlights and short marginal notes carry the substance; chat is secondary.",
+				"Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.",
+				"For page, passage, document, PDF, concept, equation, chart, or slide questions, first inspect the page with browser_get_visible_text, browser_get_selection, browser_get_viewport_headings, browser_extract_content, browser_pdf_search, or browser_pdf_read_pages before making page-specific claims.",
+				"After reading page/PDF text for a page-material question, call browser_highlight_text with one short exact source span that supports the answer before speaking the final answer. Add browser_show_note when a short marginal note would help.",
+				"For comparative questions, anchor the specific sentence or list item that names the comparison; for the current Transformers notes, the multi-head attention anchor should be the exact line about multiple weighted graphs in parallel when it supports the answer.",
+				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
+				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
+				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
+				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation.",
+				"If a highlight attempt fails, retry once with a smaller exact visible span. If it still fails, clearly say what source text you read but could not anchor.",
+				"Speak the answer only after the needed tools have succeeded. Keep the sidebar answer, spoken answer, citations, and saved turn consistent.",
+				"Use publish_sidebar_answer only after any needed browser/PDF tool calls; it is never the first tool for a page-material question.",
+				"When calling publish_sidebar_answer, write the full answer in markdown. Do not publish setup phrases like 'Let me explain' or 'Here is the difference' unless the same markdown also contains the complete answer. Do not write manual citation markers like [1]; Onhand will attach citation buttons from the highlighted source.",
+				"Keep spoken answers concise, grounded, and conversational. If evidence is insufficient after using the tools, state what you can see and ask for the needed selection, page, or scroll position.",
+			].join(" ");
+		}
 
 	function realtimeInputAudioConfig() {
+		if (isRealtimeOnlyVoiceMode()) {
+			return {
+				noise_reduction: { type: "far_field" },
+				transcription: { model: "gpt-4o-mini-transcribe" },
+				turn_detection: {
+					type: "semantic_vad",
+					eagerness: "medium",
+					create_response: false,
+					interrupt_response: true,
+				},
+			};
+		}
 		return {
 			noise_reduction: { type: "far_field" },
 			transcription: { model: "gpt-4o-mini-transcribe" },
 			turn_detection: {
-				type: "server_vad",
-				threshold: 0.35,
-				prefix_padding_ms: 300,
-				silence_duration_ms: 1300,
+				type: "semantic_vad",
+				eagerness: "low",
 				create_response: false,
-				interrupt_response: true,
+				interrupt_response: false,
 			},
 		};
 	}
 
 	function sendRealtimeSessionUpdate() {
+		const realtimeOnly = isRealtimeOnlyVoiceMode();
 		sendRealtimeEvent({
 			event_id: realtimeEventId("onhand_session_update"),
 			type: "session.update",
@@ -6149,11 +6494,28 @@
 				type: "realtime",
 				output_modalities: ["audio"],
 				audio: { input: realtimeInputAudioConfig() },
-				instructions: realtimeTutorInstructions(),
-				tools: realtimeToolDefinitions(),
-				tool_choice: "auto",
+				instructions: realtimeOnly
+					? realtimeTutorInstructions()
+					: "You are Onhand's realtime audio interface. Use semantic patience for microphone turns. Do not answer page questions from audio by yourself; Onhand will send exact answer text to speak when the runtime agent has finished page grounding.",
+				tools: realtimeOnly ? realtimeToolDefinitions() : [],
+				tool_choice: realtimeOnly ? REALTIME_FORCED_INITIAL_TOOL_CHOICE : "auto",
 			},
 		});
+	}
+
+	function realtimeInitialGroundedResponseOptions(prompt = "") {
+		const text = normalizeRealtimeTranscriptText(prompt);
+		return {
+			tools: realtimeToolDefinitions(),
+			tool_choice: REALTIME_FORCED_INITIAL_TOOL_CHOICE,
+			instructions: [
+				realtimeTutorInstructions(),
+				text ? `Student question: ${text}` : "",
+				"Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
+			]
+				.filter(Boolean)
+				.join("\n\n"),
+		};
 	}
 
 	async function requestRealtimeContext() {
@@ -6263,12 +6625,21 @@
 		return hasRealtimePageMaterialContext(state);
 	}
 
+	function isExplicitRealtimeSocraticRequest(prompt) {
+		const text = String(prompt || "").trim().toLowerCase();
+		if (!text) return false;
+		return /\b(quiz me|test me|ask me (?:a|some|one) question|give me (?:a|some|one) (?:quiz|practice|retrieval|prediction|check)|check my understanding|practice (?:with me|questions?)|socratic|coach me through|walk me through with questions|make me think|don't tell me the answer|do not tell me the answer)\b/.test(
+			text,
+		);
+	}
+
 	function shouldRouteRealtimePromptThroughSocraticPlan(prompt, state = currentState) {
 		const text = String(prompt || "").trim();
 		if (!text) return false;
 		if (!Boolean(state?.preferences?.learningMode)) return false;
 		if (isRealtimeCalendarRequest(text)) return false;
 		if (!hasRealtimePageMaterialContext(state)) return false;
+		if (!isExplicitRealtimeSocraticRequest(text)) return false;
 		return !realtimePendingSocraticMove;
 	}
 
@@ -6313,6 +6684,50 @@
 			"Text:",
 			text,
 		].join("\n\n");
+	}
+
+	function realtimePublishedAnswerLooksSubstantive(markdown, turn = realtimeActiveVoiceTurn) {
+		if (!isRealtimeOnlyVoiceMode() || turn?.kind !== "realtime_response" || !hasRealtimePageMaterialContext(currentState)) return true;
+		const text = normalizeRealtimeTranscriptText(canonicalRealtimeSpeechText(markdown));
+		if (!text) return false;
+		const prompt = normalizeRealtimeTranscriptText(turn?.prompt || "");
+		if (!prompt || /^voice question$/i.test(prompt)) return false;
+		const lower = text.toLowerCase();
+		if (text.length < 70) return false;
+		if (/^let me\b|^i(?:'|’)ll\b|^i will\b/i.test(text) && text.length < 160) return false;
+		if (/\b(?:lay out|walk through|explain)\b/i.test(text) && !/\bsingle\b|\bmulti\b|\battention\b|\bbecause\b|\bwhereas\b|\bwhile\b/i.test(text)) {
+			return false;
+		}
+		if (/\b(?:difference|compare|versus|vs)\b/i.test(prompt)) {
+			if (/\bsingle[-\s]?headed?\b/i.test(prompt) && /\bmulti[-\s]?headed?\b/i.test(prompt) && /\battention\b/i.test(prompt)) {
+				return /\bsingle[-\s]?headed?\b|\bone attention\b|\bone pattern\b|\bone map\b/i.test(lower) &&
+					/\bmulti[-\s]?headed?\b|\bmultiple heads?\b|\bseveral heads?\b|\bparallel\b/i.test(lower) &&
+					/\battention\b|\bheads?\b|\bpatterns?\b|\bmaps?\b/i.test(lower);
+			}
+			const promptTokens = realtimeHighlightRepairTokens(prompt).filter((token) => !["mean", "here"].includes(token));
+			const answerTokens = new Set(realtimeHighlightRepairTokens(text));
+			const overlap = promptTokens.filter((token) => answerTokens.has(token)).length;
+			return overlap >= Math.min(3, Math.max(2, promptTokens.length));
+		}
+		return true;
+	}
+
+	function narratePublishedRealtimeAnswer(markdown) {
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
+		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand voice answer", markdown);
+		requestRealtimeResponse(
+			"speak_published_realtime_answer",
+			{
+				instructions: voicePrompt,
+				tool_choice: "none",
+			},
+			{
+				trackVoiceTurn: false,
+				suppressTranscript: true,
+				afterDoneStatus: "Voice ready · ask, then pause",
+			},
+		);
+		return true;
 	}
 
 	function buildRealtimeAnnotationPageActions(result) {
@@ -6363,6 +6778,750 @@
 		return turn.pageActions;
 	}
 
+	async function applyRealtimeAnnotations(anchors) {
+		const items = Array.isArray(anchors) ? anchors : [];
+		if (!items.length) return { result: null, pageActions: [] };
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:realtime-annotate",
+			windowId: await ensureCurrentWindowId(),
+			anchors: items,
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not annotate the page.");
+		await requestState();
+		const result = response.result || {};
+		const pageActions = Array.isArray(result.pageActions) ? result.pageActions : buildRealtimeAnnotationPageActions(result);
+		const activeTurn = realtimeActiveVoiceTurn;
+		if (activeTurn) {
+			appendRealtimeTurnPageActions(activeTurn, pageActions);
+			updateRealtimeAnswerForTurn(activeTurn, { pageActions: activeTurn.pageActions });
+		}
+		return {
+			result: {
+				...result,
+				pageActions,
+			},
+			pageActions,
+		};
+	}
+
+	function realtimeBrowserToolCommand(name) {
+		const toolName = String(name || "").trim();
+		return Object.prototype.hasOwnProperty.call(REALTIME_BROWSER_TOOL_COMMANDS, toolName) ? REALTIME_BROWSER_TOOL_COMMANDS[toolName] : "";
+	}
+
+	function realtimeHighlightArgumentText(args = {}) {
+		const raw = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+		const nestedAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
+		const nestedSource = raw.source && typeof raw.source === "object" ? raw.source : {};
+		const candidates = [
+			raw.text,
+			raw.quote,
+			raw.phrase,
+			raw.query,
+			raw.anchorText,
+			raw.anchor_text,
+			raw.textExcerpt,
+			raw.text_excerpt,
+			raw.sourceText,
+			raw.source_text,
+			raw.exactText,
+			raw.exact_text,
+			nestedAnchor.text,
+			nestedAnchor.quote,
+			nestedAnchor.textExcerpt,
+			nestedAnchor.text_excerpt,
+			nestedSource.text,
+			nestedSource.quote,
+			nestedSource.textExcerpt,
+			nestedSource.text_excerpt,
+		];
+		for (const candidate of candidates) {
+			const text = String(candidate || "").replace(/\s+/g, " ").trim();
+			if (text) return text;
+		}
+		return "";
+	}
+
+	function normalizeRealtimeBrowserToolArgs(args = {}) {
+		const raw = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
+		const aliases = {
+			tab_id: "tabId",
+			title_contains: "titleContains",
+			url_contains: "urlContains",
+			new_tab: "newTab",
+			wait_for_load: "waitForLoad",
+			timeout_ms: "timeoutMs",
+			pdf_url: "pdfUrl",
+			max_matches: "maxMatches",
+			max_context_chars: "maxContextChars",
+			page_number: "pageNumber",
+			start_page: "startPage",
+			end_page: "endPage",
+			max_pages: "maxPages",
+			max_chars: "maxChars",
+			max_blocks: "maxBlocks",
+			max_headings: "maxHeadings",
+			clear_existing: "clearExisting",
+			scroll_into_view: "scrollIntoView",
+			exact_only: "exactOnly",
+			allow_approximate: "allowApproximate",
+			reuse_existing: "reuseExisting",
+			annotation_id: "annotationId",
+			label_text: "labelText",
+			interactive_only: "interactiveOnly",
+			include_hidden: "includeHidden",
+			max_results: "maxResults",
+			duration_ms: "durationMs",
+			max_entries: "maxEntries",
+			ignore_cache: "ignoreCache",
+			only_failures: "onlyFailures",
+			match_url_contains: "matchUrlContains",
+			include_request_headers: "includeRequestHeaders",
+			include_response_headers: "includeResponseHeaders",
+			include_bodies: "includeBodies",
+			body_max_entries: "bodyMaxEntries",
+			body_max_chars: "bodyMaxChars",
+			delay_ms: "delayMs",
+			include_html: "includeHtml",
+			include_screenshot: "includeScreenshot",
+			anchor_text: "anchorText",
+			text_excerpt: "textExcerpt",
+			source_text: "sourceText",
+			exact_text: "exactText",
+		};
+		for (const [from, to] of Object.entries(aliases)) {
+			if (Object.prototype.hasOwnProperty.call(raw, from) && !Object.prototype.hasOwnProperty.call(raw, to)) {
+				raw[to] = raw[from];
+			}
+		}
+		if (!String(raw.text || "").trim()) {
+			const highlightText = realtimeHighlightArgumentText(raw);
+			if (highlightText) raw.text = highlightText;
+		}
+		return raw;
+	}
+
+	function sanitizeRealtimeToolResult(value, depth = 0) {
+		if (value == null) return value;
+		if (typeof value === "string") {
+			if (/^data:image\//i.test(value)) return "[image data omitted]";
+			return value.length > 6000 ? `${value.slice(0, 6000).trim()}…` : value;
+		}
+		if (typeof value !== "object") return value;
+		if (depth > 4) return "[nested result omitted]";
+		if (Array.isArray(value)) return value.slice(0, 30).map((entry) => sanitizeRealtimeToolResult(entry, depth + 1));
+		const next = {};
+		for (const [key, entry] of Object.entries(value)) {
+			if (/^(data|dataUrl|screenshot|image)$/i.test(key) && typeof entry === "string") {
+				next[key] = "[binary data omitted]";
+				continue;
+			}
+			next[key] = sanitizeRealtimeToolResult(entry, depth + 1);
+		}
+		return next;
+	}
+
+	function realtimeToolTab(result) {
+		return result?.tab && typeof result.tab === "object" ? result.tab : {};
+	}
+
+	function realtimeToolTabLabel(tab) {
+		return compactRealtimeTutorText(tab?.title || tab?.url || "current tab", 90);
+	}
+
+		function formatRealtimeBrowserToolResult(name, result) {
+			const tab = realtimeToolTab(result);
+			const tabLabel = realtimeToolTabLabel(tab);
+			switch (name) {
+			case "browser_list_tabs": {
+				const tabs = Array.isArray(result?.tabs) ? result.tabs : Array.isArray(result?.state?.tabs) ? result.state.tabs : [];
+				return tabs.length
+					? `Open tabs:\n${tabs
+							.slice(0, 12)
+							.map((item) => `${item?.active ? "* " : "- "}${compactRealtimeTutorText(item?.title || item?.url || `tab ${item?.id || ""}`, 120)}`)
+							.join("\n")}`
+					: "No open tabs returned.";
+			}
+			case "browser_activate_tab":
+				return `Activated tab: ${tabLabel}.`;
+			case "browser_navigate":
+				return `Navigated to: ${tabLabel}.`;
+			case "browser_open_pdf_in_onhand_viewer":
+				return `${result?.alreadyOpen ? "Using existing" : "Opened"} PDF in Onhand viewer: ${tabLabel}.`;
+			case "browser_pdf_search": {
+				const search = result?.search || {};
+				const matches = Array.isArray(search.matches) ? search.matches : [];
+				return matches.length
+					? `PDF search results for "${search.query || ""}":\n${matches
+							.slice(0, 8)
+							.map((match, index) => `${index + 1}. p. ${match.pageNumber || match.page || "?"}: ${compactRealtimeTutorText(match.context || match.text || match.matchedText, 260)}`)
+							.join("\n")}`
+					: `No PDF search results returned for "${search.query || result?.query || ""}".`;
+			}
+			case "browser_pdf_read_pages": {
+				const pages = result?.pages || {};
+				const pageItems = Array.isArray(pages.pages) ? pages.pages : Array.isArray(pages.results) ? pages.results : [];
+				if (pageItems.length) {
+					return `PDF pages:\n${pageItems
+						.slice(0, 8)
+						.map((page) => `p. ${page.pageNumber || page.page || "?"}: ${compactRealtimeTutorText(page.text || page.markdown || "", 900)}`)
+						.join("\n\n")}`;
+				}
+				return compactRealtimeTutorText(pages.text || pages.markdown || JSON.stringify(sanitizeRealtimeToolResult(pages)), 2000);
+			}
+			case "browser_pdf_jump_to_page": {
+				const jump = result?.jump || {};
+				return `Moved PDF to page ${jump.pageNumber || jump.page || "?"}${jump.matchedText ? ` near "${compactRealtimeTutorText(jump.matchedText, 120)}"` : ""}.`;
+			}
+			case "browser_get_visible_text": {
+				const visible = result?.visible || {};
+				return `Visible text from ${tabLabel}:\n${compactRealtimeTutorText(visible.text || visible.markdown || JSON.stringify(sanitizeRealtimeToolResult(visible)), 4000)}`;
+			}
+			case "browser_extract_content": {
+				const content = result?.content || {};
+				return `Readable content from ${tabLabel}:\n${compactRealtimeTutorText(content.markdown || content.text || JSON.stringify(sanitizeRealtimeToolResult(content)), 5000)}`;
+			}
+			case "browser_get_selection": {
+				const selection = result?.selection || {};
+				return selection.text ? `Selected text:\n${compactRealtimeTutorText(selection.text, 1600)}` : "No selected text.";
+			}
+			case "browser_get_viewport_headings": {
+				const headings = result?.headings || {};
+				const items = Array.isArray(headings.headings) ? headings.headings : [];
+				return [`Current heading: ${headings.currentHeading?.text || "none"}`, items.slice(0, 12).map((heading, index) => `${index + 1}. ${heading.text || ""}`).join("\n")]
+					.filter(Boolean)
+					.join("\n");
+			}
+			case "browser_get_scroll_state": {
+				const scroll = result?.scroll || {};
+				const progress = typeof scroll.progressY === "number" ? `${Math.round(scroll.progressY * 100)}%` : "unknown";
+				return `Scroll state: y=${scroll.scrollY ?? "?"}/${scroll.maxScrollY ?? "?"}, progress=${progress}.`;
+			}
+			case "browser_highlight_text": {
+				const annotation = result?.annotation || {};
+				return `Highlighted "${compactRealtimeTutorText(annotation.matchedText || annotation.text || "", 500)}" on ${tabLabel}. annotationId: ${annotation.annotationId || "(unknown)"}.`;
+			}
+			case "browser_show_note": {
+				const note = result?.note || {};
+				return `Added note to annotationId ${note.annotationId || result?.annotation?.annotationId || "(unknown)"}: ${compactRealtimeTutorText(note.note || note.text || note.label || "", 500)}`;
+			}
+			case "browser_scroll_to_annotation":
+				return `Scrolled to annotationId ${result?.annotation?.annotationId || "(unknown)"}.`;
+			case "browser_clear_annotations":
+				return "Cleared Onhand annotations on the page.";
+			case "browser_find_elements": {
+				const matches = Array.isArray(result?.matches) ? result.matches : [];
+				return matches.length ? `Matching elements:\n${matches.slice(0, 10).map((match, index) => `${index + 1}. ${compactRealtimeTutorText(match.text || match.label || match.selector || "", 180)}`).join("\n")}` : "No matching elements found.";
+			}
+			case "browser_click":
+			case "browser_click_text":
+				return `Clicked the requested element on ${tabLabel}.`;
+			case "browser_type":
+			case "browser_type_by_label":
+				return `Typed into the requested field on ${tabLabel}.`;
+			case "browser_wait_for_selector":
+				return `Found selector on ${tabLabel}.`;
+			case "browser_collect_console": {
+				const entries = Array.isArray(result?.entries) ? result.entries : [];
+				return entries.length ? `Console entries:\n${entries.slice(0, 20).map((entry, index) => `${index + 1}. [${entry.level || "info"}] ${compactRealtimeTutorText(entry.text || "", 240)}`).join("\n")}` : "No console entries captured.";
+			}
+			case "browser_collect_network": {
+				const entries = Array.isArray(result?.entries) ? result.entries : [];
+				return entries.length ? `Network entries:\n${entries.slice(0, 20).map((entry, index) => `${index + 1}. ${entry.method || "GET"} ${entry.status || ""} ${compactRealtimeTutorText(entry.url || "", 220)}`).join("\n")}` : "No network entries captured.";
+			}
+			case "browser_get_dom":
+				return `DOM from ${tabLabel}:\n${compactRealtimeTutorText(result?.outerHTML || "", 5000)}`;
+			case "browser_capture_state":
+				return `Captured page state for ${tabLabel}.`;
+			case "browser_capture_screenshot":
+			case "browser_get_visible_region_image":
+			case "browser_pdf_capture_page_image":
+				return `Captured visual data from ${tabLabel}. Exact text tools are still required for citations.`;
+			case "browser_run_js":
+				return `JavaScript result on ${tabLabel}:\n${compactRealtimeTutorText(JSON.stringify(sanitizeRealtimeToolResult(result?.result)), 2000)}`;
+			default:
+				return compactRealtimeTutorText(JSON.stringify(sanitizeRealtimeToolResult(result)), 3000);
+			}
+		}
+
+		function realtimeBrowserToolResultText(name, result) {
+			switch (name) {
+				case "browser_get_visible_text":
+					return result?.visible?.text || result?.visible?.markdown || "";
+				case "browser_extract_content":
+					return result?.content?.markdown || result?.content?.text || "";
+				case "browser_get_selection":
+					return result?.selection?.text || "";
+				case "browser_get_viewport_headings": {
+					const headings = result?.headings || {};
+					return [
+						headings.currentHeading?.text || "",
+						...(Array.isArray(headings.headings) ? headings.headings.map((heading) => heading?.text || "") : []),
+					].join("\n");
+				}
+				case "browser_pdf_search": {
+					const matches = Array.isArray(result?.search?.matches) ? result.search.matches : [];
+					return matches.map((match) => match?.context || match?.text || match?.matchedText || "").join("\n");
+				}
+				case "browser_pdf_read_pages": {
+					const pages = result?.pages || {};
+					const pageItems = Array.isArray(pages.pages) ? pages.pages : Array.isArray(pages.results) ? pages.results : [];
+					return pageItems.map((page) => page?.text || page?.markdown || "").join("\n") || pages.text || pages.markdown || "";
+				}
+				default:
+					return "";
+			}
+		}
+
+		function realtimeBrowserToolReturnedReadableText(name, result) {
+			const text = normalizeRealtimeTranscriptText(realtimeBrowserToolResultText(name, result));
+			return text.length >= 24;
+		}
+
+		function rememberRealtimeReadableBrowserToolResult(name, result) {
+			if (!REALTIME_READ_TOOL_NAMES.has(String(name || ""))) return;
+			const text = String(realtimeBrowserToolResultText(name, result) || "").trim();
+			if (normalizeRealtimeTranscriptText(text).length < 24) return;
+			realtimeLastReadableBrowserTool = String(name || "");
+			realtimeLastReadableBrowserText = text;
+		}
+
+		const REALTIME_HIGHLIGHT_REPAIR_STOPWORDS = new Set([
+			"the",
+			"and",
+			"for",
+			"that",
+			"this",
+			"with",
+			"from",
+			"into",
+			"onto",
+			"about",
+			"where",
+			"what",
+			"when",
+			"how",
+			"which",
+			"between",
+			"difference",
+			"different",
+			"compare",
+			"comparison",
+			"versus",
+			"vs",
+			"line",
+			"page",
+			"says",
+			"say",
+			"does",
+			"did",
+			"can",
+			"you",
+			"your",
+			"its",
+			"are",
+			"was",
+			"were",
+			"has",
+			"have",
+			"had",
+		]);
+
+		function realtimeHighlightRepairTokens(value) {
+			const rawTokens = String(value || "")
+				.toLowerCase()
+				.replace(/[’']/g, "")
+				.match(/[a-z0-9]+/g);
+			if (!rawTokens) return [];
+			const tokens = [];
+			for (const token of rawTokens) {
+				if (token.length <= 2 || REALTIME_HIGHLIGHT_REPAIR_STOPWORDS.has(token)) continue;
+				tokens.push(token);
+				if (token.endsWith("ing") && token.length > 5) tokens.push(token.slice(0, -3));
+				if (token.endsWith("ed") && token.length > 4) tokens.push(token.slice(0, -2));
+				if (token.endsWith("s") && token.length > 4) tokens.push(token.slice(0, -1));
+			}
+			return [...new Set(tokens)];
+		}
+
+		function normalizeRealtimeHighlightRepairCandidate(value) {
+			return String(value || "")
+				.replace(/^\s*Visible text from [^:\n]+:\s*/i, "")
+				.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, "")
+				.replace(/\s+/g, " ")
+				.trim();
+		}
+
+		function realtimeReadableTextChunks(value) {
+			const raw = String(value || "");
+			const chunks = [];
+			for (const line of raw.split(/\n+/)) {
+				const normalizedLine = normalizeRealtimeHighlightRepairCandidate(line);
+				if (normalizedLine) chunks.push(normalizedLine);
+				for (const sentence of normalizedLine.split(/(?<=[.!?:])\s+(?=[A-Z"“])/)) {
+					const normalizedSentence = normalizeRealtimeHighlightRepairCandidate(sentence);
+					if (normalizedSentence) chunks.push(normalizedSentence);
+				}
+			}
+			return chunks.filter((chunk, index, list) => {
+				if (chunk.length < 12 || chunk.length > 500) return false;
+				const key = chunk.toLowerCase();
+				return list.findIndex((other) => other.toLowerCase() === key) === index;
+			});
+		}
+
+		function isMeaningfulRealtimeVoicePrompt(value = realtimeActiveVoiceTurn?.prompt) {
+			const text = normalizeRealtimeTranscriptText(value);
+			if (!text || /^voice question$/i.test(text)) return false;
+			return realtimeHighlightRepairTokens(text).length >= 2;
+		}
+
+		function buildRealtimeHighlightRepairCandidates(args = {}) {
+			const requestedText = normalizeRealtimeHighlightRepairCandidate(realtimeHighlightArgumentText(args));
+			const readableText = String(realtimeLastReadableBrowserText || "");
+			if (!requestedText || !readableText) return [];
+			const queryTokens = realtimeHighlightRepairTokens(requestedText);
+			if (!queryTokens.length) return [];
+			const queryTokenSet = new Set(queryTokens);
+			const chunks = realtimeReadableTextChunks(readableText);
+			const compactQuery = normalizeCitationText(requestedText);
+			const asksMultiHeadAttention =
+				/\bmulti[-\s]?headed?\b|\bmulti[-\s]?head\b|\bmultiple heads?\b/i.test(requestedText) &&
+				/\battention\b/i.test(requestedText);
+			const scored = [];
+			for (const chunk of chunks) {
+				if (chunk.toLowerCase() === requestedText.toLowerCase()) continue;
+				const chunkTokens = realtimeHighlightRepairTokens(chunk);
+				if (!chunkTokens.length) continue;
+				const chunkTokenSet = new Set(chunkTokens);
+				let overlap = 0;
+				for (const token of queryTokenSet) {
+					if (chunkTokenSet.has(token)) overlap += 1;
+				}
+				const coverage = overlap / Math.max(queryTokenSet.size, 1);
+				const density = overlap / Math.max(chunkTokenSet.size, 1);
+				const compactChunk = normalizeCitationText(chunk);
+				const substringBonus = compactChunk.includes(compactQuery) || compactQuery.includes(compactChunk) ? 80 : 0;
+				const multiHeadBonus =
+					asksMultiHeadAttention && /\bmulti[-\s]?head\b/i.test(chunk) && /\bparallel|multiple weighted graphs|heads?\b/i.test(chunk)
+						? 120
+						: 0;
+				if (overlap < 2 || coverage < 0.42) continue;
+				scored.push({
+					text: chunk,
+					score: overlap * 20 + coverage * 50 + density * 20 + substringBonus + multiHeadBonus - chunk.length * 0.01,
+				});
+			}
+			return scored
+				.sort((left, right) => right.score - left.score)
+				.map((item) => item.text)
+				.filter((text, index, list) => list.findIndex((other) => other.toLowerCase() === text.toLowerCase()) === index)
+				.slice(0, 4);
+		}
+
+		function buildRealtimeAutoAnchorCandidates() {
+			const prompt = normalizeRealtimeTranscriptText(realtimeActiveVoiceTurn?.prompt || "");
+			if (!isMeaningfulRealtimeVoicePrompt(prompt)) return [];
+			const candidates = buildRealtimeHighlightRepairCandidates({ text: prompt });
+			if (candidates.length) return candidates;
+			return realtimeReadableTextChunks(realtimeLastReadableBrowserText)
+				.filter((chunk) => chunk.length >= 24 && chunk.length <= 220)
+				.slice(0, 2);
+		}
+
+		function realtimeVoiceTurnHasAnchor(turn = realtimeActiveVoiceTurn) {
+			return (Array.isArray(turn?.pageActions) ? turn.pageActions : []).some((action) => {
+				const type = String(action?.type || "");
+				return type === "annotation" || type === "note";
+			});
+		}
+
+		function realtimeCurrentAnchorText(turn = realtimeActiveVoiceTurn) {
+			const actions = Array.isArray(turn?.pageActions) ? turn.pageActions : [];
+			const action = actions.find((item) => item?.type === "annotation" && item?.citationText) || actions.find((item) => item?.citationText);
+			return String(action?.citationText || action?.detail || "").trim();
+		}
+
+		function realtimePublishAnswerInstructions(reason = "publish_answer") {
+			const prompt = normalizeRealtimeTranscriptText(realtimeActiveVoiceTurn?.prompt || "");
+			const anchorText = realtimeCurrentAnchorText();
+			return [
+				realtimeTutorInstructions(),
+				prompt ? `Student question: ${prompt}` : "",
+				anchorText ? `Highlighted source span: ${anchorText}` : "",
+				"Do not speak in this response. Call publish_sidebar_answer now. Do not call another browser tool unless the highlighted span is clearly unrelated to the question.",
+				"Do not publish a lead-in by itself. The markdown must be the complete answer to the student's question.",
+				"Do not write manual citation markers like [1] in the markdown; Onhand will attach citation buttons from the highlighted source.",
+				"For a comparison question, explicitly name both sides of the comparison and explain the difference in 2-4 concise sentences.",
+				"For the single-headed versus multi-headed attention question, say that single-headed attention uses one attention pattern/map, while multi-headed attention uses several heads in parallel so different relation patterns can be learned at the same time.",
+				reason ? `Correction reason: ${reason}.` : "",
+			]
+				.filter(Boolean)
+				.join("\n\n");
+		}
+
+		function realtimeForcedPublishResponseOptions(reason = "publish_answer") {
+			return {
+				output_modalities: ["text"],
+				tool_choice: REALTIME_FORCED_PUBLISH_TOOL_CHOICE,
+				instructions: realtimePublishAnswerInstructions(reason),
+			};
+		}
+
+		function realtimeResponseOptionsAfterTool(toolName, output) {
+			if (!isRealtimeOnlyVoiceMode()) return {};
+			if (output?.autoAnchor?.ok) {
+				return realtimeForcedPublishResponseOptions("source span already highlighted");
+			}
+			if (output?.ok && realtimeActiveVoiceTurn?.kind === "realtime_response" && realtimeVoiceTurnHasAnchor()) {
+				return realtimeForcedPublishResponseOptions("source span highlighted");
+			}
+			if (
+					REALTIME_READ_TOOL_NAMES.has(String(toolName || "")) &&
+					output?.ok &&
+					realtimeBrowserToolReturnedReadableText(toolName, output?.result || {}) &&
+					!realtimeVoiceTurnHasAnchor()
+				) {
+				return {
+					tool_choice: REALTIME_FORCED_HIGHLIGHT_TOOL_CHOICE,
+					instructions:
+						"Use browser_highlight_text now with a short exact span copied from the tool result that supports the student's page question. Do not answer yet.",
+				};
+			}
+			return { tool_choice: "auto" };
+		}
+
+		function buildRealtimeBrowserToolPageAction(name, result) {
+		const tab = realtimeToolTab(result);
+		const base = {
+			tabId: typeof tab.id === "number" ? tab.id : null,
+			windowId: typeof tab.windowId === "number" ? tab.windowId : null,
+			title: String(tab.title || "").trim(),
+			url: String(tab.url || "").trim(),
+		};
+		switch (name) {
+			case "browser_open_pdf_in_onhand_viewer":
+				return {
+					key: `tab:${tab.id || result?.pdfUrl || "pdf"}:pdf-viewer`,
+					type: "tab",
+					...base,
+					label: result?.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
+					detail: compactRealtimeTutorText(result?.pdfUrl || tab.title || tab.url || "PDF", 72),
+				};
+			case "browser_pdf_search": {
+				const search = result?.search || {};
+				const detail = compactRealtimeTutorText(search.query || "PDF search", 72);
+				return {
+					key: `pdf-search:${tab.id || "tab"}:${detail}`,
+					type: "read",
+					...base,
+					label: "Searched PDF",
+					detail,
+				};
+			}
+			case "browser_pdf_read_pages": {
+				const pages = result?.pages || {};
+				const pageList = Array.isArray(pages.pageNumbers) ? pages.pageNumbers.join(", ") : pages.pageNumber || pages.page || "pages";
+				return {
+					key: `pdf-read:${tab.id || "tab"}:${pageList}`,
+					type: "read",
+					...base,
+					label: "Read PDF",
+					detail: compactRealtimeTutorText(`p. ${pageList}`, 72),
+				};
+			}
+			case "browser_pdf_jump_to_page": {
+				const jump = result?.jump || {};
+				const page = jump.pageNumber || jump.pdfAnchor?.pageNumber || "?";
+				return {
+					key: `pdf-jump:${tab.id || "tab"}:${page}`,
+					type: "tab",
+					...base,
+					label: "Moved PDF",
+					detail: `p. ${page}`,
+				};
+			}
+			case "browser_highlight_text": {
+				const annotation = result?.annotation || {};
+				const matchedTextFull = String(annotation.matchedText || annotation.text || "").trim();
+				const matchedText = compactRealtimeTutorText(matchedTextFull || "Relevant passage", 72);
+				return {
+					key: `highlight:${annotation.annotationId || matchedText}`,
+					type: "annotation",
+					...base,
+					annotationId: annotation.annotationId || null,
+					label: "Highlighted text",
+					detail: matchedText,
+					citationText: matchedTextFull || matchedText,
+					...(annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {}),
+				};
+			}
+			case "browser_show_note": {
+				const note = result?.note || {};
+				const noteTextFull = String(note.note || note.text || note.label || "").trim();
+				const noteText = compactRealtimeTutorText(noteTextFull || "Short explanation", 72);
+				return {
+					key: `note:${note.annotationId || noteText}`,
+					type: "note",
+					...base,
+					annotationId: note.annotationId || null,
+					label: "Added note",
+					detail: noteText,
+					citationText: noteTextFull || noteText,
+					...(note.pdfAnchor ? { pdfAnchor: note.pdfAnchor } : {}),
+				};
+			}
+			case "browser_scroll_to_annotation":
+				return {
+					key: `scroll:${result?.annotation?.annotationId || Date.now()}`,
+					type: "annotation",
+					...base,
+					annotationId: result?.annotation?.annotationId || null,
+					label: "Moved to section",
+					detail: "Brought the relevant part of the page into view",
+				};
+			case "browser_capture_state": {
+				const artifactId = result?.persistedArtifact?.artifactId || result?.artifact?.id || null;
+				if (!artifactId) return null;
+				return {
+					key: `artifact:${artifactId}`,
+					type: "artifact",
+					...base,
+					artifactId,
+					label: "Saved artifact",
+					detail: compactRealtimeTutorText(result?.page?.title || tab.title || artifactId, 72),
+				};
+			}
+			default:
+				return null;
+		}
+	}
+
+	function appendRealtimeBrowserToolPageAction(name, result) {
+		const action = buildRealtimeBrowserToolPageAction(name, result);
+		if (!action) return [];
+		const activeTurn = realtimeActiveVoiceTurn;
+		if (activeTurn) {
+			appendRealtimeTurnPageActions(activeTurn, [action]);
+			updateRealtimeAnswerForTurn(activeTurn, { pageActions: activeTurn.pageActions });
+		}
+		return [action];
+	}
+
+	async function executeRealtimeBrowserTool(name, args = {}) {
+		const command = realtimeBrowserToolCommand(name);
+		if (!command) throw new Error(`Unknown realtime browser tool: ${name || "(blank)"}`);
+		const normalizedArgs = normalizeRealtimeBrowserToolArgs(args);
+		if (name === "browser_highlight_text" && normalizedArgs.text) {
+			if (!Object.prototype.hasOwnProperty.call(normalizedArgs, "allowApproximate") && !Object.prototype.hasOwnProperty.call(normalizedArgs, "exactOnly")) {
+				normalizedArgs.allowApproximate = true;
+			}
+			if (!Object.prototype.hasOwnProperty.call(normalizedArgs, "scrollIntoView")) normalizedArgs.scrollIntoView = true;
+		}
+		const runToolFor = async (toolName, toolCommand, toolArgs) => {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:realtime-browser-tool",
+				windowId: await ensureCurrentWindowId(),
+				tool: toolName,
+				command: toolCommand,
+				args: toolArgs,
+			});
+			if (!response?.ok) throw new Error(response?.error || `Could not run ${toolName}.`);
+			return response.result || {};
+		};
+		const runTool = (toolArgs) => runToolFor(name, command, toolArgs);
+		let result = null;
+		if (name === "browser_highlight_text") {
+			const originalText = String(normalizedArgs.text || realtimeHighlightArgumentText(normalizedArgs) || "").trim();
+			const repairCandidates = buildRealtimeHighlightRepairCandidates(normalizedArgs);
+			const attempts = [
+				normalizedArgs,
+				...repairCandidates.map((text) => ({
+					...normalizedArgs,
+					text,
+					allowApproximate: true,
+					scrollIntoView: normalizedArgs.scrollIntoView !== false,
+				})),
+			].filter((attempt, index, list) => {
+				const text = String(attempt?.text || "").trim().toLowerCase();
+				return text && list.findIndex((other) => String(other?.text || "").trim().toLowerCase() === text) === index;
+			});
+			let lastError = null;
+			for (let index = 0; index < attempts.length; index += 1) {
+				try {
+					result = await runTool(attempts[index]);
+					if (index > 0) {
+						result = {
+							...result,
+							highlightRetry: {
+								originalText,
+								usedText: attempts[index].text,
+								sourceTool: realtimeLastReadableBrowserTool,
+							},
+						};
+					}
+					break;
+				} catch (error) {
+					lastError = error;
+				}
+			}
+			if (!result) throw lastError || new Error(`Could not run ${name}.`);
+		} else {
+			result = await runTool(normalizedArgs);
+		}
+		rememberRealtimeReadableBrowserToolResult(name, result);
+		let pageActions = appendRealtimeBrowserToolPageAction(name, result);
+		let autoAnchor = null;
+		if (
+			REALTIME_READ_TOOL_NAMES.has(String(name || "")) &&
+			realtimeBrowserToolReturnedReadableText(name, result) &&
+			realtimeActiveVoiceTurn?.kind === "realtime_response" &&
+			!realtimeVoiceTurnHasAnchor()
+		) {
+			const highlightCommand = realtimeBrowserToolCommand("browser_highlight_text");
+			for (const text of buildRealtimeAutoAnchorCandidates()) {
+				try {
+					const anchorResult = await runToolFor("browser_highlight_text", highlightCommand, {
+						text,
+						allowApproximate: true,
+						scrollIntoView: true,
+						reuseExisting: true,
+					});
+					const anchorActions = appendRealtimeBrowserToolPageAction("browser_highlight_text", anchorResult);
+					autoAnchor = {
+						ok: true,
+						tool: "browser_highlight_text",
+						command: highlightCommand,
+						content: formatRealtimeBrowserToolResult("browser_highlight_text", anchorResult),
+						pageActions: anchorActions,
+						result: sanitizeRealtimeToolResult(anchorResult),
+					};
+					pageActions = dedupePageActions([...pageActions, ...anchorActions]);
+					break;
+				} catch (error) {
+					autoAnchor = {
+						ok: false,
+						tool: "browser_highlight_text",
+						command: highlightCommand,
+						error: error?.message || String(error),
+					};
+				}
+			}
+		}
+		if (pageActions.length || autoAnchor || /highlight|note|annotation|pdf|capture|navigate|activate/.test(name)) {
+			await requestState();
+		}
+			return {
+				ok: true,
+				tool: name,
+				command,
+				content: formatRealtimeBrowserToolResult(name, result),
+				pageActions,
+				result: sanitizeRealtimeToolResult(result),
+				...(autoAnchor ? { autoAnchor } : {}),
+			};
+		}
+
 	function normalizeRealtimePedagogicalMove(value, fallbackPrompt = "") {
 		const raw = value?.move && typeof value.move === "object" ? value.move : value && typeof value === "object" ? value : {};
 		const rawAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
@@ -6377,7 +7536,7 @@
 			anchor: {
 				text_excerpt: anchorText,
 				kind: compactRealtimeTutorText(rawAnchor.kind || "question_anchor", 40) || "question_anchor",
-				note: compactRealtimeTutorText(rawAnchor.note || raw.note || "Look here first", 80),
+				note: compactRealtimeTutorText(rawAnchor.note || raw.note || "Key evidence for this question.", 80),
 			},
 			move_type: compactRealtimeTutorText(raw.move_type || "prediction_prompt", 40) || "prediction_prompt",
 			voice_script: voiceScript,
@@ -6524,7 +7683,7 @@
 			anchors: [
 				{
 					text: anchorText,
-					note: compactRealtimeTutorText(move?.anchor?.note || "Look here first", 80),
+					note: compactRealtimeTutorText(move?.anchor?.note || "Key evidence for this question.", 80),
 					label: "Tutor prompt",
 					conceptLabel: compactRealtimeTutorText(move?.expected_concepts?.[0] || "Page concept", 80),
 					checkKind: move?.move_type === "retrieval_prompt" ? "retrieval" : "prediction",
@@ -6774,13 +7933,63 @@
 		}
 	}
 
+	function realtimeTurnNeedsGroundedAnchor(turn = realtimeActiveVoiceTurn) {
+		return Boolean(
+			isRealtimeOnlyVoiceMode() &&
+				turn?.kind === "realtime_response" &&
+				hasRealtimePageMaterialContext(currentState) &&
+				!realtimeSuppressTranscriptForResponse &&
+				!realtimeVoiceTurnHasAnchor(turn),
+		);
+	}
+
+	function retryRealtimeGroundedResponse(turn, reason = "ungrounded_response") {
+		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return false;
+		const retryCount = Number(turn.groundingRetryCount || 0);
+		if (retryCount >= 2) return false;
+		turn.groundingRetryCount = retryCount + 1;
+		turn.cancelledUngroundedResponse = false;
+		realtimeTranscriptBuffer = "";
+		updateRealtimeAnswerForTurn(turn, {
+			markdown: "",
+			status: "Reading page",
+			pending: true,
+			published: false,
+		});
+		requestRealtimeResponse(`response_retry_${reason}`, realtimeInitialGroundedResponseOptions(turn.prompt || "Voice question"), {
+			voiceTurnId: turn.id,
+		});
+		setRealtimeStatus("Reading page...");
+		return true;
+	}
+
+	function maybeCancelUngroundedRealtimeAudio() {
+		const turn = realtimeActiveVoiceTurn;
+		if (!realtimeTurnNeedsGroundedAnchor(turn)) return false;
+		if (!turn.cancelledUngroundedResponse) {
+			turn.cancelledUngroundedResponse = true;
+			setRealtimeStatus("Reading page...");
+			try {
+				sendRealtimeEvent({
+					event_id: realtimeEventId("onhand_cancel_ungrounded_audio"),
+					type: "response.cancel",
+				});
+			} catch {
+				// The response may already be finishing; response.done will trigger the grounded retry.
+			}
+		}
+		return true;
+	}
+
 	function appendRealtimeTranscript(delta) {
 		if (realtimeSuppressTranscriptForResponse) return;
+		if (realtimeTurnNeedsGroundedAnchor()) return;
 		const text = String(delta || "");
 		if (!text) return;
 		const activeTurn = realtimeActiveVoiceTurn;
 		if (!activeTurn) return;
 		realtimeTranscriptBuffer += text;
+		if (activeTurn.kind === "realtime_response") activeTurn.lastSpokenAnswerText = realtimeTranscriptBuffer;
 		updateRealtimeAnswerForTurn(activeTurn, {
 			markdown: realtimeTranscriptBuffer,
 			status: "Speaking",
@@ -6805,15 +8014,63 @@
 		return true;
 	}
 
+	function pushRealtimeResponseTextPart(parts, value) {
+		const text = String(value || "").trim();
+		if (text) parts.push(text);
+	}
+
 	function extractRealtimeResponseText(response) {
 		const parts = [];
+		pushRealtimeResponseTextPart(parts, response?.output_text);
 		for (const item of Array.isArray(response?.output) ? response.output : []) {
+			pushRealtimeResponseTextPart(parts, item?.text);
+			pushRealtimeResponseTextPart(parts, item?.transcript);
+			pushRealtimeResponseTextPart(parts, item?.audio_transcript);
+			pushRealtimeResponseTextPart(parts, item?.output_text);
 			for (const content of Array.isArray(item?.content) ? item.content : []) {
-				const text = content?.text || content?.transcript || content?.audio_transcript || "";
-				if (text) parts.push(text);
+				pushRealtimeResponseTextPart(parts, content?.text);
+				pushRealtimeResponseTextPart(parts, content?.transcript);
+				pushRealtimeResponseTextPart(parts, content?.audio_transcript);
+				pushRealtimeResponseTextPart(parts, content?.output_text);
+				for (const part of Array.isArray(content?.parts) ? content.parts : []) {
+					pushRealtimeResponseTextPart(parts, part?.text);
+					pushRealtimeResponseTextPart(parts, part?.transcript);
+					pushRealtimeResponseTextPart(parts, part?.audio_transcript);
+					pushRealtimeResponseTextPart(parts, part?.output_text);
+				}
 			}
 		}
 		return parts.join("\n").trim();
+	}
+
+	function realtimeCompletedAnswerText(eventText, activeTurn) {
+		return String(
+			eventText ||
+				activeTurn?.lastSpokenAnswerText ||
+				realtimeAnswer?.markdown ||
+				realtimeTranscriptBuffer ||
+				"",
+		).trim();
+	}
+
+	function retryRealtimePublishSidebarAnswer(turn, reason = "missing_sidebar_answer") {
+		if (!turn || !isRealtimeVoiceTurnCurrent(turn)) return false;
+		const retryCount = Number(turn.answerRetryCount || 0);
+		if (retryCount >= 2) return false;
+		turn.answerRetryCount = retryCount + 1;
+		updateRealtimeAnswerForTurn(turn, {
+			markdown: "",
+			status: "Composing answer",
+			pending: true,
+			published: false,
+			pageActions: Array.isArray(turn.pageActions) ? turn.pageActions : [],
+		});
+		requestRealtimeResponse(
+			`response_retry_${reason}`,
+			realtimeForcedPublishResponseOptions(reason),
+			{ voiceTurnId: turn.id },
+		);
+		return true;
 	}
 
 	function parseRealtimeArguments(value) {
@@ -6854,6 +8111,9 @@
 	}
 
 	async function executeRealtimeTool(name, args) {
+		if (realtimeBrowserToolCommand(name)) {
+			return await executeRealtimeBrowserTool(name, args);
+		}
 		switch (name) {
 			case "check_calendar": {
 				const date = String(args?.date || "").trim();
@@ -6869,111 +8129,88 @@
 			case "get_current_learning_context":
 				return await requestRealtimeContext();
 			case "annotate_page": {
-				const response = await chrome.runtime.sendMessage({
-					type: "sidebar:realtime-annotate",
-					windowId: await ensureCurrentWindowId(),
-					anchors: Array.isArray(args?.anchors) ? args.anchors : [],
-				});
-				if (!response?.ok) throw new Error(response?.error || "Could not annotate the page.");
-				await requestState();
-				const result = response.result || {};
-				const pageActions = Array.isArray(result.pageActions) ? result.pageActions : buildRealtimeAnnotationPageActions(result);
-				const activeTurn = realtimeActiveVoiceTurn;
-				if (activeTurn) {
-					appendRealtimeTurnPageActions(activeTurn, pageActions);
-					updateRealtimeAnswerForTurn(activeTurn, { pageActions: activeTurn.pageActions });
-				}
-				return {
-					...result,
-					pageActions,
-				};
+				const { result } = await applyRealtimeAnnotations(args?.anchors);
+				return result || { annotations: [], pageActions: [] };
 			}
 			case "open_pdf_in_onhand_viewer": {
-				const result = await ensureRealtimePdfSurfaceForVoice();
-				return {
-					opened: Boolean(result?.opened),
-					result: result?.result || null,
-				};
+				return await executeRealtimeBrowserTool("browser_open_pdf_in_onhand_viewer", args);
 			}
 			case "search_pdf": {
-				const response = await chrome.runtime.sendMessage({
-					type: "sidebar:realtime-pdf-tool",
-					windowId: await ensureCurrentWindowId(),
-					tool: "pdf_search",
-					args: {
-						query: String(args?.query || "").trim(),
-						maxMatches: Number.isFinite(Number(args?.max_matches)) ? Number(args.max_matches) : undefined,
-					},
-				});
-				if (!response?.ok) throw new Error(response?.error || "Could not search the PDF.");
-				return response.result || {};
+				return await executeRealtimeBrowserTool("browser_pdf_search", args);
 			}
 			case "read_pdf_pages": {
-				const response = await chrome.runtime.sendMessage({
-					type: "sidebar:realtime-pdf-tool",
-					windowId: await ensureCurrentWindowId(),
-					tool: "pdf_read_pages",
-					args: {
-						pages: args?.pages,
-						pageNumber: Number.isFinite(Number(args?.page_number)) ? Number(args.page_number) : undefined,
-						startPage: Number.isFinite(Number(args?.start_page)) ? Number(args.start_page) : undefined,
-						endPage: Number.isFinite(Number(args?.end_page)) ? Number(args.end_page) : undefined,
-						maxChars: Number.isFinite(Number(args?.max_chars)) ? Number(args.max_chars) : undefined,
-					},
-				});
-				if (!response?.ok) throw new Error(response?.error || "Could not read PDF pages.");
-				return response.result || {};
+				return await executeRealtimeBrowserTool("browser_pdf_read_pages", args);
 			}
 			case "jump_to_pdf_page": {
-				const response = await chrome.runtime.sendMessage({
-					type: "sidebar:realtime-pdf-tool",
-					windowId: await ensureCurrentWindowId(),
-					tool: "pdf_jump_to_page",
-					args: {
-						pageNumber: Number(args?.page_number),
-						text: typeof args?.text === "string" ? args.text : undefined,
-						occurrence: Number.isFinite(Number(args?.occurrence)) ? Number(args.occurrence) : undefined,
-					},
-				});
-				if (!response?.ok) throw new Error(response?.error || "Could not move to the PDF page.");
-				return response.result || {};
+				return await executeRealtimeBrowserTool("browser_pdf_jump_to_page", args);
 			}
 			case "publish_sidebar_answer": {
 				const activeTurn = realtimeActiveVoiceTurn;
+				const markdown = String(args?.markdown || "").trim();
+				if (!realtimePublishedAnswerLooksSubstantive(markdown, activeTurn)) {
+					if (activeTurn) activeTurn.answerRetryCount = Number(activeTurn.answerRetryCount || 0) + 1;
+					updateRealtimeAnswerForTurn(activeTurn, {
+						markdown: "",
+						status: "Composing answer",
+						pending: true,
+						published: false,
+					});
+					if (Number(activeTurn?.answerRetryCount || 0) <= 2) {
+						return {
+							published: false,
+							rejected: true,
+							reason: "incomplete_answer",
+							message: "publish_sidebar_answer markdown must contain the complete answer, not just a lead-in.",
+							responseAfterTool: {
+								reason: "response_retry_complete_answer",
+								responseOptions: realtimeForcedPublishResponseOptions("previous publish_sidebar_answer was incomplete"),
+								controlOptions: { voiceTurnId: activeTurn?.id || "" },
+							},
+						};
+					}
+				}
+				if (Array.isArray(args?.anchors) && args.anchors.length) {
+					await applyRealtimeAnnotations(args.anchors);
+				}
 				updateRealtimeAnswerForTurn(activeTurn, {
-					markdown: String(args?.markdown || "").trim(),
+					markdown,
 					status: String(args?.status || "Voice answer").trim(),
 					pending: false,
 					published: true,
 					pageActions: Array.isArray(activeTurn?.pageActions) ? activeTurn.pageActions : [],
 				});
 				if (activeTurn?.kind === "realtime_response") {
-					await persistRealtimeVoiceTurn(activeTurn, args?.markdown || "", {
+					await persistRealtimeVoiceTurn(activeTurn, markdown, {
 						status: args?.status || "Voice answer",
 						pageActions: activeTurn.pageActions,
 					});
 				}
-				return { published: true };
+				try {
+					narratePublishedRealtimeAnswer(markdown);
+				} catch (error) {
+					setRealtimeStatus("Voice ready · ask, then pause", error?.message || String(error));
+				}
+				return { published: true, responseAlreadyRequested: true };
 			}
 			case "answer_directly": {
-				return await startRealtimeDirectAnswer(args?.prompt);
+				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
 			}
 			case "plan_pedagogical_move": {
-				return await startRealtimeSocraticPlan(args?.user_question || args?.userQuestion || args?.prompt);
+				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
 			}
 			case "evaluate_response": {
-				return await startRealtimeSocraticEvaluation(args?.user_response || args?.userResponse || args?.response);
+				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
 			}
 			default:
 				throw new Error(`Unknown realtime tool: ${name || "(blank)"}`);
 		}
 	}
 
-	async function handleRealtimeFunctionCall(call) {
-		realtimeHandledCallIds.add(call.callId);
-		let output = null;
-		try {
-			output = await executeRealtimeTool(call.name, parseRealtimeArguments(call.arguments));
+		async function handleRealtimeFunctionCall(call) {
+			realtimeHandledCallIds.add(call.callId);
+			let output = null;
+			try {
+				output = await executeRealtimeTool(call.name, parseRealtimeArguments(call.arguments));
 			sendRealtimeEvent({
 				event_id: realtimeEventId("onhand_tool_result"),
 				type: "conversation.item.create",
@@ -6981,21 +8218,31 @@
 					type: "function_call_output",
 					call_id: call.callId,
 					output: JSON.stringify(output),
-				},
-			});
-		} catch (error) {
-			sendRealtimeEvent({
-				event_id: realtimeEventId("onhand_tool_error"),
-				type: "conversation.item.create",
-				item: {
-					type: "function_call_output",
-					call_id: call.callId,
-					output: JSON.stringify({ error: error?.message || String(error) }),
-				},
-			});
+					},
+				});
+			} catch (error) {
+				output = { ok: false, tool: call.name || "", error: error?.message || String(error) };
+				sendRealtimeEvent({
+					event_id: realtimeEventId("onhand_tool_error"),
+					type: "conversation.item.create",
+					item: {
+						type: "function_call_output",
+						call_id: call.callId,
+						output: JSON.stringify(output),
+					},
+				});
+			}
+			if (output?.responseAfterTool) {
+				const followup = output.responseAfterTool;
+				requestRealtimeResponse(
+					followup.reason || "response_after_tool",
+					followup.responseOptions || realtimeResponseOptionsAfterTool(call.name, output),
+					followup.controlOptions || {},
+				);
+			} else if (!output?.responseAlreadyRequested) {
+				requestRealtimeResponse("response_after_tool", realtimeResponseOptionsAfterTool(call.name, output));
+			}
 		}
-		if (!output?.responseAlreadyRequested) requestRealtimeResponse("response_after_tool");
-	}
 
 	async function handleRealtimeServerEvent(rawEvent) {
 		let event;
@@ -7029,26 +8276,53 @@
 		if (event.type === "input_audio_buffer.speech_started") {
 			clearRealtimeVoiceFallback();
 			pauseRealtimePendingTranscriptFlush();
+			clearRealtimeOnlyVoiceResponse();
 			realtimeServerSpeechSeenAt = Date.now();
-			if (realtimeActiveVoiceTurn) markRealtimeVoiceTurnStale("user_interrupted");
+			if (
+				realtimeActiveVoiceTurn &&
+				(!isRealtimeOnlyVoiceMode() || realtimeResponseInProgress || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
+			) {
+				markRealtimeVoiceTurnStale("user_interrupted");
+			}
 			setRealtimeStatus("Listening...");
 			return;
 		}
 		if (event.type === "input_audio_buffer.speech_stopped") {
 			clearRealtimeVoiceFallback();
 			realtimeServerSpeechSeenAt = Date.now();
-			setRealtimeStatus("Transcribing...");
+			setRealtimeStatus(isRealtimeOnlyVoiceMode() ? "Transcribing..." : "Transcribing...");
+			if (isRealtimeOnlyVoiceMode()) {
+				scheduleRealtimeOnlyVoiceCommitFallback("speech_stopped");
+				return;
+			}
 			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
 			return;
 		}
 		if (event.type === "input_audio_buffer.committed") {
 			clearRealtimeVoiceFallback();
+			clearRealtimeOnlyVoiceResponse();
+			realtimeManualVoiceCommitPending = false;
 			realtimeServerSpeechSeenAt = Date.now();
+			if (isRealtimeOnlyVoiceMode()) {
+				ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
+				setRealtimeStatus("Thinking...");
+				return;
+			}
 			setRealtimeStatus("Transcribing...");
 			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
 			return;
 		}
 		if (event.type === "conversation.item.input_audio_transcription.failed") {
+			clearRealtimeOnlyVoiceResponse();
+			realtimeManualVoiceCommitPending = false;
+			if (isRealtimeOnlyVoiceMode()) {
+				ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
+				return;
+			}
+			if (!shouldUseLocalRealtimeFallbackCommit()) {
+				setRealtimeStatus("Voice ready · ask, then pause", "Could not transcribe that voice turn. Please try again.");
+				return;
+			}
 			if (startRealtimeAudioResponseFallback(event.item_id, "response_after_transcription_failed")) {
 				setRealtimeStatus("Thinking from audio...");
 			} else {
@@ -7058,6 +8332,15 @@
 		}
 		if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
 			const transcript = String(event.transcript || "").trim();
+			clearRealtimeOnlyVoiceResponse();
+			realtimeManualVoiceCommitPending = false;
+			if (isRealtimeOnlyVoiceMode()) {
+				clearRealtimeTranscriptionFallback();
+				const turn = ensureRealtimeAudioVoiceTurn(event.item_id, transcript || "Voice question");
+				if (transcript) appendRealtimeUserTranscriptToTurn(turn, transcript);
+				queueRealtimeVoiceTranscript(transcript);
+				return;
+			}
 			if (noteRealtimeTranscriptHandledByAudioFallback(event.item_id, transcript)) return;
 			clearRealtimeTranscriptionFallback();
 			queueRealtimeVoiceTranscript(transcript);
@@ -7065,12 +8348,18 @@
 		}
 		if (event.type === "response.created") {
 			clearRealtimeVoiceFallback();
+			clearRealtimeOnlyVoiceResponse();
+			if (isRealtimeOnlyVoiceMode() && !realtimeSuppressTranscriptForResponse) {
+				const turn = ensureRealtimeAudioVoiceTurn("", "Voice question");
+				if (!realtimeResponseVoiceTurnId && turn?.id) realtimeResponseVoiceTurnId = turn.id;
+			}
 			realtimeResponseInProgress = true;
 			realtimeTranscriptBuffer = "";
 			setRealtimeStatus("Thinking...");
 			return;
 		}
 		if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
+			if (maybeCancelUngroundedRealtimeAudio()) return;
 			setRealtimeStatus("Speaking...");
 			return;
 		}
@@ -7088,7 +8377,39 @@
 			event.transcript &&
 			!realtimeSuppressTranscriptForResponse
 		) {
-			updateRealtimeAnswer({ markdown: event.transcript, status: "Voice answer", pending: false });
+			if (realtimeTurnNeedsGroundedAnchor()) return;
+			const activeTurn =
+				realtimeResponseVoiceTurnId && isRealtimeVoiceTurnCurrent(realtimeResponseVoiceTurnId) ? realtimeActiveVoiceTurn : null;
+			if (activeTurn) {
+				activeTurn.lastSpokenAnswerText = String(event.transcript || "").trim();
+				updateRealtimeAnswerForTurn(activeTurn, {
+					markdown: activeTurn.lastSpokenAnswerText,
+					status: "Voice answer",
+					pending: false,
+					pageActions: Array.isArray(activeTurn.pageActions) ? activeTurn.pageActions : [],
+				});
+			} else {
+				updateRealtimeAnswer({ markdown: event.transcript, status: "Voice answer", pending: false });
+			}
+		}
+		if (
+			(event.type === "response.output_text.done" || event.type === "response.text.done") &&
+			event.text &&
+			!realtimeSuppressTranscriptForResponse
+		) {
+			const activeTurn =
+				realtimeResponseVoiceTurnId && isRealtimeVoiceTurnCurrent(realtimeResponseVoiceTurnId) ? realtimeActiveVoiceTurn : null;
+			if (activeTurn) {
+				activeTurn.lastSpokenAnswerText = String(event.text || "").trim();
+				updateRealtimeAnswerForTurn(activeTurn, {
+					markdown: activeTurn.lastSpokenAnswerText,
+					status: "Voice answer",
+					pending: false,
+					pageActions: Array.isArray(activeTurn.pageActions) ? activeTurn.pageActions : [],
+				});
+			} else {
+				updateRealtimeAnswer({ markdown: event.text, status: "Voice answer", pending: false });
+			}
 		}
 
 		for (const call of collectRealtimeFunctionCalls(event)) {
@@ -7099,18 +8420,41 @@
 			const text = extractRealtimeResponseText(event.response);
 			const responseVoiceTurnId = realtimeResponseVoiceTurnId;
 			const responseAfterDoneStatus = realtimeResponseAfterDoneStatus;
+			const responseOutputModalities = realtimeResponseOutputModalities;
 			const activeTurn = responseVoiceTurnId && isRealtimeVoiceTurnCurrent(responseVoiceTurnId) ? realtimeActiveVoiceTurn : null;
 			const continuingAfterTool = noteRealtimeResponseDone();
-			if (text && !realtimeAnswer?.published && activeTurn) {
-				updateRealtimeAnswerForTurn(activeTurn, { markdown: text, status: "Voice answer", pending: false });
+			if (!continuingAfterTool && activeTurn && realtimeTurnNeedsGroundedAnchor(activeTurn) && (text || activeTurn.cancelledUngroundedResponse)) {
+				if (retryRealtimeGroundedResponse(activeTurn, "ungrounded")) return;
+			}
+			const finalText = realtimeCompletedAnswerText(text, activeTurn);
+			const shouldNarrateFinalText =
+				Boolean(finalText && activeTurn && !realtimeAnswer?.published) &&
+				responseOutputModalities.includes("text") &&
+				!responseOutputModalities.includes("audio");
+			if (finalText && !continuingAfterTool && !realtimeAnswer?.published && activeTurn) {
+				if (!realtimePublishedAnswerLooksSubstantive(finalText, activeTurn)) {
+					if (retryRealtimePublishSidebarAnswer(activeTurn, "complete_answer_required")) return;
+				}
+				updateRealtimeAnswerForTurn(activeTurn, {
+					markdown: finalText,
+					status: "Voice answer",
+					pending: false,
+					pageActions: Array.isArray(activeTurn.pageActions) ? activeTurn.pageActions : [],
+				});
 			} else if (continuingAfterTool && realtimeAnswer?.pending && activeTurn) {
 				updateRealtimeAnswerForTurn(activeTurn, { status: "Using page context...", pending: true });
 			} else if (realtimeAnswer?.pending && activeTurn) {
 				updateRealtimeAnswerForTurn(activeTurn, { pending: false });
 			}
 			if (activeTurn?.kind === "realtime_response" && !continuingAfterTool) {
-				const finalText = text || realtimeAnswer?.markdown || realtimeTranscriptBuffer;
-				await persistRealtimeVoiceTurn(activeTurn, finalText, { status: "Voice answer" });
+				if (!finalText && realtimeVoiceTurnHasAnchor(activeTurn)) {
+					if (retryRealtimePublishSidebarAnswer(activeTurn, "missing_sidebar_answer")) return;
+				}
+				await persistRealtimeVoiceTurn(activeTurn, finalText, {
+					status: "Voice answer",
+					pageActions: activeTurn.pageActions,
+				});
+				if (shouldNarrateFinalText) narratePublishedRealtimeAnswer(finalText);
 			}
 			if (activeTurn?.audioItemId) realtimeAudioFallbackItemIds.delete(activeTurn.audioItemId);
 			if (!continuingAfterTool) realtimeResponseVoiceTurnId = "";
@@ -7216,6 +8560,7 @@
 	function stopRealtimeVoice(status = "Voice idle") {
 		clearRealtimeIdleTimeout();
 		stopRealtimeMicMonitor();
+		clearRealtimeOnlyVoiceResponse();
 		try {
 			realtimeDataChannel?.close();
 		} catch {}
@@ -7243,6 +8588,7 @@
 		realtimeQueuedResponseRequest = null;
 		realtimeResponseVoiceTurnId = "";
 		realtimeSuppressTranscriptForResponse = false;
+		realtimeResponseOutputModalities = ["audio"];
 		realtimeResponseAfterDoneStatus = "";
 		realtimeServerSpeechSeenAt = 0;
 		realtimePendingDirectAnswerRequestId = "";
@@ -7261,6 +8607,35 @@
 		}
 		const text = String(prompt || "").trim();
 		if (!text) return;
+		if (isRealtimeOnlyVoiceMode() && shouldRouteRealtimePromptThroughOnhand(text)) {
+			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
+			return;
+		}
+		if (isRealtimeOnlyVoiceMode()) {
+			noteRealtimeActivity();
+			const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
+			updateRealtimeAnswerForTurn(voiceTurn, {
+				markdown: "",
+				status: "Thinking",
+				pending: true,
+				published: false,
+			});
+			sendRealtimeSessionUpdate();
+			sendRealtimeEvent({
+				event_id: realtimeEventId("onhand_user_text"),
+				type: "conversation.item.create",
+				item: {
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text }],
+				},
+			});
+			requestRealtimeResponse("response_for_text", realtimeInitialGroundedResponseOptions(text), {
+				voiceTurnId: voiceTurn.id,
+			});
+			setRealtimeStatus("Thinking...");
+			return;
+		}
 		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
 			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
 			return;
@@ -7918,9 +9293,13 @@
 			clearRealtimeVoiceFallback,
 			commitRealtimeVoiceFallback,
 			scheduleRealtimeVoiceFallbackCommit,
-			expireRealtimeIdleTimeout,
-			getRealtimeToolDefinitions: realtimeToolDefinitions,
-			handleRealtimeServerEvent,
+				expireRealtimeIdleTimeout,
+					getRealtimeToolDefinitions: realtimeToolDefinitions,
+					getRealtimeTutorInstructions: realtimeTutorInstructions,
+					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
+					isRealtimeOnlyVoiceMode,
+				sendRealtimeSessionUpdate,
+				handleRealtimeServerEvent,
 			ensureRealtimePdfSurfaceForVoice,
 			requestRealtimeResponse,
 			flushRealtimePendingTranscript,
@@ -7938,6 +9317,7 @@
 					suppressTranscriptForResponse: realtimeSuppressTranscriptForResponse,
 					manualVoiceCommitPending: realtimeManualVoiceCommitPending,
 					pendingTranscriptionItemId: realtimePendingTranscriptionItemId,
+					realtimeOnlyVoiceResponsePending: Boolean(realtimeOnlyVoiceResponseTimer),
 					audioFallbackItemIds: Array.from(realtimeAudioFallbackItemIds),
 					micCurrentRms: realtimeMicCurrentRms,
 					micPeakRms: realtimeMicPeakRms,

@@ -8539,21 +8539,18 @@ function buildRealtimeSessionConfig() {
 				noise_reduction: { type: "far_field" },
 				transcription: { model: "gpt-4o-mini-transcribe" },
 				turn_detection: {
-					type: "server_vad",
-					threshold: 0.35,
-					prefix_padding_ms: 300,
-					silence_duration_ms: 650,
-					create_response: true,
-					interrupt_response: true,
+					type: "semantic_vad",
+					eagerness: "low",
+					create_response: false,
+					interrupt_response: false,
 				},
 			},
 			output: { voice: OPENAI_REALTIME_VOICE },
 		},
 		instructions: [
-			"You are Onhand's realtime voice tutor.",
-			"Keep spoken answers concise, pedagogical, and grounded in the current page.",
-			"Before making page-specific claims, use the available tools to inspect or annotate the page.",
-			"Prefer one clear highlight and one short marginal note over broad annotation.",
+			"You are Onhand's realtime audio interface.",
+			"Use semantic patience for microphone turns.",
+			"Do not answer page questions from audio by yourself; Onhand will send exact answer text to speak when the runtime agent has finished page grounding.",
 		].join(" "),
 	};
 }
@@ -8771,6 +8768,120 @@ async function annotateRealtimePage(message) {
 	};
 }
 
+const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
+	browser_list_tabs: "list_tabs",
+	browser_activate_tab: "activate_tab",
+	browser_navigate: "navigate",
+	browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
+	browser_pdf_search: "pdf_search",
+	browser_pdf_read_pages: "pdf_read_pages",
+	browser_pdf_jump_to_page: "pdf_jump_to_page",
+	browser_pdf_capture_page_image: "pdf_capture_page_image",
+	browser_get_visible_text: "get_visible_text",
+	browser_get_visible_region_image: "get_visible_region_image",
+	browser_extract_content: "extract_content",
+	browser_get_selection: "get_selection",
+	browser_get_viewport_headings: "get_viewport_headings",
+	browser_get_scroll_state: "get_scroll_state",
+	browser_highlight_text: "highlight_text",
+	browser_show_note: "show_note",
+	browser_scroll_to_annotation: "scroll_to_annotation",
+	browser_clear_annotations: "clear_annotations",
+	browser_capture_state: "capture_state",
+	browser_find_elements: "find_elements",
+	browser_wait_for_selector: "wait_for_selector",
+	browser_click: "click",
+	browser_type: "type_text",
+	browser_click_text: "click_text",
+	browser_type_by_label: "type_by_label",
+	browser_pick_elements: "pick_elements",
+	browser_collect_console: "collect_console",
+	browser_collect_network: "collect_network",
+	browser_get_dom: "get_dom",
+	browser_capture_screenshot: "capture_screenshot",
+	browser_run_js: "run_js",
+});
+
+function normalizeRealtimeBrowserToolArgs(args = {}) {
+	const raw = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
+	const aliases = {
+		tab_id: "tabId",
+		title_contains: "titleContains",
+		url_contains: "urlContains",
+		new_tab: "newTab",
+		wait_for_load: "waitForLoad",
+		timeout_ms: "timeoutMs",
+		pdf_url: "pdfUrl",
+		max_matches: "maxMatches",
+		max_context_chars: "maxContextChars",
+		page_number: "pageNumber",
+		start_page: "startPage",
+		end_page: "endPage",
+		max_pages: "maxPages",
+		max_chars: "maxChars",
+		max_blocks: "maxBlocks",
+		max_headings: "maxHeadings",
+		clear_existing: "clearExisting",
+		scroll_into_view: "scrollIntoView",
+		exact_only: "exactOnly",
+		allow_approximate: "allowApproximate",
+		reuse_existing: "reuseExisting",
+		annotation_id: "annotationId",
+		label_text: "labelText",
+		interactive_only: "interactiveOnly",
+		include_hidden: "includeHidden",
+		max_results: "maxResults",
+		duration_ms: "durationMs",
+		max_entries: "maxEntries",
+		ignore_cache: "ignoreCache",
+		only_failures: "onlyFailures",
+		match_url_contains: "matchUrlContains",
+		include_request_headers: "includeRequestHeaders",
+		include_response_headers: "includeResponseHeaders",
+		include_bodies: "includeBodies",
+		body_max_entries: "bodyMaxEntries",
+		body_max_chars: "bodyMaxChars",
+		delay_ms: "delayMs",
+		include_html: "includeHtml",
+		include_screenshot: "includeScreenshot",
+		anchor_text: "anchorText",
+		text_excerpt: "textExcerpt",
+		source_text: "sourceText",
+		exact_text: "exactText",
+	};
+	for (const [from, to] of Object.entries(aliases)) {
+		if (Object.prototype.hasOwnProperty.call(raw, from) && !Object.prototype.hasOwnProperty.call(raw, to)) {
+			raw[to] = raw[from];
+		}
+	}
+	if (!String(raw.text || "").trim()) {
+		const nestedAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
+		const nestedSource = raw.source && typeof raw.source === "object" ? raw.source : {};
+		for (const candidate of [
+			raw.quote,
+			raw.phrase,
+			raw.query,
+			raw.anchorText,
+			raw.textExcerpt,
+			raw.sourceText,
+			raw.exactText,
+			nestedAnchor.text,
+			nestedAnchor.quote,
+			nestedAnchor.text_excerpt,
+			nestedSource.text,
+			nestedSource.quote,
+			nestedSource.text_excerpt,
+		]) {
+			const text = String(candidate || "").replace(/\s+/g, " ").trim();
+			if (text) {
+				raw.text = text;
+				break;
+			}
+		}
+	}
+	return raw;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	(async () => {
 		if (message?.type === "get-status") {
@@ -8937,6 +9048,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			sendResponse({
 				ok: true,
 				result: await createRealtimeClientSecret(),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:realtime-browser-tool") {
+			const tool = String(message.tool || "");
+			const command = REALTIME_BROWSER_TOOL_COMMANDS[tool] || "";
+			if (!command || (message.command && message.command !== command)) {
+				throw new Error(`Unsupported realtime browser tool: ${tool || "(missing)"}`);
+			}
+			const result = await handleCommand(command, {
+				...normalizeRealtimeBrowserToolArgs(message.args || {}),
+				windowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
+			sendResponse({
+				ok: true,
+				result,
 			});
 			return;
 		}

@@ -254,6 +254,8 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
+const REALTIME_API_KEY_SETUP_MESSAGE =
+	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 let smokeModelRegistration: ReturnType<typeof registerFauxProvider> | null = null;
 
 const ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor running inside a Chromium extension side panel.
@@ -288,7 +290,7 @@ Use click/type/navigation tools only when the user is clearly asking you to inte
 const ONHAND_LEARNING_MODE_APPEND = `Learning is enabled for this request.
 
 Learning uses a tutoring stance:
-- For conceptual questions, do not dump the full answer first. Anchor the relevant passage/equation and ask one short page-anchored question that helps the user reason from it.
+- For direct conceptual questions, give a concise anchored answer first, then optionally ask one short page-anchored check. Do not make the check the whole answer unless the user explicitly asked to be quizzed.
 - Stay fast: the first move should be a useful page anchor or anchored prompt, not a long preamble.
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
 - Use onhand_record_learning_event to keep learner state current: record a concept when you introduce it, record a prediction/retrieval check when you place it, and resolve an open check before moving on when the user answers it.
@@ -297,6 +299,7 @@ Learning uses a tutoring stance:
 - Include annotationId, tabTitle, and url in learning events whenever you have them from browser tool results. If you open a check, reuse the returned checkId when resolving it later.
 - If a concept is already in learner state, prefer a lightweight refresher: use the existing source anchor, avoid broad re-inspection, add at most one replacement highlight and no note unless the user asks for a deeper pass, and do not re-explain from scratch.
 - If that concept already has an open check, do not open or record a second check. Point back to the existing check or ask the user to answer it.
+- If the user's latest turn is an answer to an open check, acknowledges/frustrates about a repeated check, or asks "did I not answer?", resolve or respond to that check from the conversation state before doing any new page grounding. Do not add fresh annotations for this meta/follow-up turn.
 - Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be anchored to a highlight or note, not floated in chat.
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
 - Cross-tab interleaving is offer-first. Scan the captured open-tab list, and call browser_list_tabs once only if the captured list is missing or ambiguous. If another already-open tab likely contains a prerequisite, contrast, or related example, name that tab briefly and ask whether the user wants to connect it.
@@ -1319,6 +1322,68 @@ function getSmokeModel(modelId: string) {
 	return smokeModelRegistration.getModel(modelId || SMOKE_MODEL);
 }
 
+function stripVoicePromptPrefix(value: unknown) {
+	return String(value || "")
+		.replace(/^\s*\[Voice\]\s*/i, "")
+		.trim();
+}
+
+function getLatestOpenLearningCheck(state: unknown) {
+	const learnerState = normalizeLearnerState(state, "learning");
+	return learnerState.openChecks[learnerState.openChecks.length - 1] || null;
+}
+
+function isLearningCheckMetaFollowup(prompt: string) {
+	const text = stripVoicePromptPrefix(prompt).toLowerCase();
+	return /\b(did i not|didn't i|did i already|already answered|i answered|i just answered|i just said|did i not give|didn't i give|wait[, ]+did|you asked me again|why are you asking)\b/.test(
+		text,
+	);
+}
+
+function isLikelyLearningCheckAnswer(prompt: string) {
+	const text = stripVoicePromptPrefix(prompt).toLowerCase();
+	if (!text || text.length < 12) return false;
+	if (/[?？]\s*$/.test(text) && !/\b(i think|my answer|by saying|what i meant)\b/.test(text)) return false;
+	return /\b(i think|i'd say|i would say|my answer|it means|that means|it's saying|it is saying|this says|because|by saying)\b/.test(text);
+}
+
+function buildLearningCheckAcknowledgement(prompt: string, check: LearnerCheck, state: LearnerState) {
+	const cleanPrompt = stripVoicePromptPrefix(prompt);
+	const conceptLabel = getLearnerConceptLabel(state, check.conceptId);
+	const meta = isLearningCheckMetaFollowup(prompt);
+	const promptText = truncate(check.promptText, 160);
+	if (meta) {
+		return [
+			"Yes — you did answer it. I should have treated that as your response instead of asking the same check again.",
+			`I'll mark this ${check.kind} check on ${conceptLabel} as answered and keep using the existing source anchor for it.`,
+		].join("\n\n");
+	}
+	if (/\bmulti[- ]?head|attention\b/i.test(`${conceptLabel} ${promptText} ${cleanPrompt}`)) {
+		return [
+			"Yes — that is the right direction.",
+			"More precisely: multi-head attention runs several learned attention heads in parallel, so the model can build different weighted token-relationship patterns at the same time. I'll mark that check as answered.",
+		].join("\n\n");
+	}
+	return [
+		"Yes — that answers the check well enough to move on.",
+		`I'll mark the check as answered. The open prompt was: "${promptText}"`,
+	].join("\n\n");
+}
+
+function buildLearningCheckFollowup(prompt: string, state: unknown) {
+	const learnerState = normalizeLearnerState(state, "learning");
+	const check = getLatestOpenLearningCheck(learnerState);
+	if (!check) return null;
+	if (!isLearningCheckMetaFollowup(prompt) && !isLikelyLearningCheckAnswer(prompt)) return null;
+	const assessment = isLearningCheckMetaFollowup(prompt) ? "partial" : "correct";
+	return {
+		check,
+		learnerState,
+		assessment,
+		reply: buildLearningCheckAcknowledgement(prompt, check, learnerState),
+	};
+}
+
 function createSession(name: string | null = null): RuntimeSession {
 	const timestamp = nowIso();
 	const id = `session_${crypto.randomUUID()}`;
@@ -2072,14 +2137,16 @@ function buildLearnerStatePromptSummary(rawState: unknown, latestPrompt = "") {
 			lines.push(
 				"- For likely repeated concepts, keep the turn lightweight: start with a brief reminder that it came up earlier, use the existing source anchor when possible, and avoid re-running the full teaching flow.",
 				"- Page-work budget for repeated concepts: jump/scroll to the existing anchor if available; if that fails, use at most one fallback read and at most one replacement highlight copied from visible/readable page text, not from your explanation. Do not annotate nearby examples or add notes unless the user explicitly asks for a deeper pass.",
-				"- If one of these concepts already has an open check listed above, do not call onhand_record_learning_event with check_opened for it. Point to the existing check instead.",
-				"- If there is no open check for the concept, ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
-				"- Do not treat a likely repeated concept as brand-new. When recording learning events for it, reuse the existing conceptId.",
+		"- If one of these concepts already has an open check listed above, do not call onhand_record_learning_event with check_opened for it. Point to the existing check instead.",
+		"- If there is no open check for the concept, ask one short retrieval/refresher check. Give a full re-explanation only if the user asks directly or seems stuck.",
+		"- Do not treat a likely repeated concept as brand-new. When recording learning events for it, reuse the existing conceptId.",
 			);
 		}
 	}
 	lines.push(
-		"- If the user's latest message answers an open check, resolve that check with onhand_record_learning_event before introducing new material.",
+		"- If the user's latest message answers an open check, resolve that check with onhand_record_learning_event before introducing new material. A reasonable paraphrase with phrases like 'I think...' or 'it is saying...' counts as an answer; do not ask the same check again.",
+		"- If the latest message complains that the check was already answered, acknowledge it, resolve the open check as partial/correct based on the prior answer, and do not perform new page annotations.",
+		"- For follow-ups on an open check, keep using the existing annotation/source when it supports the answer. Do not replace it with a nearby but different passage.",
 		"- Concept hygiene: reuse an existing conceptId for restatements or local details; record a new concept only for a separate future retrieval-check unit.",
 	);
 	return lines.join("\n");
@@ -2831,7 +2898,7 @@ function normalizePlannerMove(rawValue: unknown, fallback: { userQuestion: strin
 		anchor: {
 			text_excerpt: anchorText,
 			kind: compactInternalText(rawAnchor.kind || "question_anchor", 40) || "question_anchor",
-			note: compactInternalText(rawAnchor.note || raw.note || "Look here first", 80),
+			note: compactInternalText(rawAnchor.note || raw.note || "Key evidence for this question.", 80),
 		},
 		move_type: compactInternalText(raw.move_type || "prediction_prompt", 40) || "prediction_prompt",
 		voice_script: voiceScript,
@@ -2875,12 +2942,12 @@ function normalizeEvaluatorMove(rawValue: unknown, fallback: { userResponse: str
 				.filter((entry: any) => entry.concept || entry.anchor_text || entry.nudge)
 				.slice(0, 3)
 		: [];
-	const nextMove = ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "nudge";
+	const nextMove = ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "move_on";
 	const feedback =
 		compactInternalText(raw.feedback_summary || raw.voice_script || raw.sidebar_markdown, 220) ||
 		(previousVoice
-			? `Good start. Now tie that back to the highlighted line: ${previousVoice}`
-			: "Good start. Tie your answer back to the highlighted wording.");
+			? "Good start — that answers the check. I'll mark it and move on."
+			: "Good start — that answers the check.");
 	return {
 		correct_points: correctPoints,
 		missed_points: missedPoints,
@@ -2947,7 +3014,9 @@ function buildRealtimeEvaluatorPrompt(options: {
 		"- Keep feedback short enough for voice.",
 		"- Anchor page-material feedback to the previous move or captured page context.",
 		"- If feedback depends on an attached visible-region image, refer to the visual region explicitly and avoid unsupported claims when the image or text anchor is insufficient.",
-		"- If the user asks for the direct answer or seems frustrated, set next_move to direct_answer_escape.",
+		"- Treat a reasonable paraphrase as an answer, even if it is informal. Do not repeat the same question after the student answers it.",
+		"- If the user asks whether they already answered, says they just answered, or seems frustrated, acknowledge that and set next_move to direct_answer_escape or move_on.",
+		"- Prefer move_on for substantially correct or partially correct answers. Use nudge only when the response is clearly missing the central point.",
 		...(options.recentConversation ? ["", "Recent conversation:", options.recentConversation] : []),
 		"",
 		buildLearnerStatePromptSummary(options.learnerState, options.userResponse),
@@ -4564,6 +4633,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	async function resolveApiKey(provider: string) {
 		const store = await loadStore();
 		const settings = store.settings as RuntimeSettings;
+		if (provider === OPENAI_API_PROVIDER && settings.aiApiKey) return settings.aiApiKey;
 		if (provider !== settings.aiProvider) return undefined;
 		if (settings.authMode !== "oauth") return settings.aiApiKey || undefined;
 		const credentials = settings.oauthCredentials?.[provider];
@@ -5616,7 +5686,6 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const requestId = crypto.randomUUID();
 			const targetWindowId =
 				typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
-			const model = await getConfiguredModel(store.settings);
 			const recentConversation = buildRecentConversationContext(session);
 			const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
 			const requestSettings = {
@@ -5645,6 +5714,24 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			await publishState({ status: "Starting Onhand..." });
 
 			try {
+				const learningFollowup = learningMode ? buildLearningCheckFollowup(prompt, session.learnerState) : null;
+				if (learningFollowup) {
+					await recordLearningEventForSession(
+						session,
+						{
+							kind: "check_resolved",
+							checkId: learningFollowup.check.checkId,
+							assessment: learningFollowup.assessment,
+							evidence: stripVoicePromptPrefix(prompt),
+						},
+						"learning",
+					);
+					activeRequest.reply = learningFollowup.reply;
+					await finalizeRequest(session, requestId, null, []);
+					return { requestId };
+				}
+
+				const model = await getConfiguredModel(store.settings);
 				let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
 				if (!pdfHandoff) {
 					pdfHandoff = await runAutomaticPdfHandoffIfNeeded(targetWindowId);
