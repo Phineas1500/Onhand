@@ -8924,9 +8924,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiProvider: message.aiProvider,
 				aiModel: message.aiModel,
 				aiApiKey: message.aiApiKey,
+				aiApiKeys: message.aiApiKeys,
 				authMode: message.authMode,
 				speedMode: message.speedMode,
 			});
+			sendResponse({
+				ok: true,
+				settings,
+			});
+			return;
+		}
+
+
+		if (message?.type === "browser-runtime:validate-api-key") {
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.validateApiKey({
+				providerId: message.providerId,
+				apiKey: message.apiKey,
+			});
+			sendResponse({
+				ok: Boolean(result?.ok),
+				result,
+				error: result?.ok ? undefined : result?.error,
+			});
+			return;
+		}
+
+		if (message?.type === "browser-runtime:remove-api-key") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.removeApiKey(message.providerId);
 			sendResponse({
 				ok: true,
 				settings,

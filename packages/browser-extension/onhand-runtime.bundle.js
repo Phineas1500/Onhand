@@ -16977,6 +16977,10 @@ function getModel(provider, modelId) {
   const providerModels = modelRegistry.get(provider);
   return providerModels?.get(modelId);
 }
+function getModels(provider) {
+  const models = modelRegistry.get(provider);
+  return models ? Array.from(models.values()) : [];
+}
 function calculateCost(model, usage) {
   usage.cost.input = model.cost.input / 1e6 * usage.input;
   usage.cost.output = model.cost.output / 1e6 * usage.output;
@@ -124167,6 +124171,39 @@ var OPENAI_API_PROVIDER = "openai";
 var OPENAI_API_MODEL = "gpt-4.1-mini";
 var OPENAI_CODEX_PROVIDER = "openai-codex";
 var OPENAI_CODEX_MODEL = "gpt-5.5";
+var ANTHROPIC_API_PROVIDER = "anthropic";
+var ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
+var GOOGLE_API_PROVIDER = "google";
+var GOOGLE_API_MODEL = "gemini-2.5-flash";
+var SUPPORTED_API_PROVIDERS = {
+  [OPENAI_API_PROVIDER]: {
+    id: OPENAI_API_PROVIDER,
+    name: "OpenAI API",
+    defaultModel: OPENAI_API_MODEL,
+    keyLabel: "OpenAI platform API key",
+    keyPlaceholder: "sk-...",
+    keyPrefix: "sk-",
+    realtime: true
+  },
+  [ANTHROPIC_API_PROVIDER]: {
+    id: ANTHROPIC_API_PROVIDER,
+    name: "Anthropic API",
+    defaultModel: ANTHROPIC_API_MODEL,
+    keyLabel: "Anthropic API key",
+    keyPlaceholder: "sk-ant-...",
+    keyPrefix: "sk-ant-",
+    realtime: false
+  },
+  [GOOGLE_API_PROVIDER]: {
+    id: GOOGLE_API_PROVIDER,
+    name: "Google Gemini API",
+    defaultModel: GOOGLE_API_MODEL,
+    keyLabel: "Gemini API key",
+    keyPlaceholder: "AIza...",
+    keyPrefix: "AIza",
+    realtime: false
+  }
+};
 var SMOKE_PROVIDER = "onhand-smoke";
 var SMOKE_MODEL = "onhand-smoke-1";
 var SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
@@ -124189,6 +124226,7 @@ var DEFAULT_SETTINGS = {
   aiProvider: OPENAI_CODEX_PROVIDER,
   aiModel: OPENAI_CODEX_MODEL,
   aiApiKey: "",
+  aiApiKeys: {},
   authMode: "oauth",
   oauthCredentials: {}
 };
@@ -124922,6 +124960,70 @@ function normalizeAuthMode(value) {
 function normalizeSpeedMode(value) {
   return "auto";
 }
+function getSupportedApiProvider(provider) {
+  return SUPPORTED_API_PROVIDERS[provider] || null;
+}
+function getSupportedProviderIds() {
+  return Object.keys(SUPPORTED_API_PROVIDERS);
+}
+function normalizeApiKeys(value, legacyOpenAiApiKey = "") {
+  const normalized = {};
+  if (value && typeof value === "object") {
+    for (const [providerId, rawKey] of Object.entries(value)) {
+      if (!getSupportedApiProvider(providerId)) continue;
+      if (typeof rawKey !== "string") continue;
+      const key = rawKey.trim();
+      if (key) normalized[providerId] = key;
+    }
+  }
+  const legacyKey = typeof legacyOpenAiApiKey === "string" ? legacyOpenAiApiKey.trim() : "";
+  if (legacyKey && !normalized[OPENAI_API_PROVIDER]) normalized[OPENAI_API_PROVIDER] = legacyKey;
+  return normalized;
+}
+function getApiKeyForProvider(settings2, provider) {
+  const keyed = settings2.aiApiKeys?.[provider];
+  if (keyed) return keyed;
+  if ((provider === OPENAI_API_PROVIDER || provider === SMOKE_PROVIDER) && settings2.aiApiKey) return settings2.aiApiKey;
+  return "";
+}
+function summarizeApiKeyProviders(settings2) {
+  return getSupportedProviderIds().map((providerId) => {
+    const provider = getSupportedApiProvider(providerId);
+    return {
+      id: providerId,
+      name: provider.name,
+      defaultModel: provider.defaultModel,
+      hasApiKey: Boolean(getApiKeyForProvider(settings2, providerId)),
+      realtime: provider.realtime
+    };
+  });
+}
+function validateProviderApiKey(providerId, apiKey) {
+  const provider = getSupportedApiProvider(providerId);
+  if (!provider) return { ok: false, error: `Unsupported provider: ${providerId || "(blank)"}` };
+  const key = String(apiKey || "").trim();
+  if (!key) return { ok: false, error: `${provider.name} API key is missing.` };
+  if (provider.keyPrefix && !key.startsWith(provider.keyPrefix)) {
+    return { ok: false, error: `${provider.name} API key should start with ${provider.keyPrefix}.` };
+  }
+  return { ok: true, providerId, providerName: provider.name };
+}
+function getProviderModelOptions(providerId) {
+  if (!getSupportedApiProvider(providerId)) return [];
+  try {
+    return getModels(providerId).filter((model) => model?.input?.includes?.("text")).map((model) => ({
+      id: model.id,
+      name: model.name || model.id,
+      api: model.api,
+      input: Array.isArray(model.input) ? model.input : [],
+      tools: ["openai-responses", "openai-completions", "anthropic-messages", "google-generative-ai"].includes(model.api),
+      structuredOutput: ["openai-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
+      realtime: providerId === OPENAI_API_PROVIDER && /realtime/i.test(model.id)
+    })).slice(0, 80);
+  } catch {
+    return [];
+  }
+}
 function normalizeOAuthCredentials(value) {
   if (!value || typeof value !== "object") return {};
   const normalized = {};
@@ -124940,13 +125042,14 @@ function normalizeOAuthCredentials(value) {
 }
 function normalizeProviderForAuthMode(provider, authMode, allowSmokeProvider = false) {
   if (allowSmokeProvider && provider === SMOKE_PROVIDER) return SMOKE_PROVIDER;
-  return authMode === "oauth" ? OPENAI_CODEX_PROVIDER : OPENAI_API_PROVIDER;
+  if (authMode === "oauth") return OPENAI_CODEX_PROVIDER;
+  return getSupportedApiProvider(provider)?.id || OPENAI_API_PROVIDER;
 }
 function normalizeModelForProvider(model, provider, authMode) {
   const trimmed = model.trim();
   if (provider === SMOKE_PROVIDER) return trimmed || SMOKE_MODEL;
   if (authMode === "oauth") return OPENAI_CODEX_MODEL;
-  return trimmed || OPENAI_API_MODEL;
+  return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
 function buildPublicSettings(settings2) {
   const signedInProviders = summarizeOAuthCredentials(settings2.oauthCredentials);
@@ -124957,7 +125060,10 @@ function buildPublicSettings(settings2) {
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
-    hasAiApiKey: Boolean(settings2.aiApiKey),
+    hasAiApiKey: Boolean(getApiKeyForProvider(settings2, OPENAI_API_PROVIDER)),
+    hasSelectedProviderApiKey: Boolean(getApiKeyForProvider(settings2, settings2.aiProvider)),
+    apiKeyProviders: summarizeApiKeyProviders(settings2),
+    providerModels: Object.fromEntries(getSupportedProviderIds().map((providerId) => [providerId, getProviderModelOptions(providerId)])),
     hasOAuthCredentials: Boolean(activeOAuthProvider?.signedIn),
     activeOAuthProvider,
     oauthProviders: getBrowserOAuthProviders(),
@@ -126803,6 +126909,11 @@ var __browserRuntimeTest = {
   createEmptyLearnerState,
   formatVisibleTextForModel,
   formatToolResultForModel: toolResultTextForModel,
+  getApiKeyForProvider,
+  getProviderModelOptions,
+  normalizeApiKeys,
+  normalizeProviderForAuthMode,
+  validateProviderApiKey,
   getReplayHighlightCandidates,
   getPublicActivities,
   getSelectionText,
@@ -127569,6 +127680,7 @@ function createOnhandBrowserRuntime(host) {
         aiProvider,
         aiModel: normalizeModelForProvider(rawModel, aiProvider, authMode),
         aiApiKey: typeof rawSettings.aiApiKey === "string" ? rawSettings.aiApiKey : "",
+        aiApiKeys: normalizeApiKeys(rawSettings.aiApiKeys, rawSettings.aiApiKey),
         authMode,
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials)
       };
@@ -128082,17 +128194,19 @@ function createOnhandBrowserRuntime(host) {
       if (!settings2.oauthCredentials?.[settings2.aiProvider]) {
         throw new Error(`Sign in to ${getBrowserOAuthProvider(settings2.aiProvider)?.name || settings2.aiProvider} in Onhand options first.`);
       }
-    } else if (!settings2.aiApiKey) {
-      throw new Error("Set an OpenAI API key or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.");
+    } else if (!getApiKeyForProvider(settings2, settings2.aiProvider)) {
+      const provider = getSupportedApiProvider(settings2.aiProvider);
+      throw new Error(`Set a ${provider?.name || settings2.aiProvider} API key or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.`);
     }
     return prepareModelForBrowser(model, settings2);
   }
   async function resolveApiKey2(provider) {
     const store = await loadStore();
     const settings2 = store.settings;
-    if (provider === OPENAI_API_PROVIDER && settings2.aiApiKey) return settings2.aiApiKey;
+    const apiKey = getApiKeyForProvider(settings2, provider);
+    if (apiKey) return apiKey;
     if (provider !== settings2.aiProvider) return void 0;
-    if (settings2.authMode !== "oauth") return settings2.aiApiKey || void 0;
+    if (settings2.authMode !== "oauth") return void 0;
     const credentials = settings2.oauthCredentials?.[provider];
     if (!credentials) return void 0;
     const result = await getBrowserOAuthApiKey(provider, credentials, {
@@ -128819,9 +128933,10 @@ function createOnhandBrowserRuntime(host) {
     async getOpenAIRealtimeCredential() {
       const store = await loadStore();
       const settings2 = store.settings;
-      if (settings2.aiApiKey) {
+      const openAiApiKey = getApiKeyForProvider(settings2, OPENAI_API_PROVIDER);
+      if (openAiApiKey) {
         return {
-          apiKey: settings2.aiApiKey,
+          apiKey: openAiApiKey,
           source: "openai-api-key"
         };
       }
@@ -128850,6 +128965,7 @@ function createOnhandBrowserRuntime(host) {
         aiProvider,
         aiModel,
         aiApiKey: typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey.trim() : store.settings.aiApiKey,
+        aiApiKeys: normalizeApiKeys(nextPartial.aiApiKeys ?? store.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store.settings.aiApiKey),
         authMode,
         oauthCredentials: nextOAuthCredentials
       };
@@ -128896,6 +129012,29 @@ function createOnhandBrowserRuntime(host) {
         status: "Direct sign-in complete",
         detail: `Using ${provider.name} with ${nextModel}.`
       });
+      return await getPublicSettings();
+    },
+    async validateApiKey(request = {}) {
+      const store = await loadStore();
+      const providerId = normalizeProviderForAuthMode(String(request.providerId || store.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
+      const apiKey = typeof request.apiKey === "string" ? request.apiKey : getApiKeyForProvider(store.settings, providerId);
+      return validateProviderApiKey(providerId, apiKey);
+    },
+    async removeApiKey(providerId) {
+      if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before changing API keys.");
+      const store = await loadStore();
+      const targetProviderId = normalizeProviderForAuthMode(String(providerId || store.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
+      const aiApiKeys = { ...store.settings.aiApiKeys || {} };
+      delete aiApiKeys[targetProviderId];
+      store.settings = {
+        ...store.settings,
+        aiApiKeys,
+        aiApiKey: targetProviderId === OPENAI_API_PROVIDER ? "" : store.settings.aiApiKey
+      };
+      await saveStore(store);
+      const session = store.sessions[store.currentSessionId];
+      uiState = createEmptyState(session, store.settings);
+      uiState.messages = buildConversationMessages(session.messages);
       return await getPublicSettings();
     },
     async signOut(providerId) {
