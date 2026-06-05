@@ -8,6 +8,7 @@ const ONHAND_RELEASE = {
 const ONHAND_ANALYTICS = {
   chromeStoreEvent: 'chrome_store_click',
   releaseDownloadEvent: 'download_zip_click',
+  githubSourceEvent: 'github_source_click',
 };
 
 const ONHAND_STORE = {
@@ -25,6 +26,7 @@ const ONHAND_STORE = {
   const downloadUrl = `${ONHAND_RELEASE.repo}/releases/download/${versionLabel}/${fileName}`;
   const downloadEventName = ONHAND_ANALYTICS.releaseDownloadEvent;
   const chromeStoreEventName = ONHAND_ANALYTICS.chromeStoreEvent;
+  const githubSourceEventName = ONHAND_ANALYTICS.githubSourceEvent;
 
   function releaseDownloadData(node){
     return {
@@ -89,27 +91,41 @@ const ONHAND_STORE = {
   document.querySelectorAll('[data-onhand-release-notes]').forEach((node) => {
     node.href = releaseUrl;
   });
+  function trackConversion(eventName, category, label, data){
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', eventName, {
+        ...data,
+        event_category: category,
+        event_label: label,
+        transport_type: 'beacon',
+      });
+    }
+    if (window.umami && typeof window.umami.track === 'function') {
+      window.umami.track(eventName, data);
+    }
+  }
+
   document.querySelectorAll('[data-onhand-store-link]').forEach((node) => {
     node.href = ONHAND_STORE.url;
     node.setAttribute('data-onhand-analytics-event', chromeStoreEventName);
     node.addEventListener('click', () => {
-      const data = {
+      trackConversion(chromeStoreEventName, 'install', ONHAND_STORE.url, {
         store_version: ONHAND_STORE.approvedVersion,
         pending_version: ONHAND_STORE.pendingVersion || '',
         link_url: ONHAND_STORE.url,
         link_text: node.textContent.replace(/\s+/g, ' ').trim(),
-      };
-      if (typeof window.gtag === 'function') {
-        window.gtag('event', chromeStoreEventName, {
-          ...data,
-          event_category: 'install',
-          event_label: ONHAND_STORE.url,
-          transport_type: 'beacon',
-        });
-      }
-      if (window.umami && typeof window.umami.track === 'function') {
-        window.umami.track(chromeStoreEventName, data);
-      }
+      });
+    });
+  });
+  document.querySelectorAll('[data-onhand-source-link]').forEach((node) => {
+    node.href = ONHAND_RELEASE.repo;
+    node.setAttribute('data-onhand-analytics-event', githubSourceEventName);
+    node.addEventListener('click', () => {
+      trackConversion(githubSourceEventName, 'source', ONHAND_RELEASE.repo, {
+        release_version: versionLabel,
+        link_url: ONHAND_RELEASE.repo,
+        link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+      });
     });
   });
   document.querySelectorAll('[data-onhand-store-version]').forEach((node) => {

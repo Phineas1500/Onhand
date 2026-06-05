@@ -45,6 +45,20 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 - **Add to Chrome link:** generated from `ONHAND_STORE.url` for elements with `data-onhand-store-link`.
 - **Open Graph image:** `<meta property="og:image">` — currently the attention screenshot. Replace with a 1200×630 dedicated card when you have one.
 
+## Analytics events
+
+The site uses Google Analytics 4 (`G-JQ159C5BGF`) and Umami. Custom conversion events are defined in `site.js` under `ONHAND_ANALYTICS` and fired to both backends with the same event name.
+
+| Event name | Intent | Hook attribute | GA category |
+|------------|--------|----------------|-------------|
+| `chrome_store_click` | Chrome Web Store install | `data-onhand-store-link` | `install` |
+| `download_zip_click` | Manual ZIP download / load unpacked | `data-onhand-release-download` | `release` |
+| `github_source_click` | View repo / build from source | `data-onhand-source-link` | `source` |
+
+Tracked elements also receive `data-onhand-analytics-event` with the event name for inspection in DevTools.
+
+Verify locally with `npm run website:verify-analytics`.
+
 ## Asset replacement
 
 If the brand mark changes, replace `icons/onhand-128.png` and `icons/onhand-48.png` (and the SVG). The CSS uses the unicode ☞ glyph for everything *except* the favicon and the small mark in the nav, so the rest of the page picks up symbol-font rendering automatically.

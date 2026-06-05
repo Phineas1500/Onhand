@@ -21,6 +21,7 @@
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "website:sync-store": "node ./scripts/sync-chrome-store-version.mjs",
     "website:check-store": "node ./scripts/sync-chrome-store-version.mjs --check",
+    "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",
