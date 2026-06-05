@@ -124986,6 +124986,12 @@ function getApiKeyForProvider(settings2, provider) {
   if ((provider === OPENAI_API_PROVIDER || provider === SMOKE_PROVIDER) && settings2.aiApiKey) return settings2.aiApiKey;
   return "";
 }
+function getMissingApiKeyError(providerId) {
+  const provider = getSupportedApiProvider(providerId);
+  const providerLabel = String(provider?.name || providerId || "selected provider").trim();
+  const keyLabel = /\bapi$/i.test(providerLabel) ? `${providerLabel} key` : `${providerLabel} API key`;
+  return `Set a ${keyLabel} or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.`;
+}
 function summarizeApiKeyProviders(settings2) {
   return getSupportedProviderIds().map((providerId) => {
     const provider = getSupportedApiProvider(providerId);
@@ -126909,6 +126915,7 @@ var __browserRuntimeTest = {
   createEmptyLearnerState,
   formatVisibleTextForModel,
   formatToolResultForModel: toolResultTextForModel,
+  getMissingApiKeyError,
   getApiKeyForProvider,
   getProviderModelOptions,
   normalizeApiKeys,
@@ -128195,8 +128202,7 @@ function createOnhandBrowserRuntime(host) {
         throw new Error(`Sign in to ${getBrowserOAuthProvider(settings2.aiProvider)?.name || settings2.aiProvider} in Onhand options first.`);
       }
     } else if (!getApiKeyForProvider(settings2, settings2.aiProvider)) {
-      const provider = getSupportedApiProvider(settings2.aiProvider);
-      throw new Error(`Set a ${provider?.name || settings2.aiProvider} API key or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.`);
+      throw new Error(getMissingApiKeyError(settings2.aiProvider));
     }
     return prepareModelForBrowser(model, settings2);
   }
@@ -128205,6 +128211,9 @@ function createOnhandBrowserRuntime(host) {
     const settings2 = store.settings;
     const apiKey = getApiKeyForProvider(settings2, provider);
     if (apiKey) return apiKey;
+    if (provider === settings2.aiProvider && settings2.authMode === "api-key") {
+      throw new Error(getMissingApiKeyError(provider));
+    }
     if (provider !== settings2.aiProvider) return void 0;
     if (settings2.authMode !== "oauth") return void 0;
     const credentials = settings2.oauthCredentials?.[provider];

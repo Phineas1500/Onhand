@@ -217,6 +217,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
 		getApiKeyForProvider,
+		getMissingApiKeyError,
 		getProviderModelOptions,
 		normalizeApiKeys,
 		normalizeProviderForAuthMode,
@@ -224,6 +225,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof normalizeApiKeys, "function", "provider key normalizer export is missing");
 	assert.equal(typeof getApiKeyForProvider, "function", "provider key lookup export is missing");
+	assert.equal(typeof getMissingApiKeyError, "function", "provider key error export is missing");
 	assert.equal(typeof validateProviderApiKey, "function", "provider key validator export is missing");
 	assert.equal(typeof getProviderModelOptions, "function", "provider model list export is missing");
 	assert.deepEqual(normalizeApiKeys({ openai: " sk-openai ", anthropic: "sk-ant-test", unknown: "secret" }, "legacy"), {
@@ -237,6 +239,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(validateProviderApiKey("anthropic", "not-an-anthropic-key").ok, false);
 	assert.equal(validateProviderApiKey("anthropic", "sk-ant-test").ok, true);
 	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
+	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
 
 	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
 		settings: {

@@ -1167,6 +1167,13 @@ function getApiKeyForProvider(settings: RuntimeSettings, provider: string) {
 	return "";
 }
 
+function getMissingApiKeyError(providerId: string) {
+	const provider = getSupportedApiProvider(providerId);
+	const providerLabel = String(provider?.name || providerId || "selected provider").trim();
+	const keyLabel = /\bapi$/i.test(providerLabel) ? `${providerLabel} key` : `${providerLabel} API key`;
+	return `Set a ${keyLabel} or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.`;
+}
+
 function summarizeApiKeyProviders(settings: RuntimeSettings) {
 	return getSupportedProviderIds().map((providerId) => {
 		const provider = getSupportedApiProvider(providerId)!;
@@ -3406,6 +3413,7 @@ export const __browserRuntimeTest = {
 	createEmptyLearnerState,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
+	getMissingApiKeyError,
 	getApiKeyForProvider,
 	getProviderModelOptions,
 	normalizeApiKeys,
@@ -4759,8 +4767,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				throw new Error(`Sign in to ${getBrowserOAuthProvider(settings.aiProvider)?.name || settings.aiProvider} in Onhand options first.`);
 			}
 		} else if (!getApiKeyForProvider(settings, settings.aiProvider)) {
-			const provider = getSupportedApiProvider(settings.aiProvider);
-			throw new Error(`Set a ${provider?.name || settings.aiProvider} API key or use OpenAI Codex sign-in in the Onhand extension options before using the browser runtime.`);
+			throw new Error(getMissingApiKeyError(settings.aiProvider));
 		}
 		return prepareModelForBrowser(model, settings);
 	}
@@ -4770,6 +4777,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const settings = store.settings as RuntimeSettings;
 		const apiKey = getApiKeyForProvider(settings, provider);
 		if (apiKey) return apiKey;
+		if (provider === settings.aiProvider && settings.authMode === "api-key") {
+			throw new Error(getMissingApiKeyError(provider));
+		}
 		if (provider !== settings.aiProvider) return undefined;
 		if (settings.authMode !== "oauth") return undefined;
 		const credentials = settings.oauthCredentials?.[provider];
