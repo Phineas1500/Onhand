@@ -211,6 +211,71 @@ async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
 	return state;
 }
 
+
+async function assertProviderApiKeyStorageAndRouting() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const {
+		getApiKeyForProvider,
+		getProviderModelOptions,
+		normalizeApiKeys,
+		normalizeProviderForAuthMode,
+		validateProviderApiKey,
+	} = __browserRuntimeTest || {};
+	assert.equal(typeof normalizeApiKeys, "function", "provider key normalizer export is missing");
+	assert.equal(typeof getApiKeyForProvider, "function", "provider key lookup export is missing");
+	assert.equal(typeof validateProviderApiKey, "function", "provider key validator export is missing");
+	assert.equal(typeof getProviderModelOptions, "function", "provider model list export is missing");
+	assert.deepEqual(normalizeApiKeys({ openai: " sk-openai ", anthropic: "sk-ant-test", unknown: "secret" }, "legacy"), {
+		openai: "sk-openai",
+		anthropic: "sk-ant-test",
+	});
+	assert.deepEqual(normalizeApiKeys({}, "sk-legacy"), { openai: "sk-legacy" });
+	assert.equal(normalizeProviderForAuthMode("anthropic", "api-key"), "anthropic");
+	assert.equal(normalizeProviderForAuthMode("google", "api-key"), "google");
+	assert.equal(normalizeProviderForAuthMode("anthropic", "oauth"), "openai-codex");
+	assert.equal(validateProviderApiKey("anthropic", "not-an-anthropic-key").ok, false);
+	assert.equal(validateProviderApiKey("anthropic", "sk-ant-test").ok, true);
+	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
+
+	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
+		settings: {
+			aiProvider: "openai",
+			aiModel: "gpt-4.1-mini",
+			aiApiKey: "sk-legacy-openai",
+			authMode: "api-key",
+		},
+		sessions: {},
+		currentSessionId: "",
+	};
+	let runtime = createOnhandBrowserRuntime(createReplayHost());
+	let settings = await runtime.getSettings();
+	assert.equal(settings.hasAiApiKey, true, "legacy OpenAI API key should migrate into provider key status");
+	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "openai").hasApiKey, true);
+
+	runtime = createOnhandBrowserRuntime(createReplayHost());
+	settings = await runtime.updateSettings({
+		aiProvider: "anthropic",
+		aiModel: "claude-sonnet-4-5-20250929",
+		authMode: "api-key",
+		aiApiKeys: {
+			openai: "sk-openai-runtime",
+			anthropic: "sk-ant-runtime",
+		},
+	});
+	assert.equal(settings.aiProvider, "anthropic");
+	assert.equal(settings.aiModel, "claude-sonnet-4-5-20250929");
+	assert.equal(settings.hasSelectedProviderApiKey, true);
+	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, true);
+	const storedSettings = globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings;
+	assert.equal(getApiKeyForProvider(storedSettings, "anthropic"), "sk-ant-runtime");
+	assert.equal(getApiKeyForProvider(storedSettings, "openai"), "sk-openai-runtime");
+	const validation = await runtime.validateApiKey({ providerId: "anthropic", apiKey: "sk-ant-runtime" });
+	assert.equal(validation.ok, true);
+	settings = await runtime.removeApiKey("anthropic");
+	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, false);
+}
+
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
@@ -3482,6 +3547,7 @@ async function assertFixtureResponses() {
 }
 
 async function main() {
+	await assertProviderApiKeyStorageAndRouting();
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertConstitutionPromptContract();

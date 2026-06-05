@@ -6,7 +6,7 @@
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        max-width: 760px;
+        max-width: 860px;
         margin: 32px auto;
         padding: 0 16px;
         color: #111827;
@@ -136,26 +136,49 @@
 
       <div class="inline-grid">
         <div class="field">
-          <label for="aiModel">AI model</label>
-          <input id="aiModel" placeholder="gpt-5.5" />
-          <p id="modelHelp" class="help">Codex sign-in uses OpenAI Codex with GPT-5.5.</p>
-        </div>
-
-        <div class="field">
           <label for="authMode">Authentication</label>
           <select id="authMode">
             <option value="oauth">OpenAI Codex sign-in</option>
-            <option value="api-key">OpenAI API key</option>
+            <option value="api-key">Provider API key</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="aiProvider">Default provider</label>
+          <select id="aiProvider">
+            <option value="openai">OpenAI API</option>
+            <option value="anthropic">Anthropic API</option>
+            <option value="google">Google Gemini API</option>
           </select>
         </div>
       </div>
 
+      <div class="field">
+        <label for="aiModelSelect">Default model</label>
+        <select id="aiModelSelect"></select>
+        <input id="aiModel" placeholder="gpt-5.5" />
+        <p id="modelHelp" class="help">Codex sign-in uses OpenAI Codex with GPT-5.5.</p>
+        <p id="capabilityStatus" class="help">Capability status loads with runtime settings.</p>
+      </div>
+
       <div class="inline-grid">
         <div class="field">
-          <label for="aiApiKey">OpenAI platform API key</label>
+          <label for="apiKeyProvider">API key provider</label>
+          <select id="apiKeyProvider">
+            <option value="openai">OpenAI API</option>
+            <option value="anthropic">Anthropic API</option>
+            <option value="google">Google Gemini API</option>
+          </select>
+        </div>
+        <div class="field">
+          <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
           <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
           <p id="apiKeyHelp" class="help">Optional while Codex sign-in is selected. Voice uses this key for <code>gpt-realtime-2</code>.</p>
         </div>
+      </div>
+      <div class="row">
+        <button id="validateKey">Validate selected key</button>
+        <button id="removeKey">Remove selected key</button>
       </div>
     </section>
 
