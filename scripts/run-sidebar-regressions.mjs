@@ -18,6 +18,7 @@ function createState() {
 		},
 		preferences: {
 			learningMode: false,
+			realtimeVoiceEnabled: true,
 			speedMode: "auto",
 			extensionVersion: "test",
 			runtimeRevision: "test",
@@ -1876,6 +1877,23 @@ async function assertRealtimeMicPickerConstrainsSelectedDevice() {
 	assert.equal(mediaRequests.length, 1);
 	assert.equal(mediaRequests[0].audio.deviceId.exact, "studio-mic");
 	assert.equal(hooks.getRealtimeDebugState().micDeviceId, "studio-mic");
+	dom.window.close();
+}
+
+async function assertRealtimeVoiceDisabledState() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.preferences.realtimeVoiceEnabled = false;
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const voiceButton = shadow.getElementById("realtimeVoiceButton");
+	const status = shadow.getElementById("realtimeStatus");
+
+	assert.equal(voiceButton.textContent, "Off", "expected disabled realtime voice button to render as off");
+	assert.equal(voiceButton.disabled, true, "expected disabled realtime voice button to be disabled");
+	assert.equal(status.textContent, "Voice disabled", "expected realtime status to explain disabled voice");
+	assert.match(status.title, /Enable Realtime Voice/);
 	dom.window.close();
 }
 
@@ -3956,6 +3974,7 @@ await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
+await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
 await assertRealtimeResponseCreateQueuesUntilDone();

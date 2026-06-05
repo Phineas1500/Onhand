@@ -124222,6 +124222,7 @@ var ONHAND_FAST_OUTPUT_TOKENS = 550;
 var ONHAND_DEEP_OUTPUT_TOKENS = 1100;
 var DEFAULT_SETTINGS = {
   learningMode: false,
+  realtimeVoiceEnabled: false,
   speedMode: "auto",
   aiProvider: OPENAI_CODEX_PROVIDER,
   aiModel: OPENAI_CODEX_MODEL,
@@ -125015,15 +125016,17 @@ function validateProviderApiKey(providerId, apiKey) {
   return { ok: true, providerId, providerName: provider.name };
 }
 function getProviderModelOptions(providerId) {
-  if (!getSupportedApiProvider(providerId)) return [];
+  const isApiProvider = Boolean(getSupportedApiProvider(providerId));
+  const isOAuthProvider = isBrowserOAuthProvider(providerId);
+  if (!isApiProvider && !isOAuthProvider) return [];
   try {
     return getModels(providerId).filter((model) => model?.input?.includes?.("text")).map((model) => ({
       id: model.id,
       name: model.name || model.id,
       api: model.api,
       input: Array.isArray(model.input) ? model.input : [],
-      tools: ["openai-responses", "openai-completions", "anthropic-messages", "google-generative-ai"].includes(model.api),
-      structuredOutput: ["openai-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
+      tools: ["openai-responses", "openai-completions", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
+      structuredOutput: ["openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai"].includes(model.api),
       realtime: providerId === OPENAI_API_PROVIDER && /realtime/i.test(model.id)
     })).slice(0, 80);
   } catch {
@@ -125054,14 +125057,16 @@ function normalizeProviderForAuthMode(provider, authMode, allowSmokeProvider = f
 function normalizeModelForProvider(model, provider, authMode) {
   const trimmed = model.trim();
   if (provider === SMOKE_PROVIDER) return trimmed || SMOKE_MODEL;
-  if (authMode === "oauth") return OPENAI_CODEX_MODEL;
+  if (authMode === "oauth") return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
   return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
 function buildPublicSettings(settings2) {
   const signedInProviders = summarizeOAuthCredentials(settings2.oauthCredentials);
   const activeOAuthProvider = signedInProviders.find((provider) => provider.id === settings2.aiProvider) || null;
+  const providerModelIds = Array.from(/* @__PURE__ */ new Set([...getSupportedProviderIds(), ...getBrowserOAuthProviders().map((provider) => provider.id)]));
   return {
     learningMode: settings2.learningMode,
+    realtimeVoiceEnabled: settings2.realtimeVoiceEnabled,
     speedMode: settings2.speedMode,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
@@ -125069,7 +125074,7 @@ function buildPublicSettings(settings2) {
     hasAiApiKey: Boolean(getApiKeyForProvider(settings2, OPENAI_API_PROVIDER)),
     hasSelectedProviderApiKey: Boolean(getApiKeyForProvider(settings2, settings2.aiProvider)),
     apiKeyProviders: summarizeApiKeyProviders(settings2),
-    providerModels: Object.fromEntries(getSupportedProviderIds().map((providerId) => [providerId, getProviderModelOptions(providerId)])),
+    providerModels: Object.fromEntries(providerModelIds.map((providerId) => [providerId, getProviderModelOptions(providerId)])),
     hasOAuthCredentials: Boolean(activeOAuthProvider?.signedIn),
     activeOAuthProvider,
     oauthProviders: getBrowserOAuthProviders(),
@@ -127683,6 +127688,7 @@ function createOnhandBrowserRuntime(host) {
         ...DEFAULT_SETTINGS,
         ...rawSettings,
         learningMode: Boolean(rawSettings.learningMode),
+        realtimeVoiceEnabled: Boolean(rawSettings.realtimeVoiceEnabled),
         speedMode: normalizeSpeedMode(rawSettings.speedMode),
         aiProvider,
         aiModel: normalizeModelForProvider(rawModel, aiProvider, authMode),
@@ -128942,6 +128948,9 @@ function createOnhandBrowserRuntime(host) {
     async getOpenAIRealtimeCredential() {
       const store = await loadStore();
       const settings2 = store.settings;
+      if (!settings2.realtimeVoiceEnabled) {
+        throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
+      }
       const openAiApiKey = getApiKeyForProvider(settings2, OPENAI_API_PROVIDER);
       if (openAiApiKey) {
         return {
@@ -128970,6 +128979,7 @@ function createOnhandBrowserRuntime(host) {
         ...store.settings,
         ...nextPartial,
         learningMode: Boolean(nextPartial.learningMode ?? store.settings.learningMode),
+        realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store.settings.realtimeVoiceEnabled),
         speedMode: normalizeSpeedMode(nextPartial.speedMode ?? store.settings.speedMode),
         aiProvider,
         aiModel,
@@ -129001,7 +129011,11 @@ function createOnhandBrowserRuntime(host) {
         onProgress: (event) => host.notifyAuthProgress?.(event)
       });
       const store = await loadStore();
-      const nextModel = getDefaultOAuthModel(providerId) || OPENAI_CODEX_MODEL;
+      const nextModel = normalizeModelForProvider(
+        String(request.aiModel || store.settings.aiModel || getDefaultOAuthModel(providerId) || OPENAI_CODEX_MODEL),
+        providerId,
+        "oauth"
+      );
       store.settings = {
         ...store.settings,
         authMode: "oauth",
@@ -129058,7 +129072,7 @@ function createOnhandBrowserRuntime(host) {
         oauthCredentials,
         authMode: "oauth",
         aiProvider: OPENAI_CODEX_PROVIDER,
-        aiModel: OPENAI_CODEX_MODEL
+        aiModel: normalizeModelForProvider(store.settings.aiModel || OPENAI_CODEX_MODEL, OPENAI_CODEX_PROVIDER, "oauth")
       };
       await saveStore(store);
       const session = store.sessions[store.currentSessionId];

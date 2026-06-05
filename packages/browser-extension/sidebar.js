@@ -5463,6 +5463,10 @@
 		setRealtimeStatus(status);
 	}
 
+	function isRealtimeVoiceEnabledInPreferences(state = currentState) {
+		return Boolean(state?.preferences?.realtimeVoiceEnabled);
+	}
+
 	function clearRealtimeSessionLocalState() {
 		clearRealtimeTranscriptionFallback();
 		clearRealtimePendingTranscript();
@@ -6247,12 +6251,19 @@
 
 	function renderRealtimeControls() {
 		if (!realtimeVoiceButton || !realtimeStatusEl) return;
+		const voiceEnabled = isRealtimeVoiceEnabledInPreferences();
+		if (!voiceEnabled && (realtimeConnected || realtimeConnecting)) {
+			stopRealtimeVoice("Voice disabled");
+			return;
+		}
 		const needsApiKeySetup = Boolean(realtimeError && isRealtimeApiKeySetupError(realtimeError));
-		const buttonLabel = realtimeConnecting ? "..." : realtimeConnected ? "End" : needsApiKeySetup ? "Setup" : "Voice";
+		const buttonLabel = !voiceEnabled ? "Off" : realtimeConnecting ? "..." : realtimeConnected ? "End" : needsApiKeySetup ? "Setup" : "Voice";
 		realtimeVoiceButton.dataset.state = realtimeConnecting ? "connecting" : realtimeConnected ? "connected" : needsApiKeySetup ? "setup" : "idle";
 		const hiddenLabel = realtimeVoiceButton.querySelector(".onhand-sr-only");
 		if (hiddenLabel) hiddenLabel.textContent = buttonLabel;
-		realtimeVoiceButton.title = realtimeConnected
+		realtimeVoiceButton.title = !voiceEnabled
+			? "Enable Realtime Voice in Onhand options."
+			: realtimeConnected
 			? "End realtime voice tutor"
 			: needsApiKeySetup
 				? "Open Onhand options to add an OpenAI platform API key for Voice."
@@ -6261,8 +6272,8 @@
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
 		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
-		realtimeVoiceButton.disabled = realtimeConnecting;
-		realtimeStatusEl.textContent = realtimeError || realtimeStatus;
+		realtimeVoiceButton.disabled = !voiceEnabled || realtimeConnecting;
+		realtimeStatusEl.textContent = !voiceEnabled ? "Voice disabled" : realtimeError || realtimeStatus;
 		realtimeStatusEl.setAttribute("aria-expanded", realtimeErrorExpanded && realtimeError ? "true" : "false");
 		realtimeStatusEl.setAttribute("aria-controls", "realtimeErrorBubble");
 		realtimeStatusEl.tabIndex = realtimeError ? 0 : -1;
@@ -6273,7 +6284,7 @@
 						realtimeLocalSpeechThreshold(),
 					)}`
 				: "";
-		realtimeStatusEl.title = [realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
+		realtimeStatusEl.title = [!voiceEnabled ? "Enable Realtime Voice in Onhand options." : realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
 			.filter(Boolean)
 			.join("\n");
 		realtimeStatusEl.classList.toggle("error", Boolean(realtimeError));
@@ -8696,6 +8707,9 @@
 	}
 
 	async function startRealtimeVoice() {
+		if (!isRealtimeVoiceEnabledInPreferences()) {
+			throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
+		}
 		if (realtimeConnecting || realtimeConnected) return;
 		realtimeConnecting = true;
 		realtimeError = "";

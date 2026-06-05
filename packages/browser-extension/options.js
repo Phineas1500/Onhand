@@ -30,11 +30,17 @@ const modelSelectEl = document.getElementById("aiModelSelect");
 const aiModelInput = document.getElementById("aiModel");
 const modelHelpEl = document.getElementById("modelHelp");
 const authModeInput = document.getElementById("authMode");
-const apiKeyProviderInput = document.getElementById("apiKeyProvider");
+const apiKeySectionEl = document.getElementById("apiKeySection");
+const apiKeyActionsEl = document.getElementById("apiKeyActions");
 const aiApiKeyInput = document.getElementById("aiApiKey");
 const apiKeyLabelEl = document.getElementById("apiKeyLabel");
 const apiKeyHelpEl = document.getElementById("apiKeyHelp");
 const capabilityStatusEl = document.getElementById("capabilityStatus");
+const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
+const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
+const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField");
+const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey");
+const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 let runtimePublicSettings = null;
@@ -69,13 +75,26 @@ function getProviderMeta(providerId) {
 	return API_PROVIDERS[providerId] || API_PROVIDERS.openai;
 }
 
+function getOAuthProviderMeta(providerId) {
+	return runtimePublicSettings?.oauthProviders?.find((provider) => provider.id === providerId) || null;
+}
+
+function getProviderDefaultModel(providerId) {
+	if (providerId === CODEX_PROVIDER) return getOAuthProviderMeta(providerId)?.defaultModel || CODEX_MODEL;
+	return getProviderMeta(providerId).defaultModel;
+}
+
 function selectedProvider() {
 	return isCodexSignInMode() ? CODEX_PROVIDER : providerInput.value || "openai";
 }
 
+function selectedApiKeyProvider() {
+	return isCodexSignInMode() ? "openai" : providerInput.value || "openai";
+}
+
 function selectedModel() {
-	if (isCodexSignInMode()) return CODEX_MODEL;
-	return aiModelInput.value.trim() || getProviderMeta(providerInput.value).defaultModel;
+	const providerId = selectedProvider();
+	return aiModelInput.value.trim() || getProviderDefaultModel(providerId);
 }
 
 function providerModels(providerId) {
@@ -84,6 +103,7 @@ function providerModels(providerId) {
 
 function populateModelSelect(providerId, selectedId) {
 	const models = providerModels(providerId);
+	const fallbackModelId = getProviderDefaultModel(providerId);
 	modelSelectEl.textContent = "";
 	const customOption = document.createElement("option");
 	customOption.value = "__custom__";
@@ -101,15 +121,26 @@ function populateModelSelect(providerId, selectedId) {
 		aiModelInput.hidden = true;
 	} else {
 		modelSelectEl.value = "__custom__";
-		aiModelInput.value = selectedId || getProviderMeta(providerId).defaultModel;
+		aiModelInput.value = selectedId || fallbackModelId;
 		aiModelInput.hidden = false;
 	}
 }
 
+function isOpenAiApiKeyMode() {
+	return !isCodexSignInMode() && (providerInput.value || "openai") === "openai";
+}
+
+function isRealtimeVoiceEnabled() {
+	return Boolean(realtimeVoiceEnabledInput.checked);
+}
+
 function syncCapabilityStatus() {
 	if (isCodexSignInMode()) {
-		capabilityStatusEl.textContent = "Text chat uses OpenAI Codex sign-in. Voice/realtime still requires an OpenAI platform API key.";
-		capabilityStatusEl.className = "warn";
+		const modelId = selectedModel();
+		capabilityStatusEl.textContent = isRealtimeVoiceEnabled()
+			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice uses an OpenAI platform API key for gpt-realtime-2.`
+			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice is disabled.`;
+		capabilityStatusEl.className = "ok";
 		return;
 	}
 	const providerId = providerInput.value || "openai";
@@ -125,14 +156,18 @@ function syncCapabilityStatus() {
 			}
 		: meta.capabilities;
 	const unsupported = [
-		caps.realtime ? "" : "realtime voice",
 		caps.vision ? "" : "vision",
 		caps.tools ? "" : "page tools",
 		caps.structuredOutput ? "" : "structured output",
 	].filter(Boolean);
+	const realtimeText = isRealtimeVoiceEnabled()
+		? isOpenAiApiKeyMode()
+			? " The same OpenAI API key is also used for gpt-realtime-2."
+			: " Realtime Voice uses a separate OpenAI platform API key for gpt-realtime-2."
+		: " Realtime Voice is disabled.";
 	capabilityStatusEl.textContent = unsupported.length
-		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.`
-		: `${meta.name}/${modelId} supports Onhand text chat, page tools, vision inputs, and structured helper output. Voice/realtime requires an OpenAI platform realtime-capable key.`;
+		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.${realtimeText}`
+		: `${meta.name}/${modelId} supports Onhand text chat, page tools, vision inputs, and structured helper output.${realtimeText}`;
 	capabilityStatusEl.className = unsupported.length ? "warn" : "ok";
 }
 
@@ -140,37 +175,72 @@ function syncAuthModeFields() {
 	if (isCodexSignInMode()) {
 		providerInput.value = "openai";
 		providerInput.disabled = true;
-		modelSelectEl.disabled = true;
-		aiModelInput.value = CODEX_MODEL;
-		aiModelInput.disabled = true;
-		aiModelInput.hidden = false;
-		modelHelpEl.textContent = "Codex sign-in uses OpenAI Codex with GPT-5.5 for text chat.";
+		modelSelectEl.disabled = false;
+		aiModelInput.disabled = false;
+		const providerId = CODEX_PROVIDER;
+		const currentModelId = aiModelInput.value.trim();
+		const models = providerModels(providerId);
+		if (!currentModelId || (models.length && !models.some((model) => model.id === currentModelId))) {
+			aiModelInput.value = getProviderDefaultModel(providerId);
+		}
+		populateModelSelect(providerId, aiModelInput.value.trim());
+		modelHelpEl.textContent = "Codex sign-in uses your selected OpenAI Codex model for text chat. Switch Authentication to Provider API key if you want text chat to use an API key.";
 	} else {
 		providerInput.disabled = false;
 		modelSelectEl.disabled = false;
 		aiModelInput.disabled = false;
 		const providerId = providerInput.value || "openai";
-		if (!aiModelInput.value.trim() || aiModelInput.value.trim() === CODEX_MODEL) aiModelInput.value = getProviderMeta(providerId).defaultModel;
+		if (!aiModelInput.value.trim() || aiModelInput.value.trim() === CODEX_MODEL || providerModels(CODEX_PROVIDER).some((model) => model.id === aiModelInput.value.trim())) {
+			aiModelInput.value = getProviderMeta(providerId).defaultModel;
+		}
 		populateModelSelect(providerId, aiModelInput.value.trim());
-		modelHelpEl.textContent = "API key mode uses your selected provider/model for chat, learning, and page-tool requests.";
+		modelHelpEl.textContent = "Provider API key mode uses your selected provider/model for text chat, learning, and page-tool requests.";
 	}
 	syncApiKeyFields();
 	syncCapabilityStatus();
 }
 
 function syncApiKeyFields() {
-	const providerId = apiKeyProviderInput.value || "openai";
+	const showApiKeySection = !isCodexSignInMode();
+	apiKeySectionEl.hidden = !showApiKeySection;
+	apiKeyActionsEl.hidden = !showApiKeySection;
+	const providerId = selectedApiKeyProvider();
 	const meta = getProviderMeta(providerId);
 	apiKeyLabelEl.textContent = meta.keyLabel;
 	aiApiKeyInput.placeholder = meta.keyPlaceholder;
 	aiApiKeyInput.value = pendingApiKeys[providerId] || "";
 	const saved = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === providerId)?.hasApiKey;
 	apiKeyHelpEl.textContent = `${saved ? "Saved key exists. Enter a new key to update it, or remove it below." : "No saved key for this provider."} Keys are stored only in chrome.storage.local and are redacted from status diagnostics.`;
+	syncRealtimeVoiceFields();
+}
+
+function syncRealtimeVoiceFields() {
+	const enabled = isRealtimeVoiceEnabled();
+	const usingOpenAiApiKeyForText = isOpenAiApiKeyMode();
+	const showSeparateOpenAiKey = enabled && !usingOpenAiApiKeyForText;
+	realtimeOpenAiKeyFieldEl.hidden = !showSeparateOpenAiKey;
+	realtimeOpenAiApiKeyInput.value = pendingApiKeys.openai || "";
+	const savedOpenAiKey = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === "openai")?.hasApiKey;
+	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for gpt-realtime-2; text chat keeps using the selected authentication mode above.`;
+	if (!enabled) {
+		realtimeVoiceHelpEl.textContent = "Realtime Voice is disabled. Enable it to use gpt-realtime-2 with an OpenAI platform API key.";
+		return;
+	}
+	if (usingOpenAiApiKeyForText) {
+		realtimeVoiceHelpEl.textContent = "Realtime Voice will use the same OpenAI platform API key selected for Provider API key mode to start gpt-realtime-2.";
+		return;
+	}
+	realtimeVoiceHelpEl.textContent = isCodexSignInMode()
+		? "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2. Text chat still uses OpenAI Codex sign-in."
+		: "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2. Text chat still uses your selected provider API key.";
 }
 
 function collectApiKeys() {
-	const providerId = apiKeyProviderInput.value || "openai";
-	pendingApiKeys[providerId] = aiApiKeyInput.value.trim();
+	if (!apiKeySectionEl.hidden) {
+		const providerId = selectedApiKeyProvider();
+		pendingApiKeys[providerId] = aiApiKeyInput.value.trim();
+	}
+	if (!realtimeOpenAiKeyFieldEl.hidden) pendingApiKeys.openai = realtimeOpenAiApiKeyInput.value.trim();
 	return Object.fromEntries(Object.entries(pendingApiKeys).filter(([, key]) => key));
 }
 
@@ -181,8 +251,9 @@ async function loadForm() {
 	if (runtimeSettings.aiApiKey && !pendingApiKeys.openai) pendingApiKeys.openai = runtimeSettings.aiApiKey;
 	authModeInput.value = runtimeSettings.authMode === "api-key" ? "api-key" : "oauth";
 	providerInput.value = API_PROVIDERS[runtimeSettings.aiProvider] ? runtimeSettings.aiProvider : "openai";
-	apiKeyProviderInput.value = providerInput.value;
-	aiModelInput.value = authModeInput.value === "oauth" ? CODEX_MODEL : runtimeSettings.aiModel || getProviderMeta(providerInput.value).defaultModel;
+	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
+	const modelProviderId = authModeInput.value === "oauth" ? CODEX_PROVIDER : providerInput.value;
+	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
 }
 
@@ -212,6 +283,7 @@ async function save() {
 		aiProvider: selectedProvider(),
 		aiModel: selectedModel(),
 		authMode: authModeInput.value === "oauth" ? "oauth" : "api-key",
+		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});
@@ -220,7 +292,7 @@ async function save() {
 }
 
 async function validateSelectedKey() {
-	const providerId = apiKeyProviderInput.value || "openai";
+	const providerId = selectedApiKeyProvider();
 	const response = await chrome.runtime.sendMessage({
 		type: "browser-runtime:validate-api-key",
 		providerId,
@@ -231,7 +303,7 @@ async function validateSelectedKey() {
 }
 
 async function removeSelectedKey() {
-	const providerId = apiKeyProviderInput.value || "openai";
+	const providerId = selectedApiKeyProvider();
 	pendingApiKeys[providerId] = "";
 	const response = await chrome.runtime.sendMessage({ type: "browser-runtime:remove-api-key", providerId });
 	if (!response?.ok) throw new Error(response?.error || "Could not remove API key.");
@@ -241,11 +313,11 @@ async function removeSelectedKey() {
 async function signIn(providerId, defaultModel) {
 	if (!providerId) throw new Error("Provider id is required.");
 	if (providerId !== CODEX_PROVIDER) throw new Error("Only OpenAI Codex sign-in is supported.");
-	aiModelInput.value = defaultModel || CODEX_MODEL;
 	authModeInput.value = "oauth";
+	if (!aiModelInput.value.trim()) aiModelInput.value = defaultModel || getProviderDefaultModel(CODEX_PROVIDER);
 	syncAuthModeFields();
 	renderAuthStatus(`Starting ${providerId} sign-in...`);
-	const response = await chrome.runtime.sendMessage({ type: "browser-runtime:oauth-sign-in", providerId, aiModel: CODEX_MODEL });
+	const response = await chrome.runtime.sendMessage({ type: "browser-runtime:oauth-sign-in", providerId, aiModel: selectedModel() });
 	if (!response?.ok) throw new Error(response?.error || "Direct sign-in failed.");
 	await loadForm();
 	await refreshStatus();
@@ -266,7 +338,6 @@ document.getElementById("removeKey").addEventListener("click", () => removeSelec
 authModeInput.addEventListener("change", syncAuthModeFields);
 providerInput.addEventListener("change", () => {
 	aiModelInput.value = getProviderMeta(providerInput.value).defaultModel;
-	apiKeyProviderInput.value = providerInput.value;
 	syncAuthModeFields();
 });
 modelSelectEl.addEventListener("change", () => {
@@ -280,9 +351,17 @@ modelSelectEl.addEventListener("change", () => {
 	syncCapabilityStatus();
 });
 aiModelInput.addEventListener("input", syncCapabilityStatus);
-apiKeyProviderInput.addEventListener("change", syncApiKeyFields);
 aiApiKeyInput.addEventListener("input", () => {
-	pendingApiKeys[apiKeyProviderInput.value || "openai"] = aiApiKeyInput.value.trim();
+	pendingApiKeys[selectedApiKeyProvider()] = aiApiKeyInput.value.trim();
+	syncRealtimeVoiceFields();
+	syncCapabilityStatus();
+});
+realtimeVoiceEnabledInput.addEventListener("change", () => {
+	syncRealtimeVoiceFields();
+	syncCapabilityStatus();
+});
+realtimeOpenAiApiKeyInput.addEventListener("input", () => {
+	pendingApiKeys.openai = realtimeOpenAiApiKeyInput.value.trim();
 });
 document.getElementById("refresh").addEventListener("click", () => refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error")));
 document.getElementById("signOutAuth").addEventListener("click", () => signOutSelectedProvider().catch((error) => renderAuthStatus(error?.message || String(error), "error")));

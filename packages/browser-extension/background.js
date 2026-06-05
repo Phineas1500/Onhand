@@ -8926,6 +8926,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiApiKey: message.aiApiKey,
 				aiApiKeys: message.aiApiKeys,
 				authMode: message.authMode,
+				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
 				speedMode: message.speedMode,
 			});
 			sendResponse({

@@ -95,6 +95,15 @@
         gap: 12px;
         margin-top: 24px;
       }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+      }
+      .toggle-row input {
+        width: auto;
+      }
       button {
         padding: 10px 14px;
         font-size: 14px;
@@ -161,35 +170,39 @@
         <p id="capabilityStatus" class="help">Capability status loads with runtime settings.</p>
       </div>
 
-      <div class="inline-grid">
-        <div class="field">
-          <label for="apiKeyProvider">API key provider</label>
-          <select id="apiKeyProvider">
-            <option value="openai">OpenAI API</option>
-            <option value="anthropic">Anthropic API</option>
-            <option value="google">Google Gemini API</option>
-          </select>
-        </div>
-        <div class="field">
-          <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
-          <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-          <p id="apiKeyHelp" class="help">Optional while Codex sign-in is selected. Voice uses this key for <code>gpt-realtime-2</code>.</p>
-        </div>
+      <div id="apiKeySection" class="field">
+        <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
+        <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+        <p id="apiKeyHelp" class="help">Keys are stored only in chrome.storage.local and are redacted from status diagnostics.</p>
       </div>
-      <div class="row">
-        <button id="validateKey">Validate selected key</button>
-        <button id="removeKey">Remove selected key</button>
+      <div id="apiKeyActions" class="row">
+        <button id="validateKey">Validate key</button>
+        <button id="removeKey">Remove key</button>
+      </div>
+
+      <div class="field">
+        <label class="toggle-row" for="realtimeVoiceEnabled">
+          <input id="realtimeVoiceEnabled" type="checkbox" />
+          <span>Enable realtime voice</span>
+        </label>
+        <p id="realtimeVoiceHelp" class="help">Enable Realtime Voice to use <code>gpt-realtime-2</code> with an OpenAI platform API key.</p>
+      </div>
+
+      <div id="realtimeOpenAiKeyField" class="field" hidden>
+        <label for="realtimeOpenAiApiKey">OpenAI platform API key for realtime voice</label>
+        <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+        <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2</code>. Text chat keeps using the selected authentication mode above.</p>
       </div>
     </section>
 
     <section>
       <h2>OpenAI Codex Sign-In</h2>
-      <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat. Voice can still use the OpenAI platform API key above for <code>gpt-realtime-2</code>.</p>
+      <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Realtime Voice can use an OpenAI platform API key when enabled.</p>
 
       <div class="auth-grid">
         <div class="auth-card">
           <h3>OpenAI Codex</h3>
-          <p>ChatGPT Plus/Pro OAuth for GPT-5.5 Codex models.</p>
+          <p>ChatGPT Plus/Pro OAuth for selectable Codex text models.</p>
           <button data-oauth-provider="openai-codex" data-default-model="gpt-5.5">Sign in</button>
         </div>
       </div>
