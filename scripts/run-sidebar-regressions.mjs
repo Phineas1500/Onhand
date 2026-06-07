@@ -212,6 +212,23 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						],
 					};
 				}
+				if (message?.type === "sidebar:new-session") {
+					state.currentSession = {
+						sessionId: "session-new",
+						sessionName: "New session",
+					};
+					state.turns = [];
+					state.pageActions = [];
+					state.activities = [];
+					return { ok: true, currentSession: state.currentSession };
+				}
+				if (message?.type === "sidebar:set-learning-mode") {
+					state.preferences = {
+						...(state.preferences || {}),
+						learningMode: Boolean(message.learningMode),
+					};
+					return { ok: true, settings: state.preferences };
+				}
 				if (message?.type === "sidebar:switch-session" && typeof options.switchSessionResponse === "function") {
 					return options.switchSessionResponse(message, state);
 				}
@@ -3951,11 +3968,95 @@ async function assertComposerEnterSubmitsAndShiftEnterDoesNot() {
 	dom.window.close();
 }
 
+async function assertSubmitUsesVisibleLearningToggleState() {
+	const state = createState();
+	state.preferences.learningMode = true;
+	const runtimeMessages = [];
+	const submissions = [];
+	const dom = await renderSidebar(state, runtimeMessages, {
+		submitPromptResponse(message) {
+			submissions.push(message);
+			return { ok: true, requestId: "request-toggle-submit" };
+		},
+	});
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const input = shadow.getElementById("input");
+	const learningModeToggle = shadow.getElementById("learningModeToggle");
+
+	assert.equal(learningModeToggle.checked, true, "expected Learning Mode to start on");
+	learningModeToggle.checked = false;
+	input.value = "Answer mode should answer directly";
+	input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(submissions.length, 1, "expected visible-toggle submit to send one prompt");
+	assert.equal(submissions[0].learningMode, false, "submit should use the checkbox's visible state instead of stale currentState preferences");
+	dom.window.close();
+}
+
+async function assertLearningSwitchClickUpdatesVisibleToggleState() {
+	const state = createState();
+	state.preferences.learningMode = true;
+	const runtimeMessages = [];
+	const submissions = [];
+	const dom = await renderSidebar(state, runtimeMessages, {
+		submitPromptResponse(message) {
+			submissions.push(message);
+			return { ok: true, requestId: "request-clicked-toggle-submit" };
+		},
+	});
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const input = shadow.getElementById("input");
+	const learningModeLabel = shadow.getElementById("learningModeLabel");
+	const learningModeToggle = shadow.getElementById("learningModeToggle");
+
+	assert.equal(learningModeToggle.checked, true, "expected Learning Mode to start on");
+	learningModeLabel.click();
+	await waitForSidebarTick(dom);
+
+	assert.equal(learningModeToggle.checked, false, "clicking the visible Learning switch should toggle the checkbox off");
+	const modeMessage = runtimeMessages.findLast((message) => message?.type === "sidebar:set-learning-mode");
+	assert.equal(modeMessage?.type, "sidebar:set-learning-mode", "visible Learning switch should persist the new mode");
+	assert.equal(modeMessage?.learningMode, false, "visible Learning switch should persist answer mode");
+
+	input.value = "Answer mode should answer directly after clicking the switch";
+	input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(submissions.length, 1, "expected answer-mode submit after visible switch click");
+	assert.equal(submissions[0].learningMode, false, "submit should use the visible switch state after a click");
+	dom.window.close();
+}
+
+async function assertHeaderNewEntryButtonStartsNewOnhandSession() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const newEntryButton = shadow.getElementById("headerNewSessionButton");
+
+	assert.equal(shadow.textContent.includes("cmd+n"), false, "sidebar should not advertise Chrome's reserved Cmd+N shortcut");
+	newEntryButton.click();
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:new-session"),
+		true,
+		"expected the header new-entry button to create a new Onhand session",
+	);
+	dom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
 await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();
 await assertComposerEnterSubmitsAndShiftEnterDoesNot();
+await assertSubmitUsesVisibleLearningToggleState();
+await assertLearningSwitchClickUpdatesVisibleToggleState();
+await assertHeaderNewEntryButtonStartsNewOnhandSession();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();

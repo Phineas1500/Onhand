@@ -610,8 +610,25 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /Do not switch to, read, highlight, or note a related tab unless the user explicitly asks/);
 	assert.match(contract.learningModeAppend, /anchor each page separately and say which tab supports which claim/);
 	assert.match(contract.learningModeAppend, /Do not record an offered related tab as a learning source/);
-	assert.match(contract.learningModeAppend, /Do not solve homework-style prompts outright/);
-	assert.match(contract.learningModeAppend, /Drop the Socratic stance/);
+	assert.match(contract.learningModeAppend, /Homework\/problem priority/);
+	assert.match(contract.learningModeAppend, /final numeric, symbolic, or code answer/);
+	assert.match(contract.learningModeAppend, /even if the user asks directly/);
+	assert.match(contract.learningModeAppend, /ask for the next step the learner should do/);
+	assert.match(contract.learningModeAppend, /Drop the Socratic stance only for non-homework conceptual questions/);
+	assert.match(contract.learningModeAppend, /homework\/problem priority still wins/);
+	assert.ok(
+		contract.learningModeAppend.indexOf("Homework/problem priority") < contract.learningModeAppend.indexOf("Drop the Socratic stance only"),
+		"homework guard must appear before and constrain the direct-answer escape hatch",
+	);
+	assert.match(contract.homeworkLearningPrompt, /Learning mode homework test/);
+	assert.match(contract.homeworkLearningPrompt, /Chain Rule - Practice Problems/);
+	assert.match(contract.homeworkLearningPrompt, /Please give me the final answer/);
+	assert.match(contract.homeworkLearningPrompt, /Homework\/problem priority/);
+	assert.match(contract.homeworkLearningPrompt, /do not give the final numeric, symbolic, or code answer/);
+	assert.match(contract.homeworkLearningPrompt, /even if the user asks directly/);
+	assert.match(contract.homeworkLearningPrompt, /ask for the next step the learner should do/);
+	assert.match(contract.homeworkLearningPrompt, /homework\/problem priority still wins/);
+	assert.doesNotMatch(contract.homeworkLearningPrompt, /Drop the Socratic stance when the user explicitly asks for the direct answer/);
 	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
 	assert.match(contract.learningPrompt, /Rejection sampling \(concept_rejection_sampling\)/);
 	assert.match(contract.learningPrompt, /check-rejection-1/);
@@ -661,11 +678,12 @@ async function assertConstitutionPromptContract() {
 
 async function assertLearnerStateUpdates() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { applyLearningEvent, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
+	const { applyLearningEvent, buildLearningCheckFollowupForTest, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
 	assert.equal(typeof createEmptyLearnerState, "function", "browser runtime learner-state factory export is missing");
 	assert.equal(typeof normalizeLearnerState, "function", "browser runtime learner-state normalizer export is missing");
 	assert.equal(typeof applyLearningEvent, "function", "browser runtime learning-event reducer export is missing");
 	assert.equal(typeof setLearnerStateMode, "function", "browser runtime learner-state mode export is missing");
+	assert.equal(typeof buildLearningCheckFollowupForTest, "function", "browser runtime learning follow-up helper export is missing");
 
 	let learnerState = createEmptyLearnerState("learning");
 	assert.deepEqual(learnerState, {
@@ -720,6 +738,31 @@ async function assertLearnerStateUpdates() {
 			askedAt: "2026-05-18T05:01:00.000Z",
 		},
 	]);
+	const derivativeFollowup = buildLearningCheckFollowupForTest("I think the derivative measures rate of change.", learnerState);
+	assert.equal(derivativeFollowup?.check?.checkId, "check-derivative-1", "related answer-shaped follow-up should resolve the matching open check");
+
+	let staleMdnCheckState = createEmptyLearnerState("learning");
+	staleMdnCheckState = applyLearningEvent(staleMdnCheckState, {
+		kind: "concept_introduced",
+		conceptLabel: "Promise.allSettled result objects",
+		conceptId: "concept_promise_allsettled_result_objects",
+		tabTitle: "Promise.allSettled() - JavaScript | MDN",
+		url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled",
+	});
+	staleMdnCheckState = applyLearningEvent(staleMdnCheckState, {
+		kind: "check_opened",
+		checkId: "check-mdn-reason",
+		checkKind: "retrieval",
+		conceptId: "concept_promise_allsettled_result_objects",
+		promptText: "If one input promise rejects with \"Network error\", what would that result object contain: value or reason?",
+	});
+	const unrelatedCalculusFollowup = buildLearningCheckFollowupForTest(
+		"I think the inside derivative is 6x + 7. Is that right? Please help me fix it if needed.",
+		staleMdnCheckState,
+	);
+	assert.equal(unrelatedCalculusFollowup, null, "unrelated answer-shaped prompt must not resolve a stale open check from another concept");
+	const relatedMdnFollowup = buildLearningCheckFollowupForTest("I think it would contain reason.", staleMdnCheckState);
+	assert.equal(relatedMdnFollowup?.check?.checkId, "check-mdn-reason", "related answer-shaped prompt should still resolve the matching open check");
 
 	learnerState = applyLearningEvent(
 		learnerState,

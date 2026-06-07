@@ -1644,6 +1644,7 @@
 				position: relative;
 				flex: 0 0 auto;
 			}
+			.onhand-new-session,
 			.onhand-menu {
 				width: 28px;
 				height: 28px;
@@ -1657,10 +1658,18 @@
 				border-radius: 3px;
 				cursor: pointer;
 			}
+			.onhand-new-session {
+				font: 20px/1 var(--rm-font-mono);
+			}
 			.onhand-menu:hover,
-			.onhand-menu[aria-expanded="true"] {
+			.onhand-menu[aria-expanded="true"],
+			.onhand-new-session:hover {
 				background: var(--rm-surface-1);
 				color: var(--rm-text);
+			}
+			.onhand-new-session:disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
 			}
 			.onhand-menu-panel {
 				position: absolute;
@@ -2903,6 +2912,31 @@
 				border-radius: 2px;
 				flex: 0 0 auto;
 				white-space: nowrap;
+				position: relative;
+			}
+			.onhand-row .learn.disabled {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-row .learn input {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+				margin: 0;
+				padding: 0;
+				border: 0;
+				opacity: 0;
+				cursor: pointer;
+				-webkit-appearance: none;
+				appearance: none;
+				z-index: 1;
+			}
+			.onhand-row .learn input:disabled {
+				cursor: not-allowed;
+			}
+			.onhand-row .learn:focus-within .sw {
+				box-shadow: 0 0 0 2px color-mix(in srgb, var(--rm-pine) 28%, transparent);
 			}
 			.onhand-row .learn .sw {
 				width: 22px;
@@ -3059,6 +3093,7 @@
 					<span class="onhand-logo-mark" aria-hidden="true">☞</span>
 				</div>
 				<input id="sessionTitleInput" class="onhand-title" type="text" value="Current session" aria-label="Session title" spellcheck="false" />
+				<button id="headerNewSessionButton" class="onhand-new-session" type="button" aria-label="New entry" title="New entry">+</button>
 				<div class="onhand-menu-wrap">
 					<button id="menuButton" class="onhand-menu" type="button" aria-label="Open Onhand menu" aria-haspopup="menu" aria-expanded="false">&#8943;</button>
 					<div id="menuPanel" class="onhand-menu-panel" hidden>
@@ -3083,7 +3118,7 @@
 									<button id="closeButton" class="session-button" type="button">Close Onhand</button>
 								</div>
 							<div id="restoreResult" class="onhand-menu-restore-result" hidden></div>
-							<div class="onhand-hotkeys">esc dismiss · cmd+n new entry · enter ask · shift+enter newline</div>
+							<div class="onhand-hotkeys">esc dismiss · enter ask · shift+enter newline</div>
 						</div>
 					</div>
 					</header>
@@ -3120,7 +3155,7 @@
 					<button id="realtimeStatus" class="onhand-realtime-status" type="button" aria-expanded="false">Voice idle</button>
 					<label id="learningModeLabel" class="learn" title="Learning asks Onhand to tutor from the page: anchor prompts, scaffold concepts, and check understanding.">
 						<span class="sw"></span>
-						<input id="learningModeToggle" type="checkbox" hidden />
+						<input id="learningModeToggle" type="checkbox" aria-label="Learning Mode" />
 						<span>Learning</span>
 					</label>
 					<span class="spacer"></span>
@@ -3133,7 +3168,7 @@
 						<button id="realtimeErrorDismissButton" type="button">Dismiss</button>
 					</div>
 				</div>
-				<div id="helper" class="onhand-hint">enter ask · shift+enter newline · cmd+n new entry</div>
+				<div id="helper" class="onhand-hint">enter ask · shift+enter newline</div>
 			</form>
 		</div>
 	`;
@@ -3150,6 +3185,7 @@
 	const meta = shadow.getElementById("meta");
 	const body = shadow.getElementById("scroll");
 	const menuButton = shadow.getElementById("menuButton");
+	const headerNewSessionButton = shadow.getElementById("headerNewSessionButton");
 	const menuPanel = shadow.getElementById("menuPanel");
 	const sessionTitleInput = shadow.getElementById("sessionTitleInput");
 	const restoreResultEl = shadow.getElementById("restoreResult");
@@ -3299,7 +3335,9 @@
 		learningModeToggle.checked = learningMode;
 		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
 		learningModeLabel.classList.toggle("on", learningMode);
+		learningModeLabel.classList.toggle("disabled", learningModeToggle.disabled);
 		composer.classList.toggle("learning", learningMode);
+		headerNewSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
 		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
 		openPdfViewerButton.disabled =
 			openingPdfViewer || creatingSession || sessionSwitching || activeRequest || !canOpenCurrentPdfInViewer(state);
@@ -3310,6 +3348,7 @@
 		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
 		stopButton.disabled = !activeRequest || stoppingRequest;
 		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
+		headerNewSessionButton.textContent = creatingSession ? "..." : "+";
 		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
 		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
 	}
@@ -5148,7 +5187,7 @@
 				? "voice is live · speak then pause, or type here"
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
-				: "esc dismiss · cmd+n new entry";
+				: "esc dismiss · enter ask · shift+enter newline";
 		if (body instanceof HTMLElement && (activeRequest || wasNearBottom)) {
 			body.scrollTop = body.scrollHeight;
 		}
@@ -5178,7 +5217,8 @@
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
-		const learningMode = Boolean(currentState?.preferences?.learningMode);
+		const learningMode =
+			learningModeToggle instanceof HTMLInputElement ? Boolean(learningModeToggle.checked) : Boolean(currentState?.preferences?.learningMode);
 		if (realtimeConnected && realtimeDataChannel?.readyState === "open" && trimmedPrompt && !attachments.length) {
 			await sendRealtimeTextPrompt(trimmedPrompt);
 			input.value = "";
@@ -9215,14 +9255,17 @@
 		});
 	});
 
-	newSessionButton.addEventListener("click", () => {
+	function handleCreateNewSessionAction() {
 		void createNewSession().catch((error) => {
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
 			});
 		});
-	});
+	}
+
+	headerNewSessionButton.addEventListener("click", handleCreateNewSessionAction);
+	newSessionButton.addEventListener("click", handleCreateNewSessionAction);
 
 	openPdfViewerButton.addEventListener("click", () => {
 		void openCurrentPdfInViewer().catch((error) => {

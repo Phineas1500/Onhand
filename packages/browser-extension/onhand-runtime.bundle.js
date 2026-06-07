@@ -124281,8 +124281,9 @@ Learning uses a tutoring stance:
 - Cross-tab interleaving is offer-first. Scan the captured open-tab list, and call browser_list_tabs once only if the captured list is missing or ambiguous. If another already-open tab likely contains a prerequisite, contrast, or related example, name that tab briefly and ask whether the user wants to connect it.
 - Do not switch to, read, highlight, or note a related tab unless the user explicitly asks for cross-tab work or accepts the offer. If the user did ask for cross-tab comparison, anchor each page separately and say which tab supports which claim.
 - Do not record an offered related tab as a learning source until you actually inspect or anchor it.
-- Do not solve homework-style prompts outright. Guide the derivation from the page.
-- Drop the Socratic stance when the user explicitly asks for the direct answer, asks for a study artifact, or is visibly frustrated. Still anchor material claims.`;
+- Homework/problem priority: if the page or prompt looks like an exercise, problem set, assignment, quiz, exam, or the user asks for a "final answer" to a problem, do not give the final numeric, symbolic, or code answer in Learning mode, even if the user asks directly.
+- For homework/problem prompts, anchor the problem and the relevant rule or setup, add a short note if helpful, then ask for the next step the learner should do. For example, ask them to identify inside/outside functions, compute the inner derivative, choose the rule, or write the next line. Do not reveal the final answer until the user switches to answer mode or presents their own completed work and asks for feedback.
+- Drop the Socratic stance only for non-homework conceptual questions, study artifacts, or visibly frustrated users; the homework/problem priority still wins. Still anchor material claims.`;
 var LIST_TABS_SCHEMA = typebox_exports.Object({
   onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" }))
 });
@@ -125282,6 +125283,52 @@ function isLikelyLearningCheckAnswer(prompt) {
   if (/[?？]\s*$/.test(text) && !/\b(i think|my answer|by saying|what i meant)\b/.test(text)) return false;
   return /\b(i think|i'd say|i would say|my answer|it means|that means|it's saying|it is saying|this says|because|by saying)\b/.test(text);
 }
+var LEARNING_CHECK_MATCH_STOPWORDS = /* @__PURE__ */ new Set([
+  "about",
+  "answer",
+  "because",
+  "concept",
+  "contain",
+  "contains",
+  "could",
+  "does",
+  "field",
+  "give",
+  "help",
+  "inside",
+  "important",
+  "just",
+  "mean",
+  "means",
+  "needed",
+  "page",
+  "prompt",
+  "right",
+  "saying",
+  "should",
+  "that",
+  "the",
+  "think",
+  "this",
+  "what",
+  "with",
+  "would"
+]);
+function learningCheckMatchTokens(value) {
+  return new Set(
+    String(value || "").toLowerCase().match(/[a-z][a-z0-9_'-]{2,}/g)?.map((token) => token.replace(/^['-]+|['-]+$/g, "")).filter((token) => token && !LEARNING_CHECK_MATCH_STOPWORDS.has(token)) || []
+  );
+}
+function learningCheckAnswerMatchesOpenCheck(prompt, check2, state) {
+  const answerTokens = learningCheckMatchTokens(prompt);
+  if (!answerTokens.size) return true;
+  const conceptLabel = getLearnerConceptLabel(state, check2.conceptId);
+  const checkTokens = learningCheckMatchTokens(`${conceptLabel} ${check2.promptText}`);
+  for (const token of answerTokens) {
+    if (checkTokens.has(token)) return true;
+  }
+  return false;
+}
 function buildLearningCheckAcknowledgement(prompt, check2, state) {
   const cleanPrompt = stripVoicePromptPrefix(prompt);
   const conceptLabel = getLearnerConceptLabel(state, check2.conceptId);
@@ -125308,8 +125355,10 @@ function buildLearningCheckFollowup(prompt, state) {
   const learnerState = normalizeLearnerState(state, "learning");
   const check2 = getLatestOpenLearningCheck(learnerState);
   if (!check2) return null;
-  if (!isLearningCheckMetaFollowup(prompt) && !isLikelyLearningCheckAnswer(prompt)) return null;
-  const assessment = isLearningCheckMetaFollowup(prompt) ? "partial" : "correct";
+  const metaFollowup = isLearningCheckMetaFollowup(prompt);
+  if (!metaFollowup && !isLikelyLearningCheckAnswer(prompt)) return null;
+  if (!metaFollowup && !learningCheckAnswerMatchesOpenCheck(prompt, check2, learnerState)) return null;
+  const assessment = metaFollowup ? "partial" : "correct";
   return {
     check: check2,
     learnerState,
@@ -126986,13 +127035,29 @@ var __browserRuntimeTest = {
       "",
       learnerState
     );
+    const homeworkLearningPrompt = buildLauncherPrompt(
+      "Learning mode homework test: I need the derivative for problem 1. Please give me the final answer.",
+      "Active tab: Chain Rule - Practice Problems\nVisible text snapshot:\nFor problems 1-27 differentiate the given function.\n1. f(x) = (6x^2 + 7x)^4",
+      [],
+      true,
+      buildReasoningProfile(
+        DEFAULT_SETTINGS,
+        "Learning mode homework test: I need the derivative for problem 1. Please give me the final answer.",
+        [],
+        true
+      ),
+      [],
+      "",
+      createEmptyLearnerState("learning")
+    );
     return {
       systemPrompt: ONHAND_SYSTEM_PROMPT,
       learningModeAppend: ONHAND_LEARNING_MODE_APPEND,
       answerPrompt,
       learningPrompt,
       learnerState,
-      newConceptLearningPrompt
+      newConceptLearningPrompt,
+      homeworkLearningPrompt
     };
   },
   getToolNamesForTest(prompt, learningMode = false, learnerState = null, options = {}) {
@@ -127016,6 +127081,9 @@ var __browserRuntimeTest = {
       }
     };
     return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState, options).map((tool) => tool.name);
+  },
+  buildLearningCheckFollowupForTest(prompt, learnerState) {
+    return buildLearningCheckFollowup(prompt, learnerState);
   },
   setLearnerStateMode,
   summarizeRestoredArtifact
