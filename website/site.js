@@ -136,7 +136,44 @@ const ONHAND_STORE = {
   });
 })();
 
-// 1) Theme toggle: cycles light → dark → auto. Persisted in localStorage.
+// 1) Interactive product demo: citation buttons jump back to page evidence.
+(function(){
+  const demo = document.querySelector('[data-onhand-demo]');
+  if (!demo) return;
+
+  const page = demo.querySelector('[data-demo-page]');
+  const citationButtons = Array.from(demo.querySelectorAll('[data-demo-cite]'));
+  let activeTarget = null;
+
+  function setActiveButton(targetId){
+    citationButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.getAttribute('data-demo-cite') === targetId);
+    });
+  }
+
+  function focusSource(targetId){
+    const target = demo.querySelector(`#${CSS.escape(targetId)}`);
+    if (!target || !page) return;
+
+    if (activeTarget) activeTarget.classList.remove('is-targeted');
+    activeTarget = target;
+    activeTarget.classList.add('is-targeted');
+    setActiveButton(targetId);
+
+    const top = target.offsetTop - (page.clientHeight - target.clientHeight) / 2;
+    page.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  }
+
+  citationButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      focusSource(button.getAttribute('data-demo-cite') || '');
+    });
+  });
+
+  window.setTimeout(() => focusSource('demo-source-definition'), 450);
+})();
+
+// 2) Theme toggle: cycles light → dark → auto. Persisted in localStorage.
 (function(){
   const root = document.documentElement;
   const btn = document.querySelector('[data-theme-toggle]');
