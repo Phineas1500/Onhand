@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Onhand Dev",
-  "version": "0.2.7",
+  "name": "Onhand",
+  "version": "0.2.8",
   "description": "Runs the Onhand contextual tutor directly inside the browser extension.",
   "minimum_chrome_version": "116",
   "icons": {
@@ -21,7 +21,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Onhand Dev",
+    "default_title": "Onhand",
     "default_icon": {
       "16": "icons/onhand-16.png",
       "32": "icons/onhand-32.png",

@@ -9244,6 +9244,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:delete-session") {
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.deleteSession(message.sessionPath, {
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
+			sendResponse({
+				ok: true,
+				deletedSessionId: response.deletedSessionId,
+				currentSession: response.currentSession,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:rename-session") {
 			const runtime = getOnhandBrowserRuntime();
 			const response = await runtime.renameSession(message.sessionName);

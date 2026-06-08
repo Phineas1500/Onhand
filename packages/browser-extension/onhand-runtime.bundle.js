@@ -129220,6 +129220,40 @@ function createOnhandBrowserRuntime(host) {
         currentSession: buildSessionState(session)
       };
     },
+    async deleteSession(sessionId, options = {}) {
+      if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
+      const store = await loadStore();
+      const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+      const targetSession = store.sessions[targetSessionId];
+      if (!targetSession) throw new Error("Session not found.");
+      const wasCurrentSession = targetSessionId === store.currentSessionId;
+      if (wasCurrentSession) {
+        const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
+        await clearActivePageAnnotations(targetWindowId);
+      }
+      delete store.sessions[targetSessionId];
+      let currentSession = store.sessions[store.currentSessionId];
+      if (wasCurrentSession || !currentSession) {
+        currentSession = Object.values(store.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+        if (!currentSession) {
+          currentSession = createSession();
+          store.sessions[currentSession.id] = currentSession;
+        }
+        currentSession.learnerState = setLearnerStateMode(currentSession.learnerState, store.settings.learningMode ? "learning" : "answer");
+        store.sessions[currentSession.id] = currentSession;
+        store.currentSessionId = currentSession.id;
+        uiState = createEmptyState(currentSession, store.settings);
+        uiState.messages = buildConversationMessages(currentSession.messages);
+      }
+      await saveStore(store);
+      if (!wasCurrentSession) {
+        await publishState({ status: "Deleted session." });
+      }
+      return {
+        deletedSessionId: targetSessionId,
+        currentSession: buildSessionState(currentSession)
+      };
+    },
     async renameSession(sessionName) {
       const session = await getCurrentSession();
       session.name = truncate(sessionName, 120);

@@ -1096,6 +1096,71 @@ async function assertSessionBoundaryClearsActivePageAnnotations() {
 	assert.equal(switchCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
 }
 
+async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				windowId: 3,
+				active: true,
+				title: "Wrong active window",
+				url: "https://example.test/wrong-window",
+			}),
+			replaySmokeTab({
+				id: 8,
+				windowId: 4,
+				active: true,
+				title: "Target active window",
+				url: "https://example.test/target-window",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const firstSessionId = store.currentSessionId;
+	store.sessions[firstSessionId].name = "First session";
+	store.sessions[firstSessionId].updatedAt = "2026-05-12T10:00:00.000Z";
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	await runtime.startNewSession({ targetWindowId: 4 });
+	const withSecondSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const secondSessionId = withSecondSession.currentSessionId;
+	assert.notEqual(secondSessionId, firstSessionId, "starting a new session should create a second session before delete regression");
+
+	const callCountBeforeDelete = host.calls.length;
+	const deletedSecond = await runtime.deleteSession(secondSessionId, { targetWindowId: 4 });
+	const deleteCalls = host.calls.slice(callCountBeforeDelete);
+	const afterDeletingSecond = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	assert.equal(afterDeletingSecond.sessions[secondSessionId], undefined, "expected deleted current session to be removed from storage");
+	assert.equal(afterDeletingSecond.currentSessionId, firstSessionId, "expected delete to switch to the remaining session");
+	assert.equal(deletedSecond.deletedSessionId, secondSessionId);
+	assert.equal(deletedSecond.currentSession.sessionId, firstSessionId);
+	assert.equal(deleteCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), true);
+	assert.equal(deleteCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
+	const stateAfterDelete = await runtime.getState();
+	assert.equal(stateAfterDelete.currentSession.sessionId, firstSessionId, "runtime state should follow the selected replacement session");
+
+	const deletedLast = await runtime.deleteSession(firstSessionId, { targetWindowId: 4 });
+	const afterDeletingLast = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const remainingSessionIds = Object.keys(afterDeletingLast.sessions);
+	assert.equal(afterDeletingLast.sessions[firstSessionId], undefined, "expected original last session to be removed");
+	assert.equal(remainingSessionIds.length, 1, "deleting the final saved session should create one fresh session");
+	assert.notEqual(afterDeletingLast.currentSessionId, firstSessionId);
+	assert.equal(deletedLast.deletedSessionId, firstSessionId);
+	assert.equal(deletedLast.currentSession.sessionId, afterDeletingLast.currentSessionId);
+	const freshState = await runtime.getState();
+	assert.equal(freshState.currentSession.sessionId, afterDeletingLast.currentSessionId);
+	assert.deepEqual(freshState.turns, [], "fresh replacement session should not inherit deleted turns");
+}
+
 async function assertSessionReplayRestore() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -3602,6 +3667,7 @@ async function main() {
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
+	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
 	await assertSessionReplayRestore();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();

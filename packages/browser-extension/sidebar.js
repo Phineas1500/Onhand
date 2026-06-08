@@ -160,6 +160,7 @@
 	let pendingSessionPath = "";
 	let creatingSession = false;
 	let restoringSession = false;
+	let deletingSession = false;
 	let openingPdfViewer = false;
 	let lastRestoreResult = null;
 	let stoppingRequest = false;
@@ -170,6 +171,7 @@
 	let attachmentDrafts = [];
 	let lastMessagesMarkup = "";
 	let lastReplyMarkup = "";
+	const sourceDisclosureOpenKeys = new Set();
 	let quickOpenFocusGeneration = 0;
 	let quickOpenFocusUntil = 0;
 	let quickOpenKeyCaptureUntil = 0;
@@ -1115,6 +1117,14 @@
 			.stop-button:hover {
 				background: rgba(255, 142, 134, 0.14);
 			}
+			.delete-button {
+				color: #ffd2cb;
+				border-color: rgba(255, 142, 134, 0.24);
+				background: rgba(255, 142, 134, 0.08);
+			}
+			.delete-button:hover {
+				background: rgba(255, 142, 134, 0.14);
+			}
 			.section {
 				display: flex;
 				flex-direction: column;
@@ -1760,6 +1770,10 @@
 				cursor: not-allowed;
 			}
 			.onhand-menu-actions .stop-button {
+				color: var(--rm-love);
+				border-color: color-mix(in srgb, var(--rm-love) 38%, var(--rm-surface-2));
+			}
+			.onhand-menu-actions .delete-button {
 				color: var(--rm-love);
 				border-color: color-mix(in srgb, var(--rm-love) 38%, var(--rm-surface-2));
 			}
@@ -2898,10 +2912,48 @@
 			}
 			.onhand-realtime-sources {
 				margin-top: 10px;
+				font: 11px/1 var(--rm-font-mono);
+				color: var(--rm-subtext);
 			}
-			.onhand-realtime-sources .onhand-label {
-				display: block;
-				margin-bottom: 4px;
+			.onhand-source-summary {
+				cursor: pointer;
+				list-style: none;
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				padding: 4px 7px;
+				margin-left: -7px;
+				border-radius: 2px;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+			.onhand-source-summary::-webkit-details-marker {
+				display: none;
+			}
+			.onhand-source-summary::before {
+				content: ">";
+				color: var(--rm-surface-2);
+				transition: transform 120ms;
+				display: inline-block;
+			}
+			.onhand-source-disclosure[open] .onhand-source-summary::before {
+				transform: rotate(90deg);
+			}
+			.onhand-source-summary:hover {
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+			}
+			.onhand-source-summary .onhand-count {
+				font-size: 10px;
+				letter-spacing: 0;
+			}
+			.onhand-source-body {
+				padding: 7px 0 0 14px;
+				margin-left: 2px;
+				border-left: 1px solid var(--rm-surface-1);
+			}
+			.onhand-source-body .onhand-actions {
+				margin-top: 0;
 			}
 			.onhand-row .learn {
 				display: inline-flex;
@@ -3005,6 +3057,13 @@
 			}
 			.onhand-send:hover {
 				background: var(--rm-foam);
+			}
+			.onhand-send.stop-button {
+				color: var(--rm-base);
+				background: var(--rm-love);
+			}
+			.onhand-send.stop-button:hover {
+				background: color-mix(in srgb, var(--rm-love) 82%, var(--rm-gold));
 			}
 			.onhand-send:disabled,
 			.onhand-input:disabled,
@@ -3114,7 +3173,8 @@
 									<button id="newSessionButton" class="session-button" type="button">New</button>
 									<button id="openPdfViewerButton" class="session-button" type="button">Open PDF</button>
 									<button id="restoreSessionButton" class="session-button" type="button">Restore pages</button>
-									<button id="stopButton" class="session-button stop-button" type="button">Stop</button>
+									<button id="optionsButton" class="session-button" type="button">Options</button>
+									<button id="deleteSessionButton" class="session-button delete-button" type="button">Delete</button>
 									<button id="closeButton" class="session-button" type="button">Close Onhand</button>
 								</div>
 							<div id="restoreResult" class="onhand-menu-restore-result" hidden></div>
@@ -3199,7 +3259,8 @@
 	const newSessionButton = shadow.getElementById("newSessionButton");
 	const openPdfViewerButton = shadow.getElementById("openPdfViewerButton");
 	const restoreSessionButton = shadow.getElementById("restoreSessionButton");
-	const stopButton = shadow.getElementById("stopButton");
+	const optionsButton = shadow.getElementById("optionsButton");
+	const deleteSessionButton = shadow.getElementById("deleteSessionButton");
 	const messagesEl = shadow.getElementById("messages");
 	const activityEl = shadow.getElementById("activity");
 	const replySectionEl = shadow.getElementById("replySection");
@@ -3298,6 +3359,28 @@
 		);
 	}
 
+	function hasMeaningfulSessionItems(items) {
+		return (Array.isArray(items) ? items : []).some((item) => {
+			if (!item || typeof item !== "object") return Boolean(item);
+			return Boolean(
+				item.pending ||
+					item.error ||
+					String(item.userPrompt || item.reply || item.label || item.detail || "").trim() ||
+					(Array.isArray(item.pageActions) && item.pageActions.length) ||
+					(Array.isArray(item.activities) && item.activities.length),
+			);
+		});
+	}
+
+	function isFreshCurrentSession(state) {
+		if (!state?.currentSession) return false;
+		return !(
+			hasMeaningfulSessionItems(state?.turns) ||
+			(Array.isArray(state?.pageActions) && state.pageActions.length) ||
+			(Array.isArray(state?.activities) && state.activities.length)
+		);
+	}
+
 	function renderSessionControls(state) {
 		const currentPath = getCurrentSessionPath(state);
 		if (pendingSessionPath && pendingSessionPath === currentPath) {
@@ -3329,25 +3412,32 @@
 		}
 
 		const activeRequest = Boolean(state?.activeRequestId);
-		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || restoringSession || activeRequest;
+		sessionSelect.disabled = sessionLoading || sessionSwitching || creatingSession || restoringSession || deletingSession || activeRequest;
 		sessionSelect.title = sessionSwitching ? "Switching session..." : "";
 		themeSelect.value = sidebarTheme;
 		learningModeToggle.checked = learningMode;
-		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || stoppingRequest;
+		learningModeToggle.disabled = activeRequest || sessionLoading || sessionSwitching || creatingSession || restoringSession || deletingSession || stoppingRequest;
 		learningModeLabel.classList.toggle("on", learningMode);
 		learningModeLabel.classList.toggle("disabled", learningModeToggle.disabled);
 		composer.classList.toggle("learning", learningMode);
-		headerNewSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
-		newSessionButton.disabled = creatingSession || sessionSwitching || activeRequest;
+		const currentSessionFresh = isFreshCurrentSession(state);
+		const newSessionDisabled = currentSessionFresh || sessionLoading || creatingSession || sessionSwitching || restoringSession || deletingSession || activeRequest;
+		headerNewSessionButton.disabled = newSessionDisabled;
+		newSessionButton.disabled = newSessionDisabled;
+		const newSessionTitle = currentSessionFresh ? "Current session is already new" : "New entry";
+		headerNewSessionButton.title = newSessionTitle;
+		newSessionButton.title = newSessionTitle;
 		openPdfViewerButton.disabled =
-			openingPdfViewer || creatingSession || sessionSwitching || activeRequest || !canOpenCurrentPdfInViewer(state);
+			openingPdfViewer || creatingSession || sessionSwitching || restoringSession || deletingSession || activeRequest || !canOpenCurrentPdfInViewer(state);
 		openPdfViewerButton.textContent = openingPdfViewer ? "Opening PDF..." : "Open PDF";
 		openPdfViewerButton.title = canOpenCurrentPdfInViewer(state)
 			? "Open this PDF in Onhand's viewer"
 			: "Open a PDF tab to use Onhand's PDF viewer";
-		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || activeRequest || !currentPath;
-		stopButton.disabled = !activeRequest || stoppingRequest;
-		stopButton.textContent = stoppingRequest ? "Stopping..." : "Stop";
+		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || deletingSession || activeRequest || !currentPath;
+		const selectedSessionPath = getSelectedSessionPath();
+		deleteSessionButton.disabled = deletingSession || creatingSession || sessionSwitching || restoringSession || activeRequest || !selectedSessionPath;
+		deleteSessionButton.textContent = deletingSession ? "Deleting..." : "Delete";
+		deleteSessionButton.title = selectedSessionPath ? "Delete selected session" : "Choose a session to delete";
 		headerNewSessionButton.textContent = creatingSession ? "..." : "+";
 		newSessionButton.textContent = creatingSession ? "Creating..." : "New";
 		restoreSessionButton.textContent = restoringSession ? "Restoring..." : "Restore pages";
@@ -3429,6 +3519,7 @@
 	}
 
 	async function createNewSession() {
+		if (isFreshCurrentSession(currentState)) return;
 		creatingSession = true;
 		lastRestoreResult = null;
 		resetReplayState();
@@ -3506,6 +3597,51 @@
 			});
 		} finally {
 			restoringSession = false;
+			renderState(currentState || {});
+		}
+	}
+
+	function getSelectedSessionLabel(targetSessionPath = "") {
+		const sessionPath = getSelectedSessionPath(targetSessionPath);
+		const selectedOption = Array.from(sessionSelect.options || []).find((option) => option.value === sessionPath);
+		return (
+			String(selectedOption?.textContent || "").trim() ||
+			currentState?.currentSession?.sessionName ||
+			sessionOverview?.currentSession?.sessionName ||
+			"this session"
+		);
+	}
+
+	async function deleteSelectedSession(targetSessionPath = "") {
+		const sessionPath = getSelectedSessionPath(targetSessionPath);
+		if (!sessionPath) {
+			throw new Error("Choose a session to delete first.");
+		}
+		if (currentState?.activeRequestId) {
+			throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
+		}
+		const sessionLabel = getSelectedSessionLabel(sessionPath);
+		const confirmed =
+			typeof globalThis.confirm !== "function" ||
+			globalThis.confirm(`Delete "${sessionLabel}"? This cannot be undone.`);
+		if (!confirmed) return;
+		deletingSession = true;
+		lastRestoreResult = null;
+		resetReplayState();
+		renderState(currentState || {});
+		try {
+			const response = await chrome.runtime.sendMessage({
+				type: "sidebar:delete-session",
+				sessionPath,
+				windowId: await ensureCurrentWindowId(),
+			});
+			if (!response?.ok) {
+				throw new Error(response?.error || "Could not delete that session.");
+			}
+			setMenuOpen(false);
+			await Promise.all([requestState(), requestSessions()]);
+		} finally {
+			deletingSession = false;
 			renderState(currentState || {});
 		}
 	}
@@ -3626,6 +3762,7 @@
 	}
 
 	async function stopActiveRun() {
+		if (!currentState?.activeRequestId || stoppingRequest) return;
 		stoppingRequest = true;
 		renderState(currentState || {});
 		try {
@@ -4594,7 +4731,7 @@
 								<div class="onhand-response">
 									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
 									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
-									${renderRealtimeSourceButtons(sourceActions)}
+									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 								</div>
 								${renderReplyCopyButton(turn, reply)}
 							</div>
@@ -4608,6 +4745,23 @@
 		root.querySelectorAll(".onhand-progress").forEach((detailsEl) => {
 			detailsEl.addEventListener("toggle", () => {
 				progressExpanded = detailsEl.open;
+			});
+		});
+	}
+
+	function bindSourceDisclosures(root) {
+		if (!(root instanceof Element)) return;
+		root.querySelectorAll("[data-source-disclosure-key]").forEach((detailsEl) => {
+			if (!(detailsEl instanceof HTMLDetailsElement) || detailsEl.dataset.onhandSourceDisclosureBound === "true") return;
+			detailsEl.dataset.onhandSourceDisclosureBound = "true";
+			detailsEl.addEventListener("toggle", () => {
+				const key = String(detailsEl.dataset.sourceDisclosureKey || "").trim();
+				if (!key) return;
+				if (detailsEl.open) {
+					sourceDisclosureOpenKeys.add(key);
+				} else {
+					sourceDisclosureOpenKeys.delete(key);
+				}
 			});
 		});
 	}
@@ -4846,6 +5000,7 @@
 			lastMessagesMarkup = markup;
 			messagesEl.innerHTML = markup;
 			bindProgressToggles(messagesEl);
+			bindSourceDisclosures(messagesEl);
 			bindActionButtons(messagesEl);
 			bindCopyButtons(messagesEl);
 		}
@@ -5072,14 +5227,30 @@
 		return selectRelevantCitationActions(priorActions, sourceText);
 	}
 
-	function renderRealtimeSourceButtons(actions) {
+	function sourceDisclosureKey(actions, preferredKey = "") {
+		const key = String(preferredKey || "").trim();
+		if (key) return key;
+		return (Array.isArray(actions) ? actions : [])
+			.map((action) => String(action?.key || action?.annotationId || action?.citationText || action?.detail || "").trim())
+			.filter(Boolean)
+			.join("|");
+	}
+
+	function renderRealtimeSourceButtons(actions, preferredKey = "") {
 		const items = Array.isArray(actions) ? actions : [];
 		if (!items.length) return "";
+		const disclosureKey = sourceDisclosureKey(items, preferredKey);
+		const openAttribute = disclosureKey && sourceDisclosureOpenKeys.has(disclosureKey) ? " open" : "";
 		return `
-			<div class="onhand-realtime-sources">
-				<span class="onhand-label">Sources</span>
-				${renderActionButtons(items, "onhand-actions onhand-realtime-source-actions")}
-			</div>
+			<details class="onhand-realtime-sources onhand-source-disclosure" data-source-disclosure-key="${escapeAttribute(disclosureKey)}"${openAttribute}>
+				<summary class="onhand-source-summary">
+					<span class="onhand-label">Sources</span>
+					<span class="onhand-count">${escapeHtml(String(items.length))}</span>
+				</summary>
+				<div class="onhand-source-body">
+					${renderActionButtons(items, "onhand-actions onhand-realtime-source-actions")}
+				</div>
+			</details>
 		`;
 	}
 
@@ -5114,7 +5285,7 @@
 							<div class="onhand-response">
 								${markdown ? renderReplyMarkdownWithCitationFallback(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
 								${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
-								${renderRealtimeSourceButtons(sourceActions)}
+								${renderRealtimeSourceButtons(sourceActions, `realtime:${sessionPath}:${realtimeAnswer.sourceTurnId || realtimeAnswer.voiceTurnId || realtimeAnswer.updatedAt || "current"}`)}
 							</div>
 							${renderRealtimeAnswerCopyButton(markdown)}
 						</div>
@@ -5123,6 +5294,7 @@
 			if (replyEl.innerHTML === markup || markup === lastReplyMarkup) return;
 			lastReplyMarkup = markup;
 			replyEl.innerHTML = markup;
+			bindSourceDisclosures(replyEl);
 			bindActionButtons(replyEl);
 			bindCopyButtons(replyEl);
 				return;
@@ -5177,12 +5349,16 @@
 		const activeRequest = Boolean(state?.activeRequestId);
 		composer.hidden = false;
 		input.disabled = activeRequest || sending;
-		sendButton.disabled = activeRequest || sending;
+		sendButton.disabled = activeRequest ? stoppingRequest : sending;
+		sendButton.classList.toggle("stop-button", activeRequest);
+		sendButton.title = activeRequest ? "Stop current Onhand response" : "Ask Onhand";
+		sendButton.setAttribute("aria-label", activeRequest ? "Stop current Onhand response" : "Ask Onhand");
+		sendButton.innerHTML = activeRequest ? (stoppingRequest ? "Stopping..." : "Stop") : 'Ask <span class="kbd">&#8617;</span>';
 		attachButton.disabled = activeRequest || sending;
 		fileInput.disabled = activeRequest || sending;
 		refocusQuickAskComposerAfterRender();
 		helper.textContent = activeRequest
-			? "Onhand is responding · use Stop from the menu"
+			? "Onhand is responding · press Stop to cancel"
 			: realtimeConnected
 				? "voice is live · speak then pause, or type here"
 			: attachmentDrafts.length
@@ -9032,6 +9208,12 @@
 		}
 	}
 
+	function cancelQuickAskComposerFocus() {
+		quickOpenFocusGeneration += 1;
+		quickOpenFocusUntil = 0;
+		quickOpenKeyCaptureUntil = 0;
+	}
+
 	function schedulePanelComposerFocus() {
 		if (!IS_NATIVE_SIDE_PANEL && !open) return;
 		scheduleQuickAskComposerFocus({ ensureOpen: false });
@@ -9083,7 +9265,9 @@
 	}
 
 	menuButton.addEventListener("click", () => {
-		setMenuOpen(Boolean(menuPanel.hidden));
+		const nextOpen = Boolean(menuPanel.hidden);
+		if (nextOpen) cancelQuickAskComposerFocus();
+		setMenuOpen(nextOpen);
 	});
 
 	shadow.addEventListener("pointerdown", (event) => {
@@ -9285,6 +9469,15 @@
 		});
 	});
 
+	optionsButton.addEventListener("click", () => {
+		void openOnhandOptionsPage().catch((error) => {
+			renderState({
+				...(currentState || {}),
+				status: error?.message || String(error),
+			});
+		});
+	});
+
 	replayViewEl.addEventListener("click", (event) => {
 		const target = event.target instanceof Element ? event.target : null;
 		if (!target) return;
@@ -9346,8 +9539,8 @@
 		}
 	});
 
-	stopButton.addEventListener("click", () => {
-		void stopActiveRun().catch((error) => {
+	deleteSessionButton.addEventListener("click", () => {
+		void deleteSelectedSession().catch((error) => {
 			renderState({
 				...(currentState || {}),
 				status: error?.message || String(error),
@@ -9464,6 +9657,15 @@
 	});
 
 	function submitComposerInput() {
+		if (currentState?.activeRequestId) {
+			void stopActiveRun().catch((error) => {
+				renderState({
+					...(currentState || {}),
+					status: error?.message || String(error),
+				});
+			});
+			return;
+		}
 		void submitPrompt(input.value).catch((error) => {
 			renderState({
 				...(currentState || {}),

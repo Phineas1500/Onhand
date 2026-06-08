@@ -171,6 +171,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	});
 	const { window } = dom;
 	window.__onhandSidebarExposeTestHooks = true;
+	window.confirm = typeof options.confirm === "function" ? options.confirm : () => true;
 	let openOptionsCalls = 0;
 	const createdTabs = [];
 	if (options.mediaDevices) {
@@ -221,6 +222,20 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					state.pageActions = [];
 					state.activities = [];
 					return { ok: true, currentSession: state.currentSession };
+				}
+				if (message?.type === "sidebar:delete-session") {
+					if (typeof options.deleteSessionResponse === "function") {
+						return options.deleteSessionResponse(message, state);
+					}
+					const deletedSessionId = String(message.sessionPath || state.currentSession?.sessionId || "");
+					state.currentSession = {
+						sessionId: "session-after-delete",
+						sessionName: "Remaining session",
+					};
+					state.turns = [];
+					state.pageActions = [];
+					state.activities = [];
+					return { ok: true, deletedSessionId, currentSession: state.currentSession };
 				}
 				if (message?.type === "sidebar:set-learning-mode") {
 					state.preferences = {
@@ -338,6 +353,11 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						return options.submitPromptResponse(message, state);
 					}
 					return { ok: true, requestId: options.submitPromptRequestId || "request-sidebar-test" };
+				}
+				if (message?.type === "sidebar:stop") {
+					state.activeRequestId = null;
+					state.currentTurnId = null;
+					return { ok: true, stopped: { cancelled: false }, currentSession: state.currentSession };
 				}
 				if (message?.type === "sidebar:realtime-plan-pedagogical-move") {
 					if (typeof options.realtimePlanResponse === "function") {
@@ -841,6 +861,12 @@ async function assertTurnSourceButtonsExposeAllPageActions() {
 	const dom = await renderSidebar(state, runtimeMessages);
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const shadow = host.shadowRoot;
+	const sourceDisclosure = shadow.querySelector(".onhand-realtime-sources");
+	assert.ok(sourceDisclosure, "expected saved turn to render a source dropdown");
+	assert.equal(sourceDisclosure.tagName, "DETAILS", "expected sources to render as a disclosure dropdown");
+	assert.equal(sourceDisclosure.open, false, "expected source dropdown to be collapsed by default");
+	assert.match(sourceDisclosure.querySelector("summary")?.textContent || "", /Sources/);
+	assert.match(sourceDisclosure.querySelector("summary")?.textContent || "", /2/);
 	assert.equal(shadow.querySelectorAll(".onhand-cite").length, 0, "expected no inline citation when reply text does not quote sources");
 	assert.ok(
 		shadow.querySelector('.onhand-realtime-sources [data-action-key="highlight:source-strip"]'),
@@ -850,6 +876,12 @@ async function assertTurnSourceButtonsExposeAllPageActions() {
 		shadow.querySelector('.onhand-realtime-sources [data-action-key="note:source-strip"]'),
 		"expected saved turn source strip to expose note source",
 	);
+	sourceDisclosure.open = true;
+	sourceDisclosure.dispatchEvent(new dom.window.Event("toggle"));
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const rerenderedSourceDisclosure = shadow.querySelector(".onhand-realtime-sources");
+	assert.equal(rerenderedSourceDisclosure.open, true, "expected opened source dropdown to survive sidebar rerender");
 
 	dom.window.close();
 }
@@ -3941,6 +3973,23 @@ async function assertMenuClosesOnOutsidePointer() {
 	dom.window.close();
 }
 
+async function assertInitialMenuClickSurvivesStartupComposerFocus() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const menuButton = shadow.getElementById("menuButton");
+	const menuPanel = shadow.getElementById("menuPanel");
+
+	menuButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	assert.equal(menuPanel.hidden, false, "expected first menu click to open the menu");
+
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 1350));
+	assert.equal(menuPanel.hidden, false, "pending startup composer focus should not close the menu after the first click");
+
+	dom.window.close();
+}
+
 async function assertComposerEnterSubmitsAndShiftEnterDoesNot() {
 	const runtimeMessages = [];
 	const submissions = [];
@@ -3965,6 +4014,43 @@ async function assertComposerEnterSubmitsAndShiftEnterDoesNot() {
 	await waitForSidebarTick(dom);
 	assert.equal(submissions.length, 1, "expected Shift+Enter not to submit the composer");
 
+	dom.window.close();
+}
+
+async function assertActiveComposerButtonStopsCurrentRequest() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.activeRequestId = "request-active";
+	state.currentTurnId = "request-active";
+	state.status = "Thinking...";
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const composer = shadow.getElementById("composer");
+	const input = shadow.getElementById("input");
+	const sendButton = shadow.getElementById("sendButton");
+	const helper = shadow.getElementById("helper");
+
+	assert.equal(input.disabled, true, "expected text input to stay disabled during an active request");
+	assert.equal(sendButton.disabled, false, "expected composer button to remain clickable while it acts as Stop");
+	assert.equal(sendButton.textContent.trim(), "Stop", "expected Ask button to become Stop during an active request");
+	assert.equal(sendButton.classList.contains("stop-button"), true, "expected active composer button to use the Stop style");
+	assert.match(sendButton.title, /Stop current Onhand response/);
+	assert.match(helper.textContent, /press Stop to cancel/);
+
+	composer.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:stop"),
+		true,
+		"expected active composer submit to stop the current response",
+	);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:submit-prompt"),
+		false,
+		"active composer submit should not enqueue a new prompt",
+	);
 	dom.window.close();
 }
 
@@ -4038,6 +4124,7 @@ async function assertHeaderNewEntryButtonStartsNewOnhandSession() {
 	const newEntryButton = shadow.getElementById("headerNewSessionButton");
 
 	assert.equal(shadow.textContent.includes("cmd+n"), false, "sidebar should not advertise Chrome's reserved Cmd+N shortcut");
+	assert.equal(newEntryButton.disabled, false, "expected populated sessions to allow creating a new entry");
 	newEntryButton.click();
 	await waitForSidebarTick(dom);
 
@@ -4049,14 +4136,128 @@ async function assertHeaderNewEntryButtonStartsNewOnhandSession() {
 	dom.window.close();
 }
 
+async function assertFreshSessionCannotCreateAnotherNewSession() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.currentSession = {
+		sessionId: "session-empty",
+		sessionName: "New session",
+	};
+	state.turns = [];
+	state.pageActions = [];
+	state.activities = [];
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const newEntryButton = shadow.getElementById("headerNewSessionButton");
+	const menuNewButton = shadow.getElementById("newSessionButton");
+
+	assert.equal(newEntryButton.disabled, true, "expected header new-entry button to be disabled for a fresh current session");
+	assert.equal(menuNewButton.disabled, true, "expected menu New button to be disabled for a fresh current session");
+	assert.match(newEntryButton.title, /already new/i);
+	assert.match(menuNewButton.title, /already new/i);
+
+	newEntryButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	menuNewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:new-session"),
+		false,
+		"fresh current sessions should not create another blank session",
+	);
+	dom.window.close();
+}
+
+async function assertMenuOptionsButtonOpensOptionsPage() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const optionsButton = shadow.getElementById("optionsButton");
+
+	assert.ok(optionsButton, "expected side-panel menu to include an Options button");
+	optionsButton.click();
+	await waitForSidebarTick(dom);
+
+	assert.equal(dom.getOpenOptionsCalls(), 1, "expected Options button to open the extension options page");
+	dom.window.close();
+}
+
+async function assertMenuDeleteButtonConfirmsBeforeDeletingSession() {
+	const runtimeMessages = [];
+	const confirmMessages = [];
+	let confirmResult = false;
+	const state = createState();
+	state.currentSession = {
+		sessionId: "session-alpha",
+		sessionName: "Alpha session",
+	};
+	const sessions = [
+		{
+			id: "session-alpha",
+			name: "Alpha session",
+			path: "session-alpha",
+			title: "Alpha session",
+		},
+		{
+			id: "session-beta",
+			name: "Beta session",
+			path: "session-beta",
+			title: "Beta session",
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages, {
+		sessions: () => sessions,
+		confirm(message) {
+			confirmMessages.push(message);
+			return confirmResult;
+		},
+	});
+	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const deleteButton = shadow.getElementById("deleteSessionButton");
+
+	assert.ok(deleteButton, "expected side-panel menu to include a Delete button");
+	assert.equal(shadow.getElementById("stopButton"), null, "expected menu Stop button to be removed");
+	assert.equal(deleteButton.disabled, false, "expected populated current session to be deletable");
+	assert.equal(deleteButton.textContent.trim(), "Delete");
+
+	deleteButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+
+	assert.equal(confirmMessages.length, 1, "expected Delete to confirm before removing a session");
+	assert.match(confirmMessages[0], /Delete "Alpha session"/);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:delete-session"),
+		false,
+		"canceling Delete confirmation should not remove a session",
+	);
+
+	confirmResult = true;
+	deleteButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+
+	const deleteMessage = runtimeMessages.find((message) => message?.type === "sidebar:delete-session");
+	assert.ok(deleteMessage, "expected confirmed Delete to send a delete-session message");
+	assert.equal(deleteMessage.sessionPath, "session-alpha");
+	assert.equal(deleteMessage.windowId, 1);
+	dom.window.close();
+}
+
 await assertSessionWideCitationNumbers();
 await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();
+await assertInitialMenuClickSurvivesStartupComposerFocus();
 await assertComposerEnterSubmitsAndShiftEnterDoesNot();
+await assertActiveComposerButtonStopsCurrentRequest();
 await assertSubmitUsesVisibleLearningToggleState();
 await assertLearningSwitchClickUpdatesVisibleToggleState();
 await assertHeaderNewEntryButtonStartsNewOnhandSession();
+await assertFreshSessionCannotCreateAnotherNewSession();
+await assertMenuOptionsButtonOpensOptionsPage();
+await assertMenuDeleteButtonConfirmsBeforeDeletingSession();
 await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
