@@ -1,0 +1,47 @@
+name: Sync GitHub Release Version
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-github-release-version
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ONHAND_GITHUB_REPO: Phineas1500/Onhand
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sync website release version
+        run: npm run website:sync-release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Commit website release update
+        run: |
+          if git diff --quiet -- website/site.js website/index.html website/support.html; then
+            echo "Website already matches GitHub latest release."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/site.js website/index.html website/support.html
+          git commit -m "Sync website GitHub release version"
+          git push
