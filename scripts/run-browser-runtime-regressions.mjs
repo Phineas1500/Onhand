@@ -579,6 +579,23 @@ async function assertPublicActivitiesFilterInternalThinking() {
 	assert.doesNotMatch(JSON.stringify(activities), /onhand_record_learning_event/);
 }
 
+async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
+	// requestAnimationFrame never fires on hidden tabs or occluded windows;
+	// a bare rAF await left viewer annotation commands hanging until the
+	// surface became visible, and their stale completions then clobbered
+	// newer annotations (see docs/onhand-pdf-qa-2026-06-09.md).
+	const { readFile } = await import("node:fs/promises");
+	for (const path of ["packages/browser-extension/src/pdf-viewer.ts", "packages/browser-extension/pdf-viewer.bundle.js"]) {
+		const source = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
+		assert.match(source, /waitForNextFrame/, `${path} should use the timeout-backed frame wait`);
+		assert.doesNotMatch(
+			source,
+			/await new Promise\(\s*\(?resolve\)?\s*=>\s*requestAnimationFrame\(resolve\)\s*\)/,
+			`${path} should not await bare requestAnimationFrame (hangs on hidden/occluded surfaces)`,
+		);
+	}
+}
+
 async function assertConstitutionPromptContract() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { classifyPromptForReasoning, getPromptContractForTest, getToolNamesForTest } = __browserRuntimeTest || {};
@@ -4328,6 +4345,7 @@ async function main() {
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertConstitutionPromptContract();
+	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertLearnerStateUpdates();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();

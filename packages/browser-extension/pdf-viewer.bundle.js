@@ -25104,6 +25104,18 @@ var resizeRenderTimer = null;
 function inlinePdfViewerBridgeStorageKey(pdfUrl) {
   return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
 }
+function waitForNextFrame(timeoutMs = 150) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    requestAnimationFrame(finish);
+    setTimeout(finish, timeoutMs);
+  });
+}
 function extensionUrl(path) {
   if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) return chrome.runtime.getURL(path);
   return path;
@@ -25523,7 +25535,7 @@ async function pdfHighlightText(query, options = {}) {
       const duplicateCount = removeDuplicatePdfHighlights(existing, rawQuery, options, occurrence);
       if (options.scrollIntoView !== false) {
         existing.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await waitForNextFrame();
         updatePageFromScroll();
       }
       return buildAnnotationResult(existing, rawQuery, {
@@ -25578,7 +25590,7 @@ async function pdfHighlightText(query, options = {}) {
     ensureAnnotationLayer(page).append(highlight);
     if (options.scrollIntoView !== false) {
       highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await waitForNextFrame();
       updatePageFromScroll();
     }
     return buildAnnotationResult(highlight, rawQuery, { approximate: Boolean(match.fallback), fallback: match.fallback });
@@ -25888,7 +25900,7 @@ async function pdfShowNote(annotationId, noteText, options = {}) {
   positionPdfNote(note, annotation, page);
   if (options.scrollIntoView !== false) {
     note.scrollIntoView({ behavior: "auto", block: options.block || "center", inline: "nearest" });
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await waitForNextFrame();
     positionPdfNote(note, annotation, page);
     updatePageFromScroll();
   }
@@ -25912,7 +25924,7 @@ async function pdfScrollToAnnotation(annotationId, options = {}) {
   if (options.target === "note" && note) expandPdfNoteForAnnotation(annotationId);
   const target = options.target === "note" && note ? note : annotation;
   target.scrollIntoView({ behavior: "auto", block: options.block || "center", inline: "nearest" });
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await waitForNextFrame();
   updatePageFromScroll();
   return buildAnnotationResult(annotation);
 }
@@ -25994,7 +26006,7 @@ async function restorePdfViewSnapshot(snapshot, sequence) {
     const pageTop = window.scrollY + rect.top;
     window.scrollTo({ top: Math.max(0, pageTop + rect.height * snapshot.pageOffsetRatio), left: 0, behavior: "auto" });
     setCurrentPageNumber(snapshot.pageNumber);
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await waitForNextFrame();
   }
   updatePageFromScroll();
 }
@@ -26180,7 +26192,7 @@ async function pdfJumpToPage(options = {}) {
   const page = getPdfPageByNumber(pageNumber);
   if (!page) throw new Error(`PDF page not found: ${pageNumber}`);
   scrollToPage(pageNumber);
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await waitForNextFrame();
   const text = String(options.text || anchor?.matchedText || anchor?.textQuote?.exact || "").trim();
   let matchAnchor = null;
   if (text) {
@@ -26189,7 +26201,7 @@ async function pdfJumpToPage(options = {}) {
     const match = textLayer ? findMappedTextRange(textLayer, text, occurrence) : null;
     if (match) {
       match.range.startContainer.parentElement?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await waitForNextFrame();
       matchAnchor = buildPdfAnchor(page, match, occurrence);
     }
   }
@@ -26216,7 +26228,7 @@ async function pdfCapturePageImage(options = {}) {
   const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
   const quality = Math.max(0.1, Math.min(1, Number(options.quality || 0.92) || 0.92));
   scrollToPage(pageNumber);
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await waitForNextFrame();
   const dataUrl = format === "jpeg" ? canvas.toDataURL(mimeType, quality) : canvas.toDataURL(mimeType);
   return {
     surface: "pdf",
