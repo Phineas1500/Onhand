@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamSimple, Type } from "@mariozechner/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAIResponses, streamSimple, Type } from "@mariozechner/pi-ai";
 import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
 import {
 	getBrowserOAuthApiKey,
@@ -3666,6 +3666,18 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
 			reasoningSummary: "auto",
 			textVerbosity: reasoningProfile?.textVerbosity || "low",
+		});
+	}
+	if (model?.api === "openai-responses" && model?.reasoning) {
+		// Reasoning models on the plain OpenAI API must round-trip encrypted
+		// reasoning content: requests are sent with store:false, so replaying
+		// the previous response's reasoning item ids 404s on the second tool
+		// round unless a reasoningEffort makes pi-ai request encrypted
+		// content (see docs/onhand-pdf-qa-2026-06-09.md, Finding 4).
+		return streamOpenAIResponses(model, context, {
+			...baseOptions,
+			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
+			reasoningSummary: "auto",
 		});
 	}
 	return streamSimple(model, context, baseOptions);

@@ -25655,10 +25655,12 @@ function getPdfTextRects(page, pageRect) {
   }).filter((rect) => Boolean(rect));
 }
 function scorePdfNoteCandidate(candidate, textRects, anchorRect) {
-  const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0);
-  const anchorOverlap = rectOverlapArea(candidate, anchorRect);
+  const candidateArea = Math.max(1, candidate.width * candidate.height);
+  const anchorArea = Math.max(1, anchorRect.width * anchorRect.height);
+  const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
+  const anchorOverlap = rectOverlapArea(candidate, anchorRect) / anchorArea;
   const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
-  return textOverlap * 1e3 + anchorOverlap * 1200 + anchorDistance * 0.01 + candidate.order;
+  return textOverlap * 800 + anchorOverlap * 1600 + anchorDistance + candidate.order * 4;
 }
 function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight) {
   const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
@@ -25679,16 +25681,18 @@ function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight
   const belowAnchor = anchorRect.bottom + gap;
   const alignedTop = anchorRect.top;
   const candidates = [
-    [rightOfAnchor, aboveAnchor],
-    [rightEdge, aboveAnchor],
-    [alignedWithAnchor, aboveAnchor],
-    [leftOfAnchor, aboveAnchor],
     [rightOfAnchor, belowAnchor],
-    [rightEdge, belowAnchor],
     [alignedWithAnchor, belowAnchor],
+    [rightOfAnchor, aboveAnchor],
+    [alignedWithAnchor, aboveAnchor],
     [leftOfAnchor, belowAnchor],
+    [leftOfAnchor, aboveAnchor],
+    [rightOfAnchor, alignedTop],
+    [leftOfAnchor, alignedTop],
     [rightEdge, alignedTop],
     [leftEdge, alignedTop],
+    [rightEdge, belowAnchor],
+    [rightEdge, aboveAnchor],
     [rightEdge, margin],
     [rightEdge, maxTop],
     [leftEdge, maxTop]
@@ -25785,9 +25789,11 @@ function positionPdfNote(note, annotation, page) {
     scrollMarginTop: "22vh",
     scrollMarginBottom: "22vh"
   });
-  const measuredHeight = note.getBoundingClientRect().height || note.offsetHeight || 0;
+  const measuredRect = note.getBoundingClientRect();
+  const measuredHeight = measuredRect.height || note.offsetHeight || 0;
   const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
-  const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), maxWidth, noteHeight);
+  const noteWidth = Math.max(220, Math.min(maxWidth, measuredRect.width || maxWidth));
+  const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight);
   if (positioned) {
     note.style.left = `${positioned.left}px`;
     note.style.top = `${positioned.top}px`;

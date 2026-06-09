@@ -688,10 +688,18 @@ function getPdfTextRects(page: HTMLElement, pageRect: DOMRect) {
 }
 
 function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRects: PageRect[], anchorRect: PageRect) {
-	const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0);
-	const anchorOverlap = rectOverlapArea(candidate, anchorRect);
+	// Normalize overlaps to fractions so they stay comparable to the
+	// distance term: raw overlap areas are in the tens of thousands of
+	// square pixels and used to crush distance entirely, dumping notes at
+	// the bottom of the page whenever no fully-clear spot existed near the
+	// highlight. A note brushing some text near its anchor reads far
+	// better than an overlap-free note far away from it.
+	const candidateArea = Math.max(1, candidate.width * candidate.height);
+	const anchorArea = Math.max(1, anchorRect.width * anchorRect.height);
+	const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
+	const anchorOverlap = rectOverlapArea(candidate, anchorRect) / anchorArea;
 	const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
-	return textOverlap * 1000 + anchorOverlap * 1200 + anchorDistance * 0.01 + candidate.order;
+	return textOverlap * 800 + anchorOverlap * 1600 + anchorDistance + candidate.order * 4;
 }
 
 function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect: PageRect, noteWidth: number, noteHeight: number) {
@@ -713,16 +721,18 @@ function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect:
 	const belowAnchor = anchorRect.bottom + gap;
 	const alignedTop = anchorRect.top;
 	const candidates = [
-		[rightOfAnchor, aboveAnchor],
-		[rightEdge, aboveAnchor],
-		[alignedWithAnchor, aboveAnchor],
-		[leftOfAnchor, aboveAnchor],
 		[rightOfAnchor, belowAnchor],
-		[rightEdge, belowAnchor],
 		[alignedWithAnchor, belowAnchor],
+		[rightOfAnchor, aboveAnchor],
+		[alignedWithAnchor, aboveAnchor],
 		[leftOfAnchor, belowAnchor],
+		[leftOfAnchor, aboveAnchor],
+		[rightOfAnchor, alignedTop],
+		[leftOfAnchor, alignedTop],
 		[rightEdge, alignedTop],
 		[leftEdge, alignedTop],
+		[rightEdge, belowAnchor],
+		[rightEdge, aboveAnchor],
 		[rightEdge, margin],
 		[rightEdge, maxTop],
 		[leftEdge, maxTop],
@@ -821,9 +831,14 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 		scrollMarginTop: "22vh",
 		scrollMarginBottom: "22vh",
 	});
-	const measuredHeight = note.getBoundingClientRect().height || note.offsetHeight || 0;
+	const measuredRect = note.getBoundingClientRect();
+	const measuredHeight = measuredRect.height || note.offsetHeight || 0;
 	const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
-	const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), maxWidth, noteHeight);
+	// Score candidates with the note's rendered width, not the CSS
+	// max-width cap — overestimating width inflates overlap penalties and
+	// pushes notes away from their highlight.
+	const noteWidth = Math.max(220, Math.min(maxWidth, measuredRect.width || maxWidth));
+	const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight);
 	if (positioned) {
 		note.style.left = `${positioned.left}px`;
 		note.style.top = `${positioned.top}px`;

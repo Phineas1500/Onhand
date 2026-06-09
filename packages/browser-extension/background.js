@@ -6903,6 +6903,29 @@ function annotateGoogleScholarReaderFrameFallbackFailureIfRelevant(methodName, p
 	return annotateGoogleScholarReaderFrameFallbackFailure(payload, error);
 }
 
+// The viewer frame executor joins the failure messages of its delivery
+// attempts. Treat the result as "frame not present" only when every part
+// is a missing-frame/transport miss; anything else is a real error from
+// the viewer surface and should be surfaced instead of the generic
+// main-world unsupported-PDF error (see docs/onhand-pdf-qa-2026-06-09.md).
+function isMissingOnhandPdfViewerFrameError(error) {
+	const message = error?.message || String(error || "");
+	if (!message.trim()) return false;
+	return message.split("; ").every((part) => /No Onhand PDF viewer (runtime port|frame)|frame context found/i.test(part));
+}
+
+function annotateOnhandPdfViewerFrameFallbackFailure(payload, error) {
+	if (!payload || typeof payload !== "object") return payload;
+	return {
+		...payload,
+		onhandPdfViewerFrameFallback: {
+			attempted: true,
+			ok: false,
+			error: error?.message || String(error || "Onhand PDF viewer frame fallback failed"),
+		},
+	};
+}
+
 function isLikelyPdfTabUrl(value) {
 	try {
 		const url = new URL(String(value || ""));
@@ -7054,11 +7077,15 @@ async function executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName
 					const expression = `(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`;
 					return await evaluateInMatchingFrame(tabId, frameOrContextLooksLikeOnhandPdfViewer, expression, missingMessage);
 				} catch (debuggerFrameError) {
-					const runtimePortMessage = runtimePortError?.message || String(runtimePortError || "");
-					const bridgeMessage = bridgeFrameError?.message || String(bridgeFrameError || "");
-					const scriptingMessage = scriptingFrameError?.message || String(scriptingFrameError || "");
-					const debuggerMessage = debuggerFrameError?.message || String(debuggerFrameError || "");
-					throw new Error([runtimePortMessage, bridgeMessage, scriptingMessage, debuggerMessage].filter(Boolean).join("; "));
+					const messages = [runtimePortError, bridgeFrameError, scriptingFrameError, debuggerFrameError]
+						.map((error) => error?.message || String(error || ""))
+						.filter(Boolean)
+						.filter((message, index, all) => all.indexOf(message) === index);
+					// When the viewer itself reported a real error, drop the
+					// transport misses from the other delivery attempts so the
+					// surfaced message stays readable.
+					const meaningful = messages.filter((message) => !/No Onhand PDF viewer (runtime port|frame)|frame context found/i.test(message));
+					throw new Error((meaningful.length ? meaningful : messages).join("; "));
 				}
 			}
 		}
@@ -7096,7 +7123,11 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					SCRIPT_EXECUTION_TIMEOUT_MS,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
-			} catch {}
+			} catch (frameError) {
+				if (!isMissingOnhandPdfViewerFrameError(frameError) && payload && typeof payload === "object") {
+					return annotateOnhandPdfViewerFrameFallbackFailure(payload, frameError);
+				}
+			}
 		}
 		if (shouldTryGoogleScholarReaderFrameForTab(tab, payload) && shouldRetryGoogleScholarReaderFrame(methodName, payload)) {
 			try {
@@ -7128,6 +7159,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 				readerFrameFallbackError = frameError;
 			}
 		}
+		let onhandFrameFallbackError = null;
 		if (shouldTryOnhandPdfViewerFrameForTab(tab)) {
 			try {
 				return await withOperationTimeout(
@@ -7135,19 +7167,32 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					SCRIPT_EXECUTION_TIMEOUT_MS,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
-			} catch {}
+			} catch (frameError) {
+				onhandFrameFallbackError = frameError;
+			}
 		}
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
-		const payload = await withOperationTimeout(
-			evaluateInTab(
-				tabId,
-				`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
-				{ skipScripting: true },
-			),
-			SCRIPT_EXECUTION_TIMEOUT_MS,
-			`Page toolkit debugger fallback timed out: ${methodName}`,
-		);
+		let payload;
+		try {
+			payload = await withOperationTimeout(
+				evaluateInTab(
+					tabId,
+					`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
+					{ skipScripting: true },
+				),
+				SCRIPT_EXECUTION_TIMEOUT_MS,
+				`Page toolkit debugger fallback timed out: ${methodName}`,
+			);
+		} catch (debuggerFallbackError) {
+			// The viewer frame is the authoritative PDF surface when present;
+			// its error explains the failure better than the main world's
+			// generic unsupported-PDF error.
+			if (onhandFrameFallbackError && !isMissingOnhandPdfViewerFrameError(onhandFrameFallbackError)) {
+				throw onhandFrameFallbackError;
+			}
+			throw debuggerFallbackError;
+		}
 		return annotateGoogleScholarReaderFrameFallbackFailureIfRelevant(methodName, payload, readerFrameFallbackError);
 	}
 }

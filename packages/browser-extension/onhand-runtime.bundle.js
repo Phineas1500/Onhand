@@ -127155,6 +127155,13 @@ function streamOnhandFast(model, context, options = {}) {
       textVerbosity: reasoningProfile?.textVerbosity || "low"
     });
   }
+  if (model?.api === "openai-responses" && model?.reasoning) {
+    return streamOpenAIResponses2(model, context, {
+      ...baseOptions,
+      reasoningEffort: reasoningProfile?.reasoningEffort || "none",
+      reasoningSummary: "auto"
+    });
+  }
   return streamSimple(model, context, baseOptions);
 }
 function createRecordLearningEventTool(recordLearningEvent) {

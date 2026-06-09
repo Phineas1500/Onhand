@@ -60,17 +60,23 @@ Validate the PDF annotation path end-to-end in a real Chromium browser, beyond w
 
 Fix: `waitForNextFrame()` in `packages/browser-extension/src/pdf-viewer.ts` races rAF against a 150 ms timeout; all 8 bare awaits replaced. Validated live by running the full highlight/note/scroll/capture cycle on a deliberately backgrounded viewer tab. Guarded by `assertPdfViewerFrameWaitsHaveTimeoutFallback` in the regression suite (checks source and bundle).
 
-### Finding 2 (medium, open) - frame-executor failures are swallowed, surfacing misleading errors
+### Finding 2 (medium) - frame-executor failures are swallowed, surfacing misleading errors - FIXED
 
-`runPageToolkitMethod` retries through the viewer frame inside bare `catch {}` blocks. When the frame path fails, the user-visible error comes from the main-world toolkit ("no readable text layer"), which sent this investigation down the wrong path initially. Recommendation: when the tab hosts an Onhand viewer (inline or own-tab), prefer reporting the frame executor's error over the generic unsupported-surface error.
+`runPageToolkitMethod` retried through the viewer frame inside bare `catch {}` blocks. When the frame path failed, the user-visible error came from the main-world toolkit ("no readable text layer"), which sent this investigation down the wrong path initially.
 
-### Finding 3 (medium, open) - viewer note cards render far from their highlight
+Fix: viewer-frame errors are now preferred over the generic unsupported-surface error when the frame produced a real error (transport "no frame found" misses still fall through), unsupported-payload results are annotated with the frame failure, and the frame executor dedupes its joined failure messages. Validated live: a highlight for nonexistent text on a viewer tab now reports `No visible text matched: …` instead of the misleading unsupported-surface error.
 
-In the Onhand viewer, `show_note` placed the note card near the bottom of the page while the highlight was in the top third (screenshot in pass logs; HTML fixture placement is correct). Likely a page-relative vs viewport-relative rect issue in viewer note placement.
+### Finding 3 (medium) - viewer note cards render far from their highlight - FIXED
 
-### Finding 4 (high for Provider API key mode, open) - gpt-5.x multi-step tool turns fail over the plain OpenAI API
+In the Onhand viewer, `show_note` placed the note card near the bottom of the page while the highlight was in the top third. Root cause: candidate scoring compared raw overlap areas (px², tens of thousands) against a distance term weighted at 0.01/px, so any overlap-free spot — usually the page bottom — always won; the candidate rect also assumed the CSS max-width instead of the rendered note width, inflating overlap estimates.
 
-With `authMode: api-key`, `aiProvider: openai`, `aiModel: gpt-5.5`, the first tool round-trip succeeds, then the second model call fails: `404 Item with id 'rs_…' not found. Items are not persisted when 'store' is set to false.` The Responses API conversation replay references the previous response's reasoning item while `store: false`. Non-reasoning models (`gpt-4.1-mini`) work. Codex OAuth uses the codex-responses path and is unaffected. Likely needs a pi-ai driver behavior (store the response, or pass reasoning items back with encrypted content) — worth reporting upstream and/or filtering reasoning-model ids from the API-key model picker until then. The turn errored cleanly and the session recovered on the next prompt (no poisoning).
+Fix: overlaps are normalized as fractions of the note/anchor area so they stay comparable to distance, candidates are scored with the rendered note width, and same-line side positions were added to the candidate list. Validated live: notes now sit adjacent to their highlight on both the sparse fixture and a dense arXiv page.
+
+### Finding 4 (high for Provider API key mode) - gpt-5.x multi-step tool turns fail over the plain OpenAI API - FIXED
+
+With `authMode: api-key`, `aiProvider: openai`, `aiModel: gpt-5.5`, the first tool round-trip succeeded, then the second model call failed: `404 Item with id 'rs_…' not found. Items are not persisted when 'store' is set to false.` pi-ai sends Responses API requests with `store: false` and only requests `reasoning.encrypted_content` when a reasoning effort/summary option is passed; Onhand's `streamOnhandFast` passed reasoning options on the Codex path but not the plain `openai-responses` path, so reasoning items replayed by server-side id and 404ed. Non-reasoning models (`gpt-4.1-mini`) worked, and Codex OAuth was unaffected.
+
+Fix: reasoning models on `openai-responses` now stream through `streamOpenAIResponses` with `reasoningEffort` from the runtime's reasoning profile ("none" for fast/balanced, "low" for deep — gpt-5.5 accepts none/low/medium/high/xhigh) and `reasoningSummary: "auto"`, which makes pi-ai round-trip encrypted reasoning content. Validated live: gpt-5.5 completed both a 2-tool turn and a 7-tool follow-up turn on the arXiv PDF with no errors. The turn errored cleanly before the fix and sessions recovered on the next prompt (no poisoning).
 
 ### Finding 5 (low, open) - Learning Mode check not recorded as an open check on PDFs
 
@@ -88,8 +94,8 @@ B3 asked a retrieval check in the reply and recorded the concept, but `learnerSt
 
 ## Follow-ups, in priority order
 
-1. Finding 4: reproduce with a minimal pi-ai script and report upstream (or gate reasoning models out of API-key mode).
-2. Finding 2: surface frame-executor errors for viewer tabs.
-3. Finding 3: fix note placement in the Onhand viewer.
-4. Re-run B3-style Learning Mode prompts with Codex `gpt-5.5` via manual side-panel acceptance to settle Finding 5.
-5. Finding 6: skip the replay fallback when artifact restore succeeded for the same target, or retry the timed-out evaluation before falling back.
+Findings 1-4 were fixed and validated live during/after this pass. Remaining:
+
+1. Re-run B3-style Learning Mode prompts with Codex `gpt-5.5` via manual side-panel acceptance to settle Finding 5 (open check not recorded).
+2. Finding 6: skip the replay fallback when artifact restore succeeded for the same target, or retry the timed-out evaluation before falling back.
+3. Consider reporting the pi-ai `store:false` + reasoning-item default upstream so plain `streamSimple` callers are not exposed to the same trap.
