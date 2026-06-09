@@ -1,7 +1,7 @@
 // site.js — small bits of vanilla JS for the Onhand landing page.
 
 const ONHAND_RELEASE = {
-  version: '0.2.8',
+  version: '0.2.9',
   repo: 'https://github.com/Phineas1500/Onhand',
 };
 
