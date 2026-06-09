@@ -4410,11 +4410,20 @@
 										const title = page?.title || page?.url || page?.artifactId || "Saved page";
 										const source = page?.source === "browser-replay" ? "replay" : "artifact";
 										const failures = Array.isArray(page?.failures) ? page.failures : [];
+										const failureMarkup = failures.length
+											? failures
+													.slice(0, 3)
+													.map((failure) => `<span class="onhand-restore-failure">${escapeHtml(failure)}</span>`)
+													.join("") +
+												(failures.length > 3
+													? `<span class="onhand-restore-failure">${escapeHtml(`+ ${failures.length - 3} more failure${failures.length - 3 === 1 ? "" : "s"}`)}</span>`
+													: "")
+											: "";
 										return `
 											<div class="onhand-restore-page">
 												<span class="onhand-restore-title">${escapeHtml(title)}</span>
 												<span class="onhand-restore-meta">${escapeHtml(source)} / ${escapeHtml(pluralize(Number(page?.restoredAnnotations || 0), "highlight"))} / ${escapeHtml(pluralize(Number(page?.restoredNotes || 0), "note"))}</span>
-												${failures.length ? `<span class="onhand-restore-failure">${escapeHtml(failures[0])}</span>` : ""}
+												${failureMarkup}
 											</div>
 										`;
 									})

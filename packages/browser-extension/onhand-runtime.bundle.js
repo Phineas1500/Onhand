@@ -126177,7 +126177,8 @@ function tabMatchesSavedTarget(tab, url2, title) {
   const tabUrl = String(tab.url || "").split("#")[0];
   const targetUrl = String(url2 || "").split("#")[0];
   const tabTitle = String(tab.title || "").trim().toLowerCase();
-  return Boolean(targetUrl && tabUrl === targetUrl || title && tabTitle === title);
+  if (targetUrl) return tabUrl === targetUrl;
+  return Boolean(title && tabTitle === title);
 }
 function summarizeOpenTabs(state, activeTab, limit2 = 8) {
   const targetWindowId = activeTab?.windowId;
@@ -128415,7 +128416,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function artifactRestoreTargetKey(artifact, artifactId = "") {
     const url2 = String(artifact.page?.url || artifact.tab?.url || "").trim().split("#")[0];
@@ -128443,7 +128444,7 @@ function createOnhandBrowserRuntime(host) {
   }
   function artifactLooksLikePdfViewer(artifact) {
     const url2 = String(artifact.page?.url || artifact.tab?.url || "");
-    return /\/pdf-viewer\.html(?:[?#]|$)/i.test(url2) || /[?&](?:url|file|pdf|src)=[^#]*\.pdf/i.test(url2);
+    return /\/pdf-viewer\.html(?:[?#]|$)/i.test(url2) || /[?&](?:url|file|pdf|src)=[^#]*\.pdf/i.test(url2) || isLikelyPdfUrlForAutoHandoff(url2);
   }
   async function waitForPdfRestoreSurface(tabId, artifact, annotations) {
     if (!artifactHasPdfAnnotations(artifact, annotations) && !artifactLooksLikePdfViewer(artifact)) return;
@@ -128502,6 +128503,11 @@ function createOnhandBrowserRuntime(host) {
     const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
     const failures = [];
     await waitForPdfRestoreSurface(tabId, artifact, annotations);
+    if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number" || artifact.page?.scrollContainer)) {
+      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer).catch((error51) => {
+        host.log?.("artifact pre-highlight scroll restore failed", error51);
+      });
+    }
     if (params.clearExisting !== false && annotations.length > 0) {
       try {
         await host.runCommand("clear_annotations", { tabId });
@@ -128516,7 +128522,7 @@ function createOnhandBrowserRuntime(host) {
       const text = String(annotation?.matchedText || "").trim();
       if (!text) continue;
       try {
-        const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false, pdfAnchor: annotation?.pdfAnchor });
+        const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false, pdfAnchor: annotation?.pdfAnchor, scanPage: true });
         restoredAnnotations += 1;
         const noteText = String(annotation?.note?.text || "").trim();
         const annotationId = highlighted?.annotation?.annotationId;
@@ -128542,11 +128548,8 @@ function createOnhandBrowserRuntime(host) {
         failures.push(error51?.message || String(error51));
       }
     }
-    if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number")) {
-      await host.runCommand("run_js", {
-        tabId,
-        expression: `window.scrollTo(${Number(artifact.page?.scrollX || 0)}, ${Number(artifact.page?.scrollY || 0)}); true;`
-      }).catch((error51) => {
+    if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number" || artifact.page?.scrollContainer)) {
+      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer).catch((error51) => {
         host.log?.("artifact scroll restore failed", error51);
         if (isOnhandPdfViewerAccessError(error51)) return;
         failures.push(error51?.message || String(error51));
@@ -128578,7 +128581,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function findActionTab(tabs, action) {
     const url2 = String(action.url || "").trim();
@@ -128590,7 +128593,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function buildReplayArtifact(session, targetKey, tab, annotations) {
     const first = annotations[0] || {};
@@ -128612,6 +128615,412 @@ function createOnhandBrowserRuntime(host) {
         }))
       }
     };
+  }
+  function replayScrollRootsScript() {
+    return `
+			const collectRestoreScrollRoots = () => {
+				const roots = [];
+				const seen = new Set();
+				const viewportHeight = Math.max(1, Number(window.innerHeight || 0));
+				const viewportWidth = Math.max(1, Number(window.innerWidth || 0));
+				const addWindow = () => {
+					const scrollHeight = Math.max(
+						Number(document.documentElement?.scrollHeight || 0),
+						Number(document.body?.scrollHeight || 0)
+					);
+					const scrollWidth = Math.max(
+						Number(document.documentElement?.scrollWidth || 0),
+						Number(document.body?.scrollWidth || 0)
+					);
+					roots.push({
+						type: "window",
+						source: "window",
+						scrollTop: Number(window.scrollY || window.pageYOffset || 0),
+						scrollLeft: Number(window.scrollX || window.pageXOffset || 0),
+						scrollHeight,
+						scrollWidth,
+						clientHeight: viewportHeight,
+						clientWidth: viewportWidth,
+						maxY: Math.max(0, scrollHeight - viewportHeight),
+						maxX: Math.max(0, scrollWidth - viewportWidth),
+						score: Math.max(0, scrollHeight - viewportHeight) + 1000
+					});
+				};
+				const addElement = (element, source) => {
+					if (!element || seen.has(element)) return;
+					seen.add(element);
+					const scrollTop = Number(element.scrollTop || 0);
+					const scrollLeft = Number(element.scrollLeft || 0);
+					const scrollHeight = Number(element.scrollHeight || 0);
+					const scrollWidth = Number(element.scrollWidth || 0);
+					const clientHeight = Number(element.clientHeight || 0);
+					const clientWidth = Number(element.clientWidth || 0);
+					const maxY = Math.max(0, scrollHeight - clientHeight);
+					const maxX = Math.max(0, scrollWidth - clientWidth);
+					if (maxY < 120 && maxX < 120) return;
+					let rect = { top: 0, bottom: viewportHeight, width: clientWidth, height: clientHeight };
+					try { rect = element.getBoundingClientRect(); } catch {}
+					let overflowBonus = 0;
+					try {
+						const style = getComputedStyle(element);
+						if (/(auto|scroll|overlay)/.test(style.overflowY || "") && maxY > 0) overflowBonus += 1200;
+						if (/(auto|scroll|overlay)/.test(style.overflowX || "") && maxX > 0) overflowBonus += 400;
+					} catch {}
+					const visible = rect.bottom > 0 && rect.top < viewportHeight && rect.width > 80 && rect.height > 80;
+					if (source === "scrollable-element" && (!visible || clientHeight < 120 || clientWidth < 120)) return;
+					const activeBonus = scrollTop > 0 || scrollLeft > 0 ? 2000 : 0;
+					roots.push({
+						type: "element",
+						source,
+						element,
+						scrollTop,
+						scrollLeft,
+						scrollHeight,
+						scrollWidth,
+						clientHeight,
+						clientWidth,
+						maxY,
+						maxX,
+						score: maxY + maxX * 0.25 + clientHeight * 0.5 + overflowBonus + activeBonus
+					});
+				};
+				addWindow();
+				addElement(document.scrollingElement, "document-scrolling-element");
+				addElement(document.documentElement, "document-element");
+				addElement(document.body, "document-body");
+				const elements = Array.from(document.querySelectorAll("*")).slice(0, 8000);
+				for (const element of elements) {
+					if (!(element instanceof Element)) continue;
+					const maxY = Number(element.scrollHeight || 0) - Number(element.clientHeight || 0);
+					const maxX = Number(element.scrollWidth || 0) - Number(element.clientWidth || 0);
+					if (maxY < 200 && maxX < 200) continue;
+					let canScroll = false;
+					try {
+						const style = getComputedStyle(element);
+						canScroll = /(auto|scroll|overlay)/.test(String(style.overflowY || "") + " " + String(style.overflowX || ""));
+					} catch {}
+					if (canScroll || Number(element.scrollTop || 0) > 0 || Number(element.scrollLeft || 0) > 0) {
+						addElement(element, "scrollable-element");
+					}
+				}
+				return roots
+					.sort((left, right) => Number(right.score || 0) - Number(left.score || 0))
+					.slice(0, 16);
+			};
+		`;
+  }
+  function replayScrollPositionExpression(scrollX, scrollY, scrollContainer) {
+    const x = Number.isFinite(Number(scrollContainer?.scrollLeft)) ? Math.max(0, Math.floor(Number(scrollContainer.scrollLeft))) : Number.isFinite(Number(scrollX)) ? Math.max(0, Math.floor(Number(scrollX))) : 0;
+    const y = Number.isFinite(Number(scrollContainer?.scrollTop)) ? Math.max(0, Math.floor(Number(scrollContainer.scrollTop))) : Number.isFinite(Number(scrollY)) ? Math.max(0, Math.floor(Number(scrollY))) : 0;
+    return `(() => new Promise((resolve) => {
+			const targetX = ${x};
+			const targetY = ${y};
+			${replayScrollRootsScript()}
+			const roots = collectRestoreScrollRoots();
+			window.scrollTo(targetX, targetY);
+			for (const root of roots) {
+				try {
+					if (root.type === "window") {
+						window.scrollTo(Math.min(root.maxX || targetX, targetX), Math.min(root.maxY || targetY, targetY));
+					} else if (root.element) {
+						root.element.scrollLeft = Math.min(root.maxX || targetX, targetX);
+						root.element.scrollTop = Math.min(root.maxY || targetY, targetY);
+					}
+				} catch {}
+			}
+			requestAnimationFrame(() => setTimeout(() => resolve({
+				scrollX: Math.max(window.scrollX || 0, ...roots.map((root) => Number(root.element?.scrollLeft || root.scrollLeft || 0))),
+				scrollY: Math.max(window.scrollY || 0, ...roots.map((root) => Number(root.element?.scrollTop || root.scrollTop || 0))),
+				scrollHeight: Math.max(0, ...roots.map((root) => Number(root.scrollHeight || 0))),
+				innerHeight: Math.max(window.innerHeight || 0, ...roots.map((root) => Number(root.clientHeight || 0))),
+				maxY: Math.max(0, ...roots.map((root) => Number(root.maxY || 0)))
+			}), 120));
+		}))()`;
+  }
+  async function restoreReplayScrollPosition(tabId, scrollX, scrollY, scrollContainer) {
+    if (!Number.isFinite(Number(scrollX)) && !Number.isFinite(Number(scrollY)) && !scrollContainer) return null;
+    return await host.runCommand("run_js", {
+      tabId,
+      expression: replayScrollPositionExpression(scrollX, scrollY, scrollContainer)
+    });
+  }
+  async function readReplayScrollMetrics(tabId) {
+    const response = await host.runCommand("run_js", {
+      tabId,
+      expression: `(() => {
+				${replayScrollRootsScript()}
+				const roots = collectRestoreScrollRoots();
+				const scrollY = Math.max(window.scrollY || 0, ...roots.map((root) => Number(root.element?.scrollTop || root.scrollTop || 0)));
+				const scrollX = Math.max(window.scrollX || 0, ...roots.map((root) => Number(root.element?.scrollLeft || root.scrollLeft || 0)));
+				const scrollHeight = Math.max(0, ...roots.map((root) => Number(root.scrollHeight || 0)));
+				const innerHeight = Math.max(window.innerHeight || 0, ...roots.map((root) => Number(root.clientHeight || 0)));
+				const maxY = Math.max(0, ...roots.map((root) => Number(root.maxY || 0)));
+				return {
+					scrollX,
+					scrollY,
+					innerHeight,
+					scrollHeight,
+					maxY
+				};
+			})()`
+    });
+    const result = response?.result || {};
+    return {
+      scrollX: Number(result.scrollX || 0),
+      scrollY: Number(result.scrollY || 0),
+      innerHeight: Number(result.innerHeight || 0),
+      scrollHeight: Number(result.scrollHeight || 0),
+      maxY: Number(result.maxY || 0)
+    };
+  }
+  function replayScrollScanPositions(metrics) {
+    const maxY = Math.max(0, Number(metrics.maxY || 0));
+    if (!Number.isFinite(maxY) || maxY < 200) return [];
+    const viewport = Math.max(300, Number(metrics.innerHeight || 0) || 800);
+    const steps = Math.max(6, Math.min(18, Math.ceil(maxY / Math.max(1, viewport * 0.75))));
+    const positions = [Number(metrics.scrollY || 0), 0, maxY];
+    for (let index = 0; index <= steps; index += 1) {
+      positions.push(Math.round(maxY * index / steps));
+    }
+    const unique = [];
+    for (const position of positions) {
+      const normalized = Math.max(0, Math.min(maxY, Math.round(Number(position) || 0)));
+      if (!unique.some((existing) => Math.abs(existing - normalized) < 80)) unique.push(normalized);
+    }
+    return unique;
+  }
+  async function tryReplayHighlightCandidates(tabId, candidates, options = {}) {
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        const result = await host.runCommand("highlight_text", {
+          tabId,
+          text: candidate,
+          clearExisting: false,
+          scrollIntoView: options.scrollIntoView !== false,
+          exactOnly: true,
+          allowApproximate: false,
+          reuseExisting: true
+        });
+        return { result, lastError: null };
+      } catch (error51) {
+        lastError = error51;
+      }
+    }
+    return { result: null, lastError };
+  }
+  function visibleReplayTextCandidatesExpression(text) {
+    const query = JSON.stringify(compactActionText(text));
+    return `(() => {
+			const restoreProbe = "visible-replay-text-candidates";
+			const rawQuery = ${query};
+			const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+			const searchNormalize = (value) => normalize(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\\s+/g, " ").trim();
+			const stopWords = new Set("a an and are as at be but by can could does for from has have if in into is it its of on or should that the this to when where which why with would your".split(" "));
+			const querySearch = searchNormalize(rawQuery);
+			const queryTokens = querySearch.split(" ").filter((token) => token.length >= 3 && !stopWords.has(token));
+			if (!querySearch || !queryTokens.length) return { candidates: [] };
+			const queryWords = querySearch.split(" ").filter(Boolean);
+			const phraseWindows = [];
+			for (const size of [6, 5, 4, 3]) {
+				for (let index = 0; index <= queryWords.length - size; index += 1) {
+					const phrase = queryWords.slice(index, index + size).join(" ");
+					if (phrase.length >= 16) phraseWindows.push(phrase);
+				}
+			}
+			const excludedSelector = [
+				"script",
+				"style",
+				"noscript",
+				"textarea",
+				"input",
+				"[data-onhand-pdf-overlay-layer]",
+				"[data-onhand-pdf-segment-kind]",
+				"[data-onhand-highlight-kind]",
+				"[data-onhand-note-kind]",
+				"[data-onhand-note-part]",
+				"[contenteditable='true']",
+				"[contenteditable=true]",
+				"nav",
+				"aside",
+				"header",
+				"footer",
+				"[role='navigation']",
+				"[role='menubar']",
+				"[role='menu']",
+				"[role='toolbar']"
+			].join(",");
+			const isVisible = (element) => {
+				if (!(element instanceof Element)) return false;
+				if (element.closest(excludedSelector)) return false;
+				const rect = element.getBoundingClientRect();
+				if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= window.innerHeight) return false;
+				const style = getComputedStyle(element);
+				if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+				return true;
+			};
+			const scoreText = (value) => {
+				const normalized = normalize(value);
+				if (normalized.length < 12) return 0;
+				const search = searchNormalize(normalized);
+				if (!search) return 0;
+				let score = 0;
+				if (search.includes(querySearch)) score += 1600;
+				if (querySearch.includes(search) && search.length >= 16) score += 1200 + Math.min(search.length, 120);
+				for (const phrase of phraseWindows) {
+					if (search.includes(phrase)) score += 650 + phrase.length;
+				}
+				const tokenSet = new Set(search.split(" ").filter((token) => token.length >= 3));
+				let overlap = 0;
+				for (const token of queryTokens) {
+					if (tokenSet.has(token)) overlap += 1;
+				}
+				score += overlap * 120;
+				if (overlap < 2 && score < 1000) return 0;
+				return score;
+			};
+			const candidates = [];
+			const seen = new Set();
+			const addCandidate = (value, source) => {
+				let normalized = normalize(value);
+				if (normalized.length < 12) return;
+				const score = scoreText(normalized);
+				if (score <= 0) return;
+				if (normalized.length > 260) {
+					const search = searchNormalize(normalized);
+					const phrase = phraseWindows.find((candidate) => search.includes(candidate)) || "";
+					const phraseIndex = phrase ? search.indexOf(phrase) : -1;
+					if (phraseIndex >= 0) {
+						const approxRatio = Math.max(0, Math.min(1, phraseIndex / Math.max(1, search.length)));
+						const start = Math.max(0, Math.floor(normalized.length * approxRatio) - 90);
+						normalized = normalized.slice(start, start + 220).replace(/^\\S{1,30}\\s+/, "").replace(/\\s+\\S{1,30}$/, "").trim();
+					} else {
+						normalized = normalized.slice(0, 220).trim();
+					}
+				}
+				if (normalized.length < 12) return;
+				const key = normalized.toLowerCase();
+				if (seen.has(key)) return;
+				seen.add(key);
+				candidates.push({ text: normalized, score, source });
+			};
+			const stack = [document.body];
+			let visited = 0;
+			while (stack.length && visited < 16000) {
+				const node = stack.pop();
+				visited += 1;
+				if (!node) continue;
+				if (node.nodeType === 3) {
+					const parent = node.parentElement;
+					if (isVisible(parent)) addCandidate(node.nodeValue, "text-node");
+					continue;
+				}
+				if (node.nodeType !== 1) continue;
+				if (node instanceof Element && node.closest(excludedSelector)) continue;
+				const children = node.childNodes ? Array.from(node.childNodes) : [];
+				for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
+			}
+			for (const element of Array.from(document.querySelectorAll("p, li, blockquote, pre, code, figcaption, td, th, span")).slice(0, 3000)) {
+				if (!isVisible(element)) continue;
+				addCandidate(element.innerText || element.textContent || "", "element");
+			}
+			candidates.sort((left, right) => right.score - left.score || left.text.length - right.text.length);
+			return { candidates: candidates.slice(0, 8).map((candidate) => candidate.text) };
+		})()`;
+  }
+  async function tryVisibleReplayTextCandidates(tabId, text, options = {}) {
+    let response = null;
+    try {
+      response = await host.runCommand("run_js", {
+        tabId,
+        expression: visibleReplayTextCandidatesExpression(text)
+      });
+    } catch (error51) {
+      return { result: null, lastError: error51 };
+    }
+    const rawCandidates = Array.isArray(response?.result?.candidates) ? response.result.candidates : [];
+    const candidates = [];
+    for (const candidate of rawCandidates) {
+      addReplayExactCandidate(candidates, compactActionText(candidate));
+    }
+    if (!candidates.length) return { result: null, lastError: null };
+    return await tryReplayHighlightCandidates(tabId, candidates, options);
+  }
+  function replaySourcePresenceExpression(text) {
+    const query = JSON.stringify(stripReplayCitationMarkers(compactActionText(text)));
+    return `(() => {
+			const restoreProbe = "replay-source-presence";
+			const rawQuery = ${query};
+			const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+			const searchNormalize = (value) => normalize(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\\s+/g, " ").trim();
+			const stopWords = new Set("a an and are as at be but by can could does for from has have if in into is it its of on or should that the this to when where which why with would your".split(" "));
+			const querySearch = searchNormalize(rawQuery);
+			const queryTokens = querySearch.split(" ").filter((token) => token.length >= 3 && !stopWords.has(token));
+			const bodySearch = searchNormalize(document.body?.innerText || document.body?.textContent || "");
+			if (!querySearch || !bodySearch || !queryTokens.length) return { present: false, reason: "empty" };
+			if (bodySearch.includes(querySearch)) return { present: true, reason: "exact" };
+			const queryWords = querySearch.split(" ").filter(Boolean);
+			for (const size of [8, 6, 5, 4]) {
+				for (let index = 0; index <= queryWords.length - size; index += 1) {
+					const phrase = queryWords.slice(index, index + size).join(" ");
+					if (phrase.length >= 18 && bodySearch.includes(phrase)) {
+						return { present: true, reason: "phrase", phrase };
+					}
+				}
+			}
+			const bodyTokens = new Set(bodySearch.split(" ").filter((token) => token.length >= 3));
+			let overlap = 0;
+			for (const token of queryTokens) {
+				if (bodyTokens.has(token)) overlap += 1;
+			}
+			const requiredOverlap = Math.max(3, Math.min(8, Math.ceil(queryTokens.length * 0.35)));
+			return { present: overlap >= requiredOverlap, reason: "token-overlap", overlap, requiredOverlap };
+		})()`;
+  }
+  async function replayMissingSourceError(tabId, text) {
+    const sourceText = stripReplayCitationMarkers(compactActionText(text));
+    if (!sourceText) return null;
+    try {
+      const response = await host.runCommand("run_js", {
+        tabId,
+        expression: replaySourcePresenceExpression(sourceText)
+      });
+      if (response?.result?.present === false) {
+        return new Error(`Saved source text is not currently loaded in this page: ${truncate(sourceText, 96)}`);
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  async function scanPageForReplayHighlight(tabId, candidates, options = {}) {
+    let metrics;
+    try {
+      metrics = await readReplayScrollMetrics(tabId);
+    } catch (error51) {
+      return { result: null, lastError: error51 };
+    }
+    let lastError = null;
+    for (const y of replayScrollScanPositions(metrics)) {
+      try {
+        await host.runCommand("run_js", {
+          tabId,
+          expression: replayScrollPositionExpression(metrics.scrollX || 0, y)
+        });
+      } catch (error51) {
+        lastError = error51;
+        continue;
+      }
+      const attempt = await tryReplayHighlightCandidates(tabId, candidates, options);
+      if (attempt.result) return attempt;
+      lastError = attempt.lastError || lastError;
+      if (options.fallbackText) {
+        const visibleAttempt = await tryVisibleReplayTextCandidates(tabId, options.fallbackText, options);
+        if (visibleAttempt.result) return visibleAttempt;
+        lastError = visibleAttempt.lastError || lastError;
+      }
+    }
+    return { result: null, lastError };
   }
   async function highlightTextWithReplayCandidates(tabId, text, options = {}) {
     let lastError = null;
@@ -128636,21 +129045,18 @@ function createOnhandBrowserRuntime(host) {
     for (const candidate of getReplayHighlightCandidates(text)) {
       if (!candidates.includes(candidate)) candidates.push(candidate);
     }
-    for (const candidate of candidates) {
-      try {
-        const result = await host.runCommand("highlight_text", {
-          tabId,
-          text: candidate,
-          clearExisting: false,
-          scrollIntoView: options.scrollIntoView !== false,
-          exactOnly: true,
-          allowApproximate: false,
-          reuseExisting: true
-        });
-        return result;
-      } catch (error51) {
-        lastError = error51;
-      }
+    const initialAttempt = await tryReplayHighlightCandidates(tabId, candidates, options);
+    if (initialAttempt.result) return initialAttempt.result;
+    lastError = initialAttempt.lastError || lastError;
+    if (options.scanPage) {
+      const visibleAttempt = await tryVisibleReplayTextCandidates(tabId, text, options);
+      if (visibleAttempt.result) return visibleAttempt.result;
+      lastError = visibleAttempt.lastError || lastError;
+      const scannedAttempt = await scanPageForReplayHighlight(tabId, candidates, { ...options, fallbackText: text });
+      if (scannedAttempt.result) return scannedAttempt.result;
+      lastError = scannedAttempt.lastError || lastError;
+      const missingSourceError = await replayMissingSourceError(tabId, text);
+      if (missingSourceError) throw missingSourceError;
     }
     throw lastError || new Error(`No visible text matched: ${text}`);
   }
@@ -128885,7 +129291,8 @@ function createOnhandBrowserRuntime(host) {
         try {
           const highlighted = await highlightTextWithReplayCandidates(tabId, annotation.matchedText, {
             scrollIntoView: false,
-            pdfAnchor: annotation.pdfAnchor
+            pdfAnchor: annotation.pdfAnchor,
+            scanPage: true
           });
           restoredAnnotations += 1;
           const annotationId = highlighted?.annotation?.annotationId;
@@ -129272,9 +129679,21 @@ function createOnhandBrowserRuntime(host) {
       const restored = [];
       const artifactIdsToRestore = await latestArtifactIdsByTarget(artifactIds);
       for (const artifactId of artifactIdsToRestore) {
-        const result = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true });
-        rebindSessionTargetsFromArtifactRestore(session, result, replayableAnnotations);
-        restored.push(result);
+        try {
+          const result = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true });
+          rebindSessionTargetsFromArtifactRestore(session, result, replayableAnnotations);
+          restored.push(result);
+        } catch (error51) {
+          const artifact = await getBrowserArtifact(artifactId);
+          restored.push({
+            tab: null,
+            artifact,
+            artifactId,
+            restoredAnnotations: 0,
+            restoredNotes: 0,
+            failures: [error51?.message || String(error51)]
+          });
+        }
       }
       const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayableAnnotations.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayableAnnotations);
       const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);

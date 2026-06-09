@@ -48,6 +48,9 @@ function createReplayHost(options = {}) {
 			calls.push({ name, args });
 			const tab = tabForArgs(args);
 			if (name === "navigate") {
+				if (options.rejectNavigate?.(String(args.url || ""), args)) {
+					throw new Error(`Navigation failed: ${args.url}`);
+				}
 				const navigatedTab = {
 					id: Number(options.navigateTabId || 99),
 					windowId: Number(options.navigateWindowId || tab.windowId || 3),
@@ -104,7 +107,7 @@ function createReplayHost(options = {}) {
 				return { tab, annotation: { annotationId: String(args.annotationId || ""), ...extra } };
 			}
 			if (name === "highlight_text") {
-				if (options.rejectHighlightText?.(String(args.text || ""))) {
+				if (options.rejectHighlightText?.(String(args.text || ""), args, calls)) {
 					throw new Error(`No visible text matched: ${args.text}`);
 				}
 				const annotationId =
@@ -123,7 +126,8 @@ function createReplayHost(options = {}) {
 			if (name === "show_note") return { tab, note: { annotationId: String(args.annotationId || "replay-highlight"), note: String(args.note || "") } };
 			if (name === "run_js") {
 				if (options.rejectRunJs) throw new Error(typeof options.rejectRunJs === "string" ? options.rejectRunJs : "run_js failed");
-				return { tab, result: true };
+				const runJsResult = typeof options.runJsResult === "function" ? options.runJsResult(args, calls, tab) : options.runJsResult;
+				return { tab, result: runJsResult ?? true };
 			}
 			if (name === "get_selection") return { selection: options.selection || { text: "" } };
 			if (name === "get_visible_text") {
@@ -1322,6 +1326,64 @@ async function assertSessionReplayDoesNotTrustStaleTabIds() {
 	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 7), false);
 }
 
+async function assertSessionReplayDoesNotReuseSameTitleWrongUrl() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://arxiv.org/search/?query=AxBench+Steering+LLMs+simple+baselines+outperform&searchtype=all";
+	const wrongUrl = "https://arxiv.org/search/?query=causal+interventions+activation+steering+language+models&searchtype=all";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				active: true,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+			replaySmokeTab({
+				id: 8,
+				active: false,
+				title: "Search | arXiv e-print repository",
+				url: wrongUrl,
+			}),
+		],
+		navigateTabId: 21,
+		navigateTitle: "Search | arXiv e-print repository",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = [];
+	session.pageActions = [
+		{
+			key: "highlight:arxiv-title",
+			type: "annotation",
+			tabId: 1235288553,
+			title: "Search | arXiv e-print repository",
+			url: targetUrl,
+			label: "Highlighted text",
+			citationText: "AxBench: Steering LLMs? Even Simple Baselines Outperform Sparse Autoencoders",
+			annotationId: "arxiv-title",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].tabId, 21);
+	assert.equal(restoreCalls.some((call) => call.name === "navigate" && call.args.url === targetUrl), true);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), false);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 8), false);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 21), true);
+}
+
 async function assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -1496,6 +1558,477 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 0);
 	assert.equal(restoreCalls.some((call) => call.name === "navigate"), true);
 	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
+}
+
+async function assertArtifactRestoreDoesNotReuseSameTitleWrongUrl() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://arxiv.org/search/?query=%22Decomposing+The+Dark+Matter+of+Sparse+Autoencoders%22&searchtype=all";
+	const wrongUrl = "https://arxiv.org/search/?query=causal+interventions+activation+steering+language+models&searchtype=all";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				active: true,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+			replaySmokeTab({
+				id: 8,
+				active: false,
+				title: "Search | arXiv e-print repository",
+				url: wrongUrl,
+			}),
+		],
+		navigateTabId: 22,
+		navigateTitle: "Search | arXiv e-print repository",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_arxiv_generic_title"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_arxiv_generic_title: {
+				id: "artifact_arxiv_generic_title",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "arxiv generic title",
+				tab: {
+					id: 1235288554,
+					windowId: 3,
+					title: "Search | arXiv e-print repository",
+					url: targetUrl,
+				},
+				page: {
+					title: "Search | arXiv e-print repository",
+					url: targetUrl,
+					annotations: [
+						{
+							annotationId: "dark-matter-title",
+							kind: "inline",
+							matchedText: "Decomposing The Dark Matter of Sparse Autoencoders",
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].tabId, 22);
+	assert.equal(restoreCalls.some((call) => call.name === "navigate" && call.args.url === targetUrl), true);
+	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), false);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 8), false);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 22), true);
+}
+
+async function assertArtifactRestoreScrollsBeforeHighlightForVirtualizedPage() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://chatgpt.com/c/restore-scroll-smoke";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 31,
+				title: "Further study suggestions",
+				url: targetUrl,
+			}),
+		],
+		rejectHighlightText: (_text, _args, calls) =>
+			!calls.some((call) => call.name === "run_js" && /targetY = 2400/.test(String(call.args.expression || "")) && /scrollTop/.test(String(call.args.expression || ""))),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_virtualized_chat_scroll"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_virtualized_chat_scroll: {
+				id: "artifact_virtualized_chat_scroll",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "virtualized chat scroll",
+				tab: replaySmokeTab({ id: 31, title: "Further study suggestions", url: targetUrl }),
+				page: {
+					title: "Further study suggestions",
+					url: targetUrl,
+					scrollX: 0,
+					scrollY: 2400,
+					annotations: [
+						{
+							annotationId: "chat-scroll-target",
+							kind: "inline",
+							matchedText: "around the question: when does a representation become a causal handle",
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const preScrollIndex = restoreCalls.findIndex((call) => call.name === "run_js" && /targetY = 2400/.test(String(call.args.expression || "")) && /scrollTop/.test(String(call.args.expression || "")));
+	const highlightIndex = restoreCalls.findIndex((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(preScrollIndex >= 0, true);
+	assert.equal(highlightIndex > preScrollIndex, true);
+}
+
+async function assertArtifactRestoreUsesSavedScrollContainerForVirtualizedPage() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://chatgpt.com/c/restore-scroll-container-smoke";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 33,
+				title: "Further study suggestions",
+				url: targetUrl,
+			}),
+		],
+		rejectHighlightText: (_text, _args, calls) =>
+			!calls.some((call) => call.name === "run_js" && /targetY = 3600/.test(String(call.args.expression || "")) && /scrollTop/.test(String(call.args.expression || ""))),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_virtualized_chat_scroll_container"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_virtualized_chat_scroll_container: {
+				id: "artifact_virtualized_chat_scroll_container",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "virtualized chat scroll container",
+				tab: replaySmokeTab({ id: 33, title: "Further study suggestions", url: targetUrl }),
+				page: {
+					title: "Further study suggestions",
+					url: targetUrl,
+					scrollX: 0,
+					scrollY: 0,
+					scrollContainer: {
+						source: "scrollable-element",
+						scrollTop: 3600,
+						scrollLeft: 0,
+						scrollHeight: 9000,
+						clientHeight: 720,
+					},
+					annotations: [
+						{
+							annotationId: "chat-scroll-container-target",
+							kind: "inline",
+							matchedText: "around the question: when does a representation become a causal handle",
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const preScrollIndex = restoreCalls.findIndex((call) => call.name === "run_js" && /targetY = 3600/.test(String(call.args.expression || "")));
+	const highlightIndex = restoreCalls.findIndex((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(preScrollIndex >= 0, true);
+	assert.equal(highlightIndex > preScrollIndex, true);
+}
+
+async function assertArtifactRestoreUsesVisibleFallbackForSplitChatText() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://chatgpt.com/c/restore-visible-fallback-smoke";
+	const fallbackText = "I’d focus your next study plan around the question:";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 34,
+				title: "Further study suggestions",
+				url: targetUrl,
+			}),
+		],
+		runJsResult: (args) => {
+			const expression = String(args.expression || "");
+			if (/visible-replay-text-candidates/.test(expression)) return { candidates: [fallbackText] };
+			if (/maxY/.test(expression)) return { scrollX: 0, scrollY: 0, innerHeight: 800, scrollHeight: 3000, maxY: 2200 };
+			return true;
+		},
+		rejectHighlightText: (text) => text !== fallbackText,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_split_chat_text"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_split_chat_text: {
+				id: "artifact_split_chat_text",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "split chat text",
+				tab: replaySmokeTab({ id: 34, title: "Further study suggestions", url: targetUrl }),
+				page: {
+					title: "Further study suggestions",
+					url: targetUrl,
+					annotations: [
+						{
+							annotationId: "split-chat-target",
+							kind: "inline",
+							matchedText: "around the question: when does a representation that predicts reasoning success become a causal handle",
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restoreCalls.some((call) => call.name === "run_js" && /visible-replay-text-candidates/.test(String(call.args.expression || ""))), true);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.text === fallbackText), true);
+}
+
+async function assertArtifactRestoreReportsAbsentLiveSourceText() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://claude.ai/chat/restore-absent-source-smoke";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 35,
+				title: "InAbHyD ontology reasoning research directions - Claude",
+				url: targetUrl,
+			}),
+		],
+		runJsResult: (args) => {
+			const expression = String(args.expression || "");
+			if (/visible-replay-text-candidates/.test(expression)) return { candidates: [] };
+			if (/replay-source-presence/.test(expression)) return { present: false, reason: "token-overlap", overlap: 0, requiredOverlap: 4 };
+			if (/maxY/.test(expression)) return { scrollX: 0, scrollY: 0, innerHeight: 800, scrollHeight: 800, maxY: 0 };
+			return true;
+		},
+		rejectHighlightText: () => true,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_absent_live_source"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_absent_live_source: {
+				id: "artifact_absent_live_source",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "absent live source",
+				tab: replaySmokeTab({ id: 35, title: "InAbHyD ontology reasoning research directions - Claude", url: targetUrl }),
+				page: {
+					title: "InAbHyD ontology reasoning research directions - Claude",
+					url: targetUrl,
+					annotations: [
+						{
+							annotationId: "absent-live-source-target",
+							kind: "inline",
+							matchedText: "The two most feasible high-value follow-ups would use the existing Gemma 3 result.",
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const restored = await runtime.restoreSession();
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 0);
+	assert.equal(restored.restoredPages[0].failedCount, 1);
+	assert.match(restored.restoredPages[0].failures[0], /Saved source text is not currently loaded/i);
+}
+
+async function assertSessionReplayScansScrollPositionsForVirtualizedPage() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const targetUrl = "https://claude.ai/chat/restore-scroll-smoke";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 32,
+				title: "InAbHyD ontology reasoning research directions - Claude",
+				url: targetUrl,
+			}),
+		],
+		runJsResult: (args) => {
+			const expression = String(args.expression || "");
+			if (/maxY/.test(expression)) {
+				return { scrollX: 0, scrollY: 6400, innerHeight: 800, scrollHeight: 9600, maxY: 8800 };
+			}
+			return true;
+		},
+		rejectHighlightText: (_text, _args, calls) =>
+			!calls.some((call) => call.name === "run_js" && /targetY = \d+/.test(String(call.args.expression || "")) && /scrollTop/.test(String(call.args.expression || ""))),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = [];
+	session.pageActions = [
+		{
+			key: "highlight:claude-most-feasible",
+			type: "annotation",
+			tabId: 32,
+			title: "InAbHyD ontology reasoning research directions - Claude",
+			url: targetUrl,
+			label: "Highlighted text",
+			citationText: "The two most feasible, high-value follow-ups on your existing Gemma 3 + Gemma Scope work",
+			annotationId: "claude-most-feasible",
+		},
+	];
+	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.equal(restoreCalls.some((call) => call.name === "run_js" && /maxY/.test(String(call.args.expression || ""))), true);
+	assert.equal(restoreCalls.some((call) => call.name === "run_js" && /targetY = \d+/.test(String(call.args.expression || "")) && /scrollTop/.test(String(call.args.expression || ""))), true);
+}
+
+async function assertSessionRestoreContinuesAfterArtifactOpenFailure() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				title: "Onhand Sidebar",
+				url: "chrome-extension://extension-id/sidepanel.html",
+			}),
+		],
+		rejectNavigate: (url) => /broken\.example/.test(url),
+		navigateTabId: 9,
+		navigateTitle: "Good restored page",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_broken_restore", "artifact_good_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_broken_restore: {
+				id: "artifact_broken_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "broken restore",
+				tab: {
+					id: 101,
+					windowId: 3,
+					title: "Broken restored page",
+					url: "https://broken.example/session",
+				},
+				page: {
+					title: "Broken restored page",
+					url: "https://broken.example/session",
+					annotations: [{ annotationId: "ann-broken", kind: "inline", matchedText: "Broken content" }],
+				},
+			},
+			artifact_good_restore: {
+				id: "artifact_good_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "good restore",
+				tab: {
+					id: 102,
+					windowId: 3,
+					title: "Good restored page",
+					url: "https://example.test/good",
+				},
+				page: {
+					title: "Good restored page",
+					url: "https://example.test/good",
+					annotations: [{ annotationId: "ann-good", kind: "inline", matchedText: "Alpha smoke content" }],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const brokenPage = restored.restoredPages.find((page) => page.artifactId === "artifact_broken_restore");
+	const goodPage = restored.restoredPages.find((page) => page.artifactId === "artifact_good_restore");
+	assert.equal(restored.restoredPages.length, 2);
+	assert.equal(brokenPage?.restoredAnnotations, 0);
+	assert.equal(brokenPage?.failedCount, 1);
+	assert.match(brokenPage?.failures?.[0] || "", /Navigation failed/);
+	assert.equal(goodPage?.restoredAnnotations, 1);
+	assert.equal(goodPage?.failedCount, 0);
+	assert.equal(restoreCalls.some((call) => call.name === "highlight_text" && call.args.text === "Alpha smoke content"), true);
 }
 
 async function assertArtifactRestoreUsesStrictReusableMatchingForShortMath() {
@@ -1989,6 +2522,75 @@ async function assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight
 	assert.match(restoreCalls[waitIndex].args.selector, /data-onhand-inline-pdf-viewer/);
 	assert.deepEqual(restoreCalls[highlightIndex].args.pdfAnchor, pdfAnchor);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "direct-pdf-inline-restored-anchor"), true);
+}
+
+async function assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "https://arxiv.org/pdf/2509.03345";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 42,
+				windowId: 5,
+				active: true,
+				title: "2509.03345",
+				url: pdfUrl,
+			}),
+		],
+		highlightAnnotationId: "direct-pdf-text-restored-anchor",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_direct_pdf_text_restore"];
+	await globalThis.chrome.storage.local.set({
+		onhandBrowserRuntime: store,
+		onhandBrowserArtifacts: {
+			artifact_direct_pdf_text_restore: {
+				id: "artifact_direct_pdf_text_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "direct pdf text restore",
+				tab: replaySmokeTab({ id: 42, windowId: 5, title: "2509.03345", url: pdfUrl }),
+				page: {
+					title: "2509.03345",
+					url: pdfUrl,
+					annotations: [
+						{
+							annotationId: "ann-direct-pdf-text",
+							kind: "inline",
+							matchedText: "language models",
+							note: { text: "Older direct PDF note.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const openPdfIndex = restoreCalls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const waitIndex = restoreCalls.findIndex((call) => call.name === "wait_for_selector");
+	const highlightIndex = restoreCalls.findIndex((call) => call.name === "highlight_text");
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
+	assert.ok(openPdfIndex >= 0, "expected direct PDF URL restore to prepare Onhand's PDF viewer even without a pdfAnchor");
+	assert.equal(restoreCalls[openPdfIndex].args.tabId, 42);
+	assert.equal(waitIndex > openPdfIndex, true);
+	assert.equal(highlightIndex > waitIndex, true);
+	assert.equal(restoreCalls[highlightIndex].args.text, "language models");
+	assert.equal(restoreCalls[highlightIndex].args.pdfAnchor, undefined);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "direct-pdf-text-restored-anchor"), true);
 }
 
 async function assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback() {
@@ -3671,14 +4273,23 @@ async function main() {
 	await assertSessionReplayRestore();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
+	await assertSessionReplayDoesNotReuseSameTitleWrongUrl();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
+	await assertArtifactRestoreDoesNotReuseSameTitleWrongUrl();
+	await assertArtifactRestoreScrollsBeforeHighlightForVirtualizedPage();
+	await assertArtifactRestoreUsesSavedScrollContainerForVirtualizedPage();
+	await assertArtifactRestoreUsesVisibleFallbackForSplitChatText();
+	await assertArtifactRestoreReportsAbsentLiveSourceText();
+	await assertSessionReplayScansScrollPositionsForVirtualizedPage();
+	await assertSessionRestoreContinuesAfterArtifactOpenFailure();
 	await assertArtifactRestoreUsesStrictReusableMatchingForShortMath();
 	await assertArtifactRestorePassesPdfAnchorToHighlight();
 	await assertPdfActionActivationHandsOffBeforeSourceFallback();
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
 	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();
+	await assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff();
 	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();
 	await assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets();
 	await assertArtifactActionActivationPreservesExistingAnnotations();

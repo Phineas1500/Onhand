@@ -6213,6 +6213,64 @@ const createPageToolkit = (options = {}) => {
 		};
 	};
 
+	const capturePrimaryScrollContainer = () => {
+		const candidates = [];
+		const viewportHeight = Math.max(1, Number(window.innerHeight || 0));
+		const viewportWidth = Math.max(1, Number(window.innerWidth || 0));
+		const addCandidate = (element, source, isWindow = false) => {
+			const scrollTop = isWindow ? Number(window.scrollY || window.pageYOffset || 0) : Number(element?.scrollTop || 0);
+			const scrollLeft = isWindow ? Number(window.scrollX || window.pageXOffset || 0) : Number(element?.scrollLeft || 0);
+			const scrollHeight = isWindow
+				? Math.max(Number(document.documentElement?.scrollHeight || 0), Number(document.body?.scrollHeight || 0))
+				: Number(element?.scrollHeight || 0);
+			const scrollWidth = isWindow
+				? Math.max(Number(document.documentElement?.scrollWidth || 0), Number(document.body?.scrollWidth || 0))
+				: Number(element?.scrollWidth || 0);
+			const clientHeight = isWindow ? viewportHeight : Number(element?.clientHeight || 0);
+			const clientWidth = isWindow ? viewportWidth : Number(element?.clientWidth || 0);
+			const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+			const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
+			if (maxScrollTop < 120 && maxScrollLeft < 120) return;
+			if (!isWindow) {
+				let rect = null;
+				try { rect = element.getBoundingClientRect(); } catch {}
+				const visible = rect && rect.bottom > 0 && rect.top < viewportHeight && rect.width > 80 && rect.height > 80;
+				if (!visible || clientHeight < 120 || clientWidth < 120) return;
+				let canScroll = false;
+				try {
+					const style = getComputedStyle(element);
+					canScroll = /(auto|scroll|overlay)/.test(String(style.overflowY || "") + " " + String(style.overflowX || ""));
+				} catch {}
+				if (!canScroll && scrollTop <= 0 && scrollLeft <= 0) return;
+			}
+			const activeBonus = scrollTop > 0 || scrollLeft > 0 ? 10000 : 0;
+			candidates.push({
+				source,
+				scrollTop,
+				scrollLeft,
+				scrollHeight,
+				scrollWidth,
+				clientHeight,
+				clientWidth,
+				maxScrollTop,
+				maxScrollLeft,
+				scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : null,
+				score: activeBonus + maxScrollTop + clientHeight * 0.5,
+			});
+		};
+		addCandidate(null, "window", true);
+		const seen = new Set();
+		for (const element of [document.scrollingElement, document.documentElement, document.body, ...Array.from(document.querySelectorAll("*")).slice(0, 8000)]) {
+			if (!element || seen.has(element)) continue;
+			seen.add(element);
+			addCandidate(element, element === document.scrollingElement ? "document-scrolling-element" : "scrollable-element");
+		}
+		candidates.sort((left, right) => Number(right.score || 0) - Number(left.score || 0));
+		const best = candidates.find((candidate) => Number(candidate.scrollTop || 0) > 0 || Number(candidate.scrollLeft || 0) > 0) || candidates[0] || null;
+		if (!best || (Number(best.scrollTop || 0) <= 0 && Number(best.scrollLeft || 0) <= 0)) return null;
+		return best;
+	};
+
 	const captureState = async () => {
 		syncPdfOverlayPositions();
 		await waitForLayout();
@@ -6281,6 +6339,7 @@ const createPageToolkit = (options = {}) => {
 			capturedAt: Date.now(),
 			scrollX: window.scrollX,
 			scrollY: window.scrollY,
+			scrollContainer: capturePrimaryScrollContainer(),
 			viewport: {
 				width: window.innerWidth,
 				height: window.innerHeight,
