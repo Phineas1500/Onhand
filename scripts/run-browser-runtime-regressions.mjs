@@ -17,6 +17,25 @@ function installChromeStorageStub() {
 	};
 }
 
+// Sessions live in per-record storage (IndexedDB in Chrome, the
+// onhandBrowserSessions fallback key in Node), while the
+// onhandBrowserRuntime key only holds settings + currentSessionId.
+function getStoredSessions() {
+	const data = globalThis.chrome.storage.local.data;
+	if (!data.onhandBrowserSessions || typeof data.onhandBrowserSessions !== "object") data.onhandBrowserSessions = {};
+	return data.onhandBrowserSessions;
+}
+
+function getStoredStore() {
+	const meta = globalThis.chrome.storage.local.data.onhandBrowserRuntime || {};
+	return { ...meta, sessions: getStoredSessions() };
+}
+
+function storedStoreEntries(store) {
+	const { sessions = {}, ...meta } = store || {};
+	return { onhandBrowserRuntime: meta, onhandBrowserSessions: sessions };
+}
+
 function replaySmokeTab(overrides = {}) {
 	return {
 		id: 7,
@@ -955,7 +974,7 @@ async function assertLearnerStateUpdates() {
 		url: "https://example.test/bayesian-dl",
 	});
 	assert.equal(recorded.learnerState.conceptsIntroduced[0].label, "Monte Carlo");
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const savedSession = store.sessions[store.currentSessionId];
 	assert.equal(savedSession.learnerState.mode, "learning");
 	assert.equal(savedSession.learnerState.conceptsIntroduced[0].label, "Monte Carlo");
@@ -993,7 +1012,7 @@ async function assertLearningModeToolLoopPersistsAgentEvents() {
 		},
 	]);
 	assert.equal(completedState.activities.some((activity) => activity.toolName === "onhand_record_learning_event"), false);
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	assert.equal(session.learnerState.conceptsIntroduced[0].label, "Alpha smoke content");
 	assert.equal(session.learnerState.openChecks[0].checkId, "check-alpha-smoke");
@@ -1128,21 +1147,21 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const firstSessionId = store.currentSessionId;
 	store.sessions[firstSessionId].name = "First session";
 	store.sessions[firstSessionId].updatedAt = "2026-05-12T10:00:00.000Z";
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	await runtime.startNewSession({ targetWindowId: 4 });
-	const withSecondSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const withSecondSession = getStoredStore();
 	const secondSessionId = withSecondSession.currentSessionId;
 	assert.notEqual(secondSessionId, firstSessionId, "starting a new session should create a second session before delete regression");
 
 	const callCountBeforeDelete = host.calls.length;
 	const deletedSecond = await runtime.deleteSession(secondSessionId, { targetWindowId: 4 });
 	const deleteCalls = host.calls.slice(callCountBeforeDelete);
-	const afterDeletingSecond = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const afterDeletingSecond = getStoredStore();
 	assert.equal(afterDeletingSecond.sessions[secondSessionId], undefined, "expected deleted current session to be removed from storage");
 	assert.equal(afterDeletingSecond.currentSessionId, firstSessionId, "expected delete to switch to the remaining session");
 	assert.equal(deletedSecond.deletedSessionId, secondSessionId);
@@ -1153,7 +1172,7 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 	assert.equal(stateAfterDelete.currentSession.sessionId, firstSessionId, "runtime state should follow the selected replacement session");
 
 	const deletedLast = await runtime.deleteSession(firstSessionId, { targetWindowId: 4 });
-	const afterDeletingLast = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const afterDeletingLast = getStoredStore();
 	const remainingSessionIds = Object.keys(afterDeletingLast.sessions);
 	assert.equal(afterDeletingLast.sessions[firstSessionId], undefined, "expected original last session to be removed");
 	assert.equal(remainingSessionIds.length, 1, "deleting the final saved session should create one fresh session");
@@ -1163,6 +1182,51 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 	const freshState = await runtime.getState();
 	assert.equal(freshState.currentSession.sessionId, afterDeletingLast.currentSessionId);
 	assert.deepEqual(freshState.turns, [], "fresh replacement session should not inherit deleted turns");
+}
+
+async function assertLegacySessionBlobMigratesToSessionRecords() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const legacySession = {
+		id: "session_legacy_1",
+		name: "Legacy session",
+		createdAt: "2026-05-01T10:00:00.000Z",
+		updatedAt: "2026-05-02T10:00:00.000Z",
+		messages: [],
+		turns: [],
+		pageActions: [],
+		artifactIds: [],
+	};
+	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
+		settings: {
+			aiProvider: "openai",
+			aiModel: "gpt-4.1-mini",
+			aiApiKey: "sk-legacy-secret",
+			authMode: "api-key",
+		},
+		sessions: { [legacySession.id]: legacySession },
+		currentSessionId: legacySession.id,
+	};
+
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	const listed = await runtime.listSessions();
+	assert.equal(listed.currentSession.sessionId, legacySession.id, "legacy current session should survive migration");
+	assert.ok(listed.sessions.some((session) => session.id === legacySession.id), "legacy session should be listed after migration");
+
+	const migratedSessions = getStoredSessions();
+	assert.ok(migratedSessions[legacySession.id], "legacy session should move into per-session storage");
+	assert.equal(migratedSessions[legacySession.id].name, "Legacy session");
+	const meta = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	assert.equal(meta.sessions, undefined, "legacy blob should be stripped of sessions after migration");
+	assert.equal(meta.currentSessionId, legacySession.id, "currentSessionId should stay in the meta blob");
+	assert.equal(meta.settings.aiApiKey, "sk-legacy-secret", "settings should survive migration");
+
+	migratedSessions[legacySession.id].name = "Renamed after migration";
+	const rebooted = createOnhandBrowserRuntime(createReplayHost());
+	const relisted = await rebooted.listSessions();
+	const matches = relisted.sessions.filter((session) => session.id === legacySession.id);
+	assert.equal(matches.length, 1, "reboot after migration should not duplicate the migrated session");
+	assert.equal(matches[0].name, "Renamed after migration", "per-session record should win over any stale legacy copy");
 }
 
 async function assertSessionReplayRestore() {
@@ -1184,12 +1248,12 @@ async function assertSessionReplayRestore() {
 	});
 	const completedState = await waitForRuntimeCompletion(runtime);
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete before replay regression timeout");
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	assert.equal(session.artifactIds.length, 1, "annotated turns should auto-save a review snapshot");
 	assert.equal(session.pageActions.some((action) => action.key === "highlight:replay-highlight"), true);
 	session.artifactIds = [];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const listed = await runtime.listSessions();
 	assert.equal(listed.sessions.length, 1);
@@ -1267,7 +1331,7 @@ async function assertSelectedPdfAnchorIsReusedForPromptHighlight() {
 	const highlightCalls = host.calls.filter((call) => call.name === "highlight_text");
 	assert.equal(highlightCalls.length >= 1, true);
 	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	const highlightAction = session.pageActions.find((action) => action.type === "annotation");
 	assert.deepEqual(highlightAction?.pdfAnchor, pdfAnchor);
@@ -1299,7 +1363,7 @@ async function assertSessionReplayDoesNotTrustStaleTabIds() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -1313,7 +1377,7 @@ async function assertSessionReplayDoesNotTrustStaleTabIds() {
 			annotationId: "stale-tab",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession();
@@ -1356,7 +1420,7 @@ async function assertSessionReplayDoesNotReuseSameTitleWrongUrl() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = [];
 	session.pageActions = [
@@ -1371,7 +1435,7 @@ async function assertSessionReplayDoesNotReuseSameTitleWrongUrl() {
 			annotationId: "arxiv-title",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession();
@@ -1414,7 +1478,7 @@ async function assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.name = "BayesianDL";
 	const highlightAction = {
@@ -1466,7 +1530,7 @@ async function assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets
 			createdAt: new Date().toISOString(),
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession(session.id);
@@ -1482,7 +1546,7 @@ async function assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets
 	assert.equal(highlightCalls.some((call) => call.args.text === questionFallbackText), true);
 	assert.equal(restoreCalls.some((call) => call.name === "activate_tab" && call.args.tabId === staleTabId), false);
 
-	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedSession = getStoredSessions()[session.id];
 	const updatedHighlight = savedSession.turns[0].pageActions.find((action) => action.key === "highlight:old-ann");
 	const updatedNote = savedSession.turns[0].pageActions.find((action) => action.key === "note:old-ann");
 	assert.equal(updatedHighlight.tabId, restoredTabId);
@@ -1522,11 +1586,11 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_empty_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_empty_restore: {
 				id: "artifact_empty_restore",
@@ -1590,11 +1654,11 @@ async function assertArtifactRestoreDoesNotReuseSameTitleWrongUrl() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_arxiv_generic_title"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_arxiv_generic_title: {
 				id: "artifact_arxiv_generic_title",
@@ -1656,11 +1720,11 @@ async function assertArtifactRestoreScrollsBeforeHighlightForVirtualizedPage() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_virtualized_chat_scroll"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_virtualized_chat_scroll: {
 				id: "artifact_virtualized_chat_scroll",
@@ -1719,11 +1783,11 @@ async function assertArtifactRestoreUsesSavedScrollContainerForVirtualizedPage()
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_virtualized_chat_scroll_container"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_virtualized_chat_scroll_container: {
 				id: "artifact_virtualized_chat_scroll_container",
@@ -1795,11 +1859,11 @@ async function assertArtifactRestoreUsesVisibleFallbackForSplitChatText() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_split_chat_text"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_split_chat_text: {
 				id: "artifact_split_chat_text",
@@ -1860,11 +1924,11 @@ async function assertArtifactRestoreReportsAbsentLiveSourceText() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_absent_live_source"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_absent_live_source: {
 				id: "artifact_absent_live_source",
@@ -1924,7 +1988,7 @@ async function assertSessionReplayScansScrollPositionsForVirtualizedPage() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = [];
 	session.pageActions = [
@@ -1939,7 +2003,7 @@ async function assertSessionReplayScansScrollPositionsForVirtualizedPage() {
 			annotationId: "claude-most-feasible",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession();
@@ -1972,11 +2036,11 @@ async function assertSessionRestoreContinuesAfterArtifactOpenFailure() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_broken_restore", "artifact_good_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_broken_restore: {
 				id: "artifact_broken_restore",
@@ -2045,11 +2109,11 @@ async function assertArtifactRestoreUsesStrictReusableMatchingForShortMath() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_short_math_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_short_math_restore: {
 				id: "artifact_short_math_restore",
@@ -2126,11 +2190,11 @@ async function assertArtifactRestorePassesPdfAnchorToHighlight() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_pdf_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_pdf_restore: {
 				id: "artifact_pdf_restore",
@@ -2210,7 +2274,7 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -2226,7 +2290,7 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 			pdfAnchor,
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	await runtime.activateAction("highlight:pdf-source");
 	const openPdfIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
@@ -2283,11 +2347,11 @@ async function assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_pdf_viewer_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_pdf_viewer_restore: {
 				id: "artifact_pdf_viewer_restore",
@@ -2379,11 +2443,11 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_own_pdf_viewer_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_own_pdf_viewer_restore: {
 				id: "artifact_own_pdf_viewer_restore",
@@ -2476,11 +2540,11 @@ async function assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_direct_pdf_inline_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_direct_pdf_inline_restore: {
 				id: "artifact_direct_pdf_inline_restore",
@@ -2547,11 +2611,11 @@ async function assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_direct_pdf_text_restore"];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_direct_pdf_text_restore: {
 				id: "artifact_direct_pdf_text_restore",
@@ -2635,7 +2699,7 @@ async function assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_fresh_pdf_restore"];
 	session.pageActions = [
@@ -2665,7 +2729,7 @@ async function assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback() {
 		},
 	];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_fresh_pdf_restore: {
 				id: "artifact_fresh_pdf_restore",
@@ -2722,7 +2786,7 @@ async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTa
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	const sourceAction = {
 		key: "highlight:old-source",
@@ -2794,7 +2858,7 @@ async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTa
 		responses: [],
 	};
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_old_bayesian: {
 				id: "artifact_old_bayesian",
@@ -2851,7 +2915,7 @@ async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTa
 	assert.deepEqual(highlightCalls.map((call) => call.args.text), [sourceText, newerText]);
 	assert.equal(highlightCalls.some((call) => call.args.text === "Older snapshot only"), false);
 
-	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedSession = getStoredSessions()[session.id];
 	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:old-source").annotationId, "restored-source");
 	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:old-newer").annotationId, "restored-newer");
 	assert.equal(savedSession.learnerState.conceptsIntroduced[0].sources[0].annotationId, "restored-source");
@@ -2880,7 +2944,7 @@ async function assertArtifactActionActivationPreservesExistingAnnotations() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -2896,7 +2960,7 @@ async function assertArtifactActionActivationPreservesExistingAnnotations() {
 		},
 	];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_concept_source: {
 				id: "artifact_concept_source",
@@ -2956,7 +3020,7 @@ async function assertCrossPageLearningSourceActivationOpensMissingPage() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3005,7 +3069,7 @@ async function assertCrossPageLearningSourceActivationOpensMissingPage() {
 		openChecks: [],
 		responses: [],
 	};
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("highlight:cnn-source");
@@ -3031,7 +3095,7 @@ async function assertCrossPageLearningSourceActivationOpensMissingPage() {
 		"cross-page source activation must not try to repair the CNN source on the current BayesianDL tab",
 	);
 
-	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedSession = getStoredSessions()[session.id];
 	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:cnn-source").annotationId, "repaired-cnn-anchor");
 	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:cnn-source").tabId, 12);
 	assert.equal(savedSession.learnerState.conceptsIntroduced[1].sources[0].annotationId, "repaired-cnn-anchor");
@@ -3056,7 +3120,7 @@ async function assertTruncatedActionActivationRetriesEllipsislessExactPrefix() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3071,7 +3135,7 @@ async function assertTruncatedActionActivationRetriesEllipsislessExactPrefix() {
 			detail: truncatedSource,
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("highlight:rejection-heading");
@@ -3087,7 +3151,7 @@ async function assertTruncatedActionActivationRetriesEllipsislessExactPrefix() {
 		"activation should retry truncated action text without the trailing ellipsis",
 	);
 
-	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedSession = getStoredSessions()[session.id];
 	assert.equal(savedSession.pageActions.find((action) => action.key === "highlight:rejection-heading").annotationId, "repaired-broad-heading");
 }
 
@@ -3106,7 +3170,7 @@ async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_failed_math_restore"];
 	session.pageActions = [
@@ -3134,7 +3198,7 @@ async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
 		},
 	];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_failed_math_restore: {
 				id: "artifact_failed_math_restore",
@@ -3185,7 +3249,7 @@ async function assertSessionReplaySnapshotPayload() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.name = "Snapshot replay";
 	session.artifactIds = ["artifact_snapshot_replay"];
@@ -3214,7 +3278,7 @@ async function assertSessionReplaySnapshotPayload() {
 		},
 	];
 	await globalThis.chrome.storage.local.set({
-		onhandBrowserRuntime: store,
+		...storedStoreEntries(store),
 		onhandBrowserArtifacts: {
 			artifact_snapshot_replay: {
 				id: "artifact_snapshot_replay",
@@ -3283,7 +3347,7 @@ async function assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot() {
 	const completedState = await waitForRuntimeCompletion(runtime);
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete auto snapshot regression");
 
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	assert.equal(session.artifactIds.length, 1, "expected successful annotated turn to save one review snapshot");
 	assert.equal(
@@ -3336,7 +3400,7 @@ async function assertReplayActionActivationCanTargetSavedSession() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const savedSessionId = "session_saved_replay_action";
 	store.sessions[savedSessionId] = {
 		id: savedSessionId,
@@ -3373,7 +3437,7 @@ async function assertReplayActionActivationCanTargetSavedSession() {
 			},
 		],
 	};
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("highlight:saved-session", { sessionId: savedSessionId });
@@ -3401,7 +3465,7 @@ async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3417,7 +3481,7 @@ async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource
 			citationText: "Q=QP [1]",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	const activated = await runtime.activateAction("highlight:old-ann");
@@ -3430,7 +3494,7 @@ async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource
 	assert.equal(highlightCalls[1]?.args.reuseExisting, true);
 	assert.equal(activated.annotationId, "replay-highlight");
 
-	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	const savedAction = getStoredSessions()[session.id].pageActions[0];
 	assert.equal(savedAction.annotationId, "replay-highlight");
 }
 
@@ -3447,7 +3511,7 @@ async function assertReplayNoteActivationUsesPairedHighlightSource() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3504,7 +3568,7 @@ async function assertReplayNoteActivationUsesPairedHighlightSource() {
 		],
 		responses: [],
 	};
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("note:old-ann");
@@ -3520,7 +3584,7 @@ async function assertReplayNoteActivationUsesPairedHighlightSource() {
 	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the transition keeps the distribution fixed.");
 	assert.equal(noteCalls[0]?.args.scrollIntoView, true);
 
-	const savedSession = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id];
+	const savedSession = getStoredSessions()[session.id];
 	const savedActions = savedSession.pageActions;
 	assert.equal(savedActions.find((action) => action.key === "highlight:old-ann").annotationId, "replay-highlight");
 	assert.equal(savedActions.find((action) => action.key === "note:old-ann").annotationId, "replay-highlight");
@@ -3543,7 +3607,7 @@ async function assertReplayNoteActivationDoesNotRegenerateExistingNote() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3571,7 +3635,7 @@ async function assertReplayNoteActivationDoesNotRegenerateExistingNote() {
 			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("note:ann-stationary");
@@ -3606,7 +3670,7 @@ async function assertReplayNoteActivationRegeneratesMissingNote() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3634,7 +3698,7 @@ async function assertReplayNoteActivationRegeneratesMissingNote() {
 			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("note:ann-stationary");
@@ -3661,7 +3725,7 @@ async function assertReplayNoteActivationUsesRepairedPairedHighlightAnchor() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3689,7 +3753,7 @@ async function assertReplayNoteActivationUsesRepairedPairedHighlightAnchor() {
 			citationText: "Stationary means applying the Markov transition once leaves the distribution unchanged.",
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("note:old-ann");
@@ -3704,7 +3768,7 @@ async function assertReplayNoteActivationUsesRepairedPairedHighlightAnchor() {
 	assert.equal(noteCalls[0]?.args.annotationId, "current-ann");
 	assert.equal(noteCalls[0]?.args.note, "Stationary means applying the Markov transition once leaves the distribution unchanged.");
 
-	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions.find(
+	const savedAction = getStoredSessions()[session.id].pageActions.find(
 		(action) => action.key === "note:old-ann",
 	);
 	assert.equal(savedAction.annotationId, "current-ann");
@@ -3739,7 +3803,7 @@ async function assertPdfReplayActionActivationRepairsWithPdfAnchor() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3756,7 +3820,7 @@ async function assertPdfReplayActionActivationRepairsWithPdfAnchor() {
 			pdfAnchor,
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("highlight:old-pdf-source");
@@ -3769,7 +3833,7 @@ async function assertPdfReplayActionActivationRepairsWithPdfAnchor() {
 	assert.equal(highlightCalls[0]?.args.allowApproximate, false);
 	assert.equal(highlightCalls[0]?.args.reuseExisting, true);
 
-	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	const savedAction = getStoredSessions()[session.id].pageActions[0];
 	assert.equal(savedAction.annotationId, "repaired-pdf-source");
 	assert.deepEqual(savedAction.pdfAnchor, pdfAnchor);
 }
@@ -3803,7 +3867,7 @@ async function assertPdfNoteReplayActionActivationRepairsWithPdfAnchor() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3820,7 +3884,7 @@ async function assertPdfNoteReplayActionActivationRepairsWithPdfAnchor() {
 			pdfAnchor,
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await runtime.activateAction("note:old-pdf-note");
@@ -3834,7 +3898,7 @@ async function assertPdfNoteReplayActionActivationRepairsWithPdfAnchor() {
 	assert.equal(noteCalls[0]?.args.annotationId, "repaired-pdf-note");
 	assert.equal(noteCalls[0]?.args.note, "This note is anchored to the PDF selection.");
 
-	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	const savedAction = getStoredSessions()[session.id].pageActions[0];
 	assert.equal(savedAction.annotationId, "repaired-pdf-note");
 	assert.deepEqual(savedAction.pdfAnchor, pdfAnchor);
 }
@@ -3855,7 +3919,7 @@ async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
 		aiApiKey: "test",
 		authMode: "api-key",
 	});
-	const store = globalThis.chrome.storage.local.data.onhandBrowserRuntime;
+	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
 	session.pageActions = [
 		{
@@ -3871,7 +3935,7 @@ async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
 			citationText: exactCitation,
 		},
 	];
-	await globalThis.chrome.storage.local.set({ onhandBrowserRuntime: store });
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	const callCountBeforeActivate = host.calls.length;
 	await assert.rejects(() => runtime.activateAction("highlight:old-source"), /Source not found on this page/);
@@ -3884,7 +3948,7 @@ async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
 	assert.equal(highlightCalls[0]?.args.reuseExisting, true);
 	assert.equal(highlightCalls.some((call) => call.args.text === unrelatedSentence), false);
 
-	const savedAction = globalThis.chrome.storage.local.data.onhandBrowserRuntime.sessions[session.id].pageActions[0];
+	const savedAction = getStoredSessions()[session.id].pageActions[0];
 	assert.equal(savedAction.annotationId, "old-source");
 }
 
@@ -4270,6 +4334,7 @@ async function main() {
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
+	await assertLegacySessionBlobMigratesToSessionRecords();
 	await assertSessionReplayRestore();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();

@@ -124164,9 +124164,11 @@ function summarizeOAuthCredentials(credentials = {}) {
 // packages/browser-extension/src/browser-runtime.ts
 var STORAGE_KEY = "onhandBrowserRuntime";
 var ARTIFACTS_STORAGE_KEY = "onhandBrowserArtifacts";
-var ARTIFACT_DB_NAME = "onhandBrowserRuntime";
-var ARTIFACT_DB_VERSION = 1;
+var SESSIONS_FALLBACK_STORAGE_KEY = "onhandBrowserSessions";
+var RUNTIME_DB_NAME = "onhandBrowserRuntime";
+var RUNTIME_DB_VERSION = 2;
 var ARTIFACT_STORE_NAME = "browserArtifacts";
+var SESSION_STORE_NAME = "runtimeSessions";
 var OPENAI_API_PROVIDER = "openai";
 var OPENAI_API_MODEL = "gpt-4.1-mini";
 var OPENAI_CODEX_PROVIDER = "openai-codex";
@@ -125397,9 +125399,9 @@ function normalizeSession(rawSession) {
 function canUseIndexedDb() {
   return typeof indexedDB !== "undefined";
 }
-function openArtifactDb() {
+function openRuntimeDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(ARTIFACT_DB_NAME, ARTIFACT_DB_VERSION);
+    const request = indexedDB.open(RUNTIME_DB_NAME, RUNTIME_DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(ARTIFACT_STORE_NAME)) {
@@ -125407,17 +125409,21 @@ function openArtifactDb() {
         store.createIndex("createdAt", "createdAt", { unique: false });
         store.createIndex("sessionId", "sessionId", { unique: false });
       }
+      if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {
+        const store = db.createObjectStore(SESSION_STORE_NAME, { keyPath: "id" });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
     };
-    request.onerror = () => reject(request.error || new Error("Could not open Onhand artifact store."));
+    request.onerror = () => reject(request.error || new Error("Could not open Onhand runtime store."));
     request.onsuccess = () => resolve(request.result);
   });
 }
-async function withArtifactStore(mode, callback) {
-  const db = await openArtifactDb();
+async function withRuntimeStore(storeName, mode, callback) {
+  const db = await openRuntimeDb();
   try {
     return await new Promise((resolve, reject) => {
-      const transaction = db.transaction(ARTIFACT_STORE_NAME, mode);
-      const store = transaction.objectStore(ARTIFACT_STORE_NAME);
+      const transaction = db.transaction(storeName, mode);
+      const store = transaction.objectStore(storeName);
       let settled = false;
       Promise.resolve(callback(store)).then((value) => {
         settled = true;
@@ -125427,18 +125433,62 @@ async function withArtifactStore(mode, callback) {
         reject(error51);
       });
       transaction.onerror = () => {
-        if (!settled) reject(transaction.error || new Error("Onhand artifact transaction failed."));
+        if (!settled) reject(transaction.error || new Error("Onhand storage transaction failed."));
       };
     });
   } finally {
     db.close?.();
   }
 }
+async function withArtifactStore(mode, callback) {
+  return await withRuntimeStore(ARTIFACT_STORE_NAME, mode, callback);
+}
 function requestToPromise(request) {
   return new Promise((resolve, reject) => {
-    request.onerror = () => reject(request.error || new Error("Onhand artifact request failed."));
+    request.onerror = () => reject(request.error || new Error("Onhand storage request failed."));
     request.onsuccess = () => resolve(request.result);
   });
+}
+async function readFallbackSessions() {
+  const stored = await chrome.storage.local.get({ [SESSIONS_FALLBACK_STORAGE_KEY]: {} });
+  const sessions = stored[SESSIONS_FALLBACK_STORAGE_KEY];
+  return sessions && typeof sessions === "object" ? sessions : {};
+}
+async function writeFallbackSessions(sessions) {
+  await chrome.storage.local.set({ [SESSIONS_FALLBACK_STORAGE_KEY]: sessions });
+}
+async function getAllSessionRecords() {
+  if (canUseIndexedDb()) {
+    const all = await withRuntimeStore(SESSION_STORE_NAME, "readonly", async (store) => await requestToPromise(store.getAll()));
+    return Array.isArray(all) ? all : [];
+  }
+  return Object.values(await readFallbackSessions());
+}
+async function putSessionRecords(sessions) {
+  const records = (Array.isArray(sessions) ? sessions : []).filter((session) => session && typeof session.id === "string" && session.id);
+  if (!records.length) return;
+  if (canUseIndexedDb()) {
+    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store) => {
+      await Promise.all(records.map((session) => requestToPromise(store.put(session))));
+    });
+    return;
+  }
+  const stored = await readFallbackSessions();
+  for (const session of records) stored[session.id] = session;
+  await writeFallbackSessions(stored);
+}
+async function deleteSessionRecords(sessionIds) {
+  const ids = (Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || "").trim()).filter(Boolean);
+  if (!ids.length) return;
+  if (canUseIndexedDb()) {
+    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store) => {
+      await Promise.all(ids.map((id) => requestToPromise(store.delete(id))));
+    });
+    return;
+  }
+  const stored = await readFallbackSessions();
+  for (const id of ids) delete stored[id];
+  await writeFallbackSessions(stored);
 }
 async function readFallbackArtifacts() {
   const stored = await chrome.storage.local.get({ [ARTIFACTS_STORAGE_KEY]: {} });
@@ -127766,32 +127816,79 @@ function createOnhandBrowserRuntime(host) {
         authMode,
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials)
       };
-      const rawSessions = raw.sessions && typeof raw.sessions === "object" ? raw.sessions : {};
-      const sessions = Object.fromEntries(Object.entries(rawSessions).map(([id, session]) => [id, normalizeSession(session)]));
+      const sessions = {};
+      for (const record2 of await getAllSessionRecords()) {
+        const session = normalizeSession(record2);
+        sessions[session.id] = session;
+      }
+      const legacySessions = raw.sessions && typeof raw.sessions === "object" ? raw.sessions : null;
+      const migratedSessions = [];
+      if (legacySessions) {
+        for (const legacy of Object.values(legacySessions)) {
+          const session = normalizeSession(legacy);
+          if (!sessions[session.id]) {
+            sessions[session.id] = session;
+            migratedSessions.push(session);
+          }
+        }
+      }
       let currentSessionId = typeof raw.currentSessionId === "string" ? raw.currentSessionId : "";
+      let createdSession = null;
       if (!currentSessionId || !sessions[currentSessionId]) {
         const session = createSession();
         sessions[session.id] = session;
         currentSessionId = session.id;
+        createdSession = session;
+      }
+      try {
+        const recordsToPersist = createdSession ? [...migratedSessions, createdSession] : migratedSessions;
+        await putSessionRecords(recordsToPersist);
+        if (legacySessions) {
+          await chrome.storage.local.set({ [STORAGE_KEY]: { settings: settings2, currentSessionId } });
+        }
+      } catch (error51) {
+        host.log?.("onhand session storage migration failed", error51);
       }
       return { settings: settings2, sessions, currentSessionId };
     })();
     return await storePromise;
   }
-  async function saveStore(store) {
+  async function saveStore(store, changed) {
     storePromise = Promise.resolve(store);
-    await chrome.storage.local.set({ [STORAGE_KEY]: store });
+    try {
+      await putSessionRecords(changed?.sessions || []);
+      await deleteSessionRecords(changed?.deletedSessionIds || []);
+      await chrome.storage.local.set({ [STORAGE_KEY]: { settings: store.settings, currentSessionId: store.currentSessionId } });
+    } catch (error51) {
+      host.log?.("onhand store save failed", error51);
+      try {
+        await publishState({ status: `Onhand could not save this session: ${error51?.message || error51}` });
+      } catch {
+      }
+      throw error51;
+    }
   }
   async function getCurrentSession() {
     const store = await loadStore();
     return store.sessions[store.currentSessionId];
+  }
+  async function ensureSessionLoaded(store, sessionId) {
+    if (!sessionId || store.sessions[sessionId]) return;
+    try {
+      for (const record2 of await getAllSessionRecords()) {
+        const session = normalizeSession(record2);
+        if (!store.sessions[session.id]) store.sessions[session.id] = session;
+      }
+    } catch (error51) {
+      host.log?.("onhand session reload failed", error51);
+    }
   }
   async function replaceCurrentSession(session) {
     const store = await loadStore();
     session.updatedAt = nowIso();
     store.sessions[session.id] = session;
     store.currentSessionId = session.id;
-    await saveStore(store);
+    await saveStore(store, { sessions: [session] });
     return session;
   }
   async function ensureUiState() {
@@ -127821,7 +127918,7 @@ function createOnhandBrowserRuntime(host) {
       session.learnerState = storedSession.learnerState;
       session.updatedAt = storedSession.updatedAt;
     }
-    await saveStore(store);
+    await saveStore(store, { sessions: [storedSession] });
     await publishState({
       currentSession: buildSessionState(storedSession),
       learnerState: storedSession.learnerState
@@ -128302,7 +128399,7 @@ function createOnhandBrowserRuntime(host) {
         [provider]: result.credentials
       };
       store.settings = settings2;
-      await saveStore(store);
+      await saveStore(store, {});
       await publishState({
         preferences: {
           runtime: "browser-extension",
@@ -129466,7 +129563,7 @@ function createOnhandBrowserRuntime(host) {
       const session = store.sessions[store.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
       store.sessions[session.id] = session;
-      await saveStore(store);
+      await saveStore(store, { sessions: [session] });
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return await getPublicSettings();
@@ -129501,7 +129598,7 @@ function createOnhandBrowserRuntime(host) {
           [providerId]: credentials
         }
       };
-      await saveStore(store);
+      await saveStore(store, {});
       const session = store.sessions[store.currentSessionId];
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
@@ -129529,7 +129626,7 @@ function createOnhandBrowserRuntime(host) {
         aiApiKeys,
         aiApiKey: targetProviderId === OPENAI_API_PROVIDER ? "" : store.settings.aiApiKey
       };
-      await saveStore(store);
+      await saveStore(store, {});
       const session = store.sessions[store.currentSessionId];
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
@@ -129549,7 +129646,7 @@ function createOnhandBrowserRuntime(host) {
         aiProvider: OPENAI_CODEX_PROVIDER,
         aiModel: normalizeModelForProvider(store.settings.aiModel || OPENAI_CODEX_MODEL, OPENAI_CODEX_PROVIDER, "oauth")
       };
-      await saveStore(store);
+      await saveStore(store, {});
       const session = store.sessions[store.currentSessionId];
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
@@ -129566,6 +129663,7 @@ function createOnhandBrowserRuntime(host) {
     async getSessionReplay(sessionId) {
       const store = await loadStore();
       const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+      await ensureSessionLoaded(store, targetSessionId);
       const session = store.sessions[targetSessionId];
       if (!session) throw new Error("Session not found.");
       const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
@@ -129602,7 +129700,7 @@ function createOnhandBrowserRuntime(host) {
       session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
       store.sessions[session.id] = session;
       store.currentSessionId = session.id;
-      await saveStore(store);
+      await saveStore(store, { sessions: [session] });
       uiState = createEmptyState(session, store.settings);
       return {
         created: { cancelled: false },
@@ -129614,12 +129712,13 @@ function createOnhandBrowserRuntime(host) {
       const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
       await clearActivePageAnnotations(targetWindowId);
       const store = await loadStore();
+      await ensureSessionLoaded(store, sessionId);
       if (!store.sessions[sessionId]) throw new Error("Session not found.");
       store.currentSessionId = sessionId;
       const session = store.sessions[sessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
       store.sessions[session.id] = session;
-      await saveStore(store);
+      await saveStore(store, { sessions: [session] });
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return {
@@ -129631,6 +129730,7 @@ function createOnhandBrowserRuntime(host) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
       const store = await loadStore();
       const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+      await ensureSessionLoaded(store, targetSessionId);
       const targetSession = store.sessions[targetSessionId];
       if (!targetSession) throw new Error("Session not found.");
       const wasCurrentSession = targetSessionId === store.currentSessionId;
@@ -129652,7 +129752,7 @@ function createOnhandBrowserRuntime(host) {
         uiState = createEmptyState(currentSession, store.settings);
         uiState.messages = buildConversationMessages(currentSession.messages);
       }
-      await saveStore(store);
+      await saveStore(store, { sessions: currentSession ? [currentSession] : [], deletedSessionIds: [targetSessionId] });
       if (!wasCurrentSession) {
         await publishState({ status: "Deleted session." });
       }
@@ -129671,6 +129771,7 @@ function createOnhandBrowserRuntime(host) {
     async restoreSession(sessionId) {
       const store = await loadStore();
       const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
+      await ensureSessionLoaded(store, targetSessionId);
       const session = store.sessions[targetSessionId];
       if (!session) throw new Error("Session not found.");
       const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
@@ -129707,7 +129808,7 @@ function createOnhandBrowserRuntime(host) {
       const status = artifactPages.length && replayPages.length ? `Restored ${artifactPages.length} saved page state${artifactPages.length === 1 ? "" : "s"} and replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"}.` : artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
       session.updatedAt = nowIso();
       store.sessions[targetSessionId] = session;
-      await saveStore(store);
+      await saveStore(store, { sessions: [session] });
       await publishState(
         targetSessionId === store.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
       );
@@ -129838,6 +129939,7 @@ function createOnhandBrowserRuntime(host) {
     async activateAction(actionKey, options = {}) {
       const store = await loadStore();
       const requestedSessionId = String(options?.sessionId || options?.sessionPath || store.currentSessionId || "").trim();
+      await ensureSessionLoaded(store, requestedSessionId);
       const session = store.sessions[requestedSessionId];
       if (!session) throw new Error("Session not found.");
       const isCurrentSession = requestedSessionId === store.currentSessionId;
@@ -129945,7 +130047,7 @@ function createOnhandBrowserRuntime(host) {
       if (changed && actionBelongsToSession) {
         session.updatedAt = nowIso();
         store.sessions[requestedSessionId] = session;
-        await saveStore(store);
+        await saveStore(store, { sessions: [session] });
         if (isCurrentSession) {
           await publishState({
             currentSession: buildSessionState(session),

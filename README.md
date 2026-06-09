@@ -23,7 +23,7 @@ Onhand now uses the browser extension as its runtime:
 3. sidebar messages route to an in-extension runtime controller
 4. browser tools call the existing extension command handlers directly
 5. direct sign-in and API-key auth are configured from the extension options page
-6. sessions and runtime settings are stored in `chrome.storage.local`
+6. runtime settings are stored in `chrome.storage.local`; sessions and artifacts are stored as per-record entries in extension IndexedDB
 
 ## Browser-only direction
 
@@ -171,5 +171,5 @@ Onhand is licensed under the Apache License, Version 2.0. See `LICENSE` for deta
 ## Likely next steps
 
 - stronger replay/restore fidelity for changed pages and missing tabs beyond best-effort text matching
-- move sessions/artifacts from `chrome.storage.local` to IndexedDB once transcripts and captured artifacts grow
+- session/artifact export-import and a storage-usage readout now that sessions/artifacts live in IndexedDB
 - PDF/document support after the browser-grounded MVP is solid
