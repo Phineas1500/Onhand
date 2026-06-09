@@ -1133,6 +1133,48 @@ function applyLearningEvent(rawState: unknown, rawEvent: LearningEvent, options:
 	return state;
 }
 
+// Conversational offers ("want me to explain more?") are not retrieval
+// checks and must not open learner-state checks.
+const LEARNING_CHECK_OFFER_PATTERN = /^(do you want|would you like|want me|should i|shall i|can i|may i|let me know|anything else|ready for|interested in)\b/i;
+
+function extractTrailingCheckQuestion(reply: string) {
+	const text = String(reply || "").trim();
+	if (!text.endsWith("?")) return "";
+	const lastLine = text.split("\n").map((line) => line.trim()).filter(Boolean).pop() || "";
+	let question = lastLine.match(/[^.!?]*\?$/)?.[0]?.trim() || "";
+	// Drop lead-ins like "Here's a short check:" before the question itself.
+	const afterColon = question.includes(": ") ? question.slice(question.lastIndexOf(": ") + 2).trim() : "";
+	if (afterColon.length >= 15 && afterColon.endsWith("?")) question = afterColon;
+	if (question.length < 12) return "";
+	if (LEARNING_CHECK_OFFER_PATTERN.test(question)) return "";
+	return question;
+}
+
+// Learning Mode asks the model to record the checks it opens, but weaker
+// models sometimes ask a closing check question without calling
+// onhand_record_learning_event. Record the trailing question as an open
+// check so the sidebar can track and resolve it (PDF QA Finding 5).
+function withFallbackOpenCheck(rawState: unknown, reply: string, requestStartedAt: string): LearnerState {
+	const state = normalizeLearnerState(rawState);
+	const startedAt = String(requestStartedAt || "");
+	if (state.openChecks.some((check) => String(check.askedAt || "") >= startedAt)) return state;
+	const promptText = extractTrailingCheckQuestion(reply);
+	if (!promptText) return state;
+	const recentConcept =
+		[...state.conceptsIntroduced].reverse().find((concept) => String(concept.firstSeenAt || "") >= startedAt) ||
+		state.conceptsIntroduced[state.conceptsIntroduced.length - 1] ||
+		null;
+	return applyLearningEvent(
+		state,
+		{
+			kind: "check_opened",
+			promptText,
+			...(recentConcept ? { conceptId: recentConcept.conceptId, conceptLabel: recentConcept.label } : { conceptLabel: promptText }),
+		},
+		{ mode: "learning" },
+	);
+}
+
 function normalizeAuthMode(value: unknown): RuntimeSettings["authMode"] {
 	return value === "oauth" ? "oauth" : "api-key";
 }
@@ -3530,6 +3572,8 @@ export const __browserRuntimeTest = {
 	buildReplayAnnotationsFromPageActions,
 	classifyPromptForReasoning,
 	createEmptyLearnerState,
+	extractTrailingCheckQuestion,
+	withFallbackOpenCheck,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
 	getMissingApiKeyError,
@@ -4863,6 +4907,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		session.messages = createStoredConversationMessages(session.turns);
 		session.pageActions = [...activeRequest.pageActions];
 		session.artifactIds = Array.from(new Set([...(session.artifactIds || []), ...(activeRequest.artifactIds || [])]));
+		if (!finalError && !activeRequest.aborted && activeRequest.learningMode) {
+			session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
+		}
 		await replaceCurrentSession(session);
 		await publishState({
 			currentSession: buildSessionState(session),
@@ -4870,6 +4917,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			messages: buildConversationMessages(session.messages),
 			activities: [...turn.activities],
 			pageActions: [...activeRequest.pageActions],
+			learnerState: session.learnerState,
 			status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
 			activeRequestId: null,
 		});
@@ -5997,7 +6045,10 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 	}
 
 	async function restoreSessionPageActions(session: RuntimeSession, params: any = {}) {
-		const replayAnnotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
+		const replayAnnotations =
+			Array.isArray(params.annotations) && params.annotations.length
+				? (params.annotations as ReplayAnnotation[])
+				: buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
 		if (!replayAnnotations.length) throw new Error("No saved browser artifacts or replayable page actions were found for this session.");
 		const state = await host.snapshotState();
 		const tabs = flattenTabs(state);
@@ -6506,7 +6557,23 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const needsReplayRestore =
 				!artifactIds.length || artifactRestoreMissesReplayTargets || (replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
 			if (needsReplayRestore) {
-				restored.push(...await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: !artifactIds.length }));
+				// Replay only the annotations the artifact restore did not
+				// already cover, so a partially successful artifact pass is
+				// not redone (PDF QA Finding 6). When coverage is complete but
+				// counts came up short, replay everything as before.
+				const restoredTargets = restored.flatMap((result) =>
+					(Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation),
+				);
+				const uncoveredAnnotations = replayableAnnotations.filter(
+					(annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target)),
+				);
+				restored.push(
+					...await restoreSessionPageActions(session, {
+						openIfNeeded: true,
+						clearExisting: !artifactIds.length,
+						...(uncoveredAnnotations.length ? { annotations: uncoveredAnnotations } : {}),
+					}),
+				);
 			}
 			const restoredPages = restored.map(summarizeRestoredArtifact);
 			const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
@@ -6567,6 +6634,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				aborted: false,
 				targetWindowId,
 				initialSelection: null,
+				learningMode,
 			};
 			await publishState({ status: "Starting Onhand..." });
 

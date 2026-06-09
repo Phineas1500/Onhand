@@ -124958,6 +124958,35 @@ function applyLearningEvent(rawState, rawEvent, options = {}) {
   }
   return state;
 }
+var LEARNING_CHECK_OFFER_PATTERN = /^(do you want|would you like|want me|should i|shall i|can i|may i|let me know|anything else|ready for|interested in)\b/i;
+function extractTrailingCheckQuestion(reply) {
+  const text = String(reply || "").trim();
+  if (!text.endsWith("?")) return "";
+  const lastLine = text.split("\n").map((line) => line.trim()).filter(Boolean).pop() || "";
+  let question = lastLine.match(/[^.!?]*\?$/)?.[0]?.trim() || "";
+  const afterColon = question.includes(": ") ? question.slice(question.lastIndexOf(": ") + 2).trim() : "";
+  if (afterColon.length >= 15 && afterColon.endsWith("?")) question = afterColon;
+  if (question.length < 12) return "";
+  if (LEARNING_CHECK_OFFER_PATTERN.test(question)) return "";
+  return question;
+}
+function withFallbackOpenCheck(rawState, reply, requestStartedAt) {
+  const state = normalizeLearnerState(rawState);
+  const startedAt = String(requestStartedAt || "");
+  if (state.openChecks.some((check2) => String(check2.askedAt || "") >= startedAt)) return state;
+  const promptText = extractTrailingCheckQuestion(reply);
+  if (!promptText) return state;
+  const recentConcept = [...state.conceptsIntroduced].reverse().find((concept) => String(concept.firstSeenAt || "") >= startedAt) || state.conceptsIntroduced[state.conceptsIntroduced.length - 1] || null;
+  return applyLearningEvent(
+    state,
+    {
+      kind: "check_opened",
+      promptText,
+      ...recentConcept ? { conceptId: recentConcept.conceptId, conceptLabel: recentConcept.label } : { conceptLabel: promptText }
+    },
+    { mode: "learning" }
+  );
+}
 function normalizeAuthMode(value) {
   return value === "oauth" ? "oauth" : "api-key";
 }
@@ -127018,6 +127047,8 @@ var __browserRuntimeTest = {
   buildReplayAnnotationsFromPageActions,
   classifyPromptForReasoning,
   createEmptyLearnerState,
+  extractTrailingCheckQuestion,
+  withFallbackOpenCheck,
   formatVisibleTextForModel,
   formatToolResultForModel: toolResultTextForModel,
   getMissingApiKeyError,
@@ -128278,6 +128309,9 @@ function createOnhandBrowserRuntime(host) {
     session.messages = createStoredConversationMessages(session.turns);
     session.pageActions = [...activeRequest.pageActions];
     session.artifactIds = Array.from(/* @__PURE__ */ new Set([...session.artifactIds || [], ...activeRequest.artifactIds || []]));
+    if (!finalError && !activeRequest.aborted && activeRequest.learningMode) {
+      session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
+    }
     await replaceCurrentSession(session);
     await publishState({
       currentSession: buildSessionState(session),
@@ -128285,6 +128319,7 @@ function createOnhandBrowserRuntime(host) {
       messages: buildConversationMessages(session.messages),
       activities: [...turn.activities],
       pageActions: [...activeRequest.pageActions],
+      learnerState: session.learnerState,
       status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
       activeRequestId: null
     });
@@ -129336,7 +129371,7 @@ function createOnhandBrowserRuntime(host) {
     }
   }
   async function restoreSessionPageActions(session, params = {}) {
-    const replayAnnotations = buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
+    const replayAnnotations = Array.isArray(params.annotations) && params.annotations.length ? params.annotations : buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
     if (!replayAnnotations.length) throw new Error("No saved browser artifacts or replayable page actions were found for this session.");
     const state = await host.snapshotState();
     const tabs = flattenTabs(state);
@@ -129806,7 +129841,19 @@ function createOnhandBrowserRuntime(host) {
       const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayableAnnotations.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayableAnnotations);
       const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);
       if (needsReplayRestore) {
-        restored.push(...await restoreSessionPageActions(session, { openIfNeeded: true, clearExisting: !artifactIds.length }));
+        const restoredTargets = restored.flatMap(
+          (result) => (Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation)
+        );
+        const uncoveredAnnotations = replayableAnnotations.filter(
+          (annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target))
+        );
+        restored.push(
+          ...await restoreSessionPageActions(session, {
+            openIfNeeded: true,
+            clearExisting: !artifactIds.length,
+            ...uncoveredAnnotations.length ? { annotations: uncoveredAnnotations } : {}
+          })
+        );
       }
       const restoredPages = restored.map(summarizeRestoredArtifact);
       const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
@@ -129857,7 +129904,8 @@ function createOnhandBrowserRuntime(host) {
         createdAt: nowIso(),
         aborted: false,
         targetWindowId,
-        initialSelection: null
+        initialSelection: null,
+        learningMode
       };
       await publishState({ status: "Starting Onhand..." });
       try {

@@ -716,6 +716,37 @@ async function assertConstitutionPromptContract() {
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
 }
 
+async function assertFallbackOpenCheckRecording() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { extractTrailingCheckQuestion, withFallbackOpenCheck, applyLearningEvent, createEmptyLearnerState } = __browserRuntimeTest;
+
+	assert.equal(
+		extractTrailingCheckQuestion("Explanation text.\n\nHere's a short question for you: Why does the paper scale the dot products?"),
+		"Why does the paper scale the dot products?",
+		"trailing check question should be extracted without its lead-in",
+	);
+	assert.equal(extractTrailingCheckQuestion("All done. Want me to explain more?"), "", "conversational offers should not become checks");
+	assert.equal(extractTrailingCheckQuestion("The slope is 3."), "", "non-question replies should not become checks");
+	assert.equal(extractTrailingCheckQuestion("Why?"), "", "too-short questions should be ignored");
+
+	const startedAt = "2026-06-09T18:00:00.000Z";
+	let state = applyLearningEvent(createEmptyLearnerState("learning"), {
+		kind: "concept_introduced",
+		conceptLabel: "Scaled dot-product attention",
+		at: "2026-06-09T18:00:05.000Z",
+	});
+	state = withFallbackOpenCheck(state, "Explained.\n\nIn your own words, why are the dot products scaled?", startedAt);
+	assert.equal(state.openChecks.length, 1, "fallback should record the trailing question as an open check");
+	assert.equal(state.openChecks[0].promptText, "In your own words, why are the dot products scaled?");
+	assert.equal(state.openChecks[0].conceptId, state.conceptsIntroduced[0].conceptId, "fallback check should attach to the turn's concept");
+
+	const unchanged = withFallbackOpenCheck(state, "Another question here, what about this?", startedAt);
+	assert.equal(unchanged.openChecks.length, 1, "fallback should not add a second check when one was already opened this turn");
+
+	const noQuestion = withFallbackOpenCheck(applyLearningEvent(createEmptyLearnerState("learning"), { kind: "concept_introduced", conceptLabel: "X" }), "Plain answer.", startedAt);
+	assert.equal(noQuestion.openChecks.length, 0, "no trailing question should record nothing");
+}
+
 async function assertLearnerStateUpdates() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { applyLearningEvent, buildLearningCheckFollowupForTest, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
@@ -2948,6 +2979,85 @@ async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTa
 	);
 }
 
+async function assertReplayFallbackSkipsArtifactCoveredAnnotations() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const coveredText = "Artifact covered passage";
+	const uncoveredText = "Replay only passage";
+	const host = createReplayHost({ tabs: [replaySmokeTab({ title: "Coverage", url: "https://example.test/coverage" })] });
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	const makeAction = (key, text, annotationId) => ({
+		key,
+		type: "annotation",
+		tabId: 7,
+		windowId: 3,
+		title: "Coverage",
+		url: "https://example.test/coverage",
+		annotationId,
+		label: "Highlighted text",
+		detail: text,
+		citationText: text,
+	});
+	session.artifactIds = ["artifact_coverage"];
+	session.pageActions = [makeAction("highlight:covered", coveredText, "page-covered"), makeAction("highlight:uncovered", uncoveredText, "page-uncovered")];
+	session.turns = [
+		{
+			id: "turn-coverage",
+			userPrompt: "explain both passages",
+			reply: "covered and uncovered",
+			activities: [],
+			pageActions: [...session.pageActions],
+			pending: false,
+			error: false,
+			createdAt: new Date().toISOString(),
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_coverage: {
+				id: "artifact_coverage",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "coverage snapshot",
+				tab: replaySmokeTab({ title: "Coverage", url: "https://example.test/coverage" }),
+				page: {
+					title: "Coverage",
+					url: "https://example.test/coverage",
+					annotations: [
+						{
+							annotationId: "artifact-covered",
+							kind: "inline",
+							matchedText: coveredText,
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	await runtime.restoreSession();
+	const highlightTexts = host.calls
+		.slice(callCountBeforeRestore)
+		.filter((call) => call.name === "highlight_text")
+		.map((call) => call.args.text);
+	assert.deepEqual(
+		[...highlightTexts].sort(),
+		[coveredText, uncoveredText].sort(),
+		"each session annotation should be restored exactly once across the artifact and replay passes",
+	);
+}
+
 async function assertArtifactActionActivationPreservesExistingAnnotations() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -4347,6 +4457,7 @@ async function main() {
 	await assertConstitutionPromptContract();
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertLearnerStateUpdates();
+	await assertFallbackOpenCheckRecording();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertReplayHighlightCandidateGeneration();
@@ -4375,6 +4486,7 @@ async function main() {
 	await assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff();
 	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();
 	await assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets();
+	await assertReplayFallbackSkipsArtifactCoveredAnnotations();
 	await assertArtifactActionActivationPreservesExistingAnnotations();
 	await assertCrossPageLearningSourceActivationOpensMissingPage();
 	await assertTruncatedActionActivationRetriesEllipsislessExactPrefix();

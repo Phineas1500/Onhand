@@ -78,13 +78,17 @@ With `authMode: api-key`, `aiProvider: openai`, `aiModel: gpt-5.5`, the first to
 
 Fix: reasoning models on `openai-responses` now stream through `streamOpenAIResponses` with `reasoningEffort` from the runtime's reasoning profile ("none" for fast/balanced, "low" for deep — gpt-5.5 accepts none/low/medium/high/xhigh) and `reasoningSummary: "auto"`, which makes pi-ai round-trip encrypted reasoning content. Validated live: gpt-5.5 completed both a 2-tool turn and a 7-tool follow-up turn on the arXiv PDF with no errors. The turn errored cleanly before the fix and sessions recovered on the next prompt (no poisoning).
 
-### Finding 5 (low, open) - Learning Mode check not recorded as an open check on PDFs
+### Finding 5 (low) - Learning Mode check not recorded as an open check on PDFs - FIXED
 
-B3 asked a retrieval check in the reply and recorded the concept, but `learnerState.openChecks` stayed empty, so the sidebar can't resolve the answer turn against it. Model-dependent (gpt-4.1-mini may simply not have called `onhand_record_learning_event` for the check); re-test with the production Codex model before treating as a bug.
+B3 asked a retrieval check in the reply and recorded the concept, but `learnerState.openChecks` stayed empty, so the sidebar could not resolve the answer turn against it. Model-dependent: weaker models ask the closing question without calling `onhand_record_learning_event`.
 
-### Finding 6 (low, open) - restore runs artifact restore and replay fallback together
+Fix: after a successful Learning Mode turn that recorded no open check, the runtime records the reply's trailing question as a fallback open check, attached to the concept introduced that turn. Conversational offers ("want me to explain more?") and short fragments are filtered out, and turns where the model recorded its own check are left untouched. Covered by `assertFallbackOpenCheckRecording`.
 
-`sidebar:restore-session` restored the saved artifact (1 annotation + 1 note, with one logged failure: "Debugger evaluation timed out") and then also ran the replay fallback (5 annotations + 1 note). Net page state was correct with no visible duplicates, but the artifact pass's timeout failure plus overlapping replay deserves tightening: the timeout failure is what triggered the fallback, doing double work on a slow surface.
+### Finding 6 (low) - restore runs artifact restore and replay fallback together - FIXED
+
+`sidebar:restore-session` restored the saved artifact and then ran the replay fallback over the full session annotation set, redoing the artifact pass's successful work.
+
+Fix: the replay fallback now restores only the annotations the artifact pass did not cover (matched by annotation id, text, and URL). When coverage is complete but restored counts came up short, it still replays everything as before. Covered by `assertReplayFallbackSkipsArtifactCoveredAnnotations`.
 
 ### Observations (no action required yet)
 
@@ -94,8 +98,7 @@ B3 asked a retrieval check in the reply and recorded the concept, but `learnerSt
 
 ## Follow-ups, in priority order
 
-Findings 1-4 were fixed and validated live during/after this pass. Remaining:
+All six findings were fixed and validated during/after this pass. Remaining:
 
-1. Re-run B3-style Learning Mode prompts with Codex `gpt-5.5` via manual side-panel acceptance to settle Finding 5 (open check not recorded).
-2. Finding 6: skip the replay fallback when artifact restore succeeded for the same target, or retry the timed-out evaluation before falling back.
-3. Consider reporting the pi-ai `store:false` + reasoning-item default upstream so plain `streamSimple` callers are not exposed to the same trap.
+1. Consider reporting the pi-ai `store:false` + reasoning-item default upstream so plain `streamSimple` callers are not exposed to the same trap.
+2. The observations (viewer visible-text page markers/word spacing, first-occurrence highlight matching) remain log-only.
