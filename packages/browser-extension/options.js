@@ -1,4 +1,5 @@
 const RUNTIME_STORAGE_KEY = "onhandBrowserRuntime";
+const THEME_STORAGE_KEY = "onhandSidebarTheme";
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_MODEL = "gpt-5.5";
 const API_PROVIDERS = {
@@ -43,8 +44,22 @@ const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey"
 const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
+const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
+const codexSignInButton = document.querySelector(`[data-oauth-provider="${CODEX_PROVIDER}"]`);
+const signOutAuthButton = document.getElementById("signOutAuth");
+const CODEX_AUTH_DEFAULT_SUMMARY = codexAuthSummaryEl.textContent;
 let runtimePublicSettings = null;
 let pendingApiKeys = {};
+
+function applyOnhandTheme(value) {
+	const theme = String(value || "system").toLowerCase();
+	document.documentElement.dataset.onhandTheme = ["light", "dark", "system"].includes(theme) ? theme : "system";
+}
+
+chrome.storage.local.get({ [THEME_STORAGE_KEY]: "system" }).then((stored) => applyOnhandTheme(stored[THEME_STORAGE_KEY]));
+chrome.storage.onChanged.addListener((changes, area) => {
+	if (area === "local" && changes[THEME_STORAGE_KEY]) applyOnhandTheme(changes[THEME_STORAGE_KEY].newValue);
+});
 
 function renderStatus(data, className = "") {
 	statusEl.className = className;
@@ -257,6 +272,19 @@ async function loadForm() {
 	syncAuthModeFields();
 }
 
+function syncCodexAuthCard() {
+	const codex = runtimePublicSettings?.signedInProviders?.find((provider) => provider.id === CODEX_PROVIDER);
+	const signedIn = Boolean(codex?.signedIn);
+	codexSignInButton.hidden = signedIn;
+	signOutAuthButton.hidden = !signedIn;
+	if (!signedIn) {
+		codexAuthSummaryEl.textContent = CODEX_AUTH_DEFAULT_SUMMARY;
+		return;
+	}
+	const identity = codex.email || codex.accountId || "";
+	codexAuthSummaryEl.textContent = `Signed in${identity ? ` as ${identity}` : ""}.${codex.expired ? " Session expired — sign out and sign in again." : ""}`;
+}
+
 async function refreshStatus() {
 	const response = await chrome.runtime.sendMessage({ type: "get-status" });
 	if (!response?.ok) {
@@ -264,6 +292,7 @@ async function refreshStatus() {
 		return;
 	}
 	runtimePublicSettings = response.status?.browserRuntime || null;
+	syncCodexAuthCard();
 	renderStatus(response.status);
 	const browserRuntime = response.status?.browserRuntime;
 	if (browserRuntime?.signedInProviders || browserRuntime?.apiKeyProviders) {

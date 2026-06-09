@@ -4,128 +4,352 @@
     <meta charset="utf-8" />
     <title>Onhand Options</title>
     <style>
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        max-width: 860px;
-        margin: 32px auto;
-        padding: 0 16px;
-        color: #111827;
+      @font-face {
+        font-family: "New York";
+        font-style: normal;
+        font-weight: 400 1000;
+        font-display: swap;
+        src: url("fonts/NewYork.woff2") format("woff2");
       }
-      h1 {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 8px;
+      @font-face {
+        font-family: "New York";
+        font-style: italic;
+        font-weight: 400 1000;
+        font-display: swap;
+        src: url("fonts/NewYorkItalic.woff2") format("woff2");
       }
-      .logo-mark {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 30px;
-        height: 30px;
-        color: #575279;
-        font-family: "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Noto Sans Symbols", serif;
-        font-size: 31px;
-        line-height: 1;
-        transform: translateY(-1px);
+      @font-face {
+        font-family: "Ioskeley Mono";
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url("fonts/IoskeleyMono-Regular.woff2") format("woff2");
       }
-      h2 {
-        margin: 0 0 8px;
-        font-size: 18px;
-      }
-      p.help {
-        color: #4b5563;
-        margin-top: 0;
-      }
-      section,
-      details {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 18px;
-        margin: 20px 0;
-      }
-      summary {
-        cursor: pointer;
+      @font-face {
+        font-family: "Ioskeley Mono";
+        font-style: normal;
         font-weight: 700;
+        font-display: swap;
+        src: url("fonts/IoskeleyMono-Bold.woff2") format("woff2");
       }
+
+      :root {
+        color-scheme: light;
+        --rm-base: #eee6dd;
+        --rm-mantle: #e6dbd1;
+        --rm-crust: #ddd0c6;
+        --rm-surface-0: #dcd3cb;
+        --rm-surface-1: #d1c9c2;
+        --rm-surface-2: #cac1b9;
+        --rm-text: #575279;
+        --rm-subtext: #797593;
+        --rm-love: #b4637a;
+        --rm-pine: #286983;
+        --rm-foam: #56949f;
+        --rm-iris: #907aa9;
+        --rm-gold: #ea9d34;
+        --rm-rose: #d6817d;
+        --rm-font-serif: "New York", "Iowan Old Style", Charter, Georgia, serif;
+        --rm-font-mono: "Ioskeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-onhand-theme="light"]) {
+          color-scheme: dark;
+          --rm-base: #191724;
+          --rm-mantle: #1f1d2e;
+          --rm-crust: #26233a;
+          --rm-surface-0: #2a273f;
+          --rm-surface-1: #393552;
+          --rm-surface-2: #44415a;
+          --rm-text: #e0def4;
+          --rm-subtext: #908caa;
+          --rm-love: #eb6f92;
+          --rm-pine: #31748f;
+          --rm-foam: #9ccfd8;
+          --rm-iris: #c4a7e7;
+          --rm-gold: #f6c177;
+          --rm-rose: #ebbcba;
+        }
+      }
+
+      :root[data-onhand-theme="dark"] {
+        color-scheme: dark;
+        --rm-base: #191724;
+        --rm-mantle: #1f1d2e;
+        --rm-crust: #26233a;
+        --rm-surface-0: #2a273f;
+        --rm-surface-1: #393552;
+        --rm-surface-2: #44415a;
+        --rm-text: #e0def4;
+        --rm-subtext: #908caa;
+        --rm-love: #eb6f92;
+        --rm-pine: #31748f;
+        --rm-foam: #9ccfd8;
+        --rm-iris: #c4a7e7;
+        --rm-gold: #f6c177;
+        --rm-rose: #ebbcba;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      body {
+        margin: 0;
+        background: var(--rm-base);
+        color: var(--rm-text);
+        font: 15px/1.6 var(--rm-font-serif);
+      }
+
+      .page {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 28px 20px 48px;
+      }
+
+      .head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding-bottom: 14px;
+        margin-bottom: 22px;
+        border-bottom: 1px solid var(--rm-surface-2);
+      }
+
+      .logo-mark {
+        font: 26px/1 "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "Noto Sans Symbols", serif;
+        color: var(--rm-text);
+        transform: translateY(1px);
+      }
+
+      .head h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .head .tagline {
+        color: var(--rm-subtext);
+        font: 11px/1.4 var(--rm-font-mono);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      section {
+        background: var(--rm-mantle);
+        border: 1px solid var(--rm-surface-2);
+        border-radius: 4px;
+        padding: 16px 18px 18px;
+        margin: 0 0 18px;
+      }
+
+      h2 {
+        margin: 0 0 4px;
+        font: 700 13px/1.3 var(--rm-font-mono);
+        letter-spacing: 0.02em;
+      }
+
+      p.help {
+        color: var(--rm-subtext);
+        font-size: 12.5px;
+        line-height: 1.45;
+        margin: 0 0 6px;
+      }
+
+      code {
+        font: 11.5px/1.4 var(--rm-font-mono);
+      }
+
       .field {
-        margin: 16px 0;
+        margin: 14px 0 0;
       }
+
       label {
         display: block;
-        font-weight: 600;
+        color: var(--rm-subtext);
+        font: 10.5px/1.2 var(--rm-font-mono);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
         margin-bottom: 6px;
       }
+
       input,
       select {
         width: 100%;
-        padding: 10px 12px;
-        font-size: 14px;
-        box-sizing: border-box;
+        border: 1px solid var(--rm-surface-2);
+        background: var(--rm-base);
+        color: var(--rm-text);
+        border-radius: 3px;
+        padding: 8px 10px;
+        font: 13px/1.4 var(--rm-font-serif);
       }
+
+      input::placeholder {
+        color: var(--rm-subtext);
+        opacity: 0.7;
+      }
+
+      input:focus,
+      select:focus {
+        outline: 1px solid var(--rm-pine);
+        outline-offset: 0;
+      }
+
+      .field .help {
+        margin: 6px 0 0;
+      }
+
+      /* custom-model input shown below the model select */
+      #aiModel {
+        margin-top: 6px;
+      }
+
       .inline-grid {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 12px;
       }
+
       .auth-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
         gap: 12px;
-        margin-top: 16px;
+        margin-top: 14px;
       }
+
       .auth-card {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
+        border: 1px solid var(--rm-surface-2);
+        background: var(--rm-base);
+        border-radius: 3px;
         padding: 12px;
       }
+
       .auth-card h3 {
-        font-size: 14px;
         margin: 0 0 4px;
+        font: 700 12px/1.3 var(--rm-font-mono);
       }
+
       .auth-card p {
         min-height: 36px;
         margin: 0 0 12px;
-        color: #4b5563;
-        font-size: 13px;
+        color: var(--rm-subtext);
+        font-size: 12.5px;
+        line-height: 1.45;
       }
+
       .row {
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 24px;
+        gap: 8px;
+        margin-top: 16px;
       }
+
       .toggle-row {
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-weight: 600;
+        gap: 8px;
+        cursor: pointer;
       }
+
       .toggle-row input {
         width: auto;
+        margin: 0;
+        accent-color: var(--rm-pine);
       }
+
       button {
-        padding: 10px 14px;
-        font-size: 14px;
+        border: 1px solid var(--rm-surface-2);
+        background: var(--rm-base);
+        color: var(--rm-text);
+        border-radius: 2px;
+        padding: 8px 12px;
+        font: 11px/1 var(--rm-font-mono);
+        cursor: pointer;
       }
+
+      button:hover {
+        background: var(--rm-surface-0);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      button.primary,
+      .auth-card button:not(.danger) {
+        border: 0;
+        border-radius: 3px;
+        background: var(--rm-pine);
+        color: var(--rm-base);
+        font-weight: 700;
+        padding: 9px 14px;
+      }
+
+      button.primary:hover,
+      .auth-card button:not(.danger):hover {
+        background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
+      }
+
+      .auth-card button.danger {
+        padding: 9px 14px;
+        border-radius: 3px;
+      }
+
+      button.danger {
+        color: var(--rm-love);
+        border-color: color-mix(in srgb, var(--rm-love) 38%, var(--rm-surface-2));
+      }
+
+      button.danger:hover {
+        background: color-mix(in srgb, var(--rm-love) 10%, var(--rm-base));
+      }
+
       pre {
         white-space: pre-wrap;
-        background: #f3f4f6;
-        padding: 12px;
-        border-radius: 8px;
+        word-break: break-word;
+        background: var(--rm-crust);
+        border: 1px solid var(--rm-surface-1);
+        border-radius: 3px;
+        padding: 10px 12px;
+        margin: 14px 0 0;
+        color: var(--rm-subtext);
+        font: 11px/1.5 var(--rm-font-mono);
       }
+
+      .status h2 {
+        margin-bottom: 0;
+      }
+
       .status {
-        margin-top: 24px;
+        margin-top: 18px;
       }
+
       .ok {
-        color: #065f46;
+        color: var(--rm-foam);
       }
+
       .warn {
-        color: #92400e;
+        color: var(--rm-gold);
       }
+
       .error {
-        color: #991b1b;
+        color: var(--rm-love);
       }
+
+      /* options.js replaces this element's class list outright with
+         ok/warn, so style it by id rather than relying on .help */
+      #capabilityStatus {
+        margin: 6px 0 0;
+        font: 11px/1.5 var(--rm-font-mono);
+      }
+
       @media (max-width: 640px) {
         .inline-grid {
           grid-template-columns: 1fr;
@@ -134,94 +358,94 @@
     </style>
   </head>
   <body>
-    <h1><span class="logo-mark" aria-hidden="true">☞</span><span>Onhand</span></h1>
-    <p class="help">
-      Configure the browser-hosted runtime used by the extension side panel.
-    </p>
+    <div class="page">
+      <div class="head">
+        <span class="logo-mark" aria-hidden="true">☞</span>
+        <h1>Onhand</h1>
+        <span class="tagline">Runtime options</span>
+      </div>
 
-    <section>
-      <h2>Browser Runtime</h2>
-      <p class="help">Onhand now runs Pi directly inside the extension and calls browser tools without a localhost bridge.</p>
+      <section>
+        <h2>Browser Runtime</h2>
+        <p class="help">Onhand runs Pi directly inside the extension and calls browser tools without a localhost bridge.</p>
 
-      <div class="inline-grid">
-        <div class="field">
-          <label for="authMode">Authentication</label>
-          <select id="authMode">
-            <option value="oauth">OpenAI Codex sign-in</option>
-            <option value="api-key">Provider API key</option>
-          </select>
+        <div class="inline-grid">
+          <div class="field">
+            <label for="authMode">Authentication</label>
+            <select id="authMode">
+              <option value="oauth">OpenAI Codex sign-in</option>
+              <option value="api-key">Provider API key</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="aiProvider">Default provider</label>
+            <select id="aiProvider">
+              <option value="openai">OpenAI API</option>
+              <option value="anthropic">Anthropic API</option>
+              <option value="google">Google Gemini API</option>
+            </select>
+          </div>
         </div>
 
         <div class="field">
-          <label for="aiProvider">Default provider</label>
-          <select id="aiProvider">
-            <option value="openai">OpenAI API</option>
-            <option value="anthropic">Anthropic API</option>
-            <option value="google">Google Gemini API</option>
-          </select>
+          <label for="aiModelSelect">Default model</label>
+          <select id="aiModelSelect"></select>
+          <input id="aiModel" placeholder="gpt-5.5" />
+          <p id="modelHelp" class="help">Codex sign-in uses OpenAI Codex with GPT-5.5.</p>
+          <p id="capabilityStatus" class="help">Capability status loads with runtime settings.</p>
         </div>
-      </div>
 
-      <div class="field">
-        <label for="aiModelSelect">Default model</label>
-        <select id="aiModelSelect"></select>
-        <input id="aiModel" placeholder="gpt-5.5" />
-        <p id="modelHelp" class="help">Codex sign-in uses OpenAI Codex with GPT-5.5.</p>
-        <p id="capabilityStatus" class="help">Capability status loads with runtime settings.</p>
-      </div>
-
-      <div id="apiKeySection" class="field">
-        <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
-        <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-        <p id="apiKeyHelp" class="help">Keys are stored only in chrome.storage.local and are redacted from status diagnostics.</p>
-      </div>
-      <div id="apiKeyActions" class="row">
-        <button id="validateKey">Validate key</button>
-        <button id="removeKey">Remove key</button>
-      </div>
-
-      <div class="field">
-        <label class="toggle-row" for="realtimeVoiceEnabled">
-          <input id="realtimeVoiceEnabled" type="checkbox" />
-          <span>Enable realtime voice</span>
-        </label>
-        <p id="realtimeVoiceHelp" class="help">Enable Realtime Voice to use <code>gpt-realtime-2</code> with an OpenAI platform API key.</p>
-      </div>
-
-      <div id="realtimeOpenAiKeyField" class="field" hidden>
-        <label for="realtimeOpenAiApiKey">OpenAI platform API key for realtime voice</label>
-        <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-        <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2</code>. Text chat keeps using the selected authentication mode above.</p>
-      </div>
-    </section>
-
-    <section>
-      <h2>OpenAI Codex Sign-In</h2>
-      <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Realtime Voice can use an OpenAI platform API key when enabled.</p>
-
-      <div class="auth-grid">
-        <div class="auth-card">
-          <h3>OpenAI Codex</h3>
-          <p>ChatGPT Plus/Pro OAuth for selectable Codex text models.</p>
-          <button data-oauth-provider="openai-codex" data-default-model="gpt-5.5">Sign in</button>
+        <div id="apiKeySection" class="field">
+          <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
+          <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          <p id="apiKeyHelp" class="help">Keys are stored only in chrome.storage.local and are redacted from status diagnostics.</p>
         </div>
-      </div>
+        <div id="apiKeyActions" class="row">
+          <button id="validateKey">Validate key</button>
+          <button id="removeKey" class="danger">Remove key</button>
+        </div>
+
+        <div class="field">
+          <label class="toggle-row" for="realtimeVoiceEnabled">
+            <input id="realtimeVoiceEnabled" type="checkbox" />
+            <span>Enable realtime voice</span>
+          </label>
+          <p id="realtimeVoiceHelp" class="help">Enable Realtime Voice to use <code>gpt-realtime-2</code> with an OpenAI platform API key.</p>
+        </div>
+
+        <div id="realtimeOpenAiKeyField" class="field" hidden>
+          <label for="realtimeOpenAiApiKey">OpenAI platform API key for realtime voice</label>
+          <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2</code>. Text chat keeps using the selected authentication mode above.</p>
+        </div>
+      </section>
+
+      <section>
+        <h2>OpenAI Codex Sign-In</h2>
+        <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Realtime Voice can use an OpenAI platform API key when enabled.</p>
+
+        <div class="auth-grid">
+          <div class="auth-card">
+            <h3>OpenAI Codex</h3>
+            <p id="codexAuthSummary">ChatGPT Plus/Pro OAuth for selectable Codex text models.</p>
+            <button data-oauth-provider="openai-codex" data-default-model="gpt-5.5">Sign in</button>
+            <button id="signOutAuth" class="danger" hidden>Sign out</button>
+          </div>
+        </div>
+
+        <pre id="authStatus">No direct sign-in activity yet.</pre>
+      </section>
 
       <div class="row">
-        <button id="signOutAuth">Sign out selected provider</button>
+        <button id="save" class="primary">Save</button>
+        <button id="refresh">Refresh status</button>
       </div>
 
-      <pre id="authStatus">No direct sign-in activity yet.</pre>
-    </section>
-
-    <div class="row">
-      <button id="save">Save</button>
-      <button id="refresh">Refresh status</button>
-    </div>
-
-    <div class="status">
-      <h2>Status</h2>
-      <pre id="status">Loading…</pre>
+      <div class="status">
+        <h2>Status</h2>
+        <pre id="status">Loading…</pre>
+      </div>
     </div>
 
     <script type="module" src="options.js"></script>
