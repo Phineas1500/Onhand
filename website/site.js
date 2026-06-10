@@ -197,3 +197,52 @@ const ONHAND_STORE = {
     apply(next);
   });
 })();
+
+// 3) Live GitHub star count on the nav GitHub button.
+(function(){
+  const counters = document.querySelectorAll('[data-onhand-star-count]');
+  if (!counters.length || typeof fetch !== 'function') return;
+  const CACHE_KEY = 'onhand-github-stars';
+  const CACHE_TTL_MS = 60 * 60 * 1000;
+  const repoPath = ONHAND_RELEASE.repo.replace(/^https?:\/\/github\.com\//i, '');
+
+  function formatStars(count){
+    if (!Number.isFinite(count) || count < 0) return '';
+    if (count >= 10000) return `${Math.round(count / 1000)}k`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+    return String(count);
+  }
+
+  function render(count){
+    const label = formatStars(count);
+    if (!label) return;
+    counters.forEach((node) => {
+      const value = node.querySelector('[data-onhand-star-value]');
+      if (value) value.textContent = label;
+      node.hidden = false;
+    });
+  }
+
+  function readCache(){
+    try {
+      const raw = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+      if (raw && typeof raw.count === 'number' && Date.now() - raw.at < CACHE_TTL_MS) return raw.count;
+    } catch {}
+    return null;
+  }
+
+  const cached = readCache();
+  if (cached !== null) {
+    render(cached);
+    return;
+  }
+  fetch(`https://api.github.com/repos/${repoPath}`, { headers: { Accept: 'application/vnd.github+json' } })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => {
+      const count = Number(data && data.stargazers_count);
+      if (!Number.isFinite(count)) return;
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ count, at: Date.now() })); } catch {}
+      render(count);
+    })
+    .catch(() => {});
+})();
