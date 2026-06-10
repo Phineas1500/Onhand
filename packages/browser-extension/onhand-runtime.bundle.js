@@ -124165,6 +124165,7 @@ function summarizeOAuthCredentials(credentials = {}) {
 var STORAGE_KEY = "onhandBrowserRuntime";
 var ARTIFACTS_STORAGE_KEY = "onhandBrowserArtifacts";
 var SESSIONS_FALLBACK_STORAGE_KEY = "onhandBrowserSessions";
+var REVIEW_SNOOZE_STORAGE_KEY = "onhandReviewSnoozes";
 var RUNTIME_DB_NAME = "onhandBrowserRuntime";
 var RUNTIME_DB_VERSION = 2;
 var ARTIFACT_STORE_NAME = "browserArtifacts";
@@ -124809,11 +124810,15 @@ function normalizeLearnerResponse(rawResponse, fallbackNow) {
   const checkId = compactLearnerText(rawResponse.checkId || rawResponse.itemId, 120);
   if (!checkId) return null;
   const evidence = compactLearnerText(rawResponse.evidence || rawResponse.rationale, 320);
+  const conceptId = compactLearnerText(rawResponse.conceptId, 120);
+  const promptText = compactLearnerText(rawResponse.promptText, 260);
   return {
     checkId,
     assessment: normalizeLearnerAssessment(rawResponse.assessment),
     resolvedAt: normalizeLearnerTimestamp(rawResponse.resolvedAt || rawResponse.createdAt, fallbackNow),
-    ...evidence ? { evidence } : {}
+    ...evidence ? { evidence } : {},
+    ...conceptId ? { conceptId } : {},
+    ...promptText ? { promptText } : {}
   };
 }
 function dedupeLearnerOpenChecksByConcept(openChecks) {
@@ -124946,12 +124951,15 @@ function applyLearningEvent(rawState, rawEvent, options = {}) {
   if (event.kind === "check_resolved") {
     const checkId = compactLearnerText(event.checkId || event.itemId, 120);
     if (!checkId) return state;
+    const resolvedCheck = state.openChecks.find((check2) => check2.checkId === checkId) || null;
     state.openChecks = state.openChecks.filter((check2) => check2.checkId !== checkId);
     const response = {
       checkId,
       assessment: normalizeLearnerAssessment(event.assessment),
       resolvedAt: normalizeLearnerTimestamp(event.at, now),
-      ...compactLearnerText(event.evidence, 320) ? { evidence: compactLearnerText(event.evidence, 320) } : {}
+      ...compactLearnerText(event.evidence, 320) ? { evidence: compactLearnerText(event.evidence, 320) } : {},
+      ...resolvedCheck?.conceptId ? { conceptId: resolvedCheck.conceptId } : {},
+      ...resolvedCheck?.promptText ? { promptText: resolvedCheck.promptText } : {}
     };
     state.responses = [...state.responses.filter((entry) => entry.checkId !== checkId), response];
     return state;
@@ -124986,6 +124994,121 @@ function withFallbackOpenCheck(rawState, reply, requestStartedAt) {
     },
     { mode: "learning" }
   );
+}
+var REVIEW_INTERVAL_LADDER_DAYS = [1, 3, 7, 14, 30];
+var REVIEW_DAY_MS = 24 * 60 * 60 * 1e3;
+var REVIEW_DEFAULT_LIMIT = 3;
+function normalizeReviewConceptKey(label) {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160);
+}
+async function readReviewSnoozes() {
+  const stored = await chrome.storage.local.get({ [REVIEW_SNOOZE_STORAGE_KEY]: {} });
+  const snoozes = stored[REVIEW_SNOOZE_STORAGE_KEY];
+  return snoozes && typeof snoozes === "object" ? snoozes : {};
+}
+async function writeReviewSnooze(conceptKey, untilIso) {
+  const snoozes = await readReviewSnoozes();
+  snoozes[conceptKey] = untilIso;
+  await chrome.storage.local.set({ [REVIEW_SNOOZE_STORAGE_KEY]: snoozes });
+  return snoozes;
+}
+function reviewUrlHost(value) {
+  try {
+    return new URL(String(value || "")).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function parseReviewTimestamp(value, fallbackMs) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : fallbackMs;
+}
+function computeDueReviews(sessions, options = {}) {
+  const nowMs = typeof options.now === "number" ? options.now : parseReviewTimestamp(options.now, Date.now());
+  const limit2 = Math.max(1, Math.min(10, Number(options.limit || REVIEW_DEFAULT_LIMIT) || REVIEW_DEFAULT_LIMIT));
+  const snoozes = options.snoozes && typeof options.snoozes === "object" ? options.snoozes : {};
+  const activeHost = reviewUrlHost(options.activeUrl || "");
+  const entries = /* @__PURE__ */ new Map();
+  for (const session of Array.isArray(sessions) ? sessions : []) {
+    const state = normalizeLearnerState(session?.learnerState);
+    const conceptKeysById = /* @__PURE__ */ new Map();
+    for (const concept of state.conceptsIntroduced) {
+      const key = normalizeReviewConceptKey(concept.label);
+      if (!key) continue;
+      conceptKeysById.set(concept.conceptId, key);
+      const lastSeenMs = parseReviewTimestamp(concept.lastSeenAt || concept.firstSeenAt, 0);
+      const entry = entries.get(key) || {
+        label: concept.label,
+        lastSeenMs: 0,
+        sources: [],
+        assessments: [],
+        sessionId: String(session?.id || ""),
+        checkPrompt: ""
+      };
+      if (lastSeenMs >= entry.lastSeenMs) {
+        entry.lastSeenMs = lastSeenMs;
+        entry.label = concept.label;
+        entry.sessionId = String(session?.id || "");
+      }
+      for (const source of concept.sources || []) {
+        const exists = entry.sources.some((candidate) => candidate.url === source.url && candidate.annotationId === source.annotationId);
+        if (!exists) entry.sources.push(source);
+      }
+      entries.set(key, entry);
+    }
+    for (const check2 of state.openChecks) {
+      const key = conceptKeysById.get(check2.conceptId);
+      const entry = key ? entries.get(key) : null;
+      if (entry && check2.promptText) entry.checkPrompt = check2.promptText;
+    }
+    for (const response of state.responses) {
+      const key = response.conceptId ? conceptKeysById.get(response.conceptId) : null;
+      const entry = key ? entries.get(key) : null;
+      if (!entry) continue;
+      entry.assessments.push({
+        assessment: response.assessment,
+        resolvedAtMs: parseReviewTimestamp(response.resolvedAt, 0)
+      });
+      if (response.promptText) entry.checkPrompt = response.promptText;
+    }
+  }
+  const due = [];
+  for (const [conceptKey, entry] of entries) {
+    if (!entry.lastSeenMs) continue;
+    const snoozedUntilMs = parseReviewTimestamp(snoozes[conceptKey], 0);
+    if (snoozedUntilMs > nowMs) continue;
+    const assessments = [...entry.assessments].sort((left, right) => left.resolvedAtMs - right.resolvedAtMs);
+    let box = 0;
+    for (const { assessment } of assessments) {
+      if (assessment === "correct") box = Math.min(box + 1, REVIEW_INTERVAL_LADDER_DAYS.length - 1);
+      else if (assessment !== "partial") box = 0;
+    }
+    const last = assessments[assessments.length - 1] || null;
+    const lastEventMs = Math.max(entry.lastSeenMs, last?.resolvedAtMs || 0);
+    const dueAtMs = lastEventMs + REVIEW_INTERVAL_LADDER_DAYS[box] * REVIEW_DAY_MS;
+    if (dueAtMs > nowMs) continue;
+    const matchesActiveTab = Boolean(activeHost && entry.sources.some((source) => reviewUrlHost(source.url || "") === activeHost));
+    due.push({
+      conceptKey,
+      label: entry.label,
+      lastSeenAt: new Date(entry.lastSeenMs).toISOString(),
+      lastAssessment: last ? assessments[assessments.length - 1].assessment : null,
+      lastAssessedAt: last ? new Date(last.resolvedAtMs).toISOString() : null,
+      box,
+      dueAt: new Date(dueAtMs).toISOString(),
+      overdueDays: Math.max(0, Math.floor((nowMs - dueAtMs) / REVIEW_DAY_MS)),
+      sources: entry.sources.slice(0, 5),
+      sessionId: entry.sessionId,
+      checkPrompt: entry.checkPrompt,
+      matchesActiveTab
+    });
+  }
+  due.sort((left, right) => {
+    if (left.matchesActiveTab !== right.matchesActiveTab) return left.matchesActiveTab ? -1 : 1;
+    if (left.overdueDays !== right.overdueDays) return right.overdueDays - left.overdueDays;
+    return left.lastSeenAt.localeCompare(right.lastSeenAt);
+  });
+  return due.slice(0, limit2);
 }
 function normalizeAuthMode(value) {
   return value === "oauth" ? "oauth" : "api-key";
@@ -127046,8 +127169,10 @@ var __browserRuntimeTest = {
   buildPlannerAnchorCandidates,
   buildReplayAnnotationsFromPageActions,
   classifyPromptForReasoning,
+  computeDueReviews,
   createEmptyLearnerState,
   extractTrailingCheckQuestion,
+  normalizeReviewConceptKey,
   withFallbackOpenCheck,
   formatVisibleTextForModel,
   formatToolResultForModel: toolResultTextForModel,
@@ -128488,6 +128613,23 @@ function createOnhandBrowserRuntime(host) {
     const store = await loadStore();
     return buildPublicSettings(store.settings);
   }
+  async function getDueReviews(params = {}) {
+    const store = await loadStore();
+    const snoozes = await readReviewSnoozes();
+    let activeUrl = "";
+    try {
+      const state = await host.snapshotState();
+      const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : void 0);
+      activeUrl = String(activeTab?.url || "");
+    } catch {
+    }
+    return computeDueReviews(Object.values(store.sessions), {
+      now: params?.now,
+      limit: params?.limit,
+      activeUrl,
+      snoozes
+    });
+  }
   function buildArtifactId(tab, page) {
     const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
     const title = String(page?.title || tab?.title || "page").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "page";
@@ -129527,9 +129669,11 @@ function createOnhandBrowserRuntime(host) {
       const store = await loadStore();
       const session = store.sessions[store.currentSessionId];
       const state = await ensureUiState();
+      const dueReviews = await getDueReviews().catch(() => []);
       return {
         ...state,
         currentSession: buildSessionState(session),
+        dueReviews,
         preferences: {
           ...state.preferences,
           runtime: "browser-extension",
@@ -129693,6 +129837,17 @@ function createOnhandBrowserRuntime(host) {
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return await getPublicSettings();
+    },
+    async listDueReviews(params = {}) {
+      return { reviews: await getDueReviews(params) };
+    },
+    async snoozeReview(params = {}) {
+      const conceptKey = normalizeReviewConceptKey(String(params?.conceptKey || params?.label || ""));
+      if (!conceptKey) throw new Error("Review snooze needs a conceptKey.");
+      const days = Math.max(0.5, Math.min(30, Number(params?.days || 3) || 3));
+      const snoozedUntil = new Date(Date.now() + days * REVIEW_DAY_MS).toISOString();
+      await writeReviewSnooze(conceptKey, snoozedUntil);
+      return { snoozedUntil, reviews: await getDueReviews(params) };
     },
     async listSessions(limit2 = 20) {
       const store = await loadStore();

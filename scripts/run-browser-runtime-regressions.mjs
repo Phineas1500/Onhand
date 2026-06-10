@@ -716,6 +716,136 @@ async function assertConstitutionPromptContract() {
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
 }
 
+async function assertSpacedReviewScheduling() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { computeDueReviews } = __browserRuntimeTest;
+	const DAY = 24 * 60 * 60 * 1000;
+	const now = Date.parse("2026-06-09T12:00:00.000Z");
+	const iso = (msAgo) => new Date(now - msAgo).toISOString();
+	const makeSession = (id, learnerState) => ({
+		id,
+		name: id,
+		createdAt: iso(30 * DAY),
+		updatedAt: iso(DAY),
+		messages: [],
+		turns: [],
+		pageActions: [],
+		artifactIds: [],
+		learnerState,
+	});
+	const concept = (conceptId, label, lastSeenMsAgo, sources = []) => ({
+		conceptId,
+		label,
+		firstSeenAt: iso(lastSeenMsAgo + DAY),
+		lastSeenAt: iso(lastSeenMsAgo),
+		sources,
+	});
+
+	const sessions = [
+		makeSession("session_a", {
+			mode: "learning",
+			conceptsIntroduced: [
+				concept("concept_due", "Chain rule", 2 * DAY, [{ tabTitle: "Calc notes", url: "https://example.test/calc" }]),
+				concept("concept_fresh", "Quotient rule", 2 * 60 * 60 * 1000),
+			],
+			openChecks: [],
+			responses: [],
+		}),
+		makeSession("session_b", {
+			mode: "learning",
+			conceptsIntroduced: [concept("concept_boxed", "Bayes theorem", 6 * DAY, [{ url: "https://example.test/bayes" }])],
+			openChecks: [],
+			responses: [{ checkId: "check_bayes", assessment: "correct", resolvedAt: iso(2 * DAY), conceptId: "concept_boxed", promptText: "State Bayes theorem." }],
+		}),
+	];
+
+	const due = computeDueReviews(sessions, { now, limit: 5 });
+	const labels = due.map((review) => review.label);
+	assert.ok(labels.includes("Chain rule"), "an unassessed concept past its first interval should be due");
+	assert.ok(!labels.includes("Quotient rule"), "a concept seen hours ago should not be due yet");
+	assert.ok(!labels.includes("Bayes theorem"), "a correct assessment should advance the interval past now");
+	const chainRule = due.find((review) => review.label === "Chain rule");
+	assert.equal(chainRule.box, 0);
+	assert.equal(chainRule.overdueDays, 1);
+	assert.equal(chainRule.sources[0].url, "https://example.test/calc");
+
+	const resetSessions = [
+		makeSession("session_c", {
+			mode: "learning",
+			conceptsIntroduced: [concept("concept_reset", "Markov chains", 10 * DAY)],
+			openChecks: [],
+			responses: [
+				{ checkId: "c1", assessment: "correct", resolvedAt: iso(9 * DAY), conceptId: "concept_reset" },
+				{ checkId: "c2", assessment: "incorrect", resolvedAt: iso(2 * DAY), conceptId: "concept_reset" },
+			],
+		}),
+	];
+	const reset = computeDueReviews(resetSessions, { now });
+	assert.equal(reset.length, 1, "an incorrect assessment should reset the interval and come due quickly");
+	assert.equal(reset[0].box, 0);
+	assert.equal(reset[0].lastAssessment, "incorrect");
+
+	const snoozed = computeDueReviews(sessions, { now, snoozes: { "chain rule": new Date(now + DAY).toISOString() } });
+	assert.ok(!snoozed.some((review) => review.label === "Chain rule"), "snoozed concepts should be excluded until the snooze expires");
+
+	const boostSessions = [
+		makeSession("session_d", {
+			mode: "learning",
+			conceptsIntroduced: [
+				concept("concept_near", "On-page concept", 3 * DAY, [{ url: "https://example.test/calc" }]),
+				concept("concept_far", "Off-page concept", 10 * DAY, [{ url: "https://other.test/notes" }]),
+			],
+			openChecks: [],
+			responses: [],
+		}),
+	];
+	const boosted = computeDueReviews(boostSessions, { now, activeUrl: "https://example.test/anything" });
+	assert.equal(boosted[0].label, "On-page concept", "concepts sourced from the active tab's domain should sort first");
+	assert.equal(boosted[0].matchesActiveTab, true);
+
+	const mergedSessions = [
+		makeSession("session_e", {
+			mode: "learning",
+			conceptsIntroduced: [concept("concept_e", "Chain rule", 12 * DAY)],
+			openChecks: [],
+			responses: [{ checkId: "ce", assessment: "correct", resolvedAt: iso(11 * DAY), conceptId: "concept_e" }],
+		}),
+		makeSession("session_f", {
+			mode: "learning",
+			conceptsIntroduced: [concept("concept_f", "Chain rule", 4 * DAY)],
+			openChecks: [],
+			responses: [],
+		}),
+	];
+	const merged = computeDueReviews(mergedSessions, { now });
+	assert.equal(merged.filter((review) => review.label === "Chain rule").length, 1, "the same concept across sessions should merge into one review");
+	assert.equal(merged[0].sessionId, "session_f", "the merged review should point at the most recent session");
+	assert.equal(merged[0].box, 1, "the merged review should keep the assessment history from the earlier session");
+
+	// Runtime surface: listDueReviews reads sessions from storage and
+	// snoozeReview persists an exclusion.
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.learnerState = {
+		mode: "learning",
+		conceptsIntroduced: [concept("concept_live", "Spectral theorem", 4 * DAY, [{ url: "https://example.test/spectral" }])],
+		openChecks: [],
+		responses: [],
+	};
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
+	const listed = await runtime.listDueReviews({ now });
+	assert.equal(listed.reviews.length, 1);
+	assert.equal(listed.reviews[0].label, "Spectral theorem");
+	const afterSnooze = await runtime.snoozeReview({ conceptKey: listed.reviews[0].conceptKey, days: 3, now });
+	assert.equal(afterSnooze.reviews.length, 0, "a snoozed review should disappear from the due list");
+	const state = await runtime.getState();
+	assert.ok(Array.isArray(state.dueReviews), "runtime state should expose dueReviews");
+}
+
 async function assertFallbackOpenCheckRecording() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { extractTrailingCheckQuestion, withFallbackOpenCheck, applyLearningEvent, createEmptyLearnerState } = __browserRuntimeTest;
@@ -875,6 +1005,8 @@ async function assertLearnerStateUpdates() {
 			assessment: "partial",
 			resolvedAt: "2026-05-18T05:02:00.000Z",
 			evidence: "User connected the derivative to rate of change but missed instantaneous behavior.",
+			conceptId: "concept_derivative",
+			promptText: "What input change is this derivative measuring?",
 		},
 	]);
 
@@ -4458,6 +4590,7 @@ async function main() {
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertLearnerStateUpdates();
 	await assertFallbackOpenCheckRecording();
+	await assertSpacedReviewScheduling();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertReplayHighlightCandidateGeneration();

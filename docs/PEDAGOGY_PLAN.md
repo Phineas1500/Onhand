@@ -147,6 +147,13 @@ Goal: the thing no chatbot can do — come back the next day and have Onhand int
 
 This is the most ambitious phase and should come only after the first three are proven.
 
+**Status: implemented (2026-06-09), with a design adapted to the browser-only runtime.** Concepts and check assessments already accumulate in each session's `learnerState`, and sessions are durable per-record IndexedDB documents, so the scheduler derives reviews from sessions directly instead of extending artifact metadata (6.1) or adding a review tool (6.2). What shipped:
+
+- `check_resolved` events now stamp `conceptId`/`promptText` onto the recorded response so assessments stay keyed to concepts across sessions.
+- `computeDueReviews` merges concepts across sessions by normalized label and schedules with a Leitner-style ladder (1/3/7/14/30 days): correct advances the box, partial holds, incorrect/skipped resets. Concepts sourced from the active tab's domain sort first.
+- Runtime API: `listDueReviews` / `snoozeReview` (`sidebar:list-due-reviews` / `sidebar:snooze-review`), with due reviews included in runtime state.
+- Sidebar banner (6.3): "You studied *X* N days ago — quick check?" with Review now (turns Learning Mode on and submits a retrieval-check prompt referencing the saved source) and Later (3-day snooze).
+
 **6.1 Extend artifact metadata**
 
 Artifacts are persisted by `browser_capture_state` in `packages/browser-extension/src/browser-runtime.ts`. Extend the artifact schema to include:

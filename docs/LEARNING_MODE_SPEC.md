@@ -18,6 +18,7 @@ Implementation progress:
 - Slice C is implemented in the sidebar: Learning Mode sessions with state now show a compact "This session" panel with covered concepts, open checks, and best-effort source jumps with visible success/failure feedback.
 - Slice D is implemented in the Chrome acceptance matrix: Answer Mode control, Learning Mode concept prompt, open-check resolution, and repeated-concept refresher cases are available through `npm run acceptance:chrome -- --suite=learning`.
 - Slice E is implemented as prompt-contract behavior: Learning Mode scans captured open tabs, offers related-tab connections before switching context, and has a manual Chrome acceptance case.
+- Cross-session spaced review (pedagogy phase 4) is implemented: assessments are concept-linked, `computeDueReviews` schedules per-concept reviews across sessions with a Leitner-style ladder, and the sidebar shows a review nudge with Review now / snooze actions. Learning Mode turns that end in an unrecorded check question also get a fallback open check.
 
 ## Product thesis
 

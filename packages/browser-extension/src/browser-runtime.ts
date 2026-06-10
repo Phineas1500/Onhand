@@ -143,6 +143,10 @@ interface LearnerResponse {
 	assessment: LearnerAssessment;
 	resolvedAt: string;
 	evidence?: string;
+	// Carried over from the resolved check so cross-session review
+	// scheduling can key assessments to concepts.
+	conceptId?: string;
+	promptText?: string;
 }
 
 interface LearnerState {
@@ -223,6 +227,7 @@ interface RuntimeArtifactHooks {
 const STORAGE_KEY = "onhandBrowserRuntime";
 const ARTIFACTS_STORAGE_KEY = "onhandBrowserArtifacts";
 const SESSIONS_FALLBACK_STORAGE_KEY = "onhandBrowserSessions";
+const REVIEW_SNOOZE_STORAGE_KEY = "onhandReviewSnoozes";
 const RUNTIME_DB_NAME = "onhandBrowserRuntime";
 const RUNTIME_DB_VERSION = 2;
 const ARTIFACT_STORE_NAME = "browserArtifacts";
@@ -966,11 +971,15 @@ function normalizeLearnerResponse(rawResponse: any, fallbackNow: string): Learne
 	const checkId = compactLearnerText(rawResponse.checkId || rawResponse.itemId, 120);
 	if (!checkId) return null;
 	const evidence = compactLearnerText(rawResponse.evidence || rawResponse.rationale, 320);
+	const conceptId = compactLearnerText(rawResponse.conceptId, 120);
+	const promptText = compactLearnerText(rawResponse.promptText, 260);
 	return {
 		checkId,
 		assessment: normalizeLearnerAssessment(rawResponse.assessment),
 		resolvedAt: normalizeLearnerTimestamp(rawResponse.resolvedAt || rawResponse.createdAt, fallbackNow),
 		...(evidence ? { evidence } : {}),
+		...(conceptId ? { conceptId } : {}),
+		...(promptText ? { promptText } : {}),
 	};
 }
 
@@ -1120,12 +1129,15 @@ function applyLearningEvent(rawState: unknown, rawEvent: LearningEvent, options:
 	if (event.kind === "check_resolved") {
 		const checkId = compactLearnerText(event.checkId || event.itemId, 120);
 		if (!checkId) return state;
+		const resolvedCheck = state.openChecks.find((check) => check.checkId === checkId) || null;
 		state.openChecks = state.openChecks.filter((check) => check.checkId !== checkId);
 		const response: LearnerResponse = {
 			checkId,
 			assessment: normalizeLearnerAssessment(event.assessment),
 			resolvedAt: normalizeLearnerTimestamp(event.at, now),
 			...(compactLearnerText(event.evidence, 320) ? { evidence: compactLearnerText(event.evidence, 320) } : {}),
+			...(resolvedCheck?.conceptId ? { conceptId: resolvedCheck.conceptId } : {}),
+			...(resolvedCheck?.promptText ? { promptText: resolvedCheck.promptText } : {}),
 		};
 		state.responses = [...state.responses.filter((entry) => entry.checkId !== checkId), response];
 		return state;
@@ -1173,6 +1185,165 @@ function withFallbackOpenCheck(rawState: unknown, reply: string, requestStartedA
 		},
 		{ mode: "learning" },
 	);
+}
+
+// --- Cross-session spaced review scheduling (pedagogy phase 4) ---
+//
+// Concepts and check assessments accumulate in each session's learnerState.
+// The scheduler merges concepts across sessions by normalized label and
+// computes a due date per concept with a small Leitner-style ladder:
+// correct assessments advance the box, partial holds it, incorrect or
+// skipped resets it. No assessments means the concept sits in box 0.
+const REVIEW_INTERVAL_LADDER_DAYS = [1, 3, 7, 14, 30];
+const REVIEW_DAY_MS = 24 * 60 * 60 * 1000;
+const REVIEW_DEFAULT_LIMIT = 3;
+
+interface DueReview {
+	conceptKey: string;
+	label: string;
+	lastSeenAt: string;
+	lastAssessment: LearnerAssessment | null;
+	lastAssessedAt: string | null;
+	box: number;
+	dueAt: string;
+	overdueDays: number;
+	sources: LearnerConceptSource[];
+	sessionId: string;
+	checkPrompt: string;
+	matchesActiveTab: boolean;
+}
+
+function normalizeReviewConceptKey(label: string) {
+	return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160);
+}
+
+async function readReviewSnoozes(): Promise<Record<string, string>> {
+	const stored = await chrome.storage.local.get({ [REVIEW_SNOOZE_STORAGE_KEY]: {} });
+	const snoozes = stored[REVIEW_SNOOZE_STORAGE_KEY];
+	return snoozes && typeof snoozes === "object" ? snoozes : {};
+}
+
+async function writeReviewSnooze(conceptKey: string, untilIso: string) {
+	const snoozes = await readReviewSnoozes();
+	snoozes[conceptKey] = untilIso;
+	await chrome.storage.local.set({ [REVIEW_SNOOZE_STORAGE_KEY]: snoozes });
+	return snoozes;
+}
+
+function reviewUrlHost(value: string) {
+	try {
+		return new URL(String(value || "")).host.toLowerCase();
+	} catch {
+		return "";
+	}
+}
+
+function parseReviewTimestamp(value: unknown, fallbackMs: number) {
+	const parsed = Date.parse(String(value || ""));
+	return Number.isFinite(parsed) ? parsed : fallbackMs;
+}
+
+function computeDueReviews(
+	sessions: RuntimeSession[],
+	options: { now?: number | string; limit?: number; activeUrl?: string; snoozes?: Record<string, string> } = {},
+): DueReview[] {
+	const nowMs = typeof options.now === "number" ? options.now : parseReviewTimestamp(options.now, Date.now());
+	const limit = Math.max(1, Math.min(10, Number(options.limit || REVIEW_DEFAULT_LIMIT) || REVIEW_DEFAULT_LIMIT));
+	const snoozes = options.snoozes && typeof options.snoozes === "object" ? options.snoozes : {};
+	const activeHost = reviewUrlHost(options.activeUrl || "");
+
+	const entries = new Map<
+		string,
+		{
+			label: string;
+			lastSeenMs: number;
+			sources: LearnerConceptSource[];
+			assessments: { assessment: LearnerAssessment; resolvedAtMs: number }[];
+			sessionId: string;
+			checkPrompt: string;
+		}
+	>();
+	for (const session of Array.isArray(sessions) ? sessions : []) {
+		const state = normalizeLearnerState(session?.learnerState);
+		const conceptKeysById = new Map<string, string>();
+		for (const concept of state.conceptsIntroduced) {
+			const key = normalizeReviewConceptKey(concept.label);
+			if (!key) continue;
+			conceptKeysById.set(concept.conceptId, key);
+			const lastSeenMs = parseReviewTimestamp(concept.lastSeenAt || concept.firstSeenAt, 0);
+			const entry = entries.get(key) || {
+				label: concept.label,
+				lastSeenMs: 0,
+				sources: [],
+				assessments: [],
+				sessionId: String(session?.id || ""),
+				checkPrompt: "",
+			};
+			if (lastSeenMs >= entry.lastSeenMs) {
+				entry.lastSeenMs = lastSeenMs;
+				entry.label = concept.label;
+				entry.sessionId = String(session?.id || "");
+			}
+			for (const source of concept.sources || []) {
+				const exists = entry.sources.some((candidate) => candidate.url === source.url && candidate.annotationId === source.annotationId);
+				if (!exists) entry.sources.push(source);
+			}
+			entries.set(key, entry);
+		}
+		for (const check of state.openChecks) {
+			const key = conceptKeysById.get(check.conceptId);
+			const entry = key ? entries.get(key) : null;
+			if (entry && check.promptText) entry.checkPrompt = check.promptText;
+		}
+		for (const response of state.responses) {
+			const key = response.conceptId ? conceptKeysById.get(response.conceptId) : null;
+			const entry = key ? entries.get(key) : null;
+			if (!entry) continue;
+			entry.assessments.push({
+				assessment: response.assessment,
+				resolvedAtMs: parseReviewTimestamp(response.resolvedAt, 0),
+			});
+			if (response.promptText) entry.checkPrompt = response.promptText;
+		}
+	}
+
+	const due: DueReview[] = [];
+	for (const [conceptKey, entry] of entries) {
+		if (!entry.lastSeenMs) continue;
+		const snoozedUntilMs = parseReviewTimestamp(snoozes[conceptKey], 0);
+		if (snoozedUntilMs > nowMs) continue;
+		const assessments = [...entry.assessments].sort((left, right) => left.resolvedAtMs - right.resolvedAtMs);
+		let box = 0;
+		for (const { assessment } of assessments) {
+			if (assessment === "correct") box = Math.min(box + 1, REVIEW_INTERVAL_LADDER_DAYS.length - 1);
+			else if (assessment !== "partial") box = 0;
+		}
+		const last = assessments[assessments.length - 1] || null;
+		const lastEventMs = Math.max(entry.lastSeenMs, last?.resolvedAtMs || 0);
+		const dueAtMs = lastEventMs + REVIEW_INTERVAL_LADDER_DAYS[box] * REVIEW_DAY_MS;
+		if (dueAtMs > nowMs) continue;
+		const matchesActiveTab = Boolean(activeHost && entry.sources.some((source) => reviewUrlHost(source.url || "") === activeHost));
+		due.push({
+			conceptKey,
+			label: entry.label,
+			lastSeenAt: new Date(entry.lastSeenMs).toISOString(),
+			lastAssessment: last ? assessments[assessments.length - 1].assessment : null,
+			lastAssessedAt: last ? new Date(last.resolvedAtMs).toISOString() : null,
+			box,
+			dueAt: new Date(dueAtMs).toISOString(),
+			overdueDays: Math.max(0, Math.floor((nowMs - dueAtMs) / REVIEW_DAY_MS)),
+			sources: entry.sources.slice(0, 5),
+			sessionId: entry.sessionId,
+			checkPrompt: entry.checkPrompt,
+			matchesActiveTab,
+		});
+	}
+	due.sort((left, right) => {
+		if (left.matchesActiveTab !== right.matchesActiveTab) return left.matchesActiveTab ? -1 : 1;
+		if (left.overdueDays !== right.overdueDays) return right.overdueDays - left.overdueDays;
+		return left.lastSeenAt.localeCompare(right.lastSeenAt);
+	});
+	return due.slice(0, limit);
 }
 
 function normalizeAuthMode(value: unknown): RuntimeSettings["authMode"] {
@@ -3571,8 +3742,10 @@ export const __browserRuntimeTest = {
 	buildPlannerAnchorCandidates,
 	buildReplayAnnotationsFromPageActions,
 	classifyPromptForReasoning,
+	computeDueReviews,
 	createEmptyLearnerState,
 	extractTrailingCheckQuestion,
+	normalizeReviewConceptKey,
 	withFallbackOpenCheck,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
@@ -5098,6 +5271,23 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return buildPublicSettings(store.settings);
 	}
 
+	async function getDueReviews(params: any = {}) {
+		const store = await loadStore();
+		const snoozes = await readReviewSnoozes();
+		let activeUrl = "";
+		try {
+			const state = await host.snapshotState();
+			const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : undefined);
+			activeUrl = String(activeTab?.url || "");
+		} catch {}
+		return computeDueReviews(Object.values(store.sessions) as RuntimeSession[], {
+			now: params?.now,
+			limit: params?.limit,
+			activeUrl,
+			snoozes,
+		});
+	}
+
 	function buildArtifactId(tab: any, page: any) {
 		const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 		const title = String(page?.title || tab?.title || "page")
@@ -6215,9 +6405,11 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const store = await loadStore();
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			const state = await ensureUiState();
+			const dueReviews = await getDueReviews().catch(() => []);
 			return {
 				...state,
 				currentSession: buildSessionState(session),
+				dueReviews,
 				preferences: {
 					...state.preferences,
 					runtime: "browser-extension",
@@ -6395,6 +6587,19 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			uiState = createEmptyState(session, store.settings);
 			uiState.messages = buildConversationMessages(session.messages);
 			return await getPublicSettings();
+		},
+
+		async listDueReviews(params: any = {}) {
+			return { reviews: await getDueReviews(params) };
+		},
+
+		async snoozeReview(params: any = {}) {
+			const conceptKey = normalizeReviewConceptKey(String(params?.conceptKey || params?.label || ""));
+			if (!conceptKey) throw new Error("Review snooze needs a conceptKey.");
+			const days = Math.max(0.5, Math.min(30, Number(params?.days || 3) || 3));
+			const snoozedUntil = new Date(Date.now() + days * REVIEW_DAY_MS).toISOString();
+			await writeReviewSnooze(conceptKey, snoozedUntil);
+			return { snoozedUntil, reviews: await getDueReviews(params) };
 		},
 
 		async listSessions(limit = 20) {

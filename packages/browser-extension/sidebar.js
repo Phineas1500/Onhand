@@ -1902,6 +1902,56 @@
 			.onhand-index[hidden] {
 				display: none;
 			}
+			.onhand-review-nudge[hidden] {
+				display: none;
+			}
+			.onhand-review-nudge {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+				flex-wrap: wrap;
+				border-top: 1px solid var(--rm-surface-2);
+				background: color-mix(in srgb, var(--rm-gold) 12%, transparent);
+				padding: 9px 14px;
+				font: 12.5px/1.45 var(--rm-font-serif);
+				color: var(--rm-text);
+			}
+			.onhand-review-text strong {
+				font-style: italic;
+				font-weight: 620;
+			}
+			.onhand-review-actions {
+				display: flex;
+				gap: 7px;
+				flex: 0 0 auto;
+			}
+			.onhand-review-nudge button {
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				border-radius: 2px;
+				padding: 5px 8px;
+				font: 11px/1 var(--rm-font-mono);
+				cursor: pointer;
+			}
+			.onhand-review-nudge button:hover {
+				background: var(--rm-surface-0);
+			}
+			.onhand-review-nudge button[disabled] {
+				opacity: 0.55;
+				cursor: not-allowed;
+			}
+			.onhand-review-nudge [data-review-start] {
+				border: 0;
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				font-weight: 700;
+				border-radius: 3px;
+			}
+			.onhand-review-nudge [data-review-start]:hover {
+				background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
+			}
 			.onhand-learner-panel[hidden] {
 				display: none;
 			}
@@ -3193,6 +3243,7 @@
 					<div id="reply"></div>
 				</section>
 			</div>
+			<section id="reviewNudge" class="onhand-review-nudge" hidden></section>
 			<section id="learnerPanel" class="onhand-learner-panel" hidden></section>
 			<form id="composer" class="onhand-compose">
 				<div id="attachmentList" class="onhand-draft-chips"></div>
@@ -3267,6 +3318,8 @@
 	const replyEl = shadow.getElementById("reply");
 	const actionsEl = shadow.getElementById("actions");
 	const learnerPanelEl = shadow.getElementById("learnerPanel");
+	const reviewNudgeEl = shadow.getElementById("reviewNudge");
+	const dismissedReviewKeys = new Set();
 	const composer = shadow.getElementById("composer");
 	const attachButton = shadow.getElementById("attachButton");
 	const fileInput = shadow.getElementById("fileInput");
@@ -4177,6 +4230,79 @@
 				${renderLearnerSourceButton(check?.annotationId, "note", action?.key)}
 			</div>
 		`;
+	}
+
+	function describeReviewAge(lastSeenAt) {
+		const seenMs = Date.parse(String(lastSeenAt || ""));
+		if (!Number.isFinite(seenMs)) return "a while ago";
+		const days = Math.max(0, Math.round((Date.now() - seenMs) / 86400000));
+		if (days <= 0) return "earlier today";
+		if (days === 1) return "yesterday";
+		return `${days} days ago`;
+	}
+
+	function pickDueReview(state) {
+		const reviews = Array.isArray(state?.dueReviews) ? state.dueReviews.filter(Boolean) : [];
+		return reviews.find((review) => review?.conceptKey && !dismissedReviewKeys.has(review.conceptKey)) || null;
+	}
+
+	function latestReviewSource(review) {
+		const sources = Array.isArray(review?.sources) ? review.sources.filter(Boolean) : [];
+		return sources.length ? sources[sources.length - 1] : null;
+	}
+
+	async function startConceptReview(review) {
+		dismissedReviewKeys.add(review.conceptKey);
+		void chrome.runtime.sendMessage({ type: "sidebar:snooze-review", conceptKey: review.conceptKey, days: 1 }).catch(() => {});
+		if (learningModeToggle instanceof HTMLInputElement && !learningModeToggle.checked) {
+			learningModeToggle.checked = true;
+			await updateLearningMode(true).catch(() => {
+				learningModeToggle.checked = false;
+			});
+		}
+		const source = latestReviewSource(review);
+		const sourceHint = source?.url
+			? ` My saved source is "${source.tabTitle || source.url}" (${source.url}); if that page is open or easy to open, anchor the check there with a highlight.`
+			: "";
+		const prompt = `Spaced review: quiz me with one short retrieval check on "${review.label}".${sourceHint} Ask the question and wait for my answer without revealing it. Record the check, and when I answer, assess and resolve it.`;
+		await submitPrompt(prompt);
+	}
+
+	async function snoozeConceptReview(review) {
+		dismissedReviewKeys.add(review.conceptKey);
+		renderReviewNudge(currentState || {});
+		const response = await chrome.runtime.sendMessage({ type: "sidebar:snooze-review", conceptKey: review.conceptKey, days: 3 });
+		if (!response?.ok) throw new Error(response?.error || "Could not snooze the review.");
+	}
+
+	function renderReviewNudge(state) {
+		const review = pickDueReview(state);
+		if (!review) {
+			reviewNudgeEl.hidden = true;
+			reviewNudgeEl.innerHTML = "";
+			return;
+		}
+		const busy = Boolean(state?.activeRequestId) || sending;
+		const source = latestReviewSource(review);
+		const sourceLabel = source ? getLearnerSourceLabel(source) : "";
+		reviewNudgeEl.hidden = false;
+		reviewNudgeEl.innerHTML = `
+			<span class="onhand-review-text">You studied <strong>${escapeHtml(compactLearnerPanelText(review.label, 64))}</strong> ${escapeHtml(describeReviewAge(review.lastSeenAt))}${sourceLabel ? ` on ${escapeHtml(sourceLabel)}` : ""} — quick check?</span>
+			<span class="onhand-review-actions">
+				<button type="button" data-review-start ${busy ? "disabled" : ""}>Review now</button>
+				<button type="button" data-review-snooze ${busy ? "disabled" : ""}>Later</button>
+			</span>
+		`;
+		reviewNudgeEl.querySelector("[data-review-start]")?.addEventListener("click", () => {
+			void startConceptReview(review).catch((error) => {
+				renderState({ ...(currentState || {}), status: error?.message || String(error) });
+			});
+		});
+		reviewNudgeEl.querySelector("[data-review-snooze]")?.addEventListener("click", () => {
+			void snoozeConceptReview(review).catch((error) => {
+				renderState({ ...(currentState || {}), status: error?.message || String(error) });
+			});
+		});
 	}
 
 	function renderLearnerPanel(state, hiddenByView = false) {
@@ -5346,6 +5472,7 @@
 		renderRestoreResult();
 		renderReplayView();
 		renderAuthPanel(state);
+		renderReviewNudge(state);
 		renderLearnerPanel(state, false);
 		pageIndexEl.hidden = true;
 		messagesEl.hidden = false;

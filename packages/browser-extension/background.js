@@ -9291,6 +9291,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:list-due-reviews") {
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.listDueReviews({
+				limit: typeof message.limit === "number" && Number.isFinite(message.limit) ? message.limit : undefined,
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
+			sendResponse({
+				ok: true,
+				reviews: response.reviews,
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:snooze-review") {
+			const runtime = getOnhandBrowserRuntime();
+			const response = await runtime.snoozeReview({
+				conceptKey: message.conceptKey,
+				days: typeof message.days === "number" && Number.isFinite(message.days) ? message.days : undefined,
+				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
+			});
+			sendResponse({
+				ok: true,
+				snoozedUntil: response.snoozedUntil,
+				reviews: response.reviews,
+			});
+			return;
+		}
+
 		if (message?.type === "sidebar:list-sessions") {
 			const runtime = getOnhandBrowserRuntime();
 			const response = await runtime.listSessions(typeof message.limit === "number" && Number.isFinite(message.limit) ? message.limit : 20);
