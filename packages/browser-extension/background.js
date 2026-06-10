@@ -7377,9 +7377,57 @@ async function navigateBrowser(args = {}) {
 	return finalTab;
 }
 
+async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
+	const statusCommand = { command: "status" };
+	const attempts = [
+		() => callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found"),
+		() => callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found"),
+	];
+	for (const attempt of attempts) {
+		try {
+			const status = await attempt();
+			if (!status || status.error) continue;
+			// Accept a viewer that is still rendering this PDF: reinstalling
+			// would restart the render from scratch.
+			if (!status.sourceUrl || stripUrlHash(status.sourceUrl) === stripUrlHash(pdfUrl)) return status;
+		} catch {}
+	}
+	return null;
+}
+
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	// Reuse a viewer that is already rendered for this PDF instead of
+	// reinstalling: re-running the install rewrites the iframe src with a
+	// freshly inferred page param, which reloads the viewer and yanks the
+	// user away from where they were reading on every prompt.
+	if (args.forceReload !== true && args.newTab !== true && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+		const existingStatus = await probeInlineOnhandPdfViewerStatus(sourceTab.id, pdfUrl);
+		if (existingStatus) {
+			const focusedTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
+			const reuseTimeoutMs = clampNumber(args.timeoutMs, 15000, { min: 100, max: 120000 });
+			const viewerReady =
+				existingStatus.ready || args.waitForLoad === false
+					? { ok: true, ...existingStatus }
+					: await waitForInlineOnhandPdfViewerReady(sourceTab.id, reuseTimeoutMs);
+			return {
+				tab: simplifyTab(focusedTab),
+				sourceTab: simplifyTab(sourceTab),
+				pdfUrl,
+				viewerUrl: buildOnhandPdfViewerUrl(pdfUrl, existingStatus.pageNumber ? { pageNumber: existingStatus.pageNumber } : {}),
+				initialPageNumber: existingStatus.pageNumber || null,
+				initialPageSource: "existing-onhand-pdf-viewer",
+				initialScrollRatio: null,
+				viewerReady,
+				alreadyOpen: true,
+				opened: false,
+				replacedCurrentTab: false,
+				reusedExistingViewer: true,
+				preservedSourceUrl: true,
+			};
+		}
+	}
 	const initialPageLocation = await inferInitialPdfViewerPageLocation(args, sourceTab, pdfUrl);
 	const initialPageNumber = initialPageLocation?.pageNumber || null;
 	const initialPageSource = initialPageLocation?.source || null;

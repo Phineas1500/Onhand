@@ -25101,6 +25101,7 @@ var runtimeBridgeReconnectTimer = null;
 var parentBridgeToken = "";
 var annotationSequence = 0;
 var resizeRenderTimer = null;
+var lastFitRenderWidth = 0;
 function inlinePdfViewerBridgeStorageKey(pdfUrl) {
   return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
 }
@@ -25200,6 +25201,7 @@ function viewerPadding() {
 }
 async function computeFitScale(pageNumber = 1) {
   if (!pdfDocument) return DEFAULT_SCALE;
+  if (document.hidden || viewer.clientWidth <= 1 || window.innerHeight <= 1) return currentScale || DEFAULT_SCALE;
   const targetPage = Math.max(1, Math.min(Number(pdfDocument.numPages || 1) || 1, Math.floor(Number(pageNumber) || 1)));
   const page = await pdfDocument.getPage(targetPage);
   const viewport = page.getViewport({ scale: 1 });
@@ -25545,29 +25547,14 @@ async function pdfHighlightText(query, options = {}) {
     }
   }
   const targetPageNumber = pdfAnchorPageNumber(options.pdfAnchor);
-  const pages = getPdfPages().map((page, index) => {
-    const rect = page.getBoundingClientRect();
-    const pageNumber = getPageNumber(page);
-    return {
-      page,
-      index,
-      targeted: Boolean(targetPageNumber && pageNumber === targetPageNumber),
-      visible: visibleEnough(rect),
-      distance: Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2)
-    };
-  }).sort((a, b) => {
-    if (a.targeted !== b.targeted) return a.targeted ? -1 : 1;
-    if (a.visible !== b.visible) return a.visible ? -1 : 1;
-    if (a.visible && b.visible && a.distance !== b.distance) return a.distance - b.distance;
-    return a.index - b.index;
-  });
-  for (const { page } of pages) {
+  if (targetPageNumber) await ensurePageRendered(targetPageNumber);
+  async function applyHighlightToPage(page) {
     const textLayer = page.querySelector(".textLayer");
-    if (!textLayer) continue;
+    if (!textLayer) return null;
     const match = findMappedTextRange(textLayer, rawQuery, occurrence);
-    if (!match) continue;
+    if (!match) return null;
     const rects = rangeRectsForPage(match.range, page);
-    if (!rects.length) continue;
+    if (!rects.length) return null;
     const union = unionRects(rects);
     const annotationId = nextAnnotationId();
     const pdfAnchor = {
@@ -25594,6 +25581,35 @@ async function pdfHighlightText(query, options = {}) {
       updatePageFromScroll();
     }
     return buildAnnotationResult(highlight, rawQuery, { approximate: Boolean(match.fallback), fallback: match.fallback });
+  }
+  const pages = getPdfPages().map((page, index) => {
+    const rect = page.getBoundingClientRect();
+    const pageNumber = getPageNumber(page);
+    return {
+      page,
+      index,
+      targeted: Boolean(targetPageNumber && pageNumber === targetPageNumber),
+      visible: visibleEnough(rect),
+      distance: Math.abs(rect.top + rect.height / 2 - window.innerHeight / 2)
+    };
+  }).sort((a, b) => {
+    if (a.targeted !== b.targeted) return a.targeted ? -1 : 1;
+    if (a.visible !== b.visible) return a.visible ? -1 : 1;
+    if (a.visible && b.visible && a.distance !== b.distance) return a.distance - b.distance;
+    return a.index - b.index;
+  });
+  for (const { page } of pages) {
+    const result = await applyHighlightToPage(page);
+    if (result) return result;
+  }
+  const pendingPageNumber = await findPendingPageWithText(rawQuery);
+  if (pendingPageNumber) {
+    await ensurePageRendered(pendingPageNumber);
+    const pendingPage = getPdfPageByNumber(pendingPageNumber);
+    if (pendingPage) {
+      const result = await applyHighlightToPage(pendingPage);
+      if (result) return result;
+    }
   }
   throw new Error(`No visible text matched: ${rawQuery}`);
 }
@@ -26116,7 +26132,7 @@ function parsePdfPageNumbers(options = {}) {
   }
   return [...new Set(values)].sort((a, b) => a - b);
 }
-function pdfSearch(options = {}) {
+async function pdfSearch(options = {}) {
   const query = String(options.query || options.text || "").trim();
   if (!query) throw new Error("PDF search requires a non-empty query.");
   const maxMatches = Math.max(1, Math.min(50, Number(options.maxMatches || options.limit || 8) || 8));
@@ -26146,6 +26162,42 @@ function pdfSearch(options = {}) {
       });
     }
   }
+  const normalizedQuery = normalizeText(query).toLowerCase();
+  for (const page of getPdfPages()) {
+    if (matches.length >= maxMatches) break;
+    if (!isPendingPage(page)) continue;
+    const pageNumber = getPageNumber(page);
+    if (!pageNumber) continue;
+    const pageText = await getPageTextContent(pageNumber);
+    const lowerText = pageText.toLowerCase();
+    let fromIndex = 0;
+    for (let occurrence = 1; occurrence <= 100 && matches.length < maxMatches; occurrence += 1) {
+      const index = normalizedQuery ? lowerText.indexOf(normalizedQuery, fromIndex) : -1;
+      if (index === -1) break;
+      fromIndex = index + Math.max(1, normalizedQuery.length);
+      const matchedText = pageText.slice(index, index + normalizedQuery.length);
+      const snippet = snippetForMatch(pageText, matchedText, maxContextChars);
+      matches.push({
+        pageNumber,
+        occurrence,
+        matchedText,
+        before: snippet.before,
+        after: snippet.after,
+        snippet: snippet.snippet,
+        visible: false,
+        pendingRender: true,
+        pdfAnchor: {
+          surface: "pdf",
+          viewer: "onhand-pdf-viewer",
+          document: { url: sourceUrl, title: document.title },
+          pageNumber,
+          matchedText,
+          textQuote: { exact: matchedText },
+          occurrence
+        }
+      });
+    }
+  }
   return {
     surface: "pdf",
     viewer: "onhand-pdf-viewer",
@@ -26156,7 +26208,7 @@ function pdfSearch(options = {}) {
     matches
   };
 }
-function pdfReadPages(options = {}) {
+async function pdfReadPages(options = {}) {
   const maxChars = Math.max(500, Math.min(5e4, Number(options.maxChars || 12e3) || 12e3));
   const pageNumbers = parsePdfPageNumbers(options).slice(0, Math.max(1, Math.min(30, Number(options.maxPages || 12) || 12)));
   const blocks = [];
@@ -26164,7 +26216,7 @@ function pdfReadPages(options = {}) {
   for (const pageNumber of pageNumbers) {
     const page = getPdfPageByNumber(pageNumber);
     if (!page) continue;
-    const text = pdfPageText(page);
+    const text = isPendingPage(page) ? await getPageTextContent(pageNumber) : pdfPageText(page);
     if (!text) continue;
     const remaining = maxChars - usedChars;
     if (remaining <= 0) break;
@@ -26197,6 +26249,7 @@ async function pdfJumpToPage(options = {}) {
   if (!Number.isFinite(pageNumber) || pageNumber < 1) throw new Error("PDF jump requires a valid pageNumber.");
   const page = getPdfPageByNumber(pageNumber);
   if (!page) throw new Error(`PDF page not found: ${pageNumber}`);
+  await ensurePageRendered(pageNumber);
   scrollToPage(pageNumber);
   await waitForNextFrame();
   const text = String(options.text || anchor?.matchedText || anchor?.textQuote?.exact || "").trim();
@@ -26228,6 +26281,7 @@ async function pdfCapturePageImage(options = {}) {
   if (!Number.isFinite(pageNumber) || pageNumber < 1) throw new Error("PDF page image capture requires a valid pageNumber.");
   const page = getPdfPageByNumber(pageNumber);
   if (!page) throw new Error(`PDF page not found: ${pageNumber}`);
+  await ensurePageRendered(pageNumber);
   const canvas = page.querySelector("canvas");
   if (!canvas) throw new Error(`PDF page ${pageNumber} has no rendered canvas.`);
   const format = String(options.format || "png").toLowerCase() === "jpeg" ? "jpeg" : "png";
@@ -26542,15 +26596,12 @@ function scrollToPage(pageNumber) {
   if (!target) return;
   target.scrollIntoView({ behavior: "auto", block: "start", inline: "nearest" });
   setCurrentPageNumber(pageNumber);
+  void ensurePageRendered(pageNumber);
 }
-async function renderPage(pageNumber, sequence) {
+async function renderPageContent(pageElement, pageNumber, sequence) {
   const page = await pdfDocument.getPage(pageNumber);
   if (sequence !== renderSequence) return;
   const viewport = page.getViewport({ scale: currentScale });
-  const pageElement = document.createElement("section");
-  pageElement.className = "page";
-  pageElement.setAttribute("data-page-number", String(pageNumber));
-  pageElement.setAttribute("data-onhand-pdf-page", "true");
   pageElement.style.width = `${viewport.width}px`;
   pageElement.style.height = `${viewport.height}px`;
   const canvasWrapper = document.createElement("div");
@@ -26568,8 +26619,9 @@ async function renderPage(pageNumber, sequence) {
   textLayer.className = "textLayer";
   textLayer.setAttribute("data-onhand-pdf-text-layer", "true");
   textLayer.style.setProperty("--scale-factor", String(currentScale));
-  pageElement.append(canvasWrapper, textLayer);
-  viewer.append(pageElement);
+  pageElement.querySelector(".canvasWrapper")?.remove();
+  pageElement.querySelector(".textLayer")?.remove();
+  pageElement.prepend(canvasWrapper, textLayer);
   await page.render({
     canvasContext: context,
     viewport,
@@ -26586,22 +26638,164 @@ async function renderPage(pageNumber, sequence) {
     span.setAttribute("data-onhand-pdf-text-span", String(index));
   });
 }
+var pageRenderPromises = /* @__PURE__ */ new Map();
+var pageTextContentCache = /* @__PURE__ */ new Map();
+function isPendingPage(pageElement) {
+  return pageElement?.getAttribute("data-onhand-pdf-pending") === "true";
+}
+function compactPendingSearchText(value) {
+  return String(value || "").toLowerCase().replace(/[\s ]+/g, "");
+}
+async function getPageTextContent(pageNumber) {
+  const cached = pageTextContentCache.get(pageNumber);
+  if (cached !== void 0) return cached;
+  try {
+    const page = await pdfDocument.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = normalizeText(content.items.map((item) => typeof item?.str === "string" ? item.str : "").join(" "));
+    pageTextContentCache.set(pageNumber, text);
+    return text;
+  } catch {
+    return "";
+  }
+}
+async function createPageShells(sequence) {
+  const firstPage = await pdfDocument.getPage(1);
+  if (sequence !== renderSequence) return;
+  const baseViewport = firstPage.getViewport({ scale: currentScale });
+  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
+    const pageElement = document.createElement("section");
+    pageElement.className = "page";
+    pageElement.setAttribute("data-page-number", String(pageNumber));
+    pageElement.setAttribute("data-onhand-pdf-page", "true");
+    pageElement.setAttribute("data-onhand-pdf-pending", "true");
+    pageElement.style.width = `${baseViewport.width}px`;
+    pageElement.style.height = `${baseViewport.height}px`;
+    viewer.append(pageElement);
+  }
+}
+function ensurePageRendered(pageNumber, sequence = renderSequence) {
+  const pageElement = getPdfPageByNumber(pageNumber);
+  if (!pageElement || !isPendingPage(pageElement)) return Promise.resolve();
+  const existing = pageRenderPromises.get(pageNumber);
+  if (existing) return existing;
+  const promise = (async () => {
+    await renderPageContent(pageElement, pageNumber, sequence);
+    if (sequence === renderSequence) pageElement.removeAttribute("data-onhand-pdf-pending");
+  })().finally(() => pageRenderPromises.delete(pageNumber));
+  pageRenderPromises.set(pageNumber, promise);
+  return promise;
+}
+function nextPendingPageNumber() {
+  const currentNumber = Number(pageInput.value || 1) || getPageNumber(findViewportPage()) || 1;
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const pageElement of getPdfPages()) {
+    if (!isPendingPage(pageElement)) continue;
+    const pageNumber = getPageNumber(pageElement);
+    if (!pageNumber) continue;
+    const distance = Math.abs(pageNumber - currentNumber);
+    if (distance < bestDistance) {
+      best = pageNumber;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+function countPendingPages() {
+  return getPdfPages().filter((pageElement) => isPendingPage(pageElement)).length;
+}
+async function renderRemainingPages(sequence) {
+  while (sequence === renderSequence) {
+    const pageNumber = nextPendingPageNumber();
+    if (!pageNumber) break;
+    await ensurePageRendered(pageNumber, sequence);
+    if (sequence !== renderSequence) return;
+    const total = Number(pdfDocument?.numPages || 0);
+    const pendingCount = countPendingPages();
+    if (pendingCount > 0) setStatus(`Rendered ${total - pendingCount}/${total}`);
+  }
+  if (sequence === renderSequence && !countPendingPages()) {
+    document.body.setAttribute("data-onhand-pdf-rendered", "true");
+    setStatus("Ready");
+  }
+}
+async function findPendingPageWithText(query) {
+  const normalizedQuery = normalizeText(query).toLowerCase();
+  const compactQuery = compactPendingSearchText(query);
+  if (!normalizedQuery) return null;
+  for (const pageElement of getPdfPages()) {
+    if (!isPendingPage(pageElement)) continue;
+    const pageNumber = getPageNumber(pageElement);
+    if (!pageNumber) continue;
+    const text = (await getPageTextContent(pageNumber)).toLowerCase();
+    if (text.includes(normalizedQuery) || compactPendingSearchText(text).includes(compactQuery)) return pageNumber;
+  }
+  return null;
+}
 async function renderDocument(options = {}) {
   if (!pdfDocument) return;
   const snapshot = options.preserveView ? capturePdfViewSnapshot() : null;
   const sequence = ++renderSequence;
   document.body.removeAttribute("data-onhand-pdf-rendered");
   viewer.replaceChildren();
+  pageRenderPromises.clear();
   pageCountElement.textContent = `/ ${pdfDocument.numPages}`;
   pageInput.max = String(pdfDocument.numPages);
-  setStatus(`Rendering ${pdfDocument.numPages} pages...`);
-  for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
-    await renderPage(pageNumber, sequence);
+  setStatus(`Preparing ${pdfDocument.numPages} pages...`);
+  await createPageShells(sequence);
+  if (sequence !== renderSequence) return;
+  for (let i = 0; i < 3; i += 1) {
+    const pageNumber = nextPendingPageNumber();
+    if (!pageNumber) break;
+    await ensurePageRendered(pageNumber, sequence);
     if (sequence !== renderSequence) return;
-    setStatus(`Rendered ${pageNumber}/${pdfDocument.numPages}`);
   }
   document.body.setAttribute("data-onhand-pdf-rendered", "true");
-  setStatus("Ready");
+  const pendingCount = countPendingPages();
+  setStatus(pendingCount ? `Rendered ${pdfDocument.numPages - pendingCount}/${pdfDocument.numPages}` : "Ready");
+  void renderRemainingPages(sequence);
+  await restorePdfViewSnapshot(snapshot, sequence);
+}
+async function rescaleDocument(nextScale) {
+  if (!pdfDocument) return;
+  const normalized = clampScale(nextScale);
+  if (Math.abs(normalized - currentScale) < 1e-3) return;
+  const pages = getPdfPages();
+  if (pages.length !== Number(pdfDocument.numPages || 0)) {
+    currentScale = normalized;
+    await renderDocument({ preserveView: true });
+    return;
+  }
+  const snapshot = capturePdfViewSnapshot();
+  const ratio = normalized / currentScale;
+  currentScale = normalized;
+  const sequence = ++renderSequence;
+  pageRenderPromises.clear();
+  for (const pageElement of pages) {
+    const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
+    const height = Number.parseFloat(pageElement.style.height || "0") * ratio;
+    if (width > 0) pageElement.style.width = `${width}px`;
+    if (height > 0) pageElement.style.height = `${height}px`;
+    const canvas = pageElement.querySelector("canvas");
+    if (canvas) {
+      const canvasWidth = Number.parseFloat(canvas.style.width || "0") * ratio;
+      const canvasHeight = Number.parseFloat(canvas.style.height || "0") * ratio;
+      if (canvasWidth > 0) canvas.style.width = `${canvasWidth}px`;
+      if (canvasHeight > 0) canvas.style.height = `${canvasHeight}px`;
+    }
+    pageElement.querySelector(".textLayer")?.style.setProperty("--scale-factor", String(normalized));
+    pageElement.querySelector(".onhand-pdf-annotation-layer")?.remove();
+    pageElement.setAttribute("data-onhand-pdf-pending", "true");
+  }
+  const anchorPage = getPdfPageByNumber(snapshot.pageNumber);
+  if (anchorPage) {
+    const rect = anchorPage.getBoundingClientRect();
+    const pageTop = window.scrollY + rect.top;
+    window.scrollTo({ top: Math.max(0, pageTop + rect.height * snapshot.pageOffsetRatio), left: 0, behavior: "auto" });
+  }
+  setStatus(`Rendering at ${Math.round(normalized * 100)}%...`);
+  void renderRemainingPages(sequence);
   await restorePdfViewSnapshot(snapshot, sequence);
 }
 async function loadPdf() {
@@ -26629,31 +26823,45 @@ async function loadPdf() {
   const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;
   setCurrentPageNumber(initialPageNumber);
   currentScale = await computeFitScale(initialPageNumber);
+  lastFitRenderWidth = viewer.clientWidth;
   await renderDocument();
   scrollToPage(initialPageNumber);
 }
 zoomInButton.addEventListener("click", () => {
   scaleMode = "custom";
-  currentScale = clampScale(currentScale + SCALE_STEP);
-  void renderDocument({ preserveView: true });
+  void rescaleDocument(currentScale + SCALE_STEP);
 });
 zoomOutButton.addEventListener("click", () => {
   scaleMode = "custom";
-  currentScale = clampScale(currentScale - SCALE_STEP);
-  void renderDocument({ preserveView: true });
+  void rescaleDocument(currentScale - SCALE_STEP);
 });
+var pendingFitRender = false;
+function hasUsableViewerViewport() {
+  return !document.hidden && viewer.clientWidth > 1 && window.innerHeight > 1;
+}
 function scheduleResizeRender() {
   if (!pdfDocument || scaleMode !== "fit") return;
+  if (!hasUsableViewerViewport()) {
+    pendingFitRender = true;
+    return;
+  }
+  if (viewer.clientWidth === lastFitRenderWidth) return;
   if (resizeRenderTimer !== null) window.clearTimeout(resizeRenderTimer);
   resizeRenderTimer = window.setTimeout(async () => {
     resizeRenderTimer = null;
-    if (!pdfDocument || scaleMode !== "fit") return;
+    if (!pdfDocument || scaleMode !== "fit" || !hasUsableViewerViewport()) return;
+    if (viewer.clientWidth === lastFitRenderWidth) return;
     const nextScale = await computeFitScale(Number(pageInput.value || 1) || 1);
+    lastFitRenderWidth = viewer.clientWidth;
     if (Math.abs(nextScale - currentScale) < 0.01) return;
-    currentScale = nextScale;
-    await renderDocument({ preserveView: true });
+    await rescaleDocument(nextScale);
   }, RESIZE_RENDER_DELAY_MS);
 }
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !pendingFitRender) return;
+  pendingFitRender = false;
+  scheduleResizeRender();
+});
 pageInput.addEventListener("change", () => {
   const pageNumber = Number.parseInt(pageInput.value, 10);
   if (Number.isFinite(pageNumber) && pageNumber > 0) scrollToPage(pageNumber);

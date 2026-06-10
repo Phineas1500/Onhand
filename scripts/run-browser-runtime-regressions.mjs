@@ -593,7 +593,26 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 			/await new Promise\(\s*\(?resolve\)?\s*=>\s*requestAnimationFrame\(resolve\)\s*\)/,
 			`${path} should not await bare requestAnimationFrame (hangs on hidden/occluded surfaces)`,
 		);
+		// Hidden/zero-sized surfaces must not trigger fit re-renders: a
+		// backgrounded tab fires resize with garbage dimensions and used to
+		// re-render the whole document twice per tab switch.
+		assert.match(source, /hasUsableViewerViewport/, `${path} should gate fit re-renders on a usable viewport`);
+		// Height-only resizes (the chrome.debugger infobar around tool
+		// calls) must not refit either, and large documents must render
+		// progressively with on-demand pages instead of blocking until
+		// every page is rasterized.
+		assert.match(source, /lastFitRenderWidth/, `${path} should gate fit re-renders on width changes`);
+		assert.match(source, /data-onhand-pdf-pending/, `${path} should support pending page shells`);
+		assert.match(source, /renderRemainingPages/, `${path} should background-render remaining pages`);
+		assert.match(source, /ensurePageRendered/, `${path} should render pages on demand`);
 	}
+	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.match(
+		background,
+		/probeInlineOnhandPdfViewerStatus/,
+		"open_pdf_in_onhand_viewer should reuse an existing viewer instead of reinstalling on every prompt",
+	);
+	assert.match(background, /reusedExistingViewer/, "viewer reuse should be reported in the handoff result");
 }
 
 async function assertConstitutionPromptContract() {
