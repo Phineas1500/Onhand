@@ -641,6 +641,11 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
 	assert.match(contract.systemPrompt, /do not send a heading-plus-list block as one highlight/);
 	assert.match(contract.systemPrompt, /Do not replace missing list items with nearby headings/);
+	assert.match(contract.systemPrompt, /use browser_pdf_find_citation to look up the bibliography entry/);
+	assert.match(contract.systemPrompt, /compare or relate the current material to another open tab/);
+	assert.match(contract.systemPrompt, /highlight the key passage in each source/);
+	assert.match(contract.systemPrompt, /anchor each substantive claim in the source that supports it/);
+	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not anchored in/);
 	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
@@ -715,10 +720,16 @@ async function assertConstitutionPromptContract() {
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
 	const externalSourceToolNames = getToolNamesForTest("Could you take me to these sources and highlight the parts that discuss attention?", false);
+	const comparisonToolNames = getToolNamesForTest("Compare how this paper and the other paper I have open handle attention.", false);
+	const citationToolNames = getToolNamesForTest("What does reference [2] of this paper actually say?", false);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
 	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
+	assert.equal(comparisonToolNames.includes("browser_list_tabs"), true, "comparison prompts should get tab tools");
+	assert.equal(comparisonToolNames.includes("browser_activate_tab"), true);
+	assert.equal(citationToolNames.includes("browser_pdf_find_citation"), true, "citation prompts should get the citation lookup tool");
+	assert.equal(citationToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
 	assert.equal(pdfContextToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_search"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_read_pages"), true);

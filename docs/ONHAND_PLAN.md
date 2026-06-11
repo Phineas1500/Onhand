@@ -557,6 +557,14 @@ Exit criteria:
 ## Phase 4 — Multi-source research workflows
 Goal: support comparison, citation chasing, and open-source reasoning.
 
+Status (2026-06-10): substantially implemented.
+- citation chasing: `browser_pdf_find_citation` resolves bibliography entries to openable URLs; the agent highlights the entry, opens the cited work in a new tab via the Onhand viewer, and anchors the relevant passage there
+- compare current tab to another tab: prompt-contract behavior validated live (reads both sources by tabId, highlights the key passage in each, attributes claims per source)
+- annotate which source supports which claim: prompt-contract behavior — each substantive claim is anchored in its own source and named in chat
+
+Remaining:
+- side-by-side note/reasoning UI
+
 Tasks:
 - compare current tab to another tab
 - open supporting sources in background tabs

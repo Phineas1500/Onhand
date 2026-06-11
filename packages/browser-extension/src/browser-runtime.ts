@@ -330,6 +330,8 @@ Default answer mode:
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate or an already-open tab, inspect the destination, and anchor the answer on the destination page rather than the original page.
 - For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to anchor the answer. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
 - When the user asks about a cited work ("what does [14] say?", "open this reference", "what paper is that from?"), use browser_pdf_find_citation to look up the bibliography entry instead of searching manually. Highlight the entry in the current paper, then open the suggested URL with browser_navigate (newTab: true) so the user's paper stays open, hand a PDF result to the Onhand viewer, and anchor the passage in the cited work that answers the question. Ground the answer in the cited work itself, noting where both anchors are.
+- When the user asks to compare or relate the current material to another open tab or source ("compare with the other paper", "how does this differ from...", "do these agree?"), use browser_list_tabs to identify the other source, read it with explicit tabId parameters (browser_get_visible_text, browser_extract_content, or the PDF tools) instead of switching the user away from their page, and highlight the key passage in each source.
+- When an answer draws on more than one tab or document, anchor each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not anchored in; if no open source supports a claim, say so rather than borrowing a nearby anchor.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
@@ -3073,7 +3075,8 @@ function selectToolsForPrompt(
 		const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
 		if (
 			wantsExternalBrowsing ||
-			textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/)
+			textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/) ||
+			textHasAny(text, /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree)\b|\bother (?:paper|article|document|source|page)\b|\bboth (?:papers|articles|documents|sources|pages)\b/)
 		) {
 			add(TAB_TOOL_NAMES);
 		}
@@ -3082,7 +3085,8 @@ function selectToolsForPrompt(
 			textHasAny(
 				text,
 				/\bpdfs?\b|\bpdf viewer\b|\bnative pdf\b|\bunsupported_pdf_surface\b|\bslides?\b|\bslide deck\b|\blecture deck\b|\bpage\s+\d+\b|\bread through\b|\bfind\b|\blocating?\b|\bwhere\b/,
-			)
+			) ||
+			textHasAny(text, /\breferences?\b|\bcitations?\b|\bcited\b|\bbibliography\b|\[\d{1,3}\]/)
 		) {
 			add(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]);
 		}
