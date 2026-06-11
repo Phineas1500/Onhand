@@ -1334,6 +1334,119 @@ async function pdfReadPages(options: Record<string, any> = {}) {
 	};
 }
 
+// --- Citation lookup ---
+//
+// Deterministically locate a bibliography entry so the agent can chase a
+// citation without freestyle-searching: find the references section in
+// the page text (rendered or not), slice out the entry for a bracket
+// label like [14], and extract identifiers that resolve to an openable
+// URL (arXiv id, DOI, or a plain link).
+function extractCitationIdentifiers(entryText: string) {
+	const text = String(entryText || "");
+	// Covers "arXiv:1409.0473", "arxiv.org/abs/1409.0473", and the CoRR
+	// style "abs/1409.0473".
+	const arxivId =
+		text.match(/arxiv[:\s]*(\d{4}\.\d{4,5})(v\d+)?/i)?.[1] ||
+		text.match(/\babs\/(\d{4}\.\d{4,5})/i)?.[1] ||
+		text.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/i)?.[1] ||
+		"";
+	const doi = text.match(/\b10\.\d{4,9}\/[^\s,;)\]]+/)?.[0]?.replace(/[.,;]+$/, "") || "";
+	const url = text.match(/https?:\/\/[^\s)\]]+/)?.[0]?.replace(/[.,;]+$/, "") || "";
+	const suggestedUrl = arxivId ? `https://arxiv.org/pdf/${arxivId}` : url || (doi ? `https://doi.org/${doi}` : "");
+	return {
+		...(arxivId ? { arxivId } : {}),
+		...(doi ? { doi } : {}),
+		...(url ? { url } : {}),
+		...(suggestedUrl ? { suggestedUrl } : {}),
+	};
+}
+
+async function pdfFindCitation(options: Record<string, any> = {}) {
+	const rawReference = String(options.reference ?? options.label ?? options.query ?? "").trim();
+	if (!rawReference) throw new Error('findCitation requires a reference, like "14" or "[14]".');
+	const pageCount = Number(pdfDocument?.numPages || 0);
+	if (!pageCount) throw new Error("No PDF document is loaded.");
+	const bracketNumber = rawReference.match(/^\[?(\d{1,3})\]?$/)?.[1] || "";
+
+	// Find where the references section starts; bibliographies live at the
+	// back, so scan from the end.
+	let referencesStartPage = 0;
+	for (let pageNumber = pageCount; pageNumber >= 1; pageNumber -= 1) {
+		const text = await getPageTextContent(pageNumber);
+		if (/\b(references|bibliography)\b/i.test(text)) {
+			referencesStartPage = pageNumber;
+			break;
+		}
+	}
+
+	const searchStartPage = referencesStartPage || 1;
+	let entryText = "";
+	let entryPageNumber = 0;
+	if (bracketNumber) {
+		const entryPattern = new RegExp(`\\[${bracketNumber}\\]\\s`);
+		const nextEntryPattern = /\[\d{1,3}\]\s/g;
+		for (let pageNumber = searchStartPage; pageNumber <= pageCount; pageNumber += 1) {
+			const text = await getPageTextContent(pageNumber);
+			const match = entryPattern.exec(text);
+			if (!match) continue;
+			const start = match.index;
+			nextEntryPattern.lastIndex = start + match[0].length;
+			const next = nextEntryPattern.exec(text);
+			entryText = normalizeText(text.slice(start, next ? next.index : start + 600)).slice(0, 600);
+			entryPageNumber = pageNumber;
+			break;
+		}
+	} else {
+		const needle = normalizeText(rawReference).toLowerCase();
+		for (let pageNumber = searchStartPage; pageNumber <= pageCount; pageNumber += 1) {
+			const text = await getPageTextContent(pageNumber);
+			const index = text.toLowerCase().indexOf(needle);
+			if (index === -1) continue;
+			entryText = normalizeText(text.slice(index, index + 600)).slice(0, 600);
+			entryPageNumber = pageNumber;
+			break;
+		}
+	}
+
+	if (!entryText) {
+		return {
+			surface: "pdf",
+			viewer: "onhand-pdf-viewer",
+			url: sourceUrl,
+			found: false,
+			reference: rawReference,
+			referencesStartPage: referencesStartPage || null,
+			message: referencesStartPage
+				? `No bibliography entry matched "${rawReference}" from page ${referencesStartPage} onward.`
+				: `No references section was found, and nothing matched "${rawReference}".`,
+		};
+	}
+
+	// An exact prefix of the entry anchors a highlight on that page once
+	// it renders (highlights render pending pages on demand).
+	const anchorQuote = entryText.slice(0, 110);
+	return {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		url: sourceUrl,
+		found: true,
+		reference: rawReference,
+		pageNumber: entryPageNumber,
+		referencesStartPage: referencesStartPage || null,
+		entryText,
+		identifiers: extractCitationIdentifiers(entryText),
+		highlightAnchor: {
+			surface: "pdf",
+			viewer: "onhand-pdf-viewer",
+			document: { url: sourceUrl, title: document.title },
+			pageNumber: entryPageNumber,
+			matchedText: anchorQuote,
+			textQuote: { exact: anchorQuote },
+			occurrence: 1,
+		},
+	};
+}
+
 async function pdfJumpToPage(options: Record<string, any> = {}) {
 	const anchor = options.pdfAnchor || null;
 	const pageNumber = Number(options.pageNumber || options.page || anchor?.pageNumber || "");
@@ -1435,6 +1548,8 @@ async function runPdfToolkitMethod(methodName: string, args: any[] = []) {
 			return pdfGetVisibleText(args[0] || {});
 		case "searchPdf":
 			return pdfSearch(args[0] || {});
+		case "findCitation":
+			return await pdfFindCitation(args[0] || {});
 		case "readPdfPages":
 			return pdfReadPages(args[0] || {});
 		case "jumpToPdfPage":

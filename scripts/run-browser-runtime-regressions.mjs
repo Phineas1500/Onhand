@@ -738,6 +738,34 @@ async function assertConstitutionPromptContract() {
 	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
 }
 
+async function assertPdfCitationFormatting() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { formatPdfCitationForModel } = __browserRuntimeTest;
+	const found = formatPdfCitationForModel({
+		citation: {
+			found: true,
+			reference: "2",
+			pageNumber: 10,
+			entryText: "[2] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate. CoRR, abs/1409.0473, 2014.",
+			identifiers: { arxivId: "1409.0473", suggestedUrl: "https://arxiv.org/pdf/1409.0473" },
+		},
+	});
+	assert.match(found, /Citation entry for \[2\] on p\. 10/);
+	assert.match(found, /arXiv id: 1409\.0473/);
+	assert.match(found, /navigate to https:\/\/arxiv\.org\/pdf\/1409\.0473 in a new tab/);
+	assert.match(found, /browser_highlight_text/);
+
+	const missing = formatPdfCitationForModel({
+		citation: { found: false, reference: "99", message: "No bibliography entry matched." },
+	});
+	assert.match(missing, /No citation entry found for "99"/);
+
+	const noLink = formatPdfCitationForModel({
+		citation: { found: true, reference: "3", pageNumber: 11, entryText: "[3] Some Author. A book. Publisher, 1999.", identifiers: {} },
+	});
+	assert.match(noLink, /no direct link/);
+}
+
 async function assertSpacedReviewScheduling() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -4612,6 +4640,7 @@ async function main() {
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertLearnerStateUpdates();
 	await assertFallbackOpenCheckRecording();
+	await assertPdfCitationFormatting();
 	await assertSpacedReviewScheduling();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();

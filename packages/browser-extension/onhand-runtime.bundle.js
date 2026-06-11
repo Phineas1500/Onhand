@@ -124263,6 +124263,7 @@ Default answer mode:
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate or an already-open tab, inspect the destination, and anchor the answer on the destination page rather than the original page.
 - For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to anchor the answer. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
+- When the user asks about a cited work ("what does [14] say?", "open this reference", "what paper is that from?"), use browser_pdf_find_citation to look up the bibliography entry instead of searching manually. Highlight the entry in the current paper, then open the suggested URL with browser_navigate (newTab: true) so the user's paper stays open, hand a PDF result to the Onhand viewer, and anchor the passage in the cited work that answers the question. Ground the answer in the cited work itself, noting where both anchors are.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
 Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use markdown sparingly.`;
@@ -124317,6 +124318,12 @@ var PDF_SEARCH_SCHEMA = typebox_exports.Object({
   query: typebox_exports.String({ description: "Exact word or phrase to search across the full extracted PDF text" }),
   maxMatches: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum number of PDF text matches to return" })),
   maxContextChars: typebox_exports.Optional(typebox_exports.Number({ description: "Context characters to include before and after each match" }))
+});
+var PDF_FIND_CITATION_SCHEMA = typebox_exports.Object({
+  ...TAB_MATCH_SCHEMA,
+  reference: typebox_exports.String({
+    description: 'The citation to look up: a bracket number like "14" or "[14]", or distinctive text from the entry such as an author name and year'
+  })
 });
 var PDF_READ_PAGES_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
@@ -124509,7 +124516,7 @@ var CORE_READ_TOOL_NAMES = [
 var VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
 var VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
 var TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
-var PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image"];
+var PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image", "browser_pdf_find_citation"];
 var INTERACTION_TOOL_NAMES = [
   "browser_find_elements",
   "browser_wait_for_selector",
@@ -126983,6 +126990,22 @@ ${count - lines.length} more match(es) omitted.` : "";
   return `PDF search${query ? ` for "${truncate(query, 120)}"` : ""}: ${count} match(es)
 ${lines.join("\n")}${suffix}`;
 }
+function formatPdfCitationForModel(details) {
+  const citation = details.citation || details || {};
+  if (!citation.found) {
+    return `No citation entry found for "${truncate(String(citation.reference || ""), 80)}". ${String(citation.message || "")}`.trim();
+  }
+  const identifiers = citation.identifiers || {};
+  const lines = [
+    `Citation entry for [${citation.reference}] on p. ${citation.pageNumber}:`,
+    truncate(String(citation.entryText || ""), 500),
+    identifiers.arxivId ? `arXiv id: ${identifiers.arxivId}` : "",
+    identifiers.doi ? `DOI: ${identifiers.doi}` : "",
+    identifiers.suggestedUrl ? `To open the cited work, navigate to ${identifiers.suggestedUrl} in a new tab (newTab: true) so the current paper stays open, then hand the PDF to the Onhand viewer.` : "The entry has no direct link; tell the user it could not be opened automatically.",
+    `To highlight this entry here, call browser_highlight_text with text ${JSON.stringify(truncate(String(citation.entryText || ""), 110))} and pdfAnchor {"pageNumber": ${citation.pageNumber}}.`
+  ].filter(Boolean);
+  return lines.join("\n");
+}
 function formatPdfPagesForModel(details) {
   const pages = details.pages || details || {};
   const blocks = Array.isArray(pages.blocks) ? pages.blocks : [];
@@ -127031,6 +127054,8 @@ PDF source: ${details.pdfUrl}` : "";
     }
     case "browser_pdf_search":
       return formatPdfSearchForModel(details);
+    case "browser_pdf_find_citation":
+      return formatPdfCitationForModel(details);
     case "browser_pdf_read_pages":
       return formatPdfPagesForModel(details);
     case "browser_pdf_jump_to_page": {
@@ -127174,6 +127199,7 @@ var __browserRuntimeTest = {
   extractTrailingCheckQuestion,
   normalizeReviewConceptKey,
   withFallbackOpenCheck,
+  formatPdfCitationForModel,
   formatVisibleTextForModel,
   formatToolResultForModel: toolResultTextForModel,
   getMissingApiKeyError,
@@ -127432,6 +127458,13 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       "Read extracted text from specific PDF page numbers or a page range in the current Onhand PDF viewer.",
       PDF_READ_PAGES_SCHEMA,
       "pdf_read_pages"
+    ),
+    commandTool(
+      "browser_pdf_find_citation",
+      "Browser PDF Find Citation",
+      "Look up a bibliography entry in the current Onhand PDF viewer by bracket number (like [14]) or entry text. Returns the entry text, an anchor for highlighting it, and identifiers (arXiv id, DOI, URL) with a suggested URL for opening the cited work.",
+      PDF_FIND_CITATION_SCHEMA,
+      "pdf_find_citation"
     ),
     commandTool(
       "browser_pdf_jump_to_page",
@@ -127699,6 +127732,8 @@ function getToolStatusMessage(toolName) {
       return "Opening PDF in Onhand viewer...";
     case "browser_pdf_search":
       return "Searching the PDF...";
+    case "browser_pdf_find_citation":
+      return "Looking up the citation...";
     case "browser_pdf_read_pages":
       return "Reading PDF pages...";
     case "browser_pdf_jump_to_page":
@@ -127808,6 +127843,19 @@ function buildPageAction(toolName, result) {
         windowId: tab?.windowId || null,
         ...pageActionTabFields(tab),
         label: "Searched PDF",
+        detail
+      };
+    }
+    case "browser_pdf_find_citation": {
+      const citation = details.citation || details || {};
+      const detail = truncate(`[${citation.reference || "?"}] ${citation.entryText || ""}`.trim(), 72);
+      return {
+        key: `pdf-citation:${tab?.id || "tab"}:${citation.reference || detail}`,
+        type: "read",
+        tabId: tab?.id || null,
+        windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
+        label: "Found citation",
         detail
       };
     }

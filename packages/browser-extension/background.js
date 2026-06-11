@@ -8318,6 +8318,32 @@ async function handleCommand(name, args = {}) {
 				};
 			});
 		}
+		case "pdf_find_citation": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				// findCitation lives only in the Onhand viewer, so go straight
+				// to the viewer executors instead of the generic page toolkit.
+				const payload = {
+					command: "page-toolkit-method",
+					methodName: "findCitation",
+					args: [{ reference: args.reference ?? args.label ?? args.query }],
+				};
+				let citation;
+				try {
+					citation = await callOnhandPdfViewerFrameViaRuntimePort(tab.id, payload, "No Onhand PDF viewer runtime port found");
+				} catch {
+					citation = await callOnhandPdfViewerFrameViaBridge(
+						tab.id,
+						payload,
+						"Citation lookup needs the Onhand PDF viewer. Open the PDF with browser_open_pdf_in_onhand_viewer first.",
+					);
+				}
+				return {
+					tab: simplifyTab(tab),
+					citation,
+				};
+			});
+		}
 		case "pdf_read_pages": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
@@ -8943,6 +8969,7 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_navigate: "navigate",
 	browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 	browser_pdf_search: "pdf_search",
+	browser_pdf_find_citation: "pdf_find_citation",
 	browser_pdf_read_pages: "pdf_read_pages",
 	browser_pdf_jump_to_page: "pdf_jump_to_page",
 	browser_pdf_capture_page_image: "pdf_capture_page_image",
