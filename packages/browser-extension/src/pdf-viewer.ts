@@ -1108,7 +1108,7 @@ function pdfGetVisibleText(options: Record<string, any> = {}) {
 		const rect = page.getBoundingClientRect();
 		if (!visibleEnough(rect)) continue;
 		const pageNumber = getPageNumber(page);
-		const text = normalizeText(page.querySelector(".textLayer")?.textContent || page.textContent || "");
+		const text = pdfPageText(page);
 		if (!text) continue;
 		const clipped = text.slice(0, Math.max(0, maxChars - totalChars));
 		totalChars += clipped.length;
@@ -1121,7 +1121,10 @@ function pdfGetVisibleText(options: Record<string, any> = {}) {
 		});
 		if (blocks.length >= maxBlocks || totalChars >= maxChars) break;
 	}
-	const text = blocks.map((block) => block.text).join("\n\n").slice(0, maxChars);
+	const text = blocks
+		.map((block) => (block.pageNumber ? `[p. ${block.pageNumber}] ${block.text}` : block.text))
+		.join("\n\n")
+		.slice(0, maxChars);
 	return {
 		surface: "pdf",
 		viewer: "onhand-pdf-viewer",
@@ -1133,9 +1136,21 @@ function pdfGetVisibleText(options: Record<string, any> = {}) {
 	};
 }
 
+// textContent glues the text layer's line fragments together ("FixtureThe
+// important phrase…") because PDF.js marks line ends with <br> elements
+// that contribute no text. Convert them to whitespace before reading.
+function textLayerVisibleText(textLayer: HTMLElement | null) {
+	if (!textLayer) return "";
+	const clone = textLayer.cloneNode(true) as HTMLElement;
+	clone.querySelectorAll("br").forEach((lineBreak) => lineBreak.replaceWith("\n"));
+	return normalizeText(clone.textContent || "");
+}
+
 function pdfPageText(page: HTMLElement | null) {
 	if (!page) return "";
-	return normalizeText(page.querySelector(".textLayer")?.textContent || page.textContent || "");
+	const textLayer = page.querySelector<HTMLElement>(".textLayer");
+	if (textLayer) return textLayerVisibleText(textLayer);
+	return normalizeText(page.textContent || "");
 }
 
 function buildPdfAnchor(page: HTMLElement, match: { range: Range; matchedText: string; fallback?: string }, occurrence = 1) {
@@ -1778,7 +1793,13 @@ async function getPageTextContent(pageNumber: number) {
 	try {
 		const page = await pdfDocument.getPage(pageNumber);
 		const content = await page.getTextContent();
-		const text = normalizeText(content.items.map((item: any) => (typeof item?.str === "string" ? item.str : "")).join(" "));
+		// Glue items the way the rendered text layer does: fragments run
+		// together within a line, and hasEOL marks the line breaks.
+		const text = normalizeText(
+			content.items
+				.map((item: any) => `${typeof item?.str === "string" ? item.str : ""}${item?.hasEOL ? "\n" : ""}`)
+				.join(""),
+		);
 		pageTextContentCache.set(pageNumber, text);
 		return text;
 	} catch {

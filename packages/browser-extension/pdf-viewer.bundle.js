@@ -26041,7 +26041,7 @@ function pdfGetVisibleText(options = {}) {
     const rect = page.getBoundingClientRect();
     if (!visibleEnough(rect)) continue;
     const pageNumber = getPageNumber(page);
-    const text2 = normalizeText(page.querySelector(".textLayer")?.textContent || page.textContent || "");
+    const text2 = pdfPageText(page);
     if (!text2) continue;
     const clipped = text2.slice(0, Math.max(0, maxChars - totalChars));
     totalChars += clipped.length;
@@ -26054,7 +26054,7 @@ function pdfGetVisibleText(options = {}) {
     });
     if (blocks.length >= maxBlocks || totalChars >= maxChars) break;
   }
-  const text = blocks.map((block) => block.text).join("\n\n").slice(0, maxChars);
+  const text = blocks.map((block) => block.pageNumber ? `[p. ${block.pageNumber}] ${block.text}` : block.text).join("\n\n").slice(0, maxChars);
   return {
     surface: "pdf",
     viewer: "onhand-pdf-viewer",
@@ -26065,9 +26065,17 @@ function pdfGetVisibleText(options = {}) {
     viewport: { width: window.innerWidth, height: window.innerHeight, scrollY: window.scrollY }
   };
 }
+function textLayerVisibleText(textLayer) {
+  if (!textLayer) return "";
+  const clone = textLayer.cloneNode(true);
+  clone.querySelectorAll("br").forEach((lineBreak) => lineBreak.replaceWith("\n"));
+  return normalizeText(clone.textContent || "");
+}
 function pdfPageText(page) {
   if (!page) return "";
-  return normalizeText(page.querySelector(".textLayer")?.textContent || page.textContent || "");
+  const textLayer = page.querySelector(".textLayer");
+  if (textLayer) return textLayerVisibleText(textLayer);
+  return normalizeText(page.textContent || "");
 }
 function buildPdfAnchor(page, match, occurrence = 1) {
   const rects = rangeRectsForPage(match.range, page);
@@ -26652,7 +26660,9 @@ async function getPageTextContent(pageNumber) {
   try {
     const page = await pdfDocument.getPage(pageNumber);
     const content = await page.getTextContent();
-    const text = normalizeText(content.items.map((item) => typeof item?.str === "string" ? item.str : "").join(" "));
+    const text = normalizeText(
+      content.items.map((item) => `${typeof item?.str === "string" ? item.str : ""}${item?.hasEOL ? "\n" : ""}`).join("")
+    );
     pageTextContentCache.set(pageNumber, text);
     return text;
   } catch {

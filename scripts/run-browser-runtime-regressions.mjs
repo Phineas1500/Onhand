@@ -605,6 +605,9 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /data-onhand-pdf-pending/, `${path} should support pending page shells`);
 		assert.match(source, /renderRemainingPages/, `${path} should background-render remaining pages`);
 		assert.match(source, /ensurePageRendered/, `${path} should render pages on demand`);
+		// textContent glues text-layer line fragments together; extraction
+		// must convert PDF.js's <br> line markers to whitespace.
+		assert.match(source, /textLayerVisibleText/, `${path} should separate text-layer lines when extracting text`);
 	}
 	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
 	assert.match(
