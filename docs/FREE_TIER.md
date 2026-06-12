@@ -38,7 +38,7 @@ $0.15-0.25/day; typical usage is far below that.
 cd workers/free-tier
 npx wrangler login
 npx wrangler kv namespace create FREE_TIER_KV   # paste id into wrangler.toml
-npx wrangler secret put OPENROUTER_API_KEY      # the funding key
+npx wrangler secret put OPENROUTER_API_KEY      # the funding key, press y
 npx wrangler deploy
 ```
 

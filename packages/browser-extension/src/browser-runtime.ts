@@ -247,7 +247,7 @@ const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
 // The deployed workers/free-tier proxy. Override without rebuilding via
 // the onhandFreeTierBaseUrl key in chrome.storage.local (used by tests
 // and staged deployments). See docs/FREE_TIER.md.
-const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.onhand.workers.dev/v1";
+const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
 const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 const SUPPORTED_API_PROVIDERS: Record<
