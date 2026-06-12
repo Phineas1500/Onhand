@@ -131385,6 +131385,10 @@ function createOnhandBrowserRuntime(host) {
       const tabId = typeof tab?.id === "number" ? tab.id : void 0;
       const failures = [];
       const note = (stage, error51) => failures.push(`${stage}: ${error51?.message || error51}`);
+      host.log?.(
+        "jumpToLearnerSource:resolve",
+        JSON.stringify({ annotationId, recoveredTextLen: matchedText.length, anchorPage: Number(recoveredPdfAnchor?.pageNumber) || 0, hasArtifact: Boolean(artifactId), tabId: tabId ?? null, url: url2 })
+      );
       if (annotationId && typeof tabId === "number") {
         try {
           const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId, target });
@@ -131424,7 +131428,16 @@ function createOnhandBrowserRuntime(host) {
           note("artifact", error51);
         }
       }
-      const anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+      let anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+      if (anchorPage <= 0 && matchedText && typeof tabId === "number") {
+        try {
+          const searched = await host.runCommand("pdf_search", { query: matchedText, text: matchedText, maxMatches: 1 });
+          const match2 = (searched?.search?.matches || searched?.matches || [])[0];
+          anchorPage = Number(match2?.pageNumber) || 0;
+        } catch (error51) {
+          note("search", error51);
+        }
+      }
       if (anchorPage > 0 && typeof tabId === "number") {
         try {
           const jumped = await host.runCommand("pdf_jump_to_page", {
@@ -131432,14 +131445,14 @@ function createOnhandBrowserRuntime(host) {
             pageNumber: anchorPage,
             ...matchedText ? { text: matchedText } : {},
             ...recoveredPdfAnchor?.occurrence ? { occurrence: recoveredPdfAnchor.occurrence } : {},
-            pdfAnchor: recoveredPdfAnchor
+            ...recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}
           });
           return { ok: true, mode: "page", pageNumber: anchorPage, jump: jumped?.jump || jumped };
         } catch (error51) {
           note("page", error51);
         }
       }
-      if (failures.length) host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | "));
+      host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | ") || "no recovery data");
       throw new Error("Source not found on this page.");
     }
   };

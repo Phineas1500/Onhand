@@ -7340,6 +7340,13 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				const tabId = typeof tab?.id === "number" ? tab.id : undefined;
 				const failures: string[] = [];
 				const note = (stage: string, error: any) => failures.push(`${stage}: ${error?.message || error}`);
+				// Always logged (even on success) so a failing jump can be
+				// diagnosed from the service-worker console: it confirms the
+				// build is current and shows what was recovered to act on.
+				host.log?.(
+					"jumpToLearnerSource:resolve",
+					JSON.stringify({ annotationId, recoveredTextLen: matchedText.length, anchorPage: Number(recoveredPdfAnchor?.pageNumber) || 0, hasArtifact: Boolean(artifactId), tabId: tabId ?? null, url }),
+				);
 
 				// 1) The highlight is still on the page.
 				if (annotationId && typeof tabId === "number") {
@@ -7395,7 +7402,19 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				// (complex PDF text often defeats exact re-matching), but we know
 				// which page the passage is on from the recovered anchor. Land
 				// the reader on that page so "source" is never a dead end.
-				const anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+				let anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+					// Highlights saved before anchors were stored have no page to
+					// fall back to; a full-document search (more lenient than exact
+					// re-highlight) still locates the passage's page.
+					if (anchorPage <= 0 && matchedText && typeof tabId === "number") {
+						try {
+							const searched = await host.runCommand("pdf_search", { query: matchedText, text: matchedText, maxMatches: 1 });
+							const match = (searched?.search?.matches || searched?.matches || [])[0];
+							anchorPage = Number(match?.pageNumber) || 0;
+						} catch (error) {
+							note("search", error);
+						}
+					}
 				if (anchorPage > 0 && typeof tabId === "number") {
 					try {
 						const jumped = await host.runCommand("pdf_jump_to_page", {
@@ -7403,7 +7422,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 							pageNumber: anchorPage,
 							...(matchedText ? { text: matchedText } : {}),
 							...(recoveredPdfAnchor?.occurrence ? { occurrence: recoveredPdfAnchor.occurrence } : {}),
-							pdfAnchor: recoveredPdfAnchor,
+							...(recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}),
 						});
 						return { ok: true, mode: "page", pageNumber: anchorPage, jump: jumped?.jump || jumped };
 					} catch (error) {
@@ -7411,7 +7430,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 					}
 				}
 
-				if (failures.length) host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | "));
+				host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | ") || "no recovery data");
 				throw new Error("Source not found on this page.");
 			},
 	};
