@@ -119,6 +119,11 @@ interface LearnerConceptSource {
 	url?: string;
 	annotationId?: string;
 	artifactId?: string;
+	// Verbatim highlighted text, kept so a "source" jump can re-find the
+	// passage by text (rendering the page it lives on) when the original
+	// highlight element is gone — e.g. in a later session or an unrendered
+	// page of a large PDF.
+	matchedText?: string;
 }
 
 interface LearnerConcept {
@@ -166,6 +171,7 @@ type LearningEvent =
 			artifactId?: string;
 			url?: string;
 			tabTitle?: string;
+			matchedText?: string;
 			at?: string;
 	  }
 	| {
@@ -181,6 +187,7 @@ type LearningEvent =
 			artifactId?: string;
 			url?: string;
 			tabTitle?: string;
+			matchedText?: string;
 			at?: string;
 	  }
 	| {
@@ -878,11 +885,13 @@ function normalizeLearnerSource(rawSource: any): LearnerConceptSource | null {
 	const url = compactLearnerText(rawSource?.url, 240);
 	const annotationId = compactLearnerText(rawSource?.annotationId, 120);
 	const artifactId = compactLearnerText(rawSource?.artifactId, 120);
+	const matchedText = compactLearnerText(rawSource?.matchedText || rawSource?.citationText, 400);
 	const source = {
 		...(tabTitle ? { tabTitle } : {}),
 		...(url ? { url } : {}),
 		...(annotationId ? { annotationId } : {}),
 		...(artifactId ? { artifactId } : {}),
+		...(matchedText ? { matchedText } : {}),
 	};
 	return Object.keys(source).length ? source : null;
 }
@@ -914,7 +923,18 @@ function learnerSourcesSamePage(left: LearnerConceptSource | null, right: Learne
 function appendLearnerSource(sources: LearnerConceptSource[] = [], source: LearnerConceptSource | null) {
 	if (!source) return sources;
 	const key = learnerSourceKey(source);
-	if (sources.some((existing) => learnerSourceKey(existing) === key)) return sources;
+	const existingIndex = sources.findIndex((existing) => learnerSourceKey(existing) === key);
+	if (existingIndex >= 0) {
+		// Same anchor: backfill matchedText if this recording learned it and
+		// the stored copy did not, so a later re-find has text to search for.
+		const existing = sources[existingIndex];
+		if (source.matchedText && !existing.matchedText) {
+			const merged = sources.slice();
+			merged[existingIndex] = { ...existing, matchedText: source.matchedText };
+			return merged;
+		}
+		return sources;
+	}
 	return [...sources, source];
 }
 
@@ -4873,10 +4893,34 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return uiState;
 	}
 
+	// The model records a learning event with an annotationId but not the
+	// verbatim text it highlighted. Look that text (and the page/artifact it
+	// belongs to) up from the highlight page action so the learner source can
+	// re-find its passage later, even from another session.
+	function enrichLearningEventSource(session: RuntimeSession, event: LearningEvent): LearningEvent {
+		if (!event || typeof event !== "object") return event;
+		const annotationId = compactActionText((event as any).annotationId);
+		if (!annotationId || compactActionText((event as any).matchedText)) return event;
+		const action = collectSessionPageActions(session).find(
+			(candidate) => compactActionText(candidate?.annotationId) === annotationId,
+		);
+		if (!action) return event;
+		const matchedText = compactActionText(action.citationText || action.detail);
+		if (!matchedText) return event;
+		return {
+			...event,
+			matchedText,
+			...((event as any).artifactId || !action.artifactId ? {} : { artifactId: action.artifactId }),
+			...((event as any).url || !action.url ? {} : { url: action.url }),
+			...((event as any).tabTitle || !action.title ? {} : { tabTitle: action.title }),
+		} as LearningEvent;
+	}
+
 	async function recordLearningEventForSession(session: RuntimeSession, event: LearningEvent, mode: LearnerMode) {
 		const store = await loadStore();
 		const storedSession = (store.sessions[session.id] as RuntimeSession) || session;
-		storedSession.learnerState = applyLearningEvent(setLearnerStateMode(storedSession.learnerState, mode), event, { mode });
+		const enrichedEvent = enrichLearningEventSource(storedSession, event);
+		storedSession.learnerState = applyLearningEvent(setLearnerStateMode(storedSession.learnerState, mode), enrichedEvent, { mode });
 		storedSession.updatedAt = nowIso();
 		store.sessions[storedSession.id] = storedSession;
 		if (store.currentSessionId === storedSession.id) {
@@ -7243,5 +7287,66 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			}
 			return action;
 		},
+
+			// Jump to the source behind a tracked learner concept. Unlike
+			// activateAction this works from a learner source alone (no page
+			// action), so it self-heals across sessions: when the original
+			// highlight element is gone, it re-finds the passage by its stored
+			// text (rendering the page it lives on), then falls back to
+			// restoring the saved artifact.
+			async jumpToLearnerSource(params: any = {}) {
+				const annotationId = compactActionText(params?.annotationId);
+				const matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
+				const artifactId = compactActionText(params?.artifactId);
+				const target = params?.target === "note" ? "note" : "annotation";
+				const url = compactActionText(params?.url);
+				const title = compactActionText(params?.tabTitle || params?.title);
+				if (!annotationId && !matchedText && !artifactId) {
+					throw new Error("Source not found on this page.");
+				}
+				const state = await host.snapshotState();
+				const tabs = flattenTabs(state);
+				const tab = findActionTab(tabs, { url, title } as PageAction);
+				const tabId = typeof tab?.id === "number" ? tab.id : undefined;
+
+				// 1) The highlight is still on the page.
+				if (annotationId && typeof tabId === "number") {
+					try {
+						const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId, target });
+						return { ok: true, mode: "existing", annotation: scrolled?.annotation || scrolled };
+					} catch {}
+				}
+
+				// 2) Re-find the passage by its verbatim text. The highlight
+				// command scans the whole PDF and renders the page the text is
+				// on, so this works even when that page was never rendered.
+				if (matchedText && typeof tabId === "number") {
+					try {
+						const highlighted = await highlightExactReplaySource(tabId, matchedText, { scrollIntoView: true });
+						if (highlighted?.annotation) return { ok: true, mode: "text", annotation: highlighted.annotation };
+					} catch {}
+				}
+
+				// 3) Rebuild the highlight from the saved page artifact.
+				if (artifactId) {
+					const restored = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: false });
+					const restoredTabId = typeof restored?.tab?.id === "number" ? restored.tab.id : tabId;
+					const targetMatch = (restored?.restoredTargets || []).find(
+						(entry: any) =>
+							(annotationId && compactActionText(entry?.annotationId) === annotationId) ||
+							(matchedText && stripReplayCitationMarkers(compactActionText(entry?.matchedText)) === matchedText),
+					);
+					const restoredAnnotationId = compactActionText(targetMatch?.restoredAnnotation?.annotationId);
+					if (typeof restoredTabId === "number" && restoredAnnotationId) {
+						const scrolled = await host.runCommand("scroll_to_annotation", { tabId: restoredTabId, annotationId: restoredAnnotationId, target });
+						return { ok: true, mode: "artifact", annotation: scrolled?.annotation || scrolled };
+					}
+					if (typeof restoredTabId === "number" && (restored?.restoredAnnotations || 0) > 0) {
+						return { ok: true, mode: "artifact" };
+					}
+				}
+
+				throw new Error("Source not found on this page.");
+			},
 	};
 }

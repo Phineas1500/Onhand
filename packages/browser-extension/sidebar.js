@@ -4246,15 +4246,23 @@
 		return ranked[0].action;
 	}
 
-	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "") {
+	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "", source = null) {
 		const id = String(annotationId || "").trim();
 		const key = String(actionKey || "").trim();
-		if (!id && !key) return "";
+		const matchedText = String(source?.matchedText || "").trim();
+		const artifactId = String(source?.artifactId || "").trim();
+		// The button can self-heal a stale highlight if it has the text or
+		// artifact to re-find with, even without an id or current-page action.
+		if (!id && !key && !matchedText && !artifactId) return "";
 		return `
 			<button
 				class="onhand-learner-source"
 				data-learner-annotation-id="${escapeAttribute(id)}"
 				${key ? `data-action-key="${escapeAttribute(key)}"` : ""}
+				${matchedText ? `data-source-text="${escapeAttribute(matchedText)}"` : ""}
+				${artifactId ? `data-source-artifact-id="${escapeAttribute(artifactId)}"` : ""}
+				${source?.url ? `data-source-url="${escapeAttribute(String(source.url))}"` : ""}
+				${source?.tabTitle ? `data-source-title="${escapeAttribute(String(source.tabTitle))}"` : ""}
 				data-target="${escapeAttribute(target)}"
 				type="button"
 				title="Jump to source"
@@ -4279,7 +4287,7 @@
 					<span class="onhand-learner-title">${escapeHtml(label)}</span>
 					${sourceLabel ? `<span class="onhand-learner-detail">${escapeHtml(sourceLabel)}</span>` : ""}
 				</span>
-				${renderLearnerSourceButton(source?.annotationId, "annotation", action?.key)}
+				${renderLearnerSourceButton(source?.annotationId, "annotation", action?.key, source)}
 			</div>
 		`;
 	}
@@ -4297,7 +4305,7 @@
 					<span class="onhand-learner-title">${escapeHtml(promptText)}</span>
 					<span class="onhand-learner-detail">${escapeHtml(kind)} · ${escapeHtml(conceptLabel)}</span>
 				</span>
-				${renderLearnerSourceButton(check?.annotationId, "note", action?.key)}
+				${renderLearnerSourceButton(check?.annotationId, "note", action?.key, source)}
 			</div>
 		`;
 	}
@@ -5714,10 +5722,24 @@
 		renderState(currentState || {});
 	}
 
-	async function jumpToLearnerSource(annotationId, target = "annotation", preferredActionKey = "") {
+	async function resolveLearnerSourceViaRuntime(id, target, source) {
+		const response = await chrome.runtime.sendMessage({
+			type: "sidebar:jump-learner-source",
+			annotationId: id,
+			target,
+			matchedText: String(source?.matchedText || ""),
+			artifactId: String(source?.artifactId || ""),
+			url: String(source?.url || ""),
+			tabTitle: String(source?.tabTitle || ""),
+		});
+		if (!response?.ok) throw new Error(response?.error || "Source not found on this page");
+	}
+
+	async function jumpToLearnerSource(annotationId, target = "annotation", preferredActionKey = "", source = null) {
 		const id = String(annotationId || "").trim();
 		const actionKey = String(preferredActionKey || "").trim();
-		if (!id && !actionKey) return;
+		const canSelfHeal = Boolean(source?.matchedText || source?.artifactId);
+		if (!id && !actionKey && !canSelfHeal) return;
 		const sequence = ++learnerSourceFeedbackSequence;
 		setLearnerSourceFeedback({
 			annotationId: id,
@@ -5726,11 +5748,28 @@
 		});
 		try {
 			if (actionKey) {
-				await activateAction(actionKey);
+				try {
+					await activateAction(actionKey);
+				} catch (error) {
+					// The saved page action is gone or its highlight no longer
+					// matches; re-find the passage by text/artifact instead.
+					if (!canSelfHeal) throw error;
+					await resolveLearnerSourceViaRuntime(id, target, source);
+				}
 			} else {
 				const action = findActionForAnnotation(id, target);
 				if (action?.key) {
-					await activateAction(action.key);
+					try {
+						await activateAction(action.key);
+					} catch (error) {
+						if (!canSelfHeal) throw error;
+						await resolveLearnerSourceViaRuntime(id, target, source);
+					}
+				} else if (canSelfHeal) {
+					// No current-session action (e.g. concept tracked in an
+					// earlier session): let the runtime re-find by text/artifact,
+					// rendering the PDF page the passage lives on.
+					await resolveLearnerSourceViaRuntime(id, target, source);
 				} else {
 					await scrollToAnnotation(id, null, target);
 				}
@@ -9871,7 +9910,12 @@
 		}
 		const button = target?.closest("[data-learner-annotation-id]");
 		if (!(button instanceof HTMLElement)) return;
-		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation", button.dataset.actionKey || "");
+		void jumpToLearnerSource(button.dataset.learnerAnnotationId || "", button.dataset.target === "note" ? "note" : "annotation", button.dataset.actionKey || "", {
+			matchedText: button.dataset.sourceText || "",
+			artifactId: button.dataset.sourceArtifactId || "",
+			url: button.dataset.sourceUrl || "",
+			tabTitle: button.dataset.sourceTitle || "",
+		});
 	});
 
 	function submitComposerInput() {

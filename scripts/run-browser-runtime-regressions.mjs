@@ -1234,6 +1234,49 @@ async function assertLearnerStateUpdates() {
 	assert.equal(savedSession.learnerState.conceptsIntroduced[0].label, "Monte Carlo");
 }
 
+async function assertLearnerSourceSelfHealsByText() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	// The original highlight element is gone (e.g. concept tracked in an
+	// earlier session, or a not-yet-rendered page of a large PDF), so
+	// scroll_to_annotation fails. The jump must re-find the passage by its
+	// stored text instead of giving up with "Source not found".
+	const host = createReplayHost({ rejectScrollToAnnotation: () => true });
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	assert.equal(typeof runtime.jumpToLearnerSource, "function", "runtime should expose a self-healing learner-source jump");
+	const jumped = await runtime.jumpToLearnerSource({
+		annotationId: "ann-gone",
+		matchedText: "Alpha smoke content",
+		url: replaySmokeTab().url,
+		tabTitle: replaySmokeTab().title,
+	});
+	assert.equal(jumped.ok, true, "self-healing jump should succeed by re-finding the text");
+	assert.equal(jumped.mode, "text", "jump should re-find via text when the annotation element is gone");
+	assert.ok(
+		host.calls.some((call) => call.name === "highlight_text" && String(call.args.text || "").includes("Alpha smoke content")),
+		"jump should re-highlight the stored source text",
+	);
+	// With nothing to re-find by, it still reports a clean miss.
+	await assert.rejects(
+		runtime.jumpToLearnerSource({ annotationId: "ann-gone", url: replaySmokeTab().url }),
+		/Source not found on this page/,
+		"a jump with no text or artifact should surface a clean not-found error",
+	);
+}
+
+async function assertLearnerSourceWiring() {
+	const { readFile } = await import("node:fs/promises");
+	const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(runtimeSource, /function enrichLearningEventSource/, "runtime should enrich learner events with the highlight's verbatim text");
+	assert.match(runtimeSource, /matchedText = compactLearnerText\(rawSource\?\.matchedText \|\| rawSource\?\.citationText/, "learner source should persist matchedText");
+	const sidebarSource = await readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
+	assert.match(sidebarSource, /sidebar:jump-learner-source/, "sidebar should route source jumps through the self-healing resolver");
+	assert.match(sidebarSource, /data-source-text=/, "sidebar source button should carry the passage text for re-finding");
+	const backgroundSource = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.match(backgroundSource, /sidebar:jump-learner-source/, "background should handle the learner-source jump message");
+}
+
 async function assertLearningModeToolLoopPersistsAgentEvents() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -4666,6 +4709,8 @@ async function main() {
 	await assertFallbackOpenCheckRecording();
 	await assertPdfCitationFormatting();
 	await assertSpacedReviewScheduling();
+	await assertLearnerSourceSelfHealsByText();
+	await assertLearnerSourceWiring();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertReplayHighlightCandidateGeneration();

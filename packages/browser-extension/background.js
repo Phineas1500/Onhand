@@ -9526,6 +9526,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:jump-learner-source") {
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.jumpToLearnerSource({
+				annotationId: typeof message.annotationId === "string" ? message.annotationId : "",
+				matchedText: typeof message.matchedText === "string" ? message.matchedText : "",
+				artifactId: typeof message.artifactId === "string" ? message.artifactId : "",
+				url: typeof message.url === "string" ? message.url : "",
+				tabTitle: typeof message.tabTitle === "string" ? message.tabTitle : "",
+				target: message.target === "note" ? "note" : "annotation",
+			});
+			sendResponse({ ok: true, result });
+			return;
+		}
+
 		if (message?.type === "sidebar:scroll-to-annotation") {
 			const annotationId = typeof message.annotationId === "string" ? message.annotationId.trim() : "";
 			if (!annotationId) {
