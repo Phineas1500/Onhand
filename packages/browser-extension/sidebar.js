@@ -1801,6 +1801,45 @@
 				gap: 9px;
 				flex-wrap: wrap;
 			}
+			.onhand-auth-choices {
+				display: flex;
+				flex-direction: column;
+				gap: 7px;
+				margin-bottom: 8px;
+			}
+			.onhand-auth-choice {
+				display: flex;
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 3px;
+				text-align: left;
+				border: 1px solid var(--rm-surface-2);
+				border-radius: 3px;
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				padding: 9px 11px;
+				cursor: pointer;
+			}
+			.onhand-auth-choice:hover {
+				background: var(--rm-surface-0);
+			}
+			.onhand-auth-choice:disabled {
+				opacity: 0.62;
+				cursor: wait;
+			}
+			.onhand-auth-choice:first-child {
+				border-color: color-mix(in srgb, var(--rm-pine) 55%, var(--rm-surface-2));
+			}
+			.onhand-auth-choice:first-child .onhand-auth-choice-title {
+				color: var(--rm-pine);
+			}
+			.onhand-auth-choice-title {
+				font: 700 12px/1.3 var(--rm-font-mono);
+			}
+			.onhand-auth-choice-copy {
+				color: var(--rm-subtext);
+				font: 11.5px/1.4 var(--rm-font-serif);
+			}
 			.onhand-auth-button {
 				border: 0;
 				border-radius: 3px;
@@ -3498,7 +3537,9 @@
 
 	function hasUsableOnhandAuth(state) {
 		const preferences = state?.preferences || {};
-		return Boolean(preferences.hasAiApiKey || preferences.hasOAuthCredentials);
+		// hasSelectedProviderApiKey covers keyless providers (Onhand Free)
+		// and saved keys for the selected provider.
+		return Boolean(preferences.hasAiApiKey || preferences.hasOAuthCredentials || preferences.hasSelectedProviderApiKey);
 	}
 
 	function renderAuthPanel(state) {
@@ -3512,13 +3553,39 @@
 		}
 		const statusClass = authStatusKind ? ` ${escapeAttribute(authStatusKind)}` : "";
 		authPanelEl.innerHTML = `
-			<div class="onhand-auth-title">Sign in to Onhand</div>
-			<p class="onhand-auth-copy">Use OpenAI Codex sign-in from here instead of opening options.</p>
-			<div class="onhand-auth-actions">
-				<button id="authSignInButton" class="onhand-auth-button" type="button" ${authSigningIn ? "disabled" : ""}>${authSigningIn ? "Signing in..." : "Sign in with OpenAI"}</button>
-				${authStatusText ? `<span class="onhand-auth-status${statusClass}">${escapeHtml(authStatusText)}</span>` : ""}
+			<div class="onhand-auth-title">Get started</div>
+			<p class="onhand-auth-copy">Pick how Onhand should run. You can change this anytime in options.</p>
+			<div class="onhand-auth-choices">
+				<button id="authFreeTierButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
+					<span class="onhand-auth-choice-title">Try Onhand free</span>
+					<span class="onhand-auth-choice-copy">No account or key needed. Capped daily usage.</span>
+				</button>
+				<button id="authSignInButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
+					<span class="onhand-auth-choice-title">${authSigningIn ? "Signing in..." : "Sign in with ChatGPT"}</span>
+					<span class="onhand-auth-choice-copy">Best quality with your ChatGPT Plus/Pro plan via Codex.</span>
+				</button>
+				<button id="authOwnKeyButton" class="onhand-auth-choice" type="button">
+					<span class="onhand-auth-choice-title">Use your own API key</span>
+					<span class="onhand-auth-choice-copy">OpenAI, Anthropic, Gemini, or OpenRouter — opens options.</span>
+				</button>
 			</div>
+			${authStatusText ? `<div class="onhand-auth-actions"><span class="onhand-auth-status${statusClass}">${escapeHtml(authStatusText)}</span></div>` : ""}
 		`;
+	}
+
+	async function chooseFreeTierFromSidebar() {
+		authStatusText = "Setting up Onhand Free...";
+		authStatusKind = "";
+		renderAuthPanel(currentState || {});
+		const response = await chrome.runtime.sendMessage({
+			type: "browser-runtime:update-settings",
+			authMode: "api-key",
+			aiProvider: "onhand-free",
+			aiModel: "deepseek/deepseek-v4-flash",
+		});
+		if (!response?.ok) throw new Error(response?.error || "Could not enable the free tier.");
+		authStatusText = "";
+		await requestState();
 	}
 
 	function renderAttachmentDrafts() {
@@ -9759,6 +9826,18 @@
 
 	authPanelEl.addEventListener("click", (event) => {
 		const target = event.target instanceof Element ? event.target : null;
+		if (target?.closest("#authFreeTierButton")) {
+			void chooseFreeTierFromSidebar().catch((error) => {
+				authStatusText = error?.message || String(error);
+				authStatusKind = "error";
+				renderAuthPanel(currentState || {});
+			});
+			return;
+		}
+		if (target?.closest("#authOwnKeyButton")) {
+			void chrome.runtime.openOptionsPage();
+			return;
+		}
 		if (!target?.closest("#authSignInButton")) return;
 		void signInWithOpenAICodexFromSidebar();
 	});
