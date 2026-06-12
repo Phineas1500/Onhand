@@ -7296,11 +7296,29 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			// restoring the saved artifact.
 			async jumpToLearnerSource(params: any = {}) {
 				const annotationId = compactActionText(params?.annotationId);
-				const matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
-				const artifactId = compactActionText(params?.artifactId);
+				let matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
+				let artifactId = compactActionText(params?.artifactId);
 				const target = params?.target === "note" ? "note" : "annotation";
-				const url = compactActionText(params?.url);
-				const title = compactActionText(params?.tabTitle || params?.title);
+				let url = compactActionText(params?.url);
+				let title = compactActionText(params?.tabTitle || params?.title);
+				// Concepts tracked before sources stored their text carry only a
+				// (now stale) annotation id. The original highlight action still
+				// lives in whichever session created it, so recover the verbatim
+				// text from there to make those old sources jumpable too.
+				if (!matchedText && annotationId) {
+					const store = await loadStore();
+					for (const session of Object.values(store.sessions) as RuntimeSession[]) {
+						const action = collectSessionPageActions(session).find(
+							(candidate) => compactActionText(candidate?.annotationId) === annotationId,
+						);
+						if (!action) continue;
+						matchedText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail));
+						if (!artifactId && action.artifactId) artifactId = compactActionText(action.artifactId);
+						if (!url && action.url) url = compactActionText(action.url);
+						if (!title && action.title) title = compactActionText(action.title);
+						if (matchedText) break;
+					}
+				}
 				if (!annotationId && !matchedText && !artifactId) {
 					throw new Error("Source not found on this page.");
 				}

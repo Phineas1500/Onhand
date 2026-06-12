@@ -131353,11 +131353,25 @@ function createOnhandBrowserRuntime(host) {
     // restoring the saved artifact.
     async jumpToLearnerSource(params = {}) {
       const annotationId = compactActionText(params?.annotationId);
-      const matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
-      const artifactId = compactActionText(params?.artifactId);
+      let matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
+      let artifactId = compactActionText(params?.artifactId);
       const target = params?.target === "note" ? "note" : "annotation";
-      const url2 = compactActionText(params?.url);
-      const title = compactActionText(params?.tabTitle || params?.title);
+      let url2 = compactActionText(params?.url);
+      let title = compactActionText(params?.tabTitle || params?.title);
+      if (!matchedText && annotationId) {
+        const store = await loadStore();
+        for (const session of Object.values(store.sessions)) {
+          const action = collectSessionPageActions(session).find(
+            (candidate) => compactActionText(candidate?.annotationId) === annotationId
+          );
+          if (!action) continue;
+          matchedText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail));
+          if (!artifactId && action.artifactId) artifactId = compactActionText(action.artifactId);
+          if (!url2 && action.url) url2 = compactActionText(action.url);
+          if (!title && action.title) title = compactActionText(action.title);
+          if (matchedText) break;
+        }
+      }
       if (!annotationId && !matchedText && !artifactId) {
         throw new Error("Source not found on this page.");
       }

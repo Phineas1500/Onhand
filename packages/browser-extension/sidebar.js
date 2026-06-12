@@ -5738,7 +5738,10 @@
 	async function jumpToLearnerSource(annotationId, target = "annotation", preferredActionKey = "", source = null) {
 		const id = String(annotationId || "").trim();
 		const actionKey = String(preferredActionKey || "").trim();
-		const canSelfHeal = Boolean(source?.matchedText || source?.artifactId);
+		// The runtime resolver can recover the passage text from the session
+		// that created the highlight, so it is worth trying for any source that
+		// carries an annotation id, not only ones with stored text/artifact.
+		const canSelfHeal = Boolean(source?.matchedText || source?.artifactId || id);
 		if (!id && !actionKey && !canSelfHeal) return;
 		const sequence = ++learnerSourceFeedbackSequence;
 		setLearnerSourceFeedback({

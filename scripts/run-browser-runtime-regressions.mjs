@@ -1265,6 +1265,46 @@ async function assertLearnerSourceSelfHealsByText() {
 	);
 }
 
+async function assertLearnerSourceRecoversTextAcrossSessions() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	// A concept tracked before sources stored their text: its source has only
+	// a now-stale annotation id, but the highlight page action that created it
+	// still lives in an earlier session with the verbatim text intact.
+	globalThis.chrome.storage.local.data.onhandBrowserSessions = {
+		old_session: {
+			id: "old_session",
+			name: "old",
+			createdAt: "2026-06-01T00:00:00.000Z",
+			updatedAt: "2026-06-01T00:00:00.000Z",
+			messages: [],
+			turns: [],
+			pageActions: [
+				{
+					key: "highlight:ann-rnd",
+					type: "annotation",
+					label: "Highlighted text",
+					annotationId: "ann-rnd",
+					citationText: "Alpha smoke content",
+					url: replaySmokeTab().url,
+					title: replaySmokeTab().title,
+				},
+			],
+			artifactIds: [],
+			learnerState: null,
+		},
+	};
+	const host = createReplayHost({ rejectScrollToAnnotation: () => true });
+	const runtime = createOnhandBrowserRuntime(host);
+	const jumped = await runtime.jumpToLearnerSource({ annotationId: "ann-rnd", target: "annotation" });
+	assert.equal(jumped.ok, true, "jump should recover the passage text from the originating session");
+	assert.equal(jumped.mode, "text", "recovered jump should re-find by text");
+	assert.ok(
+		host.calls.some((call) => call.name === "highlight_text" && String(call.args.text || "").includes("Alpha smoke content")),
+		"recovery should re-highlight the originating session's stored text",
+	);
+}
+
 async function assertLearnerSourceWiring() {
 	const { readFile } = await import("node:fs/promises");
 	const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
@@ -4710,6 +4750,7 @@ async function main() {
 	await assertPdfCitationFormatting();
 	await assertSpacedReviewScheduling();
 	await assertLearnerSourceSelfHealsByText();
+	await assertLearnerSourceRecoversTextAcrossSessions();
 	await assertLearnerSourceWiring();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();

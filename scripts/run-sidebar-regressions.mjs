@@ -597,6 +597,12 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					}
 					return { ok: true, result: { annotation: { annotationId: message.annotationId } } };
 				}
+				if (message?.type === "sidebar:jump-learner-source") {
+					if (typeof options.jumpLearnerSourceResponse === "function") {
+						return options.jumpLearnerSourceResponse(message);
+					}
+					return { ok: true, result: { mode: "text", annotation: { annotationId: message.annotationId } } };
+				}
 				return { ok: true };
 			},
 		},
@@ -1797,6 +1803,11 @@ async function assertLearningSessionPanelReportsSourceFailure() {
 				error: `No annotation found with key: ${message.key}`,
 			};
 		},
+		// The passage is genuinely gone (no recoverable text), so the
+		// self-heal resolver also fails and the panel must report it.
+		jumpLearnerSourceResponse() {
+			return { ok: false, error: "Source not found on this page." };
+		},
 	});
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
@@ -1809,10 +1820,49 @@ async function assertLearningSessionPanelReportsSourceFailure() {
 		runtimeMessages.some((message) => message?.type === "sidebar:activate-action" && message.key === "highlight:second"),
 		true,
 	);
+	// When activate-action fails, the panel should fall back to the
+	// self-healing resolver before reporting a miss.
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:jump-learner-source"),
+		true,
+		"a failed activate-action should fall back to the self-healing resolver",
+	);
 	const feedback = learnerPanel.querySelector(".onhand-learner-feedback");
 	assert.ok(feedback, "expected learner source feedback");
 	assert.match(feedback.textContent, /Source not found on this page/);
 	assert.equal(feedback.classList.contains("error"), true);
+
+	dom.window.close();
+}
+
+async function assertLearningSessionPanelSelfHealsSourceJump() {
+	const runtimeMessages = [];
+	// activate-action fails (the saved page action is stale), but the resolver
+	// recovers the passage, so the panel should report success, not a miss.
+	const dom = await renderSidebar(createLearningState(), runtimeMessages, {
+		activateActionResponse(message) {
+			return { ok: false, error: `No annotation found with key: ${message.key}` };
+		},
+		jumpLearnerSourceResponse(message) {
+			return { ok: true, result: { mode: "text", annotation: { annotationId: message.annotationId } } };
+		},
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const learnerPanel = host.shadowRoot.getElementById("learnerPanel");
+	const sourceButton = learnerPanel.querySelector('[data-learner-annotation-id="ann-second"]');
+	assert.ok(sourceButton, "expected concept source button");
+	sourceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:jump-learner-source"),
+		true,
+		"the panel should try the self-healing resolver",
+	);
+	const feedback = learnerPanel.querySelector(".onhand-learner-feedback");
+	assert.ok(feedback, "expected learner source feedback");
+	assert.match(feedback.textContent, /Jumped to source/);
+	assert.equal(feedback.classList.contains("error"), false);
 
 	dom.window.close();
 }
@@ -4274,6 +4324,7 @@ await assertLearningSessionPanelPrefersPairedNoteSourceOverGenericHeading();
 await assertLearningSessionPanelPrefersPairedNoteSourceOverExactBroadSource();
 await assertLearningSessionPanelShowsAllConceptsAndCanCollapse();
 await assertLearningSessionPanelReportsSourceFailure();
+await assertLearningSessionPanelSelfHealsSourceJump();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeVoiceDisabledState();
