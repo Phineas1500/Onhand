@@ -325,6 +325,9 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					};
 				}
 				if (message?.type === "sidebar:restore-session") {
+					if (typeof options.restoreSessionResponse === "function") {
+						return options.restoreSessionResponse(message);
+					}
 					return {
 						ok: true,
 						restoredPages: [],
@@ -1071,6 +1074,50 @@ async function assertReviewViewRendersSavedSnapshot() {
 	assert.equal(replayView.querySelector(".onhand-replay-body").hidden, true, "expected toggle to collapse review body");
 	assert.equal(host.shadowRoot.getElementById("messages").hidden, false);
 
+	dom.window.close();
+}
+
+async function restoreAndReadResult(restoredPages) {
+	const dom = await renderSidebar(createState(), [], {
+		restoreSessionResponse: () => ({ ok: true, restoredCount: restoredPages.length, restoredPages }),
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const replayView = host.shadowRoot.getElementById("replayView");
+	replayView.querySelector("[data-replay-toggle]").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
+	const restoreButton = replayView.querySelector("[data-replay-restore]");
+	assert.ok(restoreButton, "expected review restore button");
+	restoreButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	const restoreResult = host.shadowRoot.getElementById("restoreResult");
+	return { dom, restoreResult };
+}
+
+async function assertRestoreResultMergesPagesAndStaysQuietOnSuccess() {
+	// The artifact pass and the replay pass for one page arrive as two entries
+	// with the same url; the result must report one page, not two, and never
+	// expose the internal "artifact"/"replay" labels.
+	const samePageUrl = "https://www-cdn.example.test/doc.pdf";
+	const { dom, restoreResult } = await restoreAndReadResult([
+		{ source: "browser-artifact", title: "doc.pdf - Onhand PDF Viewer", url: samePageUrl, restoredAnnotations: 3, restoredNotes: 2, failedCount: 0, failures: [] },
+		{ source: "browser-replay", title: samePageUrl, url: samePageUrl, restoredAnnotations: 7, restoredNotes: 2, failedCount: 0, failures: [] },
+	]);
+	assert.ok(restoreResult, "expected restore result element");
+	assert.match(restoreResult.textContent, /1 page \/ 10 highlights \/ 4 notes/, "duplicate artifact/replay entries should merge into one page with summed counts");
+	assert.doesNotMatch(restoreResult.textContent, /\bartifact\b|\breplay\b/i, "internal restore mechanism labels should not be shown");
+	assert.equal(restoreResult.querySelectorAll(".onhand-restore-page").length, 0, "a clean restore should show only the summary, not a per-page breakdown");
+	dom.window.close();
+}
+
+async function assertRestoreResultShowsDetailOnFailure() {
+	const samePageUrl = "https://www-cdn.example.test/doc.pdf";
+	const { dom, restoreResult } = await restoreAndReadResult([
+		{ source: "browser-artifact", title: "doc.pdf", url: samePageUrl, restoredAnnotations: 3, restoredNotes: 2, failedCount: 1, failures: ["Could not reach the saved page"] },
+		{ source: "browser-replay", title: samePageUrl, url: samePageUrl, restoredAnnotations: 7, restoredNotes: 2, failedCount: 0, failures: [] },
+	]);
+	assert.match(restoreResult.textContent, /1 page \/ 10 highlights \/ 4 notes \/ 1 failure/, "a failure should be summarized on the merged page");
+	assert.equal(restoreResult.querySelectorAll(".onhand-restore-page").length, 1, "a failed restore should show the per-page detail");
+	assert.match(restoreResult.textContent, /Could not reach the saved page/, "the failure detail should be visible");
 	dom.window.close();
 }
 
@@ -4313,6 +4360,8 @@ await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertReviewViewRendersSavedSnapshot();
+await assertRestoreResultMergesPagesAndStaysQuietOnSuccess();
+await assertRestoreResultShowsDetailOnFailure();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertPageIndexDoesNotShowStalePageActions();

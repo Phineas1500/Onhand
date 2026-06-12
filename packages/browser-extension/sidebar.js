@@ -4592,31 +4592,67 @@
 		}
 	}
 
+	function mergeRestoredPages(rawPages) {
+		// The artifact pass and the replay pass restore one page through two
+		// internal mechanisms; merge them so a single page is reported once,
+		// not twice with confusing "artifact"/"replay" labels.
+		const merged = new Map();
+		for (const page of Array.isArray(rawPages) ? rawPages : []) {
+			if (!page || typeof page !== "object") continue;
+			const url = String(page.url || "").trim().split("#")[0];
+			const title = String(page.title || "").trim();
+			const key = url || title.toLowerCase() || String(page.artifactId || "") || `page-${merged.size}`;
+			const existing = merged.get(key);
+			if (existing) {
+				existing.restoredAnnotations += Number(page.restoredAnnotations || 0);
+				existing.restoredNotes += Number(page.restoredNotes || 0);
+				existing.failures.push(...(Array.isArray(page.failures) ? page.failures : []));
+				if (!existing.title && title) existing.title = title;
+				if (!existing.url && url) existing.url = url;
+			} else {
+				merged.set(key, {
+					title,
+					url,
+					artifactId: String(page.artifactId || ""),
+					restoredAnnotations: Number(page.restoredAnnotations || 0),
+					restoredNotes: Number(page.restoredNotes || 0),
+					failures: [...(Array.isArray(page.failures) ? page.failures : [])],
+				});
+			}
+		}
+		return [...merged.values()];
+	}
+
 	function buildRestoreResultMarkup() {
 		if (!lastRestoreResult) return "";
-		const pages = Array.isArray(lastRestoreResult.restoredPages) ? lastRestoreResult.restoredPages : [];
-		const restoredAnnotations = pages.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
-		const restoredNotes = pages.reduce((total, page) => total + Number(page?.restoredNotes || 0), 0);
-		const failedCount = pages.reduce((total, page) => total + Number(page?.failedCount || 0), 0);
+		const pages = mergeRestoredPages(lastRestoreResult.restoredPages);
+		const restoredAnnotations = pages.reduce((total, page) => total + Number(page.restoredAnnotations || 0), 0);
+		const restoredNotes = pages.reduce((total, page) => total + Number(page.restoredNotes || 0), 0);
+		const failedCount = pages.reduce((total, page) => total + page.failures.length, 0);
 		const summary = pages.length
 			? [pluralize(pages.length, "page"), pluralize(restoredAnnotations, "highlight"), pluralize(restoredNotes, "note"), failedCount ? pluralize(failedCount, "failure") : ""]
 					.filter(Boolean)
 					.join(" / ")
 			: "No pages restored";
+		// Quiet on success: a clean restore needs only the summary line. Break
+		// it down per page only when something failed or nothing came back —
+		// exactly when the detail (and the error text) is worth showing.
+		const showDetails = failedCount > 0 || pages.length === 0;
 		return `
 			<div class="onhand-restore-result">
 				<div class="onhand-restore-head">
 					<span class="onhand-label">Restore result</span>
 					<span class="onhand-count">${escapeHtml(summary)}</span>
 				</div>
-				<div class="onhand-restore-pages">
+				${
+					showDetails
+						? `<div class="onhand-restore-pages">
 					${
 						pages.length
 							? pages
 									.map((page) => {
-										const title = page?.title || page?.url || page?.artifactId || "Saved page";
-										const source = page?.source === "browser-replay" ? "replay" : "artifact";
-										const failures = Array.isArray(page?.failures) ? page.failures : [];
+										const title = page.title || page.url || page.artifactId || "Saved page";
+										const failures = page.failures;
 										const failureMarkup = failures.length
 											? failures
 													.slice(0, 3)
@@ -4629,7 +4665,7 @@
 										return `
 											<div class="onhand-restore-page">
 												<span class="onhand-restore-title">${escapeHtml(title)}</span>
-												<span class="onhand-restore-meta">${escapeHtml(source)} / ${escapeHtml(pluralize(Number(page?.restoredAnnotations || 0), "highlight"))} / ${escapeHtml(pluralize(Number(page?.restoredNotes || 0), "note"))}</span>
+												<span class="onhand-restore-meta">${escapeHtml(pluralize(Number(page.restoredAnnotations || 0), "highlight"))} / ${escapeHtml(pluralize(Number(page.restoredNotes || 0), "note"))}</span>
 												${failureMarkup}
 											</div>
 										`;
@@ -4637,7 +4673,9 @@
 									.join("")
 							: '<div class="onhand-restore-page"><span class="onhand-restore-title">Nothing restored</span><span class="onhand-restore-meta">No saved artifacts or replayable highlights were found.</span></div>'
 					}
-				</div>
+				</div>`
+						: ""
+				}
 			</div>
 		`;
 	}
