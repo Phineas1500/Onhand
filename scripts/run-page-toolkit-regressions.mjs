@@ -131,6 +131,12 @@ async function assertPdfViewerHandoffHelpers() {
 		/if \(!isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)\)/,
 		"Open PDF should not redirect an existing Onhand PDF viewer-like tab back to its raw PDF source",
 	);
+	// Every PDF tab has the browser's native PDF-viewer frame (a different
+	// extension). allFrames injection aborts wholesale on it, so frame
+	// execution must fall back to the frames Onhand can actually script.
+	assert.match(backgroundSource, /function executeScriptInFramesWithFallback/, "frame execution should fall back when a foreign-extension frame blocks allFrames injection");
+	assert.match(backgroundSource, /function isInjectableFrameUrl/, "frame fallback should skip frames Onhand cannot script");
+	assert.match(backgroundSource, /isRestrictedScriptingError\(error\)/, "frame fallback should only engage on a restricted-scripting error");
 	assert.match(backgroundSource, /function inferInitialPdfViewerPageNumber/, "PDF handoff should infer the current page before opening Onhand's viewer");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromNativeChromePdfViewerFrame/, "PDF handoff should read Chrome's native PDF viewer frame for the current page");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromDebuggerDefaultContext/, "PDF handoff should fall back to the debugger default context for native PDF pages");

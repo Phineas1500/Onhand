@@ -6633,24 +6633,57 @@ async function executeScriptInFrame(tabId, frameId, func, args = []) {
 	return results[0].result;
 }
 
+function isInjectableFrameUrl(value) {
+	try {
+		const parsed = new URL(String(value || ""));
+		if (parsed.protocol === "http:" || parsed.protocol === "https:") return true;
+		// Own-extension frames (the Onhand PDF viewer) are injectable; other
+		// extensions' frames — notably the browser's native PDF viewer — are
+		// not, and trying to inject into them aborts the whole allFrames call.
+		if (parsed.protocol === "chrome-extension:") return parsed.origin === new URL(chrome.runtime.getURL("")).origin;
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+async function getInjectableFrameIds(tabId) {
+	const frames = await getAllFramesForTab(tabId);
+	return frames.filter((frame) => typeof frame?.frameId === "number" && isInjectableFrameUrl(frame.url)).map((frame) => frame.frameId);
+}
+
+// chrome.scripting.executeScript with allFrames:true throws "Cannot access a
+// chrome-extension:// URL of different extension" if any frame belongs to
+// another extension (the native PDF viewer on every PDF tab), aborting the
+// whole injection. Fall back to injecting per accessible frame so one foreign
+// frame cannot starve the rest.
+async function executeScriptInFramesWithFallback(tabId, world, func, args) {
+	try {
+		const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world, func, args });
+		return Array.isArray(results) ? results : [];
+	} catch (error) {
+		if (!isRestrictedScriptingError(error)) throw error;
+		const frameIds = await getInjectableFrameIds(tabId);
+		const targets = frameIds.length ? frameIds : [0];
+		const results = [];
+		for (const frameId of targets) {
+			try {
+				const frameResults = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, world, func, args });
+				if (Array.isArray(frameResults)) results.push(...frameResults);
+			} catch (frameError) {
+				if (!isRestrictedScriptingError(frameError)) throw frameError;
+			}
+		}
+		return results;
+	}
+}
+
 async function executeScriptInAllFrames(tabId, func, args = []) {
-	const results = await chrome.scripting.executeScript({
-		target: { tabId, allFrames: true },
-		world: "ISOLATED",
-		func,
-		args,
-	});
-	return Array.isArray(results) ? results : [];
+	return await executeScriptInFramesWithFallback(tabId, "ISOLATED", func, args);
 }
 
 async function executeScriptInAllFramesMainWorld(tabId, func, args = []) {
-	const results = await chrome.scripting.executeScript({
-		target: { tabId, allFrames: true },
-		world: "MAIN",
-		func,
-		args,
-	});
-	return Array.isArray(results) ? results : [];
+	return await executeScriptInFramesWithFallback(tabId, "MAIN", func, args);
 }
 
 async function evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, missingMessage) {
