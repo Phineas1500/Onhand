@@ -2926,12 +2926,63 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
 	assert.equal(restored.restoredPages[0].restoredNotes, 1);
 	assert.equal(navigateCalls.length, 1);
-	assert.equal(navigateCalls[0].args.url, viewerUrl);
+	// A viewer-url artifact now navigates to the embedded source pdf and hands
+	// off to the live viewer, so a stale or different-extension viewer id can't
+	// make the restore fail with "Cannot access a chrome-extension URL".
+	assert.equal(navigateCalls[0].args.url, pdfUrl);
 	assert.equal(waitCalls.length, 1);
 	assert.match(waitCalls[0].args.selector, /data-onhand-pdf-rendered/);
 	assert.equal(highlightCalls.length, 1);
 	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "own-pdf-viewer-restored-anchor"), true);
+}
+
+async function assertForeignViewerUrlArtifactRestoresAgainstSourceTab() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "https://www-cdn.example.test/report.pdf";
+	// An artifact saved while the PDF was open in a viewer from a *different*
+	// (or older) extension id — the exact state that produced "Cannot access a
+	// chrome-extension:// URL of different extension" on restore.
+	const staleViewerUrl = `chrome-extension://staleotherextensionid000000000000/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
+	const pdfAnchor = { surface: "pdf", viewer: "onhand-pdf-viewer", pageNumber: 3, occurrence: 1, matchedText: "frontier safeguards", textQuote: { exact: "frontier safeguards" } };
+	const sourceTab = replaySmokeTab({ id: 71, title: "report.pdf", url: pdfUrl });
+	const host = createReplayHost({ tabs: [sourceTab], highlightAnnotationId: () => "restored-foreign-anchor" });
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_stale_viewer"];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_stale_viewer: {
+				id: "artifact_stale_viewer",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "stale viewer artifact",
+				tab: { ...sourceTab, url: staleViewerUrl },
+				page: {
+					title: "report.pdf - Onhand PDF Viewer",
+					url: staleViewerUrl,
+					annotations: [{ annotationId: "ann-stale-viewer", kind: "pdf", matchedText: "frontier safeguards", pdfAnchor }],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	assert.equal(restored.restoredPages.length, 1, "the stale-viewer artifact should restore");
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1, "its annotation should be re-highlighted");
+	assert.equal(restored.restoredPages[0].failedCount || 0, 0, "restore must not fail with a chrome-extension access error");
+	assert.equal(restoreCalls.some((call) => call.name === "navigate"), false, "the open source tab should be reused, not navigated to the stale viewer url");
+	assert.ok(
+		restoreCalls.some((call) => call.name === "highlight_text" && call.args.tabId === 71),
+		"the highlight should replay against the live source tab",
+	);
 }
 
 async function assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight() {
@@ -4884,6 +4935,7 @@ async function main() {
 	await assertPdfActionActivationHandsOffBeforeSourceFallback();
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
+	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();
 	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();
 	await assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff();
 	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();

@@ -127392,6 +127392,22 @@ function isOnhandPdfViewerUrl(url2) {
     return false;
   }
 }
+function onhandPdfViewerSourceUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!isOnhandPdfViewerUrl(parsed.href)) return "";
+    const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
+    if (!source) return "";
+    const decoded = decodeURIComponent(source);
+    return /^https?:\/\//i.test(decoded) ? decoded : "";
+  } catch {
+    return "";
+  }
+}
+function artifactEffectiveUrl(artifact) {
+  const raw = String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+  return onhandPdfViewerSourceUrl(raw) || raw;
+}
 function isLikelyPdfUrlForAutoHandoff(url2) {
   try {
     const parsed = new URL(String(url2 || ""));
@@ -129807,7 +129823,7 @@ function createOnhandBrowserRuntime(host) {
     };
   }
   function findArtifactTab(tabs, artifact, params = {}) {
-    const url2 = String(artifact.page?.url || artifact.tab?.url || "").trim();
+    const url2 = artifactEffectiveUrl(artifact);
     const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
     if (typeof params.tabId === "number") {
       const explicitTab = tabs.find((tab) => tab.id === params.tabId);
@@ -129819,7 +129835,7 @@ function createOnhandBrowserRuntime(host) {
     return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function artifactRestoreTargetKey(artifact, artifactId = "") {
-    const url2 = String(artifact.page?.url || artifact.tab?.url || "").trim().split("#")[0];
+    const url2 = artifactEffectiveUrl(artifact).split("#")[0];
     if (url2) return `url:${url2}`;
     const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
     if (title) return `title:${title}`;
@@ -129884,7 +129900,7 @@ function createOnhandBrowserRuntime(host) {
     const state = await host.snapshotState();
     const tabs = flattenTabs(state);
     let tab = findArtifactTab(tabs, artifact, params);
-    const url2 = artifact.page?.url || artifact.tab?.url || "";
+    const url2 = artifactEffectiveUrl(artifact);
     if (!tab) {
       if (params.openIfNeeded === false || !url2) {
         throw new Error(`No matching tab is open for artifact ${artifact.id}.`);

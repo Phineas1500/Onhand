@@ -2909,6 +2909,30 @@ function isOnhandPdfViewerUrl(url: unknown) {
 	}
 }
 
+// The raw PDF url embedded in an Onhand viewer url. Artifacts saved while a
+// PDF was open in the viewer can carry a `chrome-extension://<id>/
+// pdf-viewer.html?url=<pdf>` page url; if that id is stale or from another
+// install, restoring against it fails with "Cannot access a chrome-extension
+// URL of different extension". Resolving back to the source pdf url lets the
+// artifact restore against the live document instead.
+function onhandPdfViewerSourceUrl(value: unknown): string {
+	try {
+		const parsed = new URL(String(value || ""));
+		if (!isOnhandPdfViewerUrl(parsed.href)) return "";
+		const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
+		if (!source) return "";
+		const decoded = decodeURIComponent(source);
+		return /^https?:\/\//i.test(decoded) ? decoded : "";
+	} catch {
+		return "";
+	}
+}
+
+function artifactEffectiveUrl(artifact: BrowserArtifact | null | undefined): string {
+	const raw = String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+	return onhandPdfViewerSourceUrl(raw) || raw;
+}
+
 function isLikelyPdfUrlForAutoHandoff(url: unknown) {
 	try {
 		const parsed = new URL(String(url || ""));
@@ -5604,7 +5628,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function findArtifactTab(tabs: any[], artifact: BrowserArtifact, params: any = {}) {
-		const url = String(artifact.page?.url || artifact.tab?.url || "").trim();
+		const url = artifactEffectiveUrl(artifact);
 		const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
 		if (typeof params.tabId === "number") {
 			const explicitTab = tabs.find((tab) => tab.id === params.tabId);
@@ -5622,7 +5646,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function artifactRestoreTargetKey(artifact: BrowserArtifact, artifactId = "") {
-		const url = String(artifact.page?.url || artifact.tab?.url || "").trim().split("#")[0];
+		const url = artifactEffectiveUrl(artifact).split("#")[0];
 		if (url) return `url:${url}`;
 		const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
 		if (title) return `title:${title}`;
@@ -5692,7 +5716,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const state = await host.snapshotState();
 		const tabs = flattenTabs(state);
 		let tab = findArtifactTab(tabs, artifact, params);
-		const url = artifact.page?.url || artifact.tab?.url || "";
+		// Resolve a stale/foreign viewer url back to the raw pdf so navigation
+		// and the inline-viewer handoff target the live document.
+		const url = artifactEffectiveUrl(artifact);
 		if (!tab) {
 			if (params.openIfNeeded === false || !url) {
 				throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
