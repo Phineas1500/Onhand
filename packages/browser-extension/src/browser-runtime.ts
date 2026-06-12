@@ -301,11 +301,22 @@ const SUPPORTED_API_PROVIDERS: Record<
 	},
 };
 
-// Hosts allowed to serve OpenRouter requests. Pinned for two reasons:
-// user pages and PDFs must not transit PRC-hosted APIs by default, and
-// tool-call fidelity varies across open-weight hosts, so only validated
-// providers are eligible. Order expresses preference; fallbacks stay on.
-const OPENROUTER_ALLOWED_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
+// Any OpenRouter model id is usable via the custom-model field; ids
+// missing from pi-ai's catalog get this synthetic shape.
+function buildOpenRouterFallbackModel(modelId: string) {
+	return {
+		id: modelId,
+		name: modelId,
+		api: "openai-completions",
+		provider: OPENROUTER_API_PROVIDER,
+		baseUrl: "https://openrouter.ai/api/v1",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 131072,
+		maxTokens: 32768,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+}
 const SMOKE_PROVIDER = "onhand-smoke";
 const SMOKE_MODEL = "onhand-smoke-1";
 const SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
@@ -1293,10 +1304,12 @@ async function getOrRegisterFreeTierToken(): Promise<string> {
 	return token;
 }
 
-async function buildFreeTierModel(modelId: string) {
+async function buildFreeTierModel() {
 	const baseUrl = await getFreeTierBaseUrl();
+	// Always the worker's allowlisted model: anything else stored in
+	// settings (e.g. from an older UI) would only bounce off the worker.
 	return {
-		id: modelId || ONHAND_FREE_MODEL,
+		id: ONHAND_FREE_MODEL,
 		name: "Onhand Free (DeepSeek V4 Flash)",
 		api: "openai-completions",
 		provider: ONHAND_FREE_PROVIDER,
@@ -4034,13 +4047,13 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 		});
 	}
 	if (model?.provider === OPENROUTER_API_PROVIDER) {
+		// BYOK requests are not pinned to specific hosts: routing is the
+		// key owner's choice (configurable in their OpenRouter account).
+		// The hosted free tier pins US providers server-side in
+		// workers/free-tier instead.
 		return streamSimple(model, context, {
 			...baseOptions,
 			...(model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}),
-			onPayload: (params: any) => ({
-				...params,
-				provider: { only: OPENROUTER_ALLOWED_PROVIDERS },
-			}),
 		});
 	}
 	return streamSimple(model, context, baseOptions);
@@ -5350,8 +5363,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			settings.aiProvider === SMOKE_PROVIDER
 				? getSmokeModel(settings.aiModel)
 				: settings.aiProvider === ONHAND_FREE_PROVIDER
-					? await buildFreeTierModel(settings.aiModel)
-					: (await host.resolveModel?.(settings.aiProvider, settings.aiModel)) || getModel(settings.aiProvider as any, settings.aiModel as any);
+					? await buildFreeTierModel()
+					: (await host.resolveModel?.(settings.aiProvider, settings.aiModel)) ||
+						getModel(settings.aiProvider as any, settings.aiModel as any) ||
+						(settings.aiProvider === OPENROUTER_API_PROVIDER && settings.aiModel ? buildOpenRouterFallbackModel(settings.aiModel) : null);
 		if (!model) {
 			throw new Error(`Unknown AI model: ${settings.aiProvider}/${settings.aiModel}`);
 		}

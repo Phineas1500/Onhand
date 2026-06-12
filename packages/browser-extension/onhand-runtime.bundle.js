@@ -124232,7 +124232,20 @@ var SUPPORTED_API_PROVIDERS = {
     keyless: true
   }
 };
-var OPENROUTER_ALLOWED_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
+function buildOpenRouterFallbackModel(modelId) {
+  return {
+    id: modelId,
+    name: modelId,
+    api: "openai-completions",
+    provider: OPENROUTER_API_PROVIDER,
+    baseUrl: "https://openrouter.ai/api/v1",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 131072,
+    maxTokens: 32768,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  };
+}
 var SMOKE_PROVIDER = "onhand-smoke";
 var SMOKE_MODEL = "onhand-smoke-1";
 var SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
@@ -125061,10 +125074,10 @@ async function getOrRegisterFreeTierToken() {
   await chrome.storage.local.set({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: token });
   return token;
 }
-async function buildFreeTierModel(modelId) {
+async function buildFreeTierModel() {
   const baseUrl = await getFreeTierBaseUrl();
   return {
-    id: modelId || ONHAND_FREE_MODEL,
+    id: ONHAND_FREE_MODEL,
     name: "Onhand Free (DeepSeek V4 Flash)",
     api: "openai-completions",
     provider: ONHAND_FREE_PROVIDER,
@@ -127432,11 +127445,7 @@ function streamOnhandFast(model, context, options = {}) {
   if (model?.provider === OPENROUTER_API_PROVIDER) {
     return streamSimple(model, context, {
       ...baseOptions,
-      ...model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {},
-      onPayload: (params) => ({
-        ...params,
-        provider: { only: OPENROUTER_ALLOWED_PROVIDERS }
-      })
+      ...model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}
     });
   }
   return streamSimple(model, context, baseOptions);
@@ -128672,7 +128681,7 @@ function createOnhandBrowserRuntime(host) {
     return prepared;
   }
   async function getConfiguredModel(settings2) {
-    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : settings2.aiProvider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel(settings2.aiModel) : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel);
+    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : settings2.aiProvider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel) || (settings2.aiProvider === OPENROUTER_API_PROVIDER && settings2.aiModel ? buildOpenRouterFallbackModel(settings2.aiModel) : null);
     if (!model) {
       throw new Error(`Unknown AI model: ${settings2.aiProvider}/${settings2.aiModel}`);
     }
