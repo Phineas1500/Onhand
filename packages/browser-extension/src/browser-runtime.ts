@@ -2962,7 +2962,11 @@ function shouldAutoOpenPdfViewerForTab(tab: any) {
 
 function isOnhandPdfViewerAccessError(error: unknown) {
 	const message = String((error as any)?.message || error || "");
-	return /Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message);
+	if (/Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message)) return true;
+	// Non-essential restore steps (scroll position) that script a PDF tab whose
+	// main frame is the browser's native viewer (a different extension) throw
+	// this. The annotations still restore, so it must not count as a failure.
+	return /Cannot access a chrome-extension:\/\/ URL of different extension/i.test(message);
 }
 
 function isRestorablePageUrl(url: unknown) {

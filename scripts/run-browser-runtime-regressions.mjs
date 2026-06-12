@@ -2937,6 +2937,51 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "own-pdf-viewer-restored-anchor"), true);
 }
 
+async function assertScrollRestoreAccessErrorDoesNotFailRestore() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "https://www-cdn.example.test/doc.pdf";
+	const pdfAnchor = { surface: "pdf", pageNumber: 1, occurrence: 1, matchedText: "alpha", textQuote: { exact: "alpha" } };
+	const sourceTab = replaySmokeTab({ id: 73, title: "doc.pdf", url: pdfUrl });
+	// Restoring the scroll position scripts the tab; on a PDF whose main frame
+	// is the browser's native viewer that throws "Cannot access a
+	// chrome-extension:// URL of different extension". The annotations still
+	// restore, so this must not be surfaced as a restore failure.
+	const host = createReplayHost({
+		tabs: [sourceTab],
+		highlightAnnotationId: () => "scroll-test-anchor",
+		rejectRunJs: "Cannot access a chrome-extension:// URL of different extension",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_scroll"];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_scroll: {
+				id: "artifact_scroll",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "scroll artifact",
+				tab: sourceTab,
+				page: {
+					title: "doc.pdf",
+					url: pdfUrl,
+					scrollY: 1200,
+					annotations: [{ annotationId: "ann-scroll", kind: "pdf", matchedText: "alpha", pdfAnchor, note: { text: "scroll note", label: "Onhand" } }],
+				},
+			},
+		},
+	});
+	const restored = await runtime.restoreSession();
+	assert.equal(restored.restoredPages.length, 1, "the pdf artifact should restore");
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1, "its annotation should restore despite the scroll error");
+	assert.equal(restored.restoredPages[0].failedCount || 0, 0, "a benign scroll-position access error must not count as a restore failure");
+}
+
 async function assertForeignViewerUrlArtifactRestoresAgainstSourceTab() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -4936,6 +4981,7 @@ async function main() {
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
 	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();
+	await assertScrollRestoreAccessErrorDoesNotFailRestore();
 	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();
 	await assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff();
 	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();

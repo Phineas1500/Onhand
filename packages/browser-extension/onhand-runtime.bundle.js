@@ -127426,7 +127426,8 @@ function shouldAutoOpenPdfViewerForTab(tab) {
 }
 function isOnhandPdfViewerAccessError(error51) {
   const message = String(error51?.message || error51 || "");
-  return /Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message);
+  if (/Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message)) return true;
+  return /Cannot access a chrome-extension:\/\/ URL of different extension/i.test(message);
 }
 function isRestorablePageUrl(url2) {
   try {
