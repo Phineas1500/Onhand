@@ -240,7 +240,20 @@ const ANTHROPIC_API_PROVIDER = "anthropic";
 const ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 const GOOGLE_API_PROVIDER = "google";
 const GOOGLE_API_MODEL = "gemini-2.5-flash";
-const SUPPORTED_API_PROVIDERS: Record<string, { id: string; name: string; defaultModel: string; keyLabel: string; keyPlaceholder: string; keyPrefix?: string; realtime: boolean }> = {
+const OPENROUTER_API_PROVIDER = "openrouter";
+const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
+const ONHAND_FREE_PROVIDER = "onhand-free";
+const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
+// The deployed workers/free-tier proxy. Override without rebuilding via
+// the onhandFreeTierBaseUrl key in chrome.storage.local (used by tests
+// and staged deployments). See docs/FREE_TIER.md.
+const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.onhand.workers.dev/v1";
+const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
+const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+const SUPPORTED_API_PROVIDERS: Record<
+	string,
+	{ id: string; name: string; defaultModel: string; keyLabel: string; keyPlaceholder: string; keyPrefix?: string; realtime: boolean; keyless?: boolean }
+> = {
 	[OPENAI_API_PROVIDER]: {
 		id: OPENAI_API_PROVIDER,
 		name: "OpenAI API",
@@ -268,7 +281,31 @@ const SUPPORTED_API_PROVIDERS: Record<string, { id: string; name: string; defaul
 		keyPrefix: "AIza",
 		realtime: false,
 	},
+	[OPENROUTER_API_PROVIDER]: {
+		id: OPENROUTER_API_PROVIDER,
+		name: "OpenRouter",
+		defaultModel: OPENROUTER_API_MODEL,
+		keyLabel: "OpenRouter API key",
+		keyPlaceholder: "sk-or-...",
+		keyPrefix: "sk-or-",
+		realtime: false,
+	},
+	[ONHAND_FREE_PROVIDER]: {
+		id: ONHAND_FREE_PROVIDER,
+		name: "Onhand Free (beta)",
+		defaultModel: ONHAND_FREE_MODEL,
+		keyLabel: "No key needed",
+		keyPlaceholder: "",
+		realtime: false,
+		keyless: true,
+	},
 };
+
+// Hosts allowed to serve OpenRouter requests. Pinned for two reasons:
+// user pages and PDFs must not transit PRC-hosted APIs by default, and
+// tool-call fidelity varies across open-weight hosts, so only validated
+// providers are eligible. Order expresses preference; fallbacks stay on.
+const OPENROUTER_ALLOWED_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
 const SMOKE_PROVIDER = "onhand-smoke";
 const SMOKE_MODEL = "onhand-smoke-1";
 const SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
@@ -1227,6 +1264,51 @@ function normalizeReviewConceptKey(label: string) {
 	return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160);
 }
 
+async function getFreeTierBaseUrl(): Promise<string> {
+	const stored = await chrome.storage.local.get({ [ONHAND_FREE_BASE_URL_STORAGE_KEY]: "" });
+	const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
+	return (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+}
+
+// The free tier identifies devices with an anonymous token issued by the
+// proxy; no account or key is involved.
+async function getOrRegisterFreeTierToken(): Promise<string> {
+	const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
+	const existing = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
+	if (existing) return existing;
+	const baseUrl = await getFreeTierBaseUrl();
+	let response: Response;
+	try {
+		response = await fetch(`${baseUrl}/register`, { method: "POST" });
+	} catch {
+		throw new Error("Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.");
+	}
+	if (!response.ok) {
+		throw new Error(`Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
+	}
+	const data = await response.json().catch(() => null);
+	const token = String((data as any)?.token || "");
+	if (!token) throw new Error("Onhand free tier registration returned no token.");
+	await chrome.storage.local.set({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: token });
+	return token;
+}
+
+async function buildFreeTierModel(modelId: string) {
+	const baseUrl = await getFreeTierBaseUrl();
+	return {
+		id: modelId || ONHAND_FREE_MODEL,
+		name: "Onhand Free (DeepSeek V4 Flash)",
+		api: "openai-completions",
+		provider: ONHAND_FREE_PROVIDER,
+		baseUrl,
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 1048576,
+		maxTokens: 32768,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+}
+
 async function readReviewSnoozes(): Promise<Record<string, string>> {
 	const stored = await chrome.storage.local.get({ [REVIEW_SNOOZE_STORAGE_KEY]: {} });
 	const snoozes = stored[REVIEW_SNOOZE_STORAGE_KEY];
@@ -1418,6 +1500,7 @@ function summarizeApiKeyProviders(settings: RuntimeSettings) {
 function validateProviderApiKey(providerId: string, apiKey: string) {
 	const provider = getSupportedApiProvider(providerId);
 	if (!provider) return { ok: false, error: `Unsupported provider: ${providerId || "(blank)"}` };
+	if (provider.keyless) return { ok: true, providerId, providerName: provider.name };
 	const key = String(apiKey || "").trim();
 	if (!key) return { ok: false, error: `${provider.name} API key is missing.` };
 	if (provider.keyPrefix && !key.startsWith(provider.keyPrefix)) {
@@ -1427,12 +1510,28 @@ function validateProviderApiKey(providerId: string, apiKey: string) {
 }
 
 function getProviderModelOptions(providerId: string) {
+	if (providerId === ONHAND_FREE_PROVIDER) {
+		return [
+			{
+				id: ONHAND_FREE_MODEL,
+				name: "DeepSeek V4 Flash (Onhand Free)",
+				api: "openai-completions",
+				input: ["text"],
+				tools: true,
+				structuredOutput: false,
+				realtime: false,
+			},
+		];
+	}
 	const isApiProvider = Boolean(getSupportedApiProvider(providerId));
 	const isOAuthProvider = isBrowserOAuthProvider(providerId);
 	if (!isApiProvider && !isOAuthProvider) return [];
 	try {
 		return getModels(providerId as any)
 			.filter((model: any) => model?.input?.includes?.("text"))
+			// OpenRouter lists hundreds of models; offer the validated cheap
+			// defaults and let the custom-model field cover the rest.
+			.filter((model: any) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id))
 			.map((model: any) => ({
 				id: model.id,
 				name: model.name || model.id,
@@ -1490,7 +1589,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
 		hasAiApiKey: Boolean(getApiKeyForProvider(settings, OPENAI_API_PROVIDER)),
-		hasSelectedProviderApiKey: Boolean(getApiKeyForProvider(settings, settings.aiProvider)),
+		hasSelectedProviderApiKey: Boolean(getSupportedApiProvider(settings.aiProvider)?.keyless || getApiKeyForProvider(settings, settings.aiProvider)),
 		apiKeyProviders: summarizeApiKeyProviders(settings),
 		providerModels: Object.fromEntries(providerModelIds.map((providerId) => [providerId, getProviderModelOptions(providerId)])),
 		hasOAuthCredentials: Boolean(activeOAuthProvider?.signedIn),
@@ -3908,7 +4007,10 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 	const reasoningProfile = onhandReasoningProfile as ReasoningProfile | undefined;
 	const baseOptions = {
 		...streamOptions,
-		cacheRetention: "none",
+		// "short" lets pi-ai pass the session id as the prompt cache key so
+		// providers route the loop's repeated prefixes to the same cache
+		// shard; tool loops are mostly cache hits.
+		cacheRetention: "short",
 		maxTokens: reasoningProfile?.maxTokens || ONHAND_MAX_OUTPUT_TOKENS,
 	};
 	if (model?.api === "openai-codex-responses") {
@@ -3929,6 +4031,16 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 			...baseOptions,
 			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
 			reasoningSummary: "auto",
+		});
+	}
+	if (model?.provider === OPENROUTER_API_PROVIDER) {
+		return streamSimple(model, context, {
+			...baseOptions,
+			...(model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}),
+			onPayload: (params: any) => ({
+				...params,
+				provider: { only: OPENROUTER_ALLOWED_PROVIDERS },
+			}),
 		});
 	}
 	return streamSimple(model, context, baseOptions);
@@ -5237,7 +5349,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const model =
 			settings.aiProvider === SMOKE_PROVIDER
 				? getSmokeModel(settings.aiModel)
-				: (await host.resolveModel?.(settings.aiProvider, settings.aiModel)) || getModel(settings.aiProvider as any, settings.aiModel as any);
+				: settings.aiProvider === ONHAND_FREE_PROVIDER
+					? await buildFreeTierModel(settings.aiModel)
+					: (await host.resolveModel?.(settings.aiProvider, settings.aiModel)) || getModel(settings.aiProvider as any, settings.aiModel as any);
 		if (!model) {
 			throw new Error(`Unknown AI model: ${settings.aiProvider}/${settings.aiModel}`);
 		}
@@ -5248,13 +5362,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			if (!settings.oauthCredentials?.[settings.aiProvider]) {
 				throw new Error(`Sign in to ${getBrowserOAuthProvider(settings.aiProvider)?.name || settings.aiProvider} in Onhand options first.`);
 			}
-		} else if (!getApiKeyForProvider(settings, settings.aiProvider)) {
+		} else if (!getSupportedApiProvider(settings.aiProvider)?.keyless && !getApiKeyForProvider(settings, settings.aiProvider)) {
 			throw new Error(getMissingApiKeyError(settings.aiProvider));
 		}
 		return prepareModelForBrowser(model, settings);
 	}
 
 	async function resolveApiKey(provider: string) {
+		if (provider === ONHAND_FREE_PROVIDER) return await getOrRegisterFreeTierToken();
 		const store = await loadStore();
 		const settings = store.settings as RuntimeSettings;
 		const apiKey = getApiKeyForProvider(settings, provider);

@@ -24,6 +24,21 @@ const API_PROVIDERS = {
 		keyPlaceholder: "AIza...",
 		capabilities: { realtime: false, vision: true, tools: true, structuredOutput: true },
 	},
+	openrouter: {
+		name: "OpenRouter",
+		defaultModel: "deepseek/deepseek-v4-flash",
+		keyLabel: "OpenRouter API key",
+		keyPlaceholder: "sk-or-...",
+		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
+	},
+	"onhand-free": {
+		name: "Onhand Free (beta)",
+		defaultModel: "deepseek/deepseek-v4-flash",
+		keyLabel: "No key needed",
+		keyPlaceholder: "",
+		keyless: true,
+		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
+	},
 };
 
 const providerInput = document.getElementById("aiProvider");
@@ -216,16 +231,18 @@ function syncAuthModeFields() {
 }
 
 function syncApiKeyFields() {
-	const showApiKeySection = !isCodexSignInMode();
-	apiKeySectionEl.hidden = !showApiKeySection;
-	apiKeyActionsEl.hidden = !showApiKeySection;
 	const providerId = selectedApiKeyProvider();
 	const meta = getProviderMeta(providerId);
+	const showApiKeySection = !isCodexSignInMode() && !meta.keyless;
+	apiKeySectionEl.hidden = !showApiKeySection;
+	apiKeyActionsEl.hidden = !showApiKeySection;
 	apiKeyLabelEl.textContent = meta.keyLabel;
 	aiApiKeyInput.placeholder = meta.keyPlaceholder;
 	aiApiKeyInput.value = pendingApiKeys[providerId] || "";
 	const saved = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === providerId)?.hasApiKey;
-	apiKeyHelpEl.textContent = `${saved ? "Saved key exists. Enter a new key to update it, or remove it below." : "No saved key for this provider."} Keys are stored only in chrome.storage.local and are redacted from status diagnostics.`;
+	apiKeyHelpEl.textContent = meta.keyless
+		? "The free tier needs no key. Usage is capped per day; switch to your own API key any time for unlimited use."
+		: `${saved ? "Saved key exists. Enter a new key to update it, or remove it below." : "No saved key for this provider."} Keys are stored only in chrome.storage.local and are redacted from status diagnostics.`;
 	syncRealtimeVoiceFields();
 }
 

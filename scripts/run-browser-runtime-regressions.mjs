@@ -261,6 +261,12 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(normalizeProviderForAuthMode("anthropic", "oauth"), "openai-codex");
 	assert.equal(validateProviderApiKey("anthropic", "not-an-anthropic-key").ok, false);
 	assert.equal(validateProviderApiKey("anthropic", "sk-ant-test").ok, true);
+	assert.equal(validateProviderApiKey("openrouter", "sk-or-test").ok, true);
+	assert.equal(validateProviderApiKey("openrouter", "sk-bad").ok, false);
+	assert.equal(validateProviderApiKey("onhand-free", "").ok, true, "keyless provider should validate without a key");
+	assert.ok(getProviderModelOptions("openrouter").some((model) => model.id === "deepseek/deepseek-v4-flash"), "openrouter should offer deepseek v4 flash");
+	assert.ok(getProviderModelOptions("openrouter").length <= 5, "openrouter model options should stay curated");
+	assert.equal(getProviderModelOptions("onhand-free")[0].id, "deepseek/deepseek-v4-flash", "free tier should pin its model");
 	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
 	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
 

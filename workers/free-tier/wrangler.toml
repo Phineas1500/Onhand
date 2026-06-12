@@ -1,0 +1,16 @@
+name = "onhand-free-tier"
+main = "src/index.mjs"
+compatibility_date = "2026-05-01"
+
+# Create with: npx wrangler kv namespace create FREE_TIER_KV
+# then paste the returned id below before deploying.
+[[kv_namespaces]]
+binding = "FREE_TIER_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+# A turn is roughly 3-6 model calls; 80 requests is ~15-25 turns/day.
+DAILY_REQUEST_CAP = "80"
+REGISTRATIONS_PER_IP_PER_DAY = "5"
+
+# Secret (never in this file): npx wrangler secret put OPENROUTER_API_KEY

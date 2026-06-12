@@ -124178,6 +124178,13 @@ var ANTHROPIC_API_PROVIDER = "anthropic";
 var ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 var GOOGLE_API_PROVIDER = "google";
 var GOOGLE_API_MODEL = "gemini-2.5-flash";
+var OPENROUTER_API_PROVIDER = "openrouter";
+var OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
+var ONHAND_FREE_PROVIDER = "onhand-free";
+var ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
+var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.onhand.workers.dev/v1";
+var ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
+var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 var SUPPORTED_API_PROVIDERS = {
   [OPENAI_API_PROVIDER]: {
     id: OPENAI_API_PROVIDER,
@@ -124205,8 +124212,27 @@ var SUPPORTED_API_PROVIDERS = {
     keyPlaceholder: "AIza...",
     keyPrefix: "AIza",
     realtime: false
+  },
+  [OPENROUTER_API_PROVIDER]: {
+    id: OPENROUTER_API_PROVIDER,
+    name: "OpenRouter",
+    defaultModel: OPENROUTER_API_MODEL,
+    keyLabel: "OpenRouter API key",
+    keyPlaceholder: "sk-or-...",
+    keyPrefix: "sk-or-",
+    realtime: false
+  },
+  [ONHAND_FREE_PROVIDER]: {
+    id: ONHAND_FREE_PROVIDER,
+    name: "Onhand Free (beta)",
+    defaultModel: ONHAND_FREE_MODEL,
+    keyLabel: "No key needed",
+    keyPlaceholder: "",
+    realtime: false,
+    keyless: true
   }
 };
+var OPENROUTER_ALLOWED_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
 var SMOKE_PROVIDER = "onhand-smoke";
 var SMOKE_MODEL = "onhand-smoke-1";
 var SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
@@ -125010,6 +125036,46 @@ var REVIEW_DEFAULT_LIMIT = 3;
 function normalizeReviewConceptKey(label) {
   return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160);
 }
+async function getFreeTierBaseUrl() {
+  const stored = await chrome.storage.local.get({ [ONHAND_FREE_BASE_URL_STORAGE_KEY]: "" });
+  const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
+  return (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+}
+async function getOrRegisterFreeTierToken() {
+  const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
+  const existing = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
+  if (existing) return existing;
+  const baseUrl = await getFreeTierBaseUrl();
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/register`, { method: "POST" });
+  } catch {
+    throw new Error("Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.");
+  }
+  if (!response.ok) {
+    throw new Error(`Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
+  }
+  const data = await response.json().catch(() => null);
+  const token = String(data?.token || "");
+  if (!token) throw new Error("Onhand free tier registration returned no token.");
+  await chrome.storage.local.set({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: token });
+  return token;
+}
+async function buildFreeTierModel(modelId) {
+  const baseUrl = await getFreeTierBaseUrl();
+  return {
+    id: modelId || ONHAND_FREE_MODEL,
+    name: "Onhand Free (DeepSeek V4 Flash)",
+    api: "openai-completions",
+    provider: ONHAND_FREE_PROVIDER,
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 1048576,
+    maxTokens: 32768,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  };
+}
 async function readReviewSnoozes() {
   const stored = await chrome.storage.local.get({ [REVIEW_SNOOZE_STORAGE_KEY]: {} });
   const snoozes = stored[REVIEW_SNOOZE_STORAGE_KEY];
@@ -125172,6 +125238,7 @@ function summarizeApiKeyProviders(settings2) {
 function validateProviderApiKey(providerId, apiKey) {
   const provider = getSupportedApiProvider(providerId);
   if (!provider) return { ok: false, error: `Unsupported provider: ${providerId || "(blank)"}` };
+  if (provider.keyless) return { ok: true, providerId, providerName: provider.name };
   const key = String(apiKey || "").trim();
   if (!key) return { ok: false, error: `${provider.name} API key is missing.` };
   if (provider.keyPrefix && !key.startsWith(provider.keyPrefix)) {
@@ -125180,11 +125247,24 @@ function validateProviderApiKey(providerId, apiKey) {
   return { ok: true, providerId, providerName: provider.name };
 }
 function getProviderModelOptions(providerId) {
+  if (providerId === ONHAND_FREE_PROVIDER) {
+    return [
+      {
+        id: ONHAND_FREE_MODEL,
+        name: "DeepSeek V4 Flash (Onhand Free)",
+        api: "openai-completions",
+        input: ["text"],
+        tools: true,
+        structuredOutput: false,
+        realtime: false
+      }
+    ];
+  }
   const isApiProvider = Boolean(getSupportedApiProvider(providerId));
   const isOAuthProvider = isBrowserOAuthProvider(providerId);
   if (!isApiProvider && !isOAuthProvider) return [];
   try {
-    return getModels(providerId).filter((model) => model?.input?.includes?.("text")).map((model) => ({
+    return getModels(providerId).filter((model) => model?.input?.includes?.("text")).filter((model) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id)).map((model) => ({
       id: model.id,
       name: model.name || model.id,
       api: model.api,
@@ -125236,7 +125316,7 @@ function buildPublicSettings(settings2) {
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
     hasAiApiKey: Boolean(getApiKeyForProvider(settings2, OPENAI_API_PROVIDER)),
-    hasSelectedProviderApiKey: Boolean(getApiKeyForProvider(settings2, settings2.aiProvider)),
+    hasSelectedProviderApiKey: Boolean(getSupportedApiProvider(settings2.aiProvider)?.keyless || getApiKeyForProvider(settings2, settings2.aiProvider)),
     apiKeyProviders: summarizeApiKeyProviders(settings2),
     providerModels: Object.fromEntries(providerModelIds.map((providerId) => [providerId, getProviderModelOptions(providerId)])),
     hasOAuthCredentials: Boolean(activeOAuthProvider?.signedIn),
@@ -127328,7 +127408,10 @@ function streamOnhandFast(model, context, options = {}) {
   const reasoningProfile = onhandReasoningProfile;
   const baseOptions = {
     ...streamOptions,
-    cacheRetention: "none",
+    // "short" lets pi-ai pass the session id as the prompt cache key so
+    // providers route the loop's repeated prefixes to the same cache
+    // shard; tool loops are mostly cache hits.
+    cacheRetention: "short",
     maxTokens: reasoningProfile?.maxTokens || ONHAND_MAX_OUTPUT_TOKENS
   };
   if (model?.api === "openai-codex-responses") {
@@ -127344,6 +127427,16 @@ function streamOnhandFast(model, context, options = {}) {
       ...baseOptions,
       reasoningEffort: reasoningProfile?.reasoningEffort || "none",
       reasoningSummary: "auto"
+    });
+  }
+  if (model?.provider === OPENROUTER_API_PROVIDER) {
+    return streamSimple(model, context, {
+      ...baseOptions,
+      ...model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {},
+      onPayload: (params) => ({
+        ...params,
+        provider: { only: OPENROUTER_ALLOWED_PROVIDERS }
+      })
     });
   }
   return streamSimple(model, context, baseOptions);
@@ -128579,7 +128672,7 @@ function createOnhandBrowserRuntime(host) {
     return prepared;
   }
   async function getConfiguredModel(settings2) {
-    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel);
+    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : settings2.aiProvider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel(settings2.aiModel) : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel);
     if (!model) {
       throw new Error(`Unknown AI model: ${settings2.aiProvider}/${settings2.aiModel}`);
     }
@@ -128590,12 +128683,13 @@ function createOnhandBrowserRuntime(host) {
       if (!settings2.oauthCredentials?.[settings2.aiProvider]) {
         throw new Error(`Sign in to ${getBrowserOAuthProvider(settings2.aiProvider)?.name || settings2.aiProvider} in Onhand options first.`);
       }
-    } else if (!getApiKeyForProvider(settings2, settings2.aiProvider)) {
+    } else if (!getSupportedApiProvider(settings2.aiProvider)?.keyless && !getApiKeyForProvider(settings2, settings2.aiProvider)) {
       throw new Error(getMissingApiKeyError(settings2.aiProvider));
     }
     return prepareModelForBrowser(model, settings2);
   }
   async function resolveApiKey2(provider) {
+    if (provider === ONHAND_FREE_PROVIDER) return await getOrRegisterFreeTierToken();
     const store = await loadStore();
     const settings2 = store.settings;
     const apiKey = getApiKeyForProvider(settings2, provider);

@@ -2,3 +2,4 @@ node_modules/
 .onhand/
 .DS_Store
 *.log
+.env
