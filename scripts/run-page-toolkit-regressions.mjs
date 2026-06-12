@@ -137,6 +137,13 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(backgroundSource, /function executeScriptInFramesWithFallback/, "frame execution should fall back when a foreign-extension frame blocks allFrames injection");
 	assert.match(backgroundSource, /function isInjectableFrameUrl/, "frame fallback should skip frames Onhand cannot script");
 	assert.match(backgroundSource, /isRestrictedScriptingError\(error\)/, "frame fallback should only engage on a restricted-scripting error");
+	// A restricted main-frame error on a PDF tab (native viewer is a different
+	// extension) must not abort before trying Onhand's inline viewer frame.
+	assert.match(
+		backgroundSource,
+		/isRestrictedScriptingError\(scriptError\) &&\s*!isOwnExtensionPdfViewerUrl\(tab\?\.url\) &&\s*!shouldTryOnhandPdfViewerFrameForTab\(tab\)/,
+		"page toolkit should try the PDF viewer frame before giving up on a restricted main-frame error",
+	);
 	assert.match(backgroundSource, /function inferInitialPdfViewerPageNumber/, "PDF handoff should infer the current page before opening Onhand's viewer");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromNativeChromePdfViewerFrame/, "PDF handoff should read Chrome's native PDF viewer frame for the current page");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromDebuggerDefaultContext/, "PDF handoff should fall back to the debugger default context for native PDF pages");

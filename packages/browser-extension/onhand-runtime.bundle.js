@@ -129961,6 +129961,7 @@ function createOnhandBrowserRuntime(host) {
           restoredNotes += 1;
         }
       } catch (error51) {
+        host.log?.("artifact restore highlight failed", artifactEffectiveUrl(artifact), String(text).slice(0, 60), error51?.message || String(error51));
         failures.push(error51?.message || String(error51));
       }
     }

@@ -7177,8 +7177,20 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		}
 		return payload;
 	} catch (scriptError) {
-		if (isRestrictedScriptingError(scriptError) && !isOwnExtensionPdfViewerUrl(tab?.url)) {
+		// A restricted-scripting error on a PDF tab usually means the main
+		// frame is the browser's native PDF viewer (a different extension);
+		// Onhand's inline viewer frame is still reachable, so only give up
+		// when there is no Onhand or reader frame left to try.
+		if (
+			isRestrictedScriptingError(scriptError) &&
+			!isOwnExtensionPdfViewerUrl(tab?.url) &&
+			!shouldTryOnhandPdfViewerFrameForTab(tab) &&
+			!shouldTryGoogleScholarReaderFrameForTab(tab)
+		) {
 			throw scriptError;
+		}
+		if (isRestrictedScriptingError(scriptError)) {
+			log("Page toolkit main-frame scripting was restricted; trying PDF viewer frame", methodName, tab?.url, scriptError?.message || String(scriptError));
 		}
 		let readerFrameFallbackError = null;
 		if (shouldTryGoogleScholarReaderFrameForTab(tab)) {

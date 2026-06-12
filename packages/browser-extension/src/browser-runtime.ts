@@ -5779,6 +5779,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					restoredNotes += 1;
 				}
 			} catch (error: any) {
+					host.log?.("artifact restore highlight failed", artifactEffectiveUrl(artifact), String(text).slice(0, 60), error?.message || String(error));
 					failures.push(error?.message || String(error));
 				}
 			}
