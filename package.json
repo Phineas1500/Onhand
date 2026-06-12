@@ -1,6 +1,6 @@
 {
   "name": "onhand",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Onhand: contextual AI assistant for learning and research running in a browser extension",
   "license": "Apache-2.0",
   "type": "module",
