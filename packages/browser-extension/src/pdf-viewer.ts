@@ -441,6 +441,10 @@ function applyHighlightStyles(highlight: HTMLElement, rects: PdfRect[], union: P
 		height: `${union.height}px`,
 		pointerEvents: "auto",
 		cursor: "pointer",
+		// Highlights and note cards share one annotation layer, so paint
+		// order would otherwise follow DOM order — a highlight added after
+		// a card would cover it. Pin highlights below cards explicitly.
+		zIndex: "1",
 		scrollMarginTop: "22vh",
 		scrollMarginBottom: "22vh",
 	});
@@ -712,7 +716,7 @@ function getPdfTextRects(page: HTMLElement, pageRect: DOMRect) {
 		.filter((rect): rect is PageRect => Boolean(rect));
 }
 
-function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRects: PageRect[], anchorRect: PageRect) {
+function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRects: PageRect[], anchorRect: PageRect, noteRects: PageRect[] = []) {
 	// Normalize overlaps to fractions so they stay comparable to the
 	// distance term: raw overlap areas are in the tens of thousands of
 	// square pixels and used to crush distance entirely, dumping notes at
@@ -723,11 +727,28 @@ function scorePdfNoteCandidate(candidate: PageRect & { order: number }, textRect
 	const anchorArea = Math.max(1, anchorRect.width * anchorRect.height);
 	const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
 	const anchorOverlap = rectOverlapArea(candidate, anchorRect) / anchorArea;
+	// Stacking two cards is worse than brushing text: a covered card is
+	// unreadable until dismissed, so weigh note-on-note overlap far above
+	// every other term and prefer any non-overlapping spot the page offers.
+	const noteOverlap = noteRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
 	const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
-	return textOverlap * 800 + anchorOverlap * 1600 + anchorDistance + candidate.order * 4;
+	return textOverlap * 800 + anchorOverlap * 1600 + noteOverlap * 6000 + anchorDistance + candidate.order * 4;
 }
 
-function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect: PageRect, noteWidth: number, noteHeight: number) {
+function collectOtherPdfNoteRects(note: HTMLElement, page: HTMLElement, pageRect: DOMRect): PageRect[] {
+	const overlay = page.querySelector<HTMLElement>(".onhand-pdf-annotation-layer");
+	if (!overlay) return [];
+	return Array.from(overlay.querySelectorAll<HTMLElement>("[data-onhand-pdf-note]"))
+		.filter((element) => element !== note)
+		.map((element) => {
+			const rect = element.getBoundingClientRect();
+			if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+			return toPageRect(rect, page, pageRect);
+		})
+		.filter((rect): rect is PageRect => Boolean(rect));
+}
+
+function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect: PageRect, noteWidth: number, noteHeight: number, noteRects: PageRect[] = []) {
 	const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
 	const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
 	const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
@@ -772,7 +793,7 @@ function choosePdfNotePosition(page: HTMLElement, pageRect: DOMRect, anchorRect:
 	}));
 	const textRects = getPdfTextRects(page, pageRect);
 	return candidates.reduce<(PageRect & { order: number; score: number }) | null>((best, candidate) => {
-		const score = scorePdfNoteCandidate(candidate, textRects, anchorRect);
+		const score = scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects);
 		return !best || score < best.score ? { ...candidate, score } : best;
 	}, null);
 }
@@ -853,6 +874,8 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 		boxShadow: "0 1px 3px rgba(47, 44, 40, 0.16)",
 		font: '15px/1.55 "New York", "Iowan Old Style", Charter, Georgia, serif',
 		pointerEvents: "auto",
+		// Cards sit above highlights (z-index 1) in the shared layer.
+		zIndex: "4",
 		scrollMarginTop: "22vh",
 		scrollMarginBottom: "22vh",
 	});
@@ -863,7 +886,8 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 	// max-width cap — overestimating width inflates overlap penalties and
 	// pushes notes away from their highlight.
 	const noteWidth = Math.max(220, Math.min(maxWidth, measuredRect.width || maxWidth));
-	const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight);
+	const otherNoteRects = collectOtherPdfNoteRects(note, page, pageRect);
+	const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight, otherNoteRects);
 	if (positioned) {
 		note.style.left = `${positioned.left}px`;
 		note.style.top = `${positioned.top}px`;

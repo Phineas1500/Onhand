@@ -25437,6 +25437,10 @@ function applyHighlightStyles(highlight, rects, union) {
     height: `${union.height}px`,
     pointerEvents: "auto",
     cursor: "pointer",
+    // Highlights and note cards share one annotation layer, so paint
+    // order would otherwise follow DOM order — a highlight added after
+    // a card would cover it. Pin highlights below cards explicitly.
+    zIndex: "1",
     scrollMarginTop: "22vh",
     scrollMarginBottom: "22vh"
   });
@@ -25670,15 +25674,25 @@ function getPdfTextRects(page, pageRect) {
     return toPageRect(rect, page, pageRect);
   }).filter((rect) => Boolean(rect));
 }
-function scorePdfNoteCandidate(candidate, textRects, anchorRect) {
+function scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects = []) {
   const candidateArea = Math.max(1, candidate.width * candidate.height);
   const anchorArea = Math.max(1, anchorRect.width * anchorRect.height);
   const textOverlap = textRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
   const anchorOverlap = rectOverlapArea(candidate, anchorRect) / anchorArea;
+  const noteOverlap = noteRects.reduce((sum, rect) => sum + rectOverlapArea(candidate, rect), 0) / candidateArea;
   const anchorDistance = Math.abs(candidate.left - anchorRect.left) + Math.abs(candidate.top - anchorRect.top);
-  return textOverlap * 800 + anchorOverlap * 1600 + anchorDistance + candidate.order * 4;
+  return textOverlap * 800 + anchorOverlap * 1600 + noteOverlap * 6e3 + anchorDistance + candidate.order * 4;
 }
-function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight) {
+function collectOtherPdfNoteRects(note, page, pageRect) {
+  const overlay = page.querySelector(".onhand-pdf-annotation-layer");
+  if (!overlay) return [];
+  return Array.from(overlay.querySelectorAll("[data-onhand-pdf-note]")).filter((element) => element !== note).map((element) => {
+    const rect = element.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    return toPageRect(rect, page, pageRect);
+  }).filter((rect) => Boolean(rect));
+}
+function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight, noteRects = []) {
   const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
   const margin = Math.max(12, Math.min(20, pageWidth * 0.025));
   const gap = Math.max(10, Math.min(18, pageHeight * 0.018));
@@ -25723,7 +25737,7 @@ function choosePdfNotePosition(page, pageRect, anchorRect, noteWidth, noteHeight
   }));
   const textRects = getPdfTextRects(page, pageRect);
   return candidates.reduce((best, candidate) => {
-    const score = scorePdfNoteCandidate(candidate, textRects, anchorRect);
+    const score = scorePdfNoteCandidate(candidate, textRects, anchorRect, noteRects);
     return !best || score < best.score ? { ...candidate, score } : best;
   }, null);
 }
@@ -25802,6 +25816,8 @@ function positionPdfNote(note, annotation, page) {
     boxShadow: "0 1px 3px rgba(47, 44, 40, 0.16)",
     font: '15px/1.55 "New York", "Iowan Old Style", Charter, Georgia, serif',
     pointerEvents: "auto",
+    // Cards sit above highlights (z-index 1) in the shared layer.
+    zIndex: "4",
     scrollMarginTop: "22vh",
     scrollMarginBottom: "22vh"
   });
@@ -25809,7 +25825,8 @@ function positionPdfNote(note, annotation, page) {
   const measuredHeight = measuredRect.height || note.offsetHeight || 0;
   const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
   const noteWidth = Math.max(220, Math.min(maxWidth, measuredRect.width || maxWidth));
-  const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight);
+  const otherNoteRects = collectOtherPdfNoteRects(note, page, pageRect);
+  const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight, otherNoteRects);
   if (positioned) {
     note.style.left = `${positioned.left}px`;
     note.style.top = `${positioned.top}px`;

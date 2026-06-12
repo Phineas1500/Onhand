@@ -194,6 +194,16 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	);
 	assert.match(source, /setImportantStyle\(note,\s*"min-height",\s*"30px"\)/, "collapsed PDF viewer notes should constrain their minimum height");
 	assert.match(source, /minHeight:\s*"76px"/, "expanded PDF viewer notes should have a minimum height on first render");
+	// Two cards stacking on the same spot, or a highlight painting over a
+	// card, both make the note unreadable until dismissed. Cards must avoid
+	// other cards when positioning and sit above highlights in the layer.
+	assert.match(source, /function collectOtherPdfNoteRects/, "PDF viewer should gather other note rects so cards do not stack");
+	assert.match(source, /choosePdfNotePosition\([\s\S]*?otherNoteRects\)/, "PDF note positioning should avoid other placed notes");
+	assert.match(source, /noteOverlap\s*\*\s*\d+/, "PDF note scoring should penalize overlapping another note");
+	assert.ok(
+		source.indexOf('zIndex: "1"') !== -1 && source.indexOf('zIndex: "4"') !== -1,
+		"PDF highlights (z-index 1) must sit below note cards (z-index 4) in the shared annotation layer",
+	);
 	assert.match(source, /function getPageLayoutSize/, "PDF viewer highlights should have a layout coordinate helper for scaled pages");
 	assert.match(source, /function rangeRectsForPage[\s\S]*getPageLayoutSize/, "PDF viewer highlight rects should convert viewport rects into page layout coordinates");
 	assert.match(source, /function textSegmentRectsForPage/, "PDF viewer highlights should compute text-span segment rects for partial PDF text matches");
