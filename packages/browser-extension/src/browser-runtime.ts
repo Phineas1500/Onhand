@@ -1,6 +1,6 @@
-import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAIResponses, streamSimple, Type } from "@mariozechner/pi-ai";
-import { streamOpenAICodexResponses } from "@mariozechner/pi-ai/openai-codex-responses";
+import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai";
+import { streamOpenAICodexResponses } from "@earendil-works/pi-ai/openai-codex-responses";
 import {
 	getBrowserOAuthApiKey,
 	getBrowserOAuthProvider,
