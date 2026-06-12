@@ -2,6 +2,7 @@ const RUNTIME_STORAGE_KEY = "onhandBrowserRuntime";
 const THEME_STORAGE_KEY = "onhandSidebarTheme";
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_MODEL = "gpt-5.5";
+const FREE_TIER_PROVIDER = "onhand-free";
 const API_PROVIDERS = {
 	openai: {
 		name: "OpenAI API",
@@ -37,11 +38,15 @@ const API_PROVIDERS = {
 		keyLabel: "No key needed",
 		keyPlaceholder: "",
 		keyless: true,
+		// The free-tier worker only serves its allowlisted model, so a
+		// custom-model field would be a dead end.
+		lockedModels: true,
 		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
 	},
 };
 
 const providerInput = document.getElementById("aiProvider");
+const providerFieldEl = document.getElementById("providerField");
 const modelSelectEl = document.getElementById("aiModelSelect");
 const aiModelInput = document.getElementById("aiModel");
 const modelHelpEl = document.getElementById("modelHelp");
@@ -101,6 +106,13 @@ function isCodexSignInMode() {
 	return authModeInput.value === "oauth";
 }
 
+// "Onhand Free" is its own authentication choice in the UI, but it is
+// stored as authMode "api-key" + provider "onhand-free" so the runtime
+// and the sidebar onboarding flow need no schema change.
+function isFreeTierMode() {
+	return authModeInput.value === "free";
+}
+
 function getProviderMeta(providerId) {
 	return API_PROVIDERS[providerId] || API_PROVIDERS.openai;
 }
@@ -115,11 +127,15 @@ function getProviderDefaultModel(providerId) {
 }
 
 function selectedProvider() {
-	return isCodexSignInMode() ? CODEX_PROVIDER : providerInput.value || "openai";
+	if (isCodexSignInMode()) return CODEX_PROVIDER;
+	if (isFreeTierMode()) return FREE_TIER_PROVIDER;
+	return providerInput.value || "openai";
 }
 
 function selectedApiKeyProvider() {
-	return isCodexSignInMode() ? "openai" : providerInput.value || "openai";
+	if (isCodexSignInMode()) return "openai";
+	if (isFreeTierMode()) return FREE_TIER_PROVIDER;
+	return providerInput.value || "openai";
 }
 
 function selectedModel() {
@@ -134,20 +150,33 @@ function providerModels(providerId) {
 function populateModelSelect(providerId, selectedId) {
 	const models = providerModels(providerId);
 	const fallbackModelId = getProviderDefaultModel(providerId);
+	const lockedModels = Boolean(getProviderMeta(providerId).lockedModels);
 	modelSelectEl.textContent = "";
-	const customOption = document.createElement("option");
-	customOption.value = "__custom__";
-	customOption.textContent = models.length ? "Custom model…" : "Custom model id";
 	for (const model of models) {
 		const option = document.createElement("option");
 		option.value = model.id;
 		option.textContent = model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id;
 		modelSelectEl.append(option);
 	}
-	modelSelectEl.append(customOption);
+	if (lockedModels && !models.length) {
+		const option = document.createElement("option");
+		option.value = fallbackModelId;
+		option.textContent = fallbackModelId;
+		modelSelectEl.append(option);
+	}
+	if (!lockedModels) {
+		const customOption = document.createElement("option");
+		customOption.value = "__custom__";
+		customOption.textContent = models.length ? "Custom model…" : "Custom model id";
+		modelSelectEl.append(customOption);
+	}
 	if (models.some((model) => model.id === selectedId)) {
 		modelSelectEl.value = selectedId;
 		aiModelInput.value = selectedId;
+		aiModelInput.hidden = true;
+	} else if (lockedModels) {
+		modelSelectEl.value = models[0]?.id || fallbackModelId;
+		aiModelInput.value = modelSelectEl.value;
 		aiModelInput.hidden = true;
 	} else {
 		modelSelectEl.value = "__custom__";
@@ -157,7 +186,7 @@ function populateModelSelect(providerId, selectedId) {
 }
 
 function isOpenAiApiKeyMode() {
-	return !isCodexSignInMode() && (providerInput.value || "openai") === "openai";
+	return !isCodexSignInMode() && !isFreeTierMode() && (providerInput.value || "openai") === "openai";
 }
 
 function isRealtimeVoiceEnabled() {
@@ -173,7 +202,7 @@ function syncCapabilityStatus() {
 		capabilityStatusEl.className = "ok";
 		return;
 	}
-	const providerId = providerInput.value || "openai";
+	const providerId = selectedProvider();
 	const modelId = selectedModel();
 	const meta = getProviderMeta(providerId);
 	const model = providerModels(providerId).find((candidate) => candidate.id === modelId);
@@ -203,8 +232,10 @@ function syncCapabilityStatus() {
 
 function syncAuthModeFields() {
 	if (isCodexSignInMode()) {
-		providerInput.value = "openai";
-		providerInput.disabled = true;
+		// The real provider is openai-codex, so a provider dropdown stuck
+		// on "OpenAI API" would be misleading; the field only applies to
+		// Provider API key mode.
+		providerFieldEl.hidden = true;
 		modelSelectEl.disabled = false;
 		aiModelInput.disabled = false;
 		const providerId = CODEX_PROVIDER;
@@ -215,12 +246,24 @@ function syncAuthModeFields() {
 		}
 		populateModelSelect(providerId, aiModelInput.value.trim());
 		modelHelpEl.textContent = "Codex sign-in uses your selected OpenAI Codex model for text chat. Switch Authentication to Provider API key if you want text chat to use an API key.";
+	} else if (isFreeTierMode()) {
+		providerFieldEl.hidden = true;
+		modelSelectEl.disabled = true;
+		aiModelInput.disabled = true;
+		aiModelInput.value = getProviderDefaultModel(FREE_TIER_PROVIDER);
+		populateModelSelect(FREE_TIER_PROVIDER, aiModelInput.value);
+		modelHelpEl.textContent = "Onhand Free runs DeepSeek V4 Flash through Onhand's hosted endpoint — no API key or account needed. Daily usage is capped; switch to Provider API key or Codex sign-in any time for unlimited use.";
 	} else {
-		providerInput.disabled = false;
+		providerFieldEl.hidden = false;
 		modelSelectEl.disabled = false;
 		aiModelInput.disabled = false;
 		const providerId = providerInput.value || "openai";
-		if (!aiModelInput.value.trim() || aiModelInput.value.trim() === CODEX_MODEL || providerModels(CODEX_PROVIDER).some((model) => model.id === aiModelInput.value.trim())) {
+		const currentModelId = aiModelInput.value.trim();
+		const isOtherModeModel =
+			currentModelId === CODEX_MODEL ||
+			providerModels(CODEX_PROVIDER).some((model) => model.id === currentModelId) ||
+			(currentModelId === getProviderDefaultModel(FREE_TIER_PROVIDER) && !providerModels(providerId).some((model) => model.id === currentModelId));
+		if (!currentModelId || isOtherModeModel) {
 			aiModelInput.value = getProviderMeta(providerId).defaultModel;
 		}
 		populateModelSelect(providerId, aiModelInput.value.trim());
@@ -281,10 +324,12 @@ async function loadForm() {
 	const runtimeSettings = stored[RUNTIME_STORAGE_KEY]?.settings || {};
 	pendingApiKeys = { ...(runtimeSettings.aiApiKeys || {}) };
 	if (runtimeSettings.aiApiKey && !pendingApiKeys.openai) pendingApiKeys.openai = runtimeSettings.aiApiKey;
-	authModeInput.value = runtimeSettings.authMode === "api-key" ? "api-key" : "oauth";
-	providerInput.value = API_PROVIDERS[runtimeSettings.aiProvider] ? runtimeSettings.aiProvider : "openai";
+	const storedProvider = API_PROVIDERS[runtimeSettings.aiProvider] ? runtimeSettings.aiProvider : "openai";
+	authModeInput.value =
+		runtimeSettings.authMode === "api-key" ? (storedProvider === FREE_TIER_PROVIDER ? "free" : "api-key") : "oauth";
+	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
-	const modelProviderId = authModeInput.value === "oauth" ? CODEX_PROVIDER : providerInput.value;
+	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
 }
@@ -328,7 +373,7 @@ async function save() {
 		type: "browser-runtime:update-settings",
 		aiProvider: selectedProvider(),
 		aiModel: selectedModel(),
-		authMode: authModeInput.value === "oauth" ? "oauth" : "api-key",
+		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,

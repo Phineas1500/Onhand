@@ -267,6 +267,13 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.ok(getProviderModelOptions("openrouter").some((model) => model.id === "deepseek/deepseek-v4-flash"), "openrouter should offer deepseek v4 flash");
 	assert.ok(getProviderModelOptions("openrouter").length <= 5, "openrouter model options should stay curated");
 	assert.equal(getProviderModelOptions("onhand-free")[0].id, "deepseek/deepseek-v4-flash", "free tier should pin its model");
+	{
+		// The free-tier worker rejects everything outside its allowlist, so
+		// the options page must not offer a custom-model entry for it.
+		const { readFile } = await import("node:fs/promises");
+		const optionsSource = await readFile(new URL("../packages/browser-extension/options.js", import.meta.url), "utf8");
+		assert.match(optionsSource, /lockedModels/, "options page should lock the free-tier model dropdown to curated entries");
+	}
 	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
 	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
 
