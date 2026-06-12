@@ -7304,18 +7304,30 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				// Concepts tracked before sources stored their text carry only a
 				// (now stale) annotation id. The original highlight action still
 				// lives in whichever session created it, so recover the verbatim
-				// text from there to make those old sources jumpable too.
+				// text from there to make those old sources jumpable too. Match
+				// on the action key as well as the annotationId field: the key
+				// permanently embeds the original id (`highlight:<id>`), while
+				// the annotationId field drifts to a new value every time the
+				// highlight is re-materialized on restore, so an old source's id
+				// only still matches the key.
+				let recoveredPdfAnchor: any = null;
 				if (!matchedText && annotationId) {
 					const store = await loadStore();
 					for (const session of Object.values(store.sessions) as RuntimeSession[]) {
 						const action = collectSessionPageActions(session).find(
-							(candidate) => compactActionText(candidate?.annotationId) === annotationId,
+							(candidate) =>
+								compactActionText(candidate?.annotationId) === annotationId ||
+								actionKeySuffix(candidate, "highlight:") === annotationId ||
+								actionKeySuffix(candidate, "note:") === annotationId,
 						);
 						if (!action) continue;
-						matchedText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail));
-						if (!artifactId && action.artifactId) artifactId = compactActionText(action.artifactId);
-						if (!url && action.url) url = compactActionText(action.url);
-						if (!title && action.title) title = compactActionText(action.title);
+						const paired = isHighlightPageAction(action) ? action : findPairedHighlightAction(action, collectSessionPageActions(session));
+						const textSource = paired || action;
+						matchedText = stripReplayCitationMarkers(compactActionText(textSource.citationText || textSource.detail));
+						if (!recoveredPdfAnchor && (textSource.pdfAnchor || action.pdfAnchor)) recoveredPdfAnchor = textSource.pdfAnchor || action.pdfAnchor;
+						if (!artifactId && (textSource.artifactId || action.artifactId)) artifactId = compactActionText(textSource.artifactId || action.artifactId);
+						if (!url && (textSource.url || action.url)) url = compactActionText(textSource.url || action.url);
+						if (!title && (textSource.title || action.title)) title = compactActionText(textSource.title || action.title);
 						if (matchedText) break;
 					}
 				}
@@ -7335,12 +7347,17 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 					} catch {}
 				}
 
-				// 2) Re-find the passage by its verbatim text. The highlight
-				// command scans the whole PDF and renders the page the text is
-				// on, so this works even when that page was never rendered.
+				// 2) Re-find the passage by its verbatim text. The replay
+				// highlighter scans the whole PDF and renders the page the text
+				// is on (so this works even when that page was never rendered),
+				// and tolerates spacing/line-break drift that exact-only misses.
 				if (matchedText && typeof tabId === "number") {
 					try {
-						const highlighted = await highlightExactReplaySource(tabId, matchedText, { scrollIntoView: true });
+						const highlighted = await highlightTextWithReplayCandidates(tabId, matchedText, {
+							scrollIntoView: true,
+							scanPage: true,
+							...(recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}),
+						});
 						if (highlighted?.annotation) return { ok: true, mode: "text", annotation: highlighted.annotation };
 					} catch {}
 				}

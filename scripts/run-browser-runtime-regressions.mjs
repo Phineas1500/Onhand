@@ -1281,10 +1281,13 @@ async function assertLearnerSourceRecoversTextAcrossSessions() {
 			turns: [],
 			pageActions: [
 				{
+					// The annotationId field has drifted (re-materialized on a
+					// past restore), but the key still embeds the original id the
+					// concept source kept. Recovery must match on the key.
 					key: "highlight:ann-rnd",
 					type: "annotation",
 					label: "Highlighted text",
-					annotationId: "ann-rnd",
+					annotationId: "ann-rnd-restored-9",
 					citationText: "Alpha smoke content",
 					url: replaySmokeTab().url,
 					title: replaySmokeTab().title,

@@ -131358,17 +131358,21 @@ function createOnhandBrowserRuntime(host) {
       const target = params?.target === "note" ? "note" : "annotation";
       let url2 = compactActionText(params?.url);
       let title = compactActionText(params?.tabTitle || params?.title);
+      let recoveredPdfAnchor = null;
       if (!matchedText && annotationId) {
         const store = await loadStore();
         for (const session of Object.values(store.sessions)) {
           const action = collectSessionPageActions(session).find(
-            (candidate) => compactActionText(candidate?.annotationId) === annotationId
+            (candidate) => compactActionText(candidate?.annotationId) === annotationId || actionKeySuffix(candidate, "highlight:") === annotationId || actionKeySuffix(candidate, "note:") === annotationId
           );
           if (!action) continue;
-          matchedText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail));
-          if (!artifactId && action.artifactId) artifactId = compactActionText(action.artifactId);
-          if (!url2 && action.url) url2 = compactActionText(action.url);
-          if (!title && action.title) title = compactActionText(action.title);
+          const paired = isHighlightPageAction(action) ? action : findPairedHighlightAction(action, collectSessionPageActions(session));
+          const textSource = paired || action;
+          matchedText = stripReplayCitationMarkers(compactActionText(textSource.citationText || textSource.detail));
+          if (!recoveredPdfAnchor && (textSource.pdfAnchor || action.pdfAnchor)) recoveredPdfAnchor = textSource.pdfAnchor || action.pdfAnchor;
+          if (!artifactId && (textSource.artifactId || action.artifactId)) artifactId = compactActionText(textSource.artifactId || action.artifactId);
+          if (!url2 && (textSource.url || action.url)) url2 = compactActionText(textSource.url || action.url);
+          if (!title && (textSource.title || action.title)) title = compactActionText(textSource.title || action.title);
           if (matchedText) break;
         }
       }
@@ -131388,7 +131392,11 @@ function createOnhandBrowserRuntime(host) {
       }
       if (matchedText && typeof tabId === "number") {
         try {
-          const highlighted = await highlightExactReplaySource(tabId, matchedText, { scrollIntoView: true });
+          const highlighted = await highlightTextWithReplayCandidates(tabId, matchedText, {
+            scrollIntoView: true,
+            scanPage: true,
+            ...recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}
+          });
           if (highlighted?.annotation) return { ok: true, mode: "text", annotation: highlighted.annotation };
         } catch {
         }
