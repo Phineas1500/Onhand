@@ -10,6 +10,9 @@
 	const HOST_ID = "onhand-extension-sidebar-host";
 	const HOST_SELECTOR = `[id="${HOST_ID}"]`;
 	const SIDEBAR_THEME_STORAGE_KEY = "onhandSidebarTheme";
+	// Spaced-review nudge is hidden for now; the scheduling backend
+	// (listDueReviews/snoozeReview) still runs so this can flip back on.
+	const REVIEW_NUDGE_ENABLED = false;
 	const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
 	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
@@ -4343,7 +4346,7 @@
 	}
 
 	function renderReviewNudge(state) {
-		const review = pickDueReview(state);
+		const review = REVIEW_NUDGE_ENABLED ? pickDueReview(state) : null;
 		if (!review) {
 			reviewNudgeEl.hidden = true;
 			reviewNudgeEl.innerHTML = "";
