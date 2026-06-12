@@ -131383,11 +131383,14 @@ function createOnhandBrowserRuntime(host) {
       const tabs = flattenTabs(state);
       const tab = findActionTab(tabs, { url: url2, title });
       const tabId = typeof tab?.id === "number" ? tab.id : void 0;
+      const failures = [];
+      const note = (stage, error51) => failures.push(`${stage}: ${error51?.message || error51}`);
       if (annotationId && typeof tabId === "number") {
         try {
           const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId, target });
           return { ok: true, mode: "existing", annotation: scrolled?.annotation || scrolled };
-        } catch {
+        } catch (error51) {
+          note("existing", error51);
         }
       }
       if (matchedText && typeof tabId === "number") {
@@ -131398,24 +131401,45 @@ function createOnhandBrowserRuntime(host) {
             ...recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}
           });
           if (highlighted?.annotation) return { ok: true, mode: "text", annotation: highlighted.annotation };
-        } catch {
+        } catch (error51) {
+          note("text", error51);
         }
       }
       if (artifactId) {
-        const restored = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: false });
-        const restoredTabId = typeof restored?.tab?.id === "number" ? restored.tab.id : tabId;
-        const targetMatch = (restored?.restoredTargets || []).find(
-          (entry) => annotationId && compactActionText(entry?.annotationId) === annotationId || matchedText && stripReplayCitationMarkers(compactActionText(entry?.matchedText)) === matchedText
-        );
-        const restoredAnnotationId = compactActionText(targetMatch?.restoredAnnotation?.annotationId);
-        if (typeof restoredTabId === "number" && restoredAnnotationId) {
-          const scrolled = await host.runCommand("scroll_to_annotation", { tabId: restoredTabId, annotationId: restoredAnnotationId, target });
-          return { ok: true, mode: "artifact", annotation: scrolled?.annotation || scrolled };
-        }
-        if (typeof restoredTabId === "number" && (restored?.restoredAnnotations || 0) > 0) {
-          return { ok: true, mode: "artifact" };
+        try {
+          const restored = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: false });
+          const restoredTabId = typeof restored?.tab?.id === "number" ? restored.tab.id : tabId;
+          const targetMatch = (restored?.restoredTargets || []).find(
+            (entry) => annotationId && compactActionText(entry?.annotationId) === annotationId || matchedText && stripReplayCitationMarkers(compactActionText(entry?.matchedText)) === matchedText
+          );
+          const restoredAnnotationId = compactActionText(targetMatch?.restoredAnnotation?.annotationId);
+          if (typeof restoredTabId === "number" && restoredAnnotationId) {
+            const scrolled = await host.runCommand("scroll_to_annotation", { tabId: restoredTabId, annotationId: restoredAnnotationId, target });
+            return { ok: true, mode: "artifact", annotation: scrolled?.annotation || scrolled };
+          }
+          if (typeof restoredTabId === "number" && (restored?.restoredAnnotations || 0) > 0) {
+            return { ok: true, mode: "artifact" };
+          }
+        } catch (error51) {
+          note("artifact", error51);
         }
       }
+      const anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+      if (anchorPage > 0 && typeof tabId === "number") {
+        try {
+          const jumped = await host.runCommand("pdf_jump_to_page", {
+            tabId,
+            pageNumber: anchorPage,
+            ...matchedText ? { text: matchedText } : {},
+            ...recoveredPdfAnchor?.occurrence ? { occurrence: recoveredPdfAnchor.occurrence } : {},
+            pdfAnchor: recoveredPdfAnchor
+          });
+          return { ok: true, mode: "page", pageNumber: anchorPage, jump: jumped?.jump || jumped };
+        } catch (error51) {
+          note("page", error51);
+        }
+      }
+      if (failures.length) host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | "));
       throw new Error("Source not found on this page.");
     }
   };

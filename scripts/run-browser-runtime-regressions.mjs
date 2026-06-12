@@ -1308,6 +1308,51 @@ async function assertLearnerSourceRecoversTextAcrossSessions() {
 	);
 }
 
+async function assertLearnerSourcePageFallbackWhenTextUnfindable() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	// The page action's text is recovered, but the exact passage can no
+	// longer be re-highlighted (complex PDF text). The recovered anchor still
+	// names the page, so the jump should land the reader there, not dead-end.
+	globalThis.chrome.storage.local.data.onhandBrowserSessions = {
+		old_session: {
+			id: "old_session",
+			name: "old",
+			createdAt: "2026-06-01T00:00:00.000Z",
+			updatedAt: "2026-06-01T00:00:00.000Z",
+			messages: [],
+			turns: [],
+			pageActions: [
+				{
+					key: "highlight:ann-orig",
+					type: "annotation",
+					label: "Highlighted text",
+					annotationId: "ann-drifted",
+					citationText: "A passage that no longer re-matches exactly",
+					url: replaySmokeTab().url,
+					title: replaySmokeTab().title,
+					pdfAnchor: { surface: "pdf", pageNumber: 7, occurrence: 1, matchedText: "A passage that no longer re-matches exactly" },
+				},
+			],
+			artifactIds: [],
+			learnerState: null,
+		},
+	};
+	const host = createReplayHost({
+		rejectScrollToAnnotation: () => true,
+		rejectHighlightText: () => true,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	const jumped = await runtime.jumpToLearnerSource({ annotationId: "ann-drifted", target: "annotation" });
+	assert.equal(jumped.ok, true, "jump should fall back to the anchor page when the exact highlight cannot be rebuilt");
+	assert.equal(jumped.mode, "page", "fallback should report a page jump");
+	assert.equal(jumped.pageNumber, 7, "fallback should jump to the recovered anchor page");
+	assert.ok(
+		host.calls.some((call) => call.name === "pdf_jump_to_page" && Number(call.args.pageNumber) === 7),
+		"fallback should issue a pdf_jump_to_page to the anchor page",
+	);
+}
+
 async function assertLearnerSourceWiring() {
 	const { readFile } = await import("node:fs/promises");
 	const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
@@ -4754,6 +4799,7 @@ async function main() {
 	await assertSpacedReviewScheduling();
 	await assertLearnerSourceSelfHealsByText();
 	await assertLearnerSourceRecoversTextAcrossSessions();
+	await assertLearnerSourcePageFallbackWhenTextUnfindable();
 	await assertLearnerSourceWiring();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();

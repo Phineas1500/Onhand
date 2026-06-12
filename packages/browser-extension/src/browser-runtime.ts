@@ -7338,13 +7338,17 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				const tabs = flattenTabs(state);
 				const tab = findActionTab(tabs, { url, title } as PageAction);
 				const tabId = typeof tab?.id === "number" ? tab.id : undefined;
+				const failures: string[] = [];
+				const note = (stage: string, error: any) => failures.push(`${stage}: ${error?.message || error}`);
 
 				// 1) The highlight is still on the page.
 				if (annotationId && typeof tabId === "number") {
 					try {
 						const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId, target });
 						return { ok: true, mode: "existing", annotation: scrolled?.annotation || scrolled };
-					} catch {}
+					} catch (error) {
+						note("existing", error);
+					}
 				}
 
 				// 2) Re-find the passage by its verbatim text. The replay
@@ -7359,28 +7363,55 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 							...(recoveredPdfAnchor ? { pdfAnchor: recoveredPdfAnchor } : {}),
 						});
 						if (highlighted?.annotation) return { ok: true, mode: "text", annotation: highlighted.annotation };
-					} catch {}
+					} catch (error) {
+						note("text", error);
+					}
 				}
 
 				// 3) Rebuild the highlight from the saved page artifact.
 				if (artifactId) {
-					const restored = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: false });
-					const restoredTabId = typeof restored?.tab?.id === "number" ? restored.tab.id : tabId;
-					const targetMatch = (restored?.restoredTargets || []).find(
-						(entry: any) =>
-							(annotationId && compactActionText(entry?.annotationId) === annotationId) ||
-							(matchedText && stripReplayCitationMarkers(compactActionText(entry?.matchedText)) === matchedText),
-					);
-					const restoredAnnotationId = compactActionText(targetMatch?.restoredAnnotation?.annotationId);
-					if (typeof restoredTabId === "number" && restoredAnnotationId) {
-						const scrolled = await host.runCommand("scroll_to_annotation", { tabId: restoredTabId, annotationId: restoredAnnotationId, target });
-						return { ok: true, mode: "artifact", annotation: scrolled?.annotation || scrolled };
-					}
-					if (typeof restoredTabId === "number" && (restored?.restoredAnnotations || 0) > 0) {
-						return { ok: true, mode: "artifact" };
+					try {
+						const restored = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: false });
+						const restoredTabId = typeof restored?.tab?.id === "number" ? restored.tab.id : tabId;
+						const targetMatch = (restored?.restoredTargets || []).find(
+							(entry: any) =>
+								(annotationId && compactActionText(entry?.annotationId) === annotationId) ||
+								(matchedText && stripReplayCitationMarkers(compactActionText(entry?.matchedText)) === matchedText),
+						);
+						const restoredAnnotationId = compactActionText(targetMatch?.restoredAnnotation?.annotationId);
+						if (typeof restoredTabId === "number" && restoredAnnotationId) {
+							const scrolled = await host.runCommand("scroll_to_annotation", { tabId: restoredTabId, annotationId: restoredAnnotationId, target });
+							return { ok: true, mode: "artifact", annotation: scrolled?.annotation || scrolled };
+						}
+						if (typeof restoredTabId === "number" && (restored?.restoredAnnotations || 0) > 0) {
+							return { ok: true, mode: "artifact" };
+						}
+					} catch (error) {
+						note("artifact", error);
 					}
 				}
 
+				// 4) Last resort: the exact highlight could not be re-created
+				// (complex PDF text often defeats exact re-matching), but we know
+				// which page the passage is on from the recovered anchor. Land
+				// the reader on that page so "source" is never a dead end.
+				const anchorPage = Number(recoveredPdfAnchor?.pageNumber) || 0;
+				if (anchorPage > 0 && typeof tabId === "number") {
+					try {
+						const jumped = await host.runCommand("pdf_jump_to_page", {
+							tabId,
+							pageNumber: anchorPage,
+							...(matchedText ? { text: matchedText } : {}),
+							...(recoveredPdfAnchor?.occurrence ? { occurrence: recoveredPdfAnchor.occurrence } : {}),
+							pdfAnchor: recoveredPdfAnchor,
+						});
+						return { ok: true, mode: "page", pageNumber: anchorPage, jump: jumped?.jump || jumped };
+					} catch (error) {
+						note("page", error);
+					}
+				}
+
+				if (failures.length) host.log?.("jumpToLearnerSource exhausted all recovery paths", failures.join(" | "));
 				throw new Error("Source not found on this page.");
 			},
 	};
