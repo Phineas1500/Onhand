@@ -125598,6 +125598,48 @@ function learnerSlug(value) {
 function normalizeLearnerSourcePageUrl(value) {
   return compactLearnerText(value, 240).split("#")[0].replace(/\/+$/, "").toLowerCase();
 }
+var LEARNER_LABEL_STOPWORDS = /* @__PURE__ */ new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "of",
+  "for",
+  "to",
+  "in",
+  "on",
+  "is",
+  "are",
+  "as",
+  "at",
+  "by",
+  "be",
+  "this",
+  "that",
+  "with",
+  "from",
+  "it",
+  "its",
+  "claim",
+  "example",
+  "examples",
+  "mention",
+  "section",
+  "page",
+  "note",
+  "about",
+  "how",
+  "what",
+  "when",
+  "where",
+  "why",
+  "card",
+  "system"
+]);
+function learnerLabelTokens(value) {
+  return compactActionText(value).toLowerCase().replace(/&/g, "").replace(/[^a-z0-9]+/g, " ").split(/\s+/).map((token) => token.length > 4 && token.endsWith("s") ? token.slice(0, -1) : token).filter((token) => token.length >= 2 && !LEARNER_LABEL_STOPWORDS.has(token));
+}
 function normalizeLearnerSourceTitle(value) {
   return compactLearnerText(value, 120).toLowerCase();
 }
@@ -131356,6 +131398,7 @@ function createOnhandBrowserRuntime(host) {
       let matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
       let artifactId = compactActionText(params?.artifactId);
       const target = params?.target === "note" ? "note" : "annotation";
+      const conceptLabel = compactActionText(params?.conceptLabel);
       let url2 = compactActionText(params?.url);
       let title = compactActionText(params?.tabTitle || params?.title);
       let recoveredPdfAnchor = null;
@@ -131374,6 +131417,34 @@ function createOnhandBrowserRuntime(host) {
           if (!url2 && (textSource.url || action.url)) url2 = compactActionText(textSource.url || action.url);
           if (!title && (textSource.title || action.title)) title = compactActionText(textSource.title || action.title);
           if (matchedText) break;
+        }
+      }
+      if (!matchedText && conceptLabel && url2) {
+        const labelTokens = new Set(learnerLabelTokens(conceptLabel));
+        if (labelTokens.size) {
+          const store = await loadStore();
+          let best = null;
+          const sameUrl = url2.split("#")[0];
+          for (const session of Object.values(store.sessions)) {
+            const actions = collectSessionPageActions(session);
+            for (const action of actions) {
+              if (compactActionText(action.url).split("#")[0] !== sameUrl) continue;
+              if (!isHighlightPageAction(action) && action.type !== "note") continue;
+              const highlight = isHighlightPageAction(action) ? action : findPairedHighlightAction(action, actions);
+              if (!highlight || !compactActionText(highlight.citationText || highlight.detail)) continue;
+              const noteText = action.type === "note" ? compactActionText(action.citationText || action.detail) : "";
+              const actionTokens = new Set(learnerLabelTokens(`${compactActionText(highlight.citationText || highlight.detail)} ${noteText}`));
+              let score = 0;
+              for (const token of labelTokens) if (actionTokens.has(token)) score += 1;
+              if (score >= 2 && (!best || score > best.score)) best = { action: highlight, score };
+            }
+          }
+          if (best) {
+            matchedText = stripReplayCitationMarkers(compactActionText(best.action.citationText || best.action.detail));
+            if (!recoveredPdfAnchor && best.action.pdfAnchor) recoveredPdfAnchor = best.action.pdfAnchor;
+            if (!artifactId && best.action.artifactId) artifactId = compactActionText(best.action.artifactId);
+            if (!title && best.action.title) title = compactActionText(best.action.title);
+          }
         }
       }
       if (!annotationId && !matchedText && !artifactId) {

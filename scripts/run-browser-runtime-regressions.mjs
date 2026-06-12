@@ -1308,6 +1308,64 @@ async function assertLearnerSourceRecoversTextAcrossSessions() {
 	);
 }
 
+async function assertLearnerSourceRecoversByConceptLabelWhenIdsDrift() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	// After several restores the concept's annotation id has drifted to a
+	// generation that matches neither the page action's id nor its key. The
+	// only link left is content: the concept label overlaps the highlight's
+	// text on the same page, so recovery should re-find it by that.
+	globalThis.chrome.storage.local.data.onhandBrowserSessions = {
+		old_session: {
+			id: "old_session",
+			name: "old",
+			createdAt: "2026-06-01T00:00:00.000Z",
+			updatedAt: "2026-06-01T00:00:00.000Z",
+			messages: [],
+			turns: [],
+			pageActions: [
+				{
+					key: "highlight:onhand-pdf-original-1",
+					type: "annotation",
+					label: "Highlighted text",
+					annotationId: "onhand-pdf-gen2-aaaa",
+					citationText: "Alpha smoke content evaluation claim",
+					url: replaySmokeTab().url,
+					title: replaySmokeTab().title,
+					pdfAnchor: { surface: "pdf", pageNumber: 4, occurrence: 1 },
+				},
+				{
+					key: "highlight:onhand-pdf-other-2",
+					type: "annotation",
+					label: "Highlighted text",
+					annotationId: "onhand-pdf-gen2-bbbb",
+					citationText: "An unrelated paragraph about something else",
+					url: replaySmokeTab().url,
+					title: replaySmokeTab().title,
+					pdfAnchor: { surface: "pdf", pageNumber: 9, occurrence: 1 },
+				},
+			],
+			artifactIds: [],
+			learnerState: null,
+		},
+	};
+	const host = createReplayHost({ rejectScrollToAnnotation: () => true });
+	const runtime = createOnhandBrowserRuntime(host);
+	// The drifted id matches nothing; only the label can re-link the concept.
+	const jumped = await runtime.jumpToLearnerSource({
+		annotationId: "onhand-pdf-gen3-zzzz",
+		conceptLabel: "Alpha smoke content evaluation claim",
+		url: replaySmokeTab().url,
+		target: "annotation",
+	});
+	assert.equal(jumped.ok, true, "drifted-id concept should recover by label-to-text overlap");
+	assert.equal(jumped.mode, "text", "label recovery should re-find the matched highlight by text");
+	assert.ok(
+		host.calls.some((call) => call.name === "highlight_text" && String(call.args.text || "").includes("Alpha smoke content evaluation claim")),
+		"label recovery should re-highlight the best-matching highlight, not the unrelated one",
+	);
+}
+
 async function assertLearnerSourcePageFallbackWhenTextUnfindable() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -4799,6 +4857,7 @@ async function main() {
 	await assertSpacedReviewScheduling();
 	await assertLearnerSourceSelfHealsByText();
 	await assertLearnerSourceRecoversTextAcrossSessions();
+	await assertLearnerSourceRecoversByConceptLabelWhenIdsDrift();
 	await assertLearnerSourcePageFallbackWhenTextUnfindable();
 	await assertLearnerSourceWiring();
 	await assertLearningModeToolLoopPersistsAgentEvents();

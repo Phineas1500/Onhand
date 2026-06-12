@@ -4246,14 +4246,16 @@
 		return ranked[0].action;
 	}
 
-	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "", source = null) {
+	function renderLearnerSourceButton(annotationId, target = "annotation", actionKey = "", source = null, conceptLabel = "") {
 		const id = String(annotationId || "").trim();
 		const key = String(actionKey || "").trim();
 		const matchedText = String(source?.matchedText || "").trim();
 		const artifactId = String(source?.artifactId || "").trim();
-		// The button can self-heal a stale highlight if it has the text or
-		// artifact to re-find with, even without an id or current-page action.
-		if (!id && !key && !matchedText && !artifactId) return "";
+		const label = String(conceptLabel || "").trim();
+		// The button can self-heal a stale highlight if it has the text,
+		// artifact, or concept label to re-find with — even without an id or a
+		// current-page action.
+		if (!id && !key && !matchedText && !artifactId && !label) return "";
 		return `
 			<button
 				class="onhand-learner-source"
@@ -4263,6 +4265,7 @@
 				${artifactId ? `data-source-artifact-id="${escapeAttribute(artifactId)}"` : ""}
 				${source?.url ? `data-source-url="${escapeAttribute(String(source.url))}"` : ""}
 				${source?.tabTitle ? `data-source-title="${escapeAttribute(String(source.tabTitle))}"` : ""}
+				${label ? `data-source-label="${escapeAttribute(label)}"` : ""}
 				data-target="${escapeAttribute(target)}"
 				type="button"
 				title="Jump to source"
@@ -4287,7 +4290,7 @@
 					<span class="onhand-learner-title">${escapeHtml(label)}</span>
 					${sourceLabel ? `<span class="onhand-learner-detail">${escapeHtml(sourceLabel)}</span>` : ""}
 				</span>
-				${renderLearnerSourceButton(source?.annotationId, "annotation", action?.key, source)}
+				${renderLearnerSourceButton(source?.annotationId, "annotation", action?.key, source, concept?.label)}
 			</div>
 		`;
 	}
@@ -4305,7 +4308,7 @@
 					<span class="onhand-learner-title">${escapeHtml(promptText)}</span>
 					<span class="onhand-learner-detail">${escapeHtml(kind)} · ${escapeHtml(conceptLabel)}</span>
 				</span>
-				${renderLearnerSourceButton(check?.annotationId, "note", action?.key, source)}
+				${renderLearnerSourceButton(check?.annotationId, "note", action?.key, source, conceptLabel)}
 			</div>
 		`;
 	}
@@ -5731,6 +5734,7 @@
 			artifactId: String(source?.artifactId || ""),
 			url: String(source?.url || ""),
 			tabTitle: String(source?.tabTitle || ""),
+			conceptLabel: String(source?.conceptLabel || ""),
 		});
 		if (!response?.ok) throw new Error(response?.error || "Source not found on this page");
 	}
@@ -5741,7 +5745,7 @@
 		// The runtime resolver can recover the passage text from the session
 		// that created the highlight, so it is worth trying for any source that
 		// carries an annotation id, not only ones with stored text/artifact.
-		const canSelfHeal = Boolean(source?.matchedText || source?.artifactId || id);
+		const canSelfHeal = Boolean(source?.matchedText || source?.artifactId || source?.conceptLabel || id);
 		if (!id && !actionKey && !canSelfHeal) return;
 		const sequence = ++learnerSourceFeedbackSequence;
 		setLearnerSourceFeedback({
@@ -9918,6 +9922,7 @@
 			artifactId: button.dataset.sourceArtifactId || "",
 			url: button.dataset.sourceUrl || "",
 			tabTitle: button.dataset.sourceTitle || "",
+			conceptLabel: button.dataset.sourceLabel || "",
 		});
 	});
 

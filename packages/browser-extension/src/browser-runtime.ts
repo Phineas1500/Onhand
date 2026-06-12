@@ -864,6 +864,28 @@ function normalizeLearnerSourcePageUrl(value: unknown) {
 	return compactLearnerText(value, 240).split("#")[0].replace(/\/+$/, "").toLowerCase();
 }
 
+const LEARNER_LABEL_STOPWORDS = new Set([
+	"the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "is", "are", "as", "at", "by", "be", "this", "that",
+	"with", "from", "it", "its", "claim", "example", "examples", "mention", "section", "page", "note", "about", "how",
+	"what", "when", "where", "why", "card", "system",
+]);
+
+// Meaningful tokens from a learner concept label or highlight text, used to
+// re-link a concept to its highlight by content when ids have drifted apart.
+function learnerLabelTokens(value: string): string[] {
+	return compactActionText(value)
+		.toLowerCase()
+		// Drop "&" so abbreviations match: "R&D" -> "rd" matches a note's
+		// "R&D", and "research & development" -> "research development".
+		.replace(/&/g, "")
+		.replace(/[^a-z0-9]+/g, " ")
+		.split(/\s+/)
+		.map((token) => (token.length > 4 && token.endsWith("s") ? token.slice(0, -1) : token))
+		// Keep 2-char tokens ("ai", "rd"); labels like "AI R&D" are mostly
+		// short, meaningful tokens once the generic words are dropped.
+		.filter((token) => token.length >= 2 && !LEARNER_LABEL_STOPWORDS.has(token));
+}
+
 function normalizeLearnerSourceTitle(value: unknown) {
 	return compactLearnerText(value, 120).toLowerCase();
 }
@@ -7299,6 +7321,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				let matchedText = stripReplayCitationMarkers(compactActionText(params?.matchedText));
 				let artifactId = compactActionText(params?.artifactId);
 				const target = params?.target === "note" ? "note" : "annotation";
+				const conceptLabel = compactActionText(params?.conceptLabel);
 				let url = compactActionText(params?.url);
 				let title = compactActionText(params?.tabTitle || params?.title);
 				// Concepts tracked before sources stored their text carry only a
@@ -7329,6 +7352,40 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 						if (!url && (textSource.url || action.url)) url = compactActionText(textSource.url || action.url);
 						if (!title && (textSource.title || action.title)) title = compactActionText(textSource.title || action.title);
 						if (matchedText) break;
+					}
+				}
+				// After enough restores, a concept's annotation id drifts to a
+				// generation that matches neither the page action's id nor its
+				// key, so id recovery yields nothing. Fall back to content: among
+				// highlights on the same page, pick the one whose text best
+				// overlaps the concept label. Lossy, but lands the reader on the
+				// passage the concept is about instead of a dead end.
+				if (!matchedText && conceptLabel && url) {
+					const labelTokens = new Set(learnerLabelTokens(conceptLabel));
+					if (labelTokens.size) {
+						const store = await loadStore();
+						let best: { action: PageAction; score: number } | null = null;
+						const sameUrl = url.split("#")[0];
+						for (const session of Object.values(store.sessions) as RuntimeSession[]) {
+							const actions = collectSessionPageActions(session);
+							for (const action of actions) {
+								if (compactActionText(action.url).split("#")[0] !== sameUrl) continue;
+								if (!isHighlightPageAction(action) && action.type !== "note") continue;
+								const highlight = isHighlightPageAction(action) ? action : findPairedHighlightAction(action, actions);
+								if (!highlight || !compactActionText(highlight.citationText || highlight.detail)) continue;
+								const noteText = action.type === "note" ? compactActionText(action.citationText || action.detail) : "";
+								const actionTokens = new Set(learnerLabelTokens(`${compactActionText(highlight.citationText || highlight.detail)} ${noteText}`));
+								let score = 0;
+								for (const token of labelTokens) if (actionTokens.has(token)) score += 1;
+								if (score >= 2 && (!best || score > best.score)) best = { action: highlight, score };
+							}
+						}
+						if (best) {
+							matchedText = stripReplayCitationMarkers(compactActionText(best.action.citationText || best.action.detail));
+							if (!recoveredPdfAnchor && best.action.pdfAnchor) recoveredPdfAnchor = best.action.pdfAnchor;
+							if (!artifactId && best.action.artifactId) artifactId = compactActionText(best.action.artifactId);
+							if (!title && best.action.title) title = compactActionText(best.action.title);
+						}
 					}
 				}
 				if (!annotationId && !matchedText && !artifactId) {

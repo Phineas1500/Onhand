@@ -9534,6 +9534,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				artifactId: typeof message.artifactId === "string" ? message.artifactId : "",
 				url: typeof message.url === "string" ? message.url : "",
 				tabTitle: typeof message.tabTitle === "string" ? message.tabTitle : "",
+				conceptLabel: typeof message.conceptLabel === "string" ? message.conceptLabel : "",
 				target: message.target === "note" ? "note" : "annotation",
 			});
 			sendResponse({ ok: true, result });
