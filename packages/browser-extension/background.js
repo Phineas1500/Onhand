@@ -64,7 +64,15 @@ function configureSidePanelActionClick() {
 	});
 }
 
+function restrictStorageToTrustedContexts() {
+	if (!chrome.storage?.local?.setAccessLevel) return;
+	chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch((error) => {
+		log("Could not restrict extension storage access", error?.message || String(error));
+	});
+}
+
 function initializeExtensionSurface() {
+	restrictStorageToTrustedContexts();
 	configureSidePanelActionClick();
 	ensureOffscreenDocument().catch((error) => {
 		log("Could not initialize offscreen runtime document", error?.message || String(error));
@@ -6476,7 +6484,7 @@ async function evaluateInTab(tabId, expression, options = {}) {
 	if (!options.skipScripting) {
 		try {
 			const settledPayload = await withOperationTimeout(
-				executeScriptInTab(
+				executeScriptInTabMainWorld(
 					tabId,
 					async (source) => {
 						try {
