@@ -218,6 +218,9 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /renderDocument\(\{\s*preserveView:\s*true\s*\}\)/, "PDF viewer zoom/resize re-renders should preserve view state");
 	assert.match(source, /case "searchPdf":/, "PDF toolkit bridge should route full-document search");
 	assert.match(source, /case "readPdfPages":/, "PDF toolkit bridge should route page text reads");
+	assert.doesNotMatch(source, /parentBridgeToken/, "PDF viewer bridge must not trust a token supplied by an embedding page");
+	assert.match(source, /const expectedToken = await getBridgeToken\(\)/, "PDF viewer bridge commands should authorize against the session-stored token");
+	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
 }
 
 function installLayoutShims(window) {
