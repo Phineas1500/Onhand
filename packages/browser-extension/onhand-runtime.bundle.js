@@ -125239,7 +125239,7 @@ var READ_TAB_SELECTOR_SCHEMA = {
 };
 var NAVIGATE_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
-  url: typebox_exports.String({ description: "URL to navigate to" }),
+  url: typebox_exports.String({ description: "HTTP(S) URL to navigate to. Do not use browser_navigate for file:// URLs; local files must be opened manually by the user first." }),
   newTab: typebox_exports.Optional(typebox_exports.Boolean({ description: "Open in a new tab instead of navigating the current or matched tab" })),
   waitForLoad: typebox_exports.Optional(typebox_exports.Boolean({ description: "Wait for the tab to finish loading" })),
   timeoutMs: typebox_exports.Optional(typebox_exports.Number({ description: "Navigation timeout in milliseconds" }))

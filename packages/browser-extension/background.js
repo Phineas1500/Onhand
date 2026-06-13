@@ -7492,10 +7492,23 @@ async function syncAnnotationThemeInOpenTabs() {
 	}
 }
 
+function assertSafeBrowserNavigationUrl(url) {
+	let parsed;
+	try {
+		parsed = new URL(String(url || ""));
+	} catch {
+		return;
+	}
+	if (parsed.protocol === "file:") {
+		throw new Error("browser_navigate cannot open file:// URLs. Open local files manually in Chrome, then use Onhand on the active user-opened file tab.");
+	}
+}
+
 async function navigateBrowser(args = {}) {
 	if (typeof args.url !== "string" || !args.url.trim()) {
 		throw new Error("navigate requires a non-empty 'url'");
 	}
+	assertSafeBrowserNavigationUrl(args.url);
 	const waitForLoad = args.waitForLoad !== false;
 	const timeoutMs = clampNumber(args.timeoutMs, 15000, { min: 100, max: 120000 });
 
