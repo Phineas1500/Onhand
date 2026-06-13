@@ -27,13 +27,17 @@ npm run ops:free-tier -- --json
 ## What To Watch
 
 - `chat_stream_complete` volume: normal successful free-tier model calls.
-- `chat_stream_error`, `chat_request_rejected`, and `chat_quota_denied`: user
-  visible failure pressure.
+- `chat_stream_error`, `chat_request_rejected`, `chat_quota_denied`,
+  `chat_turn_quota_denied`, and `chat_cost_quota_denied`: user-visible failure
+  pressure.
 - `total_cost` and `avg_cost`: whether DeepSeek V4 Flash is staying within the
   intended free-tier economics.
 - `Turn Costs`: model-call count, tokens, cost, and streamed duration grouped
   by the Onhand UI turn id; older completions before turn attribution show as
   `unknown`.
+- `Guardrail Events`: heavy-turn warnings plus per-turn and shared daily cost
+  cap denials. `free_tier_heavy_turn` is warning-only; the two
+  `*_quota_denied` rows are user-visible stops.
 - `p95_ms`: whether OpenRouter/provider routing is creating slow responses.
 - `quota_and_rejections`: abuse pressure or overly strict caps.
 - `browser_run_js_*`: constrained advanced runtime-inspection usage. Unexpected

@@ -107,6 +107,8 @@ function buildQueries({ dataset, days, limit }) {
 		"chat_stream_cancelled",
 		"chat_request_rejected",
 		"chat_quota_denied",
+		"chat_turn_quota_denied",
+		"chat_cost_quota_denied",
 	];
 	const queryList = [
 		{
@@ -226,6 +228,8 @@ FROM ${dataset}
 WHERE ${where}
   AND blob1 IN (
     'chat_quota_denied',
+    'chat_turn_quota_denied',
+    'chat_cost_quota_denied',
     'chat_request_rejected',
     'telemetry_rate_limited',
     'telemetry_rejected',
@@ -233,6 +237,29 @@ WHERE ${where}
     'error_report_rejected'
   )
 GROUP BY event, error_code
+ORDER BY events DESC
+LIMIT ${limit}`,
+		},
+		{
+			name: "guardrail_events",
+			description: "Free-tier cost and heavy-turn guardrails.",
+			sql: `
+SELECT
+  blob1 AS event,
+  blob3 AS result,
+  blob15 AS reason,
+  blob4 AS model,
+  blob5 AS provider,
+  SUM(_sample_interval) AS events,
+  MAX(double5) AS max_current,
+  MAX(double6) AS cap,
+  SUM(_sample_interval * double10) AS cost,
+  SUM(_sample_interval * double9) AS total_tokens,
+  MAX(double11) AS max_turn_model_calls
+FROM ${dataset}
+WHERE ${where}
+  AND blob1 IN ('free_tier_heavy_turn', 'chat_turn_quota_denied', 'chat_cost_quota_denied')
+GROUP BY event, result, reason, model, provider
 ORDER BY events DESC
 LIMIT ${limit}`,
 		},
@@ -248,7 +275,7 @@ SELECT
   SUM(_sample_interval) AS events
 FROM ${dataset}
 WHERE ${where}
-  AND (blob3 = 'error' OR blob15 != '')
+  AND (blob3 = 'error' OR (blob15 != '' AND blob1 != 'free_tier_heavy_turn'))
 GROUP BY event, error_code, provider, status
 ORDER BY events DESC
 LIMIT ${limit}`,
@@ -438,6 +465,7 @@ function renderMarkdown(report) {
 	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
 	addTable(lines, "Turn Costs", report.sections.turn_costs, ["turn_id", "session_id", "model", "provider", "model_calls", "cost", "total_tokens", "prompt_tokens", "completion_tokens", "total_ms", "last_seen"]);
 	addTable(lines, "Quota And Rejections", report.sections.quota_and_rejections, ["event", "error_code", "events", "max_current", "cap"]);
+	addTable(lines, "Guardrail Events", report.sections.guardrail_events, ["event", "result", "reason", "model", "provider", "events", "max_current", "cap", "cost", "total_tokens", "max_turn_model_calls"]);
 	addTable(lines, "Top Errors", report.sections.top_errors, ["event", "error_code", "provider", "status", "events"]);
 	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["event", "result", "ai_model", "events"]);
 	addTable(lines, "Extension Prompts", report.sections.extension_prompts, ["event", "result", "ai_model", "error_code", "events", "avg_ms"]);

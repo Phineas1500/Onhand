@@ -11,7 +11,8 @@
 // - model allowlist (cheap models only)
 // - server-side OpenRouter provider pinning (US hosts; user pages and PDFs
 //   never transit PRC-hosted APIs)
-// - per-device daily request cap, per-IP daily registration cap
+// - per-device daily request cap, per-turn model-call cap, daily shared cost cap
+// - per-IP daily registration cap
 // - request body size and max_tokens clamps
 //
 // Secrets/bindings: OPENROUTER_API_KEY (secret), FREE_TIER_KV (KV).
@@ -22,6 +23,13 @@ const MAX_BODY_BYTES = 900_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
+const DEFAULT_DAILY_COST_CAP_USD = 5;
+const DEFAULT_DAILY_REQUEST_CAP = 80;
+const DEFAULT_TURN_MODEL_CALL_CAP = 20;
+const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
+const DEFAULT_HEAVY_TURN_COST_USD = 0.005;
+const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
+const DAILY_COUNTER_TTL_SECONDS = 60 * 60 * 48;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation";
@@ -93,6 +101,11 @@ function compactStructuredString(value, maxLength = 1200) {
 function finiteNumber(value, fallback = 0) {
 	const number = Number(value);
 	return Number.isFinite(number) ? number : fallback;
+}
+
+function envNumber(env, name, fallback) {
+	const number = Number(env?.[name]);
+	return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
 function firstFiniteNumber(...values) {
@@ -178,14 +191,16 @@ function writeAnalytics(ctx, env, eventName, fields = {}, request = null) {
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
 }
 
-function writeAnalyticsAsync(ctx, env, eventName, buildFields, request = null) {
+function writeCompletionAnalyticsAndAccounting(ctx, env, fields, request = null) {
 	const analytics = env?.ONHAND_ANALYTICS;
-	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
 	const context = analyticsContext(request);
 	const task = Promise.resolve()
-		.then(buildFields)
-		.then((fields) => {
-			analytics.writeDataPoint(analyticsDataPoint(eventName, fields || {}, context));
+		.then(() => enrichCompletionFields(env, fields))
+		.then(async (enrichedFields) => {
+			if (analytics && typeof analytics.writeDataPoint === "function") {
+				analytics.writeDataPoint(analyticsDataPoint("chat_stream_complete", enrichedFields, context));
+			}
+			await recordCompletionAccounting(env, analytics, context, enrichedFields);
 		})
 		.catch(() => {});
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
@@ -204,12 +219,85 @@ async function hashIdentifier(value) {
 }
 
 async function bumpDailyCounter(env, key, cap) {
-	const current = Number((await env.FREE_TIER_KV.get(key)) || 0);
+	const current = await readKvNumber(env, key);
 	if (current >= cap) return { allowed: false, current };
 	// get+put is racy under parallel requests; for a per-device daily cap
 	// the worst case is a couple of extra requests, which is fine.
-	await env.FREE_TIER_KV.put(key, String(current + 1), { expirationTtl: 60 * 60 * 48 });
+	await writeKvNumber(env, key, current + 1, DAILY_COUNTER_TTL_SECONDS);
 	return { allowed: true, current: current + 1 };
+}
+
+async function readKvNumber(env, key) {
+	const current = Number((await env.FREE_TIER_KV.get(key)) || 0);
+	return Number.isFinite(current) && current > 0 ? current : 0;
+}
+
+async function writeKvNumber(env, key, value, expirationTtl = DAILY_COUNTER_TTL_SECONDS) {
+	await env.FREE_TIER_KV.put(key, String(value), { expirationTtl });
+}
+
+async function addKvNumber(env, key, amount, expirationTtl = DAILY_COUNTER_TTL_SECONDS) {
+	const delta = finiteNumber(amount);
+	if (delta <= 0) return await readKvNumber(env, key);
+	const current = await readKvNumber(env, key);
+	const next = current + delta;
+	await writeKvNumber(env, key, next, expirationTtl);
+	return next;
+}
+
+function dailyCostKey() {
+	return `cost:${todayKey()}`;
+}
+
+function turnModelCallKey(deviceHash, telemetryIds) {
+	const turnKey = compactIdentifier(telemetryIds.turnId || telemetryIds.sessionId || "", 80);
+	if (!turnKey) return "";
+	return `turn-call:${deviceHash}:${todayKey()}:${turnKey}`;
+}
+
+async function bumpTurnModelCalls(env, deviceHash, telemetryIds, cap) {
+	const key = turnModelCallKey(deviceHash, telemetryIds);
+	if (!key) return { allowed: true, current: 0 };
+	return await bumpDailyCounter(env, key, cap);
+}
+
+function heavyTurnReasons(env, fields) {
+	const reasons = [];
+	const turnModelCalls = finiteNumber(fields.actionCount);
+	const totalTokens = finiteNumber(fields.totalTokens);
+	const cost = finiteNumber(fields.cost);
+	const modelCallThreshold = envNumber(env, "HEAVY_TURN_MODEL_CALLS", DEFAULT_HEAVY_TURN_MODEL_CALLS);
+	const tokenThreshold = envNumber(env, "HEAVY_TURN_TOKENS", DEFAULT_HEAVY_TURN_TOKENS);
+	const costThreshold = envNumber(env, "HEAVY_TURN_COST_USD", DEFAULT_HEAVY_TURN_COST_USD);
+	if (modelCallThreshold > 0 && turnModelCalls >= modelCallThreshold) reasons.push("model_calls");
+	if (tokenThreshold > 0 && totalTokens >= tokenThreshold) reasons.push("tokens");
+	if (costThreshold > 0 && cost >= costThreshold) reasons.push("cost");
+	return reasons;
+}
+
+async function markHeavyTurnOnce(env, fields) {
+	const turnKey = compactIdentifier(fields.turnId || fields.sessionId || "", 80);
+	const deviceHash = compactIdentifier(fields.deviceHash || "", 80);
+	if (!turnKey || !deviceHash) return true;
+	const key = `heavy-turn:${deviceHash}:${todayKey()}:${turnKey}`;
+	if (await env.FREE_TIER_KV.get(key)) return false;
+	await env.FREE_TIER_KV.put(key, "1", { expirationTtl: DAILY_COUNTER_TTL_SECONDS });
+	return true;
+}
+
+async function recordCompletionAccounting(env, analytics, context, fields) {
+	if (finiteNumber(fields.cost) > 0) await addKvNumber(env, dailyCostKey(), fields.cost);
+	const reasons = heavyTurnReasons(env, fields);
+	if (!reasons.length || !(await markHeavyTurnOnce(env, fields))) return;
+	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
+	const cap = envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP);
+	analytics.writeDataPoint(analyticsDataPoint("free_tier_heavy_turn", {
+		...fields,
+		result: "warn",
+		current: fields.actionCount,
+		cap,
+		errorCode: reasons.join(","),
+	}, context));
 }
 
 function requestTelemetryIds(request) {
@@ -379,7 +467,7 @@ function instrumentSseBody(body, env, ctx, baseFields, request) {
 						readPayload(extractSsePayload(buffered));
 					}
 					const fields = streamFields("ok");
-					writeAnalyticsAsync(ctx, env, "chat_stream_complete", () => enrichCompletionFields(env, fields), request);
+					writeCompletionAnalyticsAndAccounting(ctx, env, fields, request);
 					controller.close();
 					return;
 				}
@@ -431,8 +519,28 @@ async function handleChatCompletions(request, env, ctx) {
 		return json(401, { error: { message: "Unknown free-tier token. Re-select Onhand Free in the extension options to register again." } });
 	}
 
-	const cap = Number(env.DAILY_REQUEST_CAP || 80);
-	const usage = await bumpDailyCounter(env, `use:${token}:${todayKey()}`, cap);
+	const dailyCostCap = envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD);
+	const dailyCostUsed = await readKvNumber(env, dailyCostKey());
+	if (dailyCostUsed >= dailyCostCap) {
+		writeAnalytics(ctx, env, "chat_cost_quota_denied", {
+			...telemetryIds,
+			result: "denied",
+			status: 429,
+			durationMs: Date.now() - startedAt,
+			deviceHash,
+			current: dailyCostUsed,
+			cap: dailyCostCap,
+			errorCode: "daily_cost_cap",
+		}, request);
+		return json(429, {
+			error: {
+				message: "Onhand Free is at today's shared compute limit. It resets tomorrow, or you can switch to your own API key in options.",
+			},
+		});
+	}
+
+	const dailyRequestCap = envNumber(env, "DAILY_REQUEST_CAP", DEFAULT_DAILY_REQUEST_CAP);
+	const usage = await bumpDailyCounter(env, `use:${token}:${todayKey()}`, dailyRequestCap);
 	if (!usage.allowed) {
 		writeAnalytics(ctx, env, "chat_quota_denied", {
 			...telemetryIds,
@@ -441,11 +549,31 @@ async function handleChatCompletions(request, env, ctx) {
 			durationMs: Date.now() - startedAt,
 			deviceHash,
 			current: usage.current,
-			cap,
+			cap: dailyRequestCap,
 		}, request);
 		return json(429, {
 			error: {
 				message: "You've reached today's Onhand Free limit. It resets tomorrow — or switch to your own API key in options for unlimited use.",
+			},
+		});
+	}
+
+	const turnModelCallCap = envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP);
+	const turnUsage = await bumpTurnModelCalls(env, deviceHash, telemetryIds, turnModelCallCap);
+	if (!turnUsage.allowed) {
+		writeAnalytics(ctx, env, "chat_turn_quota_denied", {
+			...telemetryIds,
+			result: "denied",
+			status: 429,
+			durationMs: Date.now() - startedAt,
+			deviceHash,
+			current: turnUsage.current,
+			cap: turnModelCallCap,
+			errorCode: "turn_model_call_cap",
+		}, request);
+		return json(429, {
+			error: {
+				message: "This Onhand Free turn needs more compute than the free tier can provide. Switch to your own API key in options to continue on this page.",
 			},
 		});
 	}
@@ -460,7 +588,8 @@ async function handleChatCompletions(request, env, ctx) {
 			bodyBytes: raw.length,
 			deviceHash,
 			current: usage.current,
-			cap,
+			cap: dailyRequestCap,
+			actionCount: turnUsage.current,
 			errorCode: "body_too_large",
 		}, request);
 		return json(413, { error: { message: "Request too large for the free tier." } });
@@ -477,7 +606,8 @@ async function handleChatCompletions(request, env, ctx) {
 			bodyBytes: raw.length,
 			deviceHash,
 			current: usage.current,
-			cap,
+			cap: dailyRequestCap,
+			actionCount: turnUsage.current,
 			errorCode: "invalid_json",
 		}, request);
 		return json(400, { error: { message: "Request body must be JSON." } });
@@ -491,7 +621,8 @@ async function handleChatCompletions(request, env, ctx) {
 			bodyBytes: raw.length,
 			deviceHash,
 			current: usage.current,
-			cap,
+			cap: dailyRequestCap,
+			actionCount: turnUsage.current,
 			model: body.model,
 			errorCode: "model_not_allowed",
 		}, request);
@@ -524,7 +655,8 @@ async function handleChatCompletions(request, env, ctx) {
 		bodyBytes: raw.length,
 		deviceHash,
 		current: usage.current,
-		cap,
+		cap: dailyRequestCap,
+		actionCount: turnUsage.current,
 		model: body.model,
 		provider: upstreamProvider,
 	};

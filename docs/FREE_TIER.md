@@ -22,6 +22,10 @@ completions to OpenRouter with Onhand's key.
 
 - model allowlist: `deepseek/deepseek-v4-flash` only
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
+- `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
+- `TURN_MODEL_CALL_CAP` (default 20 model calls in one Onhand UI turn)
+- `HEAVY_TURN_MODEL_CALLS`, `HEAVY_TURN_COST_USD`, and
+  `HEAVY_TURN_TOKENS` (warning-only ops thresholds)
 - `REGISTRATIONS_PER_IP_PER_DAY` (default 5)
 - `TELEMETRY_EVENTS_PER_IP_PER_DAY` (default 1000 diagnostics events/day)
 - `ERROR_REPORTS_PER_IP_PER_DAY` (default 50 explicit error reports/day)
@@ -104,11 +108,14 @@ Worker-side events:
 - `register_rate_limited`
 - `chat_auth_denied`
 - `chat_quota_denied`
+- `chat_turn_quota_denied`
+- `chat_cost_quota_denied`
 - `chat_request_rejected`
 - `chat_upstream_response`
 - `chat_stream_complete`
 - `chat_stream_error`
 - `chat_stream_cancelled`
+- `free_tier_heavy_turn`
 - `telemetry_rate_limited`
 - `telemetry_rejected`
 - `error_report_submitted`
@@ -165,6 +172,13 @@ are timestamp, status, duration, body bytes, quota current, quota cap,
 prompt tokens, completion tokens, total tokens, cost, action count, and
 artifact count.
 
+For free-tier chat events, `action count` is reused as the model-call count
+inside the current Onhand turn. `chat_turn_quota_denied` stops a runaway turn
+before it can keep making model calls. `chat_cost_quota_denied` stops new model
+calls after the shared daily hosted-model cost cap has been reached.
+`free_tier_heavy_turn` is warning-only and fires once per turn when a completion
+crosses one of the configured heavy-turn thresholds.
+
 Useful first queries:
 
 ```sql
@@ -204,5 +218,8 @@ WHERE blob1 = 'chat_stream_complete'
 - Rotating the OpenRouter key: `npx wrangler secret put OPENROUTER_API_KEY` again.
 - Abuse response: lower `DAILY_REQUEST_CAP`, or delete a token's
   `token:<id>` KV entry to revoke it.
-- The cap counter is best-effort (KV get+put), which can leak a couple
-  of requests under parallel load; that is acceptable for cost control.
+- Cost response: lower `DAILY_COST_CAP_USD` to cap shared daily spend, or lower
+  `TURN_MODEL_CALL_CAP` to stop unusually complex single turns earlier.
+- The cap counters are best-effort (KV get+put), which can leak a couple
+  of requests under parallel load; that is acceptable for these free-tier
+  guardrails.

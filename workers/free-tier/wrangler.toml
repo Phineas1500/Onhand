@@ -15,6 +15,14 @@ dataset = "onhand_events"
 [vars]
 # A turn is roughly 3-6 model calls; 80 requests is ~15-25 turns/day.
 DAILY_REQUEST_CAP = "80"
+# Shared daily hosted-model spend cap. Set higher/lower in production as needed.
+DAILY_COST_CAP_USD = "5"
+# Stops runaway single turns while still allowing complex pages/PDFs.
+TURN_MODEL_CALL_CAP = "20"
+# Ops warnings for turns that are unusually expensive or tool-call heavy.
+HEAVY_TURN_MODEL_CALLS = "10"
+HEAVY_TURN_COST_USD = "0.005"
+HEAVY_TURN_TOKENS = "100000"
 REGISTRATIONS_PER_IP_PER_DAY = "5"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 ERROR_REPORTS_PER_IP_PER_DAY = "50"
