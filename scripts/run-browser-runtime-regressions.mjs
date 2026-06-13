@@ -788,6 +788,18 @@ async function assertPdfCitationFormatting() {
 		citation: { found: true, reference: "3", pageNumber: 11, entryText: "[3] Some Author. A book. Publisher, 1999.", identifiers: {} },
 	});
 	assert.match(noLink, /no direct link/);
+
+	const privateLink = formatPdfCitationForModel({
+		citation: {
+			found: true,
+			reference: "14",
+			pageNumber: 12,
+			entryText: "[14] Mallory. Internal appliance manual. http://127.0.0.1:8080/secret",
+			identifiers: { suggestedUrl: "http://127.0.0.1:8080/secret" },
+		},
+	});
+	assert.doesNotMatch(privateLink, /navigate to http:\/\/127\.0\.0\.1:8080\/secret/);
+	assert.match(privateLink, /no direct link safe to open automatically/);
 }
 
 async function assertSpacedReviewScheduling() {

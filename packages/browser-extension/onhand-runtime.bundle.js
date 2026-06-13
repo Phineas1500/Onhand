@@ -127085,18 +127085,49 @@ ${count - lines.length} more match(es) omitted.` : "";
   return `PDF search${query ? ` for "${truncate(query, 120)}"` : ""}: ${count} match(es)
 ${lines.join("\n")}${suffix}`;
 }
+function isPrivateIpv4Address(hostname3) {
+  const octets = hostname3.split(".");
+  if (octets.length !== 4) return false;
+  const numbers = octets.map((part) => Number(part));
+  if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [first, second, third] = numbers;
+  return first === 0 || first === 10 || first === 127 || first === 100 && second >= 64 && second <= 127 || first === 169 && second === 254 || first === 172 && second >= 16 && second <= 31 || first === 192 && second === 168 || first === 192 && second === 0 || first === 192 && second === 0 && third === 2 || first === 198 && (second === 18 || second === 19) || first === 198 && second === 51 && third === 100 || first === 203 && second === 0 && third === 113 || first >= 224;
+}
+var PUBLIC_CITATION_TLDS = /* @__PURE__ */ new Set(["com", "org", "net", "edu", "gov", "mil", "int", "io", "ai", "dev", "app", "info", "science", "technology"]);
+function hasPublicCitationTld(hostname3) {
+  const tld = hostname3.split(".").pop() || "";
+  return /^[a-z]{2}$/.test(tld) || PUBLIC_CITATION_TLDS.has(tld);
+}
+function isSafeCitationUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || "").trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const hostname3 = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+    if (!hostname3 || hostname3 === "localhost" || hostname3.endsWith(".localhost")) return false;
+    if (hostname3.includes(":")) return false;
+    const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(hostname3);
+    if (isIpv4) return !isPrivateIpv4Address(hostname3);
+    if (!hostname3.includes(".") || /\.(local|lan|home|internal|intranet|corp|test|invalid|example|onion)$/i.test(hostname3)) return false;
+    if (!hasPublicCitationTld(hostname3)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 function formatPdfCitationForModel(details) {
   const citation = details.citation || details || {};
   if (!citation.found) {
     return `No citation entry found for "${truncate(String(citation.reference || ""), 80)}". ${String(citation.message || "")}`.trim();
   }
   const identifiers = citation.identifiers || {};
+  const suggestedUrl = String(identifiers.suggestedUrl || "");
+  const safeSuggestedUrl = suggestedUrl && isSafeCitationUrl(suggestedUrl) ? suggestedUrl : "";
   const lines = [
     `Citation entry for [${citation.reference}] on p. ${citation.pageNumber}:`,
     truncate(String(citation.entryText || ""), 500),
     identifiers.arxivId ? `arXiv id: ${identifiers.arxivId}` : "",
     identifiers.doi ? `DOI: ${identifiers.doi}` : "",
-    identifiers.suggestedUrl ? `To open the cited work, navigate to ${identifiers.suggestedUrl} in a new tab (newTab: true) so the current paper stays open, then hand the PDF to the Onhand viewer.` : "The entry has no direct link; tell the user it could not be opened automatically.",
+    safeSuggestedUrl ? `To open the cited work, navigate to ${safeSuggestedUrl} in a new tab (newTab: true) so the current paper stays open, then hand the PDF to the Onhand viewer.` : "The entry has no direct link safe to open automatically; tell the user it could not be opened automatically.",
     `To highlight this entry here, call browser_highlight_text with text ${JSON.stringify(truncate(String(citation.entryText || ""), 110))} and pdfAnchor {"pageNumber": ${citation.pageNumber}}.`
   ].filter(Boolean);
   return lines.join("\n");
