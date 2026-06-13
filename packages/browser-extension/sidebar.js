@@ -34,16 +34,13 @@
 	const REALTIME_API_KEY_SETUP_MESSAGE =
 		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 	const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
-		browser_list_tabs: "list_tabs",
-		browser_activate_tab: "activate_tab",
 		browser_navigate: "navigate",
+		browser_click_text: "click_text",
 		browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 		browser_pdf_search: "pdf_search",
 		browser_pdf_read_pages: "pdf_read_pages",
 		browser_pdf_jump_to_page: "pdf_jump_to_page",
-		browser_pdf_capture_page_image: "pdf_capture_page_image",
 		browser_get_visible_text: "get_visible_text",
-		browser_get_visible_region_image: "get_visible_region_image",
 		browser_extract_content: "extract_content",
 		browser_get_selection: "get_selection",
 		browser_get_viewport_headings: "get_viewport_headings",
@@ -52,19 +49,6 @@
 		browser_show_note: "show_note",
 		browser_scroll_to_annotation: "scroll_to_annotation",
 		browser_clear_annotations: "clear_annotations",
-		browser_capture_state: "capture_state",
-		browser_find_elements: "find_elements",
-		browser_wait_for_selector: "wait_for_selector",
-		browser_click: "click",
-		browser_type: "type_text",
-		browser_click_text: "click_text",
-		browser_type_by_label: "type_by_label",
-		browser_pick_elements: "pick_elements",
-		browser_collect_console: "collect_console",
-		browser_collect_network: "collect_network",
-		browser_get_dom: "get_dom",
-		browser_capture_screenshot: "capture_screenshot",
-		browser_run_js: "run_js",
 	});
 	const CODEX_PROVIDER = "openai-codex";
 	const CODEX_MODEL = "gpt-5.5";
@@ -249,6 +233,27 @@
 		"browser_get_viewport_headings",
 		"browser_pdf_search",
 		"browser_pdf_read_pages",
+	]);
+	const REALTIME_DEFAULT_TOOL_NAMES = new Set([
+		"browser_open_pdf_in_onhand_viewer",
+		"browser_pdf_search",
+		"browser_pdf_read_pages",
+		"browser_pdf_jump_to_page",
+		"browser_get_visible_text",
+		"browser_extract_content",
+		"browser_get_selection",
+		"browser_get_viewport_headings",
+		"browser_get_scroll_state",
+		"browser_highlight_text",
+		"browser_show_note",
+		"browser_scroll_to_annotation",
+		"browser_clear_annotations",
+		"publish_sidebar_answer",
+	]);
+	const REALTIME_EXTERNAL_BROWSING_TOOL_NAMES = new Set([
+		...REALTIME_DEFAULT_TOOL_NAMES,
+		"browser_navigate",
+		"browser_click_text",
 	]);
 	const REALTIME_FORCED_INITIAL_TOOL_CHOICE = { type: "function", name: "browser_get_visible_text" };
 	const REALTIME_FORCED_HIGHLIGHT_TOOL_CHOICE = { type: "function", name: "browser_highlight_text" };
@@ -6815,7 +6820,7 @@
 		});
 	}
 
-	function realtimeToolDefinitions() {
+	function realtimeToolDefinitions(options = {}) {
 		const makeTool = (name, description, properties = {}, required = []) => ({
 			type: "function",
 			name,
@@ -6826,21 +6831,16 @@
 				required,
 			},
 		});
-		const tabMatch = {
-			tabId: { type: "number", description: "Exact browser tab ID to target. Omit this to use the active tab." },
-			titleContains: { type: "string", description: "Case-insensitive substring to match in the tab title." },
-			urlContains: { type: "string", description: "Case-insensitive substring to match in the tab URL." },
-		};
-		const withTab = (properties = {}) => ({ ...tabMatch, ...properties });
-		return [
+		const allowedToolNames = options?.includeExternalBrowsingTools ? REALTIME_EXTERNAL_BROWSING_TOOL_NAMES : REALTIME_DEFAULT_TOOL_NAMES;
+		const currentTabOnly = (properties = {}) => properties;
+		const tools = [
 			makeTool("browser_list_tabs", "List open browser tabs and the active tab.", { onlyActive: { type: "boolean" } }),
-			makeTool("browser_activate_tab", "Switch to a tab by tabId, titleContains, or urlContains.", withTab(), []),
+			makeTool("browser_activate_tab", "Switch to a tab by tabId, titleContains, or urlContains.", currentTabOnly(), []),
 			makeTool(
 				"browser_navigate",
-				"Navigate the current or matched tab, or open a new tab when explicitly useful.",
-				withTab({
-					url: { type: "string", description: "URL to navigate to." },
-					newTab: { type: "boolean", description: "Open in a new tab instead of navigating the current tab." },
+				"Navigate the current tab when the user explicitly asks to browse or open an external source.",
+				currentTabOnly({
+					url: { type: "string", description: "URL to navigate to in the current tab." },
 					waitForLoad: { type: "boolean" },
 					timeoutMs: { type: "number" },
 				}),
@@ -6849,7 +6849,7 @@
 			makeTool(
 				"browser_open_pdf_in_onhand_viewer",
 				"Open a direct PDF or PDF-reader tab in Onhand's PDF viewer. Use this before full-PDF reading, searching, highlighting, or note-taking when the current PDF surface is limited.",
-				withTab({
+				currentTabOnly({
 					pdfUrl: { type: "string", description: "Direct http(s) PDF URL. Omit this to infer it from the target tab URL." },
 					newTab: { type: "boolean" },
 					waitForLoad: { type: "boolean" },
@@ -6859,7 +6859,7 @@
 			makeTool(
 				"browser_pdf_search",
 				"Search the full extracted text of the current Onhand PDF viewer, including offscreen pages.",
-				withTab({
+				currentTabOnly({
 					query: { type: "string", description: "Exact word or phrase to search across the full extracted PDF text." },
 					maxMatches: { type: "number" },
 					maxContextChars: { type: "number" },
@@ -6869,7 +6869,7 @@
 			makeTool(
 				"browser_pdf_read_pages",
 				"Read extracted text from specific PDF page numbers or a page range in the current Onhand PDF viewer.",
-				withTab({
+				currentTabOnly({
 					pages: { type: "string", description: "Comma-separated page numbers, for example '2,8,9'." },
 					page: { type: "number" },
 					pageNumber: { type: "number" },
@@ -6882,7 +6882,7 @@
 			makeTool(
 				"browser_pdf_jump_to_page",
 				"Scroll the current Onhand PDF viewer to a specific page, optionally near exact text from that page.",
-				withTab({
+				currentTabOnly({
 					page: { type: "number" },
 					pageNumber: { type: "number" },
 					text: { type: "string" },
@@ -6892,7 +6892,7 @@
 			makeTool(
 				"browser_pdf_capture_page_image",
 				"Capture a specific PDF page image for visual grounding of slide layouts, figures, equations, charts, or scanned content. Use text tools too when text is available.",
-				withTab({
+				currentTabOnly({
 					page: { type: "number" },
 					pageNumber: { type: "number" },
 					format: { type: "string" },
@@ -6903,12 +6903,12 @@
 			makeTool(
 				"browser_get_visible_text",
 				"Read the text currently visible in a browser tab.",
-				withTab({ maxChars: { type: "number" }, maxBlocks: { type: "number" } }),
+				currentTabOnly({ maxChars: { type: "number" }, maxBlocks: { type: "number" } }),
 			),
 			makeTool(
 				"browser_get_visible_region_image",
 				"Capture the visible viewport, selector box, or viewport coordinates for visual debugging. Prefer exact text tools for citations.",
-				withTab({
+				currentTabOnly({
 					x: { type: "number" },
 					y: { type: "number" },
 					width: { type: "number" },
@@ -6923,15 +6923,15 @@
 			makeTool(
 				"browser_extract_content",
 				"Extract readable article or document text from the live page. Use at most once per response unless the first result is unusable.",
-				withTab({ maxChars: { type: "number" } }),
+				currentTabOnly({ maxChars: { type: "number" } }),
 			),
-			makeTool("browser_get_selection", "Read the user's current text selection in a browser tab.", withTab()),
-			makeTool("browser_get_viewport_headings", "Read the current and nearby headings for section context in a tab.", withTab({ maxHeadings: { type: "number" } })),
-			makeTool("browser_get_scroll_state", "Read scroll position and page progress for a tab.", withTab()),
+			makeTool("browser_get_selection", "Read the user's current text selection in a browser tab.", currentTabOnly()),
+			makeTool("browser_get_viewport_headings", "Read the current and nearby headings for section context in a tab.", currentTabOnly({ maxHeadings: { type: "number" } })),
+			makeTool("browser_get_scroll_state", "Read scroll position and page progress for a tab.", currentTabOnly()),
 			makeTool(
 				"browser_highlight_text",
 				"Highlight exact visible or PDF-reader text that supports a material claim. The text argument must be copied from page/PDF text, not paraphrased. Use short, distinctive spans.",
-				withTab({
+				currentTabOnly({
 					text: { type: "string", description: "Exact visible or PDF-reader text to highlight." },
 					occurrence: { type: "number" },
 					clearExisting: { type: "boolean" },
@@ -6945,7 +6945,7 @@
 			makeTool(
 				"browser_show_note",
 				"Attach a short marginal note to a highlight. Prefer one local orienting sentence over a summary or detached answer.",
-				withTab({
+				currentTabOnly({
 					annotationId: { type: "string", description: "Annotation ID returned by browser_highlight_text." },
 					note: { type: "string", description: "Short explanatory note displayed near the highlight." },
 					label: { type: "string" },
@@ -6957,18 +6957,18 @@
 			makeTool(
 				"browser_scroll_to_annotation",
 				"Scroll the page to a previously created highlight or note.",
-				withTab({
+				currentTabOnly({
 					annotationId: { type: "string" },
 					target: { type: "string" },
 					block: { type: "string" },
 				}),
 				["annotationId"],
 			),
-			makeTool("browser_clear_annotations", "Clear Onhand highlights and notes from the target tab.", withTab()),
+			makeTool("browser_clear_annotations", "Clear Onhand highlights and notes from the target tab.", currentTabOnly()),
 			makeTool(
 				"browser_capture_state",
 				"Capture page state and annotations. Set persist=true only when the state should be replayable later.",
-				withTab({
+				currentTabOnly({
 					persist: { type: "boolean" },
 					includeHtml: { type: "boolean" },
 					includeScreenshot: { type: "boolean" },
@@ -6978,7 +6978,7 @@
 			makeTool(
 				"browser_find_elements",
 				"Find visible or interactive page elements by text, label, placeholder, or aria-label.",
-				withTab({
+				currentTabOnly({
 					text: { type: "string" },
 					interactiveOnly: { type: "boolean" },
 					exact: { type: "boolean" },
@@ -6990,30 +6990,30 @@
 			makeTool(
 				"browser_wait_for_selector",
 				"Wait for a CSS selector to appear before a requested page interaction.",
-				withTab({
+				currentTabOnly({
 					selector: { type: "string" },
 					visible: { type: "boolean" },
 					timeoutMs: { type: "number" },
 				}),
 				["selector"],
 			),
-			makeTool("browser_click", "Click an element by CSS selector only when the user asked Onhand to interact with the page.", withTab({ selector: { type: "string" } }), ["selector"]),
+			makeTool("browser_click", "Click an element by CSS selector only when the user asked Onhand to interact with the page.", currentTabOnly({ selector: { type: "string" } }), ["selector"]),
 			makeTool(
 				"browser_type",
 				"Type text into a field by CSS selector only when the user explicitly asked for page interaction.",
-				withTab({ selector: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, submit: { type: "boolean" } }),
+				currentTabOnly({ selector: { type: "string" }, text: { type: "string" }, clear: { type: "boolean" }, submit: { type: "boolean" } }),
 				["selector", "text"],
 			),
 			makeTool(
 				"browser_click_text",
 				"Click the best matching button, link, or control by visible text when the user asked Onhand to interact with the page.",
-				withTab({ text: { type: "string" }, exact: { type: "boolean" }, includeHidden: { type: "boolean" }, maxResults: { type: "number" } }),
+				currentTabOnly({ text: { type: "string" }, exact: { type: "boolean" }, includeHidden: { type: "boolean" }, maxResults: { type: "number" } }),
 				["text"],
 			),
 			makeTool(
 				"browser_type_by_label",
 				"Type into a field by human-facing label or placeholder only when the user explicitly asked for page interaction.",
-				withTab({
+				currentTabOnly({
 					labelText: { type: "string" },
 					text: { type: "string" },
 					clear: { type: "boolean" },
@@ -7023,11 +7023,11 @@
 				}),
 				["labelText", "text"],
 			),
-			makeTool("browser_pick_elements", "Show an element picker overlay so the user can identify ambiguous page elements.", withTab({ message: { type: "string" } }), ["message"]),
+			makeTool("browser_pick_elements", "Show an element picker overlay so the user can identify ambiguous page elements.", currentTabOnly({ message: { type: "string" } }), ["message"]),
 			makeTool(
 				"browser_collect_console",
 				"Collect console messages, warnings, and exceptions from a tab for debugging.",
-				withTab({
+				currentTabOnly({
 					durationMs: { type: "number" },
 					maxEntries: { type: "number" },
 					reload: { type: "boolean" },
@@ -7038,7 +7038,7 @@
 			makeTool(
 				"browser_collect_network",
 				"Collect network requests and responses from a tab for debugging.",
-				withTab({
+				currentTabOnly({
 					durationMs: { type: "number" },
 					maxEntries: { type: "number" },
 					reload: { type: "boolean" },
@@ -7052,13 +7052,13 @@
 					bodyMaxChars: { type: "number" },
 				}),
 			),
-			makeTool("browser_get_dom", "Fetch raw page HTML. Prefer readable extraction for ordinary content questions.", withTab({ maxChars: { type: "number" } })),
+			makeTool("browser_get_dom", "Fetch raw page HTML. Prefer readable extraction for ordinary content questions.", currentTabOnly({ maxChars: { type: "number" } })),
 			makeTool(
 				"browser_capture_screenshot",
 				"Capture a screenshot of the current or matched tab for visual debugging.",
-				withTab({ format: { type: "string" }, quality: { type: "number" }, delayMs: { type: "number" } }),
+				currentTabOnly({ format: { type: "string" }, quality: { type: "number" }, delayMs: { type: "number" } }),
 			),
-			makeTool("browser_run_js", "Evaluate JavaScript in the target tab. Prefer readable browser tools before using this.", withTab({ expression: { type: "string" } }), ["expression"]),
+			makeTool("browser_run_js", "Evaluate JavaScript in the target tab. Prefer readable browser tools before using this.", currentTabOnly({ expression: { type: "string" } }), ["expression"]),
 			makeTool(
 				"publish_sidebar_answer",
 				"Publish the complete final Realtime answer in the Onhand sidebar. Use after any needed browser/PDF tool calls so the spoken answer, citations, and saved turn match. The markdown must contain the actual answer, not a preamble, and should not include manual bracket citation markers.",
@@ -7089,6 +7089,7 @@
 				["markdown"],
 			),
 		];
+		return tools.filter((tool) => allowedToolNames.has(tool.name));
 	}
 
 		function realtimeTutorInstructions() {
@@ -7105,7 +7106,7 @@
 				"For comparative questions, anchor the specific sentence or list item that names the comparison; for the current Transformers notes, the multi-head attention anchor should be the exact line about multiple weighted graphs in parallel when it supports the answer.",
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
-				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate or browser_activate_tab first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
+				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
 				"If a web search results page is only an intermediate step, do not highlight the search-results page as the source. Open the relevant result/source page first, then anchor there.",
 				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
 				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation.",
@@ -7164,13 +7165,13 @@
 		const text = normalizeRealtimeTranscriptText(prompt);
 		const externalBrowsingRequest = realtimePromptAsksForExternalBrowsing(text);
 		return {
-			tools: realtimeToolDefinitions(),
+			tools: realtimeToolDefinitions({ includeExternalBrowsingTools: externalBrowsingRequest }),
 			tool_choice: externalBrowsingRequest ? "auto" : REALTIME_FORCED_INITIAL_TOOL_CHOICE,
 			instructions: [
 				realtimeTutorInstructions(),
 				text ? `Student question: ${text}` : "",
 				externalBrowsingRequest
-					? "The student is asking you to browse or navigate to external sources. Do not start by anchoring the current page unless it is needed to form the search query. First call browser_navigate, browser_list_tabs, or browser_activate_tab to open/switch to the relevant source/search page. Do not speak a preamble or final answer before the navigation/tool work."
+					? "The student is asking you to browse or navigate to external sources. Do not start by anchoring the current page unless it is needed to form the search query. First call browser_navigate to open the relevant source/search page in the current tab. Do not speak a preamble or final answer before the navigation/tool work."
 					: "Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
 			]
 				.filter(Boolean)
@@ -7467,6 +7468,12 @@
 	function realtimeBrowserToolCommand(name) {
 		const toolName = String(name || "").trim();
 		return Object.prototype.hasOwnProperty.call(REALTIME_BROWSER_TOOL_COMMANDS, toolName) ? REALTIME_BROWSER_TOOL_COMMANDS[toolName] : "";
+	}
+
+	function realtimeBrowserToolAllowedForActiveTurn(name) {
+		const toolName = String(name || "").trim();
+		if (REALTIME_DEFAULT_TOOL_NAMES.has(toolName)) return true;
+		return REALTIME_EXTERNAL_BROWSING_TOOL_NAMES.has(toolName) && realtimePromptAsksForExternalBrowsing(realtimeActiveVoiceTurn?.prompt);
 	}
 
 	function realtimeHighlightArgumentText(args = {}) {
@@ -7944,6 +7951,7 @@
 				) {
 				if (realtimePromptAsksForExternalBrowsing(realtimeActiveVoiceTurn?.prompt) && realtimeToolResultLooksLikeSearchPage(output?.result || {})) {
 					return {
+						tools: realtimeToolDefinitions({ includeExternalBrowsingTools: true }),
 						tool_choice: "auto",
 						instructions:
 							"This looks like a search-results or intermediate discovery page. Open the most relevant source/result page with browser_navigate or browser_click_text before highlighting. Do not publish the final answer until you have inspected and highlighted exact text on the destination source page.",
@@ -8078,6 +8086,7 @@
 	async function executeRealtimeBrowserTool(name, args = {}) {
 		const command = realtimeBrowserToolCommand(name);
 		if (!command) throw new Error(`Unknown realtime browser tool: ${name || "(blank)"}`);
+		if (!realtimeBrowserToolAllowedForActiveTurn(name)) throw new Error(`Realtime browser tool is not allowed for this turn: ${name || "(blank)"}`);
 		const normalizedArgs = normalizeRealtimeBrowserToolArgs(args);
 		if (name === "browser_highlight_text" && normalizedArgs.text) {
 			if (!Object.prototype.hasOwnProperty.call(normalizedArgs, "allowApproximate") && !Object.prototype.hasOwnProperty.call(normalizedArgs, "exactOnly")) {

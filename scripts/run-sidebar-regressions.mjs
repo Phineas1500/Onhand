@@ -2348,6 +2348,25 @@ async function assertRealtimeSessionUsesRuntimeAgentMode() {
 		sessionUpdate?.session?.tools?.some((tool) => tool?.name === "publish_sidebar_answer"),
 		"expected Realtime session to publish its own sidebar answer",
 	);
+	const sessionToolNames = new Set((sessionUpdate?.session?.tools || []).map((tool) => tool?.name));
+	for (const unsafeTool of [
+		"browser_list_tabs",
+		"browser_activate_tab",
+		"browser_collect_network",
+		"browser_get_dom",
+		"browser_capture_screenshot",
+		"browser_run_js",
+		"browser_click",
+		"browser_type",
+	]) {
+		assert.equal(sessionToolNames.has(unsafeTool), false, `expected Realtime session not to expose ${unsafeTool}`);
+	}
+	const visibleTextTool = sessionUpdate?.session?.tools?.find((tool) => tool?.name === "browser_get_visible_text");
+	assert.equal(
+		Object.prototype.hasOwnProperty.call(visibleTextTool?.parameters?.properties || {}, "tabId"),
+		false,
+		"expected Realtime page tools not to expose cross-tab targeting arguments",
+	);
 	assert.deepEqual(
 		sessionUpdate?.session?.tool_choice,
 		{ type: "function", name: "browser_get_visible_text" },
@@ -2824,6 +2843,11 @@ async function assertRealtimeExternalSourceRequestsCanNavigateFirst() {
 	assert.equal(options.tool_choice, "auto", "expected external-source requests not to force the current-page read first");
 	assert.match(String(options.instructions || ""), /browse or navigate to external sources/i);
 	assert.match(String(options.instructions || ""), /browser_navigate/);
+	const externalToolNames = new Set((options.tools || []).map((tool) => tool?.name));
+	assert.equal(externalToolNames.has("browser_navigate"), true, "expected explicit external-source requests to expose current-tab navigation");
+	assert.equal(externalToolNames.has("browser_activate_tab"), false, "expected external-source requests not to expose cross-tab activation");
+	assert.equal(externalToolNames.has("browser_list_tabs"), false, "expected external-source requests not to expose tab listing");
+	assert.equal(externalToolNames.has("browser_run_js"), false, "expected external-source requests not to expose JavaScript execution");
 	assert.doesNotMatch(String(options.instructions || ""), /Start by calling browser_get_visible_text/);
 
 	await hooks.sendRealtimeTextPrompt("Could you take me to these sources and highlight the parts that talk about attention?");
