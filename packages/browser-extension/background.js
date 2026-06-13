@@ -9031,17 +9031,13 @@ async function annotateRealtimePage(message) {
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
-	browser_list_tabs: "list_tabs",
-	browser_activate_tab: "activate_tab",
 	browser_navigate: "navigate",
+	browser_click_text: "click_text",
 	browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 	browser_pdf_search: "pdf_search",
-	browser_pdf_find_citation: "pdf_find_citation",
 	browser_pdf_read_pages: "pdf_read_pages",
 	browser_pdf_jump_to_page: "pdf_jump_to_page",
-	browser_pdf_capture_page_image: "pdf_capture_page_image",
 	browser_get_visible_text: "get_visible_text",
-	browser_get_visible_region_image: "get_visible_region_image",
 	browser_extract_content: "extract_content",
 	browser_get_selection: "get_selection",
 	browser_get_viewport_headings: "get_viewport_headings",
@@ -9050,20 +9046,18 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_show_note: "show_note",
 	browser_scroll_to_annotation: "scroll_to_annotation",
 	browser_clear_annotations: "clear_annotations",
-	browser_capture_state: "capture_state",
-	browser_find_elements: "find_elements",
-	browser_wait_for_selector: "wait_for_selector",
-	browser_click: "click",
-	browser_type: "type_text",
-	browser_click_text: "click_text",
-	browser_type_by_label: "type_by_label",
-	browser_pick_elements: "pick_elements",
-	browser_collect_console: "collect_console",
-	browser_collect_network: "collect_network",
-	browser_get_dom: "get_dom",
-	browser_capture_screenshot: "capture_screenshot",
-	browser_run_js: "run_js",
 });
+
+function sanitizeRealtimeBrowserToolArgsForCommand(command, args = {}) {
+	const sanitized = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
+	delete sanitized.tabId;
+	delete sanitized.titleContains;
+	delete sanitized.urlContains;
+	if (command === "navigate" || command === "open_pdf_in_onhand_viewer") {
+		sanitized.newTab = false;
+	}
+	return sanitized;
+}
 
 function normalizeRealtimeBrowserToolArgs(args = {}) {
 	const raw = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
@@ -9348,8 +9342,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			if (!command || (message.command && message.command !== command)) {
 				throw new Error(`Unsupported realtime browser tool: ${tool || "(missing)"}`);
 			}
+			const normalizedArgs = normalizeRealtimeBrowserToolArgs(message.args || {});
 			const result = await handleCommand(command, {
-				...normalizeRealtimeBrowserToolArgs(message.args || {}),
+				...sanitizeRealtimeBrowserToolArgsForCommand(command, normalizedArgs),
 				windowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});
 			sendResponse({
