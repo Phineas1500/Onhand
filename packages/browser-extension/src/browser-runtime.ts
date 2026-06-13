@@ -19,7 +19,7 @@ type BrowserCommandRunner = (name: string, args?: Record<string, unknown>) => Pr
 
 interface RuntimeHost {
 	runCommand: BrowserCommandRunner;
-	snapshotState: () => Promise<any>;
+	snapshotState: (args?: Record<string, unknown>) => Promise<any>;
 	log?: (...args: unknown[]) => void;
 	notifyAuthProgress?: (event: BrowserOAuthProgressEvent) => void;
 	resolveModel?: (provider: string, model: string) => any;
@@ -408,6 +408,7 @@ Learning uses a tutoring stance:
 
 const LIST_TABS_SCHEMA = Type.Object({
 	onlyActive: Type.Optional(Type.Boolean({ description: "Only include active tabs" })),
+	windowId: Type.Optional(Type.Number({ description: "Restrict listed tabs to this browser window" })),
 });
 
 const TAB_SELECTOR_SCHEMA = {
@@ -3132,7 +3133,7 @@ function parseExplicitPdfHandoffParams(prompt: string) {
 
 function withTargetWindowId(params: Record<string, unknown> = {}, targetWindowId?: number) {
 	if (typeof targetWindowId !== "number" || !Number.isFinite(targetWindowId)) return params;
-	if (typeof params.tabId === "number" || params.titleContains || params.urlContains || typeof params.windowId === "number") return params;
+	if (typeof params.tabId === "number" || typeof params.windowId === "number") return params;
 	return {
 		...params,
 		windowId: targetWindowId,
@@ -3206,7 +3207,6 @@ function selectToolsForPrompt(
 			add(VISUAL_CONTEXT_TOOL_NAMES);
 		}
 		if (learningMode) {
-			add(["browser_list_tabs"]);
 			add(LEARNING_TOOL_NAMES);
 		}
 		if (wantsExternalBrowsing || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
@@ -4141,8 +4141,11 @@ function createTools(
 			description: "List windows and tabs from the current Chromium browser session.",
 			parameters: LIST_TABS_SCHEMA,
 			async execute(_toolCallId, params: any) {
-				const state = await host.snapshotState();
-				const tabs = flattenTabs(state).filter((tab: any) => !params?.onlyActive || tab.active);
+				const scopedParams = prepareCommandParams(params, "list_tabs") as any;
+				const state = await host.snapshotState(scopedParams);
+				const tabs = flattenTabs(state).filter(
+					(tab: any) => (!scopedParams?.onlyActive || tab.active) && (typeof scopedParams?.windowId !== "number" || tab.windowId === scopedParams.windowId),
+				);
 				const details = { state, tabs };
 				return {
 					content: [{ type: "text", text: toolResultTextForModel("browser_list_tabs", details) }],
@@ -5419,7 +5422,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function withDefaultBrowserTarget(params: any = {}) {
 		const targetWindowId = activeRequest?.targetWindowId;
 		if (typeof targetWindowId !== "number") return params || {};
-		if (typeof params?.tabId === "number" || params?.titleContains || params?.urlContains || typeof params?.windowId === "number") {
+		if (typeof params?.tabId === "number" || typeof params?.windowId === "number") {
 			return params || {};
 		}
 		return {

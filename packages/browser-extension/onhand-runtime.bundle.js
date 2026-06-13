@@ -124330,7 +124330,8 @@ Learning uses a tutoring stance:
 - For homework/problem prompts, anchor the problem and the relevant rule or setup, add a short note if helpful, then ask for the next step the learner should do. For example, ask them to identify inside/outside functions, compute the inner derivative, choose the rule, or write the next line. Do not reveal the final answer until the user switches to answer mode or presents their own completed work and asks for feedback.
 - Drop the Socratic stance only for non-homework conceptual questions, study artifacts, or visibly frustrated users; the homework/problem priority still wins. Still anchor material claims.`;
 var LIST_TABS_SCHEMA = typebox_exports.Object({
-  onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" }))
+  onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" })),
+  windowId: typebox_exports.Optional(typebox_exports.Number({ description: "Restrict listed tabs to this browser window" }))
 });
 var TAB_SELECTOR_SCHEMA = {
   tabId: typebox_exports.Optional(typebox_exports.Number({ description: "Exact browser tab ID to target. Omit this to use the active tab." }))
@@ -126672,7 +126673,7 @@ function parseExplicitPdfHandoffParams(prompt) {
 }
 function withTargetWindowId(params = {}, targetWindowId) {
   if (typeof targetWindowId !== "number" || !Number.isFinite(targetWindowId)) return params;
-  if (typeof params.tabId === "number" || params.titleContains || params.urlContains || typeof params.windowId === "number") return params;
+  if (typeof params.tabId === "number" || typeof params.windowId === "number") return params;
   return {
     ...params,
     windowId: targetWindowId
@@ -126720,7 +126721,6 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       add(VISUAL_CONTEXT_TOOL_NAMES);
     }
     if (learningMode) {
-      add(["browser_list_tabs"]);
       add(LEARNING_TOOL_NAMES);
     }
     if (wantsExternalBrowsing || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
@@ -127517,8 +127517,11 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       description: "List windows and tabs from the current Chromium browser session.",
       parameters: LIST_TABS_SCHEMA,
       async execute(_toolCallId, params) {
-        const state = await host.snapshotState();
-        const tabs = flattenTabs(state).filter((tab) => !params?.onlyActive || tab.active);
+        const scopedParams = prepareCommandParams(params, "list_tabs");
+        const state = await host.snapshotState(scopedParams);
+        const tabs = flattenTabs(state).filter(
+          (tab) => (!scopedParams?.onlyActive || tab.active) && (typeof scopedParams?.windowId !== "number" || tab.windowId === scopedParams.windowId)
+        );
         const details = { state, tabs };
         return {
           content: [{ type: "text", text: toolResultTextForModel("browser_list_tabs", details) }],
@@ -128732,7 +128735,7 @@ function createOnhandBrowserRuntime(host) {
   function withDefaultBrowserTarget(params = {}) {
     const targetWindowId = activeRequest?.targetWindowId;
     if (typeof targetWindowId !== "number") return params || {};
-    if (typeof params?.tabId === "number" || params?.titleContains || params?.urlContains || typeof params?.windowId === "number") {
+    if (typeof params?.tabId === "number" || typeof params?.windowId === "number") {
       return params || {};
     }
     return {

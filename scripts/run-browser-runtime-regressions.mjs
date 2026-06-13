@@ -206,17 +206,17 @@ function createReplayHost(options = {}) {
 			}
 			return { tab, ok: true };
 		},
-		async snapshotState() {
-			calls.push({ name: "snapshot_state", args: {} });
+		async snapshotState(args = {}) {
+			calls.push({ name: "snapshot_state", args });
+			const windowIds = Array.from(new Set(tabs.map((tab) => tab.windowId).filter((windowId) => typeof windowId === "number")));
+			const windows = windowIds.map((windowId, index) => ({
+				id: windowId,
+				focused: index === 0,
+				tabs: tabs.filter((tab) => tab.windowId === windowId),
+			}));
 			return {
-				windows: [
-				{
-					id: 3,
-					focused: true,
-					tabs,
-				},
-			],
-		};
+				windows: typeof args.windowId === "number" ? windows.filter((windowInfo) => windowInfo.id === args.windowId) : windows,
+			};
 		},
 		log() {},
 		notifyAuthProgress() {},
@@ -751,7 +751,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
 	assert.equal(externalSourceToolNames.includes("browser_click_text"), true);
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
-	assert.equal(learningToolNames.includes("browser_list_tabs"), true);
+	assert.equal(learningToolNames.includes("browser_list_tabs"), false, "learning mode alone must not expose cross-tab enumeration");
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
 	assert.equal(repeatedLearningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(repeatedLearningToolNames.includes("browser_scroll_to_annotation"), true);
@@ -4322,6 +4322,8 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 	});
 	const completedState = await waitForRuntimeCompletion(runtime);
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete target-window regression");
+	assert.equal(host.calls.some((call) => call.name === "snapshot_state" && call.args.windowId === 4), true);
+	assert.equal(host.calls.some((call) => call.name === "snapshot_state" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "get_visible_text" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "get_visible_region_image" && call.args.windowId === 4), true);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 4), true);
