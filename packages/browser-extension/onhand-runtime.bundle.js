@@ -125224,8 +125224,7 @@ Learning uses a tutoring stance:
 - For homework/problem prompts, anchor the problem and the relevant rule or setup, add a short note if helpful, then ask for the next step the learner should do. For example, ask them to identify inside/outside functions, compute the inner derivative, choose the rule, or write the next line. Do not reveal the final answer until the user switches to answer mode or presents their own completed work and asks for feedback.
 - Drop the Socratic stance only for non-homework conceptual questions, study artifacts, or visibly frustrated users; the homework/problem priority still wins. Still anchor material claims.`;
 var LIST_TABS_SCHEMA = typebox_exports.Object({
-  onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" })),
-  windowId: typebox_exports.Optional(typebox_exports.Number({ description: "Restrict listed tabs to this browser window" }))
+  onlyActive: typebox_exports.Optional(typebox_exports.Boolean({ description: "Only include active tabs" }))
 });
 var TAB_SELECTOR_SCHEMA = {
   tabId: typebox_exports.Optional(typebox_exports.Number({ description: "Exact browser tab ID to target. Omit this to use the active tab." }))
@@ -126356,7 +126355,7 @@ function getSmokeModel(modelId) {
   } else if (modelId === SMOKE_PORTS_MODEL) {
     smokeModelRegistration.setResponses([
       fauxAssistantMessage([
-        fauxToolCall("browser_list_tabs", { onlyActive: false }),
+        fauxToolCall("browser_list_tabs", { onlyActive: false, windowId: 3 }),
         fauxToolCall("browser_activate_tab", { tabId: 101 }),
         fauxToolCall("browser_navigate", {
           url: "https://example.com/onhand-smoke?nav=1",
@@ -127670,7 +127669,7 @@ function parseExplicitPdfHandoffParams(prompt) {
 }
 function withTargetWindowId(params = {}, targetWindowId) {
   if (typeof targetWindowId !== "number" || !Number.isFinite(targetWindowId)) return params;
-  if (typeof params.tabId === "number" || typeof params.windowId === "number") return params;
+  if (typeof params.tabId === "number") return params;
   return {
     ...params,
     windowId: targetWindowId
@@ -129787,7 +129786,7 @@ function createOnhandBrowserRuntime(host) {
   function withDefaultBrowserTarget(params = {}) {
     const targetWindowId = activeRequest?.targetWindowId;
     if (typeof targetWindowId !== "number") return params || {};
-    if (typeof params?.tabId === "number" || typeof params?.windowId === "number") {
+    if (typeof params?.tabId === "number") {
       return params || {};
     }
     return {

@@ -415,7 +415,6 @@ Learning uses a tutoring stance:
 
 const LIST_TABS_SCHEMA = Type.Object({
 	onlyActive: Type.Optional(Type.Boolean({ description: "Only include active tabs" })),
-	windowId: Type.Optional(Type.Number({ description: "Restrict listed tabs to this browser window" })),
 });
 
 const TAB_SELECTOR_SCHEMA = {
@@ -1728,7 +1727,7 @@ function getSmokeModel(modelId: string) {
 	} else if (modelId === SMOKE_PORTS_MODEL) {
 		smokeModelRegistration.setResponses([
 			fauxAssistantMessage([
-				fauxToolCall("browser_list_tabs", { onlyActive: false }),
+				fauxToolCall("browser_list_tabs", { onlyActive: false, windowId: 3 }),
 				fauxToolCall("browser_activate_tab", { tabId: 101 }),
 				fauxToolCall("browser_navigate", {
 					url: "https://example.com/onhand-smoke?nav=1",
@@ -3241,7 +3240,7 @@ function parseExplicitPdfHandoffParams(prompt: string) {
 
 function withTargetWindowId(params: Record<string, unknown> = {}, targetWindowId?: number) {
 	if (typeof targetWindowId !== "number" || !Number.isFinite(targetWindowId)) return params;
-	if (typeof params.tabId === "number" || typeof params.windowId === "number") return params;
+	if (typeof params.tabId === "number") return params;
 	return {
 		...params,
 		windowId: targetWindowId,
@@ -5608,7 +5607,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function withDefaultBrowserTarget(params: any = {}) {
 		const targetWindowId = activeRequest?.targetWindowId;
 		if (typeof targetWindowId !== "number") return params || {};
-		if (typeof params?.tabId === "number" || typeof params?.windowId === "number") {
+		if (typeof params?.tabId === "number") {
 			return params || {};
 		}
 		return {
