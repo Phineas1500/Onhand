@@ -31,6 +31,9 @@ npm run ops:free-tier -- --json
   visible failure pressure.
 - `total_cost` and `avg_cost`: whether DeepSeek V4 Flash is staying within the
   intended free-tier economics.
+- `Turn Costs`: model-call count, tokens, cost, and streamed duration grouped
+  by the Onhand UI turn id; older completions before turn attribution show as
+  `unknown`.
 - `p95_ms`: whether OpenRouter/provider routing is creating slow responses.
 - `quota_and_rejections`: abuse pressure or overly strict caps.
 - `browser_run_js_*`: constrained advanced runtime-inspection usage. Unexpected

@@ -125079,6 +125079,8 @@ var ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
 var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
 var ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+var ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
+var ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
 var ONHAND_DIAGNOSTICS_EVENT_NAMES = /* @__PURE__ */ new Set([
   "diagnostics_enabled",
   "extension_installed",
@@ -128499,10 +128501,11 @@ var __browserRuntimeTest = {
   summarizeRestoredArtifact
 };
 function streamOnhandFast(model, context, options = {}) {
-  const { onhandReasoningProfile, ...streamOptions } = options || {};
+  const { onhandReasoningProfile, onhandTelemetry, ...streamOptions } = options || {};
   const reasoningProfile = onhandReasoningProfile;
+  const telemetryOptions = withOnhandFreeTierTelemetryOptions(model, streamOptions, onhandTelemetry);
   const baseOptions = {
-    ...streamOptions,
+    ...telemetryOptions,
     // "short" lets pi-ai pass the session id as the prompt cache key so
     // providers route the loop's repeated prefixes to the same cache
     // shard; tool loops are mostly cache hits.
@@ -128531,6 +128534,25 @@ function streamOnhandFast(model, context, options = {}) {
     });
   }
   return streamSimple(model, context, baseOptions);
+}
+function compactOnhandTelemetryId(value, maxLength = 80) {
+  return String(value || "").trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, maxLength);
+}
+function withOnhandFreeTierTelemetryOptions(model, streamOptions, telemetry) {
+  const baseOptions = streamOptions && typeof streamOptions === "object" ? streamOptions : {};
+  if (model?.provider !== ONHAND_FREE_PROVIDER || !telemetry || typeof telemetry !== "object") return baseOptions;
+  const turnId = compactOnhandTelemetryId(telemetry.turnId);
+  const sessionId = compactOnhandTelemetryId(telemetry.sessionId);
+  if (!turnId && !sessionId) return baseOptions;
+  return {
+    ...baseOptions,
+    sessionId: compactOnhandTelemetryId(baseOptions.sessionId) || sessionId || turnId,
+    headers: {
+      ...baseOptions.headers || {},
+      ...turnId ? { [ONHAND_FREE_TURN_ID_HEADER]: turnId } : {},
+      ...sessionId ? { [ONHAND_FREE_SESSION_ID_HEADER]: sessionId } : {}
+    }
+  };
 }
 function createRecordLearningEventTool(recordLearningEvent) {
   return {
@@ -129522,6 +129544,11 @@ function createOnhandBrowserRuntime(host) {
   }
   async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = []) {
     const model = await getConfiguredModel(settings2);
+    const currentSession = await getCurrentSession().catch(() => null);
+    const telemetry = {
+      turnId: activeRequest?.id || crypto.randomUUID(),
+      sessionId: currentSession?.id || ""
+    };
     const agent = new Agent({
       initialState: {
         systemPrompt: [
@@ -129533,9 +129560,11 @@ function createOnhandBrowserRuntime(host) {
         messages: [],
         thinkingLevel: "off"
       },
+      sessionId: telemetry.sessionId || telemetry.turnId,
       getApiKey: (provider) => resolveApiKey2(provider),
       streamFn: (streamModel, streamContext, streamOptions = {}) => streamOnhandFast(streamModel, streamContext, {
         ...streamOptions,
+        onhandTelemetry: telemetry,
         onhandReasoningProfile: {
           mode: "balanced",
           setting: "auto",
@@ -131588,9 +131617,14 @@ function createOnhandBrowserRuntime(host) {
             messages: [],
             thinkingLevel: "off"
           },
+          sessionId: session.id,
           getApiKey: (provider) => resolveApiKey2(provider),
           streamFn: (streamModel, streamContext, streamOptions = {}) => streamOnhandFast(streamModel, streamContext, {
             ...streamOptions,
+            onhandTelemetry: {
+              turnId: requestId,
+              sessionId: session.id
+            },
             onhandReasoningProfile: reasoningProfile
           }),
           toolExecution: "parallel"

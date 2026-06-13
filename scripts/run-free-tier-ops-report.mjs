@@ -190,6 +190,29 @@ ORDER BY event, events DESC
 LIMIT ${limit}`,
 		},
 		{
+			name: "turn_costs",
+			description: "Per Onhand turn cost, tokens, latency, and model-call count.",
+			sql: `
+SELECT
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
+  blob4 AS model,
+  blob5 AS provider,
+  SUM(_sample_interval) AS model_calls,
+  SUM(_sample_interval * double10) AS cost,
+  SUM(_sample_interval * double9) AS total_tokens,
+  SUM(_sample_interval * double7) AS prompt_tokens,
+  SUM(_sample_interval * double8) AS completion_tokens,
+  SUM(_sample_interval * double3) AS total_ms,
+  MAX(timestamp) AS last_seen
+FROM ${dataset}
+WHERE ${where}
+  AND blob1 = 'chat_stream_complete'
+GROUP BY turn_id, session_id, model, provider
+ORDER BY cost DESC, model_calls DESC
+LIMIT ${limit}`,
+		},
+		{
 			name: "quota_and_rejections",
 			description: "Quota denials, rejected requests, and rate-limited diagnostics.",
 			sql: `
@@ -413,6 +436,7 @@ function renderMarkdown(report) {
 	addTable(lines, "Event Counts", report.sections.event_counts, ["event", "events"]);
 	addTable(lines, "Chat Latency", report.sections.chat_latency, ["event", "result", "events", "avg_ms", "p50_ms", "p95_ms", "avg_body_bytes"]);
 	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
+	addTable(lines, "Turn Costs", report.sections.turn_costs, ["turn_id", "session_id", "model", "provider", "model_calls", "cost", "total_tokens", "prompt_tokens", "completion_tokens", "total_ms", "last_seen"]);
 	addTable(lines, "Quota And Rejections", report.sections.quota_and_rejections, ["event", "error_code", "events", "max_current", "cap"]);
 	addTable(lines, "Top Errors", report.sections.top_errors, ["event", "error_code", "provider", "status", "events"]);
 	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["event", "result", "ai_model", "events"]);

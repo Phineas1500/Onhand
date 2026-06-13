@@ -289,6 +289,8 @@ const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
 const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+const ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
+const ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
 const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -4263,10 +4265,11 @@ export const __browserRuntimeTest = {
 };
 
 function streamOnhandFast(model: any, context: any, options: any = {}) {
-	const { onhandReasoningProfile, ...streamOptions } = options || {};
+	const { onhandReasoningProfile, onhandTelemetry, ...streamOptions } = options || {};
 	const reasoningProfile = onhandReasoningProfile as ReasoningProfile | undefined;
+	const telemetryOptions = withOnhandFreeTierTelemetryOptions(model, streamOptions, onhandTelemetry);
 	const baseOptions = {
-		...streamOptions,
+		...telemetryOptions,
 		// "short" lets pi-ai pass the session id as the prompt cache key so
 		// providers route the loop's repeated prefixes to the same cache
 		// shard; tool loops are mostly cache hits.
@@ -4304,6 +4307,30 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 		});
 	}
 	return streamSimple(model, context, baseOptions);
+}
+
+function compactOnhandTelemetryId(value: unknown, maxLength = 80) {
+	return String(value || "")
+		.trim()
+		.replace(/[^A-Za-z0-9_.:-]/g, "_")
+		.slice(0, maxLength);
+}
+
+function withOnhandFreeTierTelemetryOptions(model: any, streamOptions: any, telemetry: any) {
+	const baseOptions = streamOptions && typeof streamOptions === "object" ? streamOptions : {};
+	if (model?.provider !== ONHAND_FREE_PROVIDER || !telemetry || typeof telemetry !== "object") return baseOptions;
+	const turnId = compactOnhandTelemetryId(telemetry.turnId);
+	const sessionId = compactOnhandTelemetryId(telemetry.sessionId);
+	if (!turnId && !sessionId) return baseOptions;
+	return {
+		...baseOptions,
+		sessionId: compactOnhandTelemetryId(baseOptions.sessionId) || sessionId || turnId,
+		headers: {
+			...(baseOptions.headers || {}),
+			...(turnId ? { [ONHAND_FREE_TURN_ID_HEADER]: turnId } : {}),
+			...(sessionId ? { [ONHAND_FREE_SESSION_ID_HEADER]: sessionId } : {}),
+		},
+	};
 }
 
 function createRecordLearningEventTool(recordLearningEvent: (event: LearningEvent) => Promise<LearnerState>): AgentTool {
@@ -5378,6 +5405,11 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = []) {
 		const model = await getConfiguredModel(settings);
+		const currentSession = await getCurrentSession().catch(() => null);
+		const telemetry = {
+			turnId: activeRequest?.id || crypto.randomUUID(),
+			sessionId: currentSession?.id || "",
+		};
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: [
@@ -5389,10 +5421,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				messages: [],
 				thinkingLevel: "off",
 			},
+			sessionId: telemetry.sessionId || telemetry.turnId,
 			getApiKey: (provider) => resolveApiKey(provider),
 			streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
 				streamOnhandFast(streamModel, streamContext, {
 					...streamOptions,
+					onhandTelemetry: telemetry,
 					onhandReasoningProfile: {
 						mode: "balanced",
 						setting: "auto",
@@ -7596,10 +7630,15 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 						messages: [],
 						thinkingLevel: "off",
 					},
+					sessionId: session.id,
 					getApiKey: (provider) => resolveApiKey(provider),
 					streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
 						streamOnhandFast(streamModel, streamContext, {
 							...streamOptions,
+							onhandTelemetry: {
+								turnId: requestId,
+								sessionId: session.id,
+							},
 							onhandReasoningProfile: reasoningProfile,
 						}),
 					toolExecution: "parallel",

@@ -89,6 +89,15 @@ Workers Analytics Engine binding when it is configured. Missing
 Analytics Engine bindings are a no-op so local development and emergency
 deploys still work.
 
+Free-tier model calls include private `X-Onhand-Turn-Id` and
+`X-Onhand-Session-Id` headers from the extension to the Worker. The
+Worker stores those ids in Analytics Engine so ops reports can group
+model-call cost by user-visible Onhand turn. The ids are not needed in
+the chat payload itself; the Worker uses OpenRouter's generation metadata
+endpoint after completion to enrich the aggregate event with provider,
+upstream model, request id, token count, and cost when OpenRouter exposes
+those fields.
+
 Worker-side events:
 
 - `register_success`
@@ -150,9 +159,11 @@ index and `blob1`; source is `blob2`; result is `blob3`; model/provider
 are `blob4`/`blob5`; country/colo/user-agent-family are
 `blob6`/`blob7`/`blob8`; extension version/runtime revision/auth mode/
 AI provider/AI model/device hash/error code are `blob9` through
-`blob15`. Numeric fields are timestamp, status, duration, body bytes,
-quota current, quota cap, prompt tokens, completion tokens, total
-tokens, cost, action count, and artifact count.
+`blob15`; Onhand turn id/session id/OpenRouter generation id/upstream
+model/OpenRouter request id are `blob16` through `blob20`. Numeric fields
+are timestamp, status, duration, body bytes, quota current, quota cap,
+prompt tokens, completion tokens, total tokens, cost, action count, and
+artifact count.
 
 Useful first queries:
 

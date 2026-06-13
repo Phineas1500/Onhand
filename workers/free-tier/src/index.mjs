@@ -24,6 +24,7 @@ const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation";
 const TELEMETRY_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -48,7 +49,7 @@ const ERROR_REPORT_TYPES = new Set(["prompt_error", "runtime_error", "voice_erro
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "POST, OPTIONS",
-	"Access-Control-Allow-Headers": "Authorization, Content-Type",
+	"Access-Control-Allow-Headers": "Authorization, Content-Type, X-Onhand-Turn-Id, X-Onhand-Session-Id",
 	"Access-Control-Max-Age": "86400",
 };
 
@@ -71,6 +72,13 @@ function compactString(value, maxLength = 120) {
 	return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function compactIdentifier(value, maxLength = 120) {
+	return String(value || "")
+		.trim()
+		.replace(/[^A-Za-z0-9_.:-]/g, "_")
+		.slice(0, maxLength);
+}
+
 function compactStructuredString(value, maxLength = 1200) {
 	const text = String(value || "")
 		.replace(/\r\n?/g, "\n")
@@ -85,6 +93,14 @@ function compactStructuredString(value, maxLength = 1200) {
 function finiteNumber(value, fallback = 0) {
 	const number = Number(value);
 	return Number.isFinite(number) ? number : fallback;
+}
+
+function firstFiniteNumber(...values) {
+	for (const value of values) {
+		const number = Number(value);
+		if (Number.isFinite(number)) return number;
+	}
+	return undefined;
 }
 
 function finiteBoolean(value) {
@@ -110,47 +126,70 @@ function analyticsContext(request) {
 	};
 }
 
+function analyticsDataPoint(eventName, fields, context) {
+	return {
+		indexes: [compactString(eventName, 80)],
+		blobs: [
+			compactString(eventName, 80),
+			compactString(fields.source || "free-tier", 48),
+			compactString(fields.result || "", 48),
+			compactString(fields.model || "", 120),
+			compactString(fields.provider || "", 80),
+			context.country,
+			context.colo,
+			context.userAgentFamily,
+			compactString(fields.extensionVersion || "", 40),
+			compactString(fields.runtimeRevision || "", 80),
+			compactString(fields.authMode || "", 40),
+			compactString(fields.aiProvider || "", 80),
+			compactString(fields.aiModel || "", 120),
+			compactString(fields.deviceHash || "", 80),
+			compactString(fields.errorCode || "", 80),
+			compactIdentifier(fields.turnId || "", 80),
+			compactIdentifier(fields.sessionId || "", 80),
+			compactIdentifier(fields.generationId || "", 120),
+			compactString(fields.upstreamModel || "", 160),
+			compactIdentifier(fields.providerRequestId || "", 120),
+		],
+		doubles: [
+			Date.now(),
+			finiteNumber(fields.status),
+			finiteNumber(fields.durationMs),
+			finiteNumber(fields.bodyBytes),
+			finiteNumber(fields.current),
+			finiteNumber(fields.cap),
+			finiteNumber(fields.promptTokens),
+			finiteNumber(fields.completionTokens),
+			finiteNumber(fields.totalTokens),
+			finiteNumber(fields.cost),
+			finiteNumber(fields.actionCount),
+			finiteNumber(fields.artifactCount),
+		],
+	};
+}
+
 function writeAnalytics(ctx, env, eventName, fields = {}, request = null) {
 	const analytics = env?.ONHAND_ANALYTICS;
 	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
 	const context = analyticsContext(request);
 	const task = Promise.resolve().then(() => {
-		analytics.writeDataPoint({
-			indexes: [compactString(eventName, 80)],
-			blobs: [
-				compactString(eventName, 80),
-				compactString(fields.source || "free-tier", 48),
-				compactString(fields.result || "", 48),
-				compactString(fields.model || "", 120),
-				compactString(fields.provider || "", 80),
-				context.country,
-				context.colo,
-				context.userAgentFamily,
-				compactString(fields.extensionVersion || "", 40),
-				compactString(fields.runtimeRevision || "", 80),
-				compactString(fields.authMode || "", 40),
-				compactString(fields.aiProvider || "", 80),
-				compactString(fields.aiModel || "", 120),
-				compactString(fields.deviceHash || "", 80),
-				compactString(fields.errorCode || "", 80),
-			],
-			doubles: [
-				Date.now(),
-				finiteNumber(fields.status),
-				finiteNumber(fields.durationMs),
-				finiteNumber(fields.bodyBytes),
-				finiteNumber(fields.current),
-				finiteNumber(fields.cap),
-				finiteNumber(fields.promptTokens),
-				finiteNumber(fields.completionTokens),
-				finiteNumber(fields.totalTokens),
-				finiteNumber(fields.cost),
-				finiteNumber(fields.actionCount),
-				finiteNumber(fields.artifactCount),
-			],
-		});
+		analytics.writeDataPoint(analyticsDataPoint(eventName, fields, context));
 	}).catch(() => {});
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
+}
+
+function writeAnalyticsAsync(ctx, env, eventName, buildFields, request = null) {
+	const analytics = env?.ONHAND_ANALYTICS;
+	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
+	const context = analyticsContext(request);
+	const task = Promise.resolve()
+		.then(buildFields)
+		.then((fields) => {
+			analytics.writeDataPoint(analyticsDataPoint(eventName, fields || {}, context));
+		})
+		.catch(() => {});
+	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
+	else void task;
 }
 
 async function hashIdentifier(value) {
@@ -171,6 +210,13 @@ async function bumpDailyCounter(env, key, cap) {
 	// the worst case is a couple of extra requests, which is fine.
 	await env.FREE_TIER_KV.put(key, String(current + 1), { expirationTtl: 60 * 60 * 48 });
 	return { allowed: true, current: current + 1 };
+}
+
+function requestTelemetryIds(request) {
+	return {
+		turnId: compactIdentifier(request.headers.get("X-Onhand-Turn-Id") || "", 80),
+		sessionId: compactIdentifier(request.headers.get("X-Onhand-Session-Id") || "", 80),
+	};
 }
 
 async function handleRegister(request, env, ctx) {
@@ -200,17 +246,71 @@ async function handleRegister(request, env, ctx) {
 	return json(200, { token });
 }
 
-function extractUsageFromSseLine(line) {
+function extractSsePayload(line) {
 	const trimmed = line.trim();
 	if (!trimmed.startsWith("data:")) return null;
 	const data = trimmed.slice(5).trim();
 	if (!data || data === "[DONE]") return null;
 	try {
-		const payload = JSON.parse(data);
-		return payload?.usage && typeof payload.usage === "object" ? payload.usage : null;
+		return JSON.parse(data);
 	} catch {
 		return null;
 	}
+}
+
+function providerFromPayload(payload) {
+	const metadata = payload?.openrouter_metadata && typeof payload.openrouter_metadata === "object" ? payload.openrouter_metadata : {};
+	const provider = metadata.provider_name || metadata.provider || payload?.provider_name || payload?.provider;
+	return compactString(provider || "", 80);
+}
+
+async function fetchOpenRouterGenerationMetadata(env, generationId) {
+	const id = compactIdentifier(generationId, 160);
+	if (!id || !env?.OPENROUTER_API_KEY) return null;
+	const url = new URL(OPENROUTER_GENERATION_URL);
+	url.searchParams.set("id", id);
+	for (let attempt = 1; attempt <= 2; attempt += 1) {
+		try {
+			const response = await fetch(url, {
+				headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` },
+			});
+			if (!response.ok) {
+				if (attempt === 2 || ![404, 408, 429, 500, 502, 503].includes(response.status)) return null;
+				await new Promise((resolve) => setTimeout(resolve, 750));
+				continue;
+			}
+			const payload = await response.json().catch(() => null);
+			return payload?.data && typeof payload.data === "object" ? payload.data : null;
+		} catch {
+			if (attempt === 2) return null;
+			await new Promise((resolve) => setTimeout(resolve, 750));
+		}
+	}
+	return null;
+}
+
+async function enrichCompletionFields(env, fields) {
+	const metadata = await fetchOpenRouterGenerationMetadata(env, fields.generationId);
+	if (!metadata) return fields;
+	const promptTokens = firstFiniteNumber(metadata.tokens_prompt, metadata.native_tokens_prompt, fields.promptTokens);
+	const completionTokens = firstFiniteNumber(metadata.tokens_completion, metadata.native_tokens_completion, fields.completionTokens);
+	const metadataTotalTokens = Number.isFinite(promptTokens) && Number.isFinite(completionTokens) ? promptTokens + completionTokens : undefined;
+	const totalTokens = firstFiniteNumber(
+		metadata.total_tokens,
+		metadataTotalTokens,
+		fields.totalTokens,
+	);
+	return {
+		...fields,
+		provider: compactString(metadata.provider_name || fields.provider || "", 80),
+		generationId: compactIdentifier(metadata.id || fields.generationId || "", 120),
+		upstreamModel: compactString(metadata.model || fields.upstreamModel || "", 160),
+		providerRequestId: compactIdentifier(metadata.request_id || fields.providerRequestId || "", 120),
+		promptTokens,
+		completionTokens,
+		totalTokens,
+		cost: firstFiniteNumber(metadata.total_cost, metadata.usage, fields.cost),
+	};
 }
 
 function instrumentSseBody(body, env, ctx, baseFields, request) {
@@ -219,16 +319,28 @@ function instrumentSseBody(body, env, ctx, baseFields, request) {
 	const decoder = new TextDecoder();
 	let buffered = "";
 	let usage = null;
+	let generationId = "";
+	let upstreamModel = "";
+	let provider = compactString(baseFields.provider || "", 80);
+	let providerRequestId = "";
 	let streamedBytes = 0;
 
-	function readUsage(text) {
+	function readPayloads(text) {
 		buffered += text;
 		const lines = buffered.split(/\r?\n/);
 		buffered = lines.pop() || "";
 		for (const line of lines) {
-			const nextUsage = extractUsageFromSseLine(line);
-			if (nextUsage) usage = nextUsage;
+			readPayload(extractSsePayload(line));
 		}
+	}
+
+	function readPayload(payload) {
+		if (!payload || typeof payload !== "object") return;
+		if (payload?.usage && typeof payload.usage === "object") usage = payload.usage;
+		if (payload?.id) generationId = compactIdentifier(payload.id, 120) || generationId;
+		if (payload?.model) upstreamModel = compactString(payload.model, 160) || upstreamModel;
+		if (payload?.request_id) providerRequestId = compactIdentifier(payload.request_id, 120) || providerRequestId;
+		provider = providerFromPayload(payload) || provider;
 	}
 
 	function usageFields() {
@@ -240,48 +352,51 @@ function instrumentSseBody(body, env, ctx, baseFields, request) {
 		};
 	}
 
+	function streamFields(result, overrides = {}) {
+		const startedAt = finiteNumber(baseFields.startedAtMs);
+		return {
+			...baseFields,
+			result,
+			bodyBytes: streamedBytes,
+			durationMs: startedAt > 0 ? Date.now() - startedAt : baseFields.durationMs,
+			provider,
+			generationId,
+			upstreamModel,
+			providerRequestId,
+			...usageFields(),
+			...overrides,
+		};
+	}
+
 	return new ReadableStream({
 		async pull(controller) {
 			try {
 				const result = await reader.read();
 				if (result.done) {
 					const trailing = decoder.decode();
-					if (trailing) readUsage(trailing);
+					if (trailing) readPayloads(trailing);
 					if (buffered) {
-						const nextUsage = extractUsageFromSseLine(buffered);
-						if (nextUsage) usage = nextUsage;
+						readPayload(extractSsePayload(buffered));
 					}
-					writeAnalytics(ctx, env, "chat_stream_complete", {
-						...baseFields,
-						result: "ok",
-						bodyBytes: streamedBytes,
-						...usageFields(),
-					}, request);
+					const fields = streamFields("ok");
+					writeAnalyticsAsync(ctx, env, "chat_stream_complete", () => enrichCompletionFields(env, fields), request);
 					controller.close();
 					return;
 				}
 				streamedBytes += result.value.byteLength;
-				readUsage(decoder.decode(result.value, { stream: true }));
+				readPayloads(decoder.decode(result.value, { stream: true }));
 				controller.enqueue(result.value);
 			} catch (error) {
-				writeAnalytics(ctx, env, "chat_stream_error", {
-					...baseFields,
-					result: "error",
-					bodyBytes: streamedBytes,
+				writeAnalytics(ctx, env, "chat_stream_error", streamFields("error", {
 					errorCode: "stream_read_error",
-					...usageFields(),
-				}, request);
+				}), request);
 				controller.error(error);
 			}
 		},
 		cancel(reason) {
-			writeAnalytics(ctx, env, "chat_stream_cancelled", {
-				...baseFields,
-				result: "cancelled",
-				bodyBytes: streamedBytes,
+			writeAnalytics(ctx, env, "chat_stream_cancelled", streamFields("cancelled", {
 				errorCode: compactString(reason?.message || reason || "cancelled", 80),
-				...usageFields(),
-			}, request);
+			}), request);
 			return reader.cancel(reason).catch(() => {});
 		},
 	});
@@ -289,10 +404,12 @@ function instrumentSseBody(body, env, ctx, baseFields, request) {
 
 async function handleChatCompletions(request, env, ctx) {
 	const startedAt = Date.now();
+	const telemetryIds = requestTelemetryIds(request);
 	const auth = request.headers.get("Authorization") || "";
 	const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
 	if (!token || !token.startsWith("oft_")) {
 		writeAnalytics(ctx, env, "chat_auth_denied", {
+			...telemetryIds,
 			result: "denied",
 			status: 401,
 			durationMs: Date.now() - startedAt,
@@ -304,6 +421,7 @@ async function handleChatCompletions(request, env, ctx) {
 	const known = await env.FREE_TIER_KV.get(`token:${token}`);
 	if (!known) {
 		writeAnalytics(ctx, env, "chat_auth_denied", {
+			...telemetryIds,
 			result: "denied",
 			status: 401,
 			durationMs: Date.now() - startedAt,
@@ -317,6 +435,7 @@ async function handleChatCompletions(request, env, ctx) {
 	const usage = await bumpDailyCounter(env, `use:${token}:${todayKey()}`, cap);
 	if (!usage.allowed) {
 		writeAnalytics(ctx, env, "chat_quota_denied", {
+			...telemetryIds,
 			result: "denied",
 			status: 429,
 			durationMs: Date.now() - startedAt,
@@ -334,6 +453,7 @@ async function handleChatCompletions(request, env, ctx) {
 	const raw = await request.text();
 	if (raw.length > MAX_BODY_BYTES) {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
+			...telemetryIds,
 			result: "denied",
 			status: 413,
 			durationMs: Date.now() - startedAt,
@@ -350,6 +470,7 @@ async function handleChatCompletions(request, env, ctx) {
 		body = JSON.parse(raw);
 	} catch {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
+			...telemetryIds,
 			result: "denied",
 			status: 400,
 			durationMs: Date.now() - startedAt,
@@ -363,6 +484,7 @@ async function handleChatCompletions(request, env, ctx) {
 	}
 	if (!ALLOWED_MODELS.has(String(body.model || ""))) {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
+			...telemetryIds,
 			result: "denied",
 			status: 400,
 			durationMs: Date.now() - startedAt,
@@ -388,14 +510,17 @@ async function handleChatCompletions(request, env, ctx) {
 			Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
 			"HTTP-Referer": "https://github.com/Phineas1500/Onhand",
 			"X-Title": "Onhand Free Tier",
+			"X-OpenRouter-Metadata": "enabled",
 		},
 		body: JSON.stringify(body),
 	});
 	const upstreamDurationMs = Date.now() - startedAt;
 	const upstreamProvider = upstream.headers.get("X-OpenRouter-Provider") || "";
 	const metricBase = {
+		...telemetryIds,
 		status: upstream.status,
 		durationMs: upstreamDurationMs,
+		startedAtMs: startedAt,
 		bodyBytes: raw.length,
 		deviceHash,
 		current: usage.current,
