@@ -434,7 +434,7 @@ const READ_TAB_SELECTOR_SCHEMA = {
 
 const NAVIGATE_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
-	url: Type.String({ description: "URL to navigate to" }),
+	url: Type.String({ description: "HTTP(S) URL to navigate to. Do not use browser_navigate for file:// URLs; local files must be opened manually by the user first." }),
 	newTab: Type.Optional(Type.Boolean({ description: "Open in a new tab instead of navigating the current or matched tab" })),
 	waitForLoad: Type.Optional(Type.Boolean({ description: "Wait for the tab to finish loading" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Navigation timeout in milliseconds" })),
