@@ -147,6 +147,10 @@ async function assertPdfViewerHandoffHelpers() {
 		/isRestrictedScriptingError\(scriptError\) &&\s*!isOwnExtensionPdfViewerUrl\(tab\?\.url\) &&\s*!shouldTryOnhandPdfViewerFrameForTab\(tab\)/,
 		"page toolkit should try the PDF viewer frame before giving up on a restricted main-frame error",
 	);
+	assert.ok(
+		backgroundSource.indexOf("if (mainFrameScriptingRestricted)") < backgroundSource.indexOf("{ skipScripting: true }", backgroundSource.indexOf("async function runPageToolkitMethod")),
+		"page toolkit should not fall through to the whole-tab debugger fallback after a restricted main-frame scripting error",
+	);
 	assert.match(backgroundSource, /function inferInitialPdfViewerPageNumber/, "PDF handoff should infer the current page before opening Onhand's viewer");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromNativeChromePdfViewerFrame/, "PDF handoff should read Chrome's native PDF viewer frame for the current page");
 	assert.match(backgroundSource, /function inferPdfPageNumberFromDebuggerDefaultContext/, "PDF handoff should fall back to the debugger default context for native PDF pages");
