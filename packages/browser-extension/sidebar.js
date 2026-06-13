@@ -399,11 +399,16 @@
 
 	function createTokenStore() {
 		const tokens = [];
+		const tokenValues = new Set();
 		return {
 			replace(html) {
 				const token = `${TOKEN_PREFIX}${tokens.length}@@`;
 				tokens.push(html);
+				tokenValues.add(token);
 				return token;
+			},
+			has(token) {
+				return tokenValues.has(String(token || ""));
 			},
 			restore(text) {
 				let restored = String(text || "");
@@ -754,7 +759,7 @@
 				continue;
 			}
 
-			if (trimmed.startsWith(TOKEN_PREFIX)) {
+			if (blockStore.has(trimmed)) {
 				flushParagraph();
 				flushList();
 				parts.push(trimmed);
