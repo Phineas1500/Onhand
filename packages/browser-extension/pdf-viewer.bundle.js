@@ -25098,7 +25098,6 @@ var scaleMode = "fit";
 var renderSequence = 0;
 var runtimeBridgePort = null;
 var runtimeBridgeReconnectTimer = null;
-var parentBridgeToken = "";
 var annotationSequence = 0;
 var resizeRenderTimer = null;
 var lastFitRenderWidth = 0;
@@ -25131,7 +25130,6 @@ function serializeBridgeValue(value) {
   }
 }
 async function getBridgeToken() {
-  if (parentBridgeToken) return parentBridgeToken;
   if (!sourceUrl || typeof chrome === "undefined" || !chrome?.storage?.session) return "";
   const key = inlinePdfViewerBridgeStorageKey(sourceUrl);
   const stored = await chrome.storage.session.get(key);
@@ -26670,10 +26668,9 @@ async function handleBridgeCommand(data, port) {
     }
   };
   try {
-    const commandToken = String(data?.token || "");
     const commandSourceUrl = String(data?.sourceUrl || "");
-    if (commandToken && (!sourceUrl || commandSourceUrl === sourceUrl) && !parentBridgeToken) {
-      parentBridgeToken = commandToken;
+    if (!sourceUrl || commandSourceUrl !== sourceUrl) {
+      throw new Error("Unauthorized Onhand PDF viewer bridge command.");
     }
     const expectedToken = await getBridgeToken();
     if (!expectedToken || data?.token !== expectedToken) {
@@ -26693,14 +26690,7 @@ async function handleBridgeCommand(data, port) {
 }
 window.addEventListener("message", (event) => {
   const data = event?.data || {};
-  if (data?.type === "onhand-pdf-viewer-bridge-init") {
-    const token = String(data?.token || "");
-    const messageSourceUrl = String(data?.sourceUrl || "");
-    if (token && (!sourceUrl || messageSourceUrl === sourceUrl) && !parentBridgeToken) {
-      parentBridgeToken = token;
-    }
-    return;
-  }
+  if (data?.type === "onhand-pdf-viewer-bridge-init") return;
   if (data?.type !== "onhand-pdf-viewer-bridge-command") return;
   const port = event.ports?.[0];
   if (!port) return;
