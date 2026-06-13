@@ -170,9 +170,10 @@ WHERE ${where}
 		},
 		{
 			name: "model_provider_health",
-			description: "Model/provider routing, errors, latency, cost, and tokens.",
+			description: "Model/provider routing, errors, latency, cost, and tokens by chat event.",
 			sql: `
 SELECT
+  blob1 AS event,
   blob4 AS model,
   blob5 AS provider,
   blob3 AS result,
@@ -184,8 +185,8 @@ SELECT
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('chat_upstream_response', 'chat_stream_complete', 'chat_stream_error')
-GROUP BY model, provider, result
-ORDER BY events DESC
+GROUP BY event, model, provider, result
+ORDER BY event, events DESC
 LIMIT ${limit}`,
 		},
 		{
@@ -411,7 +412,7 @@ function renderMarkdown(report) {
 
 	addTable(lines, "Event Counts", report.sections.event_counts, ["event", "events"]);
 	addTable(lines, "Chat Latency", report.sections.chat_latency, ["event", "result", "events", "avg_ms", "p50_ms", "p95_ms", "avg_body_bytes"]);
-	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
+	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
 	addTable(lines, "Quota And Rejections", report.sections.quota_and_rejections, ["event", "error_code", "events", "max_current", "cap"]);
 	addTable(lines, "Top Errors", report.sections.top_errors, ["event", "error_code", "provider", "status", "events"]);
 	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["event", "result", "ai_model", "events"]);
