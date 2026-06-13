@@ -36,6 +36,10 @@ Before changing the allowlisted model, run the product-shaped comparison in
 latency, browser tool behavior, anchored answers, learning-mode coaching, and
 homework-refusal behavior against the current default.
 
+After deploying, use [`FREE_TIER_OPS.md`](FREE_TIER_OPS.md) to query the
+Cloudflare Analytics Engine dataset for cost, latency, failures, quota pressure,
+and advanced runtime-inspection usage.
+
 At the measured ~1¢/turn, a maxed-out free device costs roughly
 $0.15-0.25/day; typical usage is far below that.
 

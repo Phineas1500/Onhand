@@ -39,6 +39,9 @@ const TELEMETRY_EVENT_NAMES = new Set([
 	"session_started",
 	"session_restored",
 	"session_restore_failed",
+	"browser_run_js_started",
+	"browser_run_js_succeeded",
+	"browser_run_js_failed",
 ]);
 const ERROR_REPORT_TYPES = new Set(["prompt_error", "runtime_error", "voice_error", "options_error"]);
 

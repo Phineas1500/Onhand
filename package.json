@@ -24,6 +24,7 @@
     "website:sync-release": "node ./scripts/sync-github-release-version.mjs",
     "website:check-release": "node ./scripts/sync-github-release-version.mjs --check",
     "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
+    "ops:free-tier": "node ./scripts/run-free-tier-ops-report.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",
