@@ -219,6 +219,20 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	);
 	assert.match(source, /function getPageLayoutSize/, "PDF viewer highlights should have a layout coordinate helper for scaled pages");
 	assert.match(source, /function rangeRectsForPage[\s\S]*getPageLayoutSize/, "PDF viewer highlight rects should convert viewport rects into page layout coordinates");
+	// Robust anchoring: highlights capture surrounding context and re-find by
+	// it (disambiguating repeated text and surviving occurrence drift) rather
+	// than blindly trusting the Nth-occurrence number.
+	assert.match(source, /function findMappedTextRange\(root: Element, query: string, occurrence = 1, context\?/, "PDF re-find should accept stored anchor context");
+	assert.match(source, /function scoreContextAt/, "PDF re-find should score candidate positions by stored prefix/suffix context");
+	assert.match(source, /function pickMatchIndex/, "PDF re-find should pick the occurrence whose context matches best");
+	assert.match(source, /function extractNormalizedContext/, "PDF highlights should capture surrounding context for the anchor");
+	assert.match(source, /findMappedTextRange\(textLayer, rawQuery, occurrence, options\.pdfAnchor\?\.textQuote\)/, "PDF highlight should pass the stored anchor context into re-finding");
+	assert.match(source, /textQuote: \{\s*exact: match\.matchedText,\s*\.\.\.\(match\.context\?\.prefix/, "PDF anchor should persist prefix/suffix context in textQuote");
+	// Robustness fixes from adversarial review:
+	assert.match(source, /for \(const char of normalized\) \{\s*text \+= char;\s*positions\.push/, "normalized text map must push one position per emitted char (NFKC ligature expansion)");
+	assert.match(source, /MIN_CONTEXT_SCORE/, "context disambiguation should require a minimum agreement before overriding occurrence");
+	assert.match(source, /tied\.length === 1 \? tied\[0\] : tied\[/, "tied context scores should break by stored occurrence, not pick the first");
+	assert.match(source, /for \(const prefixIndex of collectMatchIndices\(compactText, compactPrefix\)\)/, "context recovery should consider every prefix occurrence, not just the first");
 	assert.match(source, /function textSegmentRectsForPage/, "PDF viewer highlights should compute text-span segment rects for partial PDF text matches");
 	assert.match(source, /function rangeRectsForPage[\s\S]*textSegmentRectsForPage/, "PDF viewer highlights should prefer text-span segment rects before browser range rects");
 	assert.match(htmlSource, /--scale-factor:\s*1/, "PDF viewer text layer should define a default PDF.js scale factor");

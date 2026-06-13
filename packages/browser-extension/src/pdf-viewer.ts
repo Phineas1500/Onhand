@@ -237,8 +237,14 @@ function buildNormalizedTextMap(root: Element) {
 				positions.push(pendingSpace);
 				pendingSpace = null;
 			}
-			text += normalized;
-			positions.push({ node, offset });
+			// NFKC can expand one source char into several (e.g. the "ﬁ"
+			// ligature -> "fi"); push one position per emitted char so
+			// text.length stays in lockstep with positions and every text
+			// index maps back to a real node offset.
+			for (const char of normalized) {
+				text += char;
+				positions.push({ node, offset });
+			}
 		}
 	}
 	return { text, positions };
@@ -278,53 +284,191 @@ function buildSearchText(value: string, keepSpaces: boolean) {
 	return text.trim();
 }
 
-function findMappedTextRange(root: Element, query: string, occurrence = 1) {
-	const map = buildNormalizedTextMap(root);
-	const queryText = normalizeSearchText(query);
-	let foundIndex = -1;
-	let searchFrom = 0;
-	for (let count = 0; count < occurrence; count += 1) {
-		foundIndex = map.text.indexOf(queryText, searchFrom);
-		if (foundIndex === -1) break;
-		searchFrom = foundIndex + Math.max(queryText.length, 1);
+// How many characters of surrounding text an anchor stores on each side to
+// disambiguate and re-find its highlight. Matches the native-viewer path in
+// background.js so the anchor shape is consistent across PDF surfaces.
+const ANCHOR_CONTEXT_LENGTH = 80;
+
+type AnchorContext = { prefix?: string; suffix?: string } | null | undefined;
+
+function collectMatchIndices(haystack: string, needle: string) {
+	const indices: number[] = [];
+	if (!needle) return indices;
+	let from = 0;
+	for (;;) {
+		const index = haystack.indexOf(needle, from);
+		if (index === -1) break;
+		indices.push(index);
+		from = index + Math.max(needle.length, 1);
 	}
-	if (foundIndex === -1 && compactSearchText(query).length >= 8) {
-		const compactQuery = compactSearchText(query);
-		const compactPositions: number[] = [];
-		let compactText = "";
-		for (let index = 0; index < map.text.length; index += 1) {
-			const char = map.text[index];
-			if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
-			compactText += char;
-			compactPositions.push(index);
-		}
-		let compactFound = -1;
-		let compactSearchFrom = 0;
-		for (let count = 0; count < occurrence; count += 1) {
-			compactFound = compactText.indexOf(compactQuery, compactSearchFrom);
-			if (compactFound === -1) break;
-			compactSearchFrom = compactFound + Math.max(compactQuery.length, 1);
-		}
-		if (compactFound !== -1) {
-			foundIndex = compactPositions[compactFound];
-			const endCompactIndex = compactPositions[compactFound + compactQuery.length - 1];
-			const start = map.positions[foundIndex];
-			const end = map.positions[endCompactIndex];
-			if (start && end) {
-				const range = document.createRange();
-				range.setStart(start.node, start.offset);
-				range.setEnd(end.node, end.offset + 1);
-				return { range, matchedText: normalizeText(range.toString()) || normalizeText(query), fallback: "compact-text" };
-			}
+	return indices;
+}
+
+function commonSuffixLength(a: string, b: string) {
+	let i = a.length - 1;
+	let j = b.length - 1;
+	let count = 0;
+	while (i >= 0 && j >= 0 && a[i] === b[j]) {
+		i -= 1;
+		j -= 1;
+		count += 1;
+	}
+	return count;
+}
+
+function commonPrefixLength(a: string, b: string) {
+	let i = 0;
+	while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+	return i;
+}
+
+// How well the text around a candidate match position agrees with the
+// anchor's stored prefix/suffix context. Compared in compact (alphanumeric)
+// space so punctuation and whitespace differences between the stored context
+// and the live page text never sink the score. Higher = more confident.
+function scoreContextAt(haystack: string, startIndex: number, matchLength: number, compactPrefix: string, compactSuffix: string) {
+	let score = 0;
+	if (compactPrefix) {
+		const before = compactSearchText(haystack.slice(Math.max(0, startIndex - ANCHOR_CONTEXT_LENGTH), startIndex));
+		score += commonSuffixLength(before, compactPrefix);
+	}
+	if (compactSuffix) {
+		const after = compactSearchText(haystack.slice(startIndex + matchLength, startIndex + matchLength + ANCHOR_CONTEXT_LENGTH));
+		score += commonPrefixLength(after, compactSuffix);
+	}
+	return score;
+}
+
+// Choose which occurrence of a match to use. With stored context, pick the
+// occurrence whose surroundings match it best — this is what lets re-finding
+// survive edits and repeated text. Without context, fall back to the Nth
+// occurrence exactly as before.
+// A 1-2 char boundary coincidence is meaningless; require a real run of
+// agreeing context before trusting it over the stored occurrence.
+const MIN_CONTEXT_SCORE = 6;
+
+function pickMatchIndex(haystack: string, indices: number[], matchLength: number, occurrence: number, compactPrefix: string, compactSuffix: string) {
+	if (!indices.length) return -1;
+	if (compactPrefix || compactSuffix) {
+		const scores = indices.map((index) => scoreContextAt(haystack, index, matchLength, compactPrefix, compactSuffix));
+		const bestScore = Math.max(...scores);
+		if (bestScore >= MIN_CONTEXT_SCORE) {
+			// Several occurrences can share identical surroundings (repeated
+			// rows, boilerplate); among the tied best, honor the stored
+			// occurrence so the right copy still wins.
+			const tied = indices.filter((_, i) => scores[i] === bestScore);
+			return tied.length === 1 ? tied[0] : tied[Math.min(Math.max(occurrence, 1), tied.length) - 1];
 		}
 	}
-	const start = map.positions[foundIndex];
-	const end = map.positions[foundIndex + queryText.length - 1];
+	return occurrence <= indices.length ? indices[occurrence - 1] : -1;
+}
+
+function extractNormalizedContext(haystack: string, startIndex: number, matchLength: number) {
+	const prefix = haystack.slice(Math.max(0, startIndex - ANCHOR_CONTEXT_LENGTH), startIndex).trim();
+	const suffix = haystack.slice(startIndex + matchLength, startIndex + matchLength + ANCHOR_CONTEXT_LENGTH).trim();
+	const context: { prefix?: string; suffix?: string } = {};
+	if (prefix) context.prefix = prefix;
+	if (suffix) context.suffix = suffix;
+	return Object.keys(context).length ? context : undefined;
+}
+
+function rangeFromMapPositions(positions: Array<{ node: Text; offset: number }>, startIndex: number, endIndexInclusive: number) {
+	const start = positions[startIndex];
+	const end = positions[endIndexInclusive];
 	if (!start || !end) return null;
 	const range = document.createRange();
 	range.setStart(start.node, start.offset);
 	range.setEnd(end.node, end.offset + 1);
-	return { range, matchedText: normalizeText(range.toString()) || normalizeText(query), fallback: undefined };
+	return range;
+}
+
+function findMappedTextRange(root: Element, query: string, occurrence = 1, context?: AnchorContext) {
+	const map = buildNormalizedTextMap(root);
+	const queryText = normalizeSearchText(query);
+	// Context is always compared in compact (alphanumeric) space so punctuation
+	// and spacing differences between the stored anchor and the live page text
+	// never break re-finding.
+	const compactPrefix = context?.prefix ? compactSearchText(context.prefix) : "";
+	const compactSuffix = context?.suffix ? compactSearchText(context.suffix) : "";
+
+	// 1) Exact normalized match, disambiguated by stored context when present.
+	const exactIndices = collectMatchIndices(map.text, queryText);
+	const exactIndex = pickMatchIndex(map.text, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
+	if (exactIndex !== -1) {
+		const range = rangeFromMapPositions(map.positions, exactIndex, exactIndex + queryText.length - 1);
+		if (range) {
+			return {
+				range,
+				matchedText: normalizeText(range.toString()) || normalizeText(query),
+				fallback: undefined,
+				context: extractNormalizedContext(map.text, exactIndex, queryText.length),
+			};
+		}
+	}
+
+	// Build the compact (whitespace/punctuation-insensitive) projection of the
+	// page once; tiers 2 and 3 both work in it.
+	const compactPositions: number[] = [];
+	let compactText = "";
+	for (let index = 0; index < map.text.length; index += 1) {
+		const char = map.text[index];
+		if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
+		compactText += char;
+		compactPositions.push(index);
+	}
+
+	// 2) Compact match, context-aware.
+	const compactQuery = compactSearchText(query);
+	if (compactQuery.length >= 8) {
+		const compactIndices = collectMatchIndices(compactText, compactQuery);
+		const compactIndex = pickMatchIndex(compactText, compactIndices, compactQuery.length, occurrence, compactPrefix, compactSuffix);
+		if (compactIndex !== -1) {
+			const startMapIndex = compactPositions[compactIndex];
+			const endMapIndex = compactPositions[compactIndex + compactQuery.length - 1];
+			const range = rangeFromMapPositions(map.positions, startMapIndex, endMapIndex);
+			if (range) {
+				return {
+					range,
+					matchedText: normalizeText(range.toString()) || normalizeText(query),
+					fallback: "compact-text",
+					context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1),
+				};
+			}
+		}
+	}
+
+	// 3) Context-anchored recovery: the exact text drifted, but the stored
+	// surrounding context is stable. Highlight the compact span sitting between
+	// the stored prefix and suffix, choosing — across every prefix occurrence —
+	// the gap closest to the original match length, when it is plausible.
+	if (compactPrefix.length >= 6 && compactSuffix.length >= 6) {
+		const maxSpan = Math.max(compactQuery.length * 2, compactQuery.length + 24, 16);
+		let best: { spanStart: number; suffixIndex: number; spanLength: number } | null = null;
+		for (const prefixIndex of collectMatchIndices(compactText, compactPrefix)) {
+			const spanStart = prefixIndex + compactPrefix.length;
+			const suffixIndex = compactText.indexOf(compactSuffix, spanStart);
+			if (suffixIndex <= spanStart || suffixIndex - spanStart > maxSpan) continue;
+			const spanLength = suffixIndex - spanStart;
+			if (!best || Math.abs(spanLength - compactQuery.length) < Math.abs(best.spanLength - compactQuery.length)) {
+				best = { spanStart, suffixIndex, spanLength };
+			}
+		}
+		if (best) {
+			const startMapIndex = compactPositions[best.spanStart];
+			const endMapIndex = compactPositions[best.suffixIndex - 1];
+			const range = rangeFromMapPositions(map.positions, startMapIndex, endMapIndex);
+			if (range) {
+				return {
+					range,
+					matchedText: normalizeText(range.toString()) || normalizeText(query),
+					fallback: "context",
+					context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1),
+				};
+			}
+		}
+	}
+
+	return null;
 }
 
 function ensureAnnotationLayer(page: HTMLElement) {
@@ -569,7 +713,7 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 	async function applyHighlightToPage(page: HTMLElement) {
 		const textLayer = page.querySelector<HTMLElement>(".textLayer");
 		if (!textLayer) return null;
-		const match = findMappedTextRange(textLayer, rawQuery, occurrence);
+		const match = findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
 		if (!match) return null;
 		const rects = rangeRectsForPage(match.range, page);
 		if (!rects.length) return null;
@@ -581,7 +725,11 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 			document: { url: sourceUrl, title: document.title },
 			pageNumber: getPageNumber(page),
 			matchedText: match.matchedText,
-			textQuote: { exact: match.matchedText },
+			textQuote: {
+				exact: match.matchedText,
+				...(match.context?.prefix ? { prefix: match.context.prefix } : {}),
+				...(match.context?.suffix ? { suffix: match.context.suffix } : {}),
+			},
 			rects,
 			occurrence,
 			fallback: match.fallback,
@@ -1177,7 +1325,7 @@ function pdfPageText(page: HTMLElement | null) {
 	return normalizeText(page.textContent || "");
 }
 
-function buildPdfAnchor(page: HTMLElement, match: { range: Range; matchedText: string; fallback?: string }, occurrence = 1) {
+function buildPdfAnchor(page: HTMLElement, match: { range: Range; matchedText: string; fallback?: string; context?: { prefix?: string; suffix?: string } }, occurrence = 1) {
 	const rects = rangeRectsForPage(match.range, page);
 	return {
 		surface: "pdf",
@@ -1185,7 +1333,11 @@ function buildPdfAnchor(page: HTMLElement, match: { range: Range; matchedText: s
 		document: { url: sourceUrl, title: document.title },
 		pageNumber: getPageNumber(page),
 		matchedText: match.matchedText,
-		textQuote: { exact: match.matchedText },
+		textQuote: {
+			exact: match.matchedText,
+			...(match.context?.prefix ? { prefix: match.context.prefix } : {}),
+			...(match.context?.suffix ? { suffix: match.context.suffix } : {}),
+		},
 		rects,
 		occurrence,
 		fallback: match.fallback,
@@ -1485,7 +1637,7 @@ async function pdfJumpToPage(options: Record<string, any> = {}) {
 	if (text) {
 		const textLayer = page.querySelector<HTMLElement>(".textLayer");
 		const occurrence = Math.max(1, Math.min(100, Number(options.occurrence || anchor?.occurrence || 1) || 1));
-		const match = textLayer ? findMappedTextRange(textLayer, text, occurrence) : null;
+		const match = textLayer ? findMappedTextRange(textLayer, text, occurrence, anchor?.textQuote) : null;
 		if (match) {
 			match.range.startContainer.parentElement?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
 			await waitForNextFrame();

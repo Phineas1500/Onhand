@@ -25251,8 +25251,10 @@ function buildNormalizedTextMap(root) {
         positions.push(pendingSpace);
         pendingSpace = null;
       }
-      text += normalized;
-      positions.push({ node, offset });
+      for (const char of normalized) {
+        text += char;
+        positions.push({ node, offset });
+      }
     }
   }
   return { text, positions };
@@ -25288,53 +25290,148 @@ function buildSearchText(value, keepSpaces) {
   }
   return text.trim();
 }
-function findMappedTextRange(root, query, occurrence = 1) {
-  const map = buildNormalizedTextMap(root);
-  const queryText = normalizeSearchText(query);
-  let foundIndex = -1;
-  let searchFrom = 0;
-  for (let count = 0; count < occurrence; count += 1) {
-    foundIndex = map.text.indexOf(queryText, searchFrom);
-    if (foundIndex === -1) break;
-    searchFrom = foundIndex + Math.max(queryText.length, 1);
+var ANCHOR_CONTEXT_LENGTH = 80;
+function collectMatchIndices(haystack, needle) {
+  const indices = [];
+  if (!needle) return indices;
+  let from = 0;
+  for (; ; ) {
+    const index = haystack.indexOf(needle, from);
+    if (index === -1) break;
+    indices.push(index);
+    from = index + Math.max(needle.length, 1);
   }
-  if (foundIndex === -1 && compactSearchText(query).length >= 8) {
-    const compactQuery = compactSearchText(query);
-    const compactPositions = [];
-    let compactText = "";
-    for (let index = 0; index < map.text.length; index += 1) {
-      const char = map.text[index];
-      if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
-      compactText += char;
-      compactPositions.push(index);
-    }
-    let compactFound = -1;
-    let compactSearchFrom = 0;
-    for (let count = 0; count < occurrence; count += 1) {
-      compactFound = compactText.indexOf(compactQuery, compactSearchFrom);
-      if (compactFound === -1) break;
-      compactSearchFrom = compactFound + Math.max(compactQuery.length, 1);
-    }
-    if (compactFound !== -1) {
-      foundIndex = compactPositions[compactFound];
-      const endCompactIndex = compactPositions[compactFound + compactQuery.length - 1];
-      const start2 = map.positions[foundIndex];
-      const end2 = map.positions[endCompactIndex];
-      if (start2 && end2) {
-        const range2 = document.createRange();
-        range2.setStart(start2.node, start2.offset);
-        range2.setEnd(end2.node, end2.offset + 1);
-        return { range: range2, matchedText: normalizeText(range2.toString()) || normalizeText(query), fallback: "compact-text" };
-      }
+  return indices;
+}
+function commonSuffixLength(a, b) {
+  let i = a.length - 1;
+  let j = b.length - 1;
+  let count = 0;
+  while (i >= 0 && j >= 0 && a[i] === b[j]) {
+    i -= 1;
+    j -= 1;
+    count += 1;
+  }
+  return count;
+}
+function commonPrefixLength(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  return i;
+}
+function scoreContextAt(haystack, startIndex, matchLength, compactPrefix, compactSuffix) {
+  let score = 0;
+  if (compactPrefix) {
+    const before = compactSearchText(haystack.slice(Math.max(0, startIndex - ANCHOR_CONTEXT_LENGTH), startIndex));
+    score += commonSuffixLength(before, compactPrefix);
+  }
+  if (compactSuffix) {
+    const after = compactSearchText(haystack.slice(startIndex + matchLength, startIndex + matchLength + ANCHOR_CONTEXT_LENGTH));
+    score += commonPrefixLength(after, compactSuffix);
+  }
+  return score;
+}
+var MIN_CONTEXT_SCORE = 6;
+function pickMatchIndex(haystack, indices, matchLength, occurrence, compactPrefix, compactSuffix) {
+  if (!indices.length) return -1;
+  if (compactPrefix || compactSuffix) {
+    const scores = indices.map((index) => scoreContextAt(haystack, index, matchLength, compactPrefix, compactSuffix));
+    const bestScore = Math.max(...scores);
+    if (bestScore >= MIN_CONTEXT_SCORE) {
+      const tied = indices.filter((_, i) => scores[i] === bestScore);
+      return tied.length === 1 ? tied[0] : tied[Math.min(Math.max(occurrence, 1), tied.length) - 1];
     }
   }
-  const start = map.positions[foundIndex];
-  const end = map.positions[foundIndex + queryText.length - 1];
+  return occurrence <= indices.length ? indices[occurrence - 1] : -1;
+}
+function extractNormalizedContext(haystack, startIndex, matchLength) {
+  const prefix = haystack.slice(Math.max(0, startIndex - ANCHOR_CONTEXT_LENGTH), startIndex).trim();
+  const suffix = haystack.slice(startIndex + matchLength, startIndex + matchLength + ANCHOR_CONTEXT_LENGTH).trim();
+  const context = {};
+  if (prefix) context.prefix = prefix;
+  if (suffix) context.suffix = suffix;
+  return Object.keys(context).length ? context : void 0;
+}
+function rangeFromMapPositions(positions, startIndex, endIndexInclusive) {
+  const start = positions[startIndex];
+  const end = positions[endIndexInclusive];
   if (!start || !end) return null;
   const range = document.createRange();
   range.setStart(start.node, start.offset);
   range.setEnd(end.node, end.offset + 1);
-  return { range, matchedText: normalizeText(range.toString()) || normalizeText(query), fallback: void 0 };
+  return range;
+}
+function findMappedTextRange(root, query, occurrence = 1, context) {
+  const map = buildNormalizedTextMap(root);
+  const queryText = normalizeSearchText(query);
+  const compactPrefix = context?.prefix ? compactSearchText(context.prefix) : "";
+  const compactSuffix = context?.suffix ? compactSearchText(context.suffix) : "";
+  const exactIndices = collectMatchIndices(map.text, queryText);
+  const exactIndex = pickMatchIndex(map.text, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
+  if (exactIndex !== -1) {
+    const range = rangeFromMapPositions(map.positions, exactIndex, exactIndex + queryText.length - 1);
+    if (range) {
+      return {
+        range,
+        matchedText: normalizeText(range.toString()) || normalizeText(query),
+        fallback: void 0,
+        context: extractNormalizedContext(map.text, exactIndex, queryText.length)
+      };
+    }
+  }
+  const compactPositions = [];
+  let compactText = "";
+  for (let index = 0; index < map.text.length; index += 1) {
+    const char = map.text[index];
+    if (!char || char === " " || !/[a-z0-9]|[^\x00-\x7F]/i.test(char)) continue;
+    compactText += char;
+    compactPositions.push(index);
+  }
+  const compactQuery = compactSearchText(query);
+  if (compactQuery.length >= 8) {
+    const compactIndices = collectMatchIndices(compactText, compactQuery);
+    const compactIndex = pickMatchIndex(compactText, compactIndices, compactQuery.length, occurrence, compactPrefix, compactSuffix);
+    if (compactIndex !== -1) {
+      const startMapIndex = compactPositions[compactIndex];
+      const endMapIndex = compactPositions[compactIndex + compactQuery.length - 1];
+      const range = rangeFromMapPositions(map.positions, startMapIndex, endMapIndex);
+      if (range) {
+        return {
+          range,
+          matchedText: normalizeText(range.toString()) || normalizeText(query),
+          fallback: "compact-text",
+          context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1)
+        };
+      }
+    }
+  }
+  if (compactPrefix.length >= 6 && compactSuffix.length >= 6) {
+    const maxSpan = Math.max(compactQuery.length * 2, compactQuery.length + 24, 16);
+    let best = null;
+    for (const prefixIndex of collectMatchIndices(compactText, compactPrefix)) {
+      const spanStart = prefixIndex + compactPrefix.length;
+      const suffixIndex = compactText.indexOf(compactSuffix, spanStart);
+      if (suffixIndex <= spanStart || suffixIndex - spanStart > maxSpan) continue;
+      const spanLength = suffixIndex - spanStart;
+      if (!best || Math.abs(spanLength - compactQuery.length) < Math.abs(best.spanLength - compactQuery.length)) {
+        best = { spanStart, suffixIndex, spanLength };
+      }
+    }
+    if (best) {
+      const startMapIndex = compactPositions[best.spanStart];
+      const endMapIndex = compactPositions[best.suffixIndex - 1];
+      const range = rangeFromMapPositions(map.positions, startMapIndex, endMapIndex);
+      if (range) {
+        return {
+          range,
+          matchedText: normalizeText(range.toString()) || normalizeText(query),
+          fallback: "context",
+          context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1)
+        };
+      }
+    }
+  }
+  return null;
 }
 function ensureAnnotationLayer(page) {
   let layer = page.querySelector(".onhand-pdf-annotation-layer");
@@ -25555,7 +25652,7 @@ async function pdfHighlightText(query, options = {}) {
   async function applyHighlightToPage(page) {
     const textLayer = page.querySelector(".textLayer");
     if (!textLayer) return null;
-    const match = findMappedTextRange(textLayer, rawQuery, occurrence);
+    const match = findMappedTextRange(textLayer, rawQuery, occurrence, options.pdfAnchor?.textQuote);
     if (!match) return null;
     const rects = rangeRectsForPage(match.range, page);
     if (!rects.length) return null;
@@ -25567,7 +25664,11 @@ async function pdfHighlightText(query, options = {}) {
       document: { url: sourceUrl, title: document.title },
       pageNumber: getPageNumber(page),
       matchedText: match.matchedText,
-      textQuote: { exact: match.matchedText },
+      textQuote: {
+        exact: match.matchedText,
+        ...match.context?.prefix ? { prefix: match.context.prefix } : {},
+        ...match.context?.suffix ? { suffix: match.context.suffix } : {}
+      },
       rects,
       occurrence,
       fallback: match.fallback
@@ -26102,7 +26203,11 @@ function buildPdfAnchor(page, match, occurrence = 1) {
     document: { url: sourceUrl, title: document.title },
     pageNumber: getPageNumber(page),
     matchedText: match.matchedText,
-    textQuote: { exact: match.matchedText },
+    textQuote: {
+      exact: match.matchedText,
+      ...match.context?.prefix ? { prefix: match.context.prefix } : {},
+      ...match.context?.suffix ? { suffix: match.context.suffix } : {}
+    },
     rects,
     occurrence,
     fallback: match.fallback
@@ -26370,7 +26475,7 @@ async function pdfJumpToPage(options = {}) {
   if (text) {
     const textLayer = page.querySelector(".textLayer");
     const occurrence = Math.max(1, Math.min(100, Number(options.occurrence || anchor?.occurrence || 1) || 1));
-    const match = textLayer ? findMappedTextRange(textLayer, text, occurrence) : null;
+    const match = textLayer ? findMappedTextRange(textLayer, text, occurrence, anchor?.textQuote) : null;
     if (match) {
       match.range.startContainer.parentElement?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
       await waitForNextFrame();
