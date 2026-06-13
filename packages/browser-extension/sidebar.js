@@ -5525,48 +5525,10 @@
 	}
 
 	function renderLatestReply(state) {
-		const sessionPath = getStateSessionPath(state);
-		const answerSessionPath = String(realtimeAnswer?.sessionPath || "").trim();
-		const answerBelongsToSession = !answerSessionPath || !sessionPath || answerSessionPath === sessionPath;
-		if (answerBelongsToSession && (realtimeAnswer?.markdown || realtimeAnswer?.pending)) {
-			const markdown = String(realtimeAnswer.markdown || "").trim();
-			const sourceTurn = findTurnForRealtimeAnswer(state, realtimeAnswer?.sourceTurnId);
-			const sourceActions = getRealtimeAnswerSourceActions(state, sourceTurn, markdown);
-			const citationGroups = buildCitationGroups(sourceActions);
-			const status =
-				realtimeAnswer.status || (sourceActions.length ? "Page-grounded" : "");
-			replySectionEl.hidden = false;
-			const markup = `
-					<article class="onhand-entry onhand-realtime-answer">
-						<div class="onhand-eyebrow">
-							<time>${escapeHtml(formatEntryTime(realtimeAnswer.updatedAt || new Date().toISOString()))}</time>
-							<span class="dot"></span>
-						<span>Realtime tutor</span>
-						${status ? `<span class="dot"></span><span>${escapeHtml(status)}</span>` : ""}
-					</div>
-						${realtimeAnswer.userPrompt ? `<p class="onhand-q">${escapeHtml(realtimeAnswer.userPrompt)}</p>` : ""}
-						<div class="onhand-a">
-							<div class="onhand-response">
-								${markdown ? renderReplyMarkdownWithCitationFallback(markdown, citationGroups) : '<p class="reply-placeholder">Listening...</p>'}
-								${realtimeAnswer.pending ? '<span class="onhand-cursor"></span>' : ""}
-								${renderRealtimeSourceButtons(sourceActions, `realtime:${sessionPath}:${realtimeAnswer.sourceTurnId || realtimeAnswer.voiceTurnId || realtimeAnswer.updatedAt || "current"}`)}
-							</div>
-							${renderRealtimeAnswerCopyButton(markdown)}
-						</div>
-					</article>
-				`;
-			if (replyEl.innerHTML === markup || markup === lastReplyMarkup) return;
-			lastReplyMarkup = markup;
-			replyEl.innerHTML = markup;
-			bindSourceDisclosures(replyEl);
-			bindActionButtons(replyEl);
-			bindCopyButtons(replyEl);
-				return;
-			}
-			replySectionEl.hidden = true;
-			lastReplyMarkup = "";
-			replyEl.innerHTML = "";
-		}
+		replySectionEl.hidden = true;
+		lastReplyMarkup = "";
+		replyEl.innerHTML = "";
+	}
 
 	function renderActions() {
 		actionsEl.innerHTML = "";
@@ -8603,24 +8565,6 @@
 		return turns.find((turn) => turn?.id === id) || null;
 	}
 
-	function mirrorCompletedRealtimeDirectAnswer(state, turn, reply, voiceTurnId = "") {
-		const text = String(reply || "").trim();
-		if (!turn || !text) return;
-		realtimeAnswer = {
-			...(realtimeAnswer || {}),
-			voiceTurnId: String(voiceTurnId || realtimeAnswer?.voiceTurnId || "").trim(),
-			sourceTurnId: String(turn.id || "").trim(),
-			userPrompt: stripRealtimeVoiceDisplayPrefix(turn.userPrompt || realtimePendingDirectAnswerPrompt || ""),
-			markdown: text,
-			status: Array.isArray(turn.pageActions) && turn.pageActions.length ? "Page-grounded" : "Voice answer",
-			pending: false,
-			published: true,
-			pageActions: Array.isArray(turn.pageActions) ? turn.pageActions : [],
-			sessionPath: getStateSessionPath(state) || realtimeAnswer?.sessionPath || "",
-			updatedAt: turn.createdAt || new Date().toISOString(),
-		};
-	}
-
 	async function startRealtimeDirectAnswer(prompt, existingVoiceTurn = null) {
 		const text = String(prompt || "").trim();
 		if (!text) throw new Error("answer_directly requires a prompt.");
@@ -8674,7 +8618,8 @@
 		if (!reply) return;
 		const pendingVoiceTurnId = realtimePendingDirectAnswerVoiceTurnId;
 		realtimeNarratedDirectAnswerRequestIds.add(requestId);
-		mirrorCompletedRealtimeDirectAnswer(state, turn, reply, pendingVoiceTurnId);
+		clearRealtimeAnswerForTurn(pendingVoiceTurnId ? { id: pendingVoiceTurnId } : null);
+		renderState(state || {});
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
 		realtimePendingDirectAnswerPrompt = "";
@@ -8958,7 +8903,6 @@
 					await persistRealtimeVoiceTurn(activeTurn, markdown, {
 						status: args?.status || "Voice answer",
 						pageActions: activeTurn.pageActions,
-						clearLiveAnswer: false,
 					});
 				}
 				try {
@@ -9229,7 +9173,6 @@
 				await persistRealtimeVoiceTurn(activeTurn, finalText, {
 					status: "Voice answer",
 					pageActions: activeTurn.pageActions,
-					clearLiveAnswer: false,
 				});
 				if (shouldNarrateFinalText) narratePublishedRealtimeAnswer(finalText);
 			}

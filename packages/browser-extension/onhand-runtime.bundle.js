@@ -127446,8 +127446,8 @@ function isOnhandPdfViewerAccessError(error51) {
 }
 function isRestorablePageUrl(url2) {
   try {
-    const protocol = new URL(String(url2 || "")).protocol;
-    return protocol === "http:" || protocol === "https:" || isOnhandPdfViewerUrl(url2);
+    const protocol = new URL(normalizeRestorablePageUrl(url2)).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "file:" || isOnhandPdfViewerUrl(url2);
   } catch {
     return false;
   }
@@ -127455,12 +127455,31 @@ function isRestorablePageUrl(url2) {
 function isRestorablePageTab(tab) {
   return typeof tab?.id === "number" && isRestorablePageUrl(tab.url);
 }
+function normalizeRestorablePageUrl(url2) {
+  const raw = String(url2 || "").trim();
+  if (!raw) return "";
+  return raw.startsWith("/") && !raw.startsWith("//") ? `file://${raw}` : raw;
+}
+function restorablePageUrlMatchKey(url2) {
+  const normalized = normalizeRestorablePageUrl(url2);
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return normalized.split("#")[0];
+  }
+}
+function restorablePageUrlsMatch(left, right) {
+  const leftKey = restorablePageUrlMatchKey(left);
+  const rightKey = restorablePageUrlMatchKey(right);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
 function tabMatchesSavedTarget(tab, url2, title) {
   if (!isRestorablePageTab(tab)) return false;
-  const tabUrl = String(tab.url || "").split("#")[0];
-  const targetUrl = String(url2 || "").split("#")[0];
   const tabTitle = String(tab.title || "").trim().toLowerCase();
-  if (targetUrl) return tabUrl === targetUrl;
+  if (String(url2 || "").trim()) return restorablePageUrlsMatch(tab.url, url2);
   return Boolean(title && tabTitle === title);
 }
 function summarizeOpenTabs(state, activeTab, limit2 = 8) {
@@ -129886,10 +129905,10 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function artifactRestoreTargetKey(artifact, artifactId = "") {
-    const url2 = artifactEffectiveUrl(artifact).split("#")[0];
+    const url2 = restorablePageUrlMatchKey(artifactEffectiveUrl(artifact));
     if (url2) return `url:${url2}`;
     const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
     if (title) return `title:${title}`;
@@ -130037,7 +130056,8 @@ function createOnhandBrowserRuntime(host) {
     };
   }
   function replayTargetKey(annotation) {
-    if (annotation.url) return `url:${annotation.url.split("#")[0]}`;
+    const url2 = restorablePageUrlMatchKey(annotation.url);
+    if (url2) return `url:${url2}`;
     if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
     if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
     return "active";
@@ -130052,7 +130072,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function findActionTab(tabs, action) {
     const url2 = String(action.url || "").trim();
@@ -130064,7 +130084,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && tab.url === url2) || eligibleTabs.find((tab) => url2 && String(tab.url || "").split("#")[0] === url2.split("#")[0]) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function buildReplayArtifact(session, targetKey, tab, annotations) {
     const first = annotations[0] || {};

@@ -2988,8 +2988,8 @@ function isOnhandPdfViewerAccessError(error: unknown) {
 
 function isRestorablePageUrl(url: unknown) {
 	try {
-		const protocol = new URL(String(url || "")).protocol;
-		return protocol === "http:" || protocol === "https:" || isOnhandPdfViewerUrl(url);
+		const protocol = new URL(normalizeRestorablePageUrl(url)).protocol;
+		return protocol === "http:" || protocol === "https:" || protocol === "file:" || isOnhandPdfViewerUrl(url);
 	} catch {
 		return false;
 	}
@@ -2999,12 +2999,34 @@ function isRestorablePageTab(tab: any) {
 	return typeof tab?.id === "number" && isRestorablePageUrl(tab.url);
 }
 
+function normalizeRestorablePageUrl(url: unknown) {
+	const raw = String(url || "").trim();
+	if (!raw) return "";
+	return raw.startsWith("/") && !raw.startsWith("//") ? `file://${raw}` : raw;
+}
+
+function restorablePageUrlMatchKey(url: unknown) {
+	const normalized = normalizeRestorablePageUrl(url);
+	if (!normalized) return "";
+	try {
+		const parsed = new URL(normalized);
+		parsed.hash = "";
+		return parsed.href;
+	} catch {
+		return normalized.split("#")[0];
+	}
+}
+
+function restorablePageUrlsMatch(left: unknown, right: unknown) {
+	const leftKey = restorablePageUrlMatchKey(left);
+	const rightKey = restorablePageUrlMatchKey(right);
+	return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
 function tabMatchesSavedTarget(tab: any, url: string, title: string) {
 	if (!isRestorablePageTab(tab)) return false;
-	const tabUrl = String(tab.url || "").split("#")[0];
-	const targetUrl = String(url || "").split("#")[0];
 	const tabTitle = String(tab.title || "").trim().toLowerCase();
-	if (targetUrl) return tabUrl === targetUrl;
+	if (String(url || "").trim()) return restorablePageUrlsMatch(tab.url, url);
 	return Boolean(title && tabTitle === title);
 }
 
@@ -5715,15 +5737,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
-			eligibleTabs.find((tab) => url && tab.url === url) ||
-			eligibleTabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
+			eligibleTabs.find((tab) => url && restorablePageUrlsMatch(tab.url, url)) ||
 			eligibleTabs.find((tab) => !url && title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
 	}
 
 	function artifactRestoreTargetKey(artifact: BrowserArtifact, artifactId = "") {
-		const url = artifactEffectiveUrl(artifact).split("#")[0];
+		const url = restorablePageUrlMatchKey(artifactEffectiveUrl(artifact));
 		if (url) return `url:${url}`;
 		const title = String(artifact.page?.title || artifact.tab?.title || "").trim().toLowerCase();
 		if (title) return `title:${title}`;
@@ -5879,7 +5900,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function replayTargetKey(annotation: ReplayAnnotation) {
-		if (annotation.url) return `url:${annotation.url.split("#")[0]}`;
+		const url = restorablePageUrlMatchKey(annotation.url);
+		if (url) return `url:${url}`;
 		if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
 		if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
 		return "active";
@@ -5896,8 +5918,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
-			eligibleTabs.find((tab) => url && tab.url === url) ||
-			eligibleTabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
+			eligibleTabs.find((tab) => url && restorablePageUrlsMatch(tab.url, url)) ||
 			eligibleTabs.find((tab) => !url && title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
@@ -5914,8 +5935,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
-			eligibleTabs.find((tab) => url && tab.url === url) ||
-			eligibleTabs.find((tab) => url && String(tab.url || "").split("#")[0] === url.split("#")[0]) ||
+			eligibleTabs.find((tab) => url && restorablePageUrlsMatch(tab.url, url)) ||
 			eligibleTabs.find((tab) => !url && title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);

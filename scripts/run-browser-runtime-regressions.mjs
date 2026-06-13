@@ -4109,6 +4109,69 @@ async function assertReplayActionActivationCanTargetSavedSession() {
 	);
 }
 
+async function assertLocalFileCitationActivationReusesOpenFileTab() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const fileUrl = "file:///Users/sriram/Downloads/causal_status_overview.html";
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 7,
+				windowId: 3,
+				active: true,
+				title: "Current live page",
+				url: "https://example.test/current",
+			}),
+			replaySmokeTab({
+				id: 42,
+				windowId: 9,
+				active: false,
+				title: "Phantom or Real — Where the Causality Hunt Stands",
+				url: fileUrl,
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = [
+		{
+			key: "highlight:local-file-ann",
+			type: "annotation",
+			tabId: 999,
+			windowId: 99,
+			title: "Phantom or Real — Where the Causality Hunt Stands",
+			url: `${fileUrl}#part-8`,
+			annotationId: "local-file-ann",
+			label: "Highlighted text",
+			detail: "collapse-only-under-combination = pathways jointly exhaustive",
+			citationText: "collapse-only-under-combination = pathways jointly exhaustive",
+		},
+	];
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
+
+	const callCountBeforeActivate = host.calls.length;
+	await runtime.activateAction("highlight:local-file-ann");
+	const activateCalls = host.calls.slice(callCountBeforeActivate);
+	assert.equal(activateCalls.some((call) => call.name === "navigate"), false, "local file citation should reuse the open file tab");
+	assert.equal(activateCalls.some((call) => call.name === "activate_tab" && call.args.tabId === 42), true);
+	assert.equal(
+		activateCalls.some(
+			(call) =>
+				call.name === "scroll_to_annotation" &&
+				call.args.tabId === 42 &&
+				call.args.annotationId === "local-file-ann",
+		),
+		true,
+	);
+}
+
 async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -5036,6 +5099,7 @@ async function main() {
 	await assertSessionReplaySnapshotPayload();
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();
 	await assertReplayActionActivationCanTargetSavedSession();
+	await assertLocalFileCitationActivationReusesOpenFileTab();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
 	await assertReplayNoteActivationUsesPairedHighlightSource();
 	await assertReplayNoteActivationDoesNotRegenerateExistingNote();

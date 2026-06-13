@@ -2632,8 +2632,7 @@ async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletio
 	const shadowText = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent;
 	assert.match(shadowText, /Alpha smoke content is a fixture sentence/, "expected completed voice answer to render in the sidebar");
 	const liveAnswer = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-realtime-answer");
-	assert.ok(liveAnswer, "expected completed direct voice answers to stay visible in the live answer card");
-	assert.match(liveAnswer.textContent, /Alpha smoke content is a fixture sentence/);
+	assert.equal(liveAnswer, null, "expected completed direct voice answers to render only as the saved normal turn");
 	assert.equal(
 		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer") && event.response?.tool_choice === "none"),
 		true,
@@ -2828,15 +2827,14 @@ async function assertRealtimePublishSidebarAnswerCanAnnotateAndCite() {
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const shadow = host.shadowRoot;
 	const liveAnswer = shadow.querySelector(".onhand-realtime-answer");
-	assert.ok(liveAnswer, "expected published realtime voice answer to remain visible in the live answer card");
-	assert.match(liveAnswer.textContent, /Alpha smoke content is checking the fixture behavior/);
+	assert.equal(liveAnswer, null, "expected published realtime voice answers to render only as the saved normal turn");
 	assert.ok(
 		shadow.querySelector('.onhand-cite[data-action-key="note:ann-realtime-alpha"], .onhand-cite[data-action-key="highlight:ann-realtime-alpha"]'),
 		"expected realtime voice answer to show an inline fallback citation even when the answer paraphrases the anchor",
 	);
 	assert.ok(
-		shadow.querySelector('.onhand-realtime-sources [data-action-key="highlight:ann-realtime-alpha"]'),
-		"expected realtime voice answer to expose source buttons",
+		shadow.querySelector('.onhand-entry:not(.onhand-realtime-answer) [data-action-key="highlight:ann-realtime-alpha"]'),
+		"expected saved realtime voice answer to expose source buttons",
 	);
 
 	dom.window.close();
@@ -2891,8 +2889,7 @@ async function assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations() {
 
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const realtimeAnswer = host.shadowRoot.querySelector(".onhand-realtime-answer");
-	assert.ok(realtimeAnswer, "expected completed direct voice answer to remain visible in the live answer card while it is narrated");
-	assert.match(realtimeAnswer.textContent, /Monte Carlo uses samples to estimate an expectation/);
+	assert.equal(realtimeAnswer, null, "expected completed direct voice answer to render only as the saved normal turn while it is narrated");
 	assert.ok(
 		host.shadowRoot.querySelector('.onhand-entry:not(.onhand-realtime-answer) .onhand-cite[data-action-key="highlight:second"]'),
 		"expected saved direct answer to cite the earlier source when the current highlight failed",
@@ -3166,12 +3163,12 @@ async function assertRealtimeBrowserToolsCanAnnotateAndCite() {
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const shadow = host.shadowRoot;
 	assert.ok(
-		shadow.querySelector('.onhand-realtime-sources [data-action-key="highlight:ann-realtime-alpha"]'),
-		"expected browser-tool source strip to expose the highlight",
+		shadow.querySelector('.onhand-entry:not(.onhand-realtime-answer) [data-action-key="highlight:ann-realtime-alpha"]'),
+		"expected saved browser-tool answer to expose the highlight",
 	);
 	assert.ok(
-		shadow.querySelector('.onhand-realtime-sources [data-action-key="note:ann-realtime-alpha"]'),
-		"expected browser-tool source strip to expose the note",
+		shadow.querySelector('.onhand-entry:not(.onhand-realtime-answer) [data-action-key="note:ann-realtime-alpha"]'),
+		"expected saved browser-tool answer to expose the note",
 	);
 
 	dom.window.close();
@@ -3455,12 +3452,7 @@ async function assertRealtimeSpokenAnswerWithoutPublishRemainsVisible() {
 	assert.equal(state.turns.some((turn) => turn.id === recordTurnMessage.voiceTurnId), false, "test fixture intentionally simulates a stale state refresh");
 	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
 	const liveAnswer = shadow.querySelector(".onhand-realtime-answer");
-	assert.ok(liveAnswer, "expected live Realtime answer to remain visible until the saved turn is visible in state");
-	assert.match(liveAnswer.textContent, /Single-headed attention uses one attention pattern/);
-	assert.ok(
-		liveAnswer.querySelector('.onhand-realtime-sources [data-action-key="highlight:ann-realtime-alpha"]'),
-		"expected the visible live answer to keep its highlighted source",
-	);
+	assert.equal(liveAnswer, null, "expected live Realtime answer card to stay hidden while waiting for the saved normal turn");
 
 	dom.window.close();
 }
