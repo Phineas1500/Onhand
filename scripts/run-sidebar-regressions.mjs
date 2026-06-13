@@ -2587,11 +2587,9 @@ async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletio
 
 	const shadowText = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent;
 	assert.match(shadowText, /Alpha smoke content is a fixture sentence/, "expected completed voice answer to render in the sidebar");
-	assert.equal(
-		dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-realtime-answer"),
-		null,
-		"expected completed direct voice answers to render only as saved Onhand turns",
-	);
+	const liveAnswer = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-realtime-answer");
+	assert.ok(liveAnswer, "expected completed direct voice answers to stay visible in the live answer card");
+	assert.match(liveAnswer.textContent, /Alpha smoke content is a fixture sentence/);
 	assert.equal(
 		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer") && event.response?.tool_choice === "none"),
 		true,
@@ -2785,6 +2783,9 @@ async function assertRealtimePublishSidebarAnswerCanAnnotateAndCite() {
 
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const shadow = host.shadowRoot;
+	const liveAnswer = shadow.querySelector(".onhand-realtime-answer");
+	assert.ok(liveAnswer, "expected published realtime voice answer to remain visible in the live answer card");
+	assert.match(liveAnswer.textContent, /Alpha smoke content is checking the fixture behavior/);
 	assert.ok(
 		shadow.querySelector('.onhand-cite[data-action-key="note:ann-realtime-alpha"], .onhand-cite[data-action-key="highlight:ann-realtime-alpha"]'),
 		"expected realtime voice answer to show an inline fallback citation even when the answer paraphrases the anchor",
@@ -2846,7 +2847,8 @@ async function assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations() {
 
 	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
 	const realtimeAnswer = host.shadowRoot.querySelector(".onhand-realtime-answer");
-	assert.equal(realtimeAnswer, null, "expected completed direct answer not to render a duplicate realtime card");
+	assert.ok(realtimeAnswer, "expected completed direct voice answer to remain visible in the live answer card while it is narrated");
+	assert.match(realtimeAnswer.textContent, /Monte Carlo uses samples to estimate an expectation/);
 	assert.ok(
 		host.shadowRoot.querySelector('.onhand-entry:not(.onhand-realtime-answer) .onhand-cite[data-action-key="highlight:second"]'),
 		"expected saved direct answer to cite the earlier source when the current highlight failed",
@@ -4451,6 +4453,7 @@ await assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion();
 await assertRealtimeExternalSourceRequestsCanNavigateFirst();
 await assertRealtimeBrowserHighlightRepairsNearQuoteFromVisibleText();
 await assertRealtimeTranscriptMergeWindowSubmitsMergedRuntimePrompt();
+await assertRealtimePublishSidebarAnswerCanAnnotateAndCite();
 await assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations();
 await assertRealtimeDirectAnswerPreambleQueuesFinalNarration();
 await assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn();

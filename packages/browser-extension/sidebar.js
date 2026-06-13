@@ -8603,6 +8603,24 @@
 		return turns.find((turn) => turn?.id === id) || null;
 	}
 
+	function mirrorCompletedRealtimeDirectAnswer(state, turn, reply, voiceTurnId = "") {
+		const text = String(reply || "").trim();
+		if (!turn || !text) return;
+		realtimeAnswer = {
+			...(realtimeAnswer || {}),
+			voiceTurnId: String(voiceTurnId || realtimeAnswer?.voiceTurnId || "").trim(),
+			sourceTurnId: String(turn.id || "").trim(),
+			userPrompt: stripRealtimeVoiceDisplayPrefix(turn.userPrompt || realtimePendingDirectAnswerPrompt || ""),
+			markdown: text,
+			status: Array.isArray(turn.pageActions) && turn.pageActions.length ? "Page-grounded" : "Voice answer",
+			pending: false,
+			published: true,
+			pageActions: Array.isArray(turn.pageActions) ? turn.pageActions : [],
+			sessionPath: getStateSessionPath(state) || realtimeAnswer?.sessionPath || "",
+			updatedAt: turn.createdAt || new Date().toISOString(),
+		};
+	}
+
 	async function startRealtimeDirectAnswer(prompt, existingVoiceTurn = null) {
 		const text = String(prompt || "").trim();
 		if (!text) throw new Error("answer_directly requires a prompt.");
@@ -8656,12 +8674,10 @@
 		if (!reply) return;
 		const pendingVoiceTurnId = realtimePendingDirectAnswerVoiceTurnId;
 		realtimeNarratedDirectAnswerRequestIds.add(requestId);
+		mirrorCompletedRealtimeDirectAnswer(state, turn, reply, pendingVoiceTurnId);
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
 		realtimePendingDirectAnswerPrompt = "";
-		if (!pendingVoiceTurnId || realtimeAnswer?.voiceTurnId === pendingVoiceTurnId || realtimeAnswer?.sourceTurnId === turn.id) {
-			realtimeAnswer = null;
-		}
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand answer", reply);
 		try {
@@ -8942,6 +8958,7 @@
 					await persistRealtimeVoiceTurn(activeTurn, markdown, {
 						status: args?.status || "Voice answer",
 						pageActions: activeTurn.pageActions,
+						clearLiveAnswer: false,
 					});
 				}
 				try {

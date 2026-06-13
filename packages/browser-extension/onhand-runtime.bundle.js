@@ -125503,8 +125503,18 @@ function formatReaderFrameFallbackForModel(value) {
   const error51 = String(fallback.error || "").trim();
   return `Reader-frame fallback: ${status}${error51 ? ` (${truncate(error51, 300)})` : ""}`;
 }
+function formatUnsupportedSurfaceForModel(value) {
+  if (!value || typeof value !== "object" || value.unsupported !== true) return "";
+  const reason = String(value.reason || "").trim();
+  if (reason) return reason;
+  if (value.surface === "local-file") {
+    return "This is a local file tab. Enable Allow access to file URLs for Onhand in chrome://extensions, then reload the tab.";
+  }
+  return "";
+}
 function formatVisibleTextForModel(visible, maxChars = VISIBLE_TEXT_TOOL_MAX_CHARS) {
-  const diagnostics = [formatReaderFrameFallbackForModel(visible)].filter(Boolean);
+  const unsupportedDiagnostic = formatUnsupportedSurfaceForModel(visible);
+  const diagnostics = [formatReaderFrameFallbackForModel(visible), unsupportedDiagnostic].filter(Boolean);
   const blocks = Array.isArray(visible?.blocks) ? visible.blocks : [];
   if (blocks.length) {
     const lines = blocks.map((block) => {
@@ -125515,7 +125525,8 @@ function formatVisibleTextForModel(visible, maxChars = VISIBLE_TEXT_TOOL_MAX_CHA
     if (lines.length) return truncateStructuredText([...lines, ...diagnostics].join("\n"), maxChars);
   }
   const text = String(visible?.text || "").trim();
-  return truncateStructuredText([text, ...diagnostics].filter(Boolean).join("\n"), maxChars);
+  const primaryText = text || unsupportedDiagnostic;
+  return truncateStructuredText([primaryText, ...diagnostics.filter((diagnostic) => diagnostic !== primaryText)].filter(Boolean).join("\n"), maxChars);
 }
 function normalizeHighlightRetryCandidate(value) {
   return String(value || "").replace(/\r\n?/g, "\n").replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, "").replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+/g, " ").trim();
@@ -128187,7 +128198,7 @@ ${text}` : `${heading}
     }
     case "browser_extract_content": {
       const content = details.content || details.extracted || {};
-      const text = String(content.markdown || content.text || content || "").trim();
+      const text = String(content.markdown || content.text || content.reason || content || "").trim();
       const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
       return text ? `${heading}
 ${truncateStructuredText(text, 8e3)}` : `${heading}

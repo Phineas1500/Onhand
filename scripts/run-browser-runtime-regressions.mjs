@@ -407,6 +407,25 @@ async function assertSelectionFormatting() {
 	assert.match(unsupportedPdfVisibleText, /does not expose selectable page text/);
 	assert.match(unsupportedPdfVisibleText, /Reader-frame fallback: failed/);
 	assert.match(unsupportedPdfVisibleText, /No Google Scholar PDF Reader frame context found/);
+	const localFileVisibleText = formatVisibleTextForModel({
+		surface: "local-file",
+		unsupported: true,
+		reason: 'This is a local file tab. Enable "Allow access to file URLs" for Onhand in chrome://extensions, then reload this tab.',
+	});
+	assert.match(localFileVisibleText, /local file tab/);
+	assert.match(localFileVisibleText, /Allow access to file URLs/);
+	assert.match(localFileVisibleText, /chrome:\/\/extensions/);
+	assert.match(
+		formatToolResultForModel("browser_extract_content", {
+			tab: replaySmokeTab({ title: "local report", url: "file:///Users/example/report.html" }),
+			content: {
+				surface: "local-file",
+				unsupported: true,
+				reason: "This is a local file tab. Enable Allow access to file URLs for Onhand.",
+			},
+		}),
+		/Enable Allow access to file URLs/,
+	);
 	assert.match(
 		formatToolResultForModel("browser_pdf_search", {
 			search: {

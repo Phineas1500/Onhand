@@ -328,13 +328,74 @@ function isDebuggerAttachConflict(error) {
 }
 
 function isRestrictedScriptingError(error) {
-	return /Cannot access contents of url|chrome-error:\/\/chromewebdata|Cannot access a chrome:\/\/ URL|Cannot access a chrome-extension:\/\/ URL|The extensions gallery cannot be scripted|Missing host permission/i.test(
+	return /Cannot access contents of url|chrome-error:\/\/chromewebdata|Cannot access a chrome:\/\/ URL|Cannot access a chrome-extension:\/\/ URL|Cannot access a file:\/\/ URL|The extensions gallery cannot be scripted|Missing host permission/i.test(
 		error?.message || String(error),
 	);
 }
 
 function describeTabForError(tab) {
 	return tab?.title || tab?.url || `tab ${tab?.id || "(unknown)"}`;
+}
+
+function isFileUrl(value) {
+	try {
+		return new URL(String(value || "")).protocol === "file:";
+	} catch {
+		return false;
+	}
+}
+
+function localFileAccessMessage(tab, error = null) {
+	const suffix = error ? ` Chrome reported: ${error?.message || String(error)}` : "";
+	return `This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.${suffix}`;
+}
+
+function isLocalFileAccessError(tab, error) {
+	return isFileUrl(tab?.url) && isRestrictedScriptingError(error);
+}
+
+function createLocalFileAccessError(tab, error) {
+	return new Error(localFileAccessMessage(tab, error));
+}
+
+function unsupportedLocalFilePayload(tab, error = null) {
+	const message = localFileAccessMessage(tab, error);
+	return {
+		surface: "local-file",
+		unsupported: true,
+		reason: message,
+		text: message,
+		markdown: message,
+		url: tab?.url || "",
+		title: tab?.title || "",
+	};
+}
+
+function unsupportedLocalFileToolkitPayload(methodName, tab, error = null) {
+	const payload = unsupportedLocalFilePayload(tab, error);
+	if (methodName === "getSelectionInfo") {
+		return {
+			...payload,
+			hasSelection: false,
+			text: "",
+		};
+	}
+	if (methodName === "getViewportHeadings") {
+		return {
+			...payload,
+			currentHeading: null,
+			headings: [],
+		};
+	}
+	if (methodName === "getScrollState") {
+		return {
+			...payload,
+			scrollY: 0,
+			maxScrollY: 0,
+			progressY: 0,
+		};
+	}
+	return payload;
 }
 
 function isOwnExtensionPdfViewerUrl(value) {
@@ -6658,7 +6719,7 @@ async function executeScriptInFrame(tabId, frameId, func, args = []) {
 function isInjectableFrameUrl(value) {
 	try {
 		const parsed = new URL(String(value || ""));
-		if (parsed.protocol === "http:" || parsed.protocol === "https:") return true;
+		if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "file:") return true;
 		// Own-extension frames (the Onhand PDF viewer) are injectable; other
 		// extensions' frames — notably the browser's native PDF viewer — are
 		// not, and trying to inject into them aborts the whole allFrames call.
@@ -7162,7 +7223,7 @@ async function executePageToolkitMethodViaGoogleScholarReaderFrame(tabId, method
 async function runPageToolkitMethod(tabId, methodName, ...args) {
 	const tab = await chrome.tabs.get(tabId);
 	if (!canRunPageToolkitOnTab(tab)) {
-		throw new Error(`Onhand page tools only run on http/https tabs, not ${describeTabForError(tab)}`);
+		throw new Error(`Onhand page tools only run on web or local-file tabs, not ${describeTabForError(tab)}`);
 	}
 	const toolkitOptions = await getPageToolkitOptions(tab);
 	try {
@@ -7199,6 +7260,12 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		}
 		return payload;
 	} catch (scriptError) {
+		if (isLocalFileAccessError(tab, scriptError)) {
+			if (["captureState", "getVisibleText", "getSelectionInfo", "getViewportHeadings", "getScrollState"].includes(methodName)) {
+				return unsupportedLocalFileToolkitPayload(methodName, tab, scriptError);
+			}
+			throw createLocalFileAccessError(tab, scriptError);
+		}
 		// A restricted-scripting error on a PDF tab usually means the main
 		// frame is the browser's native PDF viewer (a different extension);
 		// Onhand's inline viewer frame is still reachable, so only give up
@@ -7387,7 +7454,7 @@ function canRunPageToolkitOnTab(tab) {
 	if (isOwnExtensionPdfViewerUrl(tab.url)) return true;
 	try {
 		const protocol = new URL(tab.url).protocol;
-		return protocol === "http:" || protocol === "https:";
+		return protocol === "http:" || protocol === "https:" || protocol === "file:";
 	} catch {
 		return false;
 	}
@@ -8259,7 +8326,13 @@ async function handleCommand(name, args = {}) {
 			}
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const result = await evaluateInTab(tab.id, args.expression);
+				let result;
+				try {
+					result = await evaluateInTab(tab.id, args.expression);
+				} catch (error) {
+					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					throw error;
+				}
 				return {
 					tab: simplifyTab(tab),
 					result,
@@ -8269,7 +8342,13 @@ async function handleCommand(name, args = {}) {
 		case "get_dom": {
 			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const outerHTML = await getDomOuterHtml(tab.id);
+				let outerHTML;
+				try {
+					outerHTML = await getDomOuterHtml(tab.id);
+				} catch (error) {
+					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					throw error;
+				}
 				return {
 					tab: simplifyTab(tab),
 					outerHTML,
@@ -8279,10 +8358,16 @@ async function handleCommand(name, args = {}) {
 		case "extract_content": {
 			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const content = await evaluateInTab(
-					tab.id,
-					`(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`,
-				);
+				let content;
+				try {
+					content = await evaluateInTab(
+						tab.id,
+						`(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`,
+					);
+				} catch (error) {
+					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
+					else throw error;
+				}
 				return {
 					tab: simplifyTab(tab),
 					content,
