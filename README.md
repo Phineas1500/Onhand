@@ -155,7 +155,7 @@ Voice requires an OpenAI platform API key saved in the Onhand options page. Open
 - `browser_collect_network`
 - `browser_get_dom`
 - `browser_capture_screenshot`
-- `browser_run_js`
+- `browser_run_js` (last-resort runtime-state inspection for complex client-side pages)
 
 ## Notes
 

@@ -61,7 +61,7 @@ const suites = {
 				title: "Fixture label/click interaction",
 				url: "http://127.0.0.1:8765/",
 				prompt:
-					'CHROME ACCEPTANCE FIXTURE INTERACT {runId}: Use browser_type_by_label to replace Demo field with "chrome acceptance typed", then use browser_click_text to click Demo button, then use browser_run_js to return document.querySelector("#result")?.textContent. Answer only: CHROME_ACCEPTANCE_INTERACT <result>.',
+					'CHROME ACCEPTANCE FIXTURE INTERACT {runId}: Use browser_type_by_label to replace Demo field with "chrome acceptance typed", then use browser_click_text to click Demo button, then use browser_run_js only as a runtime-state verification step to return document.querySelector("#result")?.textContent. Answer only: CHROME_ACCEPTANCE_INTERACT <result>.',
 				expected: ["answer is CHROME_ACCEPTANCE_INTERACT Demo button clicked"],
 			},
 			{
@@ -69,10 +69,9 @@ const suites = {
 				title: "Fixture selector/debug ports",
 				url: "http://127.0.0.1:8765/",
 				prompt:
-					'CHROME ACCEPTANCE FIXTURE DEBUG {runId}: Use browser_wait_for_selector for #cssButton, browser_click on selector #cssButton, browser_type on selector #cssInput with text "chrome selector typed" and clear true, browser_collect_console with expression console.log("chrome-acceptance-console-check"), browser_get_dom with maxChars 800, browser_capture_screenshot as png, and browser_run_js to return { cssInput: document.querySelector("#cssInput")?.value, bodyHasAlpha: document.body.innerText.includes("Alpha smoke content") }. Answer with a compact PASS/FAIL checklist and the JS result.',
+					'CHROME ACCEPTANCE FIXTURE DEBUG {runId}: Use browser_wait_for_selector for #cssButton, browser_click on selector #cssButton, browser_type on selector #cssInput with text "chrome selector typed" and clear true, browser_collect_console, browser_get_dom with maxChars 800, browser_capture_screenshot as png, and browser_run_js only as a runtime-state verification step to return { cssInput: document.querySelector("#cssInput")?.value, bodyHasAlpha: document.body.innerText.includes("Alpha smoke content") }. Answer with a compact PASS/FAIL checklist and the JS result.',
 				expected: [
 					"PASS for wait, click, type, console, DOM, screenshot, and JS",
-					"console output includes chrome-acceptance-console-check",
 					"JS result has cssInput chrome selector typed and bodyHasAlpha true",
 				],
 			},
@@ -117,7 +116,7 @@ const suites = {
 				title: "Fixture no-cache network reload",
 				url: "http://127.0.0.1:8765/",
 				prompt:
-					'CHROME ACCEPTANCE FIXTURE NETWORK {runId}: Use browser_collect_network with reload true, ignoreCache true, durationMs 1500, maxEntries 12, onlyFailures false, and matchUrlContains "127.0.0.1:8765". Then use browser_click_text to click "Fetch fixture JSON". Then use browser_run_js to return { status: document.querySelector("#networkStatus")?.textContent ?? null }. Answer compact PASS/FAIL for browser_collect_network, browser_click_text, and browser_run_js; include one collected URL/status plus the JS result.',
+					'CHROME ACCEPTANCE FIXTURE NETWORK {runId}: Use browser_collect_network with reload true, ignoreCache true, durationMs 1500, maxEntries 12, onlyFailures false, and matchUrlContains "127.0.0.1:8765". Then use browser_click_text to click "Fetch fixture JSON". Then use browser_run_js only as a runtime-state verification step to return { status: document.querySelector("#networkStatus")?.textContent ?? null }. Answer compact PASS/FAIL for browser_collect_network, browser_click_text, and browser_run_js; include one collected URL/status plus the JS result.',
 				expected: [
 					"PASS for network, click, and JS",
 					"one collected URL is http://127.0.0.1:8765/ with status 200",
@@ -346,7 +345,7 @@ const suites = {
 				title: "App-like form interaction without submit",
 				url: "https://the-internet.herokuapp.com/login",
 				prompt:
-					'CHROME ACCEPTANCE FORM PAGE {runId}: Use browser_wait_for_selector for #username, browser_type on selector #username with text "chrome_acceptance_user" and clear true, browser_type on selector #password with text "chrome_acceptance_pass" and clear true, browser_get_dom with maxChars 1200, and browser_run_js to return { username: document.querySelector("#username")?.value, passwordLength: document.querySelector("#password")?.value.length, hasLoginButton: !!document.querySelector("button[type=submit]") }. Do not submit the form. Answer with a compact PASS/FAIL checklist and the JS result.',
+					'CHROME ACCEPTANCE FORM PAGE {runId}: Use browser_wait_for_selector for #username, browser_type on selector #username with text "chrome_acceptance_user" and clear true, browser_type on selector #password with text "chrome_acceptance_pass" and clear true, browser_get_dom with maxChars 1200, and browser_run_js only as a runtime-state verification step to return { username: document.querySelector("#username")?.value, passwordLength: document.querySelector("#password")?.value.length, hasLoginButton: !!document.querySelector("button[type=submit]") }. Do not submit the form. Answer with a compact PASS/FAIL checklist and the JS result.',
 				expected: [
 					"PASS for wait, username type, password type, DOM, and JS",
 					"JS result username is chrome_acceptance_user",
@@ -359,7 +358,7 @@ const suites = {
 				title: "Client-routed docs page with network reload",
 				url: "https://react.dev/learn",
 				prompt:
-					'CHROME ACCEPTANCE ROUTED PAGE {runId}: Use browser_collect_network with reload true, ignoreCache true, durationMs 2000, maxEntries 20, onlyFailures false, and matchUrlContains "react.dev". Then use browser_get_viewport_headings, browser_get_dom with maxChars 1200, and browser_run_js to return { title: document.title, pathname: location.pathname, hasLearnContent: document.body.innerText.includes("Learn React") || document.body.innerText.includes("Quick Start") }. Answer compact PASS/FAIL for browser_collect_network, browser_get_viewport_headings, browser_get_dom, and browser_run_js; include one collected URL/status plus the JS result.',
+					'CHROME ACCEPTANCE ROUTED PAGE {runId}: Use browser_collect_network with reload true, ignoreCache true, durationMs 2000, maxEntries 20, onlyFailures false, and matchUrlContains "react.dev". Then use browser_get_viewport_headings, browser_get_dom with maxChars 1200, and browser_run_js only as a runtime-state verification step to return { title: document.title, pathname: location.pathname, hasLearnContent: document.body.innerText.includes("Learn React") || document.body.innerText.includes("Quick Start") }. Answer compact PASS/FAIL for browser_collect_network, browser_get_viewport_headings, DOM, and browser_run_js; include one collected URL/status plus the JS result.',
 				expected: [
 					"PASS for network reload, headings, DOM, and JS",
 					"one collected URL is on react.dev with a successful status",

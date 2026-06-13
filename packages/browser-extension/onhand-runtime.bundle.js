@@ -125346,7 +125346,8 @@ var SCROLL_TO_ANNOTATION_SCHEMA = typebox_exports.Object({
 });
 var RUN_JS_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
-  expression: typebox_exports.String({ description: "JavaScript expression to evaluate in the target tab" })
+  expression: typebox_exports.String({ description: "JavaScript expression to evaluate in the target tab" }),
+  reason: typebox_exports.Optional(typebox_exports.String({ description: "Why JavaScript is necessary instead of readable page, DOM, screenshot, console, network, or selector tools" }))
 });
 var DOM_SCHEMA = typebox_exports.Object({
   ...READ_TAB_SELECTOR_SCHEMA,
@@ -125402,8 +125403,7 @@ var CONSOLE_SCHEMA = typebox_exports.Object({
   durationMs: typebox_exports.Optional(typebox_exports.Number({ description: "How long to observe console output" })),
   maxEntries: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum number of console entries" })),
   reload: typebox_exports.Optional(typebox_exports.Boolean({ description: "Reload the page before collecting console output" })),
-  ignoreCache: typebox_exports.Optional(typebox_exports.Boolean({ description: "Ignore cache when reload=true" })),
-  expression: typebox_exports.Optional(typebox_exports.String({ description: "Optional JavaScript expression to evaluate after listeners are attached" }))
+  ignoreCache: typebox_exports.Optional(typebox_exports.Boolean({ description: "Ignore cache when reload=true" }))
 });
 var NETWORK_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
@@ -125482,10 +125482,23 @@ var INTERACTION_TOOL_NAMES = [
   "browser_type_by_label",
   "browser_pick_elements"
 ];
-var DEBUG_TOOL_NAMES = ["browser_collect_console", "browser_collect_network", "browser_get_dom", "browser_capture_screenshot", "browser_run_js"];
+var DEBUG_INSPECTION_TOOL_NAMES = ["browser_collect_console", "browser_collect_network", "browser_get_dom", "browser_capture_screenshot"];
+var RUNTIME_JS_TOOL_NAMES = ["browser_run_js"];
 var ARTIFACT_TOOL_NAMES = ["browser_capture_state", "browser_list_artifacts", "browser_restore_state"];
 var LEARNING_TOOL_NAMES = ["onhand_record_learning_event"];
 var EXACT_TOOL_NAME_PATTERN = /\bbrowser_[a-z_]+\b/g;
+function promptNeedsRuntimeJavaScript(text, explicitToolNames) {
+  if (explicitToolNames.has("browser_run_js")) return true;
+  if (textHasAny(text, /\b(?:browser[_ -]?run[_ -]?js|run js|run javascript|execute javascript|evaluate javascript|javascript expression|js expression)\b/)) {
+    return true;
+  }
+  const runtimeStateSignal = textHasAny(
+    text,
+    /\b(?:client[- ]side|runtime state|app state|computed state|hidden state|hydrated|react|next(?:\.js)?|__next_data__|json-ld|structured data|shadow dom|virtualized|canvas|webgl|single page app|spa|dynamic(?:ally)? rendered|window\.__|dataset|selected value|disabled state)\b/
+  );
+  const inspectionIntent = textHasAny(text, /\b(?:inspect|check|verify|confirm|debug|read|extract|find|why|what value|what state)\b/);
+  return runtimeStateSignal && inspectionIntent;
+}
 function promptAsksForExternalBrowsing(text) {
   return textHasAny(
     text,
@@ -126474,8 +126487,7 @@ function getSmokeModel(modelId) {
         }),
         fauxToolCall("browser_collect_console", {
           durationMs: 10,
-          maxEntries: 5,
-          expression: "console.log('onhand-console-smoke')"
+          maxEntries: 5
         }),
         fauxToolCall("browser_collect_network", {
           durationMs: 10,
@@ -126487,7 +126499,8 @@ function getSmokeModel(modelId) {
         fauxToolCall("browser_get_dom", { maxChars: 800 }),
         fauxToolCall("browser_capture_screenshot", { format: "png" }),
         fauxToolCall("browser_run_js", {
-          expression: "window.__onhandPortSmoke"
+          expression: "window.__onhandPortSmoke",
+          reason: "Port smoke test explicitly verifies the JavaScript escape hatch."
         })
       ]),
       fauxAssistantMessage(fauxText("Browser runtime ports ok"))
@@ -127753,7 +127766,10 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       add(INTERACTION_TOOL_NAMES);
     }
     if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
-      add(DEBUG_TOOL_NAMES);
+      add(DEBUG_INSPECTION_TOOL_NAMES);
+    }
+    if (promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
+      add(RUNTIME_JS_TOOL_NAMES);
     }
     if (textHasAny(text, /\b(artifact|capture state|save state|restore|session replay|saved page|list artifacts?)\b/)) {
       add(ARTIFACT_TOOL_NAMES);
@@ -127813,6 +127829,8 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
     "- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
     "- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
+    "- browser_run_js is a last-resort runtime-state escape hatch for complex client-side pages. Use it only when explicitly requested or when readable text, DOM, screenshot, console, network, and selector tools cannot answer a dynamic/hidden-state question.",
+    "- Keep browser_run_js read-only unless the user explicitly asks for page interaction. Do not use it to inspect cookies, local/session storage, authentication material, secrets, payment fields, or unrelated page data.",
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
     "Use markdown emphasis sparingly and only for short phrases that really matter.",
     ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
@@ -128876,7 +128894,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_run_js",
       "Browser Run JS",
-      "Evaluate JavaScript in the target tab. Prefer readable browser tools before using this.",
+      "Last-resort read-only JavaScript evaluation for complex client-side runtime state when safer browser tools cannot answer the user's question. Do not inspect cookies, storage, secrets, payment fields, or unrelated page data.",
       RUN_JS_SCHEMA,
       "run_js"
     )

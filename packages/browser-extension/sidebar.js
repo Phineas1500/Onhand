@@ -7189,7 +7189,6 @@
 					maxEntries: { type: "number" },
 					reload: { type: "boolean" },
 					ignoreCache: { type: "boolean" },
-					expression: { type: "string" },
 				}),
 			),
 			makeTool(
@@ -7215,7 +7214,12 @@
 				"Capture a screenshot of the current or matched tab for visual debugging.",
 				currentTabOnly({ format: { type: "string" }, quality: { type: "number" }, delayMs: { type: "number" } }),
 			),
-			makeTool("browser_run_js", "Evaluate JavaScript in the target tab. Prefer readable browser tools before using this.", currentTabOnly({ expression: { type: "string" } }), ["expression"]),
+			makeTool(
+				"browser_run_js",
+				"Last-resort read-only JavaScript evaluation for complex client-side runtime state when safer browser tools cannot answer the user's question. Do not inspect cookies, storage, secrets, payment fields, or unrelated page data.",
+				currentTabOnly({ expression: { type: "string" }, reason: { type: "string" } }),
+				["expression"],
+			),
 			makeTool(
 				"publish_sidebar_answer",
 				"Publish the complete final Realtime answer in the Onhand sidebar. Use after any needed browser/PDF tool calls so the spoken answer, citations, and saved turn match. The markdown must contain the actual answer, not a preamble, and should not include manual bracket citation markers.",

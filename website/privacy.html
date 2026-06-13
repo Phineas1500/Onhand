@@ -6,7 +6,7 @@
 <title>Privacy Policy — Onhand</title>
 <meta name="description" content="Privacy policy for Onhand, a contextual browser extension for page-grounded learning and research." />
 <meta property="og:title" content="Privacy Policy — Onhand" />
-<meta property="og:description" content="How Onhand handles page content, prompts, voice input, API keys, and local session data." />
+<meta property="og:description" content="How Onhand handles page content, prompts, voice input, API keys, anonymous diagnostics, and local session data." />
 <meta property="og:type" content="website" />
 <link rel="icon" type="image/png" href="./icons/onhand-128.png" />
 <link rel="apple-touch-icon" href="./icons/onhand-128.png" />
@@ -62,10 +62,11 @@
     <div class="container legal-grid">
       <aside class="legal-toc" aria-label="Privacy sections">
         <a href="#summary">Summary</a>
-        <a href="#analytics">Site analytics</a>
+        <a href="#analytics">Analytics and diagnostics</a>
         <a href="#data">Data Onhand handles</a>
         <a href="#storage">Local storage</a>
         <a href="#providers">AI providers</a>
+        <a href="#retention">Retention and security</a>
         <a href="#permissions">Permissions</a>
         <a href="#choices">Your choices</a>
         <a href="#contact">Contact</a>
@@ -76,9 +77,9 @@
           <h2>Summary</h2>
           <p>
             Onhand does not sell personal information and does not operate a
-            separate hosted account database. The extension stores its settings
-            and saved study sessions in <code>chrome.storage.local</code> on
-            your device.
+            hosted user account database. The extension stores its settings,
+            provider configuration, anonymous free-tier token, and saved study
+            sessions in <code>chrome.storage.local</code> on your device.
           </p>
           <p>
             When you ask Onhand a question, the extension may send the relevant
@@ -89,7 +90,7 @@
         </section>
 
         <section id="analytics" class="legal-section">
-          <h2>Site analytics</h2>
+          <h2>Analytics and diagnostics</h2>
           <p>
             The public Onhand website uses Google Analytics and Umami to
             understand aggregate site traffic, such as page views, referrers,
@@ -131,7 +132,8 @@
             <li>Visible page text, selected passages, headings, URLs, and page titles.</li>
             <li>Optional screenshots or visible-region captures used for visual grounding.</li>
             <li>Highlights, margin notes, saved sessions, and replay artifacts.</li>
-            <li>OpenAI Codex sign-in state or an OpenAI API key if you choose to save one.</li>
+            <li>OpenAI Codex sign-in state or provider API keys if you choose to save them.</li>
+            <li>An anonymous Onhand Free token and short-lived quota counters if you choose Onhand Free.</li>
           </ul>
         </section>
 
@@ -146,7 +148,9 @@
           <p>
             Onhand does not intentionally upload saved sessions to an Onhand server.
             Provider credentials are stored by the extension so it can make
-            user-requested model calls.
+            user-requested model calls. The Onhand Free anonymous token is stored
+            locally so the hosted Worker can enforce daily usage caps without
+            requiring an account.
           </p>
         </section>
 
@@ -154,13 +158,45 @@
           <h2>AI providers</h2>
           <p>
             Onhand uses the provider you configure in the extension options page.
-            Current OpenAI-backed modes include OpenAI Codex sign-in, direct OpenAI
-            API key calls, and the experimental Realtime voice path.
+            Current modes include OpenAI Codex sign-in, direct provider API key
+            calls for OpenAI, Anthropic, Google Gemini, and OpenRouter, the
+            experimental OpenAI Realtime voice path, and Onhand Free.
           </p>
           <p>
-            Content sent to an AI provider is handled under that provider's terms
-            and privacy policy. Do not use Onhand on pages whose contents you do
-            not want sent to your configured provider.
+            In direct-provider modes, the extension sends the content needed for
+            your request to the provider you configured. In Onhand Free mode, the
+            extension sends the content needed for your request to Onhand's
+            Cloudflare Worker, which forwards the model request to OpenRouter.
+            The hosted Worker streams the response and enforces quota limits; it
+            does not store prompts, page content, screenshots, transcripts, or
+            model responses as part of normal chat handling.
+          </p>
+          <p>
+            Content sent to an AI provider or to Onhand Free is handled under the
+            relevant provider's terms and privacy policy. Do not use Onhand on
+            pages whose contents you do not want sent to your configured provider
+            or, for Onhand Free, through the hosted Onhand Worker.
+          </p>
+        </section>
+
+        <section id="retention" class="legal-section">
+          <h2>Retention and security</h2>
+          <p>
+            Local sessions, highlights, notes, transcripts, screenshots, API keys,
+            and provider settings remain in browser extension storage until you
+            delete them or uninstall the extension.
+          </p>
+          <p>
+            Onhand Free stores anonymous tokens and short-lived quota or abuse
+            counters in Cloudflare storage. Explicit anonymized error reports are
+            stored for up to 90 days under a report id so they can be inspected
+            for support and reliability work.
+          </p>
+          <p>
+            Extension-to-provider and extension-to-Onhand Free requests use HTTPS.
+            Onhand does not sell user data, use extension content for advertising,
+            or share extension prompts, page content, screenshots, transcripts,
+            saved sessions, or keys with website analytics services.
           </p>
         </section>
 
@@ -185,6 +221,9 @@
           <ul>
             <li>You choose when to open the side panel and ask Onhand a question.</li>
             <li>You choose when to start or stop the voice tutor.</li>
+            <li>You choose your authentication mode: Onhand Free, OpenAI Codex sign-in, or a provider API key.</li>
+            <li>You can disable anonymous diagnostics unless you are using Onhand Free.</li>
+            <li>You choose whether to send a one-time anonymized error report after an Onhand error.</li>
             <li>You can delete saved sessions from the extension UI or by clearing extension storage.</li>
             <li>You can remove provider credentials from the Onhand options page.</li>
             <li>You can uninstall the extension at any time from your browser's extensions page.</li>

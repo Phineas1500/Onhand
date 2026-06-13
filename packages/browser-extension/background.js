@@ -8056,35 +8056,6 @@ async function collectConsoleEvents(tabId, options = {}) {
 				await send("Page.reload", { ignoreCache: Boolean(options.ignoreCache) });
 			}
 
-			if (typeof options.expression === "string" && options.expression.trim()) {
-				if (options.reload) await delay(250);
-				const response = await send("Runtime.evaluate", {
-					expression: options.expression,
-					awaitPromise: true,
-					returnByValue: true,
-					userGesture: true,
-				});
-				if (response.exceptionDetails) {
-					pushEntry({
-						kind: "evaluationError",
-						level: "error",
-						type: "evaluationError",
-						text:
-							response.exceptionDetails.exception?.description ||
-							response.exceptionDetails.text ||
-							"Runtime.evaluate failed",
-						url:
-							response.exceptionDetails.url ||
-							response.exceptionDetails.stackTrace?.callFrames?.[0]?.url ||
-							"",
-						lineNumber:
-							typeof response.exceptionDetails.lineNumber === "number"
-								? response.exceptionDetails.lineNumber + 1
-								: undefined,
-					});
-				}
-			}
-
 			await delay(durationMs);
 			return entries.sort((a, b) => a.timestamp - b.timestamp);
 		} finally {

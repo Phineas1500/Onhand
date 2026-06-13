@@ -758,10 +758,17 @@ async function assertConstitutionPromptContract() {
 	const differenceToolNames = getToolNamesForTest("What is the difference?", false);
 	const explicitAgreementToolNames = getToolNamesForTest("Do these papers agree?", false);
 	const citationToolNames = getToolNamesForTest("What does reference [2] of this paper actually say?", false);
+	const debugToolNames = getToolNamesForTest("Debug why this page is logging console errors.", false);
+	const explicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false);
+	const dynamicRuntimeToolNames = getToolNamesForTest("Inspect the React app state and selected value on this dynamic page.", false);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
 	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
+	assert.equal(debugToolNames.includes("browser_collect_console"), true, "debug prompts should get console inspection");
+	assert.equal(debugToolNames.includes("browser_run_js"), false, "generic debug prompts should not expose JavaScript execution");
+	assert.equal(explicitRuntimeToolNames.includes("browser_run_js"), true, "explicit JavaScript prompts should expose browser_run_js");
+	assert.equal(dynamicRuntimeToolNames.includes("browser_run_js"), true, "dynamic runtime-state prompts should expose browser_run_js");
 	assert.equal(comparisonToolNames.includes("browser_list_tabs"), true, "explicit cross-tab comparison prompts should get tab tools");
 	assert.equal(comparisonToolNames.includes("browser_activate_tab"), true);
 	assert.equal(explicitAgreementToolNames.includes("browser_list_tabs"), true, "explicit multi-document agreement prompts should get tab tools");

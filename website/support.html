@@ -76,7 +76,7 @@
           <ol>
             <li>Open the <a href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-onhand-store-link>Chrome Web Store listing</a>.</li>
             <li>Click <strong>Add to Chrome</strong> and confirm the install prompt.</li>
-            <li>Open the Onhand options page and sign in with OpenAI Codex or add an OpenAI API key.</li>
+            <li>Open the Onhand options page and choose Onhand Free, OpenAI Codex sign-in, or a provider API key.</li>
             <li>Pin Onhand, open a normal web page, and click the extension icon to open the side panel.</li>
           </ol>
           <p>
@@ -92,12 +92,14 @@
             Open the Onhand options page and choose one provider path:
           </p>
           <ul>
+            <li><strong>Onhand Free:</strong> no account or API key. Daily usage is capped and anonymous diagnostics are required.</li>
             <li><strong>OpenAI Codex sign-in:</strong> recommended for normal browser tutoring.</li>
-            <li><strong>OpenAI API key:</strong> useful for direct API calls and the Realtime voice tutor.</li>
+            <li><strong>Provider API key:</strong> useful for direct OpenAI, Anthropic, Gemini, or OpenRouter calls. OpenAI API keys can also power the Realtime voice tutor.</li>
           </ul>
           <p>
             If Onhand says credentials are missing, open the options page,
-            sign in again or paste your key, save, then reopen the side panel.
+            choose Onhand Free, sign in again, or paste your key, save, then
+            reopen the side panel.
           </p>
         </section>
 
@@ -129,6 +131,12 @@
           <p>
             Please open a GitHub issue with the browser, page type, what you
             asked Onhand to do, and any visible error message.
+          </p>
+          <p>
+            If a failed Onhand reply shows <strong>Send anonymized error report</strong>,
+            click it and include the returned report id in your issue. The report
+            excludes prompts, page content, URLs, screenshots, transcripts, saved
+            sessions, and keys.
           </p>
           <p>
             <a class="inline-action" href="https://github.com/Phineas1500/Onhand/issues/new" target="_blank" rel="noopener">Open a GitHub issue ↗</a>
