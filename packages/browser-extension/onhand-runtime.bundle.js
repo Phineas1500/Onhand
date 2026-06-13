@@ -125093,7 +125093,10 @@ var ONHAND_DIAGNOSTICS_EVENT_NAMES = /* @__PURE__ */ new Set([
   "prompt_stopped",
   "session_started",
   "session_restored",
-  "session_restore_failed"
+  "session_restore_failed",
+  "browser_run_js_started",
+  "browser_run_js_succeeded",
+  "browser_run_js_failed"
 ]);
 var SUPPORTED_API_PROVIDERS = {
   [OPENAI_API_PROVIDER]: {
@@ -125183,7 +125186,8 @@ var DEFAULT_SETTINGS = {
   authMode: "oauth",
   oauthCredentials: {},
   diagnosticsEnabled: false,
-  diagnosticsClientId: ""
+  diagnosticsClientId: "",
+  advancedRuntimeInspectionEnabled: true
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var smokeModelRegistration = null;
@@ -126324,6 +126328,7 @@ function buildPublicSettings(settings2) {
     realtimeVoiceEnabled: settings2.realtimeVoiceEnabled,
     speedMode: settings2.speedMode,
     diagnosticsEnabled: settings2.diagnosticsEnabled,
+    advancedRuntimeInspectionEnabled: settings2.advancedRuntimeInspectionEnabled,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
@@ -127727,11 +127732,13 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
   const selected = /* @__PURE__ */ new Set();
   const text = String(prompt || "").toLowerCase();
   const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
+  const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
   const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
   const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
-  const selectableToolNames = allTools.map((tool) => tool.name).filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
+  const selectableToolNames = allTools.map((tool) => tool.name).filter((toolName) => runtimeInspectionEnabled || !RUNTIME_JS_TOOL_NAMES.includes(toolName)).filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
   const add = (names) => {
     for (const name of names) {
+      if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(name)) continue;
       if (toolsByName.has(name)) selected.add(name);
     }
   };
@@ -127768,7 +127775,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
       add(DEBUG_INSPECTION_TOOL_NAMES);
     }
-    if (promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
+    if (runtimeInspectionEnabled && promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
       add(RUNTIME_JS_TOOL_NAMES);
     }
     if (textHasAny(text, /\b(artifact|capture state|save state|restore|session replay|saved page|list artifacts?)\b/)) {
@@ -128968,6 +128975,8 @@ function getToolStatusMessage(toolName) {
       return "Reading page HTML...";
     case "browser_capture_screenshot":
       return "Capturing screenshot...";
+    case "browser_run_js":
+      return "Inspecting client-side page state...";
     default:
       return toolName?.startsWith("browser_") ? "Inspecting the current page..." : `Using ${toolName}...`;
   }
@@ -129209,7 +129218,8 @@ function createOnhandBrowserRuntime(host) {
         authMode,
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
         diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
-        diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : ""
+        diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
+        advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false
       };
       const sessions = {};
       for (const record2 of await getAllSessionRecords()) {
@@ -129870,6 +129880,10 @@ function createOnhandBrowserRuntime(host) {
           toolName,
           state: "running"
         });
+        if (toolName === "browser_run_js") {
+          void trackExtensionEvent("browser_run_js_started", { result: "started" }).catch(() => {
+          });
+        }
         void publishState({ status: getToolStatusMessage(toolName) });
         break;
       }
@@ -129888,6 +129902,10 @@ function createOnhandBrowserRuntime(host) {
             toolName,
             state: "error"
           });
+          if (toolName === "browser_run_js") {
+            void trackExtensionEvent("browser_run_js_failed", { result: "error" }).catch(() => {
+            });
+          }
           void publishState({ status: "Trying a different approach..." });
         } else {
           appendActivity({
@@ -129898,6 +129916,10 @@ function createOnhandBrowserRuntime(host) {
             state: "complete"
           });
           appendUniquePageAction(activeRequest.pageActions, buildPageAction(toolName, event.result));
+          if (toolName === "browser_run_js") {
+            void trackExtensionEvent("browser_run_js_succeeded", { result: "ok" }).catch(() => {
+            });
+          }
           void publishState({
             pageActions: [...activeRequest.pageActions],
             status: "Writing answer..."
@@ -131179,7 +131201,8 @@ function createOnhandBrowserRuntime(host) {
         authMode,
         oauthCredentials: nextOAuthCredentials,
         diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled, authMode, aiProvider),
-        diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId
+        diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
+        advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false
       };
       const session = store.sessions[store.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
@@ -131552,7 +131575,10 @@ function createOnhandBrowserRuntime(host) {
           attachments,
           learningMode,
           session.learnerState,
-          { forcePdfTools }
+          {
+            forcePdfTools,
+            advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled
+          }
         );
         activeAgent = new Agent({
           initialState: {

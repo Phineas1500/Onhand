@@ -429,6 +429,14 @@
           </label>
           <p id="diagnosticsHelp" class="help">Sends only extension version, provider/model category, event names, coarse errors, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.</p>
         </div>
+
+        <div class="field">
+          <label class="toggle-row" for="advancedRuntimeInspectionEnabled">
+            <input id="advancedRuntimeInspectionEnabled" type="checkbox" />
+            <span>Allow advanced runtime inspection for complex websites</span>
+          </label>
+          <p class="help">Lets Onhand use read-only JavaScript on the active page only when normal page-reading, DOM, screenshot, console, network, or selector tools are not enough. Turn this off to prevent model-requested JavaScript inspection.</p>
+        </div>
       </section>
 
       <section>

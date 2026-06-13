@@ -134,7 +134,21 @@ JavaScript/runtime-state requests or complex client-side pages where safer
 browser tools cannot answer the user-facing question. The model instructions
 require it to stay read-only unless the user explicitly asks for page
 interaction, and to avoid cookies, storage, secrets, payment fields, or
-unrelated page data.
+unrelated page data. Users can disable this capability from the options
+page with **Allow advanced runtime inspection for complex websites**.
+
+Reviewer note text:
+
+Onhand includes a constrained advanced runtime-inspection tool for complex
+client-side websites. The tool can run read-only JavaScript on the active
+page only when the user explicitly asks for JavaScript/runtime-state
+inspection or when normal page-reading, DOM, screenshot, console, network,
+and selector tools cannot answer the user's question. It is not used for
+ordinary page/PDF Q&A, Learning Mode, or generic console/network debugging.
+Users can disable it in options. Anonymous diagnostics record only
+started/succeeded/failed event names for this tool; diagnostics never
+include JavaScript expressions, prompts, page content, URLs, screenshots,
+saved sessions, transcripts, or keys.
 
 Onhand should not load or execute remotely hosted JavaScript bundles in
 the store build. The extension package includes its runtime, page tools,

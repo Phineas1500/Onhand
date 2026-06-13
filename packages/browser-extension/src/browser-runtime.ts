@@ -52,6 +52,7 @@ interface RuntimeSettings {
 	oauthCredentials: Record<string, BrowserOAuthCredentials>;
 	diagnosticsEnabled: boolean;
 	diagnosticsClientId: string;
+	advancedRuntimeInspectionEnabled: boolean;
 }
 
 type SpeedMode = "auto" | "fast" | "deep";
@@ -303,6 +304,9 @@ const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"session_started",
 	"session_restored",
 	"session_restore_failed",
+	"browser_run_js_started",
+	"browser_run_js_succeeded",
+	"browser_run_js_failed",
 ]);
 const SUPPORTED_API_PROVIDERS: Record<
 	string,
@@ -399,6 +403,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	oauthCredentials: {},
 	diagnosticsEnabled: false,
 	diagnosticsClientId: "",
+	advancedRuntimeInspectionEnabled: true,
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -1728,6 +1733,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		realtimeVoiceEnabled: settings.realtimeVoiceEnabled,
 		speedMode: settings.speedMode,
 		diagnosticsEnabled: settings.diagnosticsEnabled,
+		advancedRuntimeInspectionEnabled: settings.advancedRuntimeInspectionEnabled,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -3339,20 +3345,23 @@ function selectToolsForPrompt(
 	_attachments: any[] = [],
 	learningMode = false,
 	learnerState: unknown = null,
-	options: { forcePdfTools?: boolean } = {},
+	options: { forcePdfTools?: boolean; advancedRuntimeInspectionEnabled?: boolean } = {},
 ) {
 	const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
 	const selected = new Set<string>();
 	const text = String(prompt || "").toLowerCase();
 	const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
+	const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
 	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
 	const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
 	const selectableToolNames = allTools
 		.map((tool) => tool.name)
+		.filter((toolName) => runtimeInspectionEnabled || !RUNTIME_JS_TOOL_NAMES.includes(toolName))
 		.filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
 
 	const add = (names: string[]) => {
 		for (const name of names) {
+			if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(name)) continue;
 			if (toolsByName.has(name)) selected.add(name);
 		}
 	};
@@ -3399,7 +3408,7 @@ function selectToolsForPrompt(
 		if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
 			add(DEBUG_INSPECTION_TOOL_NAMES);
 		}
-		if (promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
+		if (runtimeInspectionEnabled && promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
 			add(RUNTIME_JS_TOOL_NAMES);
 		}
 		if (textHasAny(text, /\b(artifact|capture state|save state|restore|session replay|saved page|list artifacts?)\b/)) {
@@ -4224,7 +4233,7 @@ export const __browserRuntimeTest = {
 			homeworkLearningPrompt,
 		};
 	},
-	getToolNamesForTest(prompt: string, learningMode = false, learnerState: unknown = null, options: { forcePdfTools?: boolean } = {}) {
+	getToolNamesForTest(prompt: string, learningMode = false, learnerState: unknown = null, options: { forcePdfTools?: boolean; advancedRuntimeInspectionEnabled?: boolean } = {}) {
 		const host: RuntimeHost = {
 			async runCommand() {
 				return {};
@@ -4758,6 +4767,8 @@ function getToolStatusMessage(toolName: string) {
 			return "Reading page HTML...";
 		case "browser_capture_screenshot":
 			return "Capturing screenshot...";
+		case "browser_run_js":
+			return "Inspecting client-side page state...";
 		default:
 			return toolName?.startsWith("browser_") ? "Inspecting the current page..." : `Using ${toolName}...`;
 	}
@@ -5010,6 +5021,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
+				advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
@@ -5747,6 +5759,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					toolName,
 					state: "running",
 				});
+				if (toolName === "browser_run_js") {
+					void trackExtensionEvent("browser_run_js_started", { result: "started" }).catch(() => {});
+				}
 				void publishState({ status: getToolStatusMessage(toolName) });
 				break;
 			}
@@ -5765,6 +5780,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						toolName,
 						state: "error",
 					});
+					if (toolName === "browser_run_js") {
+						void trackExtensionEvent("browser_run_js_failed", { result: "error" }).catch(() => {});
+					}
 					void publishState({ status: "Trying a different approach..." });
 				} else {
 					appendActivity({
@@ -5775,6 +5793,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						state: "complete",
 					});
 					appendUniquePageAction(activeRequest.pageActions, buildPageAction(toolName, (event as any).result));
+					if (toolName === "browser_run_js") {
+						void trackExtensionEvent("browser_run_js_succeeded", { result: "ok" }).catch(() => {});
+					}
 					void publishState({
 						pageActions: [...activeRequest.pageActions],
 						status: "Writing answer...",
@@ -7161,6 +7182,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				oauthCredentials: nextOAuthCredentials,
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
+				advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
 			};
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
@@ -7560,7 +7582,10 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 					attachments,
 					learningMode,
 					session.learnerState,
-					{ forcePdfTools },
+					{
+						forcePdfTools,
+						advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
+					},
 				);
 
 				activeAgent = new Agent({

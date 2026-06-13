@@ -64,6 +64,7 @@ const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey"
 const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
+const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
@@ -348,6 +349,7 @@ async function loadForm() {
 	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
 	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
+	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
@@ -395,6 +397,7 @@ async function save() {
 		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
 		diagnosticsEnabled: isFreeTierMode() || Boolean(diagnosticsEnabledInput.checked),
+		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});

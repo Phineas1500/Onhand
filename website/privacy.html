@@ -112,6 +112,9 @@
             counts to the Onhand free-tier Worker for reliability, cost, quota,
             and abuse monitoring. Diagnostics do not include prompts, page
             content, URLs, screenshots, saved sessions, transcripts, or keys.
+            If advanced runtime inspection is used, diagnostics may record only
+            that the constrained JavaScript tool started, succeeded, or failed;
+            they never include the JavaScript expression or page data returned.
           </p>
           <p>
             If Onhand shows an error, you may also choose to send a one-time
@@ -223,6 +226,7 @@
             <li>You choose when to start or stop the voice tutor.</li>
             <li>You choose your authentication mode: Onhand Free, OpenAI Codex sign-in, or a provider API key.</li>
             <li>You can disable anonymous diagnostics unless you are using Onhand Free.</li>
+            <li>You can disable advanced runtime inspection to prevent model-requested JavaScript inspection on active pages.</li>
             <li>You choose whether to send a one-time anonymized error report after an Onhand error.</li>
             <li>You can delete saved sessions from the extension UI or by clearing extension storage.</li>
             <li>You can remove provider credentials from the Onhand options page.</li>

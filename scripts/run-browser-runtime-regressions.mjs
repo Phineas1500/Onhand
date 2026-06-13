@@ -291,12 +291,14 @@ async function assertProviderApiKeyStorageAndRouting() {
 	let settings = await runtime.getSettings();
 	assert.equal(settings.hasAiApiKey, true, "legacy OpenAI API key should migrate into provider key status");
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "openai").hasApiKey, true);
+	assert.equal(settings.advancedRuntimeInspectionEnabled, true, "advanced runtime inspection should default on for existing users");
 
 	runtime = createOnhandBrowserRuntime(createReplayHost());
 	settings = await runtime.updateSettings({
 		aiProvider: "anthropic",
 		aiModel: "claude-sonnet-4-5-20250929",
 		authMode: "api-key",
+		advancedRuntimeInspectionEnabled: false,
 		aiApiKeys: {
 			openai: "sk-openai-runtime",
 			anthropic: "sk-ant-runtime",
@@ -304,6 +306,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	});
 	assert.equal(settings.aiProvider, "anthropic");
 	assert.equal(settings.aiModel, "claude-sonnet-4-5-20250929");
+	assert.equal(settings.advancedRuntimeInspectionEnabled, false);
 	assert.equal(settings.hasSelectedProviderApiKey, true);
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, true);
 	const storedSettings = globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings;
@@ -761,6 +764,7 @@ async function assertConstitutionPromptContract() {
 	const debugToolNames = getToolNamesForTest("Debug why this page is logging console errors.", false);
 	const explicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false);
 	const dynamicRuntimeToolNames = getToolNamesForTest("Inspect the React app state and selected value on this dynamic page.", false);
+	const disabledExplicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false, null, { advancedRuntimeInspectionEnabled: false });
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
@@ -769,6 +773,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(debugToolNames.includes("browser_run_js"), false, "generic debug prompts should not expose JavaScript execution");
 	assert.equal(explicitRuntimeToolNames.includes("browser_run_js"), true, "explicit JavaScript prompts should expose browser_run_js");
 	assert.equal(dynamicRuntimeToolNames.includes("browser_run_js"), true, "dynamic runtime-state prompts should expose browser_run_js");
+	assert.equal(disabledExplicitRuntimeToolNames.includes("browser_run_js"), false, "disabled advanced runtime inspection should hide browser_run_js even for explicit JavaScript prompts");
 	assert.equal(comparisonToolNames.includes("browser_list_tabs"), true, "explicit cross-tab comparison prompts should get tab tools");
 	assert.equal(comparisonToolNames.includes("browser_activate_tab"), true);
 	assert.equal(explicitAgreementToolNames.includes("browser_list_tabs"), true, "explicit multi-document agreement prompts should get tab tools");

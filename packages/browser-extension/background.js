@@ -9253,6 +9253,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				authMode: message.authMode,
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
 				diagnosticsEnabled: message.diagnosticsEnabled,
+				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				speedMode: message.speedMode,
 			});
 			sendResponse({
