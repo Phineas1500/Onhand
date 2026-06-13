@@ -260,13 +260,15 @@ function simplifyWindow(windowInfo) {
 	};
 }
 
-async function snapshotState() {
+async function snapshotState(args = {}) {
+	const requestedWindowId = typeof args.windowId === "number" && Number.isFinite(args.windowId) ? args.windowId : undefined;
 	const windows = await chrome.windows.getAll({ populate: true });
 	const focusedWindow = windows.find((windowInfo) => windowInfo.focused);
+	const visibleWindows = requestedWindowId === undefined ? windows : windows.filter((windowInfo) => windowInfo.id === requestedWindowId);
 	return {
 		capturedAt: Date.now(),
 		focusedWindowId: focusedWindow?.id ?? null,
-		windows: windows.map(simplifyWindow),
+		windows: visibleWindows.map(simplifyWindow),
 	};
 }
 
@@ -288,7 +290,8 @@ async function resolveTargetTab(args = {}) {
 	const urlNeedle = String(args.urlContains || "").trim().toLowerCase();
 	const windowId = typeof args.windowId === "number" && Number.isFinite(args.windowId) ? args.windowId : undefined;
 	if (titleNeedle || urlNeedle) {
-		const tabs = await chrome.tabs.query(windowId === undefined ? {} : { windowId });
+		const scopedWindowId = windowId === undefined ? (await chrome.windows.getLastFocused())?.id : windowId;
+		const tabs = await chrome.tabs.query(scopedWindowId === undefined ? { active: true, lastFocusedWindow: true } : { windowId: scopedWindowId });
 		const matches = tabs.filter((tab) => {
 			const titleMatches = !titleNeedle || String(tab.title || "").toLowerCase().includes(titleNeedle);
 			const urlMatches = !urlNeedle || String(tab.url || "").toLowerCase().includes(urlNeedle);
@@ -8222,7 +8225,7 @@ async function handleCommand(name, args = {}) {
 		}
 		case "list_tabs":
 		case "get_state": {
-			return await snapshotState();
+			return await snapshotState(args);
 		}
 		case "activate_tab": {
 			const tab = await resolveTargetTab(args);
