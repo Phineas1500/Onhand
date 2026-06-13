@@ -2356,6 +2356,50 @@ async function assertRealtimeTranscriptRoutesPageQuestionsThroughOnhand() {
 	dom.window.close();
 }
 
+async function assertRealtimeTranscriptRoutesLocalFileQuestionsThroughOnhand() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Local causal overview",
+		url: "file:///Users/sriram/Downloads/causal_status_overview.html",
+	};
+	state.page = {
+		title: "Local causal overview",
+		url: "file:///Users/sriram/Downloads/causal_status_overview.html",
+		text: "",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-local-file-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			item_id: "item-local-file",
+			transcript: "What is the main takeaway from this page?",
+		}),
+	);
+	await flushRealtimeTranscript(hooks, dom);
+
+	const submitMessage = runtimeMessages.find((message) => message?.type === "sidebar:submit-prompt");
+	assert.ok(submitMessage, "expected local file voice transcript to use Onhand's persisted answer pipeline");
+	assert.equal(submitMessage.prompt, "What is the main takeaway from this page?");
+	assert.equal(submitMessage.displayPrompt, "[Voice] What is the main takeaway from this page?");
+	assert.equal(submitMessage.source, "realtime-voice-direct-answer");
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-local-file-direct");
+	assert.equal(hooks.getRealtimeDebugState().activeVoiceTurn?.kind, "direct_answer");
+	assert.equal(
+		events.some((event) => event.type === "response.create" && !event.event_id?.includes("backend_preamble")),
+		false,
+		"expected local file page questions not to fall back to raw Realtime self-answering",
+	);
+
+	dom.window.close();
+}
+
 async function assertRealtimeLearningVoiceQuestionUsesRuntimeAgentInsteadOfSocraticPlanner() {
 	const runtimeMessages = [];
 	const events = [];
@@ -4444,6 +4488,7 @@ await assertRealtimeServerSpeechDoesNotScheduleLocalFallback();
 await assertRealtimeCommittedAudioCreatesRealtimeTurn();
 await assertRealtimeSpeechStoppedWaitsForRealtimeResponse();
 await assertRealtimeTranscriptRoutesPageQuestionsThroughOnhand();
+await assertRealtimeTranscriptRoutesLocalFileQuestionsThroughOnhand();
 await assertRealtimeLearningVoiceQuestionUsesRuntimeAgentInsteadOfSocraticPlanner();
 await assertRealtimeExplicitLearningVoiceTranscriptPlansSocraticMove();
 await assertRealtimeEmptyInputBufferDoesNotDisconnect();

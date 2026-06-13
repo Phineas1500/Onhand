@@ -7357,7 +7357,7 @@
 		if (!candidateUrl) return false;
 		try {
 			const protocol = new URL(candidateUrl).protocol;
-			return protocol === "http:" || protocol === "https:" || protocol === "chrome-extension:";
+			return protocol === "http:" || protocol === "https:" || protocol === "chrome-extension:" || protocol === "file:";
 		} catch {
 			return false;
 		}
@@ -9229,6 +9229,7 @@
 				await persistRealtimeVoiceTurn(activeTurn, finalText, {
 					status: "Voice answer",
 					pageActions: activeTurn.pageActions,
+					clearLiveAnswer: false,
 				});
 				if (shouldNarrateFinalText) narratePublishedRealtimeAnswer(finalText);
 			}
