@@ -688,6 +688,37 @@ async function assertSessionWideCitationNumbers() {
 	dom.window.close();
 }
 
+async function assertReplyTokenPrefixCannotInjectHtml() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.turns = [
+		{
+			...state.turns[0],
+			id: "turn-token-xss",
+			reply: '@@ONHAND_TOKEN_0@@<img id="token-xss" src="x" onerror="window.__tokenXss = true">',
+			pageActions: [],
+		},
+		{
+			...state.turns[1],
+			id: "turn-code-block",
+			reply: "```js\nconst safe = '<img>';\n```",
+			pageActions: [],
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const responses = shadow.querySelectorAll(".onhand-response");
+
+	assert.equal(shadow.querySelector("#token-xss"), null, "token-prefixed reply text must not create HTML elements");
+	assert.match(responses[0].innerHTML, /&lt;img id="token-xss"/, "token-prefixed reply text should be escaped");
+	assert.match(responses[0].textContent, /@@ONHAND_TOKEN_0@@<img id=\"token-xss\"/, "escaped reply should remain readable as text");
+	assert.equal(responses[1].querySelectorAll("pre.reply-code-block code").length, 1, "internal code block tokens should still render trusted markup");
+	assert.equal(responses[1].querySelector("img"), null, "code block contents should remain escaped");
+
+	dom.window.close();
+}
+
 async function assertResponseCopyButtonAndStableMarkup() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -4246,6 +4277,7 @@ async function assertMenuDeleteButtonConfirmsBeforeDeletingSession() {
 }
 
 await assertSessionWideCitationNumbers();
+await assertReplyTokenPrefixCannotInjectHtml();
 await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();
