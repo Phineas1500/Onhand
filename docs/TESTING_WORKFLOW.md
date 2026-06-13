@@ -59,6 +59,9 @@ npm run acceptance:chrome -- --suite=learning
 npm run smoke:browser-runtime -- --json
 npm run smoke:browser-runtime -- --ports --json
 npm run smoke:browser-runtime -- --real-openai
+npm run eval:free-tier-models -- --dry-run
 ```
 
 Use `--real-openai` only when `OPENAI_API_KEY` is available and the goal is to verify the API-key fallback. The preferred product path is Chrome side-panel OAuth with OpenAI Codex.
+
+Use `npm run eval:free-tier-models` with `OPENROUTER_API_KEY` when evaluating a free-tier model change. See `docs/FREE_TIER_MODEL_EVAL.md`.

@@ -31,6 +31,11 @@ The values in this repo are defaults. The deployed worker may run
 different caps (set via wrangler vars), so production limits can be
 tuned without a code change or a repo update.
 
+Before changing the allowlisted model, run the product-shaped comparison in
+[`FREE_TIER_MODEL_EVAL.md`](FREE_TIER_MODEL_EVAL.md). It checks model cost,
+latency, browser tool behavior, anchored answers, learning-mode coaching, and
+homework-refusal behavior against the current default.
+
 At the measured ~1¢/turn, a maxed-out free device costs roughly
 $0.15-0.25/day; typical usage is far below that.
 
