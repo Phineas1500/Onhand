@@ -126296,6 +126296,12 @@ function normalizeModelForProvider(model, provider, authMode) {
   if (authMode === "oauth") return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
   return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
+function requiresDiagnostics(authMode, provider) {
+  return authMode === "api-key" && provider === ONHAND_FREE_PROVIDER;
+}
+function normalizeDiagnosticsEnabled(value, authMode, provider) {
+  return requiresDiagnostics(authMode, provider) || Boolean(value);
+}
 function buildPublicSettings(settings2) {
   const signedInProviders = summarizeOAuthCredentials(settings2.oauthCredentials);
   const activeOAuthProvider = signedInProviders.find((provider) => provider.id === settings2.aiProvider) || null;
@@ -129184,7 +129190,7 @@ function createOnhandBrowserRuntime(host) {
         aiApiKeys: normalizeApiKeys(rawSettings.aiApiKeys, rawSettings.aiApiKey),
         authMode,
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
-        diagnosticsEnabled: Boolean(rawSettings.diagnosticsEnabled),
+        diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : ""
       };
       const sessions = {};
@@ -129272,6 +129278,66 @@ function createOnhandBrowserRuntime(host) {
     if (/aborted|cancelled|stopped/.test(message)) return "aborted";
     if (/permission|debugger|side panel|tab|chrome/.test(message)) return "browser_permission";
     return "runtime_error";
+  }
+  function redactDiagnosticText(value, maxLength = 1200) {
+    let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return "";
+    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  function buildErrorReportSnapshot(error51, request, activities) {
+    const settings2 = request?.settings || {};
+    const startedAtMs = Date.parse(request?.createdAt || "");
+    const durationMs = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
+    return {
+      schema_version: 1,
+      type: "prompt_error",
+      created_at: nowIso(),
+      extension_version: compactTelemetryValue(host.extensionVersion || "", 40),
+      runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
+      auth_mode: compactTelemetryValue(settings2.authMode, 40),
+      ai_provider: compactTelemetryValue(settings2.aiProvider, 80),
+      ai_model: compactTelemetryValue(settings2.aiModel, 120),
+      realtime_voice_enabled: Boolean(settings2.realtimeVoiceEnabled),
+      learning_mode: Boolean(request?.learningMode ?? settings2.learningMode),
+      error_kind: classifyTelemetryError(error51),
+      error_message: redactDiagnosticText(error51?.message || error51, 700),
+      error_stack: redactDiagnosticText(error51?.stack || "", 2400),
+      duration_ms: durationMs,
+      action_count: Array.isArray(request?.pageActions) ? request.pageActions.length : 0,
+      artifact_count: Array.isArray(request?.artifactIds) ? request.artifactIds.length : 0,
+      activity_summary: (Array.isArray(activities) ? activities : []).slice(-16).map((activity) => ({
+        kind: compactTelemetryValue(activity?.kind, 32),
+        tool_name: compactTelemetryValue(activity?.toolName, 80),
+        state: compactTelemetryValue(activity?.state, 32)
+      })).filter((activity) => activity.kind || activity.tool_name || activity.state)
+    };
+  }
+  function buildErrorReportSnapshotFromTurn(turn, settings2) {
+    return {
+      schema_version: 1,
+      type: "prompt_error",
+      created_at: nowIso(),
+      extension_version: compactTelemetryValue(host.extensionVersion || "", 40),
+      runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
+      auth_mode: compactTelemetryValue(settings2.authMode, 40),
+      ai_provider: compactTelemetryValue(settings2.aiProvider, 80),
+      ai_model: compactTelemetryValue(settings2.aiModel, 120),
+      realtime_voice_enabled: Boolean(settings2.realtimeVoiceEnabled),
+      learning_mode: Boolean(settings2.learningMode),
+      error_kind: "runtime_error",
+      error_message: redactDiagnosticText(String(turn.reply || "").replace(/^Error:\s*/i, ""), 700),
+      error_stack: "",
+      duration_ms: 0,
+      action_count: Array.isArray(turn.pageActions) ? turn.pageActions.length : 0,
+      artifact_count: 0,
+      activity_summary: (Array.isArray(turn.activities) ? turn.activities : []).slice(-16).map((activity) => ({
+        kind: compactTelemetryValue(activity?.kind, 32),
+        tool_name: compactTelemetryValue(activity?.toolName, 80),
+        state: compactTelemetryValue(activity?.state, 32)
+      })).filter((activity) => activity.kind || activity.tool_name || activity.state)
+    };
   }
   async function ensureDiagnosticsClientId(store) {
     const settings2 = store.settings;
@@ -129712,6 +129778,7 @@ function createOnhandBrowserRuntime(host) {
     const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
     await autoPersistReviewSnapshot(session, activeRequest, finalError);
     const publicActivities = getPublicActivities(uiState?.activities || []);
+    const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
     updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
     const turn = {
       id: requestId,
@@ -129721,7 +129788,8 @@ function createOnhandBrowserRuntime(host) {
       pageActions: [...activeRequest.pageActions],
       pending: false,
       error: Boolean(finalError),
-      createdAt: activeRequest.createdAt
+      createdAt: activeRequest.createdAt,
+      ...errorReport ? { errorReport } : {}
     };
     session.turns = [...session.turns || [], turn];
     session.messages = createStoredConversationMessages(session.turns);
@@ -131012,6 +131080,43 @@ function createOnhandBrowserRuntime(host) {
     async trackEvent(eventName, data = {}) {
       return { tracked: await trackExtensionEvent(eventName, data) };
     },
+    async submitErrorReport(turnId) {
+      const store = await loadStore();
+      const session = store.sessions[store.currentSessionId];
+      const id = String(turnId || "").trim();
+      const turn = (Array.isArray(session.turns) ? session.turns : []).find((candidate) => String(candidate?.id || "") === id);
+      if (!turn) throw new Error("Could not find that failed Onhand turn.");
+      if (!turn.error) throw new Error("Only failed Onhand turns can be reported.");
+      const existingReport = turn.errorReport && typeof turn.errorReport === "object" ? turn.errorReport : null;
+      if (existingReport?.report_id) {
+        return { reportId: existingReport.report_id, alreadySubmitted: true };
+      }
+      const report = existingReport || buildErrorReportSnapshotFromTurn(turn, store.settings);
+      const baseUrl = await getFreeTierBaseUrl();
+      const response = await fetch(`${baseUrl}/error-reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report })
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.accepted || !body?.report_id) {
+        throw new Error(body?.reason ? `Could not send error report: ${body.reason}` : "Could not send error report.");
+      }
+      turn.errorReport = {
+        ...report,
+        submitted_at: nowIso(),
+        report_id: String(body.report_id)
+      };
+      session.turns = session.turns.map((candidate) => String(candidate?.id || "") === id ? turn : candidate);
+      await saveStore(store, { sessions: [session] });
+      await publishState({
+        currentSession: buildSessionState(session),
+        turns: session.turns,
+        messages: buildConversationMessages(session.messages),
+        status: `Error report sent: ${turn.errorReport.report_id}`
+      });
+      return { reportId: turn.errorReport.report_id, alreadySubmitted: false };
+    },
     async getOpenAIRealtimeCredential() {
       const store = await loadStore();
       const settings2 = store.settings;
@@ -131055,7 +131160,7 @@ function createOnhandBrowserRuntime(host) {
         aiApiKeys: normalizeApiKeys(nextPartial.aiApiKeys ?? store.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store.settings.aiApiKey),
         authMode,
         oauthCredentials: nextOAuthCredentials,
-        diagnosticsEnabled: Boolean(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled),
+        diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId
       };
       const session = store.sessions[store.currentSessionId];
@@ -131386,7 +131491,8 @@ function createOnhandBrowserRuntime(host) {
         aborted: false,
         targetWindowId,
         initialSelection: null,
-        learningMode
+        learningMode,
+        settings: requestSettings
       };
       await publishState({ status: "Starting Onhand..." });
       void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {

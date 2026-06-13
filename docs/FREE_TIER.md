@@ -23,7 +23,8 @@ completions to OpenRouter with Onhand's key.
 - model allowlist: `deepseek/deepseek-v4-flash` only
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
 - `REGISTRATIONS_PER_IP_PER_DAY` (default 5)
-- `TELEMETRY_EVENTS_PER_IP_PER_DAY` (default 1000 optional diagnostics events/day)
+- `TELEMETRY_EVENTS_PER_IP_PER_DAY` (default 1000 diagnostics events/day)
+- `ERROR_REPORTS_PER_IP_PER_DAY` (default 50 explicit error reports/day)
 - request body capped at ~900KB, `max_tokens` clamped to 16384
 
 The values in this repo are defaults. The deployed worker may run
@@ -92,12 +93,16 @@ Worker-side events:
 - `chat_stream_cancelled`
 - `telemetry_rate_limited`
 - `telemetry_rejected`
+- `error_report_submitted`
+- `error_report_rate_limited`
+- `error_report_rejected`
 
-Opt-in extension diagnostics go to `POST /v1/telemetry` and use the
-same Analytics Engine dataset. The extension only sends these events
-after the user enables "Share anonymous diagnostics" in options. The
-payload excludes prompts, page content, URLs, screenshots, saved
-sessions, transcripts, and keys.
+Extension diagnostics go to `POST /v1/telemetry` and use the same
+Analytics Engine dataset. Anonymous diagnostics are required when the
+user selects Onhand Free because Onhand hosts the model endpoint; they
+remain optional for other authentication modes. The payload excludes
+prompts, page content, URLs, screenshots, saved sessions, transcripts,
+and keys.
 
 Extension-side events:
 
@@ -115,6 +120,21 @@ Extension-side events:
 - `session_started`
 - `session_restored`
 - `session_restore_failed`
+
+Explicit error reports go to `POST /v1/error-reports`. These reports do
+not require diagnostics to be enabled; they are only sent after the user
+clicks "Send anonymized error report" on a failed Onhand reply. The
+extension sends a redacted error envelope only: extension version,
+runtime revision, auth mode, provider/model category, coarse error kind,
+redacted error message/stack, duration, tool activity names/states, and
+aggregate counts. It does not send prompts, page content, URLs, titles,
+screenshots, saved sessions, transcripts, or keys.
+
+The Worker stores accepted reports in `FREE_TIER_KV` under
+`error-report:<report_id>` with a 90-day TTL and writes an
+`error_report_submitted` aggregate event to Analytics Engine. Use the
+Cloudflare dashboard or KV listing tools to inspect keys with the
+`error-report:` prefix.
 
 Analytics Engine columns are positional. The event name is stored as the
 index and `blob1`; source is `blob2`; result is `blob3`; model/provider

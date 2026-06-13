@@ -2486,12 +2486,16 @@
 				.onhand-response > :last-child {
 					margin-bottom: 0;
 				}
-				.onhand-copy-row {
+				.onhand-copy-row,
+				.onhand-error-report-row {
 					display: flex;
 					justify-content: flex-start;
+					align-items: center;
+					gap: 8px;
 					margin-top: 9px;
 				}
-				.onhand-copy-button {
+				.onhand-copy-button,
+				.onhand-error-report-button {
 					border: 1px solid var(--rm-surface-2);
 					background: transparent;
 					color: var(--rm-subtext);
@@ -2502,13 +2506,20 @@
 					-webkit-user-select: none;
 					user-select: none;
 				}
+				.onhand-error-report-note {
+					color: var(--rm-subtext);
+					font: 10.5px/1.25 var(--rm-font-mono);
+				}
 				.onhand-copy-button:hover,
-				.onhand-copy-button.copied {
+				.onhand-copy-button.copied,
+				.onhand-error-report-button:hover,
+				.onhand-error-report-button.sent {
 					border-color: var(--rm-pine);
 					color: var(--rm-pine);
 					background: color-mix(in srgb, var(--rm-pine) 8%, transparent);
 				}
-				.onhand-copy-button.failed {
+				.onhand-copy-button.failed,
+				.onhand-error-report-button.failed {
 					border-color: var(--rm-love);
 					color: var(--rm-love);
 					background: color-mix(in srgb, var(--rm-love) 8%, transparent);
@@ -4998,6 +5009,7 @@
 									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 								</div>
 								${renderReplyCopyButton(turn, reply)}
+								${renderErrorReportButton(turn)}
 							</div>
 						</article>
 					`;
@@ -5135,6 +5147,28 @@
 			});
 		}
 
+		function renderErrorReportButton(turn) {
+			if (!turn?.error || turn?.pending) return "";
+			const turnId = String(turn?.id || "").trim();
+			if (!turnId) return "";
+			const reportId = String(turn?.errorReport?.report_id || turn?.errorReport?.reportId || "").trim();
+			if (reportId) {
+				return `
+				<div class="onhand-error-report-row">
+					<span class="onhand-error-report-note">Error report sent: ${escapeHtml(reportId)}</span>
+				</div>
+			`;
+			}
+			return `
+				<div class="onhand-error-report-row">
+					<button class="onhand-error-report-button" data-error-report-turn-id="${escapeAttribute(turnId)}" type="button" aria-label="Send anonymized error report">
+						Send anonymized error report
+					</button>
+					<span class="onhand-error-report-note">No prompt, page content, URLs, screenshots, transcripts, or keys.</span>
+				</div>
+			`;
+		}
+
 		function renderReplyCopyButton(turn, reply) {
 			const text = String(reply || "").trim();
 			if (!text || turn?.pending) return "";
@@ -5250,6 +5284,77 @@
 			);
 		}
 
+		function errorReportButtonFromEvent(root, event) {
+			const target = event.target instanceof Element ? event.target : null;
+			const button = target?.closest("[data-error-report-turn-id]");
+			return button instanceof HTMLElement && root.contains(button) ? button : null;
+		}
+
+		function setErrorReportButtonState(button, state, text = "") {
+			button.classList.remove("sent", "failed");
+			if (state) button.classList.add(state);
+			button.textContent =
+				text ||
+				(state === "sent" ? "Error report sent" : state === "failed" ? "Report failed" : state === "sending" ? "Sending..." : "Send anonymized error report");
+		}
+
+		async function submitErrorReportFromButton(button) {
+			const turnId = String(button.dataset.errorReportTurnId || "").trim();
+			if (!turnId || button.dataset.onhandErrorReportPending === "true") return;
+			button.dataset.onhandErrorReportPending = "true";
+			button.disabled = true;
+			setErrorReportButtonState(button, "sending");
+			try {
+				const response = await chrome.runtime.sendMessage({
+					type: "sidebar:submit-error-report",
+					turnId,
+				});
+				if (!response?.ok) throw new Error(response?.error || "Could not send error report.");
+				const reportId = response.result?.reportId || response.result?.report_id || "";
+				setErrorReportButtonState(button, "sent", reportId ? `Sent: ${reportId}` : "Error report sent");
+				renderState({
+					...(currentState || {}),
+					status: reportId ? `Error report sent: ${reportId}` : "Error report sent.",
+				});
+				await requestState();
+			} catch (error) {
+				button.disabled = false;
+				setErrorReportButtonState(button, "failed");
+				renderState({
+					...(currentState || {}),
+					status: error?.message || String(error),
+				});
+			} finally {
+				delete button.dataset.onhandErrorReportPending;
+			}
+		}
+
+		function bindErrorReportButtons(root) {
+			if (!(root instanceof Element) || root.dataset.onhandErrorReportDelegationBound === "true") return;
+			root.dataset.onhandErrorReportDelegationBound = "true";
+			for (const eventName of ["pointerdown", "mousedown"]) {
+				root.addEventListener(
+					eventName,
+					(event) => {
+						const button = errorReportButtonFromEvent(root, event);
+						if (!button) return;
+						consumeCopyButtonPointer(event);
+					},
+					true,
+				);
+			}
+			root.addEventListener(
+				"click",
+				(event) => {
+					const button = errorReportButtonFromEvent(root, event);
+					if (!button) return;
+					consumeCopyButtonPointer(event);
+					void submitErrorReportFromButton(button);
+				},
+				true,
+			);
+		}
+
 		function renderMessages(turns, annotationCount = 0) {
 			const emptyMarkup = annotationCount
 				? ""
@@ -5267,6 +5372,7 @@
 			bindSourceDisclosures(messagesEl);
 			bindActionButtons(messagesEl);
 			bindCopyButtons(messagesEl);
+			bindErrorReportButtons(messagesEl);
 		}
 
 	function renderReplayAnnotations(annotations) {

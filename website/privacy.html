@@ -103,12 +103,23 @@
             provider credentials to Google Analytics or Umami.
           </p>
           <p>
-            The extension also includes an optional anonymous diagnostics setting.
-            When enabled, Onhand may send event names, extension version, runtime
-            revision, selected provider/model category, coarse error categories,
-            and aggregate counts to the Onhand free-tier Worker for reliability
+            The extension also includes anonymous diagnostics. Diagnostics are
+            required when you use Onhand Free because Onhand hosts the model
+            endpoint, and are optional for other authentication modes. Onhand may
+            send event names, extension version, runtime revision, selected
+            provider/model category, coarse error categories, and aggregate
+            counts to the Onhand free-tier Worker for reliability, cost, quota,
             and abuse monitoring. Diagnostics do not include prompts, page
             content, URLs, screenshots, saved sessions, transcripts, or keys.
+          </p>
+          <p>
+            If Onhand shows an error, you may also choose to send a one-time
+            anonymized error report even when diagnostics are off. Error reports
+            include a redacted error message and stack trace, extension version,
+            runtime revision, selected provider/model category, coarse error
+            category, tool activity names/states, and aggregate counts. They do
+            not include prompts, page content, URLs, page titles, screenshots,
+            saved sessions, transcripts, or keys.
           </p>
         </section>
 

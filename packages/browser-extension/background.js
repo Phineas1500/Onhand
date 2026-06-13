@@ -52,6 +52,7 @@ function getOnhandBrowserRuntime() {
 					})
 					.catch(() => {});
 			},
+			extensionVersion: chrome.runtime.getManifest().version,
 			runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 		});
 	}
@@ -9327,6 +9328,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "browser-runtime:submit-error-report") {
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.submitErrorReport(String(message.turnId || ""));
+			sendResponse({ ok: true, result });
+			return;
+		}
+
 		if (message?.type === "browser-runtime:oauth-sign-in") {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.signIn({
@@ -9694,6 +9702,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				ok: true,
 				requestId: response.requestId,
 			});
+			return;
+		}
+
+		if (message?.type === "sidebar:submit-error-report") {
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.submitErrorReport(String(message.turnId || ""));
+			sendResponse({ ok: true, result });
 			return;
 		}
 

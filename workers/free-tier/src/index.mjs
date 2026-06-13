@@ -4,6 +4,8 @@
 // "Onhand Free" provider work without any user key:
 //   POST /v1/register           -> issues an anonymous device token
 //   POST /v1/chat/completions   -> forwards to OpenRouter (streaming)
+//   POST /v1/telemetry          -> records opt-in diagnostics events
+//   POST /v1/error-reports      -> stores explicit anonymized error reports
 //
 // Cost and abuse controls:
 // - model allowlist (cheap models only)
@@ -18,7 +20,9 @@ const ALLOWED_MODELS = new Set(["deepseek/deepseek-v4-flash"]);
 const ALLOWED_OPENROUTER_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
 const MAX_BODY_BYTES = 900_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
+const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
+const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const TELEMETRY_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
@@ -36,6 +40,7 @@ const TELEMETRY_EVENT_NAMES = new Set([
 	"session_restored",
 	"session_restore_failed",
 ]);
+const ERROR_REPORT_TYPES = new Set(["prompt_error", "runtime_error", "voice_error", "options_error"]);
 
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
@@ -63,9 +68,24 @@ function compactString(value, maxLength = 120) {
 	return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function compactStructuredString(value, maxLength = 1200) {
+	const text = String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/[ \t\f\v]+/g, " ")
+		.replace(/\n[ \t]+/g, "\n")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+	return text.length <= maxLength ? text : `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 function finiteNumber(value, fallback = 0) {
 	const number = Number(value);
 	return Number.isFinite(number) ? number : fallback;
+}
+
+function finiteBoolean(value) {
+	return Boolean(value);
 }
 
 function userAgentFamily(request) {
@@ -413,6 +433,42 @@ function telemetryData(payload) {
 	};
 }
 
+function safeActivitySummary(value) {
+	const items = Array.isArray(value) ? value : [];
+	return items
+		.slice(0, 16)
+		.map((activity) => ({
+			kind: compactString(activity?.kind, 32),
+			tool_name: compactString(activity?.tool_name || activity?.toolName, 80),
+			state: compactString(activity?.state, 32),
+		}))
+		.filter((activity) => activity.kind || activity.tool_name || activity.state);
+}
+
+function errorReportData(payload) {
+	const report = payload?.report && typeof payload.report === "object" ? payload.report : payload && typeof payload === "object" ? payload : {};
+	const type = compactString(report.type || "prompt_error", 48);
+	return {
+		schema_version: 1,
+		type: ERROR_REPORT_TYPES.has(type) ? type : "runtime_error",
+		created_at: compactString(report.created_at, 48),
+		extension_version: compactString(report.extension_version, 40),
+		runtime_revision: compactString(report.runtime_revision, 80),
+		auth_mode: compactString(report.auth_mode, 40),
+		ai_provider: compactString(report.ai_provider, 80),
+		ai_model: compactString(report.ai_model, 120),
+		realtime_voice_enabled: finiteBoolean(report.realtime_voice_enabled),
+		learning_mode: finiteBoolean(report.learning_mode),
+		error_kind: compactString(report.error_kind, 80),
+		error_message: compactStructuredString(report.error_message, 700),
+		error_stack: compactStructuredString(report.error_stack, 2400),
+		duration_ms: finiteNumber(report.duration_ms),
+		action_count: finiteNumber(report.action_count),
+		artifact_count: finiteNumber(report.artifact_count),
+		activity_summary: safeActivitySummary(report.activity_summary),
+	};
+}
+
 async function handleTelemetry(request, env, ctx) {
 	const cap = Number(env.TELEMETRY_EVENTS_PER_IP_PER_DAY || 1000);
 	const ipKey = `telemetry:${clientIp(request)}:${todayKey()}`;
@@ -462,6 +518,106 @@ async function handleTelemetry(request, env, ctx) {
 	return json(202, { ok: true, accepted: true });
 }
 
+async function handleErrorReport(request, env, ctx) {
+	const startedAt = Date.now();
+	const cap = Number(env.ERROR_REPORTS_PER_IP_PER_DAY || 50);
+	const ipKey = `error-report:${clientIp(request)}:${todayKey()}`;
+	const quota = await bumpDailyCounter(env, ipKey, cap);
+	if (!quota.allowed) {
+		writeAnalytics(ctx, env, "error_report_rate_limited", {
+			source: "extension",
+			result: "denied",
+			status: 429,
+			current: quota.current,
+			cap,
+		}, request);
+		return json(202, { ok: true, accepted: false, reason: "rate_limited" });
+	}
+
+	const raw = await request.text();
+	if (raw.length > MAX_ERROR_REPORT_BODY_BYTES) {
+		writeAnalytics(ctx, env, "error_report_rejected", {
+			source: "extension",
+			result: "denied",
+			status: 413,
+			bodyBytes: raw.length,
+			errorCode: "body_too_large",
+			current: quota.current,
+			cap,
+		}, request);
+		return json(202, { ok: true, accepted: false, reason: "body_too_large" });
+	}
+
+	let payload;
+	try {
+		payload = JSON.parse(raw);
+	} catch {
+		writeAnalytics(ctx, env, "error_report_rejected", {
+			source: "extension",
+			result: "denied",
+			status: 400,
+			bodyBytes: raw.length,
+			errorCode: "invalid_json",
+			current: quota.current,
+			cap,
+		}, request);
+		return json(202, { ok: true, accepted: false, reason: "invalid_json" });
+	}
+
+	const report = errorReportData(payload);
+	if (!report.error_kind && !report.error_message && !report.error_stack) {
+		writeAnalytics(ctx, env, "error_report_rejected", {
+			source: "extension",
+			result: "denied",
+			status: 400,
+			bodyBytes: raw.length,
+			errorCode: "empty_report",
+			current: quota.current,
+			cap,
+		}, request);
+		return json(202, { ok: true, accepted: false, reason: "empty_report" });
+	}
+
+	const reportId = `err_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
+	const context = analyticsContext(request);
+	const storedReport = {
+		report_id: reportId,
+		received_at: new Date().toISOString(),
+		source: "extension",
+		context,
+		report,
+	};
+	await env.FREE_TIER_KV.put(`error-report:${reportId}`, JSON.stringify(storedReport), {
+		expirationTtl: ERROR_REPORT_TTL_SECONDS,
+		metadata: {
+			type: report.type,
+			error_kind: report.error_kind,
+			extension_version: report.extension_version,
+			runtime_revision: report.runtime_revision,
+			received_at: storedReport.received_at,
+		},
+	});
+
+	writeAnalytics(ctx, env, "error_report_submitted", {
+		source: "extension",
+		result: "ok",
+		status: 202,
+		durationMs: Date.now() - startedAt,
+		bodyBytes: raw.length,
+		current: quota.current,
+		cap,
+		extensionVersion: report.extension_version,
+		runtimeRevision: report.runtime_revision,
+		authMode: report.auth_mode,
+		aiProvider: report.ai_provider,
+		aiModel: report.ai_model,
+		errorCode: report.error_kind,
+		actionCount: report.action_count,
+		artifactCount: report.artifact_count,
+	}, request);
+	return json(202, { ok: true, accepted: true, report_id: reportId });
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
@@ -476,6 +632,9 @@ export default {
 		}
 		if (request.method === "POST" && url.pathname === "/v1/telemetry") {
 			return await handleTelemetry(request, env, ctx);
+		}
+		if (request.method === "POST" && url.pathname === "/v1/error-reports") {
+			return await handleErrorReport(request, env, ctx);
 		}
 		return json(404, { error: { message: "Not found." } });
 	},

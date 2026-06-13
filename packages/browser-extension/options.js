@@ -63,12 +63,17 @@ const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField
 const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey");
 const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
+const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
 const codexSignInButton = document.querySelector(`[data-oauth-provider="${CODEX_PROVIDER}"]`);
 const signOutAuthButton = document.getElementById("signOutAuth");
 const CODEX_AUTH_DEFAULT_SUMMARY = codexAuthSummaryEl.textContent;
+const DIAGNOSTICS_OPTIONAL_HELP =
+	"Sends only extension version, provider/model category, event names, coarse errors, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
+const DIAGNOSTICS_FREE_HELP =
+	"Required for Onhand Free so Onhand can monitor hosted model reliability, quota pressure, costs, and abuse. It still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
 let runtimePublicSettings = null;
 let pendingApiKeys = {};
 
@@ -270,8 +275,20 @@ function syncAuthModeFields() {
 		populateModelSelect(providerId, aiModelInput.value.trim());
 		modelHelpEl.textContent = "Provider API key mode uses your selected provider/model for text chat, learning, and page-tool requests.";
 	}
+	syncDiagnosticsFields();
 	syncApiKeyFields();
 	syncCapabilityStatus();
+}
+
+function syncDiagnosticsFields() {
+	if (isFreeTierMode()) {
+		diagnosticsEnabledInput.checked = true;
+		diagnosticsEnabledInput.disabled = true;
+		diagnosticsHelpEl.textContent = DIAGNOSTICS_FREE_HELP;
+		return;
+	}
+	diagnosticsEnabledInput.disabled = false;
+	diagnosticsHelpEl.textContent = DIAGNOSTICS_OPTIONAL_HELP;
 }
 
 function syncApiKeyFields() {
@@ -377,7 +394,7 @@ async function save() {
 		aiModel: selectedModel(),
 		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
-		diagnosticsEnabled: Boolean(diagnosticsEnabledInput.checked),
+		diagnosticsEnabled: isFreeTierMode() || Boolean(diagnosticsEnabledInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});

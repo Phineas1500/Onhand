@@ -17,5 +17,6 @@ dataset = "onhand_events"
 DAILY_REQUEST_CAP = "80"
 REGISTRATIONS_PER_IP_PER_DAY = "5"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
+ERROR_REPORTS_PER_IP_PER_DAY = "50"
 
 # Secret (never in this file): npx wrangler secret put OPENROUTER_API_KEY
