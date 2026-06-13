@@ -427,6 +427,10 @@ const TAB_MATCH_SCHEMA = {
 	urlContains: Type.Optional(Type.String({ description: "Case-insensitive substring to match in the tab URL" })),
 };
 
+const READ_TAB_SELECTOR_SCHEMA = {
+	...TAB_SELECTOR_SCHEMA,
+};
+
 const NAVIGATE_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	url: Type.String({ description: "URL to navigate to" }),
@@ -485,23 +489,23 @@ const PDF_PAGE_IMAGE_SCHEMA = Type.Object({
 });
 
 const VISIBLE_TEXT_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of visible text to return" })),
 	maxBlocks: Type.Optional(Type.Number({ description: "Maximum visible text blocks to return" })),
 });
 
 const EXTRACT_CONTENT_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of readable page content to return" })),
 });
 
 const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	maxHeadings: Type.Optional(Type.Number({ description: "Maximum nearby headings to return" })),
 });
 
 const CAPTURE_STATE_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	persist: Type.Optional(Type.Boolean({ description: "Persist this page capture as a browser-only Onhand artifact" })),
 	includeHtml: Type.Optional(Type.Boolean({ description: "Persist a full HTML snapshot when persist=true" })),
 	includeScreenshot: Type.Optional(Type.Boolean({ description: "Persist a screenshot when persist=true" })),
@@ -536,7 +540,7 @@ const RUN_JS_SCHEMA = Type.Object({
 });
 
 const DOM_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum HTML characters to return" })),
 });
 
@@ -617,14 +621,14 @@ const NETWORK_SCHEMA = Type.Object({
 });
 
 const SCREENSHOT_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	format: Type.Optional(Type.String({ description: "Screenshot format: png or jpeg" })),
 	quality: Type.Optional(Type.Number({ description: "JPEG quality from 0 to 100" })),
 	delayMs: Type.Optional(Type.Number({ description: "Delay before screenshot capture" })),
 });
 
 const VISIBLE_REGION_IMAGE_SCHEMA = Type.Object({
-	...TAB_MATCH_SCHEMA,
+	...READ_TAB_SELECTOR_SCHEMA,
 	x: Type.Optional(Type.Number({ description: "Viewport x coordinate in CSS pixels. Defaults to 0." })),
 	y: Type.Optional(Type.Number({ description: "Viewport y coordinate in CSS pixels. Defaults to 0." })),
 	width: Type.Optional(Type.Number({ description: "Region width in CSS pixels. Defaults to the visible viewport width." })),
@@ -4336,7 +4340,7 @@ function createTools(
 			"browser_get_selection",
 			"Browser Selection",
 			"Read the user's current text selection in a browser tab.",
-			Type.Object({ ...TAB_MATCH_SCHEMA }),
+			Type.Object({ ...READ_TAB_SELECTOR_SCHEMA }),
 			"get_selection",
 		),
 		commandTool(
