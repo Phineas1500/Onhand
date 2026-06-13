@@ -62,6 +62,7 @@ const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
 const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField");
 const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey");
 const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
+const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
@@ -329,6 +330,7 @@ async function loadForm() {
 		runtimeSettings.authMode === "api-key" ? (storedProvider === FREE_TIER_PROVIDER ? "free" : "api-key") : "oauth";
 	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
+	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
@@ -375,6 +377,7 @@ async function save() {
 		aiModel: selectedModel(),
 		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
+		diagnosticsEnabled: Boolean(diagnosticsEnabledInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});
@@ -423,6 +426,16 @@ async function signOutSelectedProvider() {
 	renderAuthStatus(`Signed out of ${CODEX_PROVIDER}.`, "ok");
 }
 
+async function trackOptionsOpened() {
+	await chrome.runtime
+		.sendMessage({
+			type: "browser-runtime:track-event",
+			eventName: "options_opened",
+			data: { result: "ok" },
+		})
+		.catch(() => {});
+}
+
 document.getElementById("save").addEventListener("click", () => save().catch((error) => renderStatus(error?.message || String(error), "error")));
 document.getElementById("validateKey").addEventListener("click", () => validateSelectedKey().catch((error) => renderStatus(error?.message || String(error), "error")));
 document.getElementById("removeKey").addEventListener("click", () => removeSelectedKey().catch((error) => renderStatus(error?.message || String(error), "error")));
@@ -465,3 +478,4 @@ chrome.runtime.onMessage.addListener((message) => {
 
 await refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error"));
 await loadForm().catch((error) => renderStatus(error?.message || String(error), "error"));
+await trackOptionsOpened();

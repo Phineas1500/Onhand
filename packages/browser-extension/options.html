@@ -421,6 +421,14 @@
           <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
           <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2</code>. Text chat keeps using the selected authentication mode above.</p>
         </div>
+
+        <div class="field">
+          <label class="toggle-row" for="diagnosticsEnabled">
+            <input id="diagnosticsEnabled" type="checkbox" />
+            <span>Share anonymous diagnostics</span>
+          </label>
+          <p class="help">Sends only extension version, provider/model category, event names, coarse errors, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.</p>
+        </div>
       </section>
 
       <section>

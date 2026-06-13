@@ -52,6 +52,7 @@ function getOnhandBrowserRuntime() {
 					})
 					.catch(() => {});
 			},
+			runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 		});
 	}
 	return onhandBrowserRuntime;
@@ -8815,6 +8816,7 @@ if (chrome.sidePanel?.onOpened?.addListener) {
 		if (typeof info?.windowId === "number") {
 			await setSidebarWindowOpen(info.windowId, true);
 			await requestSidebarQuickOpen(info.windowId);
+			getOnhandBrowserRuntime().trackEvent("sidepanel_opened", { result: "ok" }).catch(() => {});
 		}
 	});
 }
@@ -8823,6 +8825,7 @@ if (chrome.sidePanel?.onClosed?.addListener) {
 	chrome.sidePanel.onClosed.addListener(async (info) => {
 		if (typeof info?.windowId === "number") {
 			await setSidebarWindowOpen(info.windowId, false);
+			getOnhandBrowserRuntime().trackEvent("sidepanel_closed", { result: "ok" }).catch(() => {});
 		}
 	});
 }
@@ -9277,6 +9280,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiApiKeys: message.aiApiKeys,
 				authMode: message.authMode,
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
+				diagnosticsEnabled: message.diagnosticsEnabled,
 				speedMode: message.speedMode,
 			});
 			sendResponse({
@@ -9313,6 +9317,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "browser-runtime:auth-progress") {
 			sendResponse({ ok: true });
+			return;
+		}
+
+		if (message?.type === "browser-runtime:track-event") {
+			const runtime = getOnhandBrowserRuntime();
+			const result = await runtime.trackEvent(String(message.eventName || ""), message.data && typeof message.data === "object" ? message.data : {});
+			sendResponse({ ok: true, result });
 			return;
 		}
 
@@ -9761,6 +9772,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	});
 
 	return true;
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
+	if (!reason) return;
+	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});
 });
 
 chrome.action.onClicked.addListener((tab) => {

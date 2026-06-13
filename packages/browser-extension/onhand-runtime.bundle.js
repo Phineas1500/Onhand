@@ -125079,6 +125079,22 @@ var ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
 var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
 var ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+var ONHAND_DIAGNOSTICS_EVENT_NAMES = /* @__PURE__ */ new Set([
+  "diagnostics_enabled",
+  "extension_installed",
+  "extension_updated",
+  "options_opened",
+  "settings_saved",
+  "sidepanel_opened",
+  "sidepanel_closed",
+  "prompt_submitted",
+  "prompt_succeeded",
+  "prompt_failed",
+  "prompt_stopped",
+  "session_started",
+  "session_restored",
+  "session_restore_failed"
+]);
 var SUPPORTED_API_PROVIDERS = {
   [OPENAI_API_PROVIDER]: {
     id: OPENAI_API_PROVIDER,
@@ -125165,7 +125181,9 @@ var DEFAULT_SETTINGS = {
   aiApiKey: "",
   aiApiKeys: {},
   authMode: "oauth",
-  oauthCredentials: {}
+  oauthCredentials: {},
+  diagnosticsEnabled: false,
+  diagnosticsClientId: ""
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var smokeModelRegistration = null;
@@ -126286,6 +126304,7 @@ function buildPublicSettings(settings2) {
     learningMode: settings2.learningMode,
     realtimeVoiceEnabled: settings2.realtimeVoiceEnabled,
     speedMode: settings2.speedMode,
+    diagnosticsEnabled: settings2.diagnosticsEnabled,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
@@ -129164,7 +129183,9 @@ function createOnhandBrowserRuntime(host) {
         aiApiKey: typeof rawSettings.aiApiKey === "string" ? rawSettings.aiApiKey : "",
         aiApiKeys: normalizeApiKeys(rawSettings.aiApiKeys, rawSettings.aiApiKey),
         authMode,
-        oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials)
+        oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
+        diagnosticsEnabled: Boolean(rawSettings.diagnosticsEnabled),
+        diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : ""
       };
       const sessions = {};
       for (const record2 of await getAllSessionRecords()) {
@@ -129217,6 +129238,72 @@ function createOnhandBrowserRuntime(host) {
       }
       throw error51;
     }
+  }
+  function compactTelemetryValue(value, maxLength = 120) {
+    return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+  }
+  function finiteTelemetryNumber(value) {
+    const number4 = Number(value);
+    return Number.isFinite(number4) ? number4 : 0;
+  }
+  function telemetryEventData(settings2, data = {}) {
+    return {
+      auth_mode: compactTelemetryValue(settings2.authMode, 40),
+      ai_provider: compactTelemetryValue(settings2.aiProvider, 80),
+      ai_model: compactTelemetryValue(settings2.aiModel, 120),
+      realtime_voice_enabled: Boolean(settings2.realtimeVoiceEnabled),
+      learning_mode: Boolean(settings2.learningMode),
+      result: compactTelemetryValue(data.result, 48),
+      status: finiteTelemetryNumber(data.status),
+      duration_ms: finiteTelemetryNumber(data.duration_ms ?? data.durationMs),
+      body_bytes: finiteTelemetryNumber(data.body_bytes ?? data.bodyBytes),
+      action_count: finiteTelemetryNumber(data.action_count ?? data.actionCount),
+      artifact_count: finiteTelemetryNumber(data.artifact_count ?? data.artifactCount),
+      error_kind: compactTelemetryValue(data.error_kind ?? data.errorKind, 80)
+    };
+  }
+  function classifyTelemetryError(error51) {
+    const message = compactTelemetryValue(error51?.message || error51, 240).toLowerCase();
+    if (!message) return "";
+    if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
+    if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
+    if (/network|fetch|connection|offline|reach/.test(message)) return "network";
+    if (/model|provider|upstream|openrouter|openai|anthropic|gemini/.test(message)) return "provider";
+    if (/aborted|cancelled|stopped/.test(message)) return "aborted";
+    if (/permission|debugger|side panel|tab|chrome/.test(message)) return "browser_permission";
+    return "runtime_error";
+  }
+  async function ensureDiagnosticsClientId(store) {
+    const settings2 = store.settings;
+    if (settings2.diagnosticsClientId) return settings2.diagnosticsClientId;
+    settings2.diagnosticsClientId = crypto.randomUUID();
+    store.settings = settings2;
+    await saveStore(store, {});
+    return settings2.diagnosticsClientId;
+  }
+  async function trackExtensionEvent(eventName, data = {}) {
+    const name = compactTelemetryValue(eventName, 80);
+    if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
+    const store = await loadStore();
+    const settings2 = store.settings;
+    if (!settings2.diagnosticsEnabled) return false;
+    const clientId = await ensureDiagnosticsClientId(store);
+    const baseUrl = await getFreeTierBaseUrl();
+    const manifest = chrome.runtime?.getManifest?.() || {};
+    const payload = {
+      event_name: name,
+      client_id: clientId,
+      extension_version: compactTelemetryValue(manifest.version, 40),
+      runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
+      data: telemetryEventData(settings2, data)
+    };
+    await fetch(`${baseUrl}/telemetry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).catch(() => {
+    });
+    return true;
   }
   async function getCurrentSession() {
     const store = await loadStore();
@@ -129653,6 +129740,16 @@ function createOnhandBrowserRuntime(host) {
       learnerState: session.learnerState,
       status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
       activeRequestId: null
+    });
+    const startedAtMs = Date.parse(activeRequest.createdAt || "");
+    const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
+    void trackExtensionEvent(telemetryEventName, {
+      result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok",
+      duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
+      action_count: activeRequest.pageActions?.length || 0,
+      artifact_count: activeRequest.artifactIds?.length || 0,
+      error_kind: finalError ? classifyTelemetryError(finalError) : ""
+    }).catch(() => {
     });
     activeAgent = null;
     activeRequest = null;
@@ -130912,6 +131009,9 @@ function createOnhandBrowserRuntime(host) {
     async getSettings() {
       return await getPublicSettings();
     },
+    async trackEvent(eventName, data = {}) {
+      return { tracked: await trackExtensionEvent(eventName, data) };
+    },
     async getOpenAIRealtimeCredential() {
       const store = await loadStore();
       const settings2 = store.settings;
@@ -130930,6 +131030,7 @@ function createOnhandBrowserRuntime(host) {
     async updateSettings(partial2) {
       const store = await loadStore();
       const nextPartial = partial2 || {};
+      const wasDiagnosticsEnabled = Boolean(store.settings.diagnosticsEnabled);
       const nextOAuthCredentials = nextPartial.oauthCredentials && typeof nextPartial.oauthCredentials === "object" ? normalizeOAuthCredentials(nextPartial.oauthCredentials) : store.settings.oauthCredentials;
       const authMode = normalizeAuthMode(nextPartial.authMode ?? store.settings.authMode);
       const aiProvider = normalizeProviderForAuthMode(
@@ -130953,7 +131054,9 @@ function createOnhandBrowserRuntime(host) {
         aiApiKey: typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey.trim() : store.settings.aiApiKey,
         aiApiKeys: normalizeApiKeys(nextPartial.aiApiKeys ?? store.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store.settings.aiApiKey),
         authMode,
-        oauthCredentials: nextOAuthCredentials
+        oauthCredentials: nextOAuthCredentials,
+        diagnosticsEnabled: Boolean(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled),
+        diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId
       };
       const session = store.sessions[store.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
@@ -130961,6 +131064,12 @@ function createOnhandBrowserRuntime(host) {
       await saveStore(store, { sessions: [session] });
       uiState = createEmptyState(session, store.settings);
       uiState.messages = buildConversationMessages(session.messages);
+      if (!wasDiagnosticsEnabled && store.settings.diagnosticsEnabled) {
+        void trackExtensionEvent("diagnostics_enabled", { result: "ok" }).catch(() => {
+        });
+      }
+      void trackExtensionEvent("settings_saved", { result: "ok" }).catch(() => {
+      });
       return await getPublicSettings();
     },
     async signIn(request = {}) {
@@ -131108,6 +131217,8 @@ function createOnhandBrowserRuntime(host) {
       store.currentSessionId = session.id;
       await saveStore(store, { sessions: [session] });
       uiState = createEmptyState(session, store.settings);
+      void trackExtensionEvent("session_started", { result: "ok" }).catch(() => {
+      });
       return {
         created: { cancelled: false },
         currentSession: buildSessionState(session)
@@ -131230,6 +131341,12 @@ function createOnhandBrowserRuntime(host) {
       await publishState(
         targetSessionId === store.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
       );
+      void trackExtensionEvent("session_restored", {
+        result: restored.some((page) => Array.isArray(page?.failures) && page.failures.length) ? "partial" : "ok",
+        action_count: restoredAnnotations,
+        artifact_count: restoredPages.length
+      }).catch(() => {
+      });
       return {
         restored,
         restoredPages,
@@ -131272,6 +131389,8 @@ function createOnhandBrowserRuntime(host) {
         learningMode
       };
       await publishState({ status: "Starting Onhand..." });
+      void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {
+      });
       try {
         const learningFollowup = learningMode ? buildLearningCheckFollowup(prompt, session.learnerState) : null;
         if (learningFollowup) {

@@ -23,6 +23,7 @@ interface RuntimeHost {
 	log?: (...args: unknown[]) => void;
 	notifyAuthProgress?: (event: BrowserOAuthProgressEvent) => void;
 	resolveModel?: (provider: string, model: string) => any;
+	runtimeRevision?: string;
 }
 
 interface RuntimeSession {
@@ -48,6 +49,8 @@ interface RuntimeSettings {
 	aiApiKeys: Record<string, string>;
 	authMode: "api-key" | "oauth";
 	oauthCredentials: Record<string, BrowserOAuthCredentials>;
+	diagnosticsEnabled: boolean;
+	diagnosticsClientId: string;
 }
 
 type SpeedMode = "auto" | "fast" | "deep";
@@ -257,6 +260,22 @@ const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
 const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
+	"diagnostics_enabled",
+	"extension_installed",
+	"extension_updated",
+	"options_opened",
+	"settings_saved",
+	"sidepanel_opened",
+	"sidepanel_closed",
+	"prompt_submitted",
+	"prompt_succeeded",
+	"prompt_failed",
+	"prompt_stopped",
+	"session_started",
+	"session_restored",
+	"session_restore_failed",
+]);
 const SUPPORTED_API_PROVIDERS: Record<
 	string,
 	{ id: string; name: string; defaultModel: string; keyLabel: string; keyPlaceholder: string; keyPrefix?: string; realtime: boolean; keyless?: boolean }
@@ -350,6 +369,8 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	aiApiKeys: {},
 	authMode: "oauth",
 	oauthCredentials: {},
+	diagnosticsEnabled: false,
+	diagnosticsClientId: "",
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -1656,6 +1677,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		learningMode: settings.learningMode,
 		realtimeVoiceEnabled: settings.realtimeVoiceEnabled,
 		speedMode: settings.speedMode,
+		diagnosticsEnabled: settings.diagnosticsEnabled,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -4931,6 +4953,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				aiApiKeys: normalizeApiKeys(rawSettings.aiApiKeys, rawSettings.aiApiKey),
 				authMode,
 				oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
+				diagnosticsEnabled: Boolean(rawSettings.diagnosticsEnabled),
+				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
 			};
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
@@ -4988,6 +5012,77 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			} catch {}
 			throw error;
 		}
+	}
+
+	function compactTelemetryValue(value: unknown, maxLength = 120) {
+		return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+	}
+
+	function finiteTelemetryNumber(value: unknown) {
+		const number = Number(value);
+		return Number.isFinite(number) ? number : 0;
+	}
+
+	function telemetryEventData(settings: RuntimeSettings, data: Record<string, unknown> = {}) {
+		return {
+			auth_mode: compactTelemetryValue(settings.authMode, 40),
+			ai_provider: compactTelemetryValue(settings.aiProvider, 80),
+			ai_model: compactTelemetryValue(settings.aiModel, 120),
+			realtime_voice_enabled: Boolean(settings.realtimeVoiceEnabled),
+			learning_mode: Boolean(settings.learningMode),
+			result: compactTelemetryValue(data.result, 48),
+			status: finiteTelemetryNumber(data.status),
+			duration_ms: finiteTelemetryNumber((data as any).duration_ms ?? (data as any).durationMs),
+			body_bytes: finiteTelemetryNumber((data as any).body_bytes ?? (data as any).bodyBytes),
+			action_count: finiteTelemetryNumber((data as any).action_count ?? (data as any).actionCount),
+			artifact_count: finiteTelemetryNumber((data as any).artifact_count ?? (data as any).artifactCount),
+			error_kind: compactTelemetryValue((data as any).error_kind ?? (data as any).errorKind, 80),
+		};
+	}
+
+	function classifyTelemetryError(error: unknown) {
+		const message = compactTelemetryValue((error as any)?.message || error, 240).toLowerCase();
+		if (!message) return "";
+		if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
+		if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
+		if (/network|fetch|connection|offline|reach/.test(message)) return "network";
+		if (/model|provider|upstream|openrouter|openai|anthropic|gemini/.test(message)) return "provider";
+		if (/aborted|cancelled|stopped/.test(message)) return "aborted";
+		if (/permission|debugger|side panel|tab|chrome/.test(message)) return "browser_permission";
+		return "runtime_error";
+	}
+
+	async function ensureDiagnosticsClientId(store: any) {
+		const settings = store.settings as RuntimeSettings;
+		if (settings.diagnosticsClientId) return settings.diagnosticsClientId;
+		settings.diagnosticsClientId = crypto.randomUUID();
+		store.settings = settings;
+		await saveStore(store, {});
+		return settings.diagnosticsClientId;
+	}
+
+	async function trackExtensionEvent(eventName: string, data: Record<string, unknown> = {}) {
+		const name = compactTelemetryValue(eventName, 80);
+		if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
+		const store = await loadStore();
+		const settings = store.settings as RuntimeSettings;
+		if (!settings.diagnosticsEnabled) return false;
+		const clientId = await ensureDiagnosticsClientId(store);
+		const baseUrl = await getFreeTierBaseUrl();
+		const manifest = chrome.runtime?.getManifest?.() || {};
+		const payload = {
+			event_name: name,
+			client_id: clientId,
+			extension_version: compactTelemetryValue(manifest.version, 40),
+			runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
+			data: telemetryEventData(settings, data),
+		};
+		await fetch(`${baseUrl}/telemetry`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		}).catch(() => {});
+		return true;
 	}
 
 	async function getCurrentSession() {
@@ -5463,6 +5558,15 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
 			activeRequestId: null,
 		});
+		const startedAtMs = Date.parse(activeRequest.createdAt || "");
+		const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
+		void trackExtensionEvent(telemetryEventName, {
+			result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok",
+			duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
+			action_count: activeRequest.pageActions?.length || 0,
+			artifact_count: activeRequest.artifactIds?.length || 0,
+			error_kind: finalError ? classifyTelemetryError(finalError) : "",
+		}).catch(() => {});
 		activeAgent = null;
 		activeRequest = null;
 	}
@@ -6820,6 +6924,10 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			return await getPublicSettings();
 		},
 
+		async trackEvent(eventName: string, data: Record<string, unknown> = {}) {
+			return { tracked: await trackExtensionEvent(eventName, data) };
+		},
+
 		async getOpenAIRealtimeCredential() {
 			const store = await loadStore();
 			const settings = store.settings as RuntimeSettings;
@@ -6839,6 +6947,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 		async updateSettings(partial: Partial<RuntimeSettings>) {
 			const store = await loadStore();
 			const nextPartial = partial || {};
+			const wasDiagnosticsEnabled = Boolean(store.settings.diagnosticsEnabled);
 			const nextOAuthCredentials =
 				nextPartial.oauthCredentials && typeof nextPartial.oauthCredentials === "object"
 					? normalizeOAuthCredentials(nextPartial.oauthCredentials)
@@ -6866,6 +6975,8 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				aiApiKeys: normalizeApiKeys((nextPartial as any).aiApiKeys ?? store.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store.settings.aiApiKey),
 				authMode,
 				oauthCredentials: nextOAuthCredentials,
+				diagnosticsEnabled: Boolean(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled),
+				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
 			};
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
@@ -6873,6 +6984,10 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			await saveStore(store, { sessions: [session] });
 			uiState = createEmptyState(session, store.settings);
 			uiState.messages = buildConversationMessages(session.messages);
+			if (!wasDiagnosticsEnabled && store.settings.diagnosticsEnabled) {
+				void trackExtensionEvent("diagnostics_enabled", { result: "ok" }).catch(() => {});
+			}
+			void trackExtensionEvent("settings_saved", { result: "ok" }).catch(() => {});
 			return await getPublicSettings();
 		},
 
@@ -7033,6 +7148,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			store.currentSessionId = session.id;
 			await saveStore(store, { sessions: [session] });
 			uiState = createEmptyState(session, store.settings);
+			void trackExtensionEvent("session_started", { result: "ok" }).catch(() => {});
 			return {
 				created: { cancelled: false },
 				currentSession: buildSessionState(session),
@@ -7172,6 +7288,11 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 					? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] }
 					: { status },
 			);
+			void trackExtensionEvent("session_restored", {
+				result: restored.some((page) => Array.isArray(page?.failures) && page.failures.length) ? "partial" : "ok",
+				action_count: restoredAnnotations,
+				artifact_count: restoredPages.length,
+			}).catch(() => {});
 			return {
 				restored,
 				restoredPages,
@@ -7217,6 +7338,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				learningMode,
 			};
 			await publishState({ status: "Starting Onhand..." });
+			void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {});
 
 			try {
 				const learningFollowup = learningMode ? buildLearningCheckFollowup(prompt, session.learnerState) : null;

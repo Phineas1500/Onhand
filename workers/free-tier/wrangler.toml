@@ -8,9 +8,14 @@ compatibility_date = "2026-05-01"
 binding = "FREE_TIER_KV"
 id = "7b951e234331464bb18b2d62c2d80266"
 
+[[analytics_engine_datasets]]
+binding = "ONHAND_ANALYTICS"
+dataset = "onhand_events"
+
 [vars]
 # A turn is roughly 3-6 model calls; 80 requests is ~15-25 turns/day.
 DAILY_REQUEST_CAP = "80"
 REGISTRATIONS_PER_IP_PER_DAY = "5"
+TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 
 # Secret (never in this file): npx wrangler secret put OPENROUTER_API_KEY
