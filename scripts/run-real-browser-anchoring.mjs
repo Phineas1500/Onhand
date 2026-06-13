@@ -1,18 +1,25 @@
-// Real-browser anchoring test.
+// Real-browser anchoring + restore test.
 //
 // Every anchoring/restore bug this project has hit slipped past the unit
-// suites because they mock chrome.scripting — real DOM ranges, the PDF.js
-// text layer, and the re-find logic are never exercised. This test drives the
-// UNPACKED extension in a real Chromium browser against a generated PDF with
-// controlled, repeated text, and asserts the behaviors that only show up on a
-// live surface: highlight + re-find, occurrence disambiguation by stored
-// context, context-anchored recovery of drifted text, and backward-compatible
-// occurrence selection.
+// suites because they mock chrome.scripting, so real DOM ranges, the PDF.js
+// text layer, the native PDF-viewer frame, and the restore orchestration are
+// never exercised. This test drives the UNPACKED extension in a real Chromium
+// browser against a generated PDF with controlled repeated text.
+//
+// Two groups run:
+//   1. Anchoring: highlight + re-find, occurrence disambiguation by stored
+//      context, context-anchored recovery of drifted text, backward-compatible
+//      Nth-occurrence selection.
+//   2. Restore cycle: seed a session + artifact into IndexedDB, relaunch the
+//      browser on the same profile (fresh service worker reads it from disk),
+//      and "Restore pages" — asserting the artifact replays onto the live
+//      viewer with the right occurrence and ZERO failures (the artifact carries
+//      a scroll position so the native-viewer-frame scroll-restore step, whose
+//      benign access error used to be miscounted as a failure, is exercised).
 //
 // Usage:   node scripts/run-real-browser-anchoring.mjs
-// Browser: ONHAND_TEST_BROWSER=/path/to/chromium  (defaults to Helium; the
-//          branded Chrome 137+ dropped --load-extension, so a Chromium fork is
-//          required). SKIPS (exit 0) when no usable browser is found.
+// Browser: ONHAND_TEST_BROWSER=/path/to/chromium (defaults to Helium; branded
+//          Chrome dropped --load-extension). SKIPS (exit 0) when none is found.
 import WebSocket from "ws";
 import http from "node:http";
 import assert from "node:assert/strict";
@@ -26,7 +33,7 @@ import { fileURLToPath } from "node:url";
 const EXT_DIR = fileURLToPath(new URL("../packages/browser-extension", import.meta.url));
 const CDP_PORT = Number(process.env.ONHAND_TEST_CDP_PORT || 9343);
 const EXT_ID_FALLBACK = "hpjpjeehgbloadhdidmecpijppodibim";
-const OVERALL_TIMEOUT_MS = 120000;
+const VERBOSE = Boolean(process.env.ONHAND_TEST_VERBOSE);
 
 const BROWSER_CANDIDATES = [
 	process.env.ONHAND_TEST_BROWSER,
@@ -37,11 +44,13 @@ const BROWSER_CANDIDATES = [
 ].filter(Boolean);
 
 function findBrowser() {
-	for (const candidate of BROWSER_CANDIDATES) {
-		if (existsSync(candidate)) return candidate;
-	}
+	for (const candidate of BROWSER_CANDIDATES) if (existsSync(candidate)) return candidate;
 	return null;
 }
+
+const stage = (label) => VERBOSE && console.log(`  [stage] ${label}`);
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const compact = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 // --- Minimal single-page text PDF generator (no dependencies) ---------------
 function pdfEscape(value) {
@@ -117,8 +126,6 @@ class Cdp {
 	}
 }
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 async function waitForCdp(port, timeoutMs = 20000) {
 	const startedAt = Date.now();
 	for (;;) {
@@ -131,9 +138,247 @@ async function waitForCdp(port, timeoutMs = 20000) {
 	}
 }
 
+function launchBrowser(profile, port) {
+	return spawn(
+		findBrowser(),
+		[
+			`--user-data-dir=${profile}`,
+			`--load-extension=${EXT_DIR}`,
+			`--disable-extensions-except=${EXT_DIR}`,
+			`--remote-debugging-port=${port}`,
+			"--no-first-run",
+			"--no-default-browser-check",
+			"--window-size=1200,1000",
+			"about:blank",
+		],
+		{ stdio: "ignore", detached: false },
+	);
+}
+
+// Open a driver page inside the extension origin (for chrome.runtime) and a
+// matching set of helpers bound to it.
+async function openContext(port) {
+	const version = await waitForCdp(port);
+	const cdp = new Cdp(await connect(version.webSocketDebuggerUrl));
+	const targets = (await cdp.send("Target.getTargets")).targetInfos;
+	const sw = targets.find((t) => t.type === "service_worker" && /chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
+	const extId = sw ? new URL(sw.url).host : EXT_ID_FALLBACK;
+	const driverUrl = `chrome-extension://${extId}/pdf-viewer.html?driver=1`;
+	const { targetId } = await cdp.send("Target.createTarget", { url: driverUrl, background: true });
+	const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+	await delay(900);
+	const evalIn = async (sid, expression) => {
+		const res = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sid);
+		if (res.exceptionDetails) throw new Error(`page exception: ${res.exceptionDetails.exception?.description || res.exceptionDetails.text}`);
+		return res.result?.value;
+	};
+	const driverEval = (expression) => evalIn(sessionId, expression);
+	const sendMessage = (payload) => driverEval(`chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
+	const tool = (name, args) => sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
+	return { cdp, extId, evalIn, driverEval, sendMessage, tool };
+}
+
+async function openFixtureInViewer(ctx, pdfUrl) {
+	stage("opening pdf in viewer");
+	await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
+	await delay(2500);
+	await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
+	await delay(2500);
+	const listTabs = await ctx.tool("browser_list_tabs", {});
+	const tabs = (listTabs?.result?.windows || []).flatMap((w) => w.tabs || []);
+	const pdfTab = tabs.find((t) => String(t.url || "").includes("/fixture.pdf"));
+	assert.ok(pdfTab, "fixture PDF tab should be open");
+	return pdfTab.id;
+}
+
+async function waitForViewerSession(ctx) {
+	stage("waiting for viewer text layer");
+	for (let attempt = 0; attempt < 50; attempt += 1) {
+		try {
+			const all = (await ctx.cdp.send("Target.getTargets")).targetInfos;
+			const frame = all.find((t) => (t.type === "iframe" || t.type === "page") && /pdf-viewer\.html\?url=/.test(t.url));
+			if (frame) {
+				const attached = await ctx.cdp.send("Target.attachToTarget", { targetId: frame.targetId, flatten: true });
+				const ready = await ctx.evalIn(attached.sessionId, "document.querySelectorAll('.textLayer span').length");
+				if (Number(ready) > 0) {
+					stage("viewer ready");
+					return attached.sessionId;
+				}
+			}
+		} catch {
+			// frame navigated/closed mid-render; retry
+		}
+		await delay(500);
+	}
+	throw new Error("inline PDF viewer text layer did not render");
+}
+
+// --- Group 1: anchoring ------------------------------------------------------
+async function runAnchoringGroup(pdfUrl, profile) {
+	const child = launchBrowser(profile, CDP_PORT);
+	try {
+		const ctx = await openContext(CDP_PORT);
+		const tabId = await openFixtureInViewer(ctx, pdfUrl);
+		const viewerSession = await waitForViewerSession(ctx);
+		const clearAnnotations = () =>
+			ctx.evalIn(viewerSession, "(()=>{document.querySelectorAll('[data-onhand-annotation-id]').forEach(e=>e.remove());return true})()");
+		const highlight = async (text, opts = {}) => {
+			const res = await ctx.tool("browser_highlight_text", { tabId, text, clearExisting: true, ...opts });
+			return { ok: Boolean(res?.ok), annotation: res?.result?.annotation || null };
+		};
+
+		// 1: basic highlight + re-find by anchor
+		const unique = await highlight("UNIQUESENTINEL phrase");
+		assert.ok(unique.ok && unique.annotation, "unique phrase should highlight");
+		assert.ok(compact(unique.annotation.matchedText).includes("uniquesentinelphrase"), "unique highlight should match");
+		await clearAnnotations();
+		const uniqueRefind = await highlight("UNIQUESENTINEL phrase", { pdfAnchor: unique.annotation.pdfAnchor });
+		assert.ok(uniqueRefind.ok && compact(uniqueRefind.annotation.matchedText).includes("uniquesentinelphrase"), "unique phrase should re-find by anchor");
+
+		// 2: occurrence disambiguation by stored context
+		await clearAnnotations();
+		const occ3 = await highlight("GAMMA marker", { occurrence: 3 });
+		assert.ok(occ3.ok, "third occurrence should highlight");
+		assert.ok(compact(occ3.annotation.pdfAnchor?.textQuote?.prefix).includes("shows"), "occurrence 3 anchor should capture its context");
+		await clearAnnotations();
+		const disambiguated = await highlight("GAMMA marker", { occurrence: 1, pdfAnchor: occ3.annotation.pdfAnchor });
+		assert.ok(disambiguated.ok, "context re-find should succeed");
+		assert.ok(compact(disambiguated.annotation.pdfAnchor?.textQuote?.prefix).includes("shows"), "context should override occurrence=1 and re-anchor on occurrence 3");
+		assert.ok(!compact(disambiguated.annotation.pdfAnchor?.textQuote?.prefix).includes("introduces"), "context re-find must not land on occurrence 1");
+
+		// 3: context-anchored recovery of drifted exact text
+		await clearAnnotations();
+		const recovered = await highlight("GAMMA markerDRIFTED", { occurrence: 1, pdfAnchor: occ3.annotation.pdfAnchor });
+		assert.ok(recovered.ok, "drifted text should recover via context");
+		assert.equal(compact(recovered.annotation.matchedText), "gammamarker", "recovery should land on the real passage");
+		assert.ok(compact(recovered.annotation.pdfAnchor?.textQuote?.prefix).includes("shows"), "recovery should land at the context-matching occurrence");
+
+		// 4: backward-compatible Nth-occurrence selection (no context)
+		await clearAnnotations();
+		const occ2 = await highlight("GAMMA marker", { occurrence: 2 });
+		assert.ok(occ2.ok, "second occurrence should highlight without context");
+		assert.ok(compact(occ2.annotation.pdfAnchor?.textQuote?.prefix).includes("revisits"), "no-context highlight should honor the Nth occurrence");
+	} finally {
+		try {
+			child.kill("SIGKILL");
+		} catch {}
+	}
+}
+
+// --- Group 2: full session restore cycle ------------------------------------
+function seedExpression(pdfUrl) {
+	const now = new Date().toISOString();
+	const sessionId = "seed-session-anchor-test";
+	const artifactId = "seed-artifact-anchor-test";
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: { url: pdfUrl, title: "fixture" },
+		pageNumber: 1,
+		matchedText: "GAMMA marker",
+		// occurrence is deliberately 1 while the context points at occurrence 3,
+		// so a correct restore must use context to re-anchor on occurrence 3.
+		occurrence: 1,
+		textQuote: { exact: "GAMMA marker", prefix: "Section kappa finally shows the", suffix: "among final listed items" },
+		rects: [],
+	};
+	const artifact = {
+		id: artifactId,
+		createdAt: now,
+		updatedAt: now,
+		sessionId,
+		label: "seeded fixture",
+		tab: { id: 0, title: "fixture", url: pdfUrl },
+		page: {
+			title: "fixture",
+			url: pdfUrl,
+			// a scroll position so restore runs its scroll-restore step, which
+			// must script the native PDF-viewer frame and whose benign access
+			// error must not count as a failure.
+			scrollY: 240,
+			annotations: [{ annotationId: "seed-ann-1", kind: "pdf", matchedText: "GAMMA marker", pdfAnchor, note: { text: "Seeded restore note", label: "Onhand" } }],
+		},
+	};
+	const session = {
+		id: sessionId,
+		name: "seed",
+		createdAt: now,
+		updatedAt: now,
+		messages: [],
+		turns: [],
+		pageActions: [],
+		artifactIds: [artifactId],
+		learnerState: null,
+	};
+	return `(async () => {
+		const session = ${JSON.stringify(session)};
+		const artifact = ${JSON.stringify(artifact)};
+		const db = await new Promise((res, rej) => { const r = indexedDB.open('onhandBrowserRuntime'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+		const put = (storeName, value) => new Promise((res, rej) => { const tx = db.transaction(storeName, 'readwrite'); tx.objectStore(storeName).put(value); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+		await put('runtimeSessions', session);
+		await put('browserArtifacts', artifact);
+		const existing = (await chrome.storage.local.get('onhandBrowserRuntime')).onhandBrowserRuntime || {};
+		await chrome.storage.local.set({ onhandBrowserRuntime: { settings: existing.settings || {}, currentSessionId: ${JSON.stringify(sessionId)} } });
+		return 'seeded';
+	})()`;
+}
+
+async function runRestoreCycleGroup(pdfUrl, profile) {
+	// Phase 1: ensure the runtime DB/stores exist, then seed a session+artifact.
+	stage("restore phase 1: seed");
+	let child = launchBrowser(profile, CDP_PORT);
+	try {
+		const ctx = await openContext(CDP_PORT);
+		await ctx.sendMessage({ type: "get-status" }); // makes loadStore create the DB + stores
+		await delay(400);
+		const seeded = await ctx.driverEval(seedExpression(pdfUrl));
+		assert.equal(seeded, "seeded", "session + artifact should seed into IndexedDB");
+	} finally {
+		try {
+			child.kill("SIGKILL");
+		} catch {}
+	}
+	await delay(1500); // let the profile lock release before relaunch
+
+	// Phase 2: fresh service worker reads the seed from disk; restore it.
+	stage("restore phase 2: relaunch + restore");
+	child = launchBrowser(profile, CDP_PORT);
+	try {
+		const ctx = await openContext(CDP_PORT);
+		await openFixtureInViewer(ctx, pdfUrl);
+		const viewerSession = await waitForViewerSession(ctx);
+
+		const restore = await ctx.sendMessage({ type: "sidebar:restore-session" });
+		assert.ok(restore?.ok, "restore-session should succeed");
+		const pages = Array.isArray(restore.restoredPages) ? restore.restoredPages : [];
+		const totalFailures = pages.reduce((sum, p) => sum + Number(p?.failedCount || 0), 0);
+		const totalAnnotations = pages.reduce((sum, p) => sum + Number(p?.restoredAnnotations || 0), 0);
+		const totalNotes = pages.reduce((sum, p) => sum + Number(p?.restoredNotes || 0), 0);
+		assert.equal(totalFailures, 0, `restore should report zero failures (got ${JSON.stringify(pages.map((p) => p?.failures))})`);
+		assert.ok(totalAnnotations >= 1, "restore should report the highlight restored");
+		assert.ok(totalNotes >= 1, "restore should report the note restored");
+
+		// The highlight must actually be live in the viewer, at occurrence 3
+		// (context overriding the stored occurrence=1).
+		await delay(800);
+		const live = await ctx.evalIn(
+			viewerSession,
+			`(()=>{const els=[...document.querySelectorAll('[data-onhand-highlight-kind="pdf"]')];return JSON.stringify(els.map(e=>{let a={};try{a=JSON.parse(e.getAttribute('data-onhand-pdf-anchor')||'{}')}catch{};return {text:e.getAttribute('data-onhand-matched-text')||'',prefix:(a.textQuote||{}).prefix||''}}))})()`,
+		);
+		const highlights = JSON.parse(live || "[]");
+		assert.ok(highlights.length >= 1, "the restored highlight should be present in the viewer DOM");
+		const gamma = highlights.find((h) => compact(h.text) === "gammamarker");
+		assert.ok(gamma, "the restored highlight should match the seeded passage");
+		assert.ok(compact(gamma.prefix).includes("shows"), "restore should re-anchor on occurrence 3 via context, not the stored occurrence 1");
+	} finally {
+		try {
+			child.kill("SIGKILL");
+		} catch {}
+	}
+}
+
 async function run() {
-	const browserBinary = findBrowser();
-	if (!browserBinary) {
+	if (!findBrowser()) {
 		console.log("SKIPPED: no Chromium-based browser found (set ONHAND_TEST_BROWSER). Real-browser anchoring test not run.");
 		return "skipped";
 	}
@@ -148,155 +393,35 @@ async function run() {
 		res.writeHead(404).end("not found");
 	});
 	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const pdfPort = server.address().port;
-	const pdfUrl = `http://127.0.0.1:${pdfPort}/fixture.pdf`;
+	const pdfUrl = `http://127.0.0.1:${server.address().port}/fixture.pdf`;
 
-	const profile = await mkdtemp(join(tmpdir(), "onhand-anchor-test-"));
-	const child = spawn(
-		browserBinary,
-		[
-			`--user-data-dir=${profile}`,
-			`--load-extension=${EXT_DIR}`,
-			`--disable-extensions-except=${EXT_DIR}`,
-			`--remote-debugging-port=${CDP_PORT}`,
-			"--no-first-run",
-			"--no-default-browser-check",
-			"--window-size=1200,1000",
-			"about:blank",
-		],
-		{ stdio: "ignore", detached: false },
-	);
-
-	let cdp = null;
-	let timer = null;
+	const anchoringProfile = await mkdtemp(join(tmpdir(), "onhand-anchor-test-"));
+	const restoreProfile = await mkdtemp(join(tmpdir(), "onhand-restore-test-"));
 	try {
-		await new Promise((resolve, reject) => {
-			timer = setTimeout(() => reject(new Error("Overall timeout")), OVERALL_TIMEOUT_MS);
-			runAssertions(child, pdfUrl)
-				.then(resolve)
-				.catch(reject)
-				.finally(() => clearTimeout(timer));
-		});
-		console.log("Real-browser anchoring test: PASS");
+		await runAnchoringGroup(pdfUrl, anchoringProfile);
+		console.log("Real-browser anchoring group: PASS");
+		await runRestoreCycleGroup(pdfUrl, restoreProfile);
+		console.log("Real-browser restore-cycle group: PASS");
 		return "passed";
 	} finally {
-		try {
-			child.kill("SIGKILL");
-		} catch {}
 		server.close();
-		await rm(profile, { recursive: true, force: true }).catch(() => {});
-	}
-
-	async function runAssertions() {
-		const version = await waitForCdp(CDP_PORT);
-		cdp = new Cdp(await connect(version.webSocketDebuggerUrl));
-
-		// Resolve the extension id from its background worker, falling back to
-		// the path-derived id (the worker may be dormant until first message).
-		const targets = (await cdp.send("Target.getTargets")).targetInfos;
-		const sw = targets.find((t) => t.type === "service_worker" && /chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
-		const extId = sw ? new URL(sw.url).host : EXT_ID_FALLBACK;
-
-		// A driver page inside the extension origin gives us chrome.runtime.
-		const driverUrl = `chrome-extension://${extId}/pdf-viewer.html?driver=1`;
-		const { targetId } = await cdp.send("Target.createTarget", { url: driverUrl, background: true });
-		const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-		await delay(900);
-		const stage = (label) => process.env.ONHAND_TEST_VERBOSE && console.log(`  [stage] ${label}`);
-
-		const evalIn = async (sid, expression) => {
-			const res = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sid);
-			if (res.exceptionDetails) throw new Error(`page exception: ${res.exceptionDetails.exception?.description || res.exceptionDetails.text}`);
-			return res.result?.value;
-		};
-		const sendMessage = (payload) => evalIn(sessionId, `chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
-		const tool = (name, args) => sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
-
-		// Open the fixture PDF in the Onhand viewer (the first call can report a
-		// transient miss; the second reuses the freshly created tab).
-		stage("opening pdf in viewer");
-		await tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
-		await delay(2500);
-		await tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
-		await delay(2500);
-
-		stage("listing tabs");
-		const listTabs = await tool("browser_list_tabs", {});
-		const tabs = (listTabs?.result?.windows || []).flatMap((w) => w.tabs || []);
-		const pdfTab = tabs.find((t) => String(t.url || "").includes("/fixture.pdf"));
-		assert.ok(pdfTab, "fixture PDF tab should be open");
-		const tabId = pdfTab.id;
-
-		// Attach to the inline viewer iframe (pdf-viewer.html?url=...), distinct
-		// from the ?driver=1 page, and wait for its text layer to render. The
-		// frame is re-created as PDF.js renders, so re-resolve it each attempt.
-		stage("waiting for viewer text layer");
-		let viewerSession = null;
-		for (let attempt = 0; attempt < 50 && !viewerSession; attempt += 1) {
-			try {
-				const all = (await cdp.send("Target.getTargets")).targetInfos;
-				const frame = all.find((t) => (t.type === "iframe" || t.type === "page") && /pdf-viewer\.html\?url=/.test(t.url));
-				if (frame) {
-					const attached = await cdp.send("Target.attachToTarget", { targetId: frame.targetId, flatten: true });
-					const ready = await evalIn(attached.sessionId, "document.querySelectorAll('.textLayer span').length");
-					if (Number(ready) > 0) viewerSession = attached.sessionId;
-				}
-			} catch {
-				// frame navigated/closed mid-render; retry
-			}
-			if (!viewerSession) await delay(500);
-		}
-		assert.ok(viewerSession, "inline PDF viewer text layer should render");
-		stage("viewer ready");
-
-		const clearAnnotations = () =>
-			evalIn(viewerSession, "(()=>{document.querySelectorAll('[data-onhand-annotation-id]').forEach(e=>e.remove());return true})()");
-		const compact = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-		const highlight = async (text, opts = {}) => {
-			const res = await tool("browser_highlight_text", { tabId, text, clearExisting: true, ...opts });
-			return { ok: Boolean(res?.ok), annotation: res?.result?.annotation || null };
-		};
-
-		// --- Test 1: basic highlight + re-find by anchor ---
-		const unique = await highlight("UNIQUESENTINEL phrase");
-		assert.ok(unique.ok && unique.annotation, "unique phrase should highlight");
-		assert.ok(compact(unique.annotation.matchedText).includes("uniquesentinelphrase"), "unique highlight should match the phrase");
-		await clearAnnotations();
-		const uniqueRefind = await highlight("UNIQUESENTINEL phrase", { pdfAnchor: unique.annotation.pdfAnchor });
-		assert.ok(uniqueRefind.ok && compact(uniqueRefind.annotation.matchedText).includes("uniquesentinelphrase"), "unique phrase should re-find by anchor");
-
-		// --- Test 2: occurrence disambiguation by stored context ---
-		await clearAnnotations();
-		const occ3 = await highlight("GAMMA marker", { occurrence: 3 });
-		assert.ok(occ3.ok, "third occurrence should highlight");
-		const occ3Prefix = compact(occ3.annotation.pdfAnchor?.textQuote?.prefix);
-		assert.ok(occ3Prefix.includes("shows"), `occurrence 3 anchor context should reference its surroundings (got prefix ${JSON.stringify(occ3.annotation.pdfAnchor?.textQuote?.prefix)})`);
-		await clearAnnotations();
-		// occurrence reset to 1 (the restore default) but with occurrence-3's
-		// context: context must override and land on occurrence 3, not 1.
-		const disambiguated = await highlight("GAMMA marker", { occurrence: 1, pdfAnchor: occ3.annotation.pdfAnchor });
-		assert.ok(disambiguated.ok, "context re-find should succeed");
-		const disambiguatedPrefix = compact(disambiguated.annotation.pdfAnchor?.textQuote?.prefix);
-		assert.ok(disambiguatedPrefix.includes("shows"), "context should override occurrence=1 and re-anchor on occurrence 3");
-		assert.ok(!disambiguatedPrefix.includes("introduces"), "context re-find must not land on occurrence 1");
-
-		// --- Test 3: context-anchored recovery of drifted exact text ---
-		await clearAnnotations();
-		const recovered = await highlight("GAMMA markerDRIFTED", { occurrence: 1, pdfAnchor: occ3.annotation.pdfAnchor });
-		assert.ok(recovered.ok, "drifted text should recover via context");
-		assert.equal(compact(recovered.annotation.matchedText), "gammamarker", "recovery should land on the real passage");
-		assert.ok(compact(recovered.annotation.pdfAnchor?.textQuote?.prefix).includes("shows"), "recovery should land at the context-matching occurrence");
-
-		// --- Test 4: backward-compatible occurrence selection (no context) ---
-		await clearAnnotations();
-		const occ2 = await highlight("GAMMA marker", { occurrence: 2 });
-		assert.ok(occ2.ok, "second occurrence should highlight without context");
-		assert.ok(compact(occ2.annotation.pdfAnchor?.textQuote?.prefix).includes("revisits"), "no-context highlight should honor the Nth occurrence");
+		await rm(anchoringProfile, { recursive: true, force: true }).catch(() => {});
+		await rm(restoreProfile, { recursive: true, force: true }).catch(() => {});
 	}
 }
 
+const OVERALL_TIMEOUT_MS = 240000;
+const timeout = setTimeout(() => {
+	console.error("Real-browser anchoring test: FAIL (overall timeout)");
+	process.exit(1);
+}, OVERALL_TIMEOUT_MS);
+timeout.unref();
+
 run()
-	.then((outcome) => process.exit(outcome === "passed" || outcome === "skipped" ? 0 : 1))
+	.then((outcome) => {
+		if (outcome !== "skipped") console.log("Real-browser anchoring test: PASS");
+		process.exit(0);
+	})
 	.catch((error) => {
 		console.error(`Real-browser anchoring test: FAIL\n${error?.stack || error}`);
 		process.exit(1);
