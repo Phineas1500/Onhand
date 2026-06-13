@@ -1515,6 +1515,53 @@ async function pdfReadPages(options: Record<string, any> = {}) {
 // the page text (rendered or not), slice out the entry for a bracket
 // label like [14], and extract identifiers that resolve to an openable
 // URL (arXiv id, DOI, or a plain link).
+function isPrivateIpv4Address(hostname: string) {
+	const octets = hostname.split(".");
+	if (octets.length !== 4) return false;
+	const numbers = octets.map((part) => Number(part));
+	if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+	const [first, second, third] = numbers;
+	return (
+		first === 0 ||
+		first === 10 ||
+		first === 127 ||
+		(first === 100 && second >= 64 && second <= 127) ||
+		(first === 169 && second === 254) ||
+		(first === 172 && second >= 16 && second <= 31) ||
+		(first === 192 && second === 168) ||
+		(first === 192 && second === 0) ||
+		(first === 192 && second === 0 && third === 2) ||
+		(first === 198 && (second === 18 || second === 19)) ||
+		(first === 198 && second === 51 && third === 100) ||
+		(first === 203 && second === 0 && third === 113) ||
+		first >= 224
+	);
+}
+
+const PUBLIC_CITATION_TLDS = new Set(["com", "org", "net", "edu", "gov", "mil", "int", "io", "ai", "dev", "app", "info", "science", "technology"]);
+
+function hasPublicCitationTld(hostname: string) {
+	const tld = hostname.split(".").pop() || "";
+	return /^[a-z]{2}$/.test(tld) || PUBLIC_CITATION_TLDS.has(tld);
+}
+
+function isSafeCitationUrl(rawUrl: string) {
+	try {
+		const parsed = new URL(String(rawUrl || "").trim());
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+		const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+		if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) return false;
+		if (hostname.includes(":")) return false;
+		const isIpv4 = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+		if (isIpv4) return !isPrivateIpv4Address(hostname);
+		if (!hostname.includes(".") || /\.(local|lan|home|internal|intranet|corp|test|invalid|example|onion)$/i.test(hostname)) return false;
+		if (!hasPublicCitationTld(hostname)) return false;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function extractCitationIdentifiers(entryText: string) {
 	const text = String(entryText || "");
 	// Covers "arXiv:1409.0473", "arxiv.org/abs/1409.0473", and the CoRR
@@ -1525,7 +1572,8 @@ function extractCitationIdentifiers(entryText: string) {
 		text.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/i)?.[1] ||
 		"";
 	const doi = text.match(/\b10\.\d{4,9}\/[^\s,;)\]]+/)?.[0]?.replace(/[.,;]+$/, "") || "";
-	const url = text.match(/https?:\/\/[^\s)\]]+/)?.[0]?.replace(/[.,;]+$/, "") || "";
+	const rawUrl = text.match(/https?:\/\/[^\s)\]]+/)?.[0]?.replace(/[.,;]+$/, "") || "";
+	const url = rawUrl && isSafeCitationUrl(rawUrl) ? rawUrl : "";
 	const suggestedUrl = arxivId ? `https://arxiv.org/pdf/${arxivId}` : url || (doi ? `https://doi.org/${doi}` : "");
 	return {
 		...(arxivId ? { arxivId } : {}),
