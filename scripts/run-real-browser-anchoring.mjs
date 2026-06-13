@@ -174,20 +174,26 @@ async function openContext(port) {
 	};
 	const driverEval = (expression) => evalIn(sessionId, expression);
 	const sendMessage = (payload) => driverEval(`chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
-	const tool = (name, args) => sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
+	const tool = async (name, args) => {
+		const response = await sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
+		if (!response?.ok) throw new Error(response?.error || `Could not run ${name}`);
+		return response;
+	};
 	return { cdp, extId, evalIn, driverEval, sendMessage, tool };
 }
 
 async function openFixtureInViewer(ctx, pdfUrl) {
 	stage("opening pdf in viewer");
-	await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
+	let openResponse = null;
+	openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl });
 	await delay(2500);
-	await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl }).catch(() => {});
-	await delay(2500);
-	const listTabs = await ctx.tool("browser_list_tabs", {});
-	const tabs = (listTabs?.result?.windows || []).flatMap((w) => w.tabs || []);
-	const pdfTab = tabs.find((t) => String(t.url || "").includes("/fixture.pdf"));
-	assert.ok(pdfTab, "fixture PDF tab should be open");
+	if (!openResponse?.result?.viewerReady?.ready) {
+		openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl });
+		await delay(2500);
+	}
+	const pdfTab = openResponse?.result?.tab;
+	assert.ok(pdfTab?.id, `fixture PDF tab should be open: ${JSON.stringify(openResponse)}`);
+	assert.match(String(pdfTab.url || ""), /\/fixture\.pdf|pdf-viewer\.html\?url=/, "fixture PDF tab should point at the fixture PDF or Onhand viewer");
 	return pdfTab.id;
 }
 
