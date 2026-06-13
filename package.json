@@ -29,6 +29,7 @@
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
+    "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs"
   },
   "dependencies": {
