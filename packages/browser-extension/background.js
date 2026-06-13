@@ -7278,7 +7278,8 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		) {
 			throw scriptError;
 		}
-		if (isRestrictedScriptingError(scriptError)) {
+		const mainFrameScriptingRestricted = isRestrictedScriptingError(scriptError);
+		if (mainFrameScriptingRestricted) {
 			log("Page toolkit main-frame scripting was restricted; trying PDF viewer frame", methodName, tab?.url, scriptError?.message || String(scriptError));
 		}
 		let readerFrameFallbackError = null;
@@ -7304,6 +7305,17 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			} catch (frameError) {
 				onhandFrameFallbackError = frameError;
 			}
+		}
+		if (mainFrameScriptingRestricted) {
+			// Do not convert Chrome's scripting access denial (for example
+			// missing host permission or a protected page) into a whole-tab
+			// debugger evaluation. PDF-looking URLs are only a signal to try
+			// explicit reader/viewer frames; if those frames are absent or fail,
+			// preserve the original browser-enforced access boundary.
+			if (onhandFrameFallbackError && !isMissingOnhandPdfViewerFrameError(onhandFrameFallbackError)) {
+				throw onhandFrameFallbackError;
+			}
+			throw scriptError;
 		}
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
