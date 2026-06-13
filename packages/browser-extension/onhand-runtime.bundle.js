@@ -124340,6 +124340,9 @@ var TAB_MATCH_SCHEMA = {
   titleContains: typebox_exports.Optional(typebox_exports.String({ description: "Case-insensitive substring to match in the tab title" })),
   urlContains: typebox_exports.Optional(typebox_exports.String({ description: "Case-insensitive substring to match in the tab URL" }))
 };
+var READ_TAB_SELECTOR_SCHEMA = {
+  ...TAB_SELECTOR_SCHEMA
+};
 var NAVIGATE_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
   url: typebox_exports.String({ description: "URL to navigate to" }),
@@ -124391,20 +124394,20 @@ var PDF_PAGE_IMAGE_SCHEMA = typebox_exports.Object({
   quality: typebox_exports.Optional(typebox_exports.Number({ description: "JPEG/webp image quality from 0 to 1" }))
 });
 var VISIBLE_TEXT_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   maxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum characters of visible text to return" })),
   maxBlocks: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum visible text blocks to return" }))
 });
 var EXTRACT_CONTENT_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   maxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum characters of readable page content to return" }))
 });
 var VIEWPORT_HEADINGS_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   maxHeadings: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum nearby headings to return" }))
 });
 var CAPTURE_STATE_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   persist: typebox_exports.Optional(typebox_exports.Boolean({ description: "Persist this page capture as a browser-only Onhand artifact" })),
   includeHtml: typebox_exports.Optional(typebox_exports.Boolean({ description: "Persist a full HTML snapshot when persist=true" })),
   includeScreenshot: typebox_exports.Optional(typebox_exports.Boolean({ description: "Persist a screenshot when persist=true" })),
@@ -124434,7 +124437,7 @@ var RUN_JS_SCHEMA = typebox_exports.Object({
   expression: typebox_exports.String({ description: "JavaScript expression to evaluate in the target tab" })
 });
 var DOM_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   maxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum HTML characters to return" }))
 });
 var FIND_ELEMENTS_SCHEMA = typebox_exports.Object({
@@ -124505,13 +124508,13 @@ var NETWORK_SCHEMA = typebox_exports.Object({
   bodyMaxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum characters to keep from each fetched response body" }))
 });
 var SCREENSHOT_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   format: typebox_exports.Optional(typebox_exports.String({ description: "Screenshot format: png or jpeg" })),
   quality: typebox_exports.Optional(typebox_exports.Number({ description: "JPEG quality from 0 to 100" })),
   delayMs: typebox_exports.Optional(typebox_exports.Number({ description: "Delay before screenshot capture" }))
 });
 var VISIBLE_REGION_IMAGE_SCHEMA = typebox_exports.Object({
-  ...TAB_MATCH_SCHEMA,
+  ...READ_TAB_SELECTOR_SCHEMA,
   x: typebox_exports.Optional(typebox_exports.Number({ description: "Viewport x coordinate in CSS pixels. Defaults to 0." })),
   y: typebox_exports.Optional(typebox_exports.Number({ description: "Viewport y coordinate in CSS pixels. Defaults to 0." })),
   width: typebox_exports.Optional(typebox_exports.Number({ description: "Region width in CSS pixels. Defaults to the visible viewport width." })),
@@ -127640,7 +127643,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       "browser_get_selection",
       "Browser Selection",
       "Read the user's current text selection in a browser tab.",
-      typebox_exports.Object({ ...TAB_MATCH_SCHEMA }),
+      typebox_exports.Object({ ...READ_TAB_SELECTOR_SCHEMA }),
       "get_selection"
     ),
     commandTool(

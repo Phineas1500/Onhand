@@ -301,6 +301,17 @@ async function resolveTargetTab(args = {}) {
 	return tab;
 }
 
+function hasTabMatchSelector(args = {}) {
+	return Boolean(String(args.titleContains || "").trim() || String(args.urlContains || "").trim());
+}
+
+async function resolveReadTargetTab(args = {}) {
+	if (hasTabMatchSelector(args)) {
+		throw new Error("Reading page content by titleContains or urlContains is not allowed. Use the active tab or an explicit tabId selected by the user.");
+	}
+	return await resolveTargetTab(args);
+}
+
 function isDebuggerAttachConflict(error) {
 	return /another debugger|already attached/i.test(error?.message || String(error));
 }
@@ -8200,7 +8211,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_dom": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const outerHTML = await getDomOuterHtml(tab.id);
 				return {
@@ -8210,7 +8221,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "extract_content": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const content = await evaluateInTab(
 					tab.id,
@@ -8280,7 +8291,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "capture_state": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const page = await runPageToolkitMethod(tab.id, "captureState");
 				return {
@@ -8290,7 +8301,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_visible_text": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const visible = await runPageToolkitMethod(tab.id, "getVisibleText", {
 					maxChars: args.maxChars,
@@ -8394,7 +8405,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_visible_region_image": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const image = await getVisibleRegionSnapshot(tab.id, args);
 				const data = typeof image.dataUrl === "string" && image.dataUrl.includes(",") ? image.dataUrl.split(",")[1] : "";
@@ -8412,7 +8423,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_selection": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const selection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
 				return {
@@ -8422,7 +8433,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_viewport_headings": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const headings = await runPageToolkitMethod(tab.id, "getViewportHeadings", {
 					maxHeadings: args.maxHeadings,
@@ -8434,7 +8445,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "get_scroll_state": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const scroll = await runPageToolkitMethod(tab.id, "getScrollState");
 				return {
@@ -8603,7 +8614,7 @@ async function handleCommand(name, args = {}) {
 			});
 		}
 		case "capture_screenshot": {
-			const tab = await resolveTargetTab(args);
+			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
 				const screenshot = await captureTabScreenshot(tab.id, args);
 				return {
