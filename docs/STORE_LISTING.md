@@ -150,6 +150,11 @@ started/succeeded/failed event names for this tool; diagnostics never
 include JavaScript expressions, prompts, page content, URLs, screenshots,
 saved sessions, transcripts, or keys.
 
+Onhand bundles its Sentry SDK locally. It does not load the remote Sentry
+loader script in the store build. Sentry receives only redacted crash and
+exception events when anonymous diagnostics are enabled, plus a redacted
+event when the user explicitly clicks "Send anonymized error report".
+
 Onhand should not load or execute remotely hosted JavaScript bundles in
 the store build. The extension package includes its runtime, page tools,
 PDF viewer, and vendor assets. Remote AI APIs and the Onhand Free Worker
@@ -188,6 +193,6 @@ Data use certifications:
 - In direct-provider modes, request content is sent to the provider the
   user selected. In Onhand Free mode, request content goes through
   Onhand's hosted Cloudflare Worker to OpenRouter.
-- Anonymous diagnostics and explicit error reports exclude prompts, page
-  content, URLs, page titles, screenshots, saved sessions, transcripts,
-  and keys.
+- Anonymous diagnostics, Sentry crash events, and explicit error reports
+  exclude prompts, page content, URLs, page titles, screenshots, saved
+  sessions, transcripts, and keys.

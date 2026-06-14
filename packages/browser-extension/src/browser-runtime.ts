@@ -1,6 +1,7 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai";
 import { streamOpenAICodexResponses } from "@earendil-works/pi-ai/openai-codex-responses";
+import * as Sentry from "@sentry/browser";
 import {
 	getBrowserOAuthApiKey,
 	getBrowserOAuthProvider,
@@ -291,6 +292,7 @@ const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 const ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
 const ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
+const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -5017,6 +5019,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let uiState: any | null = null;
 	let activeAgent: Agent | null = null;
 	let activeRequest: any | null = null;
+	let sentryInitialized = false;
+	let sentryDiagnosticsAllowed = false;
+	let sentryExplicitEventAllowance = 0;
 
 	async function loadStore() {
 		if (storePromise) return await storePromise;
@@ -5172,6 +5177,104 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			.replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
 		if (text.length <= maxLength) return text;
 		return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+	}
+
+	function sentryRelease() {
+		const version = compactTelemetryValue(host.extensionVersion || chrome.runtime?.getManifest?.()?.version || "", 40);
+		return version ? `onhand-extension@${version}` : "onhand-extension";
+	}
+
+	function scrubSentryEvent(event: any) {
+		if (!sentryDiagnosticsAllowed) {
+			if (sentryExplicitEventAllowance <= 0) return null;
+			sentryExplicitEventAllowance -= 1;
+		}
+		delete event.user;
+		delete event.request;
+		delete event.breadcrumbs;
+		delete event.extra;
+		if (event.contexts) event.contexts = event.contexts.onhand ? { onhand: event.contexts.onhand } : {};
+		event.transaction = redactDiagnosticText(event.transaction, 160);
+		if (event.message) event.message = redactDiagnosticText(event.message, 300);
+		const values = Array.isArray(event.exception?.values) ? event.exception.values : [];
+		for (const value of values) {
+			if (value?.value) value.value = redactDiagnosticText(value.value, 500);
+			if (value?.type) value.type = compactTelemetryValue(value.type, 120);
+			const frames = Array.isArray(value?.stacktrace?.frames) ? value.stacktrace.frames : [];
+			for (const frame of frames) {
+				if (frame.filename) frame.filename = redactDiagnosticText(frame.filename, 240);
+				if (frame.abs_path) frame.abs_path = redactDiagnosticText(frame.abs_path, 240);
+				if (frame.function) frame.function = redactDiagnosticText(frame.function, 160);
+				delete frame.context_line;
+				delete frame.pre_context;
+				delete frame.post_context;
+				delete frame.vars;
+			}
+		}
+		return event;
+	}
+
+	function initializeSentryIfNeeded() {
+		if (sentryInitialized) return;
+		Sentry.init({
+			dsn: ONHAND_SENTRY_DSN,
+			release: sentryRelease(),
+			environment: "production",
+			sendDefaultPii: false,
+			maxBreadcrumbs: 0,
+			defaultIntegrations: false,
+			integrations: [
+				Sentry.inboundFiltersIntegration(),
+				Sentry.dedupeIntegration(),
+				Sentry.globalHandlersIntegration({ onerror: true, onunhandledrejection: true }),
+			],
+			beforeBreadcrumb: () => null,
+			beforeSend: scrubSentryEvent,
+			tracesSampleRate: 0,
+			replaysSessionSampleRate: 0,
+			replaysOnErrorSampleRate: 0,
+		});
+		sentryInitialized = true;
+	}
+
+	function setSentryTags(scope: any, settings: RuntimeSettings, kind: string, data: Record<string, unknown> = {}) {
+		scope.setTag("surface", "browser_runtime");
+		scope.setTag("kind", compactTelemetryValue(kind, 80));
+		scope.setTag("extension_version", compactTelemetryValue(host.extensionVersion || "", 40));
+		scope.setTag("runtime_revision", compactTelemetryValue(host.runtimeRevision || "", 80));
+		scope.setTag("auth_mode", compactTelemetryValue(settings.authMode, 40));
+		scope.setTag("ai_provider", compactTelemetryValue(settings.aiProvider, 80));
+		scope.setTag("ai_model", compactTelemetryValue(settings.aiModel, 120));
+		const errorKind = compactTelemetryValue((data as any).error_kind || (data as any).errorKind, 80);
+		if (errorKind) scope.setTag("error_kind", errorKind);
+		const reportId = compactTelemetryValue((data as any).report_id || (data as any).reportId, 80);
+		if (reportId) scope.setTag("cloudflare_report_id", reportId);
+		const messageType = compactTelemetryValue((data as any).message_type || (data as any).messageType, 80);
+		if (messageType) scope.setTag("message_type", messageType);
+	}
+
+	function captureSentryException(error: unknown, settings: RuntimeSettings, kind: string, data: Record<string, unknown> = {}) {
+		const diagnosticsAllowed = Boolean(settings.diagnosticsEnabled);
+		const explicitUserReport = Boolean(data.explicit_user_report);
+		sentryDiagnosticsAllowed = diagnosticsAllowed;
+		if (!diagnosticsAllowed && !explicitUserReport) return false;
+		if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
+		initializeSentryIfNeeded();
+		const message = redactDiagnosticText((error as any)?.message || error || kind, 500);
+		const capturedError = new Error(message || kind);
+		capturedError.name = compactTelemetryValue((error as any)?.name || "Error", 120) || "Error";
+		if ((error as any)?.stack) capturedError.stack = redactDiagnosticText((error as any).stack, 2400);
+		Sentry.withScope((scope) => {
+			setSentryTags(scope, settings, kind, data);
+			scope.setContext("onhand", {
+				learning_mode: Boolean(settings.learningMode),
+				realtime_voice_enabled: Boolean(settings.realtimeVoiceEnabled),
+				action_count: finiteTelemetryNumber((data as any).action_count ?? (data as any).actionCount),
+				artifact_count: finiteTelemetryNumber((data as any).artifact_count ?? (data as any).artifactCount),
+			});
+			Sentry.captureException(capturedError);
+		});
+		return true;
 	}
 
 	function buildErrorReportSnapshot(error: Error, request: any, activities: UiActivity[]): RuntimeErrorReportSnapshot {
@@ -5759,6 +5862,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			artifact_count: activeRequest.artifactIds?.length || 0,
 			error_kind: finalError ? classifyTelemetryError(finalError) : "",
 		}).catch(() => {});
+		if (finalError) {
+			captureSentryException(finalError, activeRequest.settings as RuntimeSettings, "prompt_failed", {
+				error_kind: classifyTelemetryError(finalError),
+				duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
+				action_count: activeRequest.pageActions?.length || 0,
+				artifact_count: activeRequest.artifactIds?.length || 0,
+			});
+		}
 		activeAgent = null;
 		activeRequest = null;
 	}
@@ -7129,6 +7240,19 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			return { tracked: await trackExtensionEvent(eventName, data) };
 		},
 
+		async captureRuntimeException(request: any = {}) {
+			const store = await loadStore();
+			const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
+			const error = new Error(message || "Onhand runtime exception");
+			if (request?.stack) error.stack = redactDiagnosticText(request.stack, 2400);
+			return {
+				captured: captureSentryException(error, store.settings as RuntimeSettings, "runtime_exception", {
+					message_type: request?.messageType,
+					error_kind: classifyTelemetryError(message),
+				}),
+			};
+		},
+
 		async submitErrorReport(turnId: string) {
 			const store = await loadStore();
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
@@ -7163,6 +7287,15 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				turns: session.turns,
 				messages: buildConversationMessages(session.messages),
 				status: `Error report sent: ${turn.errorReport.report_id}`,
+			});
+			const sentryReportError = new Error(report.error_message || report.error_kind || "Onhand anonymized error report");
+			if (report.error_stack) sentryReportError.stack = report.error_stack;
+			captureSentryException(sentryReportError, store.settings as RuntimeSettings, "explicit_error_report", {
+				explicit_user_report: true,
+				report_id: turn.errorReport.report_id,
+				error_kind: report.error_kind,
+				action_count: report.action_count,
+				artifact_count: report.artifact_count,
 			});
 			return { reportId: turn.errorReport.report_id, alreadySubmitted: false };
 		},
@@ -7218,6 +7351,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
 				advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
 			};
+			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
 			store.sessions[session.id] = session;

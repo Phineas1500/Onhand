@@ -72,9 +72,9 @@ const codexSignInButton = document.querySelector(`[data-oauth-provider="${CODEX_
 const signOutAuthButton = document.getElementById("signOutAuth");
 const CODEX_AUTH_DEFAULT_SUMMARY = codexAuthSummaryEl.textContent;
 const DIAGNOSTICS_OPTIONAL_HELP =
-	"Sends only extension version, provider/model category, event names, coarse errors, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
+	"Sends only extension version, provider/model category, event names, coarse errors, redacted crash reports, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
 const DIAGNOSTICS_FREE_HELP =
-	"Required for Onhand Free so Onhand can monitor hosted model reliability, quota pressure, costs, and abuse. It still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
+	"Required for Onhand Free so Onhand can monitor hosted model reliability, quota pressure, costs, crashes, and abuse. It still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
 let runtimePublicSettings = null;
 let pendingApiKeys = {};
 

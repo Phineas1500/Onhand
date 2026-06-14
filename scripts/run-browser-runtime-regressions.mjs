@@ -318,6 +318,66 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, false);
 }
 
+async function assertSentryDiagnosticsGateAndScrub() {
+	installChromeStorageStub();
+	const originalFetch = globalThis.fetch;
+	const fetchCalls = [];
+	globalThis.fetch = async (url, options = {}) => {
+		fetchCalls.push({
+			url: String(url),
+			body: typeof options.body === "string" ? options.body : "",
+		});
+		return new Response("", { status: 200 });
+	};
+	try {
+		const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+		const sensitiveMessage =
+			'No visible text matched: private prompt text at https://example.test/page?token=secret from file:///Users/sriram/private.pdf using sk-or-secret';
+		let runtime = createOnhandBrowserRuntime(createReplayHost());
+		const blocked = await runtime.captureRuntimeException({
+			messageType: "sentry_smoke",
+			message: sensitiveMessage,
+			stack: `Error: ${sensitiveMessage}\n    at test (file:///Users/sriram/private.js:1:2)`,
+		});
+		assert.equal(blocked.captured, false, "diagnostics-off Sentry capture should be blocked");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.equal(fetchCalls.length, 0, "diagnostics-off Sentry capture should not call fetch");
+
+		globalThis.chrome.storage.local.data = {
+			onhandBrowserRuntime: {
+				settings: {
+					authMode: "oauth",
+					aiProvider: "openai-codex",
+					aiModel: "gpt-5.5",
+					diagnosticsEnabled: true,
+				},
+				currentSessionId: "",
+			},
+			onhandBrowserSessions: {},
+		};
+		runtime = createOnhandBrowserRuntime(createReplayHost());
+		const captured = await runtime.captureRuntimeException({
+			messageType: "sentry_smoke",
+			message: sensitiveMessage,
+			stack: `Error: ${sensitiveMessage}\n    at test (file:///Users/sriram/private.js:1:2)`,
+		});
+		assert.equal(captured.captured, true, "diagnostics-on Sentry capture should be accepted");
+		for (let attempt = 0; attempt < 20 && fetchCalls.length === 0; attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.ok(fetchCalls.some((call) => /sentry\.io/i.test(call.url)), "expected Sentry capture to use the ingest endpoint");
+		const sentryPayload = fetchCalls.map((call) => call.body).join("\n");
+		assert.doesNotMatch(sentryPayload, /private prompt text/i);
+		assert.doesNotMatch(sentryPayload, /example\.test/i);
+		assert.doesNotMatch(sentryPayload, /file:\/\/\/Users\/sriram/i);
+		assert.doesNotMatch(sentryPayload, /sk-or-secret/i);
+		assert.match(sentryPayload, /sentry_smoke/);
+		assert.match(sentryPayload, /openai-codex/);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+}
+
 async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
@@ -5060,6 +5120,7 @@ async function assertFixtureResponses() {
 
 async function main() {
 	await assertProviderApiKeyStorageAndRouting();
+	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertConstitutionPromptContract();

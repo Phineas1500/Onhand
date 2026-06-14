@@ -9755,6 +9755,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		sendResponse({ ok: false, error: "Unknown message" });
 	})().catch((error) => {
+		getOnhandBrowserRuntime().captureRuntimeException({
+			messageType: message?.type || "unknown",
+			message: error?.message || String(error),
+			stack: error?.stack || "",
+		}).catch(() => {});
 		sendResponse({ ok: false, error: error?.message || String(error) });
 	});
 
