@@ -11,11 +11,20 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err2) => function __init() {
+  if (err2) throw err2[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err2 = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -131882,6 +131891,8 @@ var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 var ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
 var ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
 var ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
+var ONHAND_SENTRY_DIST = "chrome";
+var ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
 var ONHAND_DIAGNOSTICS_EVENT_NAMES = /* @__PURE__ */ new Set([
   "diagnostics_enabled",
   "extension_installed",
@@ -136140,6 +136151,16 @@ function createOnhandBrowserRuntime(host) {
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
+  function normalizeSentryFramePath(value) {
+    const redacted = redactDiagnosticText(value, 240);
+    return redacted.replace(/^chrome-extension:\/\/\[extension\]\//i, "app:///");
+  }
+  function redactDiagnosticStack(value, maxLength = 2400, extensionFramePrefix = "app:///") {
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/chrome-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
+    const text = lines.join("\n");
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
   function sentryRelease() {
     const version2 = compactTelemetryValue(host.extensionVersion || chrome.runtime?.getManifest?.()?.version || "", 40);
     return version2 ? `onhand-extension@${version2}` : "onhand-extension";
@@ -136162,8 +136183,8 @@ function createOnhandBrowserRuntime(host) {
       if (value?.type) value.type = compactTelemetryValue(value.type, 120);
       const frames = Array.isArray(value?.stacktrace?.frames) ? value.stacktrace.frames : [];
       for (const frame of frames) {
-        if (frame.filename) frame.filename = redactDiagnosticText(frame.filename, 240);
-        if (frame.abs_path) frame.abs_path = redactDiagnosticText(frame.abs_path, 240);
+        if (frame.filename) frame.filename = normalizeSentryFramePath(frame.filename);
+        if (frame.abs_path) frame.abs_path = normalizeSentryFramePath(frame.abs_path);
         if (frame.function) frame.function = redactDiagnosticText(frame.function, 160);
         delete frame.context_line;
         delete frame.pre_context;
@@ -136178,6 +136199,7 @@ function createOnhandBrowserRuntime(host) {
     init({
       dsn: ONHAND_SENTRY_DSN,
       release: sentryRelease(),
+      dist: ONHAND_SENTRY_DIST,
       environment: "production",
       sendDefaultPii: false,
       maxBreadcrumbs: 0,
@@ -136220,7 +136242,7 @@ function createOnhandBrowserRuntime(host) {
     const message = redactDiagnosticText(error52?.message || error52 || kind, 500);
     const capturedError = new Error(message || kind);
     capturedError.name = compactTelemetryValue(error52?.name || "Error", 120) || "Error";
-    if (error52?.stack) capturedError.stack = redactDiagnosticText(error52.stack, 2400);
+    if (error52?.stack) capturedError.stack = redactDiagnosticStack(error52.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
     withScope2((scope) => {
       setSentryTags(scope, settings2, kind, data);
       scope.setContext("onhand", {
@@ -136250,7 +136272,7 @@ function createOnhandBrowserRuntime(host) {
       learning_mode: Boolean(request?.learningMode ?? settings2.learningMode),
       error_kind: classifyTelemetryError(error52),
       error_message: redactDiagnosticText(error52?.message || error52, 700),
-      error_stack: redactDiagnosticText(error52?.stack || "", 2400),
+      error_stack: redactDiagnosticStack(error52?.stack || "", 2400),
       duration_ms: durationMs,
       action_count: Array.isArray(request?.pageActions) ? request.pageActions.length : 0,
       artifact_count: Array.isArray(request?.artifactIds) ? request.artifactIds.length : 0,
@@ -138058,7 +138080,7 @@ function createOnhandBrowserRuntime(host) {
       const store = await loadStore();
       const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
       const error52 = new Error(message || "Onhand runtime exception");
-      if (request?.stack) error52.stack = redactDiagnosticText(request.stack, 2400);
+      if (request?.stack) error52.stack = redactDiagnosticStack(request.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
       return {
         captured: captureSentryException(error52, store.settings, "runtime_exception", {
           message_type: request?.messageType,

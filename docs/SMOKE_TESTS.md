@@ -122,7 +122,10 @@ npm run build:extension
 npm run test:browser-runtime-regressions
 npm run smoke:browser-runtime -- --ports --json
 npm run test:preflight
+npm run sentry:sourcemaps
+npm run sentry:smoke
 npm run acceptance:chrome -- --suite=all --run-id=merge-readiness-YYYY-MM-DD --json
 ```
 
 The acceptance command prints the manual Chrome prompt matrix; it does not itself drive the live OAuth side panel.
+Run the Sentry commands only when publishing or validating a release candidate with `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` configured.

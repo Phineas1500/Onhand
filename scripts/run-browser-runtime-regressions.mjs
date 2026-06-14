@@ -333,11 +333,12 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 		const sensitiveMessage =
 			'No visible text matched: private prompt text at https://example.test/page?token=secret from file:///Users/sriram/private.pdf using sk-or-secret';
+		const extensionFrame = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/onhand-runtime.bundle.js:123:45";
 		let runtime = createOnhandBrowserRuntime(createReplayHost());
 		const blocked = await runtime.captureRuntimeException({
 			messageType: "sentry_smoke",
 			message: sensitiveMessage,
-			stack: `Error: ${sensitiveMessage}\n    at test (file:///Users/sriram/private.js:1:2)`,
+			stack: `Error: ${sensitiveMessage}\n    at smoke (${extensionFrame})\n    at test (file:///Users/sriram/private.js:1:2)`,
 		});
 		assert.equal(blocked.captured, false, "diagnostics-off Sentry capture should be blocked");
 		await new Promise((resolve) => setTimeout(resolve, 100));
@@ -359,7 +360,7 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		const captured = await runtime.captureRuntimeException({
 			messageType: "sentry_smoke",
 			message: sensitiveMessage,
-			stack: `Error: ${sensitiveMessage}\n    at test (file:///Users/sriram/private.js:1:2)`,
+			stack: `Error: ${sensitiveMessage}\n    at smoke (${extensionFrame})\n    at test (file:///Users/sriram/private.js:1:2)`,
 		});
 		assert.equal(captured.captured, true, "diagnostics-on Sentry capture should be accepted");
 		for (let attempt = 0; attempt < 20 && fetchCalls.length === 0; attempt += 1) {
@@ -370,7 +371,10 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		assert.doesNotMatch(sentryPayload, /private prompt text/i);
 		assert.doesNotMatch(sentryPayload, /example\.test/i);
 		assert.doesNotMatch(sentryPayload, /file:\/\/\/Users\/sriram/i);
+		assert.doesNotMatch(sentryPayload, /chrome-extension:\/\/abcdefghijklmnop/i);
+		assert.match(sentryPayload, /app:\/\/\/onhand-runtime\.bundle\.js/);
 		assert.doesNotMatch(sentryPayload, /sk-or-secret/i);
+		assert.match(sentryPayload, /"dist":"chrome"/);
 		assert.match(sentryPayload, /sentry_smoke/);
 		assert.match(sentryPayload, /openai-codex/);
 	} finally {

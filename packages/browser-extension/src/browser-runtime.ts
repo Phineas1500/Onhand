@@ -293,6 +293,8 @@ const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 const ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
 const ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
 const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
+const ONHAND_SENTRY_DIST = "chrome";
+const ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
 const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -5179,6 +5181,22 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 	}
 
+	function normalizeSentryFramePath(value: unknown) {
+		const redacted = redactDiagnosticText(value, 240);
+		return redacted.replace(/^chrome-extension:\/\/\[extension\]\//i, "app:///");
+	}
+
+	function redactDiagnosticStack(value: unknown, maxLength = 2400, extensionFramePrefix = "app:///") {
+		const lines = String(value || "")
+			.replace(/\r\n?/g, "\n")
+			.split("\n")
+			.map((line) => redactDiagnosticText(line, 700).replace(/chrome-extension:\/\/\[extension\]\//gi, extensionFramePrefix))
+			.filter(Boolean);
+		const text = lines.join("\n");
+		if (text.length <= maxLength) return text;
+		return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+	}
+
 	function sentryRelease() {
 		const version = compactTelemetryValue(host.extensionVersion || chrome.runtime?.getManifest?.()?.version || "", 40);
 		return version ? `onhand-extension@${version}` : "onhand-extension";
@@ -5202,8 +5220,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			if (value?.type) value.type = compactTelemetryValue(value.type, 120);
 			const frames = Array.isArray(value?.stacktrace?.frames) ? value.stacktrace.frames : [];
 			for (const frame of frames) {
-				if (frame.filename) frame.filename = redactDiagnosticText(frame.filename, 240);
-				if (frame.abs_path) frame.abs_path = redactDiagnosticText(frame.abs_path, 240);
+				if (frame.filename) frame.filename = normalizeSentryFramePath(frame.filename);
+				if (frame.abs_path) frame.abs_path = normalizeSentryFramePath(frame.abs_path);
 				if (frame.function) frame.function = redactDiagnosticText(frame.function, 160);
 				delete frame.context_line;
 				delete frame.pre_context;
@@ -5219,6 +5237,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		Sentry.init({
 			dsn: ONHAND_SENTRY_DSN,
 			release: sentryRelease(),
+			dist: ONHAND_SENTRY_DIST,
 			environment: "production",
 			sendDefaultPii: false,
 			maxBreadcrumbs: 0,
@@ -5263,7 +5282,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const message = redactDiagnosticText((error as any)?.message || error || kind, 500);
 		const capturedError = new Error(message || kind);
 		capturedError.name = compactTelemetryValue((error as any)?.name || "Error", 120) || "Error";
-		if ((error as any)?.stack) capturedError.stack = redactDiagnosticText((error as any).stack, 2400);
+		if ((error as any)?.stack) capturedError.stack = redactDiagnosticStack((error as any).stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
 		Sentry.withScope((scope) => {
 			setSentryTags(scope, settings, kind, data);
 			scope.setContext("onhand", {
@@ -5294,7 +5313,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			learning_mode: Boolean(request?.learningMode ?? settings.learningMode),
 			error_kind: classifyTelemetryError(error),
 			error_message: redactDiagnosticText(error?.message || error, 700),
-			error_stack: redactDiagnosticText(error?.stack || "", 2400),
+			error_stack: redactDiagnosticStack(error?.stack || "", 2400),
 			duration_ms: durationMs,
 			action_count: Array.isArray(request?.pageActions) ? request.pageActions.length : 0,
 			artifact_count: Array.isArray(request?.artifactIds) ? request.artifactIds.length : 0,
@@ -7244,7 +7263,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			const store = await loadStore();
 			const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
 			const error = new Error(message || "Onhand runtime exception");
-			if (request?.stack) error.stack = redactDiagnosticText(request.stack, 2400);
+			if (request?.stack) error.stack = redactDiagnosticStack(request.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
 			return {
 				captured: captureSentryException(error, store.settings as RuntimeSettings, "runtime_exception", {
 					message_type: request?.messageType,

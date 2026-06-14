@@ -65,5 +65,22 @@ npm run ops:free-tier -- --dry-run
 
 Use `--real-openai` only when `OPENAI_API_KEY` is available and the goal is to verify the API-key fallback. The preferred product path is Chrome side-panel OAuth with OpenAI Codex.
 
+## Sentry Release Check
+
+Run this after building a release candidate and before publishing that same
+extension version:
+
+```sh
+npm run build:extension
+npm run sentry:sourcemaps
+npm run sentry:smoke
+```
+
+`npm run sentry:sourcemaps` uploads source maps for
+`onhand-extension@<manifest version>` with `dist=chrome`. `npm run sentry:smoke`
+sends one synthetic privacy-safe event and fails unless Sentry resolves
+`app:///onhand-runtime.bundle.js` back to
+`packages/browser-extension/src/browser-runtime.ts`. See `docs/SENTRY.md`.
+
 Use `npm run eval:free-tier-models` with `OPENROUTER_API_KEY` when evaluating a free-tier model change. See `docs/FREE_TIER_MODEL_EVAL.md`.
 Use `npm run ops:free-tier` with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` after deployment to inspect free-tier health. See `docs/FREE_TIER_OPS.md`.
