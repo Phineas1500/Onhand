@@ -54,7 +54,7 @@
         you are reading. Sessions stay on your device, and content only goes to an
         AI provider when you ask Onhand to help.
       </p>
-      <p class="legal-updated">Last updated: June 13, 2026</p>
+      <p class="legal-updated">Last updated: June 15, 2026</p>
     </div>
   </section>
 
@@ -110,7 +110,10 @@
             send event names, extension version, runtime revision, selected
             provider/model category, coarse error categories, and aggregate
             counts to the Onhand free-tier Worker for reliability, cost, quota,
-            and abuse monitoring. When diagnostics are enabled, Onhand may also
+            and abuse monitoring. The hosted Worker may use your request IP
+            address for short-lived daily rate limits and may record aggregate
+            network metadata such as country, Cloudflare data center, and
+            user-agent family for operations. When diagnostics are enabled, Onhand may also
             send redacted crash and exception events to Sentry for issue grouping
             and stack-trace analysis. Diagnostics do not include prompts, page
             content, URLs, screenshots, saved sessions, transcripts, or keys.
@@ -136,10 +139,11 @@
             <li>Questions and instructions you type into the Onhand side panel.</li>
             <li>Voice input and transcripts when you start the voice tutor.</li>
             <li>Visible page text, selected passages, headings, URLs, and page titles.</li>
+            <li>Personal communications if you choose to use Onhand on pages such as webmail, chat, or messaging apps.</li>
             <li>Optional screenshots or visible-region captures used for visual grounding.</li>
             <li>Highlights, margin notes, saved sessions, and replay artifacts.</li>
             <li>OpenAI Codex sign-in state or provider API keys if you choose to save them.</li>
-            <li>An anonymous Onhand Free token and short-lived quota counters if you choose Onhand Free.</li>
+            <li>An anonymous Onhand Free token, request IP-derived rate-limit counters, and aggregate location/network metadata if you choose Onhand Free or send diagnostics/error reports.</li>
           </ul>
         </section>
 
@@ -194,11 +198,14 @@
           </p>
           <p>
             Onhand Free stores anonymous tokens and short-lived quota or abuse
-            counters in Cloudflare storage. Explicit anonymized error reports are
-            stored for up to 90 days under a report id so they can be inspected
-            for support and reliability work. Redacted Sentry crash and exception
-            events are retained according to the Sentry project retention
-            settings.
+            counters in Cloudflare storage, including daily counters based on the
+            request IP address for registration, diagnostics, and explicit error
+            report rate limits. Aggregate operations events may include country,
+            Cloudflare data center, and user-agent family. Explicit anonymized
+            error reports are stored for up to 90 days under a report id so they
+            can be inspected for support and reliability work. Redacted Sentry
+            crash and exception events are retained according to the Sentry
+            project retention settings.
           </p>
           <p>
             Extension-to-provider and extension-to-Onhand Free requests use HTTPS.

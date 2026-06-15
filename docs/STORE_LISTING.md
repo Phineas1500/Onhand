@@ -174,6 +174,11 @@ Disclose collection/handling of:
 - Website content: visible page text, selected text, PDF text, headings,
   page screenshots or visible-region captures when needed for visual
   grounding, and page URLs/titles for source context.
+- Personal communications: only when the user chooses to run Onhand on
+  webmail, chat, messaging, or similar pages.
+- Location: request IP address for short-lived Onhand Free, diagnostics,
+  and explicit error-report rate limits, plus aggregate country/Cloudflare
+  data center metadata for operations.
 - User activity: user prompts, learning-mode responses, extension
   actions, tool activity names/states, diagnostics event names, and
   aggregate counts.
