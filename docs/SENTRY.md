@@ -25,7 +25,7 @@ The browser runtime sends:
 - `dist`: `chrome`
 - `environment`: `production`
 
-For version `0.3.4`, the release is `onhand-extension@0.3.4`.
+For version `0.3.5`, the release is `onhand-extension@0.3.5`.
 
 ## Alerts
 
@@ -132,7 +132,7 @@ privacy-ready.
 Useful overrides:
 
 ```sh
-npm run sentry:sourcemaps -- --release=onhand-extension@0.3.4
+npm run sentry:sourcemaps -- --release=onhand-extension@0.3.5
 npm run sentry:sourcemaps -- --org=ramaway --project=onhand-browser-extension
 npm run sentry:sourcemaps -- --url-prefix=app:///
 npm run sentry:runtime-smoke -- --timeout-ms=120000
