@@ -24,6 +24,8 @@
     "website:sync-release": "node ./scripts/sync-github-release-version.mjs",
     "website:check-release": "node ./scripts/sync-github-release-version.mjs --check",
     "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
+    "sentry:alerts": "node ./scripts/setup-sentry-alerts.mjs",
+    "sentry:runtime-smoke": "node ./scripts/run-sentry-runtime-smoke.mjs",
     "sentry:sourcemaps": "node ./scripts/upload-sentry-sourcemaps.mjs",
     "sentry:smoke": "node ./scripts/run-sentry-source-map-smoke.mjs",
     "ops:free-tier": "node ./scripts/run-free-tier-ops-report.mjs",
