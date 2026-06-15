@@ -27,6 +27,7 @@
     "sentry:sourcemaps": "node ./scripts/upload-sentry-sourcemaps.mjs",
     "sentry:smoke": "node ./scripts/run-sentry-source-map-smoke.mjs",
     "ops:free-tier": "node ./scripts/run-free-tier-ops-report.mjs",
+    "ops:free-tier:check": "node ./scripts/run-free-tier-ops-report.mjs --days=1 --check --fail-on-critical",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",

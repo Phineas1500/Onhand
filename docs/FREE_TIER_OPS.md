@@ -18,11 +18,38 @@ writes JSON plus Markdown under `tmp/free-tier-ops/`.
 ## Useful Commands
 
 ```sh
+npm run ops:free-tier:check
 npm run ops:free-tier -- --dry-run --print-sql
 npm run ops:free-tier -- --days=1
 npm run ops:free-tier -- --days=14 --limit=50
 npm run ops:free-tier -- --json
 ```
+
+Use `npm run ops:free-tier:check` as the normal daily/local check after a
+free-tier smoke test. It runs a 1-day report, writes the usual JSON and
+Markdown artifacts, and exits non-zero only for critical checks. Warning checks
+still print in the report but do not fail the command.
+
+Default critical checks:
+
+- average daily free-tier cost above `$1`
+- prompt failures above `0`
+- provider stream errors above `0`
+- free-tier quota/cost denials above `0`
+- final unrecovered tool failures above `0`
+- `browser_run_js` failures above `0`
+
+Default warning checks:
+
+- average completion cost above `$0.01`
+- recovered tool failures above `5`
+- `browser_run_js` invocations above `10`
+- heavy-turn guardrail events above `5`
+
+Override thresholds with flags such as `--max-daily-cost=2`,
+`--max-avg-cost=0.02`, or `--max-heavy-turns=10`. The same values can be set
+through `FREE_TIER_ALERT_MAX_*` environment variables; run
+`npm run ops:free-tier -- --help` for the exact names.
 
 ## What To Watch
 

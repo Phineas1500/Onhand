@@ -6,22 +6,52 @@ const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OUT_DIR = "tmp/free-tier-ops";
 const API_BASE = "https://api.cloudflare.com/client/v4";
+const DEFAULT_THRESHOLDS = {
+	maxDailyCostUsd: 1,
+	maxAvgCostUsd: 0.01,
+	maxPromptFailures: 0,
+	maxProviderErrors: 0,
+	maxQuotaDenials: 0,
+	maxFinalToolFailures: 0,
+	maxRecoveredToolFailures: 5,
+	maxBrowserRunJsFailures: 0,
+	maxBrowserRunJsEvents: 10,
+	maxHeavyTurns: 5,
+};
 
 function parseArgs(argv) {
 	const args = {
 		accountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || "",
 		apiTokenEnv: "CLOUDFLARE_API_TOKEN",
+		check: false,
 		dataset: DEFAULT_DATASET,
 		days: DEFAULT_DAYS,
 		dryRun: false,
+		failOnAlert: false,
+		failOnCritical: false,
 		json: false,
 		limit: DEFAULT_LIMIT,
 		outDir: DEFAULT_OUT_DIR,
 		printSql: false,
+		thresholds: buildDefaultThresholds(),
 	};
 	for (const value of argv) {
+		if (value === "--check") {
+			args.check = true;
+			continue;
+		}
 		if (value === "--dry-run") {
 			args.dryRun = true;
+			continue;
+		}
+		if (value === "--fail-on-alert") {
+			args.check = true;
+			args.failOnAlert = true;
+			continue;
+		}
+		if (value === "--fail-on-critical") {
+			args.check = true;
+			args.failOnCritical = true;
 			continue;
 		}
 		if (value === "--json") {
@@ -56,6 +86,46 @@ function parseArgs(argv) {
 			args.outDir = value.slice("--out-dir=".length).trim();
 			continue;
 		}
+		if (value.startsWith("--max-daily-cost=")) {
+			args.thresholds.maxDailyCostUsd = parseNonNegativeNumber(value, "--max-daily-cost=");
+			continue;
+		}
+		if (value.startsWith("--max-avg-cost=")) {
+			args.thresholds.maxAvgCostUsd = parseNonNegativeNumber(value, "--max-avg-cost=");
+			continue;
+		}
+		if (value.startsWith("--max-prompt-failures=")) {
+			args.thresholds.maxPromptFailures = parseNonNegativeNumber(value, "--max-prompt-failures=");
+			continue;
+		}
+		if (value.startsWith("--max-provider-errors=")) {
+			args.thresholds.maxProviderErrors = parseNonNegativeNumber(value, "--max-provider-errors=");
+			continue;
+		}
+		if (value.startsWith("--max-quota-denials=")) {
+			args.thresholds.maxQuotaDenials = parseNonNegativeNumber(value, "--max-quota-denials=");
+			continue;
+		}
+		if (value.startsWith("--max-final-tool-failures=")) {
+			args.thresholds.maxFinalToolFailures = parseNonNegativeNumber(value, "--max-final-tool-failures=");
+			continue;
+		}
+		if (value.startsWith("--max-recovered-tool-failures=")) {
+			args.thresholds.maxRecoveredToolFailures = parseNonNegativeNumber(value, "--max-recovered-tool-failures=");
+			continue;
+		}
+		if (value.startsWith("--max-browser-run-js-failures=")) {
+			args.thresholds.maxBrowserRunJsFailures = parseNonNegativeNumber(value, "--max-browser-run-js-failures=");
+			continue;
+		}
+		if (value.startsWith("--max-browser-run-js-events=")) {
+			args.thresholds.maxBrowserRunJsEvents = parseNonNegativeNumber(value, "--max-browser-run-js-events=");
+			continue;
+		}
+		if (value.startsWith("--max-heavy-turns=")) {
+			args.thresholds.maxHeavyTurns = parseNonNegativeNumber(value, "--max-heavy-turns=");
+			continue;
+		}
 		if (value === "--help" || value === "-h") {
 			printUsage();
 			process.exit(0);
@@ -76,6 +146,9 @@ Required for live mode:
   CLOUDFLARE_API_TOKEN           Token with Account Analytics Read permission
 
 Options:
+  --check                        Evaluate default health thresholds
+  --fail-on-critical             Exit 1 when critical checks fail
+  --fail-on-alert                Exit 1 when warning or critical checks fail
   --dry-run                      Print the report plan without network calls
   --print-sql                    Print SQL queries
   --json                         Print summary JSON
@@ -85,12 +158,68 @@ Options:
   --out-dir=<path>               Output directory for JSON and Markdown reports
   --account-id=<id>              Cloudflare account id
   --api-token-env=<name>         Environment variable containing the API token
+
+Threshold options:
+  --max-daily-cost=<usd>         Default ${DEFAULT_THRESHOLDS.maxDailyCostUsd}
+  --max-avg-cost=<usd>           Default ${DEFAULT_THRESHOLDS.maxAvgCostUsd}
+  --max-prompt-failures=<n>      Default ${DEFAULT_THRESHOLDS.maxPromptFailures}
+  --max-provider-errors=<n>      Default ${DEFAULT_THRESHOLDS.maxProviderErrors}
+  --max-quota-denials=<n>        Default ${DEFAULT_THRESHOLDS.maxQuotaDenials}
+  --max-final-tool-failures=<n>  Default ${DEFAULT_THRESHOLDS.maxFinalToolFailures}
+  --max-recovered-tool-failures=<n>
+                                  Default ${DEFAULT_THRESHOLDS.maxRecoveredToolFailures}
+  --max-browser-run-js-failures=<n>
+                                  Default ${DEFAULT_THRESHOLDS.maxBrowserRunJsFailures}
+  --max-browser-run-js-events=<n>
+                                  Default ${DEFAULT_THRESHOLDS.maxBrowserRunJsEvents}
+  --max-heavy-turns=<n>          Default ${DEFAULT_THRESHOLDS.maxHeavyTurns}
+
+Threshold env overrides:
+  FREE_TIER_ALERT_MAX_DAILY_COST_USD
+  FREE_TIER_ALERT_MAX_AVG_COST_USD
+  FREE_TIER_ALERT_MAX_PROMPT_FAILURES
+  FREE_TIER_ALERT_MAX_PROVIDER_ERRORS
+  FREE_TIER_ALERT_MAX_QUOTA_DENIALS
+  FREE_TIER_ALERT_MAX_FINAL_TOOL_FAILURES
+  FREE_TIER_ALERT_MAX_RECOVERED_TOOL_FAILURES
+  FREE_TIER_ALERT_MAX_BROWSER_RUN_JS_FAILURES
+  FREE_TIER_ALERT_MAX_BROWSER_RUN_JS_EVENTS
+  FREE_TIER_ALERT_MAX_HEAVY_TURNS
 `);
+}
+
+function buildDefaultThresholds() {
+	return {
+		maxDailyCostUsd: readThresholdEnv("FREE_TIER_ALERT_MAX_DAILY_COST_USD", DEFAULT_THRESHOLDS.maxDailyCostUsd),
+		maxAvgCostUsd: readThresholdEnv("FREE_TIER_ALERT_MAX_AVG_COST_USD", DEFAULT_THRESHOLDS.maxAvgCostUsd),
+		maxPromptFailures: readThresholdEnv("FREE_TIER_ALERT_MAX_PROMPT_FAILURES", DEFAULT_THRESHOLDS.maxPromptFailures),
+		maxProviderErrors: readThresholdEnv("FREE_TIER_ALERT_MAX_PROVIDER_ERRORS", DEFAULT_THRESHOLDS.maxProviderErrors),
+		maxQuotaDenials: readThresholdEnv("FREE_TIER_ALERT_MAX_QUOTA_DENIALS", DEFAULT_THRESHOLDS.maxQuotaDenials),
+		maxFinalToolFailures: readThresholdEnv("FREE_TIER_ALERT_MAX_FINAL_TOOL_FAILURES", DEFAULT_THRESHOLDS.maxFinalToolFailures),
+		maxRecoveredToolFailures: readThresholdEnv("FREE_TIER_ALERT_MAX_RECOVERED_TOOL_FAILURES", DEFAULT_THRESHOLDS.maxRecoveredToolFailures),
+		maxBrowserRunJsFailures: readThresholdEnv("FREE_TIER_ALERT_MAX_BROWSER_RUN_JS_FAILURES", DEFAULT_THRESHOLDS.maxBrowserRunJsFailures),
+		maxBrowserRunJsEvents: readThresholdEnv("FREE_TIER_ALERT_MAX_BROWSER_RUN_JS_EVENTS", DEFAULT_THRESHOLDS.maxBrowserRunJsEvents),
+		maxHeavyTurns: readThresholdEnv("FREE_TIER_ALERT_MAX_HEAVY_TURNS", DEFAULT_THRESHOLDS.maxHeavyTurns),
+	};
+}
+
+function readThresholdEnv(name, fallback) {
+	const rawValue = process.env[name];
+	if (!rawValue) return fallback;
+	const parsed = Number.parseFloat(rawValue);
+	if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative number`);
+	return parsed;
 }
 
 function parsePositiveInt(value, prefix) {
 	const parsed = Number.parseInt(value.slice(prefix.length), 10);
 	if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${prefix.slice(2, -1)} must be a positive integer`);
+	return parsed;
+}
+
+function parseNonNegativeNumber(value, prefix) {
+	const parsed = Number.parseFloat(value.slice(prefix.length));
+	if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${prefix.slice(2, -1)} must be a non-negative number`);
 	return parsed;
 }
 
@@ -350,13 +479,16 @@ function quotedList(values) {
 async function runReport(args) {
 	const queries = buildQueries(args);
 	const runId = new Date().toISOString().replaceAll(":", "-").replace(/\.\d+Z$/, "Z");
+	const checksEnabled = shouldEvaluateChecks(args);
 	const plan = {
 		runId,
 		accountId: args.accountId ? maskAccountId(args.accountId) : "",
+		checksEnabled,
 		dataset: args.dataset,
 		days: args.days,
 		limit: args.limit,
 		queries: queries.map(({ name, description, sql }) => ({ name, description, sql })),
+		thresholds: checksEnabled ? args.thresholds : undefined,
 	};
 
 	if (args.printSql) printQueries(queries);
@@ -376,10 +508,15 @@ async function runReport(args) {
 	}
 
 	const report = { plan, sections };
+	if (checksEnabled) report.checks = evaluateChecks(report, args.thresholds);
 	const paths = await writeReports(args.outDir, runId, report);
 	report.paths = paths;
 	printReport(report, args);
 	return report;
+}
+
+function shouldEvaluateChecks(args) {
+	return Boolean(args.check || args.failOnAlert || args.failOnCritical);
 }
 
 async function runSql({ accountId, apiToken, sql }) {
@@ -417,6 +554,122 @@ function parseSqlResponse(text) {
 				}
 			});
 	}
+}
+
+function evaluateChecks(report, thresholds) {
+	const sections = report.sections || {};
+	const days = Math.max(1, Number(report.plan.days || 1));
+	const cost = first(sections.chat_cost);
+	const extensionPrompts = sections.extension_prompts || [];
+	const modelProviderHealth = sections.model_provider_health || [];
+	const quotaAndRejections = sections.quota_and_rejections || [];
+	const guardrailEvents = sections.guardrail_events || [];
+	const browserRunJs = sections.browser_run_js || [];
+	const toolReliability = sections.tool_reliability || [];
+	const checks = [];
+
+	const totalCost = numberValue(cost?.total_cost);
+	const avgDailyCost = totalCost / days;
+	const avgCost = numberValue(cost?.avg_cost);
+	const promptFailures = sumRows(extensionPrompts, "events", (row) => row.event === "prompt_failed");
+	const providerErrors = sumRows(modelProviderHealth, "events", (row) => row.event === "chat_stream_error" || row.result === "error");
+	const quotaDenials = sumRows(quotaAndRejections, "events", (row) => String(row.event || "").endsWith("_quota_denied"));
+	const finalToolFailures = sumRows(toolReliability, "final_tool_failures");
+	const recoveredToolFailures = sumRows(toolReliability, "recovered_tool_failures");
+	const browserRunJsFailures = sumRows(browserRunJs, "events", (row) => row.event === "browser_run_js_failed");
+	const browserRunJsEvents = sumRows(browserRunJs, "events", (row) => row.event === "browser_run_js_started");
+	const heavyTurns = sumRows(guardrailEvents, "events", (row) => row.event === "free_tier_heavy_turn");
+
+	addThresholdCheck(checks, {
+		metric: "avg_daily_cost_usd",
+		actual: avgDailyCost,
+		limit: thresholds.maxDailyCostUsd,
+		severity: "critical",
+		message: "Average daily free-tier Worker spend across the report window.",
+	});
+	addThresholdCheck(checks, {
+		metric: "avg_completion_cost_usd",
+		actual: avgCost,
+		limit: thresholds.maxAvgCostUsd,
+		severity: "warn",
+		message: "Average OpenRouter cost per completed free-tier response.",
+	});
+	addThresholdCheck(checks, {
+		metric: "prompt_failures",
+		actual: promptFailures,
+		limit: thresholds.maxPromptFailures,
+		severity: "critical",
+		message: "Extension-side prompt failures reported by opted-in diagnostics.",
+	});
+	addThresholdCheck(checks, {
+		metric: "provider_errors",
+		actual: providerErrors,
+		limit: thresholds.maxProviderErrors,
+		severity: "critical",
+		message: "Worker-side free-tier chat stream errors.",
+	});
+	addThresholdCheck(checks, {
+		metric: "quota_denials",
+		actual: quotaDenials,
+		limit: thresholds.maxQuotaDenials,
+		severity: "critical",
+		message: "User-visible free-tier quota or cost-cap denials.",
+	});
+	addThresholdCheck(checks, {
+		metric: "final_tool_failures",
+		actual: finalToolFailures,
+		limit: thresholds.maxFinalToolFailures,
+		severity: "critical",
+		message: "Tool failures that were not recovered before the prompt finished.",
+	});
+	addThresholdCheck(checks, {
+		metric: "recovered_tool_failures",
+		actual: recoveredToolFailures,
+		limit: thresholds.maxRecoveredToolFailures,
+		severity: "warn",
+		message: "Recovered extension tool failures; sustained growth means reliability is drifting.",
+	});
+	addThresholdCheck(checks, {
+		metric: "browser_run_js_failures",
+		actual: browserRunJsFailures,
+		limit: thresholds.maxBrowserRunJsFailures,
+		severity: "critical",
+		message: "Failures from the constrained browser_run_js tool.",
+	});
+	addThresholdCheck(checks, {
+		metric: "browser_run_js_started",
+		actual: browserRunJsEvents,
+		limit: thresholds.maxBrowserRunJsEvents,
+		severity: "warn",
+		message: "Advanced runtime-inspection invocations; unexpected growth needs review.",
+	});
+	addThresholdCheck(checks, {
+		metric: "heavy_turns",
+		actual: heavyTurns,
+		limit: thresholds.maxHeavyTurns,
+		severity: "warn",
+		message: "Warning-only heavy-turn guardrail events.",
+	});
+
+	return checks;
+}
+
+function addThresholdCheck(checks, { metric, actual, limit, severity, message }) {
+	const normalizedActual = normalizeMetric(actual);
+	const normalizedLimit = normalizeMetric(limit);
+	checks.push({
+		status: normalizedActual > normalizedLimit ? severity : "ok",
+		metric,
+		actual: normalizedActual,
+		limit: normalizedLimit,
+		message,
+	});
+}
+
+function normalizeMetric(value) {
+	const number = Number(value);
+	if (!Number.isFinite(number)) return 0;
+	return Math.round(number * 1_000_000) / 1_000_000;
 }
 
 async function writeReports(outDir, runId, report) {
@@ -458,6 +711,13 @@ function printReport(report, args) {
 			)} final tool failures`,
 		);
 	}
+	if (report.checks?.length) {
+		const summary = summarizeChecks(report.checks);
+		console.log(`Checks: ${summary.critical} critical, ${summary.warn} warning, ${summary.ok} ok`);
+		for (const check of report.checks.filter((row) => row.status !== "ok")) {
+			console.log(`- ${check.status}: ${check.metric} ${formatCheckValue(check.actual)} > ${formatCheckValue(check.limit)} (${check.message})`);
+		}
+	}
 	if (report.paths) {
 		console.log(`Wrote ${report.paths.jsonPath}`);
 		console.log(`Wrote ${report.paths.markdownPath}`);
@@ -490,6 +750,7 @@ function renderMarkdown(report) {
 	}
 	lines.push("");
 
+	if (report.checks) addTable(lines, "Checks", report.checks, ["status", "metric", "actual", "limit", "message"]);
 	addTable(lines, "Event Counts", report.sections.event_counts, ["event", "events"]);
 	addTable(lines, "Chat Latency", report.sections.chat_latency, ["event", "result", "events", "avg_ms", "p50_ms", "p95_ms", "avg_body_bytes"]);
 	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
@@ -545,11 +806,29 @@ function first(rows) {
 	return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
-function sumRows(rows, column) {
+function sumRows(rows, column, predicate = () => true) {
 	return (Array.isArray(rows) ? rows : []).reduce((total, row) => {
+		if (!predicate(row)) return total;
 		const value = Number(row?.[column]);
 		return Number.isFinite(value) ? total + value : total;
 	}, 0);
+}
+
+function numberValue(value) {
+	const number = Number(value);
+	return Number.isFinite(number) ? number : 0;
+}
+
+function summarizeChecks(checks = []) {
+	return checks.reduce(
+		(summary, check) => {
+			if (check.status === "critical") summary.critical += 1;
+			else if (check.status === "warn") summary.warn += 1;
+			else summary.ok += 1;
+			return summary;
+		},
+		{ critical: 0, warn: 0, ok: 0 },
+	);
 }
 
 function formatCell(value) {
@@ -584,13 +863,29 @@ function formatDollars(value) {
 	return `$${number.toFixed(6)}`;
 }
 
+function formatCheckValue(value) {
+	const number = Number(value);
+	if (!Number.isFinite(number)) return "-";
+	if (Number.isInteger(number)) return formatInteger(number);
+	return formatNumber(number);
+}
+
 function maskAccountId(value) {
 	const text = String(value || "");
 	return text.length <= 8 ? "set" : `${text.slice(0, 4)}...${text.slice(-4)}`;
 }
 
 try {
-	await runReport(parseArgs(process.argv.slice(2)));
+	const args = parseArgs(process.argv.slice(2));
+	const report = await runReport(args);
+	const checkSummary = summarizeChecks(report.checks);
+	if (args.failOnAlert && checkSummary.critical + checkSummary.warn > 0) {
+		console.error(`Free tier ops check failed: ${checkSummary.critical} critical, ${checkSummary.warn} warning`);
+		process.exitCode = 1;
+	} else if (args.failOnCritical && checkSummary.critical > 0) {
+		console.error(`Free tier ops check failed: ${checkSummary.critical} critical`);
+		process.exitCode = 1;
+	}
 } catch (error) {
 	console.error(error.stack || error.message);
 	process.exit(1);
