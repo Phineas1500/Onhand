@@ -79,9 +79,10 @@ function mappedFrame(frames) {
 async function fetchSentryEvent(options, eventId) {
 	const baseUrl = options.apiUrl.replace(/\/+$/, "");
 	const eventUrl = `${baseUrl}/api/0/projects/${encodeURIComponent(options.org)}/${encodeURIComponent(options.project)}/events/${eventId}/`;
+	const readToken = process.env.SENTRY_SMOKE_AUTH_TOKEN || process.env.SENTRY_AUTH_TOKEN;
 	const response = await fetch(eventUrl, {
 		headers: {
-			Authorization: `Bearer ${process.env.SENTRY_AUTH_TOKEN}`,
+			Authorization: `Bearer ${readToken}`,
 			Accept: "application/json",
 		},
 	});
@@ -90,8 +91,8 @@ async function fetchSentryEvent(options, eventId) {
 		throw new Error(
 			[
 				"Sentry event lookup failed: HTTP 403.",
-				"The smoke event was sent, but SENTRY_AUTH_TOKEN cannot read processed events.",
-				"Grant the token event/project read access, then rerun `npm run sentry:smoke`.",
+				"The smoke event was sent, but the readback token cannot read processed events.",
+				"Set SENTRY_SMOKE_AUTH_TOKEN to a token with project/event read access, then rerun `npm run sentry:smoke`.",
 			].join(" "),
 		);
 	}
@@ -120,7 +121,7 @@ async function pollForMappedEvent(options, eventId) {
 
 const options = parseArgs(process.argv.slice(2));
 if (!options.release) options.release = `onhand-extension@${await readManifestVersion()}`;
-if (!process.env.SENTRY_AUTH_TOKEN) throw new Error("Missing SENTRY_AUTH_TOKEN");
+if (!process.env.SENTRY_SMOKE_AUTH_TOKEN && !process.env.SENTRY_AUTH_TOKEN) throw new Error("Missing SENTRY_SMOKE_AUTH_TOKEN or SENTRY_AUTH_TOKEN");
 if (!options.org) throw new Error("Missing SENTRY_ORG");
 if (!options.project) throw new Error("Missing SENTRY_PROJECT");
 

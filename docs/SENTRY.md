@@ -39,6 +39,7 @@ Required environment variables:
 export SENTRY_ORG=<org-slug>
 export SENTRY_PROJECT=onhand-browser-extension
 export SENTRY_AUTH_TOKEN=<token-with-project-read-write-and-release-admin>
+export SENTRY_SMOKE_AUTH_TOKEN=<optional-token-with-project-event-read>
 ```
 
 For `npm run sentry:sourcemaps`, the token needs enough access to create/read
@@ -48,10 +49,10 @@ releases and upload project artifacts. In Sentry's token UI this usually means:
 - Project: Write
 - Release: Admin
 
-For `npm run sentry:smoke`, the token must also be able to read processed event
-details for the project. If the smoke command sends an event but fails with
-HTTP 403 while polling, add the relevant event/project read scope to the token
-or use a separate read-capable token for the smoke check.
+For `npm run sentry:smoke`, set `SENTRY_SMOKE_AUTH_TOKEN` to a separate token
+that can read processed event details for the project. If
+`SENTRY_SMOKE_AUTH_TOKEN` is not set, the smoke script falls back to
+`SENTRY_AUTH_TOKEN`.
 
 Dry-run the upload flow:
 
