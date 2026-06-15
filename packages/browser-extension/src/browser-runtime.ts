@@ -98,7 +98,7 @@ interface UiActivity {
 	label: string;
 	text?: string;
 	toolName?: string;
-	state?: "running" | "complete" | "error";
+	state?: "running" | "complete" | "retrying" | "recovered" | "error";
 }
 
 interface RuntimeErrorReportSnapshot {
@@ -4156,6 +4156,8 @@ export const __browserRuntimeTest = {
 	validateProviderApiKey,
 	getReplayHighlightCandidates,
 	getPublicActivities,
+	finalizePublicActivitiesForTest: finalizePublicActivities,
+	summarizeToolReliabilityForTest: summarizeToolReliability,
 	getSelectionText,
 	browserContextLooksLikePdf,
 	isOnhandPdfViewerUrl,
@@ -5016,6 +5018,37 @@ function getPublicActivities(activities: UiActivity[] = []) {
 	return activities.filter((activity) => activity?.kind === "tool" && !isInternalToolName(activity.toolName || ""));
 }
 
+function finalizePublicActivities(activities: UiActivity[] = [], finalError: Error | null = null) {
+	return getPublicActivities(activities).map((activity) => {
+		if (activity.state !== "retrying") return activity;
+		return { ...activity, state: finalError ? "error" : "recovered" };
+	});
+}
+
+function summarizeToolReliability(activities: UiActivity[] = [], pageActions: PageAction[] = []) {
+	const publicActivities = getPublicActivities(activities);
+	const pageActionCount = Array.isArray(pageActions) ? pageActions.length : 0;
+	const failedStates = new Set(["retrying", "recovered", "error"]);
+	return {
+		tool_step_count: Math.max(publicActivities.length, pageActionCount),
+		tool_failure_count: publicActivities.filter((activity) => failedStates.has(activity.state || "")).length,
+		recovered_tool_failure_count: publicActivities.filter((activity) => activity.state === "recovered").length,
+		final_tool_failure_count: publicActivities.filter((activity) => activity.state === "error").length,
+	};
+}
+
+function markRecoveredToolRetries(activities: UiActivity[] = [], toolName: string) {
+	if (!toolName) return false;
+	let recovered = false;
+	for (let index = activities.length - 1; index >= 0; index -= 1) {
+		const activity = activities[index];
+		if (activity?.kind !== "tool" || activity.toolName !== toolName || activity.state !== "retrying") continue;
+		activities[index] = { ...activity, state: "recovered" };
+		recovered = true;
+	}
+	return recovered;
+}
+
 export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let storePromise: Promise<any> | null = null;
 	let uiState: any | null = null;
@@ -5137,6 +5170,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			body_bytes: finiteTelemetryNumber((data as any).body_bytes ?? (data as any).bodyBytes),
 			action_count: finiteTelemetryNumber((data as any).action_count ?? (data as any).actionCount),
 			artifact_count: finiteTelemetryNumber((data as any).artifact_count ?? (data as any).artifactCount),
+			tool_step_count: finiteTelemetryNumber((data as any).tool_step_count ?? (data as any).toolStepCount),
+			tool_failure_count: finiteTelemetryNumber((data as any).tool_failure_count ?? (data as any).toolFailureCount),
+			recovered_tool_failure_count: finiteTelemetryNumber(
+				(data as any).recovered_tool_failure_count ?? (data as any).recoveredToolFailureCount,
+			),
+			final_tool_failure_count: finiteTelemetryNumber((data as any).final_tool_failure_count ?? (data as any).finalToolFailureCount),
 			error_kind: compactTelemetryValue((data as any).error_kind ?? (data as any).errorKind, 80),
 		};
 	}
@@ -5290,6 +5329,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				realtime_voice_enabled: Boolean(settings.realtimeVoiceEnabled),
 				action_count: finiteTelemetryNumber((data as any).action_count ?? (data as any).actionCount),
 				artifact_count: finiteTelemetryNumber((data as any).artifact_count ?? (data as any).artifactCount),
+				tool_step_count: finiteTelemetryNumber((data as any).tool_step_count ?? (data as any).toolStepCount),
+				tool_failure_count: finiteTelemetryNumber((data as any).tool_failure_count ?? (data as any).toolFailureCount),
+				recovered_tool_failure_count: finiteTelemetryNumber(
+					(data as any).recovered_tool_failure_count ?? (data as any).recoveredToolFailureCount,
+				),
+				final_tool_failure_count: finiteTelemetryNumber((data as any).final_tool_failure_count ?? (data as any).finalToolFailureCount),
 			});
 			Sentry.captureException(capturedError);
 		});
@@ -5762,9 +5807,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				kind: "tool",
 				label: getToolStatusMessage(toolName),
 				toolName,
-				state: "error",
+				state: "retrying",
 			});
-			await publishState({ status: "Could not open PDF in Onhand viewer." });
+			await publishState({ status: "Trying another way to read the PDF..." });
 			if (options.failRequest === false) return null;
 			throw error;
 		}
@@ -5840,7 +5885,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const finalError = error || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
 		const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
 		await autoPersistReviewSnapshot(session, activeRequest, finalError);
-		const publicActivities = getPublicActivities(uiState?.activities || []);
+		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
+		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
 		const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
 		updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
 		const turn: UiTurn = {
@@ -5879,6 +5925,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
 			action_count: activeRequest.pageActions?.length || 0,
 			artifact_count: activeRequest.artifactIds?.length || 0,
+			...toolReliability,
 			error_kind: finalError ? classifyTelemetryError(finalError) : "",
 		}).catch(() => {});
 		if (finalError) {
@@ -5887,6 +5934,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
 				action_count: activeRequest.pageActions?.length || 0,
 				artifact_count: activeRequest.artifactIds?.length || 0,
+				...toolReliability,
 			});
 		}
 		activeAgent = null;
@@ -5942,13 +5990,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						kind: "tool",
 						label: getToolStatusMessage(toolName),
 						toolName,
-						state: "error",
+						state: "retrying",
 					});
 					if (toolName === "browser_run_js") {
 						void trackExtensionEvent("browser_run_js_failed", { result: "error" }).catch(() => {});
 					}
 					void publishState({ status: "Trying a different approach..." });
 				} else {
+					markRecoveredToolRetries(uiState?.activities || [], toolName);
 					appendActivity({
 						id: activityId,
 						kind: "tool",

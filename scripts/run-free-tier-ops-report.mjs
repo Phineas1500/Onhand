@@ -314,6 +314,28 @@ GROUP BY event, result, ai_model, error_code
 ORDER BY events DESC
 LIMIT ${limit}`,
 		},
+		{
+			name: "tool_reliability",
+			description: "Extension-side browser/PDF tool retries and final failures by prompt outcome.",
+			sql: `
+SELECT
+  blob1 AS event,
+  blob3 AS result,
+  blob13 AS ai_model,
+  SUM(_sample_interval) AS prompts,
+  SUM(_sample_interval * if(double13 > double11, double13, double11)) AS tool_steps,
+  SUM(_sample_interval * double14) AS tool_failures,
+  SUM(_sample_interval * double15) AS recovered_tool_failures,
+  SUM(_sample_interval * double16) AS final_tool_failures,
+  SUM(_sample_interval * double15) / SUM(_sample_interval) AS avg_recovered_failures,
+  SUM(_sample_interval * double16) / SUM(_sample_interval) AS avg_final_failures
+FROM ${dataset}
+WHERE ${where}
+  AND blob1 IN ('prompt_succeeded', 'prompt_failed', 'prompt_stopped')
+GROUP BY event, result, ai_model
+ORDER BY final_tool_failures DESC, recovered_tool_failures DESC, prompts DESC
+LIMIT ${limit}`,
+		},
 	];
 	return queryList.map((query) => ({
 		...query,
@@ -428,6 +450,14 @@ function printReport(report, args) {
 		console.log(`Cost: ${formatDollars(cost.total_cost)} total, ${formatDollars(cost.avg_cost)} avg/completion`);
 		console.log(`Tokens: ${formatInteger(cost.total_tokens)} total, ${formatInteger(cost.avg_tokens)} avg/completion`);
 	}
+	const toolReliability = report.sections.tool_reliability || [];
+	if (toolReliability.length) {
+		console.log(
+			`Tool reliability: ${formatInteger(sumRows(toolReliability, "recovered_tool_failures"))} recovered retries, ${formatInteger(
+				sumRows(toolReliability, "final_tool_failures"),
+			)} final tool failures`,
+		);
+	}
 	if (report.paths) {
 		console.log(`Wrote ${report.paths.jsonPath}`);
 		console.log(`Wrote ${report.paths.markdownPath}`);
@@ -469,6 +499,18 @@ function renderMarkdown(report) {
 	addTable(lines, "Top Errors", report.sections.top_errors, ["event", "error_code", "provider", "status", "events"]);
 	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["event", "result", "ai_model", "events"]);
 	addTable(lines, "Extension Prompts", report.sections.extension_prompts, ["event", "result", "ai_model", "error_code", "events", "avg_ms"]);
+	addTable(lines, "Tool Reliability", report.sections.tool_reliability, [
+		"event",
+		"result",
+		"ai_model",
+		"prompts",
+		"tool_steps",
+		"tool_failures",
+		"recovered_tool_failures",
+		"final_tool_failures",
+		"avg_recovered_failures",
+		"avg_final_failures",
+	]);
 
 	lines.push("## SQL");
 	lines.push("");
@@ -501,6 +543,13 @@ function addTable(lines, title, rows = [], columns = []) {
 
 function first(rows) {
 	return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+function sumRows(rows, column) {
+	return (Array.isArray(rows) ? rows : []).reduce((total, row) => {
+		const value = Number(row?.[column]);
+		return Number.isFinite(value) ? total + value : total;
+	}, 0);
 }
 
 function formatCell(value) {

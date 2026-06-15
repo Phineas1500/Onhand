@@ -4915,6 +4915,8 @@
 
 	function getProgressStatus(activity) {
 		if (activity?.state === "error") return "Failed";
+		if (activity?.state === "retrying") return "Retrying";
+		if (activity?.state === "recovered") return "Recovered";
 		if (activity?.state === "running") return "Running";
 		return "Done";
 	}
@@ -4936,6 +4938,8 @@
 		if (turn?.pending) return running ? `Working · ${trimProgressLabel(running.label || running.toolName)}` : "Working";
 		const parts = ["Done"];
 		if (tools.length) parts.push(pluralize(tools.length, "page step"));
+		const recoveredCount = tools.filter((activity) => activity?.state === "recovered").length;
+		if (recoveredCount) parts.push(`recovered ${pluralize(recoveredCount, "retry")}`);
 		const highlightCount = actions.filter((action) => action?.type === "annotation").length;
 		const noteCount = actions.filter((action) => action?.type === "note").length;
 		const artifactCount = actions.filter((action) => action?.type === "artifact").length;

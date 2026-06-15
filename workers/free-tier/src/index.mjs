@@ -103,6 +103,12 @@ function finiteNumber(value, fallback = 0) {
 	return Number.isFinite(number) ? number : fallback;
 }
 
+function telemetryToolStepCount(data) {
+	const explicitCount = finiteNumber(data.tool_step_count ?? data.toolStepCount);
+	const actionCount = finiteNumber(data.action_count ?? data.actionCount);
+	return Math.max(explicitCount, actionCount);
+}
+
 function envNumber(env, name, fallback) {
 	const number = Number(env?.[name]);
 	return Number.isFinite(number) && number >= 0 ? number : fallback;
@@ -177,6 +183,10 @@ function analyticsDataPoint(eventName, fields, context) {
 			finiteNumber(fields.cost),
 			finiteNumber(fields.actionCount),
 			finiteNumber(fields.artifactCount),
+			finiteNumber(fields.toolStepCount),
+			finiteNumber(fields.toolFailureCount),
+			finiteNumber(fields.recoveredToolFailureCount),
+			finiteNumber(fields.finalToolFailureCount),
 		],
 	};
 }
@@ -690,6 +700,10 @@ function telemetryData(payload) {
 		bodyBytes: finiteNumber(data.body_bytes),
 		actionCount: finiteNumber(data.action_count),
 		artifactCount: finiteNumber(data.artifact_count),
+		toolStepCount: telemetryToolStepCount(data),
+		toolFailureCount: finiteNumber(data.tool_failure_count ?? data.toolFailureCount),
+		recoveredToolFailureCount: finiteNumber(data.recovered_tool_failure_count ?? data.recoveredToolFailureCount),
+		finalToolFailureCount: finiteNumber(data.final_tool_failure_count ?? data.finalToolFailureCount),
 	};
 }
 

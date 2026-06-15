@@ -678,6 +678,68 @@ async function assertPublicActivitiesFilterInternalThinking() {
 	assert.doesNotMatch(JSON.stringify(activities), /onhand_record_learning_event/);
 }
 
+async function assertToolRetryActivitiesFinalizeAsRecovered() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { finalizePublicActivitiesForTest, summarizeToolReliabilityForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof finalizePublicActivitiesForTest, "function", "browser runtime activity finalizer export is missing");
+	assert.equal(typeof summarizeToolReliabilityForTest, "function", "browser runtime tool reliability export is missing");
+
+	const transientActivities = [
+		{
+			id: "tool:search-failed",
+			kind: "tool",
+			label: "Searching the PDF...",
+			toolName: "browser_pdf_search",
+			state: "retrying",
+		},
+		{
+			id: "tool:search-ok",
+			kind: "tool",
+			label: "Searching the PDF...",
+			toolName: "browser_pdf_search",
+			state: "complete",
+		},
+		{
+			id: "tool:learning",
+			kind: "tool",
+			label: "Updating learning state...",
+			toolName: "onhand_record_learning_event",
+			state: "retrying",
+		},
+	];
+
+	const recovered = finalizePublicActivitiesForTest(transientActivities, null);
+	assert.deepEqual(recovered.map((activity) => activity.state), ["recovered", "complete"]);
+	assert.deepEqual(summarizeToolReliabilityForTest(recovered), {
+		tool_step_count: 2,
+		tool_failure_count: 1,
+		recovered_tool_failure_count: 1,
+		final_tool_failure_count: 0,
+	});
+
+	const failed = finalizePublicActivitiesForTest(transientActivities, new Error("prompt failed"));
+	assert.deepEqual(failed.map((activity) => activity.state), ["error", "complete"]);
+	assert.deepEqual(summarizeToolReliabilityForTest(failed), {
+		tool_step_count: 2,
+		tool_failure_count: 1,
+		recovered_tool_failure_count: 0,
+		final_tool_failure_count: 1,
+	});
+
+	assert.deepEqual(
+		summarizeToolReliabilityForTest([], [
+			{ key: "capture:page", label: "Read page", detail: "Captured page content" },
+			{ key: "highlight:passage", label: "Highlighted text", detail: "Highlighted a passage" },
+		]),
+		{
+			tool_step_count: 2,
+			tool_failure_count: 0,
+			recovered_tool_failure_count: 0,
+			final_tool_failure_count: 0,
+		},
+	);
+}
+
 async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	// requestAnimationFrame never fires on hidden tabs or occluded windows;
 	// a bare rAF await left viewer annotation commands hanging until the
@@ -5127,6 +5189,7 @@ async function main() {
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
+	await assertToolRetryActivitiesFinalizeAsRecovered();
 	await assertConstitutionPromptContract();
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertLearnerStateUpdates();
