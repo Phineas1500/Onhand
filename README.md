@@ -22,7 +22,7 @@ Onhand now uses the browser extension as its runtime:
 2. `@mariozechner/pi-agent-core` and `@mariozechner/pi-ai` are bundled into the extension
 3. sidebar messages route to an in-extension runtime controller
 4. browser tools call the existing extension command handlers directly
-5. direct sign-in and API-key auth are configured from the extension options page
+5. Onhand Free, OpenAI Codex sign-in, and provider API-key auth are configured from the extension options page
 6. runtime settings are stored in `chrome.storage.local`; sessions and artifacts are stored as per-record entries in extension IndexedDB
 
 ## Browser-only direction
@@ -46,11 +46,21 @@ The broader product plan lives in:
 - `scripts/` - browser-runtime build, smoke, fixture, preflight, and Chrome acceptance helpers
 - `website/` - static landing site, privacy policy, support page, and Chrome Web Store links
 
-## Security model
+## Security and privacy model
 
-- browser-only mode stores the selected OpenAI auth mode, model, API key, and Codex sign-in refresh token in extension local storage
-- the extension calls the provider API directly from the extension runtime
-- direct sign-in currently supports only OpenAI Codex OAuth with `openai-codex` / `gpt-5.5`
+- Browser-only mode stores runtime settings in extension storage, including the selected auth mode, model, optional provider API keys, OpenAI Codex sign-in credentials, and the anonymous Onhand Free token.
+- Onhand Free uses a hosted Cloudflare Worker that forwards model requests to OpenRouter with daily usage caps. Anonymous diagnostics are required for Onhand Free so the hosted endpoint can monitor reliability, cost, quota pressure, crashes, and abuse.
+- OpenAI Codex sign-in uses the browser OAuth flow with selectable Codex text models. `gpt-5.5` is the default and recommended model for Onhand's page-grounded tool use.
+- Provider API-key mode calls the selected provider directly from the extension runtime. Supported providers include OpenAI, Anthropic, Google Gemini, and OpenRouter.
+- Anonymous diagnostics and explicit error reports are redacted. They do not include prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys. Sentry receives only redacted crash/exception events when diagnostics are enabled or when the user explicitly sends an anonymized error report.
+- `browser_run_js` is an optional, constrained last-resort runtime-state inspection tool for complex client-side pages. Users can disable it from the options page.
+
+Related docs:
+
+- `website/privacy.html`
+- `docs/FREE_TIER.md`
+- `docs/SENTRY.md`
+- `docs/STORE_LISTING.md`
 
 ## Setup
 
@@ -72,16 +82,18 @@ npm run build:extension
 - Enable developer mode
 - Load unpacked extension from `packages/browser-extension/`
 - Open the extension options page
-- Preferred: use OpenAI Codex sign-in:
+- Easiest: select `Onhand Free (beta)` for no-key, no-account usage with a daily cap.
+- Preferred for regular text chat: use OpenAI Codex sign-in:
   - click `Sign in` in the OpenAI Codex Sign-In section
   - finish the opened OpenAI login tab
   - confirm Authentication is set to `OpenAI Codex sign-in`
-  - confirm the model is `gpt-5.5`
-  - Fallback: use an OpenAI API key for text chat:
-    - set Authentication to `OpenAI API key`
-    - enter the OpenAI API key
-    - choose an OpenAI API model if needed
-    - Save
+  - keep the default/recommended model, `gpt-5.5`, unless you are intentionally testing another selectable Codex model
+- For your own provider key:
+  - set Authentication to `Provider API key`
+  - choose OpenAI, Anthropic, Google Gemini, or OpenRouter
+  - enter the provider API key
+  - choose a model if needed
+  - Save
 - Voice mode requires an OpenAI platform API key with Realtime API access. You can paste this key in the options page while keeping Authentication set to OpenAI Codex sign-in for text chat.
 
 If Helium supports Chromium extensions and the `chrome.debugger` API, the same unpacked extension should work there too.
@@ -99,7 +111,7 @@ For a real provider call:
 OPENAI_API_KEY=... npm run smoke:browser-runtime -- --real-openai
 ```
 
-For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Codex, confirm the options page shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON, then run the local fixture with `npm run serve:fixture`. Open `http://127.0.0.1:8765/` in Chrome, start a fresh Onhand side-panel session with a Chrome-specific title, and submit the read, interaction, debug, artifact, and network reload prompts there.
+For a manual Chrome smoke, reload the unpacked extension, sign in with OpenAI Codex, confirm the options page shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, the recommended `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON, then run the local fixture with `npm run serve:fixture`. Open `http://127.0.0.1:8765/` in Chrome, start a fresh Onhand side-panel session with a Chrome-specific title, and submit the read, interaction, debug, artifact, and network reload prompts there.
 
 For browser-runtime regression coverage, run:
 
@@ -172,4 +184,4 @@ Onhand is licensed under the Apache License, Version 2.0. See `LICENSE` for deta
 
 - stronger replay/restore fidelity for changed pages and missing tabs beyond best-effort text matching
 - session/artifact export-import and a storage-usage readout now that sessions/artifacts live in IndexedDB
-- PDF/document support after the browser-grounded MVP is solid
+- tighter release/ops automation for Chrome Web Store submissions, website version sync, free-tier monitoring, and Sentry checks
