@@ -6,8 +6,11 @@ const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
 const PDF_READER_FRAME_EXECUTION_TIMEOUT_MS = 6000;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
+const SIDEBAR_FALLBACK_TABS_KEY = "onhandSidebarFallbackTabs";
 const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 const SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS = [0, 80, 240, 600];
+const SIDEBAR_FALLBACK_REASON_PARAM = "onhandFallback";
+const SIDEBAR_UNSUPPORTED_SIDE_PANEL_REASON = "unsupported-side-panel";
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
@@ -156,6 +159,11 @@ async function getSidebarWindowStates() {
 	return stored[SIDEBAR_WINDOW_STATES_KEY] || {};
 }
 
+async function getSidebarFallbackTabs() {
+	const stored = await chrome.storage.local.get({ [SIDEBAR_FALLBACK_TABS_KEY]: {} });
+	return stored[SIDEBAR_FALLBACK_TABS_KEY] || {};
+}
+
 async function setSidebarWindowOpen(windowId, open) {
 	if (typeof windowId !== "number") return;
 	const states = await getSidebarWindowStates();
@@ -165,6 +173,17 @@ async function setSidebarWindowOpen(windowId, open) {
 		delete states[String(windowId)];
 	}
 	await chrome.storage.local.set({ [SIDEBAR_WINDOW_STATES_KEY]: states });
+}
+
+async function setSidebarFallbackTab(windowId, tabId) {
+	if (typeof windowId !== "number") return;
+	const tabs = await getSidebarFallbackTabs();
+	if (typeof tabId === "number") {
+		tabs[String(windowId)] = tabId;
+	} else {
+		delete tabs[String(windowId)];
+	}
+	await chrome.storage.local.set({ [SIDEBAR_FALLBACK_TABS_KEY]: tabs });
 }
 
 async function isSidebarOpenForWindow(windowId) {
@@ -185,6 +204,9 @@ async function openSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") {
 		throw new Error("No browser window is available for the Onhand sidebar.");
 	}
+	if (!chrome.sidePanel?.open) {
+		return await openSidebarFallbackTab(windowId, SIDEBAR_UNSUPPORTED_SIDE_PANEL_REASON);
+	}
 	try {
 		await chrome.sidePanel.open({ windowId });
 	} catch (error) {
@@ -196,6 +218,39 @@ async function openSidebarForWindow(windowId) {
 	}
 	await setSidebarWindowOpen(windowId, true);
 	return { windowId, open: true };
+}
+
+async function openSidebarFallbackTab(windowId, reason) {
+	if (!chrome.tabs?.create) {
+		throw new Error("This browser does not support Chrome side panels, and Onhand could not open a fallback tab.");
+	}
+	const fallbackTabs = await getSidebarFallbackTabs();
+	const existingTabId = Number(fallbackTabs[String(windowId)]);
+	if (Number.isFinite(existingTabId) && existingTabId > 0) {
+		try {
+			const existingTab = await chrome.tabs.get(existingTabId);
+			await chrome.tabs.update(existingTabId, { active: true });
+			if (typeof existingTab?.windowId === "number" && chrome.windows?.update) {
+				await chrome.windows.update(existingTab.windowId, { focused: true }).catch(() => {});
+			}
+			await setSidebarWindowOpen(existingTab?.windowId ?? windowId, true);
+			return { windowId: existingTab?.windowId ?? windowId, tabId: existingTabId, open: true, fallback: true };
+		} catch {
+			await setSidebarFallbackTab(windowId, null);
+		}
+	}
+	const sidebarUrl = new URL(chrome.runtime.getURL("sidepanel.html"));
+	sidebarUrl.searchParams.set(SIDEBAR_FALLBACK_REASON_PARAM, reason || SIDEBAR_UNSUPPORTED_SIDE_PANEL_REASON);
+	const tab = await chrome.tabs.create({
+		url: sidebarUrl.toString(),
+		active: true,
+		...(typeof windowId === "number" ? { windowId } : {}),
+	});
+	if (typeof tab?.windowId === "number") {
+		await setSidebarWindowOpen(tab.windowId, true);
+		await setSidebarFallbackTab(tab.windowId, tab?.id);
+	}
+	return { windowId: tab?.windowId ?? windowId, tabId: tab?.id ?? null, open: true, fallback: true };
 }
 
 function createQuickOpenRequest(windowId) {
@@ -229,6 +284,12 @@ async function requestSidebarQuickOpen(windowId) {
 
 async function closeSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") return { windowId, open: false };
+	const fallbackTabs = await getSidebarFallbackTabs();
+	const fallbackTabId = Number(fallbackTabs[String(windowId)]);
+	if (Number.isFinite(fallbackTabId) && fallbackTabId > 0 && chrome.tabs?.remove) {
+		await chrome.tabs.remove(fallbackTabId).catch(() => {});
+		await setSidebarFallbackTab(windowId, null);
+	}
 	if (chrome.sidePanel?.close) {
 		await chrome.sidePanel.close({ windowId });
 	}

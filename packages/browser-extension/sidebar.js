@@ -56,6 +56,14 @@
 	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
 	const IS_NATIVE_SIDE_PANEL =
 		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
+	const SIDEBAR_FALLBACK_REASON = (() => {
+		try {
+			return new URL(globalThis.location?.href || "").searchParams.get("onhandFallback") || "";
+		} catch {
+			return "";
+		}
+	})();
+	const IS_UNSUPPORTED_SIDE_PANEL_FALLBACK = SIDEBAR_FALLBACK_REASON === "unsupported-side-panel";
 	const FONT_ASSET_PATHS = Object.freeze({
 		newYorkRegular: "fonts/NewYork.woff2",
 		newYorkItalic: "fonts/NewYorkItalic.woff2",
@@ -1618,6 +1626,23 @@
 			.onhand-sidebar select,
 			.onhand-sidebar textarea {
 				font: inherit;
+			}
+			.onhand-browser-fallback {
+				margin: 10px 12px 0;
+				padding: 10px 12px;
+				border: 1px solid color-mix(in srgb, var(--rm-gold) 55%, var(--rm-surface-2));
+				border-radius: 14px;
+				background: color-mix(in srgb, var(--rm-gold) 14%, var(--rm-surface-0));
+				color: var(--rm-text);
+				font: 12px/1.45 var(--rm-font-serif);
+			}
+			.onhand-browser-fallback strong {
+				display: block;
+				font-size: 12px;
+				margin-bottom: 2px;
+			}
+			.onhand-browser-fallback span {
+				color: var(--rm-subtext);
 			}
 			.onhand-head {
 				display: flex;
@@ -3260,6 +3285,14 @@
 			}
 		</style>
 		<div class="onhand-sidebar panel" data-onhand-sidebar>
+			${
+				IS_UNSUPPORTED_SIDE_PANEL_FALLBACK
+					? `<div class="onhand-browser-fallback" role="status">
+						<strong>Opened in a tab</strong>
+						<span>This browser does not support Chrome side panels, so Onhand is running here instead.</span>
+					</div>`
+					: ""
+			}
 			<header class="onhand-head">
 				<div class="onhand-brand" aria-label="Onhand">
 					<span class="onhand-logo-mark" aria-hidden="true">☞</span>
