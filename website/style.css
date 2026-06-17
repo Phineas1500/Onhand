@@ -284,6 +284,7 @@ section:first-of-type{border-top:0}
 [data-theme="dark"] .release-download:hover{color:#191724}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .release-download{color:#191724}:root:not([data-theme="light"]) .release-download:hover{color:#191724}}
 .release-notes{font-family:var(--font-mono);font-size:11.5px;color:var(--rp-pine);text-transform:uppercase;letter-spacing:0.05em;font-weight:700}
+.release-sep{color:var(--fg-subtle);font-size:11.5px;user-select:none}
 .source-install{border:1px solid var(--border-subtle);border-radius:4px;background:var(--bg);overflow:hidden}
 .source-install summary{cursor:pointer;padding:12px 14px;font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;list-style:none}
 .source-install summary::-webkit-details-marker{display:none}

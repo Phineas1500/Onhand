@@ -59,15 +59,7 @@
         <div class="hero-eyebrow">
           <span class="tag">Chrome Web Store live</span>
           <span class="dot"></span>
-          <span>Store <span data-onhand-store-version></span> · latest build <span data-onhand-version-label></span></span>
-          <span class="dot"></span>
           <span>Apache 2.0</span>
-          <span class="dot"></span>
-          <span>For Chromium</span>
-          <span class="dot"></span>
-          <span>Built with OpenAI Codex</span>
-          <span class="dot"></span>
-          <span>Onhand Free · Codex · provider keys</span>
         </div>
 
         <h1 class="hero-h1">
@@ -76,8 +68,8 @@
 
         <p class="hero-lede">
           Onhand is a contextual AI for learning and research. Ask about the page
-          you already have open. It highlights the line, leaves a note in the margin,
-          and explains it in the side panel, <em>where you are</em>. No second window, no copy-paste.
+          you're reading. It highlights the line, leaves a margin note, and explains
+          it in the side panel. No second window, no copy-paste.
         </p>
 
         <div class="hero-ctas">
@@ -231,29 +223,25 @@ return torch.matmul(p_attn, value)</code></pre>
       <div class="feat">
         <div class="ico">☞</div>
         <h3>Points to the answer</h3>
-        <p>Highlights the exact phrase or paragraph that answers your question, in gold, and scrolls the page to bring it into view. Block-level highlights for whole paragraphs, inline highlights for phrases.</p>
-        <div class="meta">background.js · highlight_text · scroll_to_annotation</div>
+        <p>Highlights the exact phrase or paragraph that answers your question, in gold, and scrolls it into view.</p>
       </div>
 
       <div class="feat">
         <div class="ico">✎</div>
         <h3>Leaves a note in the margin</h3>
         <p>Drops a sentence or two next to your highlight, written in the article's own voice, so you can keep reading without losing your place.</p>
-        <div class="meta">show_note · pine-barred editorial callout</div>
       </div>
 
       <div class="feat">
         <div class="ico">⎘</div>
         <h3>Replay artifacts</h3>
         <p>Every session is saved with its highlights, notes, transcript, and a snapshot of the page. Come back tomorrow to the exact state you left.</p>
-        <div class="meta">chrome.storage.local · sessions + screenshots</div>
       </div>
 
       <div class="feat">
         <div class="ico">◔</div>
         <h3>Voice tutor</h3>
-        <p>Press <span class="kbd">Voice</span> in the side panel and talk through a paper. The realtime model can see your highlights and the visible text.</p>
-        <div class="meta"><span class="badge">★ </span>gpt-realtime-2 · WebRTC · experimental</div>
+        <p>Press <span class="kbd">Voice</span> in the side panel and talk through a paper. The realtime model can see your highlights and the visible text. Experimental.</p>
       </div>
     </div>
   </div>
@@ -305,10 +293,7 @@ return torch.matmul(p_attn, value)</code></pre>
     <div class="section-eyebrow"><span class="mc">☞</span><span>Install</span></div>
     <h2 class="section-title">Onhand is on the Chrome Web Store.</h2>
     <p class="section-lede">
-      Install the approved Chrome Web Store build in one click. Start with
-      Onhand Free, sign in with OpenAI Codex, or bring a provider API key.
-      The store is currently serving <span data-onhand-store-version></span>
-      and updates through Chrome.
+      Install from the Chrome Web Store in one click. It updates automatically.
     </p>
 
     <div class="install-wrap">
@@ -317,9 +302,8 @@ return torch.matmul(p_attn, value)</code></pre>
           <div class="release-kicker">Chrome Web Store · live now</div>
           <h3>Add Onhand to Chrome.</h3>
           <p>
-            The approved store build installs normally and updates through Chrome.
-            Use the GitHub ZIP only if you prefer manual installs or need a specific
-            <span data-onhand-version-label></span> release artifact.
+            Prefer a manual install? Download the ZIP below, unzip it, and load it
+            from <code>chrome://extensions</code> with developer mode on.
           </p>
           <div class="release-actions">
             <a class="release-download" href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-onhand-store-link>
@@ -329,6 +313,7 @@ return torch.matmul(p_attn, value)</code></pre>
             <a class="release-notes" href="#" data-onhand-release-download>
               Download latest ZIP
             </a>
+            <span class="release-sep" aria-hidden="true">·</span>
             <a class="release-notes" href="#" target="_blank" rel="noopener" data-onhand-release-notes>
               Release notes ↗
             </a>
@@ -360,24 +345,20 @@ return torch.matmul(p_attn, value)</code></pre>
       </div>
 
       <ol class="install-steps">
-        <li>Open the <strong>Chrome Web Store listing</strong> and click <strong>Add to Chrome</strong>.</li>
-        <li>Chrome is currently serving <strong data-onhand-store-version></strong> and will update Onhand automatically.</li>
-        <li>Open the Onhand <strong>options page</strong>. Choose <em>Onhand Free</em>, sign in with <em>OpenAI Codex</em>, or paste a <em>provider API key</em>.</li>
-        <li>Pin the extension, open any page, and click the icon to launch the <strong>side panel</strong>. Press <code>Cmd/Ctrl+K</code> in the panel to focus the composer.</li>
-        <li>Prefer a manual install? Download <strong data-onhand-release-file></strong>, unzip it, then load the folder from <code>chrome://extensions</code> with <em>developer mode</em> enabled.</li>
-        <li>That's it <span class="mc" style="color:var(--rp-gold);font-size:15px">☞</span>. Highlight a passage, type a question, and let Onhand <em>point</em>.</li>
+        <li>Open the Chrome Web Store listing and click <strong>Add to Chrome</strong>.</li>
+        <li>Open Onhand's <strong>options page</strong> and pick how to connect: Onhand Free, OpenAI Codex, or a provider API key.</li>
+        <li>Pin the extension, open any page, and click the icon to open the side panel.</li>
+        <li>Highlight a passage, ask a question, and let Onhand <em>point</em> <span class="mc" style="color:var(--rp-gold);font-size:15px">☞</span>.</li>
       </ol>
     </div>
 
     <div class="license-note">
       <span class="mc">☞</span>
       <p>
-        <strong>Apache 2.0.</strong> Onhand is open source.
-        Sessions stay on your machine in <code>chrome.storage.local</code>.
-        Provider keys never leave your device in API-key modes; Onhand Free sends
-        model requests through the hosted Onhand Worker with anonymous diagnostics
-        for reliability, quota, cost, and abuse monitoring. Helium and other
-        Chromium-based browsers that support <code>chrome.debugger</code> work too.
+        <strong>Apache 2.0.</strong> Onhand is open source. Sessions stay on your
+        machine in <code>chrome.storage.local</code>, and provider keys never leave
+        your device. Onhand Free routes model requests through the hosted Onhand
+        Worker with anonymous diagnostics for reliability and abuse monitoring.
       </p>
     </div>
   </div>
