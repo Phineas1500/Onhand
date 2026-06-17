@@ -17,7 +17,9 @@
 //
 // Secrets/bindings: OPENROUTER_API_KEY (secret), FREE_TIER_KV (KV).
 
-const ALLOWED_MODELS = new Set(["deepseek/deepseek-v4-flash"]);
+const FREE_TIER_TEXT_MODEL = "deepseek/deepseek-v4-flash";
+const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
+const ALLOWED_MODELS = new Set([FREE_TIER_TEXT_MODEL]);
 const ALLOWED_OPENROUTER_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
 const MAX_BODY_BYTES = 900_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
@@ -315,6 +317,24 @@ function requestTelemetryIds(request) {
 		turnId: compactIdentifier(request.headers.get("X-Onhand-Turn-Id") || "", 80),
 		sessionId: compactIdentifier(request.headers.get("X-Onhand-Session-Id") || "", 80),
 	};
+}
+
+function valueContainsImage(value) {
+	if (!value) return false;
+	if (typeof value === "string") return value.startsWith("data:image/");
+	if (Array.isArray(value)) return value.some(valueContainsImage);
+	if (typeof value !== "object") return false;
+	const type = String(value.type || "").toLowerCase();
+	if (type === "image" || type === "image_url" || type === "input_image") return true;
+	if (typeof value.image_url === "string" || value.image_url?.url) return true;
+	if (typeof value.url === "string" && value.url.startsWith("data:image/")) return true;
+	if (typeof value.data === "string" && value.mimeType?.startsWith?.("image/")) return true;
+	if (typeof value.data === "string" && value.media_type?.startsWith?.("image/")) return true;
+	return Object.values(value).some(valueContainsImage);
+}
+
+function routedModelForRequestBody(body) {
+	return valueContainsImage(body?.messages) ? FREE_TIER_VISUAL_MODEL : FREE_TIER_TEXT_MODEL;
 }
 
 async function handleRegister(request, env, ctx) {
@@ -639,6 +659,8 @@ async function handleChatCompletions(request, env, ctx) {
 		return json(400, { error: { message: `The free tier serves ${[...ALLOWED_MODELS].join(", ")} only.` } });
 	}
 
+	const upstreamModel = routedModelForRequestBody(body);
+	body.model = upstreamModel;
 	body.max_tokens = Math.min(Number(body.max_tokens || MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
 	// Server-side routing policy always wins over anything client-supplied.
 	body.provider = { only: ALLOWED_OPENROUTER_PROVIDERS };

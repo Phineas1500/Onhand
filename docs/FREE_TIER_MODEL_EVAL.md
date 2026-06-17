@@ -67,6 +67,13 @@ Use `deepseek/deepseek-v4-flash` as the control. A higher-quality model should
 earn its extra cost; a cheaper model should prove it does not degrade Onhand's
 core behavior.
 
+For the free-tier vision route, use `mistralai/mistral-small-3.2-24b-instruct`
+as the current challenger/control unless a newer candidate proves both better
+vision quality and equally reliable browser tool calls. In a live comparison on
+2026-06-17, `google/gemma-3-27b-it` handled simple image probes well but failed
+the browser tool-call case through upstream provider errors, while Mistral passed
+the Onhand tool-call matrix.
+
 ## Useful Commands
 
 ```sh

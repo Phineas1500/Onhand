@@ -132888,12 +132888,12 @@ async function buildFreeTierModel() {
   const baseUrl = await getFreeTierBaseUrl();
   return {
     id: ONHAND_FREE_MODEL,
-    name: "Onhand Free (DeepSeek V4 Flash)",
+    name: "Onhand Free (DeepSeek + Mistral Vision)",
     api: "openai-completions",
     provider: ONHAND_FREE_PROVIDER,
     baseUrl,
     reasoning: false,
-    input: ["text"],
+    input: ["text", "image"],
     contextWindow: 1048576,
     maxTokens: 32768,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
@@ -133074,9 +133074,9 @@ function getProviderModelOptions(providerId) {
     return [
       {
         id: ONHAND_FREE_MODEL,
-        name: "DeepSeek V4 Flash (Onhand Free)",
+        name: "DeepSeek V4 Flash + Mistral Vision (Onhand Free)",
         api: "openai-completions",
-        input: ["text"],
+        input: ["text", "image"],
         tools: true,
         structuredOutput: false,
         realtime: false
