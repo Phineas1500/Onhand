@@ -46,6 +46,9 @@ async function assertPdfViewerHandoffHelpers() {
 		"isLikelyPdfResourceUrl",
 		"normalizePdfUrlCandidate",
 		"extractPdfSourceUrlFromViewerLikeUrl",
+		"isGoogleDocsDocumentUrl",
+		"googleDocsDocumentIdFromUrl",
+		"buildGoogleDocsPdfExportUrl",
 		"resolvePdfSourceUrlForViewer",
 		"normalizePdfPageNumber",
 		"normalizePdfScrollRatio",
@@ -89,6 +92,13 @@ async function assertPdfViewerHandoffHelpers() {
 		"https://example.test/download?id=paper-123",
 	);
 	assert.equal(
+		helpers.resolvePdfSourceUrlForViewer(
+			{},
+			{ url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0" },
+		),
+		"https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf",
+	);
+	assert.equal(
 		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf"),
 		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
 	);
@@ -129,7 +139,7 @@ async function assertPdfViewerHandoffHelpers() {
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	assert.match(
 		backgroundSource,
-		/if \(!isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)\)/,
+		/if \(!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)\)/,
 		"Open PDF should not redirect an existing Onhand PDF viewer-like tab back to its raw PDF source",
 	);
 	// Every PDF tab has the browser's native PDF-viewer frame (a different
@@ -370,6 +380,7 @@ async function loadGoogleDocsBackgroundExportHelpers(fetchImpl) {
 		"isGoogleDocsDocumentUrl",
 		"googleDocsDocumentIdFromUrl",
 		"buildGoogleDocsTextExportUrl",
+		"buildGoogleDocsPdfExportUrl",
 		"googleDocsTextExportUnsupportedPayload",
 		"googleDocsTextExportPayloadFromText",
 		"extractGoogleDocsTextExportForTab",
@@ -419,6 +430,10 @@ async function assertGoogleDocsBackgroundExportReadsText() {
 	assert.equal(requestedUrls[0].credentials, "include");
 	assert.equal(requestedUrls[0].cache, "no-store");
 	assert.equal(requestedUrls[0].redirect, "follow");
+	assert.equal(
+		helpers.buildGoogleDocsPdfExportUrl("https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0"),
+		"https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf",
+	);
 }
 
 async function assertGoogleDocsBackgroundExportDoesNotReturnHtml() {
@@ -450,6 +465,52 @@ async function assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval(
 		source,
 		/case "extract_content":\s*{[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*args\.maxChars\s*\}\)[\s\S]*evaluateInTab/,
 		"browser_extract_content should read Google Docs through the background text export before page-world evaluation",
+	);
+}
+
+async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
+	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const pdfViewerSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/src/pdf-viewer.ts"), "utf8");
+	assert.match(
+		backgroundSource,
+		/isGoogleDocsDocumentUrl\(tabUrl\)[\s\S]*buildGoogleDocsPdfExportUrl\(tabUrl\)/,
+		"PDF viewer source resolution should infer a Google Docs PDF export URL from document tabs",
+	);
+	assert.match(
+		backgroundSource,
+		/const sourceIsGoogleDocs = isGoogleDocsDocumentUrl\(sourceTab\.url\);/,
+		"PDF viewer opening should detect Google Docs source tabs",
+	);
+	assert.match(
+		backgroundSource,
+		/const shouldOpenViewerInNewTab = args\.newTab === true \|\| \(sourceIsGoogleDocs && args\.newTab !== false\);/,
+		"Google Docs PDF handoff should preserve the original Docs tab by default",
+	);
+	assert.match(backgroundSource, /async function highlightGoogleDocsViaPdfViewer/, "Google Docs highlights should use a PDF viewer handoff helper");
+	assert.match(
+		backgroundSource,
+		/case "highlight_text":\s*{[\s\S]*!args\.pdfAnchor && isGoogleDocsDocumentUrl\(tab\.url\)[\s\S]*highlightGoogleDocsViaPdfViewer\(tab,\s*args\)/,
+		"browser_highlight_text should hand Google Docs tabs to the PDF viewer before annotating",
+	);
+	assert.match(
+		backgroundSource,
+		/handoff:\s*{[\s\S]*surface:\s*"google-docs"[\s\S]*mode:\s*"pdf-export"/,
+		"Google Docs PDF highlights should report the handoff surface and mode",
+	);
+	assert.match(
+		pdfViewerSource,
+		/function isGoogleDocsPdfExportUrl/,
+		"Onhand PDF viewer should detect Google Docs PDF exports",
+	);
+	assert.match(
+		pdfViewerSource,
+		/getPdfDocumentWithTimeout\(\{\s*\.\.\.baseOptions,\s*withCredentials:\s*true\s*\},\s*GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS\)/,
+		"Onhand PDF viewer should retry Google Docs PDF exports with credentials",
+	);
+	assert.match(
+		pdfViewerSource,
+		/Timed out loading the PDF\./,
+		"Onhand PDF viewer should not leave failed Google Docs exports spinning silently",
 	);
 }
 
@@ -2097,6 +2158,7 @@ async function main() {
 	await assertGoogleDocsBackgroundExportReadsText();
 	await assertGoogleDocsBackgroundExportDoesNotReturnHtml();
 	await assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval();
+	await assertGoogleDocsHighlightUsesPdfViewerHandoff();
 
 	await assertHighlight({
 		name: "curly quote exact projection",

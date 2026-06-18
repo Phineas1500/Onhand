@@ -7,6 +7,8 @@ const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.6;
 const SCALE_STEP = 0.15;
 const RESIZE_RENDER_DELAY_MS = 160;
+const PDF_LOAD_TIMEOUT_MS = 20000;
+const GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS = 12000;
 
 const viewer = document.getElementById("viewer") as HTMLElement;
 const titleElement = document.getElementById("onhand-pdf-title") as HTMLElement;
@@ -1944,6 +1946,57 @@ function parseSourceUrl() {
 	}
 }
 
+function isGoogleDocsPdfExportUrl(value: string) {
+	try {
+		const url = new URL(String(value || ""));
+		return (
+			url.hostname === "docs.google.com" &&
+			/^\/document\/d\/[^/]+\/export$/i.test(url.pathname) &&
+			String(url.searchParams.get("format") || "").toLowerCase() === "pdf"
+		);
+	} catch {
+		return false;
+	}
+}
+
+async function getPdfDocumentWithTimeout(options: Record<string, any>, timeoutMs: number) {
+	const loadingTask = getDocument(options);
+	let timeoutId: number | null = null;
+	try {
+		return await Promise.race([
+			loadingTask.promise,
+			new Promise((_, reject) => {
+				timeoutId = window.setTimeout(() => reject(new Error("Timed out loading the PDF.")), timeoutMs);
+			}),
+		]);
+	} catch (error) {
+		try {
+			await loadingTask.destroy();
+		} catch {}
+		throw error;
+	} finally {
+		if (timeoutId !== null) window.clearTimeout(timeoutId);
+	}
+}
+
+async function loadPdfDocumentFromUrl(value: string) {
+	const baseOptions = {
+		url: value,
+		cMapUrl: extensionUrl("vendor/cmaps/"),
+		cMapPacked: true,
+		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
+	};
+	if (!isGoogleDocsPdfExportUrl(value)) {
+		return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
+	}
+	try {
+		return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
+	} catch {
+		setStatus("Retrying with browser credentials...");
+		return await getPdfDocumentWithTimeout({ ...baseOptions, withCredentials: true }, GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS);
+	}
+}
+
 function normalizeViewerPageNumber(value: any, maxPage = Number.MAX_SAFE_INTEGER) {
 	const match = String(value ?? "").match(/\d+/);
 	if (!match) return null;
@@ -2317,12 +2370,7 @@ async function loadPdf() {
 	titleElement.textContent = title;
 	GlobalWorkerOptions.workerSrc = extensionUrl("vendor/pdf.worker.mjs");
 	setStatus("Loading PDF...");
-	pdfDocument = await getDocument({
-		url: sourceUrl,
-		cMapUrl: extensionUrl("vendor/cmaps/"),
-		cMapPacked: true,
-		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
-	}).promise;
+	pdfDocument = await loadPdfDocumentFromUrl(sourceUrl);
 	const pageCount = Number(pdfDocument.numPages || 0);
 	const explicitInitialPageNumber = parseInitialPageNumber(pageCount);
 	const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;

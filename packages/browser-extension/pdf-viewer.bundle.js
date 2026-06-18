@@ -25084,6 +25084,8 @@ var MIN_SCALE = 0.25;
 var MAX_SCALE = 2.6;
 var SCALE_STEP = 0.15;
 var RESIZE_RENDER_DELAY_MS = 160;
+var PDF_LOAD_TIMEOUT_MS = 2e4;
+var GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS = 12e3;
 var viewer = document.getElementById("viewer");
 var titleElement = document.getElementById("onhand-pdf-title");
 var statusElement = document.getElementById("onhand-pdf-status");
@@ -26749,6 +26751,51 @@ function parseSourceUrl() {
     return "";
   }
 }
+function isGoogleDocsPdfExportUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.hostname === "docs.google.com" && /^\/document\/d\/[^/]+\/export$/i.test(url.pathname) && String(url.searchParams.get("format") || "").toLowerCase() === "pdf";
+  } catch {
+    return false;
+  }
+}
+async function getPdfDocumentWithTimeout(options, timeoutMs) {
+  const loadingTask = __webpack_exports__getDocument(options);
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      loadingTask.promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("Timed out loading the PDF.")), timeoutMs);
+      })
+    ]);
+  } catch (error) {
+    try {
+      await loadingTask.destroy();
+    } catch {
+    }
+    throw error;
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
+}
+async function loadPdfDocumentFromUrl(value) {
+  const baseOptions = {
+    url: value,
+    cMapUrl: extensionUrl("vendor/cmaps/"),
+    cMapPacked: true,
+    standardFontDataUrl: extensionUrl("vendor/standard_fonts/")
+  };
+  if (!isGoogleDocsPdfExportUrl(value)) {
+    return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
+  }
+  try {
+    return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
+  } catch {
+    setStatus("Retrying with browser credentials...");
+    return await getPdfDocumentWithTimeout({ ...baseOptions, withCredentials: true }, GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS);
+  }
+}
 function normalizeViewerPageNumber(value, maxPage = Number.MAX_SAFE_INTEGER) {
   const match = String(value ?? "").match(/\d+/);
   if (!match) return null;
@@ -27054,12 +27101,7 @@ async function loadPdf() {
   titleElement.textContent = title;
   __webpack_exports__GlobalWorkerOptions.workerSrc = extensionUrl("vendor/pdf.worker.mjs");
   setStatus("Loading PDF...");
-  pdfDocument = await __webpack_exports__getDocument({
-    url: sourceUrl,
-    cMapUrl: extensionUrl("vendor/cmaps/"),
-    cMapPacked: true,
-    standardFontDataUrl: extensionUrl("vendor/standard_fonts/")
-  }).promise;
+  pdfDocument = await loadPdfDocumentFromUrl(sourceUrl);
   const pageCount = Number(pdfDocument.numPages || 0);
   const explicitInitialPageNumber = parseInitialPageNumber(pageCount);
   const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;

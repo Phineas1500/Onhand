@@ -577,6 +577,10 @@ function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
 	if (explicitPdfUrl) return explicitPdfUrl;
 
 	const tabUrl = String(tab?.url || "");
+	if (isGoogleDocsDocumentUrl(tabUrl)) {
+		const googleDocsPdfUrl = buildGoogleDocsPdfExportUrl(tabUrl);
+		if (googleDocsPdfUrl) return googleDocsPdfUrl;
+	}
 	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
 	if (nestedPdfUrl) return nestedPdfUrl;
 
@@ -7703,11 +7707,13 @@ async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	const sourceIsGoogleDocs = isGoogleDocsDocumentUrl(sourceTab.url);
+	const shouldOpenViewerInNewTab = args.newTab === true || (sourceIsGoogleDocs && args.newTab !== false);
 	// Reuse a viewer that is already rendered for this PDF instead of
 	// reinstalling: re-running the install rewrites the iframe src with a
 	// freshly inferred page param, which reloads the viewer and yanks the
 	// user away from where they were reading on every prompt.
-	if (args.forceReload !== true && args.newTab !== true && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+	if (args.forceReload !== true && !shouldOpenViewerInNewTab && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		const existingStatus = await probeInlineOnhandPdfViewerStatus(sourceTab.id, pdfUrl);
 		if (existingStatus) {
 			const focusedTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
@@ -7767,7 +7773,7 @@ async function openPdfInOnhandViewer(args = {}) {
 		viewerUrl,
 	});
 
-	if (!isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+	if (!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		let targetTab;
 		if (args.newTab === true) {
 			targetTab = await chrome.tabs.create({
@@ -7823,7 +7829,7 @@ async function openPdfInOnhandViewer(args = {}) {
 	}
 
 	let targetTab;
-	if (args.newTab === true) {
+	if (shouldOpenViewerInNewTab) {
 		targetTab = await chrome.tabs.create({
 			url: viewerUrl,
 			active: args.active !== false,
@@ -7852,7 +7858,50 @@ async function openPdfInOnhandViewer(args = {}) {
 		viewerReady,
 		alreadyOpen: false,
 		opened: true,
-		replacedCurrentTab: args.newTab !== true,
+		replacedCurrentTab: !shouldOpenViewerInNewTab,
+		preservedSourceUrl: sourceIsGoogleDocs && shouldOpenViewerInNewTab,
+	};
+}
+
+async function highlightGoogleDocsViaPdfViewer(sourceTab, args = {}) {
+	const pdfUrl = buildGoogleDocsPdfExportUrl(sourceTab?.url);
+	if (!pdfUrl) throw new Error("Could not build a Google Docs PDF export URL for this document.");
+	const handoff = await openPdfInOnhandViewer({
+		...args,
+		tabId: sourceTab.id,
+		pdfUrl,
+		newTab: true,
+		waitForLoad: true,
+		active: args.active,
+	});
+	const viewerTabId = handoff?.tab?.id;
+	if (typeof viewerTabId !== "number") {
+		throw new Error("Could not open the Google Doc in Onhand's PDF viewer.");
+	}
+	const annotation = await runPageToolkitMethod(viewerTabId, "highlightText", args.text, {
+		occurrence: args.occurrence,
+		clearExisting: args.clearExisting,
+		scrollIntoView: args.scrollIntoView,
+		exactOnly: args.exactOnly,
+		allowApproximate: args.allowApproximate,
+		reuseExisting: args.reuseExisting,
+		pdfAnchor: args.pdfAnchor,
+	});
+	const viewerTab = await chrome.tabs.get(viewerTabId);
+	return {
+		tab: simplifyTab(viewerTab),
+		sourceTab: simplifyTab(sourceTab),
+		annotation,
+		handoff: {
+			surface: "google-docs",
+			mode: "pdf-export",
+			pdfUrl,
+			viewerUrl: handoff.viewerUrl,
+			opened: Boolean(handoff.opened),
+			alreadyOpen: Boolean(handoff.alreadyOpen),
+			replacedCurrentTab: Boolean(handoff.replacedCurrentTab),
+			preservedSourceUrl: true,
+		},
 	};
 }
 
@@ -8058,6 +8107,15 @@ function buildGoogleDocsTextExportUrl(value) {
 	if (!documentId) return "";
 	const exportUrl = new URL(`/document/d/${encodeURIComponent(documentId)}/export`, sourceUrl.origin);
 	exportUrl.searchParams.set("format", "txt");
+	return exportUrl.href;
+}
+
+function buildGoogleDocsPdfExportUrl(value) {
+	const sourceUrl = new URL(String(value || ""));
+	const documentId = googleDocsDocumentIdFromUrl(sourceUrl.href);
+	if (!documentId) return "";
+	const exportUrl = new URL(`/document/d/${encodeURIComponent(documentId)}/export`, sourceUrl.origin);
+	exportUrl.searchParams.set("format", "pdf");
 	return exportUrl.href;
 }
 
@@ -8730,6 +8788,9 @@ async function handleCommand(name, args = {}) {
 			}
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
+				if (!args.pdfAnchor && isGoogleDocsDocumentUrl(tab.url)) {
+					return await highlightGoogleDocsViaPdfViewer(tab, args);
+				}
 				const annotation = await runPageToolkitMethod(tab.id, "highlightText", args.text, {
 					occurrence: args.occurrence,
 					clearExisting: args.clearExisting,
