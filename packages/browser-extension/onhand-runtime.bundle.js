@@ -133700,7 +133700,8 @@ function summarizeRestoredArtifact(result) {
 function replayActionKey(action, text = "") {
   const annotationId = compactActionText(action.annotationId);
   if (annotationId) return `annotation:${annotationId}`;
-  const target = typeof action.tabId === "number" ? `tab:${action.tabId}` : compactActionText(action.url) ? `url:${compactActionText(action.url)}` : compactActionText(action.title) ? `title:${compactActionText(action.title).toLowerCase()}` : "active";
+  const urlKey = restorablePageUrlMatchKey(action.url);
+  const target = typeof action.tabId === "number" ? `tab:${action.tabId}` : urlKey ? `url:${urlKey}` : compactActionText(action.title) ? `title:${compactActionText(action.title).toLowerCase()}` : "active";
   const normalizedText = compactActionText(text || action.citationText || action.detail).toLowerCase();
   return `text:${target}:${normalizedText}`;
 }
@@ -133713,6 +133714,7 @@ function mergeReplayTarget(target, action) {
   if (!target.annotationId && action.annotationId) target.annotationId = action.annotationId;
   if (!target.title && action.title) target.title = action.title;
   if (!target.url && action.url) target.url = action.url;
+  if (!target.pdfAnchor && action.pdfAnchor) target.pdfAnchor = action.pdfAnchor;
 }
 function buildReplayAnnotationsFromPageActions(pageActions = []) {
   const annotations = /* @__PURE__ */ new Map();
@@ -134419,9 +134421,50 @@ function onhandPdfViewerSourceUrl(value) {
     return "";
   }
 }
+function onhandPdfViewerOpenUrl(sourceUrl, previousViewerUrl = "") {
+  const source = String(sourceUrl || "").trim();
+  if (!/^https?:\/\//i.test(source)) return previousViewerUrl || source;
+  try {
+    const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
+    viewerUrl.searchParams.set("url", source);
+    try {
+      const previous = new URL(String(previousViewerUrl || ""));
+      if (isOnhandPdfViewerUrl(previous.href)) {
+        for (const key of ["page", "scrollRatio"]) {
+          const value = previous.searchParams.get(key);
+          if (value) viewerUrl.searchParams.set(key, value);
+        }
+      }
+    } catch {
+    }
+    return viewerUrl.href;
+  } catch {
+    return previousViewerUrl || source;
+  }
+}
+function isGoogleDocsPdfExportUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (!/(^|\.)docs\.google\.com$/i.test(parsed.hostname)) return false;
+    if (!/\/document\/d\/[^/]+\/export\/?$/i.test(parsed.pathname)) return false;
+    return String(parsed.searchParams.get("format") || "").toLowerCase() === "pdf";
+  } catch {
+    return false;
+  }
+}
+function artifactSavedUrl(artifact) {
+  return String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+}
 function artifactEffectiveUrl(artifact) {
-  const raw = String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+  const raw = artifactSavedUrl(artifact);
   return onhandPdfViewerSourceUrl(raw) || raw;
+}
+function artifactOpenUrl(artifact) {
+  const raw = artifactSavedUrl(artifact);
+  const sourceUrl = onhandPdfViewerSourceUrl(raw);
+  if (sourceUrl) return onhandPdfViewerOpenUrl(sourceUrl, raw);
+  if (isGoogleDocsPdfExportUrl(raw)) return onhandPdfViewerOpenUrl(raw);
+  return raw;
 }
 function isLikelyPdfUrlForAutoHandoff(url2) {
   try {
@@ -134463,12 +134506,14 @@ function normalizeRestorablePageUrl(url2) {
 function restorablePageUrlMatchKey(url2) {
   const normalized = normalizeRestorablePageUrl(url2);
   if (!normalized) return "";
+  const viewerSource = onhandPdfViewerSourceUrl(normalized);
+  const matchUrl = viewerSource || normalized;
   try {
-    const parsed = new URL(normalized);
+    const parsed = new URL(matchUrl);
     parsed.hash = "";
     return parsed.href;
   } catch {
-    return normalized.split("#")[0];
+    return matchUrl.split("#")[0];
   }
 }
 function restorablePageUrlsMatch(left, right) {
@@ -137332,11 +137377,12 @@ function createOnhandBrowserRuntime(host) {
     const tabs = flattenTabs(state);
     let tab = findArtifactTab(tabs, artifact, params);
     const url2 = artifactEffectiveUrl(artifact);
+    const openUrl = artifactOpenUrl(artifact);
     if (!tab) {
       if (params.openIfNeeded === false || !url2) {
         throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
       }
-      const navigated = await host.runCommand("navigate", { url: url2, newTab: true, waitForLoad: true });
+      const navigated = await host.runCommand("navigate", { url: openUrl || url2, newTab: true, waitForLoad: true });
       tab = navigated?.tab || navigated;
     } else {
       const activated = await host.runCommand("activate_tab", { tabId: tab.id });
@@ -137379,6 +137425,7 @@ function createOnhandBrowserRuntime(host) {
           noteText,
           title: artifact.page?.title || artifact.tab?.title || tab?.title || "",
           url: artifact.page?.url || artifact.tab?.url || tab?.url || "",
+          pdfAnchor: annotation?.pdfAnchor || highlighted?.annotation?.pdfAnchor || null,
           restoredAnnotation: highlighted?.annotation || null
         });
         if (noteText && annotationId) {
@@ -137416,6 +137463,8 @@ function createOnhandBrowserRuntime(host) {
   function replayTargetKey(annotation) {
     const url2 = restorablePageUrlMatchKey(annotation.url);
     if (url2) return `url:${url2}`;
+    const pdfUrl = pdfAnchorDocumentUrlKey(annotation.pdfAnchor);
+    if (pdfUrl) return `url:${pdfUrl}`;
     if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
     if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
     return "active";
@@ -137940,24 +137989,37 @@ function createOnhandBrowserRuntime(host) {
     const key = compactActionText(action?.key);
     return key.startsWith(prefix) ? key.slice(prefix.length) : "";
   }
+  function pdfAnchorDocumentUrlKey(pdfAnchor) {
+    return restorablePageUrlMatchKey(pdfAnchor?.document?.pdfUrl || pdfAnchor?.document?.url || "");
+  }
+  function pageActionDocumentKeys(action) {
+    const keys = [restorablePageUrlMatchKey(action?.url), pdfAnchorDocumentUrlKey(action?.pdfAnchor)].filter(Boolean);
+    return Array.from(new Set(keys));
+  }
+  function replayAnnotationDocumentKeys(target) {
+    const keys = [restorablePageUrlMatchKey(target?.url), pdfAnchorDocumentUrlKey(target?.pdfAnchor)].filter(Boolean);
+    return Array.from(new Set(keys));
+  }
+  function documentKeysOverlap(leftKeys, rightKeys) {
+    if (!leftKeys.length || !rightKeys.length) return null;
+    return leftKeys.some((key) => rightKeys.includes(key));
+  }
   function actionUrlKey(action) {
-    return compactActionText(action?.url).split("#")[0];
+    return restorablePageUrlMatchKey(action?.url);
   }
   function actionTitleKey(action) {
     return compactActionText(action?.title).toLowerCase();
   }
   function actionSamePage(left, right) {
-    const leftUrl = actionUrlKey(left);
-    const rightUrl = actionUrlKey(right);
-    if (leftUrl && rightUrl) return leftUrl === rightUrl;
+    const documentMatch = documentKeysOverlap(pageActionDocumentKeys(left), pageActionDocumentKeys(right));
+    if (documentMatch != null) return documentMatch;
     const leftTitle = actionTitleKey(left);
     const rightTitle = actionTitleKey(right);
     return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
   }
   function replayTargetSamePage(action, target) {
-    const actionUrl = actionUrlKey(action);
-    const targetUrl = compactActionText(target?.url).split("#")[0];
-    if (actionUrl && targetUrl) return actionUrl === targetUrl;
+    const documentMatch = documentKeysOverlap(pageActionDocumentKeys(action), replayAnnotationDocumentKeys(target));
+    if (documentMatch != null) return documentMatch;
     const actionTitle = actionTitleKey(action);
     const targetTitle = compactActionText(target?.title).toLowerCase();
     return Boolean(actionTitle && targetTitle && actionTitle === targetTitle);
@@ -138182,7 +138244,8 @@ function createOnhandBrowserRuntime(host) {
       url: target?.url || "",
       annotationId: target?.annotationId || null,
       matchedText: compactActionText(target?.matchedText || ""),
-      noteText: compactActionText(target?.noteText || "")
+      noteText: compactActionText(target?.noteText || ""),
+      pdfAnchor: target?.pdfAnchor || target?.restoredAnnotation?.pdfAnchor || null
     };
   }
   function replayAnnotationMatchesRestoredTarget(annotation, target) {
@@ -138190,9 +138253,8 @@ function createOnhandBrowserRuntime(host) {
     const leftText = stripReplayCitationMarkers(compactActionText(annotation.matchedText)).toLowerCase();
     const rightText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
     if (!leftText || leftText !== rightText) return false;
-    const leftUrl = compactActionText(annotation.url).split("#")[0];
-    const rightUrl = compactActionText(target.url).split("#")[0];
-    if (leftUrl && rightUrl) return leftUrl === rightUrl;
+    const documentMatch = documentKeysOverlap(replayAnnotationDocumentKeys(annotation), replayAnnotationDocumentKeys(target));
+    if (documentMatch != null) return documentMatch;
     const leftTitle = compactActionText(annotation.title).toLowerCase();
     const rightTitle = compactActionText(target.title).toLowerCase();
     return !leftTitle || !rightTitle || leftTitle === rightTitle;

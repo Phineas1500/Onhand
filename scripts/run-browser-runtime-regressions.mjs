@@ -3,6 +3,14 @@ import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 
 function installChromeStorageStub() {
 	globalThis.chrome = {
+		runtime: {
+			getURL(path = "") {
+				return `chrome-extension://onhand-test/${path}`;
+			},
+			getManifest() {
+				return { version: "test" };
+			},
+		},
 		storage: {
 			local: {
 				data: {},
@@ -3176,15 +3184,134 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
 	assert.equal(restored.restoredPages[0].restoredNotes, 1);
 	assert.equal(navigateCalls.length, 1);
-	// A viewer-url artifact now navigates to the embedded source pdf and hands
-	// off to the live viewer, so a stale or different-extension viewer id can't
-	// make the restore fail with "Cannot access a chrome-extension URL".
-	assert.equal(navigateCalls[0].args.url, pdfUrl);
+	// A viewer-url artifact should reopen the current Onhand PDF viewer, not
+	// navigate directly to the embedded source PDF. Direct navigation can
+	// trigger a browser download before the viewer handoff can run.
+	assert.equal(navigateCalls[0].args.url, viewerUrl);
+	assert.notEqual(navigateCalls[0].args.url, pdfUrl);
 	assert.equal(waitCalls.length, 1);
 	assert.match(waitCalls[0].args.selector, /data-onhand-pdf-rendered/);
 	assert.equal(highlightCalls.length, 1);
 	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "own-pdf-viewer-restored-anchor"), true);
+}
+
+async function assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const pdfUrl = "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf";
+	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: {
+			url: pdfUrl,
+			pdfUrl,
+			viewerUrl,
+			title: "heyclicky vision",
+			pageCount: 2,
+		},
+		pageNumber: 1,
+		matchedText: "My name is Farza.",
+		textQuote: {
+			exact: "My name is Farza.",
+		},
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.19,
+				y: 0.09,
+				width: 0.18,
+				height: 0.02,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const host = createReplayHost({
+		tabs: [],
+		navigateTabId: 89,
+		navigateTitle: "heyclicky vision - Onhand PDF Viewer",
+		highlightAnnotationId: "google-docs-pdf-restored-anchor",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_google_docs_pdf_viewer_restore"];
+	session.pageActions = [
+		{
+			key: "highlight:google-docs-pdf-anchor",
+			type: "annotation",
+			tabId: 7,
+			windowId: 3,
+			title: "heyclicky vision - Onhand PDF Viewer",
+			url: viewerUrl,
+			annotationId: "google-docs-pdf-anchor",
+			label: "Highlighted text",
+			detail: "My name is Farza.",
+			citationText: "My name is Farza.",
+			pdfAnchor,
+		},
+		{
+			key: "note:google-docs-pdf-anchor",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "heyclicky vision - Onhand PDF Viewer",
+			url: viewerUrl,
+			annotationId: "google-docs-pdf-anchor",
+			label: "Added note",
+			detail: "Opening the Docs export through Onhand keeps it annotatable.",
+			citationText: "Opening the Docs export through Onhand keeps it annotatable.",
+			pdfAnchor,
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_google_docs_pdf_viewer_restore: {
+				id: "artifact_google_docs_pdf_viewer_restore",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "google docs pdf viewer restore",
+				tab: replaySmokeTab({ title: "heyclicky vision - Onhand PDF Viewer", url: pdfUrl }),
+				page: {
+					title: "heyclicky vision - Onhand PDF Viewer",
+					url: pdfUrl,
+					annotations: [
+						{
+							annotationId: "google-docs-pdf-anchor",
+							kind: "pdf",
+							matchedText: "My name is Farza.",
+							pdfAnchor,
+							note: { text: "Opening the Docs export through Onhand keeps it annotatable.", label: "Onhand" },
+						},
+					],
+				},
+			},
+		},
+	});
+
+	const callCountBeforeRestore = host.calls.length;
+	const restored = await runtime.restoreSession();
+	const restoreCalls = host.calls.slice(callCountBeforeRestore);
+	const navigateCalls = restoreCalls.filter((call) => call.name === "navigate");
+	const highlightCalls = restoreCalls.filter((call) => call.name === "highlight_text");
+	const replayPages = restored.restoredPages.filter((page) => page.source === "browser-replay");
+	assert.equal(restored.restoredPages.length, 1, "a covered Docs PDF artifact should not trigger replay fallback");
+	assert.equal(replayPages.length, 0, "Docs PDF artifact restore should cover matching replay page actions");
+	assert.equal(navigateCalls.length, 1);
+	assert.equal(navigateCalls[0].args.url, viewerUrl);
+	assert.notEqual(navigateCalls[0].args.url, pdfUrl);
+	assert.equal(highlightCalls.length, 1);
+	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
+	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "google-docs-pdf-restored-anchor"), true);
 }
 
 async function assertScrollRestoreAccessErrorDoesNotFailRestore() {
@@ -5298,6 +5425,7 @@ async function main() {
 	await assertPdfActionActivationHandsOffBeforeSourceFallback();
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
+	await assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport();
 	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();
 	await assertScrollRestoreAccessErrorDoesNotFailRestore();
 	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();

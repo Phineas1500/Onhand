@@ -2350,10 +2350,11 @@ function summarizeRestoredArtifact(result: any) {
 function replayActionKey(action: PageAction, text = "") {
 	const annotationId = compactActionText(action.annotationId);
 	if (annotationId) return `annotation:${annotationId}`;
+	const urlKey = restorablePageUrlMatchKey(action.url);
 	const target = typeof action.tabId === "number"
 		? `tab:${action.tabId}`
-		: compactActionText(action.url)
-			? `url:${compactActionText(action.url)}`
+		: urlKey
+			? `url:${urlKey}`
 			: compactActionText(action.title)
 				? `title:${compactActionText(action.title).toLowerCase()}`
 				: "active";
@@ -2370,6 +2371,7 @@ function mergeReplayTarget(target: ReplayAnnotation, action: PageAction) {
 	if (!target.annotationId && action.annotationId) target.annotationId = action.annotationId;
 	if (!target.title && action.title) target.title = action.title;
 	if (!target.url && action.url) target.url = action.url;
+	if (!target.pdfAnchor && action.pdfAnchor) target.pdfAnchor = action.pdfAnchor;
 }
 
 function buildReplayAnnotationsFromPageActions(pageActions: PageAction[] = []): ReplayAnnotation[] {
@@ -3196,9 +3198,53 @@ function onhandPdfViewerSourceUrl(value: unknown): string {
 	}
 }
 
+function onhandPdfViewerOpenUrl(sourceUrl: string, previousViewerUrl = "") {
+	const source = String(sourceUrl || "").trim();
+	if (!/^https?:\/\//i.test(source)) return previousViewerUrl || source;
+	try {
+		const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
+		viewerUrl.searchParams.set("url", source);
+		try {
+			const previous = new URL(String(previousViewerUrl || ""));
+			if (isOnhandPdfViewerUrl(previous.href)) {
+				for (const key of ["page", "scrollRatio"]) {
+					const value = previous.searchParams.get(key);
+					if (value) viewerUrl.searchParams.set(key, value);
+				}
+			}
+		} catch {}
+		return viewerUrl.href;
+	} catch {
+		return previousViewerUrl || source;
+	}
+}
+
+function isGoogleDocsPdfExportUrl(value: unknown) {
+	try {
+		const parsed = new URL(String(value || ""));
+		if (!/(^|\.)docs\.google\.com$/i.test(parsed.hostname)) return false;
+		if (!/\/document\/d\/[^/]+\/export\/?$/i.test(parsed.pathname)) return false;
+		return String(parsed.searchParams.get("format") || "").toLowerCase() === "pdf";
+	} catch {
+		return false;
+	}
+}
+
+function artifactSavedUrl(artifact: BrowserArtifact | null | undefined): string {
+	return String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+}
+
 function artifactEffectiveUrl(artifact: BrowserArtifact | null | undefined): string {
-	const raw = String(artifact?.page?.url || artifact?.tab?.url || "").trim();
+	const raw = artifactSavedUrl(artifact);
 	return onhandPdfViewerSourceUrl(raw) || raw;
+}
+
+function artifactOpenUrl(artifact: BrowserArtifact | null | undefined): string {
+	const raw = artifactSavedUrl(artifact);
+	const sourceUrl = onhandPdfViewerSourceUrl(raw);
+	if (sourceUrl) return onhandPdfViewerOpenUrl(sourceUrl, raw);
+	if (isGoogleDocsPdfExportUrl(raw)) return onhandPdfViewerOpenUrl(raw);
+	return raw;
 }
 
 function isLikelyPdfUrlForAutoHandoff(url: unknown) {
@@ -3259,12 +3305,14 @@ function normalizeRestorablePageUrl(url: unknown) {
 function restorablePageUrlMatchKey(url: unknown) {
 	const normalized = normalizeRestorablePageUrl(url);
 	if (!normalized) return "";
+	const viewerSource = onhandPdfViewerSourceUrl(normalized);
+	const matchUrl = viewerSource || normalized;
 	try {
-		const parsed = new URL(normalized);
+		const parsed = new URL(matchUrl);
 		parsed.hash = "";
 		return parsed.href;
 	} catch {
-		return normalized.split("#")[0];
+		return matchUrl.split("#")[0];
 	}
 }
 
@@ -6476,14 +6524,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const state = await host.snapshotState();
 		const tabs = flattenTabs(state);
 		let tab = findArtifactTab(tabs, artifact, params);
-		// Resolve a stale/foreign viewer url back to the raw pdf so navigation
-		// and the inline-viewer handoff target the live document.
+		// Match viewer artifacts by their source PDF, but reopen them through
+		// the current extension's viewer. Opening Google Docs exports directly
+		// can trigger a browser download before Onhand can wrap the PDF.
 		const url = artifactEffectiveUrl(artifact);
+		const openUrl = artifactOpenUrl(artifact);
 		if (!tab) {
 			if (params.openIfNeeded === false || !url) {
 				throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
 			}
-			const navigated = await host.runCommand("navigate", { url, newTab: true, waitForLoad: true });
+			const navigated = await host.runCommand("navigate", { url: openUrl || url, newTab: true, waitForLoad: true });
 			tab = navigated?.tab || navigated;
 		} else {
 			const activated = await host.runCommand("activate_tab", { tabId: tab.id });
@@ -6526,6 +6576,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					noteText,
 					title: artifact.page?.title || artifact.tab?.title || tab?.title || "",
 					url: artifact.page?.url || artifact.tab?.url || tab?.url || "",
+					pdfAnchor: annotation?.pdfAnchor || highlighted?.annotation?.pdfAnchor || null,
 					restoredAnnotation: highlighted?.annotation || null,
 				});
 				if (noteText && annotationId) {
@@ -6564,6 +6615,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function replayTargetKey(annotation: ReplayAnnotation) {
 		const url = restorablePageUrlMatchKey(annotation.url);
 		if (url) return `url:${url}`;
+		const pdfUrl = pdfAnchorDocumentUrlKey(annotation.pdfAnchor);
+		if (pdfUrl) return `url:${pdfUrl}`;
 		if (annotation.title) return `title:${annotation.title.toLowerCase()}`;
 		if (typeof annotation.tabId === "number") return `tab:${annotation.tabId}`;
 		return "active";
@@ -7120,8 +7173,27 @@ function actionKeySuffix(action: PageAction | null | undefined, prefix: string) 
 	return key.startsWith(prefix) ? key.slice(prefix.length) : "";
 }
 
+function pdfAnchorDocumentUrlKey(pdfAnchor: any) {
+	return restorablePageUrlMatchKey(pdfAnchor?.document?.pdfUrl || pdfAnchor?.document?.url || "");
+}
+
+function pageActionDocumentKeys(action: PageAction | null | undefined) {
+	const keys = [restorablePageUrlMatchKey(action?.url), pdfAnchorDocumentUrlKey(action?.pdfAnchor)].filter(Boolean);
+	return Array.from(new Set(keys));
+}
+
+function replayAnnotationDocumentKeys(target: ReplayAnnotation | null | undefined) {
+	const keys = [restorablePageUrlMatchKey(target?.url), pdfAnchorDocumentUrlKey(target?.pdfAnchor)].filter(Boolean);
+	return Array.from(new Set(keys));
+}
+
+function documentKeysOverlap(leftKeys: string[], rightKeys: string[]) {
+	if (!leftKeys.length || !rightKeys.length) return null;
+	return leftKeys.some((key) => rightKeys.includes(key));
+}
+
 function actionUrlKey(action: PageAction | null | undefined) {
-	return compactActionText(action?.url).split("#")[0];
+	return restorablePageUrlMatchKey(action?.url);
 }
 
 function actionTitleKey(action: PageAction | null | undefined) {
@@ -7129,18 +7201,16 @@ function actionTitleKey(action: PageAction | null | undefined) {
 }
 
 function actionSamePage(left: PageAction | null | undefined, right: PageAction | null | undefined) {
-	const leftUrl = actionUrlKey(left);
-	const rightUrl = actionUrlKey(right);
-	if (leftUrl && rightUrl) return leftUrl === rightUrl;
+	const documentMatch = documentKeysOverlap(pageActionDocumentKeys(left), pageActionDocumentKeys(right));
+	if (documentMatch != null) return documentMatch;
 	const leftTitle = actionTitleKey(left);
 	const rightTitle = actionTitleKey(right);
 	return Boolean(leftTitle && rightTitle && leftTitle === rightTitle);
 }
 
 function replayTargetSamePage(action: PageAction | null | undefined, target: ReplayAnnotation | null | undefined) {
-	const actionUrl = actionUrlKey(action);
-	const targetUrl = compactActionText(target?.url).split("#")[0];
-	if (actionUrl && targetUrl) return actionUrl === targetUrl;
+	const documentMatch = documentKeysOverlap(pageActionDocumentKeys(action), replayAnnotationDocumentKeys(target));
+	if (documentMatch != null) return documentMatch;
 	const actionTitle = actionTitleKey(action);
 	const targetTitle = compactActionText(target?.title).toLowerCase();
 	return Boolean(actionTitle && targetTitle && actionTitle === targetTitle);
@@ -7383,6 +7453,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			annotationId: target?.annotationId || null,
 			matchedText: compactActionText(target?.matchedText || ""),
 			noteText: compactActionText(target?.noteText || ""),
+			pdfAnchor: target?.pdfAnchor || target?.restoredAnnotation?.pdfAnchor || null,
 		};
 	}
 
@@ -7391,9 +7462,8 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 		const leftText = stripReplayCitationMarkers(compactActionText(annotation.matchedText)).toLowerCase();
 		const rightText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
 		if (!leftText || leftText !== rightText) return false;
-		const leftUrl = compactActionText(annotation.url).split("#")[0];
-		const rightUrl = compactActionText(target.url).split("#")[0];
-		if (leftUrl && rightUrl) return leftUrl === rightUrl;
+		const documentMatch = documentKeysOverlap(replayAnnotationDocumentKeys(annotation), replayAnnotationDocumentKeys(target));
+		if (documentMatch != null) return documentMatch;
 		const leftTitle = compactActionText(annotation.title).toLowerCase();
 		const rightTitle = compactActionText(target.title).toLowerCase();
 		return !leftTitle || !rightTitle || leftTitle === rightTitle;
