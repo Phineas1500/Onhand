@@ -19,6 +19,16 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "sidebar_action": {
+    "default_icon": {
+      "16": "icons/onhand-16.png",
+      "32": "icons/onhand-32.png",
+      "48": "icons/onhand-48.png",
+      "128": "icons/onhand-128.png"
+    },
+    "default_title": "Onhand",
+    "default_panel": "sidepanel.html"
+  },
   "options_page": "options.html",
   "action": {
     "default_title": "Onhand",

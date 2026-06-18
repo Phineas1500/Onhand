@@ -9643,6 +9643,18 @@
 		}
 	}
 
+	async function notifyNativePanelOpened() {
+		if (!IS_NATIVE_SIDE_PANEL) return;
+		try {
+			await chrome.runtime.sendMessage({
+				type: "sidebar:native-panel-opened",
+				windowId: await ensureCurrentWindowId(),
+			});
+		} catch {
+			// Chrome sidePanel.onOpened already tracks Chrome; this is best-effort for Opera.
+		}
+	}
+
 	menuButton.addEventListener("click", () => {
 		const nextOpen = Boolean(menuPanel.hidden);
 		if (nextOpen) cancelQuickAskComposerFocus();
@@ -10242,6 +10254,7 @@
 		if (IS_NATIVE_SIDE_PANEL) {
 			await ensureCurrentWindowId();
 			setOpen(true);
+			void notifyNativePanelOpened();
 			void consumePendingQuickOpenRequest();
 		} else {
 			const response = await chrome.runtime.sendMessage({

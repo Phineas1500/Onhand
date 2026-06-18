@@ -8,6 +8,7 @@ const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 const SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS = [0, 80, 240, 600];
+const ONHAND_SIDEBAR_PANEL_PATH = "sidepanel.html";
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
@@ -66,6 +67,25 @@ function configureSidePanelActionClick() {
 	});
 }
 
+function getOperaSidebarAction() {
+	return globalThis.opr?.sidebarAction || null;
+}
+
+function configureOperaSidebarAction() {
+	const sidebarAction = getOperaSidebarAction();
+	if (!sidebarAction) return;
+	try {
+		sidebarAction.setTitle?.({ title: "Onhand" });
+	} catch (error) {
+		log("Could not configure Opera sidebar title", error?.message || String(error));
+	}
+	try {
+		sidebarAction.setPanel?.({ panel: ONHAND_SIDEBAR_PANEL_PATH });
+	} catch (error) {
+		log("Could not configure Opera sidebar panel", error?.message || String(error));
+	}
+}
+
 function restrictStorageToTrustedContexts() {
 	if (!chrome.storage?.local?.setAccessLevel) return;
 	chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch((error) => {
@@ -76,6 +96,7 @@ function restrictStorageToTrustedContexts() {
 function initializeExtensionSurface() {
 	restrictStorageToTrustedContexts();
 	configureSidePanelActionClick();
+	configureOperaSidebarAction();
 	ensureOffscreenDocument().catch((error) => {
 		log("Could not initialize offscreen runtime document", error?.message || String(error));
 	});
@@ -184,6 +205,13 @@ async function resolveSidebarWindowId(args = {}) {
 async function openSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") {
 		throw new Error("No browser window is available for the Onhand sidebar.");
+	}
+	if (!chrome.sidePanel?.open && getOperaSidebarAction()) {
+		await requestSidebarQuickOpen(windowId);
+		throw new Error("Opera opens Onhand from the browser sidebar. Click the Onhand icon in Opera's sidebar.");
+	}
+	if (!chrome.sidePanel?.open) {
+		throw new Error("This browser does not expose a native side panel API for Onhand.");
 	}
 	try {
 		await chrome.sidePanel.open({ windowId });
@@ -9354,6 +9382,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				ok: true,
 				open: await isSidebarOpenForWindow(windowId),
 			});
+			return;
+		}
+
+		if (message?.type === "sidebar:native-panel-opened") {
+			const windowId =
+				typeof message.windowId === "number" ? message.windowId : typeof _sender?.tab?.windowId === "number" ? _sender.tab.windowId : null;
+			await setSidebarWindowOpen(windowId, true);
+			sendResponse({ ok: true, windowId, open: true });
 			return;
 		}
 

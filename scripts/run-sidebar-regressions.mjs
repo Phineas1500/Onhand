@@ -658,6 +658,17 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	return dom;
 }
 
+async function assertNativePanelAnnouncesOpened() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:native-panel-opened" && message.windowId === 1),
+		true,
+		"expected native side panel page to announce when it opens",
+	);
+	dom.window.close();
+}
+
 async function assertSessionWideCitationNumbers() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
@@ -4435,6 +4446,7 @@ async function assertMenuDeleteButtonConfirmsBeforeDeletingSession() {
 	dom.window.close();
 }
 
+await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
 await assertReplyTokenPrefixCannotInjectHtml();
 await assertResponseCopyButtonAndStableMarkup();

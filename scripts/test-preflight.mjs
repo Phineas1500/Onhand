@@ -104,10 +104,13 @@ async function main() {
 
 	const manifest = JSON.parse(await readFile(join(PROJECT_ROOT, "packages/browser-extension/manifest.json"), "utf8"));
 	const hasSidePanel = Boolean(manifest.side_panel?.default_path);
+	const hasOperaSidebar = manifest.sidebar_action?.default_panel === manifest.side_panel?.default_path && Boolean(manifest.sidebar_action?.default_icon);
 	const hasBackgroundWorker = manifest.background?.service_worker === "background.js";
 	const hasFileHostPermission = Array.isArray(manifest.host_permissions) && manifest.host_permissions.includes("file:///*");
 	printCheck("Chrome side panel manifest", hasSidePanel && hasBackgroundWorker, `side_panel=${hasSidePanel}, background=${hasBackgroundWorker}`);
 	if (!hasSidePanel || !hasBackgroundWorker) failures.push("Manifest is missing the side panel or background worker.");
+	printCheck("Opera sidebar manifest", hasOperaSidebar, `sidebar_action=${hasOperaSidebar}`);
+	if (!hasOperaSidebar) failures.push("Manifest is missing the Opera sidebar action.");
 	printCheck("Local file host permission", hasFileHostPermission, "host_permissions includes file:///*");
 	if (!hasFileHostPermission) failures.push("Manifest is missing local file host permission.");
 
