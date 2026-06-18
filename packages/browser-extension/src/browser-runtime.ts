@@ -284,6 +284,13 @@ const OPENROUTER_API_PROVIDER = "openrouter";
 const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_PROVIDER = "onhand-free";
 const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
+const ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1048576;
+const ONHAND_FREE_VISUAL_CONTEXT_WINDOW = 131072;
+const ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT = 2;
+const ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS = 48000;
+const ONHAND_FREE_VISUAL_RECENT_TEXT_BLOCK_MAX_CHARS = 9000;
+const ONHAND_FREE_VISUAL_OLD_TOOL_TEXT_BLOCK_MAX_CHARS = 2200;
+const ONHAND_FREE_VISUAL_OLD_TEXT_BLOCK_MAX_CHARS = 3600;
 // The deployed workers/free-tier proxy. Override without rebuilding via
 // the onhandFreeTierBaseUrl key in chrome.storage.local (used by tests
 // and staged deployments). See docs/FREE_TIER.md.
@@ -1440,15 +1447,19 @@ async function buildFreeTierModel() {
 	const baseUrl = await getFreeTierBaseUrl();
 	// Always the worker's allowlisted model: anything else stored in
 	// settings (e.g. from an older UI) would only bounce off the worker.
+	// Image-capable input is advertised here so user attachments and visual
+	// tool results survive OpenAI-compatible conversion. The worker keeps the
+	// client-visible model id allowlisted, then routes image-bearing requests
+	// to the hosted visual model server-side.
 	return {
 		id: ONHAND_FREE_MODEL,
-		name: "Onhand Free (DeepSeek V4 Flash)",
+		name: "Onhand Free (DeepSeek + Mistral Vision)",
 		api: "openai-completions",
 		provider: ONHAND_FREE_PROVIDER,
 		baseUrl,
 		reasoning: false,
-		input: ["text"],
-		contextWindow: 1048576,
+		input: ["text", "image"],
+		contextWindow: ONHAND_FREE_TEXT_CONTEXT_WINDOW,
 		maxTokens: 32768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
@@ -1659,9 +1670,9 @@ function getProviderModelOptions(providerId: string) {
 		return [
 			{
 				id: ONHAND_FREE_MODEL,
-				name: "DeepSeek V4 Flash (Onhand Free)",
+				name: "DeepSeek V4 Flash + Mistral Vision (Onhand Free)",
 				api: "openai-completions",
-				input: ["text"],
+				input: ["text", "image"],
 				tools: true,
 				structuredOutput: false,
 				realtime: false,
@@ -2957,6 +2968,163 @@ function buildPromptImages(attachments: any[] = []) {
 		}));
 }
 
+function contentBlockIsImage(block: any) {
+	return block?.type === "image" || block?.type === "image_url" || block?.type === "input_image";
+}
+
+function contentBlockIsText(block: any) {
+	return block?.type === "text" && typeof block.text === "string";
+}
+
+function messageContainsImage(message: any) {
+	const content = message?.content;
+	if (Array.isArray(content)) return content.some(contentBlockIsImage);
+	return false;
+}
+
+function messagesContainImage(messages: any[] = []) {
+	return messages.some(messageContainsImage);
+}
+
+function contextContainsImage(context: any) {
+	const messages = Array.isArray(context?.messages) ? context.messages : [];
+	return messagesContainImage(messages);
+}
+
+function imageKeyForMessageBlock(messageIndex: number, blockIndex: number) {
+	return `${messageIndex}:${blockIndex}`;
+}
+
+function collectImageBlockKeysToKeep(messages: any[] = []) {
+	const keys = new Set<string>();
+	for (let messageIndex = messages.length - 1; messageIndex >= 0 && keys.size < ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT; messageIndex -= 1) {
+		const content = messages[messageIndex]?.content;
+		if (!Array.isArray(content)) continue;
+		for (let blockIndex = content.length - 1; blockIndex >= 0 && keys.size < ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT; blockIndex -= 1) {
+			if (contentBlockIsImage(content[blockIndex])) {
+				keys.add(imageKeyForMessageBlock(messageIndex, blockIndex));
+			}
+		}
+	}
+	return keys;
+}
+
+function latestImageMessageIndex(messages: any[] = []) {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		if (messageContainsImage(messages[index])) return index;
+	}
+	return -1;
+}
+
+function truncateVisualTextBlock(text: string, message: any, messageIndex: number, latestImageIndex: number) {
+	const maxChars =
+		messageIndex >= latestImageIndex
+			? ONHAND_FREE_VISUAL_RECENT_TEXT_BLOCK_MAX_CHARS
+			: message?.role === "toolResult"
+				? ONHAND_FREE_VISUAL_OLD_TOOL_TEXT_BLOCK_MAX_CHARS
+				: ONHAND_FREE_VISUAL_OLD_TEXT_BLOCK_MAX_CHARS;
+	return truncateStructuredText(text, maxChars);
+}
+
+function messageTextLength(message: any) {
+	const content = message?.content;
+	if (typeof content === "string") return content.length;
+	if (!Array.isArray(content)) return 0;
+	return content.reduce((total, block) => total + (contentBlockIsText(block) ? block.text.length : 0), 0);
+}
+
+function compactMessageForFreeTierVisualRoute(message: any, messageIndex: number, latestImageIndex: number, imageKeysToKeep: Set<string>) {
+	const content = message?.content;
+	if (typeof content === "string") {
+		return {
+			...message,
+			content: truncateVisualTextBlock(content, message, messageIndex, latestImageIndex),
+		};
+	}
+	if (!Array.isArray(content)) return message;
+	const nextContent = content.flatMap((block: any, blockIndex: number) => {
+		if (contentBlockIsImage(block)) {
+			if (imageKeysToKeep.has(imageKeyForMessageBlock(messageIndex, blockIndex))) return [{ ...block }];
+			return [{ type: "text", text: "(older visual capture omitted from compacted Onhand Free image context)" }];
+		}
+		if (contentBlockIsText(block)) {
+			return [{ ...block, text: truncateVisualTextBlock(block.text, message, messageIndex, latestImageIndex) }];
+		}
+		return [{ ...block }];
+	});
+	return { ...message, content: nextContent };
+}
+
+function trimTextTowardVisualBudget(text: string, totalText: number, minChars: number) {
+	if (totalText <= ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS) return { text, totalText };
+	const overflow = totalText - ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS;
+	const nextLength = Math.max(minChars, text.length - overflow);
+	if (nextLength >= text.length) return { text, totalText };
+	const nextText = truncateStructuredText(text, nextLength);
+	return { text: nextText, totalText: totalText - (text.length - nextText.length) };
+}
+
+function enforceFreeTierVisualTextBudget(messages: any[] = [], protectedStartIndex = messages.length) {
+	let totalText = messages.reduce((sum, message) => sum + messageTextLength(message), 0);
+	if (totalText <= ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS) return messages;
+	const compacted = messages.map((message) => ({ ...message, content: Array.isArray(message?.content) ? [...message.content] : message?.content }));
+	for (let messageIndex = 0; messageIndex < compacted.length && totalText > ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS; messageIndex += 1) {
+		const message = compacted[messageIndex];
+		const content = message?.content;
+		if (typeof content === "string") {
+			const before = content.length;
+			const after = truncateStructuredText(content, 900);
+			message.content = after;
+			totalText -= before - after.length;
+			continue;
+		}
+		if (!Array.isArray(content)) continue;
+		message.content = content.map((block: any) => {
+			if (!contentBlockIsText(block) || totalText <= ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS) return block;
+			const before = block.text.length;
+			const after = truncateStructuredText(block.text, 900);
+			totalText -= before - after.length;
+			return { ...block, text: after };
+		});
+	}
+	for (const minChars of [120, 3]) {
+		for (let messageIndex = 0; messageIndex < compacted.length && totalText > ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS; messageIndex += 1) {
+			if (minChars === 120 && messageIndex >= protectedStartIndex) continue;
+			const message = compacted[messageIndex];
+			const content = message?.content;
+			if (typeof content === "string") {
+				const trimmed = trimTextTowardVisualBudget(content, totalText, minChars);
+				message.content = trimmed.text;
+				totalText = trimmed.totalText;
+				continue;
+			}
+			if (!Array.isArray(content)) continue;
+			message.content = content.map((block: any) => {
+				if (!contentBlockIsText(block) || totalText <= ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS) return block;
+				const trimmed = trimTextTowardVisualBudget(block.text, totalText, minChars);
+				totalText = trimmed.totalText;
+				return { ...block, text: trimmed.text };
+			});
+		}
+	}
+	return compacted;
+}
+
+function compactFreeTierVisualContextMessages(messages: AgentMessage[] = []) {
+	if (!messagesContainImage(messages)) return messages;
+	const latestImageIndex = latestImageMessageIndex(messages);
+	const imageKeysToKeep = collectImageBlockKeysToKeep(messages);
+	const compacted = messages.map((message, messageIndex) =>
+		compactMessageForFreeTierVisualRoute(message, messageIndex, latestImageIndex, imageKeysToKeep),
+	);
+	return enforceFreeTierVisualTextBudget(compacted, latestImageIndex) as AgentMessage[];
+}
+
+async function transformFreeTierContextForModel(model: any, messages: AgentMessage[]) {
+	if (model?.provider !== ONHAND_FREE_PROVIDER) return messages;
+	return compactFreeTierVisualContextMessages(messages);
+}
+
 function imageAttachmentFromDataUrl(dataUrl: unknown, name = "visible-region.png") {
 	const text = String(dataUrl || "").trim();
 	const match = text.match(/^data:([^;,]+);base64,(.+)$/s);
@@ -4148,6 +4316,8 @@ export const __browserRuntimeTest = {
 	formatPdfCitationForModel,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
+	compactFreeTierVisualContextMessagesForTest: compactFreeTierVisualContextMessages,
+	messagesContainImageForTest: messagesContainImage,
 	getMissingApiKeyError,
 	getApiKeyForProvider,
 	getProviderModelOptions,
@@ -4272,8 +4442,16 @@ export const __browserRuntimeTest = {
 
 function streamOnhandFast(model: any, context: any, options: any = {}) {
 	const { onhandReasoningProfile, onhandTelemetry, ...streamOptions } = options || {};
+	const effectiveModel =
+		model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context)
+			? {
+					...model,
+					input: Array.from(new Set([...(Array.isArray(model.input) ? model.input : ["text"]), "image"])),
+					contextWindow: ONHAND_FREE_VISUAL_CONTEXT_WINDOW,
+				}
+			: model;
 	const reasoningProfile = onhandReasoningProfile as ReasoningProfile | undefined;
-	const telemetryOptions = withOnhandFreeTierTelemetryOptions(model, streamOptions, onhandTelemetry);
+	const telemetryOptions = withOnhandFreeTierTelemetryOptions(effectiveModel, streamOptions, onhandTelemetry);
 	const baseOptions = {
 		...telemetryOptions,
 		// "short" lets pi-ai pass the session id as the prompt cache key so
@@ -4282,37 +4460,37 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 		cacheRetention: "short",
 		maxTokens: reasoningProfile?.maxTokens || ONHAND_MAX_OUTPUT_TOKENS,
 	};
-	if (model?.api === "openai-codex-responses") {
-		return streamOpenAICodexResponses(model, context, {
+	if (effectiveModel?.api === "openai-codex-responses") {
+		return streamOpenAICodexResponses(effectiveModel, context, {
 			...baseOptions,
 			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
 			reasoningSummary: "auto",
 			textVerbosity: reasoningProfile?.textVerbosity || "low",
 		});
 	}
-	if (model?.api === "openai-responses" && model?.reasoning) {
+	if (effectiveModel?.api === "openai-responses" && effectiveModel?.reasoning) {
 		// Reasoning models on the plain OpenAI API must round-trip encrypted
 		// reasoning content: requests are sent with store:false, so replaying
 		// the previous response's reasoning item ids 404s on the second tool
 		// round unless a reasoningEffort makes pi-ai request encrypted
 		// content (see docs/onhand-pdf-qa-2026-06-09.md, Finding 4).
-		return streamOpenAIResponses(model, context, {
+		return streamOpenAIResponses(effectiveModel, context, {
 			...baseOptions,
 			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
 			reasoningSummary: "auto",
 		});
 	}
-	if (model?.provider === OPENROUTER_API_PROVIDER) {
+	if (effectiveModel?.provider === OPENROUTER_API_PROVIDER) {
 		// BYOK requests are not pinned to specific hosts: routing is the
 		// key owner's choice (configurable in their OpenRouter account).
 		// The hosted free tier pins US providers server-side in
 		// workers/free-tier instead.
-		return streamSimple(model, context, {
+		return streamSimple(effectiveModel, context, {
 			...baseOptions,
-			...(model?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}),
+			...(effectiveModel?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}),
 		});
 	}
-	return streamSimple(model, context, baseOptions);
+	return streamSimple(effectiveModel, context, baseOptions);
 }
 
 function compactOnhandTelemetryId(value: unknown, maxLength = 80) {
@@ -5589,6 +5767,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				thinkingLevel: "off",
 			},
 			sessionId: telemetry.sessionId || telemetry.turnId,
+			transformContext: (messages) => transformFreeTierContextForModel(model, messages),
 			getApiKey: (provider) => resolveApiKey(provider),
 			streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
 				streamOnhandFast(streamModel, streamContext, {
@@ -7833,6 +8012,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 						thinkingLevel: "off",
 					},
 					sessionId: session.id,
+					transformContext: (messages) => transformFreeTierContextForModel(model, messages),
 					getApiKey: (provider) => resolveApiKey(provider),
 					streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
 						streamOnhandFast(streamModel, streamContext, {

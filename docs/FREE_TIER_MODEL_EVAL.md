@@ -67,6 +67,12 @@ Use `deepseek/deepseek-v4-flash` as the control. A higher-quality model should
 earn its extra cost; a cheaper model should prove it does not degrade Onhand's
 core behavior.
 
+For the free-tier vision route, use
+`mistralai/mistral-small-3.2-24b-instruct` as the current control. Image-capable
+challengers such as `meta-llama/llama-4-maverick` must beat it on visual
+grounding, browser tool-loop continuity, latency, and real OpenRouter-reported
+cost before replacing the default visual route.
+
 ## Useful Commands
 
 ```sh

@@ -10,6 +10,10 @@ completions to OpenRouter with Onhand's key.
 - DeepSeek V4 Flash passed the Onhand behavioral matrix (anchored
   answers, learning mode with checks, citation chasing, homework
   refusal) at roughly a cent per turn measured through OpenRouter.
+- Image-bearing requests route server-side to Mistral Small 3.2 because
+  DeepSeek V4 Flash does not support image input. The extension treats
+  that visual route as a 128K-context path and compacts image-bearing
+  agent transcripts before the next model call.
 - The worker pins OpenRouter routing to US hosts (`deepinfra`,
   `parasail`, `novita`, `wandb`) so free-tier pages and PDFs never
   transit PRC-hosted APIs, and so only hosts with validated tool-call
@@ -20,7 +24,9 @@ completions to OpenRouter with Onhand's key.
 
 ## Cost controls
 
-- model allowlist: `deepseek/deepseek-v4-flash` only
+- client-visible model allowlist: `deepseek/deepseek-v4-flash`; requests
+  whose message history contains image content are rewritten upstream to
+  `mistralai/mistral-small-3.2-24b-instruct`
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
 - `TURN_MODEL_CALL_CAP` (default 20 model calls in one Onhand UI turn)

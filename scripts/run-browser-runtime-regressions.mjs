@@ -267,6 +267,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.ok(getProviderModelOptions("openrouter").some((model) => model.id === "deepseek/deepseek-v4-flash"), "openrouter should offer deepseek v4 flash");
 	assert.ok(getProviderModelOptions("openrouter").length <= 5, "openrouter model options should stay curated");
 	assert.equal(getProviderModelOptions("onhand-free")[0].id, "deepseek/deepseek-v4-flash", "free tier should pin its model");
+	assert.deepEqual(getProviderModelOptions("onhand-free")[0].input, ["text", "image"], "free tier must preserve image payloads for server-side visual routing");
 	{
 		// The free-tier worker rejects everything outside its allowlist, so
 		// the options page must not offer a custom-model entry for it.
@@ -316,6 +317,77 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(validation.ok, true);
 	settings = await runtime.removeApiKey("anthropic");
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, false);
+}
+
+function countImageBlocks(messages) {
+	return messages.reduce((total, message) => {
+		const content = Array.isArray(message?.content) ? message.content : [];
+		return total + content.filter((block) => block?.type === "image").length;
+	}, 0);
+}
+
+function textChars(messages) {
+	return messages.reduce((total, message) => {
+		const content = message?.content;
+		if (typeof content === "string") return total + content.length;
+		if (!Array.isArray(content)) return total;
+		return total + content.reduce((sum, block) => sum + (block?.type === "text" ? String(block.text || "").length : 0), 0);
+	}, 0);
+}
+
+async function assertFreeTierVisualContextBudgeting() {
+	installChromeStorageStub();
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { compactFreeTierVisualContextMessagesForTest, messagesContainImageForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof compactFreeTierVisualContextMessagesForTest, "function", "free-tier visual compactor export is missing");
+	assert.equal(typeof messagesContainImageForTest, "function", "image detector export is missing");
+	const longText = "Long extracted context. ".repeat(6000);
+	const olderChatter = Array.from({ length: 80 }, (_, index) => ({
+		role: "user",
+		content: [{ type: "text", text: `Older thread turn ${index}. ${"extra context ".repeat(600)}` }],
+		timestamp: index,
+	}));
+	const messages = [
+		...olderChatter,
+		{ role: "user", content: [{ type: "text", text: longText }], timestamp: 1 },
+		{
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call_old", name: "browser_get_visible_region_image", arguments: {} }],
+			timestamp: 2,
+		},
+		{
+			role: "toolResult",
+			toolCallId: "call_old",
+			toolName: "browser_get_visible_region_image",
+			content: [
+				{ type: "text", text: longText },
+				{ type: "image", data: "T0xEX1ZJU1VBTA==", mimeType: "image/png" },
+			],
+			timestamp: 3,
+		},
+		{
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call_new", name: "browser_get_visible_region_image", arguments: {} }],
+			timestamp: 4,
+		},
+		{
+			role: "toolResult",
+			toolCallId: "call_new",
+			toolName: "browser_get_visible_region_image",
+			content: [
+				{ type: "text", text: longText },
+				{ type: "image", data: "TkVXX1ZJU1VBTA==", mimeType: "image/png" },
+			],
+			timestamp: 5,
+		},
+	];
+	assert.equal(messagesContainImageForTest(messages), true);
+	const compacted = compactFreeTierVisualContextMessagesForTest(messages);
+	assert.equal(messagesContainImageForTest(compacted), true, "visual compaction must keep recent image payloads");
+	assert.equal(countImageBlocks(compacted), 2, "visual compaction should keep only the newest bounded image set");
+	assert.ok(textChars(compacted) < textChars(messages) / 3, "visual compaction should aggressively trim old text context");
+	assert.ok(textChars(compacted) <= 48000, "visual compaction should enforce the free-tier visual text budget");
+	assert.match(JSON.stringify(compacted), /Long extracted context/, "compacted context should retain useful text, not only placeholders");
 }
 
 async function assertSentryDiagnosticsGateAndScrub() {
@@ -5186,6 +5258,7 @@ async function assertFixtureResponses() {
 
 async function main() {
 	await assertProviderApiKeyStorageAndRouting();
+	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
 	await assertPublicActivitiesFilterInternalThinking();
