@@ -47,6 +47,37 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// node_modules/@earendil-works/pi-ai/dist/utils/provider-env.js
+function getBunSandboxEnvValue(name) {
+  if (typeof process === "undefined" || !process.versions?.bun || Object.keys(process.env).length > 0) {
+    return void 0;
+  }
+  if (procEnvCache === null) {
+    procEnvCache = /* @__PURE__ */ new Map();
+    try {
+      const { readFileSync } = __require("node:fs");
+      const data = readFileSync("/proc/self/environ", "utf-8");
+      for (const entry of data.split("\0")) {
+        const idx = entry.indexOf("=");
+        if (idx > 0) {
+          procEnvCache.set(entry.slice(0, idx), entry.slice(idx + 1));
+        }
+      }
+    } catch {
+    }
+  }
+  return procEnvCache.get(name);
+}
+function getProviderEnvValue(name, env2) {
+  return env2?.[name] || (typeof process !== "undefined" ? process.env[name] : void 0) || getBunSandboxEnvValue(name) || void 0;
+}
+var procEnvCache;
+var init_provider_env = __esm({
+  "node_modules/@earendil-works/pi-ai/dist/utils/provider-env.js"() {
+    procEnvCache = null;
+  }
+});
+
 // node_modules/openai/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
@@ -8526,7 +8557,7 @@ var init_models_generated = __esm({
           provider: "amazon-bedrock",
           baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
             input: 11,
@@ -8666,7 +8697,7 @@ var init_models_generated = __esm({
           provider: "amazon-bedrock",
           baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
             input: 10,
@@ -9558,7 +9589,7 @@ var init_models_generated = __esm({
           provider: "amazon-bedrock",
           baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
             input: 10,
@@ -10047,7 +10078,7 @@ var init_models_generated = __esm({
           baseUrl: "https://api.anthropic.com",
           compat: { "forceAdaptiveThinking": true },
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
             input: 10,
@@ -11088,30 +11119,13 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.25,
-            output: 0.69,
+            input: 0.35,
+            output: 0.75,
             cacheRead: 0,
             cacheWrite: 0
           },
           contextWindow: 131072,
-          maxTokens: 32768
-        },
-        "llama3.1-8b": {
-          id: "llama3.1-8b",
-          name: "Llama 3.1 8B",
-          api: "openai-completions",
-          provider: "cerebras",
-          baseUrl: "https://api.cerebras.ai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.1,
-            output: 0.1,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 32e3,
-          maxTokens: 8e3
+          maxTokens: 40960
         },
         "zai-glm-4.7": {
           id: "zai-glm-4.7",
@@ -11119,7 +11133,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "cerebras",
           baseUrl: "https://api.cerebras.ai/v1",
-          reasoning: false,
+          reasoning: true,
           input: ["text"],
           cost: {
             input: 2.25,
@@ -11128,7 +11142,7 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 131072,
-          maxTokens: 4e4
+          maxTokens: 40960
         }
       },
       "cloudflare-ai-gateway": {
@@ -11242,7 +11256,7 @@ var init_models_generated = __esm({
           baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
           compat: { "forceAdaptiveThinking": true },
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
             input: 10,
@@ -11891,6 +11905,24 @@ var init_models_generated = __esm({
           contextWindow: 262144,
           maxTokens: 256e3
         },
+        "@cf/moonshotai/kimi-k2.7-code": {
+          id: "@cf/moonshotai/kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          api: "openai-completions",
+          provider: "cloudflare-workers-ai",
+          baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+          compat: { "sendSessionAffinityHeaders": true },
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
+        },
         "@cf/nvidia/nemotron-3-120b-a12b": {
           id: "@cf/nvidia/nemotron-3-120b-a12b",
           name: "Nemotron 3 Super 120B",
@@ -11980,6 +12012,24 @@ var init_models_generated = __esm({
           },
           contextWindow: 131072,
           maxTokens: 131072
+        },
+        "@cf/zai-org/glm-5.2": {
+          id: "@cf/zai-org/glm-5.2",
+          name: "Glm 5.2",
+          api: "openai-completions",
+          provider: "cloudflare-workers-ai",
+          baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+          compat: { "sendSessionAffinityHeaders": true },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.4,
+            output: 4.4,
+            cacheRead: 0.26,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
         }
       },
       "deepseek": {
@@ -12035,7 +12085,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.14,
             output: 0.28,
-            cacheRead: 0.03,
+            cacheRead: 0.028,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -12077,6 +12127,24 @@ var init_models_generated = __esm({
           contextWindow: 202800,
           maxTokens: 131072
         },
+        "accounts/fireworks/models/glm-5p2": {
+          id: "accounts/fireworks/models/glm-5p2",
+          name: "GLM 5.2",
+          api: "anthropic-messages",
+          provider: "fireworks",
+          baseUrl: "https://api.fireworks.ai/inference",
+          compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.4,
+            output: 4.4,
+            cacheRead: 0.26,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 131072
+        },
         "accounts/fireworks/models/gpt-oss-120b": {
           id: "accounts/fireworks/models/gpt-oss-120b",
           name: "GPT OSS 120B",
@@ -12113,24 +12181,6 @@ var init_models_generated = __esm({
           contextWindow: 131072,
           maxTokens: 32768
         },
-        "accounts/fireworks/models/kimi-k2p5": {
-          id: "accounts/fireworks/models/kimi-k2p5",
-          name: "Kimi K2.5",
-          api: "anthropic-messages",
-          provider: "fireworks",
-          baseUrl: "https://api.fireworks.ai/inference",
-          compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
-          reasoning: true,
-          input: ["text", "image"],
-          cost: {
-            input: 0.6,
-            output: 3,
-            cacheRead: 0.1,
-            cacheWrite: 0
-          },
-          contextWindow: 256e3,
-          maxTokens: 256e3
-        },
         "accounts/fireworks/models/kimi-k2p6": {
           id: "accounts/fireworks/models/kimi-k2p6",
           name: "Kimi K2.6",
@@ -12149,23 +12199,23 @@ var init_models_generated = __esm({
           contextWindow: 262e3,
           maxTokens: 262e3
         },
-        "accounts/fireworks/models/minimax-m2p5": {
-          id: "accounts/fireworks/models/minimax-m2p5",
-          name: "MiniMax-M2.5",
+        "accounts/fireworks/models/kimi-k2p7-code": {
+          id: "accounts/fireworks/models/kimi-k2p7-code",
+          name: "Kimi K2.7 Code",
           api: "anthropic-messages",
           provider: "fireworks",
           baseUrl: "https://api.fireworks.ai/inference",
           compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
           reasoning: true,
-          input: ["text"],
+          input: ["text", "image"],
           cost: {
-            input: 0.3,
-            output: 1.2,
-            cacheRead: 0.03,
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
             cacheWrite: 0
           },
-          contextWindow: 196608,
-          maxTokens: 196608
+          contextWindow: 262e3,
+          maxTokens: 262e3
         },
         "accounts/fireworks/models/minimax-m2p7": {
           id: "accounts/fireworks/models/minimax-m2p7",
@@ -12185,9 +12235,27 @@ var init_models_generated = __esm({
           contextWindow: 196608,
           maxTokens: 196608
         },
-        "accounts/fireworks/models/qwen3p6-plus": {
-          id: "accounts/fireworks/models/qwen3p6-plus",
-          name: "Qwen 3.6 Plus",
+        "accounts/fireworks/models/minimax-m3": {
+          id: "accounts/fireworks/models/minimax-m3",
+          name: "MiniMax-M3",
+          api: "anthropic-messages",
+          provider: "fireworks",
+          baseUrl: "https://api.fireworks.ai/inference",
+          compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0.3,
+            output: 1.2,
+            cacheRead: 0.06,
+            cacheWrite: 0
+          },
+          contextWindow: 512e3,
+          maxTokens: 512e3
+        },
+        "accounts/fireworks/models/qwen3p7-plus": {
+          id: "accounts/fireworks/models/qwen3p7-plus",
+          name: "Qwen 3.7 Plus",
           api: "anthropic-messages",
           provider: "fireworks",
           baseUrl: "https://api.fireworks.ai/inference",
@@ -12195,9 +12263,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.5,
-            output: 3,
-            cacheRead: 0.1,
+            input: 0.4,
+            output: 1.6,
+            cacheRead: 0.08,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -12256,9 +12324,46 @@ var init_models_generated = __esm({
           },
           contextWindow: 262e3,
           maxTokens: 262e3
+        },
+        "accounts/fireworks/routers/kimi-k2p7-code-fast": {
+          id: "accounts/fireworks/routers/kimi-k2p7-code-fast",
+          name: "Kimi K2.7 Code Fast",
+          api: "anthropic-messages",
+          provider: "fireworks",
+          baseUrl: "https://api.fireworks.ai/inference",
+          compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 1.9,
+            output: 8,
+            cacheRead: 0.38,
+            cacheWrite: 0
+          },
+          contextWindow: 262e3,
+          maxTokens: 262e3
         }
       },
       "github-copilot": {
+        "claude-fable-5": {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          api: "openai-completions",
+          provider: "github-copilot",
+          baseUrl: "https://api.individual.githubcopilot.com",
+          headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false },
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 10,
+            output: 50,
+            cacheRead: 1,
+            cacheWrite: 12.5
+          },
+          contextWindow: 1e6,
+          maxTokens: 128e3
+        },
         "claude-haiku-4.5": {
           id: "claude-haiku-4.5",
           name: "Claude Haiku 4.5 (latest)",
@@ -12325,7 +12430,7 @@ var init_models_generated = __esm({
           headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
           compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
           input: ["text", "image"],
           cost: {
             input: 5,
@@ -12345,7 +12450,7 @@ var init_models_generated = __esm({
           headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
           compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
           reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
+          thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
           input: ["text", "image"],
           cost: {
             input: 5,
@@ -12403,6 +12508,7 @@ var init_models_generated = __esm({
           headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
           compat: { "forceAdaptiveThinking": true },
           reasoning: true,
+          thinkingLevelMap: { "minimal": "low", "xhigh": "max" },
           input: ["text", "image"],
           cost: {
             input: 3,
@@ -12659,25 +12765,6 @@ var init_models_generated = __esm({
           },
           contextWindow: 4e5,
           maxTokens: 128e3
-        },
-        "raptor-mini": {
-          id: "raptor-mini",
-          name: "Raptor mini",
-          api: "openai-completions",
-          provider: "github-copilot",
-          baseUrl: "https://api.individual.githubcopilot.com",
-          headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false },
-          reasoning: true,
-          input: ["text", "image"],
-          cost: {
-            input: 0.25,
-            output: 2,
-            cacheRead: 0.025,
-            cacheWrite: 0
-          },
-          contextWindow: 4e5,
-          maxTokens: 128e3
         }
       },
       "google": {
@@ -12899,11 +12986,12 @@ var init_models_generated = __esm({
           provider: "google",
           baseUrl: "https://generativelanguage.googleapis.com/v1beta",
           reasoning: true,
+          thinkingLevelMap: { "off": null },
           input: ["text", "image"],
           cost: {
-            input: 0.3,
-            output: 2.5,
-            cacheRead: 0.075,
+            input: 1.5,
+            output: 9,
+            cacheRead: 0.15,
             cacheWrite: 0
           },
           contextWindow: 1048576,
@@ -12916,10 +13004,11 @@ var init_models_generated = __esm({
           provider: "google",
           baseUrl: "https://generativelanguage.googleapis.com/v1beta",
           reasoning: true,
+          thinkingLevelMap: { "off": null },
           input: ["text", "image"],
           cost: {
-            input: 0.1,
-            output: 0.4,
+            input: 0.25,
+            output: 1.5,
             cacheRead: 0.025,
             cacheWrite: 0
           },
@@ -12961,97 +13050,48 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 32768
+        },
+        "gemma-4-E2B-it": {
+          id: "gemma-4-E2B-it",
+          name: "Gemma 4 E2B IT",
+          api: "google-generative-ai",
+          provider: "google",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+          reasoning: true,
+          thinkingLevelMap: { "off": null, "minimal": "MINIMAL", "low": null, "medium": null, "high": "HIGH" },
+          input: ["text", "image"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 131072,
+          maxTokens: 8192
+        },
+        "gemma-4-E4B-it": {
+          id: "gemma-4-E4B-it",
+          name: "Gemma 4 E4B IT",
+          api: "google-generative-ai",
+          provider: "google",
+          baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+          reasoning: true,
+          thinkingLevelMap: { "off": null, "minimal": "MINIMAL", "low": null, "medium": null, "high": "HIGH" },
+          input: ["text", "image"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 131072,
+          maxTokens: 8192
         }
       },
       "google-vertex": {
-        "gemini-1.5-flash": {
-          id: "gemini-1.5-flash",
-          name: "Gemini 1.5 Flash (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: false,
-          input: ["text", "image"],
-          cost: {
-            input: 0.075,
-            output: 0.3,
-            cacheRead: 0.01875,
-            cacheWrite: 0
-          },
-          contextWindow: 1e6,
-          maxTokens: 8192
-        },
-        "gemini-1.5-flash-8b": {
-          id: "gemini-1.5-flash-8b",
-          name: "Gemini 1.5 Flash-8B (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: false,
-          input: ["text", "image"],
-          cost: {
-            input: 0.0375,
-            output: 0.15,
-            cacheRead: 0.01,
-            cacheWrite: 0
-          },
-          contextWindow: 1e6,
-          maxTokens: 8192
-        },
-        "gemini-1.5-pro": {
-          id: "gemini-1.5-pro",
-          name: "Gemini 1.5 Pro (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: false,
-          input: ["text", "image"],
-          cost: {
-            input: 1.25,
-            output: 5,
-            cacheRead: 0.3125,
-            cacheWrite: 0
-          },
-          contextWindow: 1e6,
-          maxTokens: 8192
-        },
-        "gemini-2.0-flash": {
-          id: "gemini-2.0-flash",
-          name: "Gemini 2.0 Flash (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: false,
-          input: ["text", "image"],
-          cost: {
-            input: 0.15,
-            output: 0.6,
-            cacheRead: 0.0375,
-            cacheWrite: 0
-          },
-          contextWindow: 1048576,
-          maxTokens: 8192
-        },
-        "gemini-2.0-flash-lite": {
-          id: "gemini-2.0-flash-lite",
-          name: "Gemini 2.0 Flash Lite (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: true,
-          input: ["text", "image"],
-          cost: {
-            input: 0.075,
-            output: 0.3,
-            cacheRead: 0.01875,
-            cacheWrite: 0
-          },
-          contextWindow: 1048576,
-          maxTokens: 65536
-        },
         "gemini-2.5-flash": {
           id: "gemini-2.5-flash",
-          name: "Gemini 2.5 Flash (Vertex)",
+          name: "Gemini 2.5 Flash",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13068,24 +13108,7 @@ var init_models_generated = __esm({
         },
         "gemini-2.5-flash-lite": {
           id: "gemini-2.5-flash-lite",
-          name: "Gemini 2.5 Flash Lite (Vertex)",
-          api: "google-vertex",
-          provider: "google-vertex",
-          baseUrl: "https://{location}-aiplatform.googleapis.com",
-          reasoning: true,
-          input: ["text", "image"],
-          cost: {
-            input: 0.1,
-            output: 0.4,
-            cacheRead: 0.01,
-            cacheWrite: 0
-          },
-          contextWindow: 1048576,
-          maxTokens: 65536
-        },
-        "gemini-2.5-flash-lite-preview-09-2025": {
-          id: "gemini-2.5-flash-lite-preview-09-2025",
-          name: "Gemini 2.5 Flash Lite Preview 09-25 (Vertex)",
+          name: "Gemini 2.5 Flash-Lite",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13102,7 +13125,7 @@ var init_models_generated = __esm({
         },
         "gemini-2.5-pro": {
           id: "gemini-2.5-pro",
-          name: "Gemini 2.5 Pro (Vertex)",
+          name: "Gemini 2.5 Pro",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13119,7 +13142,7 @@ var init_models_generated = __esm({
         },
         "gemini-3-flash-preview": {
           id: "gemini-3-flash-preview",
-          name: "Gemini 3 Flash Preview (Vertex)",
+          name: "Gemini 3 Flash Preview",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13135,27 +13158,27 @@ var init_models_generated = __esm({
           contextWindow: 1048576,
           maxTokens: 65536
         },
-        "gemini-3-pro-preview": {
-          id: "gemini-3-pro-preview",
-          name: "Gemini 3 Pro Preview (Vertex)",
+        "gemini-3.1-flash-lite": {
+          id: "gemini-3.1-flash-lite",
+          name: "Gemini 3.1 Flash Lite",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
           reasoning: true,
-          thinkingLevelMap: { "off": null, "minimal": null, "low": "LOW", "medium": null, "high": "HIGH" },
+          thinkingLevelMap: { "off": null },
           input: ["text", "image"],
           cost: {
-            input: 2,
-            output: 12,
-            cacheRead: 0.2,
+            input: 0.25,
+            output: 1.5,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
-          contextWindow: 1e6,
-          maxTokens: 64e3
+          contextWindow: 1048576,
+          maxTokens: 65536
         },
         "gemini-3.1-pro-preview": {
           id: "gemini-3.1-pro-preview",
-          name: "Gemini 3.1 Pro Preview (Vertex)",
+          name: "Gemini 3.1 Pro Preview",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13173,7 +13196,7 @@ var init_models_generated = __esm({
         },
         "gemini-3.1-pro-preview-customtools": {
           id: "gemini-3.1-pro-preview-customtools",
-          name: "Gemini 3.1 Pro Preview Custom Tools (Vertex)",
+          name: "Gemini 3.1 Pro Preview Custom Tools",
           api: "google-vertex",
           provider: "google-vertex",
           baseUrl: "https://{location}-aiplatform.googleapis.com",
@@ -13188,80 +13211,66 @@ var init_models_generated = __esm({
           },
           contextWindow: 1048576,
           maxTokens: 65536
+        },
+        "gemini-3.5-flash": {
+          id: "gemini-3.5-flash",
+          name: "Gemini 3.5 Flash",
+          api: "google-vertex",
+          provider: "google-vertex",
+          baseUrl: "https://{location}-aiplatform.googleapis.com",
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 1.5,
+            output: 9,
+            cacheRead: 0.15,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 65536
+        },
+        "gemini-flash-latest": {
+          id: "gemini-flash-latest",
+          name: "Gemini Flash Latest",
+          api: "google-vertex",
+          provider: "google-vertex",
+          baseUrl: "https://{location}-aiplatform.googleapis.com",
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 1.5,
+            output: 9,
+            cacheRead: 0.15,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 65536
+        },
+        "gemini-flash-lite-latest": {
+          id: "gemini-flash-lite-latest",
+          name: "Gemini Flash-Lite Latest",
+          api: "google-vertex",
+          provider: "google-vertex",
+          baseUrl: "https://{location}-aiplatform.googleapis.com",
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 0.25,
+            output: 1.5,
+            cacheRead: 0.025,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 65536
         }
       },
       "groq": {
-        "deepseek-r1-distill-llama-70b": {
-          id: "deepseek-r1-distill-llama-70b",
-          name: "DeepSeek R1 Distill Llama 70B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0.75,
-            output: 0.99,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 8192
-        },
-        "gemma2-9b-it": {
-          id: "gemma2-9b-it",
-          name: "Gemma 2 9B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.2,
-            output: 0.2,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 8192,
-          maxTokens: 8192
-        },
-        "groq/compound": {
-          id: "groq/compound",
-          name: "Compound",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 8192
-        },
-        "groq/compound-mini": {
-          id: "groq/compound-mini",
-          name: "Compound Mini",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 8192
-        },
         "llama-3.1-8b-instant": {
           id: "llama-3.1-8b-instant",
-          name: "Llama 3.1 8B Instant",
+          name: "Llama 3.1 8B",
           api: "openai-completions",
           provider: "groq",
           baseUrl: "https://api.groq.com/openai/v1",
@@ -13278,7 +13287,7 @@ var init_models_generated = __esm({
         },
         "llama-3.3-70b-versatile": {
           id: "llama-3.3-70b-versatile",
-          name: "Llama 3.3 70B Versatile",
+          name: "Llama 3.3 70B",
           api: "openai-completions",
           provider: "groq",
           baseUrl: "https://api.groq.com/openai/v1",
@@ -13293,60 +13302,9 @@ var init_models_generated = __esm({
           contextWindow: 131072,
           maxTokens: 32768
         },
-        "llama3-70b-8192": {
-          id: "llama3-70b-8192",
-          name: "Llama 3 70B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.59,
-            output: 0.79,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 8192,
-          maxTokens: 8192
-        },
-        "llama3-8b-8192": {
-          id: "llama3-8b-8192",
-          name: "Llama 3 8B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.05,
-            output: 0.08,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 8192,
-          maxTokens: 8192
-        },
-        "meta-llama/llama-4-maverick-17b-128e-instruct": {
-          id: "meta-llama/llama-4-maverick-17b-128e-instruct",
-          name: "Llama 4 Maverick 17B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text", "image"],
-          cost: {
-            input: 0.2,
-            output: 0.6,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 8192
-        },
         "meta-llama/llama-4-scout-17b-16e-instruct": {
           id: "meta-llama/llama-4-scout-17b-16e-instruct",
-          name: "Llama 4 Scout 17B",
+          name: "Llama 4 Scout 17B 16E",
           api: "openai-completions",
           provider: "groq",
           baseUrl: "https://api.groq.com/openai/v1",
@@ -13360,57 +13318,6 @@ var init_models_generated = __esm({
           },
           contextWindow: 131072,
           maxTokens: 8192
-        },
-        "mistral-saba-24b": {
-          id: "mistral-saba-24b",
-          name: "Mistral Saba 24B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.79,
-            output: 0.79,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 32768,
-          maxTokens: 32768
-        },
-        "moonshotai/kimi-k2-instruct": {
-          id: "moonshotai/kimi-k2-instruct",
-          name: "Kimi K2 Instruct",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 1,
-            output: 3,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 16384
-        },
-        "moonshotai/kimi-k2-instruct-0905": {
-          id: "moonshotai/kimi-k2-instruct-0905",
-          name: "Kimi K2 Instruct 0905",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 1,
-            output: 3,
-            cacheRead: 0.5,
-            cacheWrite: 0
-          },
-          contextWindow: 262144,
-          maxTokens: 16384
         },
         "openai/gpt-oss-120b": {
           id: "openai/gpt-oss-120b",
@@ -13463,26 +13370,9 @@ var init_models_generated = __esm({
           contextWindow: 131072,
           maxTokens: 65536
         },
-        "qwen-qwq-32b": {
-          id: "qwen-qwq-32b",
-          name: "Qwen QwQ 32B",
-          api: "openai-completions",
-          provider: "groq",
-          baseUrl: "https://api.groq.com/openai/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0.29,
-            output: 0.39,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 16384
-        },
         "qwen/qwen3-32b": {
           id: "qwen/qwen3-32b",
-          name: "Qwen3 32B",
+          name: "Qwen3-32B",
           api: "openai-completions",
           provider: "groq",
           baseUrl: "https://api.groq.com/openai/v1",
@@ -13898,6 +13788,24 @@ var init_models_generated = __esm({
         }
       },
       "kimi-coding": {
+        "k2p7": {
+          id: "k2p7",
+          name: "Kimi K2.7 Code",
+          api: "anthropic-messages",
+          provider: "kimi-coding",
+          baseUrl: "https://api.kimi.com/coding",
+          headers: { "User-Agent": "KimiCLI/1.5" },
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 32768
+        },
         "kimi-for-coding": {
           id: "kimi-for-coding",
           name: "Kimi For Coding",
@@ -14679,6 +14587,44 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 262144
+        },
+        "kimi-k2.7-code": {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          api: "openai-completions",
+          provider: "moonshotai",
+          baseUrl: "https://api.moonshot.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
+        },
+        "kimi-k2.7-code-highspeed": {
+          id: "kimi-k2.7-code-highspeed",
+          name: "Kimi K2.7 Code HighSpeed",
+          api: "openai-completions",
+          provider: "moonshotai",
+          baseUrl: "https://api.moonshot.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 1.9,
+            output: 8,
+            cacheRead: 0.38,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
         }
       },
       "moonshotai-cn": {
@@ -14803,6 +14749,44 @@ var init_models_generated = __esm({
             input: 0.95,
             output: 4,
             cacheRead: 0.16,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
+        },
+        "kimi-k2.7-code": {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          api: "openai-completions",
+          provider: "moonshotai-cn",
+          baseUrl: "https://api.moonshot.cn/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
+        },
+        "kimi-k2.7-code-highspeed": {
+          id: "kimi-k2.7-code-highspeed",
+          name: "Kimi K2.7 Code HighSpeed",
+          api: "openai-completions",
+          provider: "moonshotai-cn",
+          baseUrl: "https://api.moonshot.cn/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          thinkingLevelMap: { "off": null },
+          input: ["text", "image"],
+          cost: {
+            input: 1.9,
+            output: 8,
+            cacheRead: 0.38,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -14932,8 +14916,8 @@ var init_models_generated = __esm({
           baseUrl: "https://integrate.api.nvidia.com/v1",
           headers: { "NVCF-POLL-SECONDS": "3600" },
           compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
-          reasoning: false,
-          input: ["text"],
+          reasoning: true,
+          input: ["text", "image"],
           cost: {
             input: 0,
             output: 0,
@@ -14961,44 +14945,6 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 262144
-        },
-        "nvidia/llama-3.3-nemotron-super-49b-v1": {
-          id: "nvidia/llama-3.3-nemotron-super-49b-v1",
-          name: "Llama 3.3 Nemotron Super 49B v1",
-          api: "openai-completions",
-          provider: "nvidia",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
-          headers: { "NVCF-POLL-SECONDS": "3600" },
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 131072
-        },
-        "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
-          id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-          name: "Llama 3.3 Nemotron Super 49B v1.5",
-          api: "openai-completions",
-          provider: "nvidia",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
-          headers: { "NVCF-POLL-SECONDS": "3600" },
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 131072
         },
         "nvidia/nemotron-3-nano-30b-a3b": {
           id: "nvidia/nemotron-3-nano-30b-a3b",
@@ -15095,6 +15041,25 @@ var init_models_generated = __esm({
           contextWindow: 131072,
           maxTokens: 131072
         },
+        "openai/gpt-oss-120b": {
+          id: "openai/gpt-oss-120b",
+          name: "GPT-OSS-120B",
+          api: "openai-completions",
+          provider: "nvidia",
+          baseUrl: "https://integrate.api.nvidia.com/v1",
+          headers: { "NVCF-POLL-SECONDS": "3600" },
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 128e3,
+          maxTokens: 8192
+        },
         "openai/gpt-oss-20b": {
           id: "openai/gpt-oss-20b",
           name: "GPT OSS 20B",
@@ -15113,25 +15078,6 @@ var init_models_generated = __esm({
           },
           contextWindow: 131072,
           maxTokens: 32768
-        },
-        "qwen/qwen3-coder-480b-a35b-instruct": {
-          id: "qwen/qwen3-coder-480b-a35b-instruct",
-          name: "Qwen3 Coder 480B A35B Instruct",
-          api: "openai-completions",
-          provider: "nvidia",
-          baseUrl: "https://integrate.api.nvidia.com/v1",
-          headers: { "NVCF-POLL-SECONDS": "3600" },
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 262144,
-          maxTokens: 66536
         },
         "qwen/qwen3.5-122b-a10b": {
           id: "qwen/qwen3.5-122b-a10b",
@@ -16043,25 +15989,6 @@ var init_models_generated = __esm({
           contextWindow: 2e5,
           maxTokens: 32e3
         },
-        "claude-fable-5": {
-          id: "claude-fable-5",
-          name: "Claude Fable 5",
-          api: "anthropic-messages",
-          provider: "opencode",
-          baseUrl: "https://opencode.ai/zen",
-          compat: { "forceAdaptiveThinking": true },
-          reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
-          input: ["text", "image"],
-          cost: {
-            input: 10,
-            output: 50,
-            cacheRead: 1,
-            cacheWrite: 12.5
-          },
-          contextWindow: 1e6,
-          maxTokens: 128e3
-        },
         "claude-haiku-4-5": {
           id: "claude-haiku-4-5",
           name: "Claude Haiku 4.5",
@@ -16228,14 +16155,14 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode",
           baseUrl: "https://opencode.ai/zen/v1",
-          compat: { "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          compat: { "maxTokensField": "max_tokens", "supportsLongCacheRetention": false, "requiresReasoningContentOnAssistantMessages": true },
           reasoning: true,
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
           input: ["text"],
           cost: {
             input: 0.14,
             output: 0.28,
-            cacheRead: 0.03,
+            cacheRead: 0.028,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -16247,7 +16174,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode",
           baseUrl: "https://opencode.ai/zen/v1",
-          compat: { "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          compat: { "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true },
           reasoning: true,
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
           input: ["text"],
@@ -16259,6 +16186,25 @@ var init_models_generated = __esm({
           },
           contextWindow: 2e5,
           maxTokens: 128e3
+        },
+        "deepseek-v4-pro": {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          api: "openai-completions",
+          provider: "opencode",
+          baseUrl: "https://opencode.ai/zen/v1",
+          compat: { "maxTokensField": "max_tokens", "supportsLongCacheRetention": false, "requiresReasoningContentOnAssistantMessages": true },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+          input: ["text"],
+          cost: {
+            input: 1.74,
+            output: 3.84,
+            cacheRead: 0.145,
+            cacheWrite: 0
+          },
+          contextWindow: 1e6,
+          maxTokens: 384e3
         },
         "gemini-3-flash": {
           id: "gemini-3-flash",
@@ -16663,7 +16609,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode",
           baseUrl: "https://opencode.ai/zen/v1",
-          compat: { "maxTokensField": "max_tokens" },
+          compat: { "maxTokensField": "max_tokens", "supportsLongCacheRetention": false },
           reasoning: true,
           input: ["text", "image"],
           cost: {
@@ -16681,7 +16627,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode",
           baseUrl: "https://opencode.ai/zen/v1",
-          compat: { "thinkingFormat": "deepseek", "supportsReasoningEffort": false, "maxTokensField": "max_tokens" },
+          compat: { "thinkingFormat": "deepseek", "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsLongCacheRetention": false },
           reasoning: true,
           input: ["text", "image"],
           cost: {
@@ -16735,7 +16681,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode",
           baseUrl: "https://opencode.ai/zen/v1",
-          compat: { "maxTokensField": "max_tokens" },
+          compat: { "maxTokensField": "max_tokens", "supportsLongCacheRetention": false },
           reasoning: true,
           input: ["text"],
           cost: {
@@ -16857,24 +16803,6 @@ var init_models_generated = __esm({
           contextWindow: 1e6,
           maxTokens: 384e3
         },
-        "glm-5": {
-          id: "glm-5",
-          name: "GLM-5",
-          api: "openai-completions",
-          provider: "opencode-go",
-          baseUrl: "https://opencode.ai/zen/go/v1",
-          compat: { "maxTokensField": "max_tokens" },
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 1,
-            output: 3.2,
-            cacheRead: 0.2,
-            cacheWrite: 0
-          },
-          contextWindow: 202752,
-          maxTokens: 32768
-        },
         "glm-5.1": {
           id: "glm-5.1",
           name: "GLM-5.1",
@@ -16893,23 +16821,23 @@ var init_models_generated = __esm({
           contextWindow: 202752,
           maxTokens: 32768
         },
-        "kimi-k2.5": {
-          id: "kimi-k2.5",
-          name: "Kimi K2.5",
+        "glm-5.2": {
+          id: "glm-5.2",
+          name: "GLM-5.2",
           api: "openai-completions",
           provider: "opencode-go",
           baseUrl: "https://opencode.ai/zen/go/v1",
           compat: { "maxTokensField": "max_tokens" },
           reasoning: true,
-          input: ["text", "image"],
+          input: ["text"],
           cost: {
-            input: 0.6,
-            output: 3,
-            cacheRead: 0.1,
+            input: 1.4,
+            output: 4.4,
+            cacheRead: 0.26,
             cacheWrite: 0
           },
-          contextWindow: 262144,
-          maxTokens: 65536
+          contextWindow: 1e6,
+          maxTokens: 131072
         },
         "kimi-k2.6": {
           id: "kimi-k2.6",
@@ -16917,7 +16845,7 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "opencode-go",
           baseUrl: "https://opencode.ai/zen/go/v1",
-          compat: { "thinkingFormat": "deepseek", "supportsReasoningEffort": false, "maxTokensField": "max_tokens" },
+          compat: { "thinkingFormat": "deepseek", "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsLongCacheRetention": false },
           reasoning: true,
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
           input: ["text", "image"],
@@ -16929,6 +16857,24 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 65536
+        },
+        "kimi-k2.7-code": {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          api: "openai-completions",
+          provider: "opencode-go",
+          baseUrl: "https://opencode.ai/zen/go/v1",
+          compat: { "maxTokensField": "max_tokens" },
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 262144
         },
         "mimo-v2.5": {
           id: "mimo-v2.5",
@@ -16966,23 +16912,6 @@ var init_models_generated = __esm({
           contextWindow: 1048576,
           maxTokens: 128e3
         },
-        "minimax-m2.5": {
-          id: "minimax-m2.5",
-          name: "MiniMax M2.5",
-          api: "anthropic-messages",
-          provider: "opencode-go",
-          baseUrl: "https://opencode.ai/zen/go",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0.3,
-            output: 1.2,
-            cacheRead: 0.03,
-            cacheWrite: 0
-          },
-          contextWindow: 204800,
-          maxTokens: 65536
-        },
         "minimax-m2.7": {
           id: "minimax-m2.7",
           name: "MiniMax M2.7",
@@ -17003,16 +16932,16 @@ var init_models_generated = __esm({
         },
         "minimax-m3": {
           id: "minimax-m3",
-          name: "MiniMax M3",
+          name: "MiniMax M3 (3x usage)",
           api: "anthropic-messages",
           provider: "opencode-go",
           baseUrl: "https://opencode.ai/zen/go",
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.3,
-            output: 1.2,
-            cacheRead: 0.06,
+            input: 0.1,
+            output: 0.4,
+            cacheRead: 0.02,
             cacheWrite: 0
           },
           contextWindow: 512e3,
@@ -17166,8 +17095,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.7999999999999999,
-            output: 3.1999999999999997,
+            input: 0.8,
+            output: 3.2,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -17200,7 +17129,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.7999999999999999,
+            input: 0.8,
             output: 4,
             cacheRead: 0.08,
             cacheWrite: 1
@@ -17236,7 +17165,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 5,
-            cacheRead: 0.09999999999999999,
+            cacheRead: 0.1,
             cacheWrite: 1.25
           },
           contextWindow: 2e5,
@@ -17580,8 +17509,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
+            input: 0.1,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -17622,6 +17551,23 @@ var init_models_generated = __esm({
           contextWindow: 128e3,
           maxTokens: 4e3
         },
+        "cohere/north-mini-code:free": {
+          id: "cohere/north-mini-code:free",
+          name: "Cohere: North Mini Code (free)",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 256e3,
+          maxTokens: 64e3
+        },
         "deepseek/deepseek-chat": {
           id: "deepseek/deepseek-chat",
           name: "DeepSeek: DeepSeek V3",
@@ -17631,8 +17577,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.20020000000000002,
-            output: 0.8000999999999999,
+            input: 0.2002,
+            output: 0.8001,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -17648,7 +17594,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.77,
             cacheRead: 0.135,
             cacheWrite: 0
@@ -17666,7 +17612,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.21,
-            output: 0.7899999999999999,
+            output: 0.79,
             cacheRead: 0.13,
             cacheWrite: 0
           },
@@ -17700,7 +17646,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.5,
-            output: 2.1500000000000004,
+            output: 2.15,
             cacheRead: 0.35,
             cacheWrite: 0
           },
@@ -17769,13 +17715,13 @@ var init_models_generated = __esm({
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "xhigh" },
           input: ["text"],
           cost: {
-            input: 0.0983,
-            output: 0.1966,
-            cacheRead: 0.019700000000000002,
+            input: 0.09,
+            output: 0.18,
+            cacheRead: 0.02,
             cacheWrite: 0
           },
           contextWindow: 1048576,
-          maxTokens: 131072
+          maxTokens: 65536
         },
         "deepseek/deepseek-v4-pro": {
           id: "deepseek/deepseek-v4-pro",
@@ -17825,7 +17771,7 @@ var init_models_generated = __esm({
             input: 0.3,
             output: 2.5,
             cacheRead: 0.03,
-            cacheWrite: 0.08333333333333334
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65535
@@ -17839,10 +17785,10 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
+            input: 0.1,
+            output: 0.4,
             cacheRead: 0.01,
-            cacheWrite: 0.08333333333333334
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65535
@@ -17856,10 +17802,10 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
+            input: 0.1,
+            output: 0.4,
             cacheRead: 0.01,
-            cacheWrite: 0.08333333333333334
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65535
@@ -17926,11 +17872,28 @@ var init_models_generated = __esm({
           cost: {
             input: 0.5,
             output: 3,
-            cacheRead: 0.049999999999999996,
-            cacheWrite: 0.08333333333333334
+            cacheRead: 0.05,
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
-          maxTokens: 65536
+          maxTokens: 65535
+        },
+        "google/gemini-3-pro-image": {
+          id: "google/gemini-3-pro-image",
+          name: "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 2,
+            output: 12,
+            cacheRead: 0.2,
+            cacheWrite: 0.375
+          },
+          contextWindow: 65536,
+          maxTokens: 32768
         },
         "google/gemini-3.1-flash-lite": {
           id: "google/gemini-3.1-flash-lite",
@@ -17943,8 +17906,8 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 1.5,
-            cacheRead: 0.024999999999999998,
-            cacheWrite: 0.08333333333333334
+            cacheRead: 0.025,
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65536
@@ -17960,8 +17923,8 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 1.5,
-            cacheRead: 0.024999999999999998,
-            cacheWrite: 0.08333333333333334
+            cacheRead: 0.025,
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65536
@@ -17977,7 +17940,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 12,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0.375
           },
           contextWindow: 1048576,
@@ -17994,7 +17957,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 12,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0.375
           },
           contextWindow: 1048756,
@@ -18012,7 +17975,7 @@ var init_models_generated = __esm({
             input: 1.5,
             output: 9,
             cacheRead: 0.15,
-            cacheWrite: 0.08333333333333334
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65536
@@ -18026,7 +17989,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.049999999999999996,
+            input: 0.05,
             output: 0.15,
             cacheRead: 0,
             cacheWrite: 0
@@ -18095,12 +18058,12 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.12,
-            output: 0.36,
+            output: 0.35,
             cacheRead: 0.09,
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 8192
+          maxTokens: 262144
         },
         "google/gemma-4-31b-it:free": {
           id: "google/gemma-4-31b-it:free",
@@ -18117,7 +18080,7 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 32768
+          maxTokens: 8192
         },
         "ibm-granite/granite-4.1-8b": {
           id: "ibm-granite/granite-4.1-8b",
@@ -18128,9 +18091,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.09999999999999999,
-            cacheRead: 0.049999999999999996,
+            input: 0.05,
+            output: 0.1,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 131072,
@@ -18148,7 +18111,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 0.75,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 128e3,
@@ -18222,6 +18185,23 @@ var init_models_generated = __esm({
           contextWindow: 256e3,
           maxTokens: 8e4
         },
+        "liquid/lfm-2.5-1.2b-thinking:free": {
+          id: "liquid/lfm-2.5-1.2b-thinking:free",
+          name: "LiquidAI: LFM2.5-1.2B-Thinking (free)",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 32768,
+          maxTokens: 4096
+        },
         "meta-llama/llama-3.1-70b-instruct": {
           id: "meta-llama/llama-3.1-70b-instruct",
           name: "Meta: Llama 3.1 70B Instruct",
@@ -18231,8 +18211,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
-            output: 0.39999999999999997,
+            input: 0.4,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -18265,7 +18245,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.32,
             cacheRead: 0,
             cacheWrite: 0
@@ -18316,7 +18296,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -18333,7 +18313,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2.2,
             cacheRead: 0,
             cacheWrite: 0
@@ -18385,8 +18365,8 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.15,
-            output: 0.8999999999999999,
-            cacheRead: 0.049999999999999996,
+            output: 0.9,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 204800,
@@ -18401,9 +18381,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.27,
-            output: 1.08,
-            cacheRead: 0.054,
+            input: 0.25,
+            output: 1,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 204800,
@@ -18436,7 +18416,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.3,
-            output: 0.8999999999999999,
+            output: 0.9,
             cacheRead: 0.03,
             cacheWrite: 0
           },
@@ -18452,7 +18432,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2,
             cacheRead: 0.04,
             cacheWrite: 0
@@ -18469,8 +18449,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
-            output: 0.19999999999999998,
+            input: 0.2,
+            output: 0.2,
             cacheRead: 0.02,
             cacheWrite: 0
           },
@@ -18486,8 +18466,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.09999999999999999,
+            input: 0.1,
+            output: 0.1,
             cacheRead: 0.01,
             cacheWrite: 0
           },
@@ -18522,7 +18502,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 6,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 128e3,
@@ -18539,7 +18519,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 6,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 131072,
@@ -18556,7 +18536,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.5,
             output: 1.5,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -18571,7 +18551,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2,
             cacheRead: 0.04,
             cacheWrite: 0
@@ -18605,7 +18585,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2,
             cacheRead: 0.04,
             cacheWrite: 0
@@ -18639,7 +18619,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.6,
             cacheRead: 0.02,
             cacheWrite: 0
@@ -18674,7 +18654,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.075,
-            output: 0.19999999999999998,
+            output: 0.2,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -18692,7 +18672,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 6,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 65536,
@@ -18707,7 +18687,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0.01,
             cacheWrite: 0
@@ -18724,7 +18704,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.5700000000000001,
+            input: 0.57,
             output: 2.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -18793,31 +18773,30 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.6799999999999999,
+            input: 0.68,
             output: 3.41,
-            cacheRead: 0.33999999999999997,
+            cacheRead: 0.34,
             cacheWrite: 0
           },
           contextWindow: 262144,
           maxTokens: 262142
         },
-        "moonshotai/kimi-k2.6:free": {
-          id: "moonshotai/kimi-k2.6:free",
-          name: "MoonshotAI: Kimi K2.6 (free)",
+        "moonshotai/kimi-k2.7-code": {
+          id: "moonshotai/kimi-k2.7-code",
+          name: "MoonshotAI: Kimi K2.7 Code",
           api: "openai-completions",
           provider: "openrouter",
           baseUrl: "https://openrouter.ai/api/v1",
-          compat: { "supportsDeveloperRole": false, "requiresReasoningContentOnAssistantMessages": true },
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
+            input: 0.74,
+            output: 3.5,
+            cacheRead: 0.15,
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 4096
+          maxTokens: 16384
         },
         "nex-agi/nex-n2-pro:free": {
           id: "nex-agi/nex-n2-pro:free",
@@ -18845,8 +18824,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
-            output: 0.39999999999999997,
+            input: 0.4,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -18862,8 +18841,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.19999999999999998,
+            input: 0.05,
+            output: 0.2,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -18914,7 +18893,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.09,
-            output: 0.44999999999999996,
+            output: 0.45,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -18948,8 +18927,8 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.5,
-            output: 2.5,
-            cacheRead: 0.15,
+            output: 2.2,
+            cacheRead: 0.1,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -18988,23 +18967,6 @@ var init_models_generated = __esm({
           },
           contextWindow: 128e3,
           maxTokens: 128e3
-        },
-        "nvidia/nemotron-nano-9b-v2": {
-          id: "nvidia/nemotron-nano-9b-v2",
-          name: "NVIDIA: Nemotron Nano 9B V2",
-          api: "openai-completions",
-          provider: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0.04,
-            output: 0.16,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 16384
         },
         "nvidia/nemotron-nano-9b-v2:free": {
           id: "nvidia/nemotron-nano-9b-v2:free",
@@ -19151,9 +19113,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
-            output: 1.5999999999999999,
-            cacheRead: 0.09999999999999999,
+            input: 0.4,
+            output: 1.6,
+            cacheRead: 0.1,
             cacheWrite: 0
           },
           contextWindow: 1047576,
@@ -19168,9 +19130,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
-            cacheRead: 0.024999999999999998,
+            input: 0.1,
+            output: 0.4,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 1047576,
@@ -19323,7 +19285,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 2,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 4e5,
@@ -19338,8 +19300,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.39999999999999997,
+            input: 0.05,
+            output: 0.4,
             cacheRead: 0.01,
             cacheWrite: 0
           },
@@ -19442,7 +19404,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 2,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 4e5,
@@ -19602,7 +19564,7 @@ var init_models_generated = __esm({
           thinkingLevelMap: { "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.25,
             cacheRead: 0.02,
             cacheWrite: 0
@@ -19781,7 +19743,7 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 131072,
-          maxTokens: 8192
+          maxTokens: 32768
         },
         "openai/gpt-oss-safeguard-20b": {
           id: "openai/gpt-oss-safeguard-20b",
@@ -20004,6 +19966,23 @@ var init_models_generated = __esm({
           contextWindow: 1048756,
           maxTokens: 262144
         },
+        "poolside/laguna-m.1": {
+          id: "poolside/laguna-m.1",
+          name: "Poolside: Laguna M.1",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0.2,
+            output: 0.4,
+            cacheRead: 0.1,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 32768
+        },
         "poolside/laguna-m.1:free": {
           id: "poolside/laguna-m.1:free",
           name: "Poolside: Laguna M.1 (free)",
@@ -20016,6 +19995,23 @@ var init_models_generated = __esm({
             input: 0,
             output: 0,
             cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 32768
+        },
+        "poolside/laguna-xs.2": {
+          id: "poolside/laguna-xs.2",
+          name: "Poolside: Laguna XS.2",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 0.1,
+            output: 0.2,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -20047,7 +20043,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.1,
             cacheRead: 0,
             cacheWrite: 0
@@ -20065,12 +20061,29 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.36,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
           contextWindow: 131072,
           maxTokens: 16384
+        },
+        "qwen/qwen-2.5-7b-instruct": {
+          id: "qwen/qwen-2.5-7b-instruct",
+          name: "Qwen: Qwen2.5 7B Instruct",
+          api: "openai-completions",
+          provider: "openrouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          reasoning: false,
+          input: ["text"],
+          cost: {
+            input: 0.04,
+            output: 0.1,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 131072,
+          maxTokens: 32768
         },
         "qwen/qwen-plus": {
           id: "qwen/qwen-plus",
@@ -20083,7 +20096,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.26,
             output: 0.78,
-            cacheRead: 0.052000000000000005,
+            cacheRead: 0.052,
             cacheWrite: 0.325
           },
           contextWindow: 1e6,
@@ -20132,7 +20145,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.24,
             cacheRead: 0,
             cacheWrite: 0
@@ -20149,8 +20162,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.45499999999999996,
-            output: 1.8199999999999998,
+            input: 0.455,
+            output: 1.82,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -20167,7 +20180,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.09,
-            output: 0.09999999999999999,
+            output: 0.1,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -20183,9 +20196,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.09999999999999999,
-            cacheRead: 0.09999999999999999,
+            input: 0.1,
+            output: 0.1,
+            cacheRead: 0.1,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -20235,7 +20248,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.08,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0.08,
             cacheWrite: 0
           },
@@ -20268,9 +20281,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.39999999999999997,
-            cacheRead: 0.049999999999999996,
+            input: 0.05,
+            output: 0.4,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 131072,
@@ -20286,7 +20299,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.22,
-            output: 1.7999999999999998,
+            output: 1.8,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -20337,7 +20350,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.11,
-            output: 0.7999999999999999,
+            output: 0.8,
             cacheRead: 0.07,
             cacheWrite: 0
           },
@@ -20472,7 +20485,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.88,
             cacheRead: 0.11,
             cacheWrite: 0
@@ -20540,8 +20553,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.10400000000000001,
-            output: 0.41600000000000004,
+            input: 0.104,
+            output: 0.416,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -20627,7 +20640,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.14,
             output: 1,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -20642,13 +20655,13 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39,
-            output: 2.34,
+            input: 0.385,
+            output: 2.45,
             cacheRead: 0,
             cacheWrite: 0
           },
-          contextWindow: 262144,
-          maxTokens: 65536
+          contextWindow: 256e3,
+          maxTokens: 4096
         },
         "qwen/qwen3.5-9b": {
           id: "qwen/qwen3.5-9b",
@@ -20659,7 +20672,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.15,
             cacheRead: 0,
             cacheWrite: 0
@@ -20711,7 +20724,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.3,
-            output: 1.7999999999999998,
+            output: 1.8,
             cacheRead: 0,
             cacheWrite: 0.375
           },
@@ -20727,13 +20740,13 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.28900000000000003,
-            output: 2.4,
+            input: 0.2885,
+            output: 3.17,
             cacheRead: 0,
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 131072
+          maxTokens: 262140
         },
         "qwen/qwen3.6-35b-a3b": {
           id: "qwen/qwen3.6-35b-a3b",
@@ -20750,7 +20763,7 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 262140
+          maxTokens: 262144
         },
         "qwen/qwen3.6-flash": {
           id: "qwen/qwen3.6-flash",
@@ -20829,10 +20842,10 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
-            output: 1.5999999999999999,
-            cacheRead: 0.08,
-            cacheWrite: 0.5
+            input: 0.32,
+            output: 1.28,
+            cacheRead: 0.064,
+            cacheWrite: 0.4
           },
           contextWindow: 1e6,
           maxTokens: 65536
@@ -20846,8 +20859,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.09999999999999999,
+            input: 0.1,
+            output: 0.1,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -20914,7 +20927,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.15,
             cacheRead: 0.04,
             cacheWrite: 0
@@ -20931,13 +20944,13 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.063,
-            output: 0.21,
-            cacheRead: 0.020999999999999998,
+            input: 0.066,
+            output: 0.26,
+            cacheRead: 0.029,
             cacheWrite: 0
           },
           contextWindow: 262144,
-          maxTokens: 4096
+          maxTokens: 262144
         },
         "thedrummer/rocinante-12b": {
           id: "thedrummer/rocinante-12b",
@@ -20948,7 +20961,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.16999999999999998,
+            input: 0.17,
             output: 0.43,
             cacheRead: 0,
             cacheWrite: 0
@@ -20965,8 +20978,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
-            output: 0.39999999999999997,
+            input: 0.4,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -21001,7 +21014,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -21018,7 +21031,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -21035,28 +21048,11 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 2,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 256e3,
           maxTokens: 4096
-        },
-        "xiaomi/mimo-v2-flash": {
-          id: "xiaomi/mimo-v2-flash",
-          name: "Xiaomi: MiMo-V2-Flash",
-          api: "openai-completions",
-          provider: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0.09999999999999999,
-            output: 0.3,
-            cacheRead: 0.01,
-            cacheWrite: 0
-          },
-          contextWindow: 262144,
-          maxTokens: 65536
         },
         "xiaomi/mimo-v2.5": {
           id: "xiaomi/mimo-v2.5",
@@ -21092,23 +21088,6 @@ var init_models_generated = __esm({
           contextWindow: 1048576,
           maxTokens: 131072
         },
-        "z-ai/glm-4-32b": {
-          id: "z-ai/glm-4-32b",
-          name: "Z.ai: GLM 4 32B ",
-          api: "openai-completions",
-          provider: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 0.09999999999999999,
-            output: 0.09999999999999999,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 128e3,
-          maxTokens: 4096
-        },
         "z-ai/glm-4.5": {
           id: "z-ai/glm-4.5",
           name: "Z.ai: GLM 4.5",
@@ -21135,30 +21114,13 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.125,
+            input: 0.13,
             output: 0.85,
-            cacheRead: 0.06,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 131072,
-          maxTokens: 131070
-        },
-        "z-ai/glm-4.5-air:free": {
-          id: "z-ai/glm-4.5-air:free",
-          name: "Z.ai: GLM 4.5 Air (free)",
-          api: "openai-completions",
-          provider: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 96e3
+          maxTokens: 98304
         },
         "z-ai/glm-4.5v": {
           id: "z-ai/glm-4.5v",
@@ -21170,7 +21132,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.6,
-            output: 1.7999999999999998,
+            output: 1.8,
             cacheRead: 0.11,
             cacheWrite: 0
           },
@@ -21204,12 +21166,12 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.3,
-            output: 0.8999999999999999,
-            cacheRead: 0.049999999999999996,
+            output: 0.9,
+            cacheRead: 0.055,
             cacheWrite: 0
           },
           contextWindow: 131072,
-          maxTokens: 24e3
+          maxTokens: 32768
         },
         "z-ai/glm-4.7": {
           id: "z-ai/glm-4.7",
@@ -21220,7 +21182,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 1.75,
             cacheRead: 0.08,
             cacheWrite: 0
@@ -21238,7 +21200,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.06,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0.01,
             cacheWrite: 0
           },
@@ -21276,7 +21238,7 @@ var init_models_generated = __esm({
             cacheRead: 0.24,
             cacheWrite: 0
           },
-          contextWindow: 202752,
+          contextWindow: 262144,
           maxTokens: 131072
         },
         "z-ai/glm-5.1": {
@@ -21296,22 +21258,22 @@ var init_models_generated = __esm({
           contextWindow: 202752,
           maxTokens: 4096
         },
-        "z-ai/glm-5v-turbo": {
-          id: "z-ai/glm-5v-turbo",
-          name: "Z.ai: GLM 5V Turbo",
+        "z-ai/glm-5.2": {
+          id: "z-ai/glm-5.2",
+          name: "Z.ai: GLM 5.2",
           api: "openai-completions",
           provider: "openrouter",
           baseUrl: "https://openrouter.ai/api/v1",
           reasoning: true,
-          input: ["text", "image"],
+          input: ["text"],
           cost: {
-            input: 1.2,
-            output: 4,
-            cacheRead: 0.24,
+            input: 1.4,
+            output: 4.4,
+            cacheRead: 0.7,
             cacheWrite: 0
           },
-          contextWindow: 202752,
-          maxTokens: 131072
+          contextWindow: 1048576,
+          maxTokens: 524288
         },
         "~anthropic/claude-fable-latest": {
           id: "~anthropic/claude-fable-latest",
@@ -21341,7 +21303,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 5,
-            cacheRead: 0.09999999999999999,
+            cacheRead: 0.1,
             cacheWrite: 1.25
           },
           contextWindow: 2e5,
@@ -21393,7 +21355,7 @@ var init_models_generated = __esm({
             input: 1.5,
             output: 9,
             cacheRead: 0.15,
-            cacheWrite: 0.08333333333333334
+            cacheWrite: 0.083333
           },
           contextWindow: 1048576,
           maxTokens: 65536
@@ -21409,7 +21371,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 12,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0.375
           },
           contextWindow: 1048576,
@@ -21424,9 +21386,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.6799999999999999,
+            input: 0.68,
             output: 3.41,
-            cacheRead: 0.33999999999999997,
+            cacheRead: 0.34,
             cacheWrite: 0
           },
           contextWindow: 262144,
@@ -21468,25 +21430,6 @@ var init_models_generated = __esm({
         }
       },
       "together": {
-        "MiniMaxAI/MiniMax-M2.5": {
-          id: "MiniMaxAI/MiniMax-M2.5",
-          name: "MiniMax-M2.5",
-          api: "openai-completions",
-          provider: "together",
-          baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
-          input: ["text"],
-          cost: {
-            input: 0.3,
-            output: 1.2,
-            cacheRead: 0.06,
-            cacheWrite: 0
-          },
-          contextWindow: 204800,
-          maxTokens: 131072
-        },
         "MiniMaxAI/MiniMax-M2.7": {
           id: "MiniMaxAI/MiniMax-M2.7",
           name: "MiniMax-M2.7",
@@ -21506,28 +21449,28 @@ var init_models_generated = __esm({
           contextWindow: 202752,
           maxTokens: 131072
         },
-        "Qwen/Qwen3-235B-A22B-Instruct-2507-tput": {
-          id: "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
-          name: "Qwen3 235B A22B Instruct 2507 FP8",
+        "MiniMaxAI/MiniMax-M3": {
+          id: "MiniMaxAI/MiniMax-M3",
+          name: "MiniMax-M3",
           api: "openai-completions",
           provider: "together",
           baseUrl: "https://api.together.ai/v1",
           compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
           reasoning: true,
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
-          input: ["text"],
+          input: ["text", "image"],
           cost: {
-            input: 0.2,
-            output: 0.6,
-            cacheRead: 0,
+            input: 0.3,
+            output: 1.2,
+            cacheRead: 0.06,
             cacheWrite: 0
           },
-          contextWindow: 262144,
-          maxTokens: 262144
+          contextWindow: 524288,
+          maxTokens: 25e4
         },
-        "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8": {
-          id: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
-          name: "Qwen3 Coder 480B A35B Instruct",
+        "Qwen/Qwen2.5-7B-Instruct-Turbo": {
+          id: "Qwen/Qwen2.5-7B-Instruct-Turbo",
+          name: "Qwen 2.5 7B Instruct Turbo",
           api: "openai-completions",
           provider: "together",
           baseUrl: "https://api.together.ai/v1",
@@ -21535,27 +21478,26 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 2,
-            output: 2,
+            input: 0.3,
+            output: 0.3,
             cacheRead: 0,
             cacheWrite: 0
           },
-          contextWindow: 262144,
-          maxTokens: 262144
+          contextWindow: 32768,
+          maxTokens: 32768
         },
-        "Qwen/Qwen3-Coder-Next-FP8": {
-          id: "Qwen/Qwen3-Coder-Next-FP8",
-          name: "Qwen3 Coder Next FP8",
+        "Qwen/Qwen3-235B-A22B-Instruct-2507-tput": {
+          id: "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
+          name: "Qwen3 235B A22B Instruct 2507 FP8",
           api: "openai-completions",
           provider: "together",
           baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
+          reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.5,
-            output: 1.2,
+            input: 0.2,
+            output: 0.6,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -21580,6 +21522,25 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 13e4
+        },
+        "Qwen/Qwen3.5-9B": {
+          id: "Qwen/Qwen3.5-9B",
+          name: "Qwen3.5 9B",
+          api: "openai-completions",
+          provider: "together",
+          baseUrl: "https://api.together.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
+          input: ["text", "image"],
+          cost: {
+            input: 0.17,
+            output: 0.25,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 65536
         },
         "Qwen/Qwen3.6-Plus": {
           id: "Qwen/Qwen3.6-Plus",
@@ -21606,56 +21567,17 @@ var init_models_generated = __esm({
           api: "openai-completions",
           provider: "together",
           baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false },
+          reasoning: false,
           input: ["text"],
           cost: {
-            input: 2.5,
-            output: 7.5,
+            input: 1.25,
+            output: 3.75,
             cacheRead: 0,
             cacheWrite: 0
           },
           contextWindow: 1e6,
           maxTokens: 5e5
-        },
-        "deepseek-ai/DeepSeek-V3": {
-          id: "deepseek-ai/DeepSeek-V3",
-          name: "DeepSeek-V3",
-          api: "openai-completions",
-          provider: "together",
-          baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
-          input: ["text"],
-          cost: {
-            input: 1.25,
-            output: 1.25,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 131072
-        },
-        "deepseek-ai/DeepSeek-V3-1": {
-          id: "deepseek-ai/DeepSeek-V3-1",
-          name: "DeepSeek V3.1",
-          api: "openai-completions",
-          provider: "together",
-          baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
-          input: ["text"],
-          cost: {
-            input: 0.6,
-            output: 1.7,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 131072,
-          maxTokens: 131072
         },
         "deepseek-ai/DeepSeek-V4-Pro": {
           id: "deepseek-ai/DeepSeek-V4-Pro",
@@ -21668,8 +21590,8 @@ var init_models_generated = __esm({
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": null },
           input: ["text"],
           cost: {
-            input: 2.1,
-            output: 4.4,
+            input: 1.74,
+            output: 3.48,
             cacheRead: 0.2,
             cacheWrite: 0
           },
@@ -21705,8 +21627,8 @@ var init_models_generated = __esm({
           thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
           input: ["text", "image"],
           cost: {
-            input: 0.2,
-            output: 0.5,
+            input: 0.39,
+            output: 0.97,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -21731,25 +21653,6 @@ var init_models_generated = __esm({
           contextWindow: 131072,
           maxTokens: 131072
         },
-        "moonshotai/Kimi-K2.5": {
-          id: "moonshotai/Kimi-K2.5",
-          name: "Kimi K2.5",
-          api: "openai-completions",
-          provider: "together",
-          baseUrl: "https://api.together.ai/v1",
-          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
-          reasoning: true,
-          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
-          input: ["text", "image"],
-          cost: {
-            input: 0.5,
-            output: 2.8,
-            cacheRead: 0,
-            cacheWrite: 0
-          },
-          contextWindow: 262144,
-          maxTokens: 262144
-        },
         "moonshotai/Kimi-K2.6": {
           id: "moonshotai/Kimi-K2.6",
           name: "Kimi K2.6",
@@ -21768,6 +21671,25 @@ var init_models_generated = __esm({
           },
           contextWindow: 262144,
           maxTokens: 131e3
+        },
+        "moonshotai/Kimi-K2.7-Code": {
+          id: "moonshotai/Kimi-K2.7-Code",
+          name: "Kimi K2.7 Code",
+          api: "openai-completions",
+          provider: "together",
+          baseUrl: "https://api.together.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
+          input: ["text"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 131072
         },
         "nvidia/nemotron-3-ultra-550b-a55b": {
           id: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -21805,6 +21727,44 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 131072,
+          maxTokens: 131072
+        },
+        "openai/gpt-oss-20b": {
+          id: "openai/gpt-oss-20b",
+          name: "GPT OSS 20B",
+          api: "openai-completions",
+          provider: "together",
+          baseUrl: "https://api.together.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": true, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "openai" },
+          reasoning: true,
+          thinkingLevelMap: { "off": null, "minimal": null },
+          input: ["text"],
+          cost: {
+            input: 0.05,
+            output: 0.2,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 131072,
+          maxTokens: 131072
+        },
+        "zai-org/GLM-5": {
+          id: "zai-org/GLM-5",
+          name: "GLM-5",
+          api: "openai-completions",
+          provider: "together",
+          baseUrl: "https://api.together.ai/v1",
+          compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "thinkingFormat": "together" },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": null, "medium": null },
+          input: ["text"],
+          cost: {
+            input: 1,
+            output: 3.2,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 202752,
           maxTokens: 131072
         },
         "zai-org/GLM-5.1": {
@@ -21922,7 +21882,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 4,
             cacheRead: 0,
             cacheWrite: 0
@@ -21992,7 +21952,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -22092,7 +22052,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 4,
             cacheRead: 0,
             cacheWrite: 0
@@ -22109,8 +22069,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
+            input: 0.1,
+            output: 0.4,
             cacheRead: 1e-3,
             cacheWrite: 0.125
           },
@@ -22126,7 +22086,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2.4,
             cacheRead: 0.04,
             cacheWrite: 0.5
@@ -22144,7 +22104,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.6,
-            output: 3.5999999999999996,
+            output: 3.6,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -22162,7 +22122,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.5,
             output: 3,
-            cacheRead: 0.09999999999999999,
+            cacheRead: 0.1,
             cacheWrite: 0.625
           },
           contextWindow: 1e6,
@@ -22194,8 +22154,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
-            output: 1.5999999999999999,
+            input: 0.4,
+            output: 1.6,
             cacheRead: 0.08,
             cacheWrite: 0.5
           },
@@ -22228,32 +22188,13 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.7999999999999999,
+            input: 0.8,
             output: 4,
             cacheRead: 0.08,
             cacheWrite: 1
           },
           contextWindow: 2e5,
           maxTokens: 8192
-        },
-        "anthropic/claude-fable-5": {
-          id: "anthropic/claude-fable-5",
-          name: "Claude Fable 5",
-          api: "anthropic-messages",
-          provider: "vercel-ai-gateway",
-          baseUrl: "https://ai-gateway.vercel.sh",
-          compat: { "forceAdaptiveThinking": true },
-          reasoning: true,
-          thinkingLevelMap: { "xhigh": "xhigh" },
-          input: ["text", "image"],
-          cost: {
-            input: 10,
-            output: 50,
-            cacheRead: 1,
-            cacheWrite: 12.5
-          },
-          contextWindow: 1e6,
-          maxTokens: 128e3
         },
         "anthropic/claude-haiku-4.5": {
           id: "anthropic/claude-haiku-4.5",
@@ -22266,7 +22207,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 5,
-            cacheRead: 0.09999999999999999,
+            cacheRead: 0.1,
             cacheWrite: 1.25
           },
           contextWindow: 2e5,
@@ -22459,7 +22400,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.25,
-            output: 0.8999999999999999,
+            output: 0.9,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -22477,7 +22418,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 2,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 256e3,
@@ -22662,8 +22603,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
+            input: 0.1,
+            output: 0.4,
             cacheRead: 0.01,
             cacheWrite: 0
           },
@@ -22698,7 +22639,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.5,
             output: 3,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -22715,7 +22656,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 12,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -22766,7 +22707,7 @@ var init_models_generated = __esm({
           cost: {
             input: 2,
             output: 12,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -22816,7 +22757,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.14,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -22834,7 +22775,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 0.75,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 128e3,
@@ -22986,7 +22927,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.24,
-            output: 0.9700000000000001,
+            output: 0.97,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -23002,7 +22943,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.16999999999999998,
+            input: 0.17,
             output: 0.66,
             cacheRead: 0,
             cacheWrite: 0
@@ -23156,7 +23097,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.3,
-            output: 0.8999999999999999,
+            output: 0.9,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -23172,7 +23113,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2,
             cacheRead: 0,
             cacheWrite: 0
@@ -23189,7 +23130,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -23206,7 +23147,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -23223,8 +23164,8 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.09999999999999999,
+            input: 0.1,
+            output: 0.1,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -23257,7 +23198,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
+            input: 0.4,
             output: 2,
             cacheRead: 0,
             cacheWrite: 0
@@ -23291,13 +23232,13 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.02,
-            output: 0.04,
+            input: 0.15,
+            output: 0.15,
             cacheRead: 0,
             cacheWrite: 0
           },
-          contextWindow: 131072,
-          maxTokens: 131072
+          contextWindow: 128e3,
+          maxTokens: 128e3
         },
         "mistral/mistral-small": {
           id: "mistral/mistral-small",
@@ -23308,7 +23249,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -23359,7 +23300,7 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text"],
           cost: {
-            input: 0.5700000000000001,
+            input: 0.57,
             output: 2.3,
             cacheRead: 0,
             cacheWrite: 0
@@ -23384,40 +23325,6 @@ var init_models_generated = __esm({
           contextWindow: 262114,
           maxTokens: 262114
         },
-        "moonshotai/kimi-k2-thinking-turbo": {
-          id: "moonshotai/kimi-k2-thinking-turbo",
-          name: "Kimi K2 Thinking Turbo",
-          api: "anthropic-messages",
-          provider: "vercel-ai-gateway",
-          baseUrl: "https://ai-gateway.vercel.sh",
-          reasoning: true,
-          input: ["text"],
-          cost: {
-            input: 1.15,
-            output: 8,
-            cacheRead: 0.15,
-            cacheWrite: 0
-          },
-          contextWindow: 262114,
-          maxTokens: 262114
-        },
-        "moonshotai/kimi-k2-turbo": {
-          id: "moonshotai/kimi-k2-turbo",
-          name: "Kimi K2 Turbo",
-          api: "anthropic-messages",
-          provider: "vercel-ai-gateway",
-          baseUrl: "https://ai-gateway.vercel.sh",
-          reasoning: false,
-          input: ["text"],
-          cost: {
-            input: 1.15,
-            output: 8,
-            cacheRead: 0.15,
-            cacheWrite: 0
-          },
-          contextWindow: 256e3,
-          maxTokens: 16384
-        },
         "moonshotai/kimi-k2.5": {
           id: "moonshotai/kimi-k2.5",
           name: "Kimi K2.5",
@@ -23429,7 +23336,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.6,
             output: 3,
-            cacheRead: 0.09999999999999999,
+            cacheRead: 0.1,
             cacheWrite: 0
           },
           contextWindow: 262114,
@@ -23451,6 +23358,40 @@ var init_models_generated = __esm({
           },
           contextWindow: 262e3,
           maxTokens: 262e3
+        },
+        "moonshotai/kimi-k2.7-code": {
+          id: "moonshotai/kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          api: "anthropic-messages",
+          provider: "vercel-ai-gateway",
+          baseUrl: "https://ai-gateway.vercel.sh",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 0.95,
+            output: 4,
+            cacheRead: 0.19,
+            cacheWrite: 0
+          },
+          contextWindow: 256e3,
+          maxTokens: 32768
+        },
+        "moonshotai/kimi-k2.7-code-highspeed": {
+          id: "moonshotai/kimi-k2.7-code-highspeed",
+          name: "Kimi K2.7 Code High Speed",
+          api: "anthropic-messages",
+          provider: "vercel-ai-gateway",
+          baseUrl: "https://ai-gateway.vercel.sh",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: {
+            input: 1.9,
+            output: 8,
+            cacheRead: 0.38,
+            cacheWrite: 0
+          },
+          contextWindow: 262144,
+          maxTokens: 32768
         },
         "nvidia/nemotron-3-super-120b-a12b": {
           id: "nvidia/nemotron-3-super-120b-a12b",
@@ -23495,7 +23436,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.6,
             cacheRead: 0,
             cacheWrite: 0
@@ -23513,7 +23454,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.06,
-            output: 0.22999999999999998,
+            output: 0.23,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -23563,9 +23504,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.39999999999999997,
-            output: 1.5999999999999999,
-            cacheRead: 0.09999999999999999,
+            input: 0.4,
+            output: 1.6,
+            cacheRead: 0.1,
             cacheWrite: 0
           },
           contextWindow: 1047576,
@@ -23580,9 +23521,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.09999999999999999,
-            output: 0.39999999999999997,
-            cacheRead: 0.024999999999999998,
+            input: 0.1,
+            output: 0.4,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 1047576,
@@ -23684,7 +23625,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 2,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 4e5,
@@ -23699,8 +23640,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.39999999999999997,
+            input: 0.05,
+            output: 0.4,
             cacheRead: 5e-3,
             cacheWrite: 0
           },
@@ -23769,7 +23710,7 @@ var init_models_generated = __esm({
           cost: {
             input: 0.25,
             output: 2,
-            cacheRead: 0.024999999999999998,
+            cacheRead: 0.025,
             cacheWrite: 0
           },
           contextWindow: 4e5,
@@ -23963,7 +23904,7 @@ var init_models_generated = __esm({
           thinkingLevelMap: { "xhigh": "xhigh" },
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.25,
             cacheRead: 0.02,
             cacheWrite: 0
@@ -24051,8 +23992,8 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.049999999999999996,
-            output: 0.19999999999999998,
+            input: 0.05,
+            output: 0.2,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -24238,7 +24179,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.15,
             cacheRead: 0.04,
             cacheWrite: 0
@@ -24255,9 +24196,9 @@ var init_models_generated = __esm({
           reasoning: false,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.5,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -24272,9 +24213,9 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text", "image"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 0.5,
-            cacheRead: 0.049999999999999996,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -24291,7 +24232,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24308,7 +24249,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24325,7 +24266,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24342,7 +24283,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24359,7 +24300,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24376,7 +24317,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 2e6,
@@ -24393,7 +24334,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1.25,
             output: 2.5,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -24410,7 +24351,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 2,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 256e3,
@@ -24425,7 +24366,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.09999999999999999,
+            input: 0.1,
             output: 0.3,
             cacheRead: 0.01,
             cacheWrite: 0
@@ -24444,7 +24385,7 @@ var init_models_generated = __esm({
           cost: {
             input: 1,
             output: 3,
-            cacheRead: 0.19999999999999998,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 1e6,
@@ -24510,7 +24451,7 @@ var init_models_generated = __esm({
           reasoning: true,
           input: ["text"],
           cost: {
-            input: 0.19999999999999998,
+            input: 0.2,
             output: 1.1,
             cacheRead: 0.03,
             cacheWrite: 0
@@ -24528,7 +24469,7 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.6,
-            output: 1.7999999999999998,
+            output: 1.8,
             cacheRead: 0.11,
             cacheWrite: 0
           },
@@ -24562,8 +24503,8 @@ var init_models_generated = __esm({
           input: ["text", "image"],
           cost: {
             input: 0.3,
-            output: 0.8999999999999999,
-            cacheRead: 0.049999999999999996,
+            output: 0.9,
+            cacheRead: 0.05,
             cacheWrite: 0
           },
           contextWindow: 128e3,
@@ -24613,7 +24554,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.07,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0,
             cacheWrite: 0
           },
@@ -24630,7 +24571,7 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 0.06,
-            output: 0.39999999999999997,
+            output: 0.4,
             cacheRead: 0.01,
             cacheWrite: 0
           },
@@ -24647,8 +24588,8 @@ var init_models_generated = __esm({
           input: ["text"],
           cost: {
             input: 1,
-            output: 3.1999999999999997,
-            cacheRead: 0.19999999999999998,
+            output: 3.2,
+            cacheRead: 0.2,
             cacheWrite: 0
           },
           contextWindow: 202800,
@@ -24687,6 +24628,23 @@ var init_models_generated = __esm({
           },
           contextWindow: 202800,
           maxTokens: 64e3
+        },
+        "zai/glm-5.2": {
+          id: "zai/glm-5.2",
+          name: "GLM 5.2",
+          api: "anthropic-messages",
+          provider: "vercel-ai-gateway",
+          baseUrl: "https://ai-gateway.vercel.sh",
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.5,
+            output: 4.5,
+            cacheRead: 0.3,
+            cacheWrite: 0
+          },
+          contextWindow: 1e6,
+          maxTokens: 128e3
         },
         "zai/glm-5v-turbo": {
           id: "zai/glm-5v-turbo",
@@ -24917,6 +24875,24 @@ var init_models_generated = __esm({
           },
           contextWindow: 1048576,
           maxTokens: 131072
+        },
+        "mimo-v2.5-pro-ultraspeed": {
+          id: "mimo-v2.5-pro-ultraspeed",
+          name: "MiMo-V2.5-Pro-UltraSpeed",
+          api: "openai-completions",
+          provider: "xiaomi",
+          baseUrl: "https://api.xiaomimimo.com/v1",
+          compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.305,
+            output: 2.61,
+            cacheRead: 0.0108,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 131072
         }
       },
       "xiaomi-token-plan-ams": {
@@ -24987,6 +24963,24 @@ var init_models_generated = __esm({
             input: 1,
             output: 3,
             cacheRead: 0.2,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 131072
+        },
+        "mimo-v2.5-pro-ultraspeed": {
+          id: "mimo-v2.5-pro-ultraspeed",
+          name: "MiMo-V2.5-Pro-UltraSpeed",
+          api: "openai-completions",
+          provider: "xiaomi-token-plan-ams",
+          baseUrl: "https://token-plan-ams.xiaomimimo.com/v1",
+          compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.305,
+            output: 2.61,
+            cacheRead: 0.0108,
             cacheWrite: 0
           },
           contextWindow: 1048576,
@@ -25065,6 +25059,24 @@ var init_models_generated = __esm({
           },
           contextWindow: 1048576,
           maxTokens: 131072
+        },
+        "mimo-v2.5-pro-ultraspeed": {
+          id: "mimo-v2.5-pro-ultraspeed",
+          name: "MiMo-V2.5-Pro-UltraSpeed",
+          api: "openai-completions",
+          provider: "xiaomi-token-plan-cn",
+          baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+          compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.305,
+            output: 2.61,
+            cacheRead: 0.0108,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 131072
         }
       },
       "xiaomi-token-plan-sgp": {
@@ -25135,6 +25147,24 @@ var init_models_generated = __esm({
             input: 1,
             output: 3,
             cacheRead: 0.2,
+            cacheWrite: 0
+          },
+          contextWindow: 1048576,
+          maxTokens: 131072
+        },
+        "mimo-v2.5-pro-ultraspeed": {
+          id: "mimo-v2.5-pro-ultraspeed",
+          name: "MiMo-V2.5-Pro-UltraSpeed",
+          api: "openai-completions",
+          provider: "xiaomi-token-plan-sgp",
+          baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
+          compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
+          reasoning: true,
+          input: ["text"],
+          cost: {
+            input: 1.305,
+            output: 2.61,
+            cacheRead: 0.0108,
             cacheWrite: 0
           },
           contextWindow: 1048576,
@@ -25212,6 +25242,25 @@ var init_models_generated = __esm({
             cacheWrite: 0
           },
           contextWindow: 2e5,
+          maxTokens: 131072
+        },
+        "glm-5.2": {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          api: "openai-completions",
+          provider: "zai",
+          baseUrl: "https://api.z.ai/api/coding/paas/v4",
+          compat: { "supportsDeveloperRole": false, "thinkingFormat": "zai", "supportsReasoningEffort": true, "zaiToolStream": true },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "xhigh": "max" },
+          input: ["text"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 1e6,
           maxTokens: 131072
         },
         "glm-5v-turbo": {
@@ -25306,6 +25355,25 @@ var init_models_generated = __esm({
           contextWindow: 2e5,
           maxTokens: 131072
         },
+        "glm-5.2": {
+          id: "glm-5.2",
+          name: "GLM-5.2",
+          api: "openai-completions",
+          provider: "zai-coding-cn",
+          baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+          compat: { "supportsDeveloperRole": false, "thinkingFormat": "zai", "supportsReasoningEffort": true, "zaiToolStream": true },
+          reasoning: true,
+          thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "xhigh": "max" },
+          input: ["text"],
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0
+          },
+          contextWindow: 1e6,
+          maxTokens: 131072
+        },
         "glm-5v-turbo": {
           id: "glm-5v-turbo",
           name: "GLM-5V-Turbo",
@@ -25339,10 +25407,12 @@ function getModels(provider) {
   return models ? Array.from(models.values()) : [];
 }
 function calculateCost(model, usage) {
+  const longWrite = usage.cacheWrite1h ?? 0;
+  const shortWrite = usage.cacheWrite - longWrite;
   usage.cost.input = model.cost.input / 1e6 * usage.input;
   usage.cost.output = model.cost.output / 1e6 * usage.output;
   usage.cost.cacheRead = model.cost.cacheRead / 1e6 * usage.cacheRead;
-  usage.cost.cacheWrite = model.cost.cacheWrite / 1e6 * usage.cacheWrite;
+  usage.cost.cacheWrite = (model.cost.cacheWrite * shortWrite + model.cost.input * 2 * longWrite) / 1e6;
   usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
   return usage.cost;
 }
@@ -32536,12 +32606,12 @@ var init_json_parse = __esm({
 function isCloudflareProvider(provider) {
   return provider === "cloudflare-workers-ai" || provider === "cloudflare-ai-gateway";
 }
-function resolveCloudflareBaseUrl(model) {
+function resolveCloudflareBaseUrl(model, env2) {
   const url2 = model.baseUrl;
   if (!url2.includes("{"))
     return url2;
   const baseUrl = url2.replace(/\{([A-Z_][A-Z0-9_]*)\}/g, (_match, name) => {
-    const value = process.env[name];
+    const value = getProviderEnvValue(name, env2);
     if (!value) {
       throw new Error(`${name} is required for provider ${model.provider} but is not set.`);
     }
@@ -32551,6 +32621,7 @@ function resolveCloudflareBaseUrl(model) {
 }
 var init_cloudflare = __esm({
   "node_modules/@earendil-works/pi-ai/dist/providers/cloudflare.js"() {
+    init_provider_env();
   }
 });
 
@@ -32602,7 +32673,8 @@ function buildBaseOptions(_model, options, apiKey) {
     websocketConnectTimeoutMs: options?.websocketConnectTimeoutMs,
     maxRetries: options?.maxRetries,
     maxRetryDelayMs: options?.maxRetryDelayMs,
-    metadata: options?.metadata
+    metadata: options?.metadata,
+    env: options?.env
   };
 }
 function clampReasoning(effort) {
@@ -32795,17 +32867,17 @@ __export(anthropic_exports, {
   streamAnthropic: () => streamAnthropic,
   streamSimpleAnthropic: () => streamSimpleAnthropic
 });
-function resolveCacheRetention(cacheRetention) {
+function resolveCacheRetention(cacheRetention, env2) {
   if (cacheRetention) {
     return cacheRetention;
   }
-  if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+  if (getProviderEnvValue("PI_CACHE_RETENTION", env2) === "long") {
     return "long";
   }
   return "short";
 }
-function getCacheControl(model, cacheRetention) {
-  const retention = resolveCacheRetention(cacheRetention);
+function getCacheControl(model, cacheRetention, env2) {
+  const retention = resolveCacheRetention(cacheRetention, env2);
   if (retention === "none") {
     return { retention };
   }
@@ -33024,7 +33096,7 @@ function mapThinkingLevelToEffort(model, level) {
 function isOAuthToken(apiKey) {
   return apiKey.includes("sk-ant-oat");
 }
-function createClient2(model, apiKey, interleavedThinking, useFineGrainedToolStreamingBeta, optionsHeaders, dynamicHeaders, sessionId) {
+function createClient2(model, apiKey, interleavedThinking, useFineGrainedToolStreamingBeta, optionsHeaders, dynamicHeaders, sessionId, env2) {
   const needsInterleavedBeta = interleavedThinking && model.compat?.forceAdaptiveThinking !== true;
   const betaFeatures = [];
   if (useFineGrainedToolStreamingBeta) {
@@ -33037,7 +33109,7 @@ function createClient2(model, apiKey, interleavedThinking, useFineGrainedToolStr
     const client2 = new Anthropic({
       apiKey: null,
       authToken: null,
-      baseURL: resolveCloudflareBaseUrl(model),
+      baseURL: resolveCloudflareBaseUrl(model, env2),
       dangerouslyAllowBrowser: true,
       defaultHeaders: mergeHeaders({
         accept: "application/json",
@@ -33095,7 +33167,7 @@ function createClient2(model, apiKey, interleavedThinking, useFineGrainedToolStr
   return { client, isOAuthToken: false };
 }
 function buildParams2(model, context, isOAuthToken2, options) {
-  const { cacheControl } = getCacheControl(model, options?.cacheRetention);
+  const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
   const compat = getAnthropicCompat(model);
   const params = {
     model: model.id,
@@ -33148,7 +33220,7 @@ function buildParams2(model, context, isOAuthToken2, options) {
           display
         };
       }
-    } else if (options?.thinkingEnabled === false) {
+    } else if (options?.thinkingEnabled === false && model.thinkingLevelMap?.off !== null) {
       params.thinking = { type: "disabled" };
     }
   }
@@ -33333,23 +33405,26 @@ function convertTools(tools, isOAuthToken2, supportsEagerToolInputStreaming, cac
     };
   });
 }
-function mapStopReason(reason) {
+function mapStopReason(reason, stopDetails) {
   switch (reason) {
     case "end_turn":
-      return "stop";
+      return { stopReason: "stop" };
     case "max_tokens":
-      return "length";
+      return { stopReason: "length" };
     case "tool_use":
-      return "toolUse";
+      return { stopReason: "toolUse" };
     case "refusal":
-      return "error";
+      return {
+        stopReason: "error",
+        errorMessage: stopDetails?.explanation || `The model refused to complete the request`
+      };
     case "pause_turn":
-      return "stop";
+      return { stopReason: "stop" };
     case "stop_sequence":
-      return "stop";
+      return { stopReason: "stop" };
     // We don't supply stop sequences, so this should never happen
     case "sensitive":
-      return "error";
+      return { stopReason: "error" };
     default:
       throw new Error(`Unhandled stop reason: ${reason}`);
   }
@@ -33362,6 +33437,7 @@ var init_anthropic = __esm({
     init_event_stream();
     init_headers2();
     init_json_parse();
+    init_provider_env();
     init_sanitize_unicode();
     init_cloudflare();
     init_github_copilot_headers();
@@ -33447,9 +33523,9 @@ var init_anthropic = __esm({
                 hasImages
               });
             }
-            const cacheRetention = options?.cacheRetention ?? resolveCacheRetention();
+            const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
             const cacheSessionId = cacheRetention === "none" ? void 0 : options?.sessionId;
-            const created = createClient2(model, apiKey, options?.interleavedThinking ?? true, shouldUseFineGrainedToolStreamingBeta(model, context), options?.headers, copilotDynamicHeaders, cacheSessionId);
+            const created = createClient2(model, apiKey, options?.interleavedThinking ?? true, shouldUseFineGrainedToolStreamingBeta(model, context), options?.headers, copilotDynamicHeaders, cacheSessionId, options?.env);
             client = created.client;
             isOAuth = created.isOAuthToken;
           }
@@ -33474,6 +33550,7 @@ var init_anthropic = __esm({
               output.usage.output = event.message.usage.output_tokens || 0;
               output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
               output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
+              output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
               output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
               calculateCost(model, output.usage);
             } else if (event.type === "content_block_start") {
@@ -33594,7 +33671,11 @@ var init_anthropic = __esm({
               }
             } else if (event.type === "message_delta") {
               if (event.delta.stop_reason) {
-                output.stopReason = mapStopReason(event.delta.stop_reason);
+                const stopReasonResult = mapStopReason(event.delta.stop_reason, event.delta.stop_details);
+                output.stopReason = stopReasonResult.stopReason;
+                if (stopReasonResult.errorMessage) {
+                  output.errorMessage = stopReasonResult.errorMessage;
+                }
               }
               if (event.usage.input_tokens != null) {
                 output.usage.input = event.usage.input_tokens;
@@ -33616,7 +33697,7 @@ var init_anthropic = __esm({
             throw new Error("Request was aborted");
           }
           if (output.stopReason === "aborted" || output.stopReason === "error") {
-            throw new Error("An unknown error occurred");
+            throw new Error(output.errorMessage || "An unknown error occurred");
           }
           stream2.push({ type: "done", reason: output.stopReason, message: output });
           stream2.end();
@@ -34041,7 +34122,7 @@ async function processResponsesStream(openaiStream, output, stream2, model, opti
         });
         currentBlock = null;
       } else if (item.type === "message" && currentBlock?.type === "text") {
-        currentBlock.text = item.content.map((c) => c.type === "output_text" ? c.text : c.refusal).join("");
+        currentBlock.text = item.content?.map((c) => c.type === "output_text" ? c.text : c.refusal).join("") || "";
         currentBlock.textSignature = encodeTextSignatureV1(item.id, item.phase ?? void 0);
         stream2.push({
           type: "text_end",
@@ -34160,7 +34241,7 @@ function resolveDeploymentName(model, options) {
   if (options?.azureDeploymentName) {
     return options.azureDeploymentName;
   }
-  const mappedDeployment = parseDeploymentNameMap(process.env.AZURE_OPENAI_DEPLOYMENT_NAME_MAP).get(model.id);
+  const mappedDeployment = parseDeploymentNameMap(getProviderEnvValue("AZURE_OPENAI_DEPLOYMENT_NAME_MAP", options?.env)).get(model.id);
   return mappedDeployment || model.id;
 }
 function formatAzureOpenAIError(error52) {
@@ -34198,9 +34279,9 @@ function buildDefaultBaseUrl(resourceName2) {
   return `https://${resourceName2}.openai.azure.com/openai/v1`;
 }
 function resolveAzureConfig(model, options) {
-  const apiVersion = options?.azureApiVersion || process.env.AZURE_OPENAI_API_VERSION || DEFAULT_AZURE_API_VERSION;
-  const baseUrl = options?.azureBaseUrl?.trim() || process.env.AZURE_OPENAI_BASE_URL?.trim() || void 0;
-  const resourceName2 = options?.azureResourceName || process.env.AZURE_OPENAI_RESOURCE_NAME;
+  const apiVersion = options?.azureApiVersion || getProviderEnvValue("AZURE_OPENAI_API_VERSION", options?.env) || DEFAULT_AZURE_API_VERSION;
+  const baseUrl = options?.azureBaseUrl?.trim() || getProviderEnvValue("AZURE_OPENAI_BASE_URL", options?.env)?.trim() || void 0;
+  const resourceName2 = options?.azureResourceName || getProviderEnvValue("AZURE_OPENAI_RESOURCE_NAME", options?.env);
   let resolvedBaseUrl = baseUrl;
   if (!resolvedBaseUrl && resourceName2) {
     resolvedBaseUrl = buildDefaultBaseUrl(resourceName2);
@@ -34271,6 +34352,7 @@ var init_azure_openai_responses = __esm({
     init_models2();
     init_event_stream();
     init_headers2();
+    init_provider_env();
     init_openai_prompt_cache();
     init_openai_responses_shared();
     init_simple_options();
@@ -52568,7 +52650,8 @@ function isGemini3ProModel(model) {
   return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());
 }
 function isGemini3FlashModel(model) {
-  return /gemini-3(?:\.\d+)?-flash/.test(model.id.toLowerCase());
+  const id = model.id.toLowerCase();
+  return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 function getDisabledThinkingConfig(model) {
   if (isGemini3ProModel(model)) {
@@ -52890,12 +52973,14 @@ __export(google_vertex_exports, {
   streamGoogleVertex: () => streamGoogleVertex,
   streamSimpleGoogleVertex: () => streamSimpleGoogleVertex
 });
-function createClient5(model, project, location, optionsHeaders) {
+function createClient5(model, project, location, optionsHeaders, env2) {
+  const googleAuthOptions = buildGoogleAuthOptions(env2);
   return new GoogleGenAI({
     vertexai: true,
     project,
     location,
     apiVersion: API_VERSION,
+    ...googleAuthOptions ? { googleAuthOptions } : {},
     httpOptions: buildHttpOptions(model, optionsHeaders)
   });
 }
@@ -52937,6 +53022,10 @@ function baseUrlIncludesApiVersion(baseUrl) {
     return /(?:^|\/)v\d+(?:beta\d*)?(?:\/|$)/.test(baseUrl);
   }
 }
+function buildGoogleAuthOptions(env2) {
+  const keyFilename = getProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env2);
+  return keyFilename ? { keyFilename } : void 0;
+}
 function resolveApiKey(options) {
   const apiKey = options?.apiKey?.trim();
   if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
@@ -52948,14 +53037,14 @@ function isPlaceholderApiKey(apiKey) {
   return /^<[^>]+>$/.test(apiKey);
 }
 function resolveProject(options) {
-  const project = options?.project || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+  const project = options?.project || getProviderEnvValue("GOOGLE_CLOUD_PROJECT", options?.env) || getProviderEnvValue("GCLOUD_PROJECT", options?.env);
   if (!project) {
     throw new Error("Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.");
   }
   return project;
 }
 function resolveLocation(options) {
-  const location = options?.location || process.env.GOOGLE_CLOUD_LOCATION;
+  const location = options?.location || getProviderEnvValue("GOOGLE_CLOUD_LOCATION", options?.env);
   if (!location) {
     throw new Error("Vertex AI requires a location. Set GOOGLE_CLOUD_LOCATION or pass location in options.");
   }
@@ -53012,7 +53101,8 @@ function isGemini3ProModel2(model) {
   return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());
 }
 function isGemini3FlashModel2(model) {
-  return /gemini-3(?:\.\d+)?-flash/.test(model.id.toLowerCase());
+  const id = model.id.toLowerCase();
+  return /gemini-3(?:\.\d+)?-flash/.test(id) || id === "gemini-flash-latest" || id === "gemini-flash-lite-latest";
 }
 function getDisabledThinkingConfig2(model) {
   const geminiModel = model;
@@ -53076,6 +53166,7 @@ var init_google_vertex = __esm({
     init_web();
     init_models2();
     init_event_stream();
+    init_provider_env();
     init_sanitize_unicode();
     init_google_shared();
     init_simple_options();
@@ -53111,7 +53202,7 @@ var init_google_vertex = __esm({
         };
         try {
           const apiKey = resolveApiKey(options);
-          const client = apiKey ? createClientWithApiKey(model, apiKey, options?.headers) : createClient5(model, resolveProject(options), resolveLocation(options), options?.headers);
+          const client = apiKey ? createClientWithApiKey(model, apiKey, options?.headers) : createClient5(model, resolveProject(options), resolveLocation(options), options?.headers, options?.env);
           let params = buildParams5(model, context, options);
           const nextParams = await options?.onPayload?.(params, model);
           if (nextParams !== void 0) {
@@ -108985,6 +109076,98 @@ var init_diagnostics = __esm({
   }
 });
 
+// node_modules/@earendil-works/pi-ai/dist/utils/node-http-proxy.js
+function getProxyEnv(key, env2) {
+  const lowercaseKey = key.toLowerCase();
+  const uppercaseKey = key.toUpperCase();
+  return env2?.[lowercaseKey] || env2?.[uppercaseKey] || getProviderEnvValue(lowercaseKey) || getProviderEnvValue(uppercaseKey) || "";
+}
+function parseProxyTargetUrl(targetUrl) {
+  if (targetUrl instanceof URL) {
+    return targetUrl;
+  }
+  try {
+    return new URL(targetUrl);
+  } catch {
+    return void 0;
+  }
+}
+function shouldProxyHostname(hostname3, port, env2) {
+  const noProxy = getProxyEnv("no_proxy", env2).toLowerCase();
+  if (!noProxy) {
+    return true;
+  }
+  if (noProxy === "*") {
+    return false;
+  }
+  return noProxy.split(/[,\s]/).every((proxy) => {
+    if (!proxy) {
+      return true;
+    }
+    const parsedProxy = proxy.match(/^(.+):(\d+)$/);
+    let proxyHostname = parsedProxy ? parsedProxy[1] : proxy;
+    const proxyPort = parsedProxy ? Number.parseInt(parsedProxy[2], 10) : 0;
+    if (proxyPort && proxyPort !== port) {
+      return true;
+    }
+    if (!/^[.*]/.test(proxyHostname)) {
+      return hostname3 !== proxyHostname;
+    }
+    if (proxyHostname.startsWith("*")) {
+      proxyHostname = proxyHostname.slice(1);
+    }
+    return !hostname3.endsWith(proxyHostname);
+  });
+}
+function getProxyForUrl(targetUrl, env2) {
+  const parsedUrl = parseProxyTargetUrl(targetUrl);
+  if (!parsedUrl?.protocol || !parsedUrl.host) {
+    return "";
+  }
+  const protocol = parsedUrl.protocol.split(":", 1)[0];
+  const hostname3 = parsedUrl.host.replace(/:\d*$/, "");
+  const port = Number.parseInt(parsedUrl.port, 10) || DEFAULT_PROXY_PORTS[protocol] || 0;
+  if (!shouldProxyHostname(hostname3, port, env2)) {
+    return "";
+  }
+  let proxy = getProxyEnv(`${protocol}_proxy`, env2) || getProxyEnv("all_proxy", env2);
+  if (proxy && !proxy.includes("://")) {
+    proxy = `${protocol}://${proxy}`;
+  }
+  return proxy;
+}
+function resolveHttpProxyUrlForTarget(targetUrl, env2) {
+  const proxy = getProxyForUrl(targetUrl, env2);
+  if (!proxy) {
+    return void 0;
+  }
+  let proxyUrl;
+  try {
+    proxyUrl = new URL(proxy);
+  } catch (error52) {
+    throw new Error(`Invalid proxy URL ${JSON.stringify(proxy)}: ${error52 instanceof Error ? error52.message : String(error52)}`);
+  }
+  if (proxyUrl.protocol !== "http:" && proxyUrl.protocol !== "https:") {
+    throw new Error(`${UNSUPPORTED_PROXY_PROTOCOL_MESSAGE} Got ${proxyUrl.protocol}`);
+  }
+  return proxyUrl;
+}
+var DEFAULT_PROXY_PORTS, UNSUPPORTED_PROXY_PROTOCOL_MESSAGE;
+var init_node_http_proxy = __esm({
+  "node_modules/@earendil-works/pi-ai/dist/utils/node-http-proxy.js"() {
+    init_provider_env();
+    DEFAULT_PROXY_PORTS = {
+      ftp: 21,
+      gopher: 70,
+      http: 80,
+      https: 443,
+      ws: 80,
+      wss: 443
+    };
+    UNSUPPORTED_PROXY_PROTOCOL_MESSAGE = "Unsupported proxy protocol. SOCKS and PAC proxy URLs are not supported; use an HTTP or HTTPS proxy URL.";
+  }
+});
+
 // node_modules/@earendil-works/pi-ai/dist/providers/openai-codex-responses.js
 var openai_codex_responses_exports = {};
 __export(openai_codex_responses_exports, {
@@ -109313,13 +109496,11 @@ function recordWebSocketFailure(sessionId, error52) {
   stats.lastWebSocketError = formatThrownValue(error52);
   stats.websocketFallbackActive = true;
 }
-async function getWebSocketConstructor() {
-  if (_cachedWebsocket)
+async function getWebSocketConstructor(env2) {
+  if (!env2 && _cachedWebsocket)
     return _cachedWebsocket;
-  if (process?.versions?.bun && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.https_proxy)) {
-    const m = await dynamicImport2("proxy-from-env");
-    const getProxyForUrl = m.getProxyForUrl;
-    _cachedWebsocket = class extends WebSocket {
+  if (typeof process !== "undefined" && process.versions?.bun) {
+    const WebSocketWithProxy = class extends WebSocket {
       constructor(url2, options) {
         let _opts = {};
         if (Array.isArray(options) || typeof options === "string") {
@@ -109327,11 +109508,14 @@ async function getWebSocketConstructor() {
         } else {
           _opts = { ...options };
         }
-        const proxy = getProxyForUrl(url2.toString().replace(/^wss:/, "https:").replace(/^ws:/, "http:"));
-        super(url2, { ..._opts, ...proxy ? { proxy } : {} });
+        const proxyUrl = resolveHttpProxyUrlForTarget(url2.toString().replace(/^wss:/, "https:").replace(/^ws:/, "http:"), env2);
+        super(url2, { ..._opts, ...proxyUrl ? { proxy: proxyUrl.toString() } : {} });
       }
     };
-    return _cachedWebsocket;
+    if (!env2) {
+      _cachedWebsocket = WebSocketWithProxy;
+    }
+    return WebSocketWithProxy;
   }
   const ctor = globalThis.WebSocket;
   if (typeof ctor !== "function")
@@ -109363,8 +109547,8 @@ function scheduleSessionWebSocketExpiry(sessionId, entry) {
     websocketSessionCache.delete(sessionId);
   }, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
-async function connectWebSocket(url2, headers, signal, connectTimeoutMs = DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS) {
-  const WebSocketCtor = await getWebSocketConstructor();
+async function connectWebSocket(url2, headers, signal, connectTimeoutMs = DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS, env2) {
+  const WebSocketCtor = await getWebSocketConstructor(env2);
   if (!WebSocketCtor) {
     throw new Error("WebSocket transport is not available in this runtime");
   }
@@ -109430,9 +109614,9 @@ async function connectWebSocket(url2, headers, signal, connectTimeoutMs = DEFAUL
     }
   });
 }
-async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeoutMs) {
+async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeoutMs, env2) {
   if (!sessionId) {
-    const socket2 = await connectWebSocket(url2, headers, signal, connectTimeoutMs);
+    const socket2 = await connectWebSocket(url2, headers, signal, connectTimeoutMs, env2);
     return {
       socket: socket2,
       reused: false,
@@ -109463,7 +109647,7 @@ async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeout
       };
     }
     if (cached2.busy) {
-      const socket2 = await connectWebSocket(url2, headers, signal, connectTimeoutMs);
+      const socket2 = await connectWebSocket(url2, headers, signal, connectTimeoutMs, env2);
       return {
         socket: socket2,
         reused: false,
@@ -109477,7 +109661,7 @@ async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeout
       websocketSessionCache.delete(sessionId);
     }
   }
-  const socket = await connectWebSocket(url2, headers, signal, connectTimeoutMs);
+  const socket = await connectWebSocket(url2, headers, signal, connectTimeoutMs, env2);
   const entry = { socket, busy: true };
   websocketSessionCache.set(sessionId, entry);
   return {
@@ -109715,7 +109899,7 @@ async function* startWebSocketOutputOnFirstEvent(events, output, stream2, onStar
   }
 }
 async function processWebSocketStream(url2, body, headers, output, stream2, model, onStart, idleTimeoutMs, websocketConnectTimeoutMs, options) {
-  const { socket, entry, reused, release } = await acquireWebSocket(url2, headers, options?.sessionId, options?.signal, websocketConnectTimeoutMs);
+  const { socket, entry, reused, release } = await acquireWebSocket(url2, headers, options?.sessionId, options?.signal, websocketConnectTimeoutMs, options?.env);
   let keepConnection = true;
   const useCachedContext = options?.transport === "websocket-cached" || options?.transport === "auto";
   const fullBody = body;
@@ -109855,6 +110039,7 @@ var init_openai_codex_responses = __esm({
     init_diagnostics();
     init_event_stream();
     init_headers2();
+    init_node_http_proxy();
     init_openai_prompt_cache();
     init_openai_responses_shared();
     init_simple_options();
@@ -109879,7 +110064,7 @@ var init_openai_codex_responses = __esm({
     DEFAULT_MAX_RETRIES = 0;
     BASE_DELAY_MS = 1e3;
     DEFAULT_MAX_RETRY_DELAY_MS = 6e4;
-    DEFAULT_SSE_HEADER_TIMEOUT_MS = 1e4;
+    DEFAULT_SSE_HEADER_TIMEOUT_MS = 2e4;
     DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15e3;
     CODEX_TOOL_CALL_PROVIDERS = /* @__PURE__ */ new Set(["openai", "openai-codex", "opencode"]);
     WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
@@ -110136,16 +110321,16 @@ function isToolCallBlock(block) {
 function isImageContentBlock(block) {
   return block.type === "image";
 }
-function resolveCacheRetention2(cacheRetention) {
+function resolveCacheRetention2(cacheRetention, env2) {
   if (cacheRetention) {
     return cacheRetention;
   }
-  if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+  if (getProviderEnvValue("PI_CACHE_RETENTION", env2) === "long") {
     return "long";
   }
   return "short";
 }
-function createClient6(model, context, apiKey, optionsHeaders, sessionId, compat = getCompat(model)) {
+function createClient6(model, context, apiKey, optionsHeaders, sessionId, compat = getCompat(model), env2) {
   const headers = { ...model.headers };
   if (model.provider === "github-copilot") {
     const hasImages = hasCopilotVisionInput(context.messages);
@@ -110170,12 +110355,12 @@ function createClient6(model, context, apiKey, optionsHeaders, sessionId, compat
   } : headers;
   return new OpenAI({
     apiKey,
-    baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
+    baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env2) : model.baseUrl,
     dangerouslyAllowBrowser: true,
     defaultHeaders
   });
 }
-function buildParams6(model, context, options, compat = getCompat(model), cacheRetention = resolveCacheRetention2(options?.cacheRetention)) {
+function buildParams6(model, context, options, compat = getCompat(model), cacheRetention = resolveCacheRetention2(options?.cacheRetention, options?.env)) {
   const messages = convertMessages3(model, context, compat);
   const cacheControl = getCompatCacheControl(compat, cacheRetention);
   const params = {
@@ -110218,6 +110403,13 @@ function buildParams6(model, context, options, compat = getCompat(model), cacheR
   if (compat.thinkingFormat === "zai" && model.reasoning) {
     const zaiParams = params;
     zaiParams.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+    if (options?.reasoningEffort && compat.supportsReasoningEffort) {
+      const mappedEffort = model.thinkingLevelMap?.[options.reasoningEffort];
+      const effort = mappedEffort === void 0 ? options.reasoningEffort : mappedEffort;
+      if (typeof effort === "string") {
+        zaiParams.reasoning_effort = effort;
+      }
+    }
   } else if (compat.thinkingFormat === "qwen" && model.reasoning) {
     params.enable_thinking = !!options?.reasoningEffort;
   } else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
@@ -110226,7 +110418,11 @@ function buildParams6(model, context, options, compat = getCompat(model), cacheR
       preserve_thinking: true
     };
   } else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
-    params.thinking = { type: options?.reasoningEffort ? "enabled" : "disabled" };
+    if (options?.reasoningEffort) {
+      params.thinking = { type: "enabled" };
+    } else if (model.thinkingLevelMap?.off !== null) {
+      params.thinking = { type: "disabled" };
+    }
     if (options?.reasoningEffort && compat.supportsReasoningEffort) {
       params.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
     }
@@ -110650,6 +110846,7 @@ var init_openai_completions = __esm({
     init_event_stream();
     init_headers2();
     init_json_parse();
+    init_provider_env();
     init_sanitize_unicode();
     init_cloudflare();
     init_github_copilot_headers();
@@ -110682,9 +110879,9 @@ var init_openai_completions = __esm({
             throw new Error(`No API key for provider: ${model.provider}`);
           }
           const compat = getCompat(model);
-          const cacheRetention = resolveCacheRetention2(options?.cacheRetention);
+          const cacheRetention = resolveCacheRetention2(options?.cacheRetention, options?.env);
           const cacheSessionId = cacheRetention === "none" ? void 0 : options?.sessionId;
-          const client = createClient6(model, context, apiKey, options?.headers, cacheSessionId, compat);
+          const client = createClient6(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.env);
           let params = buildParams6(model, context, options, compat, cacheRetention);
           const nextParams = await options?.onPayload?.(params, model);
           if (nextParams !== void 0) {
@@ -110948,11 +111145,11 @@ __export(openai_responses_exports, {
   streamOpenAIResponses: () => streamOpenAIResponses,
   streamSimpleOpenAIResponses: () => streamSimpleOpenAIResponses
 });
-function resolveCacheRetention3(cacheRetention) {
+function resolveCacheRetention3(cacheRetention, env2) {
   if (cacheRetention) {
     return cacheRetention;
   }
-  if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+  if (getProviderEnvValue("PI_CACHE_RETENTION", env2) === "long") {
     return "long";
   }
   return "short";
@@ -110982,7 +111179,7 @@ function formatOpenAIResponsesError(error52) {
     return String(error52);
   }
 }
-function createClient7(model, context, apiKey, optionsHeaders, sessionId) {
+function createClient7(model, context, apiKey, optionsHeaders, sessionId, env2) {
   const compat = getCompat2(model);
   const headers = { ...model.headers };
   if (model.provider === "github-copilot") {
@@ -111009,14 +111206,14 @@ function createClient7(model, context, apiKey, optionsHeaders, sessionId) {
   } : headers;
   return new OpenAI({
     apiKey,
-    baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
+    baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model, env2) : model.baseUrl,
     dangerouslyAllowBrowser: true,
     defaultHeaders
   });
 }
 function buildParams7(model, context, options) {
   const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
-  const cacheRetention = resolveCacheRetention3(options?.cacheRetention);
+  const cacheRetention = resolveCacheRetention3(options?.cacheRetention, options?.env);
   const compat = getCompat2(model);
   const params = {
     model: model.id,
@@ -111081,6 +111278,7 @@ var init_openai_responses = __esm({
     init_models2();
     init_event_stream();
     init_headers2();
+    init_provider_env();
     init_cloudflare();
     init_github_copilot_headers();
     init_openai_prompt_cache();
@@ -111112,9 +111310,9 @@ var init_openai_responses = __esm({
           if (!apiKey) {
             throw new Error(`No API key for provider: ${model.provider}`);
           }
-          const cacheRetention = resolveCacheRetention3(options?.cacheRetention);
+          const cacheRetention = resolveCacheRetention3(options?.cacheRetention, options?.env);
           const cacheSessionId = cacheRetention === "none" ? void 0 : options?.sessionId;
-          const client = createClient7(model, context, apiKey, options?.headers, cacheSessionId);
+          const client = createClient7(model, context, apiKey, options?.headers, cacheSessionId, options?.env);
           let params = buildParams7(model, context, options);
           const nextParams = await options?.onPayload?.(params, model);
           if (nextParams !== void 0) {
@@ -116154,6 +116352,7 @@ function unregisterApiProviders(sourceId) {
 }
 
 // node_modules/@earendil-works/pi-ai/dist/env-api-keys.js
+init_provider_env();
 var __rewriteRelativeImportExtension = function(path4, preserveJsx) {
   if (typeof path4 === "string" && /^\.\.?\//.test(path4)) {
     return path4.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m, tsx, d, ext, cm) {
@@ -116180,32 +116379,12 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
     _join = m.join;
   });
 }
-var _procEnvCache = null;
-function getProcEnv(key) {
-  if (!process.versions?.bun)
-    return void 0;
-  if (typeof process === "undefined")
-    return void 0;
-  if (Object.keys(process.env).length > 0)
-    return void 0;
-  if (_procEnvCache === null) {
-    _procEnvCache = /* @__PURE__ */ new Map();
-    try {
-      const { readFileSync } = __require("node:fs");
-      const data = readFileSync("/proc/self/environ", "utf-8");
-      for (const entry of data.split("\0")) {
-        const idx = entry.indexOf("=");
-        if (idx > 0) {
-          _procEnvCache.set(entry.slice(0, idx), entry.slice(idx + 1));
-        }
-      }
-    } catch {
-    }
-  }
-  return _procEnvCache.get(key);
-}
 var cachedVertexAdcCredentialsExists = null;
-function hasVertexAdcCredentials() {
+function hasVertexAdcCredentials(env2) {
+  const explicitCredentialsPath = env2?.GOOGLE_APPLICATION_CREDENTIALS;
+  if (explicitCredentialsPath) {
+    return _existsSync ? _existsSync(explicitCredentialsPath) : false;
+  }
   if (cachedVertexAdcCredentialsExists === null) {
     if (!_existsSync || !_homedir || !_join) {
       const isNode2 = typeof process !== "undefined" && (process.versions?.node || process.versions?.bun);
@@ -116214,7 +116393,7 @@ function hasVertexAdcCredentials() {
       }
       return false;
     }
-    const gacPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || getProcEnv("GOOGLE_APPLICATION_CREDENTIALS");
+    const gacPath = getProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env2);
     if (gacPath) {
       cachedVertexAdcCredentialsExists = _existsSync(gacPath);
     } else {
@@ -116266,28 +116445,28 @@ function getApiKeyEnvVars(provider) {
   const envVar = envMap[provider];
   return envVar ? [envVar] : void 0;
 }
-function findEnvKeys(provider) {
+function findEnvKeys(provider, env2) {
   const envVars = getApiKeyEnvVars(provider);
   if (!envVars)
     return void 0;
-  const found = envVars.filter((envVar) => !!process.env[envVar] || !!getProcEnv(envVar));
+  const found = envVars.filter((envVar) => !!getProviderEnvValue(envVar, env2));
   return found.length > 0 ? found : void 0;
 }
-function getEnvApiKey(provider) {
-  const envKeys = findEnvKeys(provider);
+function getEnvApiKey(provider, env2) {
+  const envKeys = findEnvKeys(provider, env2);
   if (envKeys?.[0]) {
-    return process.env[envKeys[0]] || getProcEnv(envKeys[0]);
+    return getProviderEnvValue(envKeys[0], env2);
   }
   if (provider === "google-vertex") {
-    const hasCredentials = hasVertexAdcCredentials();
-    const hasProject = !!(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || getProcEnv("GOOGLE_CLOUD_PROJECT") || getProcEnv("GCLOUD_PROJECT"));
-    const hasLocation = !!(process.env.GOOGLE_CLOUD_LOCATION || getProcEnv("GOOGLE_CLOUD_LOCATION"));
+    const hasCredentials = hasVertexAdcCredentials(env2);
+    const hasProject = !!(getProviderEnvValue("GOOGLE_CLOUD_PROJECT", env2) || getProviderEnvValue("GCLOUD_PROJECT", env2));
+    const hasLocation = !!getProviderEnvValue("GOOGLE_CLOUD_LOCATION", env2);
     if (hasCredentials && hasProject && hasLocation) {
       return "<authenticated>";
     }
   }
   if (provider === "amazon-bedrock") {
-    if (process.env.AWS_PROFILE || process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_BEARER_TOKEN_BEDROCK || process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI || process.env.AWS_WEB_IDENTITY_TOKEN_FILE || getProcEnv("AWS_PROFILE") || getProcEnv("AWS_ACCESS_KEY_ID") && getProcEnv("AWS_SECRET_ACCESS_KEY") || getProcEnv("AWS_BEARER_TOKEN_BEDROCK") || getProcEnv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") || getProcEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI") || getProcEnv("AWS_WEB_IDENTITY_TOKEN_FILE")) {
+    if (getProviderEnvValue("AWS_PROFILE", env2) || getProviderEnvValue("AWS_ACCESS_KEY_ID", env2) && getProviderEnvValue("AWS_SECRET_ACCESS_KEY", env2) || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", env2) || getProviderEnvValue("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", env2) || getProviderEnvValue("AWS_CONTAINER_CREDENTIALS_FULL_URI", env2) || getProviderEnvValue("AWS_WEB_IDENTITY_TOKEN_FILE", env2)) {
       return "<authenticated>";
     }
   }
@@ -116387,6 +116566,21 @@ var IMAGE_MODELS = {
         "cacheWrite": 0.08333333333333334
       }
     },
+    "google/gemini-3-pro-image": {
+      id: "google/gemini-3-pro-image",
+      name: "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+      api: "openrouter-images",
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      input: ["image", "text"],
+      output: ["image", "text"],
+      cost: {
+        "input": 2,
+        "output": 12,
+        "cacheRead": 0.19999999999999998,
+        "cacheWrite": 0.375
+      }
+    },
     "google/gemini-3-pro-image-preview": {
       id: "google/gemini-3-pro-image-preview",
       name: "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
@@ -116400,6 +116594,21 @@ var IMAGE_MODELS = {
         "output": 12,
         "cacheRead": 0.19999999999999998,
         "cacheWrite": 0.375
+      }
+    },
+    "google/gemini-3.1-flash-image": {
+      id: "google/gemini-3.1-flash-image",
+      name: "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
+      api: "openrouter-images",
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      input: ["image", "text"],
+      output: ["image", "text"],
+      cost: {
+        "input": 0.5,
+        "output": 3,
+        "cacheRead": 0,
+        "cacheWrite": 0
       }
     },
     "google/gemini-3.1-flash-image-preview": {
@@ -117453,7 +117662,7 @@ function hasExplicitApiKey(apiKey) {
 function withEnvApiKey(model, options) {
   if (hasExplicitApiKey(options?.apiKey))
     return options;
-  const apiKey = getEnvApiKey(model.provider);
+  const apiKey = getEnvApiKey(model.provider, options?.env);
   if (!apiKey)
     return options;
   return { ...options, apiKey };
@@ -122005,8 +122214,11 @@ async function prepareToolCall(currentContext, assistantMessage, toolCall, confi
 }
 async function executePreparedToolCall(prepared, signal, emit) {
   const updateEvents = [];
+  let acceptingUpdates = true;
   try {
     const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, signal, (partialResult) => {
+      if (!acceptingUpdates)
+        return;
       updateEvents.push(Promise.resolve(emit({
         type: "tool_execution_update",
         toolCallId: prepared.toolCall.id,
@@ -122015,14 +122227,18 @@ async function executePreparedToolCall(prepared, signal, emit) {
         partialResult
       })));
     });
+    acceptingUpdates = false;
     await Promise.all(updateEvents);
     return { result, isError: false };
   } catch (error52) {
+    acceptingUpdates = false;
     await Promise.all(updateEvents);
     return {
       result: createErrorToolResult(error52 instanceof Error ? error52.message : String(error52)),
       isError: true
     };
+  } finally {
+    acceptingUpdates = false;
   }
 }
 async function finalizeExecutedToolCall(currentContext, assistantMessage, prepared, executed, config2, signal) {
