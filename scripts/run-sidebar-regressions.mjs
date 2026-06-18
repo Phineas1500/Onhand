@@ -752,6 +752,43 @@ async function assertReplyTokenPrefixCannotInjectHtml() {
 	dom.window.close();
 }
 
+async function assertMarkdownTablesRenderAsTables() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.turns = [
+		{
+			...state.turns[0],
+			id: "turn-table",
+			reply: [
+				"Here is the comparison:",
+				"",
+				"| Aspect | General GNN | Transformer |",
+				"|---|---|---|",
+				"| Graph structure | sparse graph | **fully connected** token graph |",
+				"| Edges | local message passing | attention weights $\\alpha$ |",
+			].join("\n"),
+			pageActions: [],
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const shadow = host.shadowRoot;
+	const response = shadow.querySelector(".onhand-response");
+	const table = response.querySelector("table.reply-table");
+
+	assert.ok(table, "expected markdown pipe table to render as a table");
+	assert.deepEqual(
+		[...table.querySelectorAll("thead th")].map((cell) => cell.textContent.trim()),
+		["Aspect", "General GNN", "Transformer"],
+	);
+	assert.match(table.querySelector("tbody tr:first-child td:last-child").innerHTML, /<strong>fully connected<\/strong>/);
+	assert.ok(table.querySelector(".reply-math-inline"), "expected inline math inside a table cell to render");
+	assert.doesNotMatch(response.textContent, /\|---\|/, "table separator should not be shown as literal reply text");
+	assert.match(shadow.querySelector("style")?.textContent || "", /\.onhand-a \.reply-table\s*\{/);
+
+	dom.window.close();
+}
+
 async function assertResponseCopyButtonAndStableMarkup() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -4474,6 +4511,7 @@ async function assertMenuDeleteButtonConfirmsBeforeDeletingSession() {
 await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
 await assertReplyTokenPrefixCannotInjectHtml();
+await assertMarkdownTablesRenderAsTables();
 await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();

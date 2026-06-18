@@ -2942,6 +2942,11 @@ const createPageToolkit = (options = {}) => {
 			  scroll-margin-bottom: 20vh !important;
 			}
 
+			li[data-onhand-highlight-kind="block"] {
+			  margin-left: 0 !important;
+			  padding-left: 10px !important;
+			}
+
 			/* PDF highlight — overlay geometry, not text-layer mutation */
 			[data-onhand-highlight-kind="pdf"],
 			[data-onhand-pdf-segment-kind="highlight"] {
@@ -5322,6 +5327,44 @@ const createPageToolkit = (options = {}) => {
 		return highlight;
 	};
 
+	const getListItemAncestorsForNode = (node) => {
+		const element = node instanceof Element ? node : node?.parentElement;
+		const ancestors = [];
+		for (let current = element; current && current !== document.body; current = current.parentElement) {
+			if (current instanceof HTMLLIElement) ancestors.push(current);
+		}
+		return ancestors;
+	};
+
+	const getSharedListItemForRange = (range) => {
+		const startItems = getListItemAncestorsForNode(range.startContainer);
+		const endItems = getListItemAncestorsForNode(range.endContainer);
+		for (const item of startItems) {
+			if (endItems.includes(item)) return item;
+		}
+		return null;
+	};
+
+	const rangeIncludesListStructure = (range) => {
+		try {
+			return Boolean(range.cloneContents()?.querySelector?.("ol, ul, li"));
+		} catch {
+			return false;
+		}
+	};
+
+	const findStructuredRangeHighlightElement = (range) => {
+		if (!rangeIncludesListStructure(range)) return null;
+		const sharedListItem = getSharedListItemForRange(range);
+		if (sharedListItem && isVisible(sharedListItem)) return sharedListItem;
+		const common =
+			range.commonAncestorContainer instanceof Element
+				? range.commonAncestorContainer
+				: range.commonAncestorContainer?.parentElement;
+		const listContainer = common?.closest?.("li, ol, ul") || common?.querySelector?.("li, ol, ul") || null;
+		return listContainer instanceof Element && isVisible(listContainer) ? listContainer : null;
+	};
+
 	const findNoteForAnnotation = (annotationId) => {
 		const note = document.querySelector(`[data-onhand-note-for="${attrEscape(annotationId)}"]`);
 		return note instanceof Element ? note : null;
@@ -5502,6 +5545,33 @@ const createPageToolkit = (options = {}) => {
 			matchedText: getElementText(element).slice(0, 500) || normalizeText(rawQuery),
 			container: summarizeElement(findAnnotationContainer(element)),
 			rect: rectToObject(element.getBoundingClientRect()),
+			scrollY: window.scrollY,
+			approximate: Boolean(options.approximate),
+			fallback: options.fallback || undefined,
+		};
+	};
+
+	const highlightRange = async (range, rawQuery, options = {}) => {
+		const structuredElement = findStructuredRangeHighlightElement(range);
+		if (structuredElement) {
+			return await highlightBlockElement(structuredElement, rawQuery, {
+				scrollIntoView: options.scrollIntoView,
+				approximate: options.approximate,
+				fallback: options.fallback,
+			});
+		}
+		const annotationId = nextAnnotationId();
+		const highlight = wrapRangeInHighlight(range, annotationId);
+		if (options.scrollIntoView !== false) {
+			highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+		}
+		await waitForLayout();
+		return {
+			annotationId,
+			kind: "inline",
+			matchedText: getElementText(highlight).slice(0, 500) || normalizeText(options.fallbackText || rawQuery),
+			container: summarizeElement(findAnnotationContainer(highlight)),
+			rect: rectToObject(highlight.getBoundingClientRect()),
 			scrollY: window.scrollY,
 			approximate: Boolean(options.approximate),
 			fallback: options.fallback || undefined,
@@ -5753,22 +5823,11 @@ const createPageToolkit = (options = {}) => {
 						const range = document.createRange();
 						range.setStart(start.node, start.offset);
 						range.setEnd(end.node, getRangeEndOffset(end));
-						const annotationId = nextAnnotationId();
-						const highlight = wrapRangeInHighlight(range, annotationId);
-						if (scrollIntoView) {
-							highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-						}
-						await waitForLayout();
-						return {
-							annotationId,
-							kind: "inline",
-							matchedText: getElementText(highlight).slice(0, 500) || normalizeText(rawQuery),
-							container: summarizeElement(findAnnotationContainer(highlight)),
-							rect: rectToObject(highlight.getBoundingClientRect()),
-							scrollY: window.scrollY,
+						return await highlightRange(range, rawQuery, {
+							scrollIntoView,
 							approximate: Boolean(mode.fallback),
-							fallback: mode.fallback || undefined,
-						};
+							fallback: mode.fallback,
+						});
 					}
 					searchFrom = foundAt + Math.max(mode.query.length, 1);
 				}
@@ -5805,21 +5864,11 @@ const createPageToolkit = (options = {}) => {
 				const range = document.createRange();
 				range.setStart(start.node, start.offset);
 				range.setEnd(end.node, getRangeEndOffset(end));
-				const annotationId = nextAnnotationId();
-				const highlight = wrapRangeInHighlight(range, annotationId);
-				if (scrollIntoView) {
-					highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-				}
-				await waitForLayout();
-				return {
-					annotationId,
-					kind: "inline",
-					matchedText: getElementText(highlight).slice(0, 500) || normalizeText(bestApproximateMatch.text || rawQuery),
-					container: summarizeElement(findAnnotationContainer(highlight)),
-					rect: rectToObject(highlight.getBoundingClientRect()),
-					scrollY: window.scrollY,
+				return await highlightRange(range, rawQuery, {
+					scrollIntoView,
 					approximate: true,
-				};
+					fallbackText: bestApproximateMatch.text,
+				});
 			}
 		}
 

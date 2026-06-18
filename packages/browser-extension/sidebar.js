@@ -720,6 +720,64 @@
 		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
 	}
 
+	function splitMarkdownTableRow(line) {
+		const source = String(line || "").trim();
+		if (!source.includes("|")) return [];
+		const cells = [];
+		let cell = "";
+		for (let index = 0; index < source.length; index += 1) {
+			const character = source[index];
+			if (character === "\\" && source[index + 1] === "|") {
+				cell += "|";
+				index += 1;
+				continue;
+			}
+			if (character === "|") {
+				cells.push(cell.trim());
+				cell = "";
+				continue;
+			}
+			cell += character;
+		}
+		cells.push(cell.trim());
+		if (source.startsWith("|")) cells.shift();
+		if (source.endsWith("|")) cells.pop();
+		return cells;
+	}
+
+	function isMarkdownTableSeparatorLine(line, expectedCellCount) {
+		const cells = splitMarkdownTableRow(line);
+		if (cells.length < 2) return false;
+		if (expectedCellCount && cells.length !== expectedCellCount) return false;
+		return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+	}
+
+	function normalizeMarkdownTableCells(cells, width) {
+		const normalized = Array.from(cells || []).slice(0, width);
+		while (normalized.length < width) normalized.push("");
+		return normalized;
+	}
+
+	function renderMarkdownTable(headerCells, bodyRows, citationGroups, citationNumbering) {
+		const width = Math.max(2, headerCells.length);
+		const headers = normalizeMarkdownTableCells(headerCells, width);
+		const rows = bodyRows.map((row) => normalizeMarkdownTableCells(row, width));
+		const citations = findCitationsForBlock([...headers, ...rows.flat()].join(" "), citationGroups);
+		return `
+			<div class="reply-table-wrap">
+				<table class="reply-table">
+					<thead>
+						<tr>${headers.map((cell) => `<th>${renderInlineRichText(cell)}</th>`).join("")}</tr>
+					</thead>
+					<tbody>
+						${rows.map((row) => `<tr>${row.map((cell) => `<td>${renderInlineRichText(cell)}</td>`).join("")}</tr>`).join("")}
+					</tbody>
+				</table>
+				${renderReplyCitations(citations, citationNumbering)}
+			</div>
+		`;
+	}
+
 	function renderReplyMarkdown(text, citationGroups = [], citationNumbering = createCitationNumbering()) {
 		const source = String(text || "").replace(/\r\n?/g, "\n");
 		if (!source.trim()) {
@@ -756,7 +814,8 @@
 			listKind = null;
 		}
 
-		for (const line of lines) {
+		for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+			const line = lines[lineIndex];
 			const trimmed = line.trim();
 			if (!trimmed) {
 				flushParagraph();
@@ -768,6 +827,25 @@
 				flushParagraph();
 				flushList();
 				parts.push(trimmed);
+				continue;
+			}
+
+			const tableHeaderCells = splitMarkdownTableRow(trimmed);
+			if (tableHeaderCells.length >= 2 && isMarkdownTableSeparatorLine(lines[lineIndex + 1] || "", tableHeaderCells.length)) {
+				flushParagraph();
+				flushList();
+				const tableRows = [];
+				lineIndex += 2;
+				while (lineIndex < lines.length) {
+					const row = lines[lineIndex].trim();
+					if (!row || blockStore.has(row)) break;
+					const rowCells = splitMarkdownTableRow(row);
+					if (rowCells.length < 2) break;
+					tableRows.push(rowCells);
+					lineIndex += 1;
+				}
+				lineIndex -= 1;
+				parts.push(renderMarkdownTable(tableHeaderCells, tableRows, citationGroups, citationNumbering));
 				continue;
 			}
 
@@ -1227,6 +1305,7 @@
 			.reply-rich ul,
 			.reply-rich ol,
 			.reply-rich pre,
+			.reply-rich .reply-table-wrap,
 			.reply-rich blockquote,
 			.reply-rich h1,
 			.reply-rich h2,
@@ -1262,6 +1341,31 @@
 			}
 			.reply-rich li + li {
 				margin-top: 6px;
+			}
+			.reply-rich .reply-table-wrap {
+				max-width: 100%;
+				overflow-x: auto;
+			}
+			.reply-rich .reply-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.9em;
+				line-height: 1.45;
+			}
+			.reply-rich .reply-table th,
+			.reply-rich .reply-table td {
+				border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+				padding: 7px 8px;
+				text-align: left;
+				vertical-align: top;
+			}
+			.reply-rich .reply-table th {
+				background: rgba(255, 255, 255, 0.05);
+				color: #fff3e5;
+				font-weight: 700;
+			}
+			.reply-rich .reply-table td {
+				color: #f7f1e8;
 			}
 			.reply-rich strong {
 				color: #fff3e5;
@@ -2527,13 +2631,14 @@
 				.onhand-a p,
 				.onhand-a ul,
 				.onhand-a ol,
-			.onhand-a pre,
-			.onhand-a blockquote,
-			.onhand-a h1,
-			.onhand-a h2,
-			.onhand-a h3,
-			.onhand-a h4,
-			.onhand-a .reply-math-block {
+				.onhand-a pre,
+				.onhand-a .reply-table-wrap,
+				.onhand-a blockquote,
+				.onhand-a h1,
+				.onhand-a h2,
+				.onhand-a h3,
+				.onhand-a h4,
+				.onhand-a .reply-math-block {
 				margin: 0 0 10px;
 			}
 			.onhand-a p:last-child {
@@ -2565,6 +2670,30 @@
 			}
 			.onhand-a li + li {
 				margin-top: 6px;
+			}
+			.onhand-a .reply-table-wrap {
+				max-width: 100%;
+				overflow-x: auto;
+			}
+			.onhand-a .reply-table {
+				width: 100%;
+				border-collapse: collapse;
+				font: 12px/1.45 var(--rm-font-serif);
+			}
+			.onhand-a .reply-table th,
+			.onhand-a .reply-table td {
+				border-bottom: 1px solid var(--rm-surface-1);
+				padding: 6px 7px;
+				text-align: left;
+				vertical-align: top;
+			}
+			.onhand-a .reply-table th {
+				background: var(--rm-surface-0);
+				color: var(--rm-text);
+				font-weight: 700;
+			}
+			.onhand-a .reply-table td {
+				color: var(--rm-text);
 			}
 			.onhand-a blockquote {
 				border-left: 3px solid var(--rm-gold);

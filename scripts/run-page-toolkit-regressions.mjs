@@ -471,6 +471,31 @@ async function assertTweetTextContainerCanBeHighlightedAcrossNodes() {
 	assert.equal(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]").length, 1);
 }
 
+async function assertNestedListHighlightUsesBlockContainer() {
+	const query =
+		'A transformer is essentially a graph neural network (GNN) with a specially constructed graph ("fully" connected with relevance weights on the edges)';
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<ul>
+				<li id="transformer-claim">
+					A transformer is essentially a graph neural network (GNN) with
+					<ul>
+						<li>a specially constructed graph ("fully" connected with relevance weights on the edges)</li>
+					</ul>
+				</li>
+				<li>a few tricks that allow it to also learn token order.</li>
+			</ul>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText(query, { scrollIntoView: false });
+	const block = dom.window.document.querySelector('[data-onhand-highlight-kind="block"]');
+
+	assert.equal(highlight.kind, "block", "nested list-spanning matches should use a block highlight");
+	assert.equal(block?.id, "transformer-claim", "expected the shared list item to carry the highlight");
+	assert.equal(dom.window.document.querySelectorAll('span[data-onhand-highlight-kind="inline"]').length, 0);
+	assert.equal(dom.window.document.querySelectorAll("li").length, 3, "highlighting should not split list item structure");
+}
+
 async function assertExactMathSourceModeMatchesRenderedMathJax() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -1917,6 +1942,7 @@ async function main() {
 	await assertExactSourceModeReusesExistingHighlight();
 	await assertHighlightTextPreservesExistingAnnotationsByDefault();
 	await assertTweetTextContainerCanBeHighlightedAcrossNodes();
+	await assertNestedListHighlightUsesBlockContainer();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 	await assertPdfTextLayerVisibleTextUsesPdfSurface();
