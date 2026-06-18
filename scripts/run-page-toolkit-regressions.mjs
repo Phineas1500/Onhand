@@ -364,6 +364,95 @@ async function assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFa
 	assert.doesNotMatch(content.text, /File Edit View/);
 }
 
+async function loadGoogleDocsBackgroundExportHelpers(fetchImpl) {
+	const functionNames = [
+		"normalizeGoogleDocsExportText",
+		"isGoogleDocsDocumentUrl",
+		"googleDocsDocumentIdFromUrl",
+		"buildGoogleDocsTextExportUrl",
+		"googleDocsTextExportUnsupportedPayload",
+		"googleDocsTextExportPayloadFromText",
+		"extractGoogleDocsTextExportForTab",
+	];
+	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
+	return new Function("fetch", `${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`)(fetchImpl);
+}
+
+async function assertGoogleDocsBackgroundExportReadsText() {
+	const requestedUrls = [];
+	const helpers = await loadGoogleDocsBackgroundExportHelpers(async (url, options = {}) => {
+		requestedUrls.push({ url: String(url), credentials: options.credentials, cache: options.cache, redirect: options.redirect });
+		return {
+			ok: true,
+			status: 200,
+			headers: {
+				get(name) {
+					return String(name || "").toLowerCase() === "content-type" ? "text/plain; charset=utf-8" : "";
+				},
+			},
+			async text() {
+				return [
+					"\uFEFFMy name is Farza.",
+					"",
+					"I am going all-in on building a new interface for computers.",
+					"",
+					"My first major swing is heyclicky, a simple AI buddy that lives on your Mac.",
+				].join("\n");
+			},
+		};
+	});
+	const content = await helpers.extractGoogleDocsTextExportForTab(
+		{
+			url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0",
+			title: "heyclicky vision - Google Docs",
+		},
+		{ maxChars: 2000 },
+	);
+
+	assert.equal(content.surface, "google-docs");
+	assert.equal(content.source, "google-docs-export");
+	assert.equal(content.blockCount, 3);
+	assert.match(content.text, /^My name is Farza/);
+	assert.match(content.text, /new interface for computers/);
+	assert.equal(requestedUrls.length, 1);
+	assert.match(requestedUrls[0].url, /\/document\/d\/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8\/export\?format=txt$/);
+	assert.equal(requestedUrls[0].credentials, "include");
+	assert.equal(requestedUrls[0].cache, "no-store");
+	assert.equal(requestedUrls[0].redirect, "follow");
+}
+
+async function assertGoogleDocsBackgroundExportDoesNotReturnHtml() {
+	const helpers = await loadGoogleDocsBackgroundExportHelpers(async () => ({
+		ok: true,
+		status: 200,
+		headers: { get: () => "text/html; charset=utf-8" },
+		async text() {
+			return "<!doctype html><html><body>Google Docs toolbar</body></html>";
+		},
+	}));
+	const content = await helpers.extractGoogleDocsTextExportForTab(
+		{
+			url: "https://docs.google.com/document/d/restricted-doc/edit",
+			title: "Restricted Doc - Google Docs",
+		},
+		{ maxChars: 2000 },
+	);
+
+	assert.equal(content.surface, "google-docs");
+	assert.equal(content.unsupported, true);
+	assert.match(content.text, /Google Docs returned an HTML page instead of document text/);
+	assert.doesNotMatch(content.text, /toolbar/);
+}
+
+async function assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(
+		source,
+		/case "extract_content":\s*{[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*args\.maxChars\s*\}\)[\s\S]*evaluateInTab/,
+		"browser_extract_content should read Google Docs through the background text export before page-world evaluation",
+	);
+}
+
 function installLayoutShims(window) {
 	Object.defineProperty(window.HTMLElement.prototype, "innerText", {
 		get() {
@@ -2005,6 +2094,9 @@ async function main() {
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
+	await assertGoogleDocsBackgroundExportReadsText();
+	await assertGoogleDocsBackgroundExportDoesNotReturnHtml();
+	await assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval();
 
 	await assertHighlight({
 		name: "curly quote exact projection",

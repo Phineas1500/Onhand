@@ -8024,6 +8024,119 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 	};
 }
 
+function normalizeGoogleDocsExportText(value) {
+	return String(value || "")
+		.replace(/\r\n?/g, "\n")
+		.replace(/\u0000/g, "")
+		.replace(/\uFEFF/g, "")
+		.replace(/[ \t]+\n/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
+
+function isGoogleDocsDocumentUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		return url.hostname === "docs.google.com" && /^\/document\/d\/[^/]+/i.test(url.pathname);
+	} catch {
+		return false;
+	}
+}
+
+function googleDocsDocumentIdFromUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		return decodeURIComponent(url.pathname.match(/^\/document\/d\/([^/]+)/i)?.[1] || "");
+	} catch {
+		return "";
+	}
+}
+
+function buildGoogleDocsTextExportUrl(value) {
+	const sourceUrl = new URL(String(value || ""));
+	const documentId = googleDocsDocumentIdFromUrl(sourceUrl.href);
+	if (!documentId) return "";
+	const exportUrl = new URL(`/document/d/${encodeURIComponent(documentId)}/export`, sourceUrl.origin);
+	exportUrl.searchParams.set("format", "txt");
+	return exportUrl.href;
+}
+
+function googleDocsTextExportUnsupportedPayload(tab, reason, exportUrl = "") {
+	return {
+		surface: "google-docs",
+		source: "google-docs-export",
+		unsupported: true,
+		reason,
+		url: tab?.url || "",
+		exportUrl,
+		title: tab?.title || "",
+		blockCount: 0,
+		charCount: 0,
+		truncated: false,
+		blocks: [],
+		markdown: reason,
+		text: reason,
+	};
+}
+
+function googleDocsTextExportPayloadFromText(tab, text, exportUrl, maxChars = 20000) {
+	const limit = Math.max(1000, Math.min(50000, Number(maxChars || 20000) || 20000));
+	const normalized = normalizeGoogleDocsExportText(text);
+	const truncatedText = normalized.length > limit ? `${normalized.slice(0, Math.max(0, limit - 1))}…` : normalized;
+	const blocks = [];
+	let usedChars = 0;
+	for (const paragraph of truncatedText.split(/\n{2,}|\n/g).map((part) => part.trim()).filter(Boolean)) {
+		if (usedChars >= limit || blocks.length >= 120) break;
+		const remaining = limit - usedChars;
+		const output = paragraph.length > remaining ? `${paragraph.slice(0, Math.max(0, remaining - 1))}…` : paragraph;
+		blocks.push({
+			tag: "p",
+			selector: "google-docs-export",
+			text: output,
+		});
+		usedChars += output.length + 2;
+	}
+	const markdown = blocks.map((block) => block.text).join("\n\n");
+	return {
+		surface: "google-docs",
+		source: "google-docs-export",
+		url: tab?.url || "",
+		exportUrl,
+		title: tab?.title || "",
+		root: "google-docs-export",
+		blockCount: blocks.length,
+		charCount: markdown.length,
+		truncated: normalized.length > limit,
+		blocks,
+		markdown: markdown || "Google Docs export returned no document body text.",
+		text: markdown || "Google Docs export returned no document body text.",
+	};
+}
+
+async function extractGoogleDocsTextExportForTab(tab, options = {}) {
+	if (!isGoogleDocsDocumentUrl(tab?.url)) return null;
+	const exportUrl = buildGoogleDocsTextExportUrl(tab.url);
+	if (!exportUrl) return googleDocsTextExportUnsupportedPayload(tab, "Could not identify the Google Docs document id from this tab URL.");
+	try {
+		const response = await fetch(exportUrl, {
+			credentials: "include",
+			cache: "no-store",
+			redirect: "follow",
+		});
+		if (!response?.ok) {
+			return googleDocsTextExportUnsupportedPayload(tab, `Could not export this Google Doc as text (${response?.status || "unknown status"}).`, exportUrl);
+		}
+		const contentType = String(response.headers?.get?.("content-type") || "");
+		const text = await response.text();
+		if (/text\/html/i.test(contentType) || /^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
+			return googleDocsTextExportUnsupportedPayload(tab, "Google Docs returned an HTML page instead of document text.", exportUrl);
+		}
+		return googleDocsTextExportPayloadFromText(tab, text, exportUrl, options.maxChars);
+	} catch (error) {
+		return googleDocsTextExportUnsupportedPayload(tab, `Could not export this Google Doc as text: ${error?.message || String(error)}`, exportUrl);
+	}
+}
+
 async function extractReadableContentInPage(options = {}) {
 	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
 	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -8031,6 +8144,7 @@ async function extractReadableContentInPage(options = {}) {
 		String(value || "")
 			.replace(/\r\n?/g, "\n")
 			.replace(/\u0000/g, "")
+			.replace(/\uFEFF/g, "")
 			.replace(/[ \t]+\n/g, "\n")
 			.replace(/\n{3,}/g, "\n\n")
 			.trim();
@@ -8048,12 +8162,13 @@ async function extractReadableContentInPage(options = {}) {
 			return "";
 		}
 	};
-	const googleDocsUnsupportedPayload = (reason) => ({
+	const googleDocsUnsupportedPayload = (reason, exportUrl = "") => ({
 		surface: "google-docs",
 		source: "google-docs-export",
 		unsupported: true,
 		reason,
 		url: location.href,
+		exportUrl,
 		title: document.title,
 		blockCount: 0,
 		charCount: 0,
@@ -8106,16 +8221,16 @@ async function extractReadableContentInPage(options = {}) {
 				cache: "no-store",
 			});
 			if (!response?.ok) {
-				return googleDocsUnsupportedPayload(`Could not export this Google Doc as text (${response?.status || "unknown status"}).`);
+				return googleDocsUnsupportedPayload(`Could not export this Google Doc as text (${response?.status || "unknown status"}).`, exportUrl.href);
 			}
 			const contentType = String(response.headers?.get?.("content-type") || "");
 			const text = await response.text();
 			if (/text\/html/i.test(contentType) || /^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
-				return googleDocsUnsupportedPayload("Google Docs returned an HTML page instead of document text.");
+				return googleDocsUnsupportedPayload("Google Docs returned an HTML page instead of document text.", exportUrl.href);
 			}
 			return googleDocsPayloadFromText(text, exportUrl.href);
 		} catch (error) {
-			return googleDocsUnsupportedPayload(`Could not export this Google Doc as text: ${error?.message || String(error)}`);
+			return googleDocsUnsupportedPayload(`Could not export this Google Doc as text: ${error?.message || String(error)}`, exportUrl.href);
 		}
 	};
 	const isVisible = (element) => {
@@ -8596,10 +8711,9 @@ async function handleCommand(name, args = {}) {
 			return await withTabCommand(tab.id, async () => {
 				let content;
 				try {
-					content = await evaluateInTab(
-						tab.id,
-						`(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`,
-					);
+					content =
+						(await extractGoogleDocsTextExportForTab(tab, { maxChars: args.maxChars })) ||
+						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`));
 				} catch (error) {
 					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
 					else throw error;
