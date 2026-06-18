@@ -243,7 +243,11 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 		"pdfShowNote must clear collapsed note styles before positioning; doing it after positioning removes the expanded layout",
 	);
 	assert.match(source, /setImportantStyle\(note,\s*"min-height",\s*"30px"\)/, "collapsed PDF viewer notes should constrain their minimum height");
-	assert.match(source, /minHeight:\s*"76px"/, "expanded PDF viewer notes should have a minimum height on first render");
+	assert.match(source, /"min-height":\s*"76px"/, "expanded PDF viewer notes should have a minimum height on first render");
+	assert.match(source, /PDF_VIEWER_ANNOTATION_THEME\s*=\s*"light"/, "PDF viewer annotations should pin to the viewer light palette");
+	assert.match(source, /note\.setAttribute\("data-onhand-theme",\s*PDF_VIEWER_ANNOTATION_THEME\)/, "PDF viewer notes should resist shared dark annotation CSS");
+	assert.match(source, /highlight\.style\.setProperty\("background",\s*"transparent",\s*"important"\)/, "PDF viewer highlight containers should not paint the full union rectangle");
+	assert.match(source, /setImportantStyles\(note,[\s\S]*?position:\s*"absolute"/, "PDF viewer notes should override shared page-note positioning CSS");
 	// Two cards stacking on the same spot, or a highlight painting over a
 	// card, both make the note unreadable until dismissed. Cards must avoid
 	// other cards when positioning and sit above highlights in the layer.
@@ -251,7 +255,7 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /choosePdfNotePosition\([\s\S]*?otherNoteRects\)/, "PDF note positioning should avoid other placed notes");
 	assert.match(source, /noteOverlap\s*\*\s*\d+/, "PDF note scoring should penalize overlapping another note");
 	assert.ok(
-		source.indexOf('zIndex: "1"') !== -1 && source.indexOf('zIndex: "4"') !== -1,
+		source.indexOf('zIndex: "1"') !== -1 && source.indexOf('"z-index": "4"') !== -1,
 		"PDF highlights (z-index 1) must sit below note cards (z-index 4) in the shared annotation layer",
 	);
 	assert.match(source, /function getPageLayoutSize/, "PDF viewer highlights should have a layout coordinate helper for scaled pages");

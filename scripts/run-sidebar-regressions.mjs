@@ -2703,6 +2703,79 @@ async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletio
 	dom.window.close();
 }
 
+async function assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.tab = {
+		id: 42,
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+	};
+	state.page = {
+		title: "Alpha smoke fixture",
+		url: "http://127.0.0.1:8765/",
+		text: "Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-draft-direct" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			transcript: "What does Alpha smoke content mean here?",
+		}),
+	);
+	await flushRealtimeTranscript(hooks, dom);
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-draft-direct");
+
+	const draft =
+		"Let me read the page first. Alpha smoke content is a fixture sentence that confirms the page tools can read visible text and keep the answer grounded. The next sentence is still being generated.";
+	state.activeRequestId = "request-draft-direct";
+	state.currentTurnId = "request-draft-direct";
+	state.messages = [
+		{
+			id: "user:request-draft-direct",
+			role: "user",
+			text: "[Voice] What does Alpha smoke content mean here?",
+			createdAt: "2026-05-12T10:06:00.000Z",
+		},
+		{
+			id: "assistant:request-draft-direct",
+			role: "assistant",
+			text: draft,
+			pending: true,
+			createdAt: "2026-05-12T10:06:01.000Z",
+		},
+	];
+	await hooks.requestState();
+	await waitForSidebarTick(dom);
+
+	const shadowText = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.textContent;
+	assert.match(shadowText, /Alpha smoke content is a fixture sentence/, "expected the Onhand draft to render in the sidebar while pending");
+	assert.equal(
+		events.some((event) => event.type === "response.create" && event.event_id?.includes("response_for_audio_transcript")),
+		false,
+		"expected GPT Realtime not to answer the page question itself",
+	);
+	const chunkPrompt = events.find(
+		(event) =>
+			event.type === "conversation.item.create" &&
+			String(event.item?.content?.[0]?.text || "").includes("Let me read the page first."),
+	);
+	assert.ok(chunkPrompt, "expected the first short Onhand draft sentence to be queued for Realtime speech");
+	const chunkResponse = events.find((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer_chunk"));
+	assert.ok(chunkResponse, "expected Realtime to speak a chunk of the Onhand draft");
+	assert.equal(chunkResponse.response?.tool_choice, "none");
+	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected spoken chunk transcript to stay out of the sidebar");
+	assert.equal(hooks.getRealtimeDebugState().onhandNarrationRequestId, "request-draft-direct");
+	assert.ok(hooks.getRealtimeDebugState().onhandNarrationCoveredChars > 0, "expected the narration cursor to advance");
+
+	dom.window.close();
+}
+
 async function assertRealtimeUngroundedAudioIsCancelledAndRetried() {
 	const runtimeMessages = [];
 	const events = [];
@@ -3035,20 +3108,21 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	await hooks.requestState();
 	await waitForSidebarTick(dom);
 
-	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, true, "expected final narration to queue behind the preamble");
-	assert.equal(hooks.getRealtimeDebugState().queuedResponseReason, "speak_onhand_answer");
+	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, false, "expected Onhand narration chunks to use their own queue");
+	assert.equal(hooks.getRealtimeDebugState().onhandNarrationQueueLength, 1, "expected final narration chunk to queue behind the preamble");
+	assert.equal(hooks.getRealtimeDebugState().onhandNarrationRequestId, "request-preamble-direct");
 
 	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
 	await waitForSidebarTick(dom);
 
 	const finalResponse = events.filter((event) => event.type === "response.create").at(-1);
-	assert.equal(finalResponse.event_id.includes("speak_onhand_answer"), true, "expected queued final response to keep its reason");
+	assert.equal(finalResponse.event_id.includes("speak_onhand_answer_chunk"), true, "expected queued final response to speak an Onhand chunk");
 	assert.equal(finalResponse.response?.tool_choice, "none", "expected queued final response to preserve tool_choice");
 	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected final narration transcript to be suppressed");
 	assert.match(
 		String(finalResponse.response?.instructions || ""),
-		/Speak only the provided Onhand answer text/,
-		"expected queued final response to preserve exact narration instructions",
+		/Speak only the provided Onhand answer excerpt/,
+		"expected queued final response to preserve exact chunk narration instructions",
 	);
 
 	dom.window.close();
@@ -4562,6 +4636,7 @@ await assertRealtimeEmptyInputBufferDoesNotDisconnect();
 await assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle();
 await assertRealtimeSessionUsesRuntimeAgentMode();
 await assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion();
+await assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice();
 await assertRealtimeExternalSourceRequestsCanNavigateFirst();
 await assertRealtimeBrowserHighlightRepairsNearQuoteFromVisibleText();
 await assertRealtimeTranscriptMergeWindowSubmitsMergedRuntimePrompt();

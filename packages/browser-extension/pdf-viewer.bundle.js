@@ -25086,6 +25086,7 @@ var SCALE_STEP = 0.15;
 var RESIZE_RENDER_DELAY_MS = 160;
 var PDF_LOAD_TIMEOUT_MS = 2e4;
 var GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS = 12e3;
+var PDF_VIEWER_ANNOTATION_THEME = "light";
 var viewer = document.getElementById("viewer");
 var titleElement = document.getElementById("onhand-pdf-title");
 var statusElement = document.getElementById("onhand-pdf-status");
@@ -25526,6 +25527,8 @@ function unionRects(rects) {
   return { left, top, width: right - left, height: bottom - top };
 }
 function applyHighlightStyles(highlight, rects, union) {
+  highlight.setAttribute("data-onhand-pdf-highlight-container", "true");
+  highlight.setAttribute("data-onhand-theme", PDF_VIEWER_ANNOTATION_THEME);
   Object.assign(highlight.style, {
     position: "absolute",
     left: `${union.left}px`,
@@ -25544,6 +25547,7 @@ function applyHighlightStyles(highlight, rects, union) {
   for (const rect of rects) {
     const segment = document.createElement("div");
     segment.setAttribute("data-onhand-pdf-highlight-segment", "true");
+    segment.setAttribute("data-onhand-theme", PDF_VIEWER_ANNOTATION_THEME);
     Object.assign(segment.style, {
       position: "absolute",
       left: `${rect.left - union.left}px`,
@@ -25555,6 +25559,8 @@ function applyHighlightStyles(highlight, rects, union) {
     });
     highlight.append(segment);
   }
+  highlight.style.setProperty("background", "transparent", "important");
+  highlight.style.setProperty("border-radius", "0", "important");
 }
 function buildAnnotationResult(annotation, rawQuery = "", extra = {}) {
   const page = annotation.closest(".page[data-page-number]");
@@ -25738,6 +25744,11 @@ function findNoteForAnnotation(annotationId) {
 function setImportantStyle(element, property, value) {
   element.style.setProperty(property, value, "important");
 }
+function setImportantStyles(element, styles) {
+  for (const [property, value] of Object.entries(styles)) {
+    setImportantStyle(element, property, value);
+  }
+}
 function getPageLayoutSize(page, pageRect = page.getBoundingClientRect()) {
   const width = Number(page.clientWidth || page.offsetWidth || pageRect.width || 1) || 1;
   const height = Number(page.clientHeight || page.offsetHeight || pageRect.height || 1) || 1;
@@ -25902,25 +25913,25 @@ function positionPdfNote(note, annotation, page) {
   const pageRect = page.getBoundingClientRect();
   const pageSize = getPageLayoutSize(page, pageRect);
   const maxWidth = Math.min(420, Math.max(220, pageSize.width - 32));
-  Object.assign(note.style, {
+  setImportantStyles(note, {
     position: "absolute",
-    maxWidth: `${maxWidth}px`,
-    minWidth: "220px",
-    minHeight: "76px",
-    boxSizing: "border-box",
+    "max-width": `${maxWidth}px`,
+    "min-width": "220px",
+    "min-height": "76px",
+    "box-sizing": "border-box",
     padding: "12px 14px",
     background: "#e6dbd1",
     color: "#575279",
     border: "1px solid #cac1b9",
-    borderLeft: "3px solid #286983",
-    borderRadius: "0 4px 4px 0",
-    boxShadow: "0 1px 3px rgba(47, 44, 40, 0.16)",
+    "border-left": "3px solid #286983",
+    "border-radius": "0 4px 4px 0",
+    "box-shadow": "0 1px 3px rgba(47, 44, 40, 0.16)",
     font: '15px/1.55 "New York", "Iowan Old Style", Charter, Georgia, serif',
-    pointerEvents: "auto",
+    "pointer-events": "auto",
     // Cards sit above highlights (z-index 1) in the shared layer.
-    zIndex: "4",
-    scrollMarginTop: "22vh",
-    scrollMarginBottom: "22vh"
+    "z-index": "4",
+    "scroll-margin-top": "22vh",
+    "scroll-margin-bottom": "22vh"
   });
   const measuredRect = note.getBoundingClientRect();
   const measuredHeight = measuredRect.height || note.offsetHeight || 0;
@@ -25929,8 +25940,8 @@ function positionPdfNote(note, annotation, page) {
   const otherNoteRects = collectOtherPdfNoteRects(note, page, pageRect);
   const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight, otherNoteRects);
   if (positioned) {
-    note.style.left = `${positioned.left}px`;
-    note.style.top = `${positioned.top}px`;
+    setImportantStyle(note, "left", `${positioned.left}px`);
+    setImportantStyle(note, "top", `${positioned.top}px`);
   }
   if (wasCollapsed) setPdfNoteCollapsed(note, true);
 }
@@ -25992,6 +26003,7 @@ async function pdfShowNote(annotationId, noteText, options = {}) {
   const noteId = nextAnnotationId();
   const note = document.createElement("div");
   note.setAttribute("data-onhand-note-kind", "card");
+  note.setAttribute("data-onhand-theme", PDF_VIEWER_ANNOTATION_THEME);
   note.setAttribute("data-onhand-pdf-note", "true");
   note.setAttribute("data-onhand-note-id", noteId);
   note.setAttribute("data-onhand-note-for", rawAnnotationId);
