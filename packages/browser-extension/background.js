@@ -7216,7 +7216,7 @@ function shouldTryGoogleScholarReaderFrameForTab(tab, payload = null) {
 }
 
 function shouldTryOnhandPdfViewerFrameForTab(tab, payload = null) {
-	if (isOwnExtensionPdfViewerUrl(tab?.url)) return false;
+	if (isOwnExtensionPdfViewerUrl(tab?.url)) return payload == null || isUnsupportedPdfSurfacePayload(payload);
 	if (isUnsupportedPdfSurfacePayload(payload)) return true;
 	return isLikelyPdfTabUrl(tab?.url);
 }

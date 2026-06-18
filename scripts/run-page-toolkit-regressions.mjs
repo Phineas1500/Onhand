@@ -54,6 +54,9 @@ async function assertPdfViewerHandoffHelpers() {
 		"normalizePdfScrollRatio",
 		"buildOnhandPdfViewerUrl",
 		"inferPdfPageNumberFromAccessibilityNodes",
+		"isUnsupportedPdfSurfacePayload",
+		"isLikelyPdfTabUrl",
+		"shouldTryOnhandPdfViewerFrameForTab",
 	];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
 	const helpers = new Function(
@@ -113,6 +116,21 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.equal(
 		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf", { pageNumber: 7, scrollRatio: 0.3076923 }),
 		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf&page=7",
+	);
+	assert.equal(
+		helpers.shouldTryOnhandPdfViewerFrameForTab({
+			url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
+		}),
+		true,
+		"Own-extension PDF viewer tabs should fall back to the runtime bridge when direct scripting is blocked",
+	);
+	assert.equal(
+		helpers.shouldTryOnhandPdfViewerFrameForTab(
+			{ url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf" },
+			{ annotation: { annotationId: "onhand-pdf-test" } },
+		),
+		false,
+		"Own-extension PDF viewer tabs should not rerun the bridge after a successful direct toolkit result",
 	);
 	assert.deepEqual(
 		helpers.inferPdfPageNumberFromAccessibilityNodes([
