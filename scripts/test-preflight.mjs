@@ -115,13 +115,19 @@ async function main() {
 	if (!hasFileHostPermission) failures.push("Manifest is missing local file host permission.");
 
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
-	const hasOperaToolbarFallback =
-		backgroundSource.includes("async function openOperaSidebarFallbackTab") &&
-		backgroundSource.includes("chrome.runtime.getURL(ONHAND_SIDEBAR_PANEL_PATH)") &&
-		backgroundSource.includes("const isOperaSidebarFallback = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());") &&
-		backgroundSource.includes("await openOperaSidebarFallbackTab(windowId);");
-	printCheck("Opera toolbar fallback", hasOperaToolbarFallback, "toolbar action opens a visible panel tab when native sidebar cannot be opened programmatically");
-	if (!hasOperaToolbarFallback) failures.push("Background worker is missing the Opera toolbar fallback.");
+	const operaSidebarHelpSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/opera-sidebar-help.html"), "utf8");
+	const hasOperaToolbarHint =
+		backgroundSource.includes('const OPERA_TOOLBAR_POPUP_PATH = "opera-sidebar-help.html";') &&
+		backgroundSource.includes("chrome.action.setPopup({ popup: OPERA_TOOLBAR_POPUP_PATH })") &&
+		backgroundSource.includes("async function handleOperaToolbarAction") &&
+		backgroundSource.includes('surface: "opera-sidebar-instructions"') &&
+		backgroundSource.includes("await showOperaToolbarInstruction(tabId)") &&
+		backgroundSource.includes("const isOperaSidebarToolbarAction = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());") &&
+		backgroundSource.includes("await handleOperaToolbarAction(windowId, tab?.id);") &&
+		!backgroundSource.includes("async function openOperaSidebarFallbackTab") &&
+		operaSidebarHelpSource.includes("Use the Onhand button in Opera's left sidebar");
+	printCheck("Opera toolbar hint", hasOperaToolbarHint, "toolbar action shows native-sidebar instructions instead of opening a fallback page");
+	if (!hasOperaToolbarHint) failures.push("Background worker is missing the Opera toolbar hint behavior.");
 
 	const runtimeRevisionSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/runtime-revision.js"), "utf8");
 	const runtimeRevision = runtimeRevisionSource.match(/ONHAND_EXTENSION_RUNTIME_REVISION\s*=\s*"([^"]+)"/)?.[1] || "";

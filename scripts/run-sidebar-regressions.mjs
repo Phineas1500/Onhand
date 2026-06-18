@@ -163,6 +163,7 @@ function createLearningState() {
 
 async function renderSidebar(state, runtimeMessages, options = {}) {
 	const runtimeMessageListeners = [];
+	const storageChangeListeners = [];
 	const storageValues = { ...(options.storage || {}) };
 	const dom = new JSDOM("<!doctype html><html><body></body></html>", {
 		pretendToBeVisual: true,
@@ -628,7 +629,15 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					return { ...defaults, ...Object.fromEntries(Object.keys(defaults || {}).map((key) => [key, storageValues[key] ?? defaults[key]])) };
 				},
 				async set(items) {
-					Object.assign(storageValues, items || {});
+					const changes = {};
+					for (const [key, newValue] of Object.entries(items || {})) {
+						changes[key] = {
+							oldValue: storageValues[key],
+							newValue,
+						};
+						storageValues[key] = newValue;
+					}
+					for (const listener of storageChangeListeners) listener(changes, "local");
 				},
 				async remove(keys) {
 					for (const key of Array.isArray(keys) ? keys : [keys]) {
@@ -636,7 +645,11 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 					}
 				},
 			},
-			onChanged: { addListener() {} },
+			onChanged: {
+				addListener(listener) {
+					storageChangeListeners.push(listener);
+				},
+			},
 		},
 		windows: {
 			async getCurrent() {
@@ -4127,6 +4140,18 @@ async function assertQuickOpenFocusesComposer() {
 	assert.equal(menuPanel.hidden, true, "expected quick open to close the menu");
 	assert.equal(shadow.activeElement, input, "expected quick open to focus the composer input");
 	assert.equal(dom.getStorageValue("onhandSidebarQuickOpenRequest"), undefined, "expected handled quick-open request to be cleared");
+
+	input.blur();
+	await dom.window.chrome.storage.local.set({
+		onhandSidebarQuickOpenRequest: {
+			id: "quick-open-storage-test",
+			windowId: 1,
+			target: "composer",
+			createdAt: Date.now(),
+		},
+	});
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 50));
+	assert.equal(shadow.activeElement, input, "expected storage-delivered quick open to focus the composer input");
 
 	dom.window.close();
 

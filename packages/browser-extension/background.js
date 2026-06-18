@@ -9,6 +9,10 @@ const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
 const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 const SIDEBAR_QUICK_OPEN_RETRY_DELAYS_MS = [0, 80, 240, 600];
 const ONHAND_SIDEBAR_PANEL_PATH = "sidepanel.html";
+const OPERA_TOOLBAR_POPUP_PATH = "opera-sidebar-help.html";
+const OPERA_TOOLBAR_ACTION_TITLE = "Onhand: open from Opera's sidebar";
+const OPERA_TOOLBAR_HINT_BADGE_TEXT = "Side";
+const OPERA_TOOLBAR_HINT_DURATION_MS = 4000;
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
@@ -34,6 +38,7 @@ let creatingOffscreenDocument = null;
 let onhandBrowserRuntime = null;
 const debuggerTaskChains = new Map();
 const tabCommandTaskChains = new Map();
+let operaToolbarHintTimer = null;
 
 function log(...args) {
 	console.log("[onhand-extension]", ...args);
@@ -83,6 +88,16 @@ function configureOperaSidebarAction() {
 		sidebarAction.setPanel?.({ panel: ONHAND_SIDEBAR_PANEL_PATH });
 	} catch (error) {
 		log("Could not configure Opera sidebar panel", error?.message || String(error));
+	}
+	if (chrome.action?.setTitle) {
+		chrome.action.setTitle({ title: OPERA_TOOLBAR_ACTION_TITLE }).catch((error) => {
+			log("Could not configure Opera toolbar action title", error?.message || String(error));
+		});
+	}
+	if (chrome.action?.setPopup) {
+		chrome.action.setPopup({ popup: OPERA_TOOLBAR_POPUP_PATH }).catch((error) => {
+			log("Could not configure Opera toolbar action popup", error?.message || String(error));
+		});
 	}
 }
 
@@ -202,12 +217,22 @@ async function resolveSidebarWindowId(args = {}) {
 	return windowInfo?.id ?? null;
 }
 
+async function resolveSidebarMessageWindowId(message, sender) {
+	if (typeof message?.windowId === "number") return message.windowId;
+	if (typeof sender?.tab?.windowId === "number") return sender.tab.windowId;
+	try {
+		return await resolveSidebarWindowId({});
+	} catch {
+		return null;
+	}
+}
+
 async function openSidebarForWindow(windowId) {
 	if (typeof windowId !== "number") {
 		throw new Error("No browser window is available for the Onhand sidebar.");
 	}
 	if (!chrome.sidePanel?.open && getOperaSidebarAction()) {
-		return await openOperaSidebarFallbackTab(windowId);
+		return await handleOperaToolbarAction(windowId);
 	}
 	if (!chrome.sidePanel?.open) {
 		throw new Error("This browser does not expose a native side panel API for Onhand.");
@@ -254,29 +279,46 @@ async function requestSidebarQuickOpen(windowId) {
 	return request;
 }
 
-async function openOperaSidebarFallbackTab(windowId) {
-	const request = await requestSidebarQuickOpen(windowId);
-	const panelUrl = chrome.runtime.getURL(ONHAND_SIDEBAR_PANEL_PATH);
-	const tabs = await chrome.tabs.query({});
-	const matchingTabs = tabs.filter((tab) => tab?.url === panelUrl);
-	const sameWindowTab = matchingTabs.find((tab) => tab.windowId === windowId);
-	const targetTab = sameWindowTab || matchingTabs[0] || null;
-	await setSidebarWindowOpen(windowId, true);
-	if (targetTab?.id) {
-		const focusedTab = await focusTab(targetTab.id);
-		return {
-			windowId: focusedTab.windowId ?? windowId,
-			open: true,
-			surface: "tab",
-			quickOpenRequestId: request.id,
-		};
+async function showOperaToolbarInstruction(tabId) {
+	if (!chrome.action) return;
+	if (operaToolbarHintTimer) {
+		clearTimeout(operaToolbarHintTimer);
+		operaToolbarHintTimer = null;
 	}
-	const createdTab = await chrome.tabs.create({ url: panelUrl, active: true, windowId });
+	const details = typeof tabId === "number" ? { tabId } : {};
+	try {
+		await chrome.action.setTitle?.({
+			...details,
+			title: "Use the Onhand button in Opera's left sidebar",
+		});
+		await chrome.action.setBadgeText?.({
+			...details,
+			text: OPERA_TOOLBAR_HINT_BADGE_TEXT,
+		});
+		await chrome.action.setBadgeBackgroundColor?.({
+			...details,
+			color: "#4f46e5",
+		});
+	} catch (error) {
+		log("Could not show Opera toolbar sidebar hint", error?.message || String(error));
+	}
+	operaToolbarHintTimer = setTimeout(() => {
+		Promise.all([
+			chrome.action.setTitle?.({ ...details, title: OPERA_TOOLBAR_ACTION_TITLE }),
+			chrome.action.setBadgeText?.({ ...details, text: "" }),
+		]).catch((error) => {
+			log("Could not clear Opera toolbar sidebar hint", error?.message || String(error));
+		});
+		operaToolbarHintTimer = null;
+	}, OPERA_TOOLBAR_HINT_DURATION_MS);
+}
+
+async function handleOperaToolbarAction(windowId, tabId) {
+	await showOperaToolbarInstruction(tabId);
 	return {
-		windowId: createdTab.windowId ?? windowId,
-		open: true,
-		surface: "tab",
-		quickOpenRequestId: request.id,
+		windowId,
+		open: false,
+		surface: "opera-sidebar-instructions",
 	};
 }
 
@@ -9401,8 +9443,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:get-window-state") {
-			const windowId =
-				typeof message.windowId === "number" ? message.windowId : typeof _sender?.tab?.windowId === "number" ? _sender.tab.windowId : null;
+			const windowId = await resolveSidebarMessageWindowId(message, _sender);
 			sendResponse({
 				ok: true,
 				open: await isSidebarOpenForWindow(windowId),
@@ -9411,8 +9452,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		}
 
 		if (message?.type === "sidebar:native-panel-opened") {
-			const windowId =
-				typeof message.windowId === "number" ? message.windowId : typeof _sender?.tab?.windowId === "number" ? _sender.tab.windowId : null;
+			const windowId = await resolveSidebarMessageWindowId(message, _sender);
 			await setSidebarWindowOpen(windowId, true);
 			sendResponse({ ok: true, windowId, open: true });
 			return;
@@ -9841,9 +9881,9 @@ chrome.action.onClicked.addListener((tab) => {
 			await openOnhandOptionsPage();
 			return;
 		}
-		const isOperaSidebarFallback = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());
-		if (isOperaSidebarFallback) {
-			await openOperaSidebarFallbackTab(windowId);
+		const isOperaSidebarToolbarAction = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());
+		if (isOperaSidebarToolbarAction) {
+			await handleOperaToolbarAction(windowId, tab?.id);
 			return;
 		}
 		if (await isSidebarOpenForWindow(windowId)) {

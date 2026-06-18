@@ -10243,9 +10243,13 @@
 
 	if (chrome.storage?.onChanged?.addListener) {
 		chrome.storage.onChanged.addListener((changes, areaName) => {
-			if (areaName !== "local" || !changes[SIDEBAR_THEME_STORAGE_KEY]) return;
-			applySidebarTheme(changes[SIDEBAR_THEME_STORAGE_KEY].newValue);
-			themeSelect.value = sidebarTheme;
+			if (areaName !== "local") return;
+			if (changes[SIDEBAR_THEME_STORAGE_KEY]) {
+				applySidebarTheme(changes[SIDEBAR_THEME_STORAGE_KEY].newValue);
+				themeSelect.value = sidebarTheme;
+			}
+			const quickOpenRequest = changes[SIDEBAR_QUICK_OPEN_REQUEST_KEY]?.newValue;
+			if (quickOpenRequest) void handleQuickOpenRequest(quickOpenRequest);
 		});
 	}
 
