@@ -114,6 +114,15 @@ async function main() {
 	printCheck("Local file host permission", hasFileHostPermission, "host_permissions includes file:///*");
 	if (!hasFileHostPermission) failures.push("Manifest is missing local file host permission.");
 
+	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const hasOperaToolbarFallback =
+		backgroundSource.includes("async function openOperaSidebarFallbackTab") &&
+		backgroundSource.includes("chrome.runtime.getURL(ONHAND_SIDEBAR_PANEL_PATH)") &&
+		backgroundSource.includes("const isOperaSidebarFallback = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());") &&
+		backgroundSource.includes("await openOperaSidebarFallbackTab(windowId);");
+	printCheck("Opera toolbar fallback", hasOperaToolbarFallback, "toolbar action opens a visible panel tab when native sidebar cannot be opened programmatically");
+	if (!hasOperaToolbarFallback) failures.push("Background worker is missing the Opera toolbar fallback.");
+
 	const runtimeRevisionSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/runtime-revision.js"), "utf8");
 	const runtimeRevision = runtimeRevisionSource.match(/ONHAND_EXTENSION_RUNTIME_REVISION\s*=\s*"([^"]+)"/)?.[1] || "";
 	printCheck("Browser extension runtime revision", Boolean(runtimeRevision), runtimeRevision);

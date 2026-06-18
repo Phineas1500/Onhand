@@ -207,8 +207,7 @@ async function openSidebarForWindow(windowId) {
 		throw new Error("No browser window is available for the Onhand sidebar.");
 	}
 	if (!chrome.sidePanel?.open && getOperaSidebarAction()) {
-		await requestSidebarQuickOpen(windowId);
-		throw new Error("Opera opens Onhand from the browser sidebar. Click the Onhand icon in Opera's sidebar.");
+		return await openOperaSidebarFallbackTab(windowId);
 	}
 	if (!chrome.sidePanel?.open) {
 		throw new Error("This browser does not expose a native side panel API for Onhand.");
@@ -253,6 +252,32 @@ async function requestSidebarQuickOpen(windowId) {
 		}, delayMs);
 	}
 	return request;
+}
+
+async function openOperaSidebarFallbackTab(windowId) {
+	const request = await requestSidebarQuickOpen(windowId);
+	const panelUrl = chrome.runtime.getURL(ONHAND_SIDEBAR_PANEL_PATH);
+	const tabs = await chrome.tabs.query({});
+	const matchingTabs = tabs.filter((tab) => tab?.url === panelUrl);
+	const sameWindowTab = matchingTabs.find((tab) => tab.windowId === windowId);
+	const targetTab = sameWindowTab || matchingTabs[0] || null;
+	await setSidebarWindowOpen(windowId, true);
+	if (targetTab?.id) {
+		const focusedTab = await focusTab(targetTab.id);
+		return {
+			windowId: focusedTab.windowId ?? windowId,
+			open: true,
+			surface: "tab",
+			quickOpenRequestId: request.id,
+		};
+	}
+	const createdTab = await chrome.tabs.create({ url: panelUrl, active: true, windowId });
+	return {
+		windowId: createdTab.windowId ?? windowId,
+		open: true,
+		surface: "tab",
+		quickOpenRequestId: request.id,
+	};
 }
 
 async function closeSidebarForWindow(windowId) {
@@ -9814,6 +9839,11 @@ chrome.action.onClicked.addListener((tab) => {
 			typeof tab?.windowId === "number" ? tab.windowId : await resolveSidebarWindowId({ windowId: tab?.windowId });
 		if (typeof windowId !== "number") {
 			await openOnhandOptionsPage();
+			return;
+		}
+		const isOperaSidebarFallback = !chrome.sidePanel?.open && Boolean(getOperaSidebarAction());
+		if (isOperaSidebarFallback) {
+			await openOperaSidebarFallbackTab(windowId);
 			return;
 		}
 		if (await isSidebarOpenForWindow(windowId)) {
