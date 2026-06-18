@@ -25,13 +25,14 @@ async function loadBackgroundFunction(functionName) {
 	assert.notEqual(signatureEnd, -1, `${functionName} signature end not found`);
 	const bodyStart = source.indexOf("{", signatureEnd);
 	assert.notEqual(bodyStart, -1, `${functionName} body not found`);
+	const declarationStart = source.slice(Math.max(0, start - 6), start) === "async " ? start - 6 : start;
 	let depth = 0;
 	for (let index = bodyStart; index < source.length; index += 1) {
 		const char = source[index];
 		if (char === "{") depth += 1;
 		if (char === "}") {
 			depth -= 1;
-			if (depth === 0) return source.slice(start, index + 1);
+			if (depth === 0) return source.slice(declarationStart, index + 1);
 		}
 	}
 	assert.fail(`${functionName} body end not found`);
@@ -266,6 +267,101 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.doesNotMatch(source, /parentBridgeToken/, "PDF viewer bridge must not trust a token supplied by an embedding page");
 	assert.match(source, /const expectedToken = await getBridgeToken\(\)/, "PDF viewer bridge commands should authorize against the session-stored token");
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
+}
+
+async function assertGoogleDocsReadableContentUsesTextExport() {
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>heyclicky vision - Google Docs</title></head>
+			<body>
+				<main>
+					<div role="toolbar">File Edit View Tools Help</div>
+					<div>Google Docs side panel and toolbar text should not become document content.</div>
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	const requestedUrls = [];
+	dom.window.fetch = async (url, options = {}) => {
+		requestedUrls.push({ url: String(url), credentials: options.credentials, cache: options.cache });
+		return {
+			ok: true,
+			status: 200,
+			headers: {
+				get(name) {
+					return String(name || "").toLowerCase() === "content-type" ? "text/plain; charset=utf-8" : "";
+				},
+			},
+			async text() {
+				return [
+					"My name is Farza.",
+					"",
+					"I am going all-in on building a new interface for computers.",
+					"",
+					"My first major swing is heyclicky, a simple AI buddy that lives on your Mac.",
+				].join("\n");
+			},
+		};
+	};
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 2000 });
+
+	assert.equal(content.surface, "google-docs");
+	assert.equal(content.source, "google-docs-export");
+	assert.equal(content.blockCount, 3);
+	assert.match(content.text, /My name is Farza/);
+	assert.match(content.text, /new interface for computers/);
+	assert.doesNotMatch(content.text, /Google Docs side panel/);
+	assert.equal(requestedUrls.length, 1);
+	assert.match(requestedUrls[0].url, /\/document\/d\/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8\/export\?format=txt$/);
+	assert.equal(requestedUrls[0].credentials, "include");
+	assert.equal(requestedUrls[0].cache, "no-store");
+}
+
+async function assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure() {
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Restricted Doc - Google Docs</title></head>
+			<body>
+				<main>
+					<p>File Edit View Tools Help Share Request edit access</p>
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://docs.google.com/document/d/restricted-doc/edit",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	dom.window.fetch = async () => ({
+		ok: false,
+		status: 403,
+		headers: { get: () => "text/plain" },
+		async text() {
+			return "";
+		},
+	});
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 2000 });
+
+	assert.equal(content.surface, "google-docs");
+	assert.equal(content.unsupported, true);
+	assert.match(content.text, /Could not export this Google Doc as text \(403\)/);
+	assert.doesNotMatch(content.text, /File Edit View/);
 }
 
 function installLayoutShims(window) {
@@ -1907,6 +2003,8 @@ async function assertPdfSelectionIncludesAnchor() {
 async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
+	await assertGoogleDocsReadableContentUsesTextExport();
+	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 
 	await assertHighlight({
 		name: "curly quote exact projection",

@@ -8024,9 +8024,100 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 	};
 }
 
-function extractReadableContentInPage(options = {}) {
+async function extractReadableContentInPage(options = {}) {
 	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
 	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const normalizeExportText = (value) =>
+		String(value || "")
+			.replace(/\r\n?/g, "\n")
+			.replace(/\u0000/g, "")
+			.replace(/[ \t]+\n/g, "\n")
+			.replace(/\n{3,}/g, "\n\n")
+			.trim();
+	const isGoogleDocsDocumentPage = () => {
+		try {
+			return location.hostname === "docs.google.com" && /^\/document\/d\/[^/]+/i.test(location.pathname);
+		} catch {
+			return false;
+		}
+	};
+	const googleDocsDocumentId = () => {
+		try {
+			return decodeURIComponent(location.pathname.match(/^\/document\/d\/([^/]+)/i)?.[1] || "");
+		} catch {
+			return "";
+		}
+	};
+	const googleDocsUnsupportedPayload = (reason) => ({
+		surface: "google-docs",
+		source: "google-docs-export",
+		unsupported: true,
+		reason,
+		url: location.href,
+		title: document.title,
+		blockCount: 0,
+		charCount: 0,
+		truncated: false,
+		blocks: [],
+		markdown: reason,
+		text: reason,
+	});
+	const googleDocsPayloadFromText = (text, exportUrl) => {
+		const normalized = normalizeExportText(text);
+		const truncatedText = normalized.length > maxChars ? `${normalized.slice(0, Math.max(0, maxChars - 1))}…` : normalized;
+		const blocks = [];
+		let usedChars = 0;
+		for (const paragraph of truncatedText.split(/\n{2,}|\n/g).map((part) => part.trim()).filter(Boolean)) {
+			if (usedChars >= maxChars || blocks.length >= 120) break;
+			const remaining = maxChars - usedChars;
+			const output = paragraph.length > remaining ? `${paragraph.slice(0, Math.max(0, remaining - 1))}…` : paragraph;
+			blocks.push({
+				tag: "p",
+				selector: "google-docs-export",
+				text: output,
+			});
+			usedChars += output.length + 2;
+		}
+		const markdown = blocks.map((block) => block.text).join("\n\n");
+		return {
+			surface: "google-docs",
+			source: "google-docs-export",
+			url: location.href,
+			exportUrl,
+			title: document.title,
+			root: "google-docs-export",
+			blockCount: blocks.length,
+			charCount: markdown.length,
+			truncated: normalized.length > maxChars,
+			blocks,
+			markdown: markdown || "Google Docs export returned no document body text.",
+			text: markdown || "Google Docs export returned no document body text.",
+		};
+	};
+	const fetchGoogleDocsExportContent = async () => {
+		if (!isGoogleDocsDocumentPage()) return null;
+		const documentId = googleDocsDocumentId();
+		if (!documentId) return googleDocsUnsupportedPayload("Could not identify the Google Docs document id from this tab URL.");
+		const exportUrl = new URL(`/document/d/${encodeURIComponent(documentId)}/export`, location.origin);
+		exportUrl.searchParams.set("format", "txt");
+		try {
+			const response = await fetch(exportUrl.href, {
+				credentials: "include",
+				cache: "no-store",
+			});
+			if (!response?.ok) {
+				return googleDocsUnsupportedPayload(`Could not export this Google Doc as text (${response?.status || "unknown status"}).`);
+			}
+			const contentType = String(response.headers?.get?.("content-type") || "");
+			const text = await response.text();
+			if (/text\/html/i.test(contentType) || /^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
+				return googleDocsUnsupportedPayload("Google Docs returned an HTML page instead of document text.");
+			}
+			return googleDocsPayloadFromText(text, exportUrl.href);
+		} catch (error) {
+			return googleDocsUnsupportedPayload(`Could not export this Google Doc as text: ${error?.message || String(error)}`);
+		}
+	};
 	const isVisible = (element) => {
 		if (!(element instanceof Element)) return false;
 		const style = window.getComputedStyle(element);
@@ -8071,6 +8162,9 @@ function extractReadableContentInPage(options = {}) {
 		});
 		usedChars += output.length + 2;
 	};
+
+	const googleDocsContent = await fetchGoogleDocsExportContent();
+	if (googleDocsContent) return googleDocsContent;
 
 	const title = normalize(document.querySelector("h1")?.textContent || document.title);
 	if (title) pushBlock("h1", title, document.querySelector("h1") || document.documentElement);
