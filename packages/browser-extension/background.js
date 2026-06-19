@@ -2626,6 +2626,7 @@ const createPageToolkit = (options = {}) => {
 		placeholder: normalizeText(element.getAttribute?.("placeholder") || "") || null,
 		name: element.getAttribute?.("name") || null,
 		id: element.id || null,
+		href: element instanceof HTMLAnchorElement ? element.href || null : null,
 		clickable: isClickable(element),
 		editable: isEditable(element),
 		labelText: getLabelTextForControl(element) || null,

@@ -606,6 +606,19 @@ async function assertSelectionFormatting() {
 		}),
 		/## You will learn\n\n- How to create and nest components/,
 	);
+	assert.match(
+		formatToolResultForModel("browser_find_elements", {
+			matches: [
+				{
+					tag: "a",
+					selector: "a:nth-of-type(3)",
+					text: "Notes",
+					href: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/07cnn/CNNs.html",
+				},
+			],
+		}),
+		/href=https:\/\/www\.cs\.purdue\.edu\/homes\/ribeirob\/courses\/Spring2026\/lectures\/07cnn\/CNNs\.html/,
+	);
 	assert.deepEqual(buildHighlightRetryCandidates("## You will learn\n- How to create and nest components\n- How to add markup and styles"), [
 		"How to create and nest components",
 		"How to add markup and styles",
@@ -888,9 +901,11 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /highlight the key passage in each source/);
 	assert.match(contract.systemPrompt, /anchor each substantive claim in the source that supports it/);
 	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not anchored in/);
+	assert.match(contract.systemPrompt, /links\/notes\/readings\/resources listed on the current page/);
 	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
+	assert.match(contract.answerPrompt, /Linked-note\/resource requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong highlight/);
 	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not anchors/);
@@ -962,6 +977,14 @@ async function assertConstitutionPromptContract() {
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
 	const externalSourceToolNames = getToolNamesForTest("Could you take me to these sources and highlight the parts that discuss attention?", false);
+	const linkedNotesToolNames = getToolNamesForTest(
+		"Could you open the notes that are relevant? Like, could you open them up in another tab and find the exact points that might be relevant?",
+		false,
+	);
+	const linkedNotesFollowupToolNames = getToolNamesForTest(
+		"Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.",
+		false,
+	);
 	const comparisonToolNames = getToolNamesForTest("Compare how this paper and the other paper I have open handle attention.", false);
 	const agreementToolNames = getToolNamesForTest("Do you agree with this?", false);
 	const differenceToolNames = getToolNamesForTest("What is the difference?", false);
@@ -996,6 +1019,15 @@ async function assertConstitutionPromptContract() {
 	assert.equal(externalSourceToolNames.includes("browser_navigate"), true);
 	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
 	assert.equal(externalSourceToolNames.includes("browser_click_text"), true);
+	assert.equal(linkedNotesToolNames.includes("browser_navigate"), true, "linked-note requests should be able to open note URLs");
+	assert.equal(linkedNotesToolNames.includes("browser_list_tabs"), true, "linked-note requests should be able to recover an already-open index tab");
+	assert.equal(linkedNotesToolNames.includes("browser_activate_tab"), true, "linked-note requests should be able to activate an already-open index tab");
+	assert.equal(linkedNotesToolNames.includes("browser_find_elements"), true, "linked-note requests should be able to discover link elements");
+	assert.equal(linkedNotesToolNames.includes("browser_click"), true, "linked-note requests should be able to click precise link selectors");
+	assert.equal(linkedNotesToolNames.includes("browser_click_text"), true, "linked-note requests should be able to click visible note links");
+	assert.equal(linkedNotesFollowupToolNames.includes("browser_list_tabs"), true, "other-note followups should be able to find the original notes index tab");
+	assert.equal(linkedNotesFollowupToolNames.includes("browser_activate_tab"), true, "other-note followups should be able to switch back to the original notes index tab");
+	assert.equal(linkedNotesFollowupToolNames.includes("browser_find_elements"), true, "other-note followups should be able to discover additional note links");
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), false, "learning mode alone must not expose cross-tab enumeration");
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);

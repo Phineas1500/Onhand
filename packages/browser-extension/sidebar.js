@@ -34,7 +34,11 @@
 	const REALTIME_API_KEY_SETUP_MESSAGE =
 		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 	const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
+		browser_list_tabs: "list_tabs",
+		browser_activate_tab: "activate_tab",
 		browser_navigate: "navigate",
+		browser_find_elements: "find_elements",
+		browser_click: "click",
 		browser_click_text: "click_text",
 		browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 		browser_pdf_search: "pdf_search",
@@ -256,7 +260,14 @@
 	const REALTIME_EXTERNAL_BROWSING_TOOL_NAMES = new Set([
 		...REALTIME_DEFAULT_TOOL_NAMES,
 		"browser_navigate",
+		"browser_find_elements",
+		"browser_click",
 		"browser_click_text",
+	]);
+	const REALTIME_LINKED_PAGE_NAVIGATION_TOOL_NAMES = new Set([
+		...REALTIME_EXTERNAL_BROWSING_TOOL_NAMES,
+		"browser_list_tabs",
+		"browser_activate_tab",
 	]);
 	const REALTIME_FORCED_INITIAL_TOOL_CHOICE = { type: "function", name: "browser_get_visible_text" };
 	const REALTIME_FORCED_HIGHLIGHT_TOOL_CHOICE = { type: "function", name: "browser_highlight_text" };
@@ -803,6 +814,22 @@
 		let listItems = [];
 		let listKind = null;
 
+		function lineListKind(line) {
+			const trimmedLine = String(line || "").trim();
+			if (/^[-*]\s+/.test(trimmedLine)) return "unordered";
+			if (/^\d+\.\s+/.test(trimmedLine)) return "ordered";
+			return "";
+		}
+
+		function nextNonBlankLineKind(fromIndex) {
+			for (let index = fromIndex; index < lines.length; index += 1) {
+				const next = String(lines[index] || "").trim();
+				if (!next) continue;
+				return lineListKind(next);
+			}
+			return "";
+		}
+
 		function flushParagraph() {
 			if (!paragraphLines.length) return;
 			parts.push(renderCitedBlock("p", paragraphLines.join(" "), citationGroups, citationNumbering));
@@ -822,6 +849,7 @@
 			const trimmed = line.trim();
 			if (!trimmed) {
 				flushParagraph();
+				if (listKind && nextNonBlankLineKind(lineIndex + 1) === listKind) continue;
 				flushList();
 				continue;
 			}
@@ -6218,6 +6246,16 @@
 		);
 	}
 
+	function realtimePromptAsksForLinkedPageNavigation(prompt) {
+		const text = String(prompt || "").toLowerCase();
+		const hasNavigationVerb = /\b(open(?: up)?|follow|click|visit|navigate(?: to)?|go to|load|pull up|bring up|inspect|look at|check|review|read|scan)\b/.test(text);
+		const hasLinkedPageTarget = /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|pages?|articles?|papers?|documents?)\b/.test(text);
+		if (hasNavigationVerb && hasLinkedPageTarget) return true;
+		return /\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|pages?|readings?|resources?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/.test(
+			text,
+		);
+	}
+
 	function realtimeToolResultLooksLikeSearchPage(result) {
 		const tab = realtimeToolTab(result);
 		const url = String(tab?.url || "").toLowerCase();
@@ -7126,11 +7164,24 @@
 				required,
 			},
 		});
-		const allowedToolNames = options?.includeExternalBrowsingTools ? REALTIME_EXTERNAL_BROWSING_TOOL_NAMES : REALTIME_DEFAULT_TOOL_NAMES;
+			const allowedToolNames = options?.includeLinkedPageNavigationTools
+				? REALTIME_LINKED_PAGE_NAVIGATION_TOOL_NAMES
+				: options?.includeExternalBrowsingTools
+					? REALTIME_EXTERNAL_BROWSING_TOOL_NAMES
+					: REALTIME_DEFAULT_TOOL_NAMES;
 		const currentTabOnly = (properties = {}) => properties;
 		const tools = [
-			makeTool("browser_list_tabs", "List open browser tabs and the active tab.", { onlyActive: { type: "boolean" } }),
-			makeTool("browser_activate_tab", "Switch to a tab by tabId, titleContains, or urlContains.", currentTabOnly(), []),
+				makeTool("browser_list_tabs", "List open browser tabs and the active tab.", { onlyActive: { type: "boolean" } }),
+				makeTool(
+					"browser_activate_tab",
+					"Switch to a tab by tabId, titleContains, or urlContains.",
+					{
+						tabId: { type: "number" },
+						titleContains: { type: "string" },
+						urlContains: { type: "string" },
+					},
+					[],
+				),
 			makeTool(
 				"browser_navigate",
 				"Navigate the current tab when the user explicitly asks to browse or open an external source.",
@@ -7406,6 +7457,7 @@
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
 				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
+				"When the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, treat that as permission to navigate within those linked pages. If the current tab is already a destination note, use browser_list_tabs to find the already-open course/index/master page before asking the student for it, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages, inspect them, then anchor useful passages on the destination pages before publishing.",
 				"If a web search results page is only an intermediate step, do not highlight the search-results page as the source. Open the relevant result/source page first, then anchor there.",
 				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
 				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation.",
@@ -7463,14 +7515,21 @@
 	function realtimeInitialGroundedResponseOptions(prompt = "") {
 		const text = normalizeRealtimeTranscriptText(prompt);
 		const externalBrowsingRequest = realtimePromptAsksForExternalBrowsing(text);
-		return {
-			tools: realtimeToolDefinitions({ includeExternalBrowsingTools: externalBrowsingRequest }),
-			tool_choice: externalBrowsingRequest ? "auto" : REALTIME_FORCED_INITIAL_TOOL_CHOICE,
+		const linkedPageNavigationRequest = realtimePromptAsksForLinkedPageNavigation(text);
+			const navigationRequest = externalBrowsingRequest || linkedPageNavigationRequest;
+			return {
+				tools: realtimeToolDefinitions({
+					includeExternalBrowsingTools: externalBrowsingRequest,
+					includeLinkedPageNavigationTools: linkedPageNavigationRequest,
+				}),
+				tool_choice: navigationRequest ? "auto" : REALTIME_FORCED_INITIAL_TOOL_CHOICE,
 			instructions: [
 				realtimeTutorInstructions(),
 				text ? `Student question: ${text}` : "",
 				externalBrowsingRequest
 					? "The student is asking you to browse or navigate to external sources. Do not start by anchoring the current page unless it is needed to form the search query. First call browser_navigate to open the relevant source/search page in the current tab. Do not speak a preamble or final answer before the navigation/tool work."
+					: linkedPageNavigationRequest
+						? "The student is asking you to open, check, or inspect linked notes/resources from the current page or a page used earlier in the session. Do not stay on a destination note if you need the notes index. First use browser_list_tabs to find an already-open course/index/master page when the current tab does not list the needed links, then browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked page. Inspect and anchor exact text on the destination page before the final answer."
 					: "Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
 			]
 				.filter(Boolean)
@@ -7769,11 +7828,13 @@
 		return Object.prototype.hasOwnProperty.call(REALTIME_BROWSER_TOOL_COMMANDS, toolName) ? REALTIME_BROWSER_TOOL_COMMANDS[toolName] : "";
 	}
 
-	function realtimeBrowserToolAllowedForActiveTurn(name) {
-		const toolName = String(name || "").trim();
-		if (REALTIME_DEFAULT_TOOL_NAMES.has(toolName)) return true;
-		return REALTIME_EXTERNAL_BROWSING_TOOL_NAMES.has(toolName) && realtimePromptAsksForExternalBrowsing(realtimeActiveVoiceTurn?.prompt);
-	}
+		function realtimeBrowserToolAllowedForActiveTurn(name) {
+			const toolName = String(name || "").trim();
+			if (REALTIME_DEFAULT_TOOL_NAMES.has(toolName)) return true;
+			const prompt = realtimeActiveVoiceTurn?.prompt;
+			if (REALTIME_LINKED_PAGE_NAVIGATION_TOOL_NAMES.has(toolName) && realtimePromptAsksForLinkedPageNavigation(prompt)) return true;
+			return REALTIME_EXTERNAL_BROWSING_TOOL_NAMES.has(toolName) && realtimePromptAsksForExternalBrowsing(prompt);
+		}
 
 	function realtimeHighlightArgumentText(args = {}) {
 		const raw = args && typeof args === "object" && !Array.isArray(args) ? args : {};
@@ -7975,10 +8036,19 @@
 				return `Scrolled to annotationId ${result?.annotation?.annotationId || "(unknown)"}.`;
 			case "browser_clear_annotations":
 				return "Cleared Onhand annotations on the page.";
-			case "browser_find_elements": {
-				const matches = Array.isArray(result?.matches) ? result.matches : [];
-				return matches.length ? `Matching elements:\n${matches.slice(0, 10).map((match, index) => `${index + 1}. ${compactRealtimeTutorText(match.text || match.label || match.selector || "", 180)}`).join("\n")}` : "No matching elements found.";
-			}
+				case "browser_find_elements": {
+					const matches = Array.isArray(result?.matches) ? result.matches : [];
+					return matches.length
+						? `Matching elements:\n${matches
+								.slice(0, 10)
+								.map((match, index) => {
+									const label = compactRealtimeTutorText(match.text || match.label || match.selector || "", 180);
+									const href = match.href ? ` href=${compactRealtimeTutorText(match.href, 180)}` : "";
+									return `${index + 1}. ${label}${href}`;
+								})
+								.join("\n")}`
+						: "No matching elements found.";
+				}
 			case "browser_click":
 			case "browser_click_text":
 				return `Clicked the requested element on ${tabLabel}.`;

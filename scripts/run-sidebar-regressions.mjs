@@ -789,6 +789,42 @@ async function assertMarkdownTablesRenderAsTables() {
 	dom.window.close();
 }
 
+async function assertLooseOrderedMarkdownListDoesNotRestartNumbering() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.turns = [
+		{
+			...state.turns[0],
+			id: "turn-loose-ordered-list",
+			reply: [
+				"1. **Permutation sensitivity** - directly relevant to corrupted pixels.",
+				"",
+				"2. **Sign and basis invariant networks** - useful as an analogy.",
+				"",
+				"3. **Marginals vs joint information** - a caution for swapped pixels.",
+			].join("\n"),
+			pageActions: [],
+		},
+	];
+	const dom = await renderSidebar(state, runtimeMessages);
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const response = host.shadowRoot.querySelector(".onhand-response");
+	const orderedLists = response.querySelectorAll("ol");
+	const listItems = response.querySelectorAll("ol > li");
+
+	assert.equal(orderedLists.length, 1, "blank lines between ordered items should not restart the list");
+	assert.deepEqual(
+		[...listItems].map((item) => item.textContent.trim().replace(/\s+/g, " ")),
+		[
+			"Permutation sensitivity - directly relevant to corrupted pixels.",
+			"Sign and basis invariant networks - useful as an analogy.",
+			"Marginals vs joint information - a caution for swapped pixels.",
+		],
+	);
+
+	dom.window.close();
+}
+
 async function assertResponseCopyButtonAndStableMarkup() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -3165,6 +3201,84 @@ async function assertRealtimeExternalSourceRequestsCanNavigateFirst() {
 	dom.window.close();
 }
 
+async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createState();
+	state.page = null;
+	state.tab = {
+		id: 42,
+		title: "Course schedule",
+		url: "https://example.test/course",
+	};
+	const dom = await renderSidebar(state, runtimeMessages);
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	const options = hooks.getRealtimeInitialGroundedResponseOptions(
+		"Could you open the relevant notes in another tab and find the exact points that matter?",
+	);
+	assert.equal(options.tool_choice, "auto", "expected linked-note requests not to force the current-page read first");
+	assert.match(String(options.instructions || ""), /open, check, or inspect linked notes\/resources/i);
+	const linkedToolNames = new Set((options.tools || []).map((tool) => tool?.name));
+	assert.equal(linkedToolNames.has("browser_navigate"), true, "expected linked-note requests to expose navigation");
+	assert.equal(linkedToolNames.has("browser_list_tabs"), true, "expected linked-note requests to expose tab recovery");
+	assert.equal(linkedToolNames.has("browser_activate_tab"), true, "expected linked-note requests to expose index-tab activation");
+	assert.equal(linkedToolNames.has("browser_find_elements"), true, "expected linked-note requests to expose link discovery");
+	assert.equal(linkedToolNames.has("browser_click"), true, "expected linked-note requests to expose selector clicks");
+	assert.equal(linkedToolNames.has("browser_click_text"), true, "expected linked-note requests to expose text clicks");
+	assert.doesNotMatch(String(options.instructions || ""), /Start by calling browser_get_visible_text/);
+	assert.match(String(options.instructions || ""), /browser_list_tabs/);
+
+	const followupOptions = hooks.getRealtimeInitialGroundedResponseOptions(
+		"Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.",
+	);
+	assert.equal(followupOptions.tool_choice, "auto", "expected other-notes follow-up to be treated as navigation");
+	assert.match(String(followupOptions.instructions || ""), /already-open course\/index\/master page/i);
+	const followupToolNames = new Set((followupOptions.tools || []).map((tool) => tool?.name));
+	assert.equal(followupToolNames.has("browser_list_tabs"), true, "expected other-notes follow-up to recover the open index tab");
+	assert.equal(followupToolNames.has("browser_activate_tab"), true, "expected other-notes follow-up to activate the open index tab");
+	assert.equal(followupToolNames.has("browser_find_elements"), true, "expected other-notes follow-up to discover note links");
+
+	await hooks.sendRealtimeTextPrompt("Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.");
+	await waitForSidebarTick(dom);
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "response.function_call_arguments.done",
+			call_id: "call-linked-list-tabs",
+			name: "browser_list_tabs",
+			arguments: JSON.stringify({ onlyActive: false }),
+		}),
+	);
+	await waitForSidebarTick(dom);
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "response.function_call_arguments.done",
+			call_id: "call-linked-find-elements",
+			name: "browser_find_elements",
+			arguments: JSON.stringify({ text: "Notes", limit: 10 }),
+		}),
+	);
+	await waitForSidebarTick(dom);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:realtime-browser-tool" && message.tool === "browser_list_tabs" && message.command === "list_tabs"),
+		true,
+		"expected linked-note voice follow-up to be allowed to list open tabs",
+	);
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:realtime-browser-tool" && message.tool === "browser_find_elements" && message.command === "find_elements"),
+		true,
+		"expected linked-note voice follow-up to be allowed to find note links",
+	);
+	const toolErrors = events
+		.filter((event) => event.type === "conversation.item.create" && event.event_id?.includes("onhand_tool_error"))
+		.map((event) => event.item?.output || "");
+	assert.equal(toolErrors.some((output) => /not allowed|unknown realtime browser tool/i.test(output)), false, "expected linked-note tools not to be rejected by the realtime guard");
+
+	dom.window.close();
+}
+
 async function assertRealtimeBrowserToolsCanAnnotateAndCite() {
 	const runtimeMessages = [];
 	const events = [];
@@ -4586,6 +4700,7 @@ await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
 await assertReplyTokenPrefixCannotInjectHtml();
 await assertMarkdownTablesRenderAsTables();
+await assertLooseOrderedMarkdownListDoesNotRestartNumbering();
 await assertResponseCopyButtonAndStableMarkup();
 await assertQuickOpenFocusesComposer();
 await assertMenuClosesOnOutsidePointer();
@@ -4638,6 +4753,7 @@ await assertRealtimeSessionUsesRuntimeAgentMode();
 await assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion();
 await assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice();
 await assertRealtimeExternalSourceRequestsCanNavigateFirst();
+await assertRealtimeLinkedNoteRequestsCanOpenLinksFirst();
 await assertRealtimeBrowserHighlightRepairsNearQuoteFromVisibleText();
 await assertRealtimeTranscriptMergeWindowSubmitsMergedRuntimePrompt();
 await assertRealtimePublishSidebarAnswerCanAnnotateAndCite();

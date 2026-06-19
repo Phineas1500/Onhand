@@ -169,6 +169,7 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(backgroundSource, /protocol === "file:"/, "page toolkit should allow local file tabs when Chrome grants file access");
 	assert.match(backgroundSource, /Allow access to file URLs/, "local file access failures should tell the user which Chrome extension toggle to enable");
 	assert.match(backgroundSource, /browser_navigate cannot open file:\/\/ URLs/, "browser navigation should not be able to open arbitrary local file URLs");
+	assert.match(backgroundSource, /href: element instanceof HTMLAnchorElement \? element\.href \|\| null : null/, "element search should expose resolved link hrefs for navigation");
 	assert.match(backgroundSource, /isRestrictedScriptingError\(error\)/, "frame fallback should only engage on a restricted-scripting error");
 	// A restricted main-frame error on a PDF tab (native viewer is a different
 	// extension) must not abort before trying Onhand's inline viewer frame.
