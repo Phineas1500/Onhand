@@ -127,6 +127,8 @@ For the repeatable Chrome/OAuth acceptance gate, see `docs/CHROME_ACCEPTANCE.md`
 npm run acceptance:chrome -- --suite=all
 ```
 
+For terminal-first session inspection, CLI-driven browser questions, and automated live acceptance, see `docs/SESSION_DEBUGGING.md`.
+
 ## Experimental Realtime Voice Tutor
 
 This branch includes an experimental `gpt-realtime-2` WebRTC voice tutor for the side panel. Start the local session endpoint with:
