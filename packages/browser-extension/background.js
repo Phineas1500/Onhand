@@ -8006,7 +8006,43 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 	const focusedTab = await focusTab(tabId);
 	const viewport = await executeScriptInTab(
 		focusedTab.id,
-		(selector) => {
+		(selector, shouldScrollIntoView) => {
+			let selectorRegion = null;
+			const rawSelector = String(selector || "").trim();
+			if (rawSelector) {
+				const element = document.querySelector(rawSelector);
+				if (!element) throw new Error(`No element matched selector: ${rawSelector}`);
+				if (shouldScrollIntoView !== false) {
+					element.scrollIntoView?.({ behavior: "auto", block: "center", inline: "center" });
+				}
+				const rect = element.getBoundingClientRect();
+				const viewportWidth = Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1));
+				const viewportHeight = Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1));
+				const visibleLeft = Math.max(0, rect.left);
+				const visibleTop = Math.max(0, rect.top);
+				const visibleRight = Math.min(viewportWidth, rect.right);
+				const visibleBottom = Math.min(viewportHeight, rect.bottom);
+				const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+				const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+				const elementArea = Math.max(1, rect.width * rect.height);
+				const visibleRatio = Math.max(0, Math.min(1, (visibleWidth * visibleHeight) / elementArea));
+				selectorRegion = {
+					x: Math.round(rect.left),
+					y: Math.round(rect.top),
+					width: Math.round(rect.width),
+					height: Math.round(rect.height),
+					selector: rawSelector,
+					visibleRatio,
+					clipped: visibleRatio < 0.98 || rect.left < 0 || rect.top < 0 || rect.right > viewportWidth || rect.bottom > viewportHeight,
+					smallRegion: rect.width < 120 || rect.height < 120,
+					visibleRect: {
+						x: Math.round(visibleLeft),
+						y: Math.round(visibleTop),
+						width: Math.round(visibleWidth),
+						height: Math.round(visibleHeight),
+					},
+				};
+			}
 			const viewport = {
 				width: Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1)),
 				height: Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1)),
@@ -8014,23 +8050,9 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 				scrollX: Math.round(window.scrollX || 0),
 				scrollY: Math.round(window.scrollY || 0),
 			};
-			let selectorRegion = null;
-			const rawSelector = String(selector || "").trim();
-			if (rawSelector) {
-				const element = document.querySelector(rawSelector);
-				if (!element) throw new Error(`No element matched selector: ${rawSelector}`);
-				const rect = element.getBoundingClientRect();
-				selectorRegion = {
-					x: Math.round(rect.left),
-					y: Math.round(rect.top),
-					width: Math.round(rect.width),
-					height: Math.round(rect.height),
-					selector: rawSelector,
-				};
-			}
 			return { viewport, selectorRegion };
 		},
-		[String(options.selector || "")],
+		[String(options.selector || ""), options.scrollIntoView !== false],
 	);
 	const viewportInfo = viewport?.viewport || { width: 1, height: 1, devicePixelRatio: 1, scrollX: 0, scrollY: 0 };
 	const selectorRegion = viewport?.selectorRegion || null;
@@ -8051,6 +8073,7 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 		height,
 		coordinateSystem: "viewport-css-pixels",
 		...(selectorRegion?.selector ? { selector: selectorRegion.selector } : {}),
+		...(selectorRegion ? { visibleRatio: selectorRegion.visibleRatio, clipped: Boolean(selectorRegion.clipped), smallRegion: Boolean(selectorRegion.smallRegion) } : {}),
 	};
 	const screenshot = await captureTabScreenshot(focusedTab.id, {
 		...options,
@@ -8069,6 +8092,21 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 		mimeType: options.format === "jpeg" ? "image/jpeg" : "image/png",
 		label: String(options.label || selectorRegion?.selector || "visible region").trim().slice(0, 80) || "visible region",
 		region,
+		...(selectorRegion
+			? {
+				selectorRegion: {
+					x: selectorRegion.x,
+					y: selectorRegion.y,
+					width: selectorRegion.width,
+					height: selectorRegion.height,
+					selector: selectorRegion.selector,
+					visibleRatio: selectorRegion.visibleRatio,
+					clipped: Boolean(selectorRegion.clipped),
+					smallRegion: Boolean(selectorRegion.smallRegion),
+					visibleRect: selectorRegion.visibleRect,
+				},
+			}
+			: {}),
 		viewport: viewportInfo,
 		capturedAt: new Date().toISOString(),
 	};
@@ -8198,6 +8236,7 @@ async function extractGoogleDocsTextExportForTab(tab, options = {}) {
 
 async function extractReadableContentInPage(options = {}) {
 	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
+	const maxHeadingOutline = Math.max(0, Math.min(160, Number(options.maxHeadingOutline || 80) || 80));
 	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
 	const normalizeExportText = (value) =>
 		String(value || "")
@@ -8316,8 +8355,76 @@ async function extractReadableContentInPage(options = {}) {
 		document.documentElement;
 	const ignoredSelector = "script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea";
 	const blocks = [];
+	const headingOutline = [];
+	const headingOutlineElements = [];
+	const seenHeadingOutline = new Set();
 	const seen = new Set();
 	let usedChars = 0;
+	const pushHeadingOutline = (element) => {
+		if (headingOutline.length >= maxHeadingOutline) return;
+		if (!(element instanceof Element) || !isVisible(element)) return;
+		if (element.closest(ignoredSelector)) return;
+		const tag = element.tagName.toLowerCase();
+		const level = Number(tag.slice(1)) || 2;
+		const clean = normalize(element.textContent || "");
+		if (!clean || clean.length < 2) return;
+		const key = `${tag}:${clean.toLowerCase()}`;
+		if (seenHeadingOutline.has(key)) return;
+		seenHeadingOutline.add(key);
+		const entry = {
+			tag,
+			level,
+			selector: selectorFor(element),
+			text: `${"#".repeat(level)} ${clean.slice(0, 300)}`,
+		};
+		headingOutline.push(entry);
+		headingOutlineElements.push({ entry, element });
+	};
+	const isHeadingElement = (element) => element instanceof Element && /^h[1-6]$/i.test(element.tagName);
+	const collectHeadingSnippet = (heading, maxSnippetChars = 280) => {
+		if (!(heading instanceof Element)) return "";
+		const chunks = [];
+		let usedSnippetChars = 0;
+		const append = (value) => {
+			const clean = normalize(value);
+			if (!clean || clean.length < 2) return;
+			if (chunks.some((existing) => existing.toLowerCase() === clean.toLowerCase())) return;
+			const remaining = maxSnippetChars - usedSnippetChars;
+			if (remaining <= 0) return;
+			const output = clean.length > remaining ? `${clean.slice(0, Math.max(0, remaining - 1))}…` : clean;
+			chunks.push(output);
+			usedSnippetChars += output.length + 1;
+		};
+		const collectFrom = (element) => {
+			if (!(element instanceof Element) || !isVisible(element)) return false;
+			if (element.closest(ignoredSelector)) return false;
+			if (isHeadingElement(element)) return true;
+			const tag = element.tagName.toLowerCase();
+			if (["p", "li", "blockquote", "pre", "figcaption", "caption"].includes(tag)) {
+				append(element.textContent || "");
+				return false;
+			}
+			for (const child of Array.from(element.children || [])) {
+				if (collectFrom(child)) return true;
+				if (usedSnippetChars >= maxSnippetChars) return false;
+			}
+			if (!element.children?.length) append(element.textContent || "");
+			return false;
+		};
+		let sibling = heading.nextElementSibling;
+		while (sibling && usedSnippetChars < maxSnippetChars) {
+			if (collectFrom(sibling)) break;
+			sibling = sibling.nextElementSibling;
+		}
+		if (!chunks.length && heading.parentElement) {
+			sibling = heading.parentElement.nextElementSibling;
+			while (sibling && usedSnippetChars < maxSnippetChars) {
+				if (collectFrom(sibling)) break;
+				sibling = sibling.nextElementSibling;
+			}
+		}
+		return chunks.join(" ");
+	};
 	const pushBlock = (kind, text, element) => {
 		const clean = normalize(text);
 		if (!clean || clean.length < 2) return;
@@ -8339,6 +8446,17 @@ async function extractReadableContentInPage(options = {}) {
 
 	const googleDocsContent = await fetchGoogleDocsExportContent();
 	if (googleDocsContent) return googleDocsContent;
+
+	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+		pushHeadingOutline(element);
+	}
+	for (const { entry: heading, element } of headingOutlineElements) {
+		const snippet = collectHeadingSnippet(element);
+		if (snippet) {
+			heading.snippet = snippet;
+			heading.markdown = `${heading.text}\n  ${snippet}`;
+		}
+	}
 
 	const title = normalize(document.querySelector("h1")?.textContent || document.title);
 	if (title) pushBlock("h1", title, document.querySelector("h1") || document.documentElement);
@@ -8369,6 +8487,8 @@ async function extractReadableContentInPage(options = {}) {
 		blockCount: blocks.length,
 		charCount: markdown.length,
 		truncated: markdown.length >= maxChars,
+		headingOutline,
+		headingOutlineMarkdown: headingOutline.map((heading) => heading.markdown || heading.text).join("\n"),
 		blocks,
 		markdown,
 		text: markdown,

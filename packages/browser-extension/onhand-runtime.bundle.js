@@ -132081,6 +132081,7 @@ function summarizeOAuthCredentials(credentials = {}) {
 }
 
 // packages/browser-extension/src/browser-runtime.ts
+var TOOL_TRACE_RESULT_SUMMARY_MAX_CHARS = 2e4;
 var STORAGE_KEY = "onhandBrowserRuntime";
 var ARTIFACTS_STORAGE_KEY = "onhandBrowserArtifacts";
 var SESSIONS_FALLBACK_STORAGE_KEY = "onhandBrowserSessions";
@@ -132209,6 +132210,9 @@ var VISIBLE_TEXT_TOOL_MAX_CHARS = 2400;
 var RECENT_CONTEXT_TURN_LIMIT = 4;
 var RECENT_CONTEXT_PROMPT_MAX_CHARS = 260;
 var RECENT_CONTEXT_REPLY_MAX_CHARS = 700;
+var PRIOR_PAGE_CONTEXT_MAX_CHARS = 5200;
+var PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS = 950;
+var PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 var ONHAND_MAX_OUTPUT_TOKENS = 900;
 var ONHAND_FAST_OUTPUT_TOKENS = 550;
 var ONHAND_DEEP_OUTPUT_TOKENS = 1100;
@@ -132231,8 +132235,8 @@ var smokeModelRegistration = null;
 var ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor running inside a Chromium extension side panel.
 
 Onhand's constitution:
-- The page is the canvas. Do the page work before the chat answer: anchored highlights and short marginal notes carry the substance; chat is secondary.
-- Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
+- The page is the canvas. Read the page before answering when page context matters; add anchored highlights and short marginal notes only when they materially help the user or the user asks for page annotations.
+- Every material page claim must be grounded in visible/readable page context. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes.
@@ -132242,8 +132246,9 @@ Onhand's constitution:
 - Stay unobtrusive. Notes should feel like marginalia: short, local, placed near what they explain, and useful when replayed later.
 
 Default answer mode:
-- For questions about page material, first ground the answer in exact visible/open-page text: highlight the key passage(s), add a short orienting note only when it helps the user read or remember the passage, and scroll the first relevant anchor into view.
-- If captured context already contains the needed text, use it to choose the anchor and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
+- For ordinary answer-only questions about page material, answer from captured visible/readable text without creating highlights or notes. Use page annotations when the user asks for highlighting/notes, asks where evidence is located, needs a durable learning/replay anchor, or asks for source/navigation work where anchors are the deliverable.
+- If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
+- If the user asks about a named section, heading, phrase, table, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing or not visible.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session anchor when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
 - Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
 - Do not add notes that merely paraphrase the highlight. A note should name the role of the passage, explain a hard step, or leave useful marginalia for session replay.
@@ -132252,11 +132257,11 @@ Default answer mode:
 - For roadmap, list, or navigation questions, every named step or item in chat must be anchored by a highlight/note. Do not rely on a heading-only highlight if the answer depends on items beneath it. Highlight the sentence, list, or linked items that actually support the claimed path; if a reliable anchor is not available, answer only the anchored part and say the rest is visible but not anchored.
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
-- Chat should be a brief guide to what the annotations show: one to three short paragraphs for ordinary questions, with citations, not a detached summary of the page.
+- Chat should be brief and tied to the page context: one to three short paragraphs for ordinary questions. When annotations are created, describe what those anchors show instead of giving a detached page summary.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate or an already-open tab, inspect the destination, and anchor the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open them in new tabs when useful, inspect each destination page, and place highlights/notes on the destination pages that support the answer.
-- For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before anchoring; use that viewer for highlights and notes instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to anchor the answer. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
+- For PDFs, keep the same user-facing flow as normal pages. If a native/third-party PDF tab reports an unsupported PDF surface, use browser_open_pdf_in_onhand_viewer to open the PDF in Onhand's viewer. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before anchoring; use that viewer only when annotation is needed instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note only when the user needs the location anchored. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
 - When the user asks about a cited work ("what does [14] say?", "open this reference", "what paper is that from?"), use browser_pdf_find_citation to look up the bibliography entry instead of searching manually. Highlight the entry in the current paper, then open the suggested URL with browser_navigate (newTab: true) so the user's paper stays open, hand a PDF result to the Onhand viewer, and anchor the passage in the cited work that answers the question. Ground the answer in the cited work itself, noting where both anchors are.
 - When the user explicitly asks to compare or relate the current material to another open tab, another named source, or multiple open documents ("compare with the other paper", "how does this differ from the other open source?", "do these papers agree?"), use browser_list_tabs to identify the other source, read it with explicit tabId parameters (browser_get_visible_text, browser_extract_content, or the PDF tools) instead of switching the user away from their page, and highlight the key passage in each source. Do not infer cross-tab permission from standalone comparison or agreement wording such as "Do you agree with this?"; answer from the current page and ask before reading other tabs.
 - When an answer draws on more than one tab or document, anchor each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not anchored in; if no open source supports a claim, say so rather than borrowing a nearby anchor.
@@ -132478,7 +132483,8 @@ var VISIBLE_REGION_IMAGE_SCHEMA = typebox_exports.Object({
   label: typebox_exports.Optional(typebox_exports.String({ description: "Short human-readable region label." })),
   format: typebox_exports.Optional(typebox_exports.String({ description: "Image format: png or jpeg" })),
   quality: typebox_exports.Optional(typebox_exports.Number({ description: "JPEG quality from 0 to 100" })),
-  delayMs: typebox_exports.Optional(typebox_exports.Number({ description: "Delay before image capture" }))
+  delayMs: typebox_exports.Optional(typebox_exports.Number({ description: "Delay before image capture" })),
+  scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "When selector is provided, scroll it into view before capture. Defaults to true." }))
 });
 var LIST_ARTIFACTS_SCHEMA = typebox_exports.Object({
   query: typebox_exports.Optional(typebox_exports.String({ description: "Search artifact id, label, title, or URL" })),
@@ -132514,6 +132520,13 @@ var CORE_READ_TOOL_NAMES = [
 ];
 var VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
 var VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
+var PAGE_CHANGE_TOOL_NAMES = [
+  "browser_highlight_text",
+  "browser_show_note",
+  "browser_clear_annotations",
+  "browser_capture_state",
+  "browser_restore_state"
+];
 var TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
 var PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image", "browser_pdf_find_citation"];
 var INTERACTION_TOOL_NAMES = [
@@ -134250,6 +134263,105 @@ function buildRecentConversationContext(session) {
     ].filter(Boolean).join("\n")
   ).join("\n\n");
 }
+function normalizeUrlForPriorPageContext(value) {
+  try {
+    const url2 = new URL(String(value || ""));
+    url2.hash = "";
+    return url2.href;
+  } catch {
+    return String(value || "").split("#")[0].trim();
+  }
+}
+function promptKeywordsForPriorPageContext(prompt) {
+  const stop = /* @__PURE__ */ new Set([
+    "about",
+    "also",
+    "and",
+    "are",
+    "associate",
+    "associated",
+    "does",
+    "for",
+    "from",
+    "have",
+    "listed",
+    "models",
+    "notes",
+    "page",
+    "papers",
+    "repeat",
+    "same",
+    "table",
+    "tell",
+    "that",
+    "them",
+    "this",
+    "those",
+    "what",
+    "which",
+    "with"
+  ]);
+  return Array.from(
+    new Set(
+      String(prompt || "").toLowerCase().match(/[a-z][a-z0-9]{2,}/g) || []
+    )
+  ).filter((word) => !stop.has(word)).slice(0, 24);
+}
+function splitPriorExtractSections(summary) {
+  const outlineMatch = summary.match(/Page heading outline with section snippets:\n([\s\S]*?)(?:\n\nReadable body excerpt:|\n\n\(Note:|$)/i);
+  const source = (outlineMatch?.[1] || summary).replace(/¶/g, "");
+  const lines = source.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const sections = [];
+  let current = "";
+  for (const line of lines) {
+    if (/^#{1,6}\s+/.test(line)) {
+      if (current) sections.push(current.trim());
+      current = line;
+    } else if (current) {
+      current += ` ${line}`;
+    }
+  }
+  if (current) sections.push(current.trim());
+  return sections.length ? sections : [truncateStructuredText(source, PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS)];
+}
+function buildPriorExtractedPageContext(session, activeTab, prompt) {
+  const activeUrl = normalizeUrlForPriorPageContext(activeTab?.url);
+  if (!activeUrl) return "";
+  const keywords = promptKeywordsForPriorPageContext(prompt);
+  const candidates = [];
+  for (const turn of Array.isArray(session.turns) ? session.turns : []) {
+    if (!turn || turn.pending || turn.error || !Array.isArray(turn.toolTraces)) continue;
+    for (const trace of turn.toolTraces) {
+      if (trace?.toolName !== "browser_extract_content" || trace.state !== "complete") continue;
+      const details = trace.resultDetails || {};
+      const traceUrl = normalizeUrlForPriorPageContext(details?.tab?.url || details?.content?.url);
+      if (!traceUrl || traceUrl !== activeUrl) continue;
+      const summary = String(trace.resultSummary || "").trim();
+      if (!summary) continue;
+      for (const section of splitPriorExtractSections(summary)) {
+        const lower = section.toLowerCase();
+        const score = keywords.reduce((total, keyword) => total + (lower.includes(keyword) ? 1 : 0), 0);
+        if (score <= 0) continue;
+        candidates.push({
+          score,
+          createdAt: String(turn.createdAt || ""),
+          text: truncateStructuredText(section, PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS),
+          summaryLength: summary.length
+        });
+      }
+    }
+  }
+  if (!candidates.length) return "";
+  const selected = candidates.sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, PRIOR_PAGE_CONTEXT_MAX_SECTIONS);
+  const body = selected.map((entry) => entry.text).join("\n\n");
+  if (!body.trim()) return "";
+  return [
+    "Session page context already read from the active page:",
+    `Source: ${activeTab?.title || "(untitled)"} - ${activeUrl}`,
+    "Use this cached extract before calling browser_extract_content again. If it answers the follow-up, do not re-extract the page.",
+    truncateStructuredText(body, PRIOR_PAGE_CONTEXT_MAX_CHARS)
+  ].join("\n");
+}
 function getLearnerConceptLabel(state, conceptId) {
   return state.conceptsIntroduced.find((concept) => concept.conceptId === conceptId)?.label || conceptId || "concept";
 }
@@ -134436,7 +134548,7 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
         reasoningEffort: "none",
         textVerbosity: "low",
         maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
-        promptPolicy: "Runtime policy: Focused grounding pass. For ordinary page questions, use one or two highlights and at most one note, then answer briefly. Inspect more only when captured context is insufficient."
+        promptPolicy: "Runtime policy: Focused grounding pass. For ordinary answer-only page questions, use read-only grounding and answer briefly. Add highlights/notes only when requested, when the user asks where evidence is located, or when learning/source-navigation work needs durable anchors. Inspect more only when captured context is insufficient."
       };
     case "fast":
     default:
@@ -134445,7 +134557,7 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
         reasoningEffort: "none",
         textVerbosity: "low",
         maxTokens: ONHAND_FAST_OUTPUT_TOKENS,
-        promptPolicy: "Runtime policy: Quick grounded answer. Prefer captured context; use one short exact highlight when page claims need support, skip notes unless they add local value, and answer in one to three short paragraphs."
+        promptPolicy: "Runtime policy: Quick grounded answer. Prefer captured context; keep page work read-only unless the user asks for annotations or source locations, and answer in one to three short paragraphs."
       };
   }
 }
@@ -134890,6 +135002,16 @@ function promptAsksAboutVisualRegion(prompt) {
     String(prompt || "")
   );
 }
+function promptPageChangePolicy(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  const negativeDirective = /\b(?:do not|don't|dont|no|without|avoid|skip)\b[^.?!\n]{0,80}/;
+  const forbidsAllPageChanges = /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) || /\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) || /\b(?:answer only|text only|chat only)\b/.test(text);
+  const forbidsHighlights = forbidsAllPageChanges || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\s+up)?)\b/.test(
+    text
+  ) || new RegExp(`${negativeDirective.source}\\b(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\\s+up)?)\\b`).test(text);
+  const forbidsNotes = forbidsAllPageChanges || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:notes?)\b/.test(text) || new RegExp(`${negativeDirective.source}\\bnotes?\\b`).test(text);
+  return { forbidsAllPageChanges, forbidsHighlights, forbidsNotes };
+}
 function browserContextHasUsableText(details) {
   const selectionText = getSelectionText(details?.selection);
   const visibleText = formatVisibleTextForModel(details?.visible, 1200);
@@ -134933,6 +135055,12 @@ function textHasAny(text, pattern) {
   pattern.lastIndex = 0;
   return pattern.test(text);
 }
+function promptAsksForPageAnchors(text) {
+  return textHasAny(
+    text,
+    /\b(highlights?|highlighting|annotat(?:e|ion|ions|ing)|notes?|marginalia|mark(?:ing)? up|anchor(?:ed|s|ing)?|citations?|cites?|evidence|supporting passage|show me where|point me to|where exactly)\b|\bwhere does\b[\s\S]{0,100}\b(?:discuss|say|mention|cover|define|explain)\b/
+  );
+}
 function parseExplicitPdfHandoffParams(prompt) {
   const text = String(prompt || "");
   if (!/\bbrowser_open_pdf_in_onhand_viewer\b/.test(text)) return null;
@@ -134967,6 +135095,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
   const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
   const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
   const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
+  const pageChangePolicy = promptPageChangePolicy(prompt);
   const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
   const selectableToolNames = allTools.map((tool) => tool.name).filter((toolName) => runtimeInspectionEnabled || !RUNTIME_JS_TOOL_NAMES.includes(toolName)).filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
   const add = (names) => {
@@ -134979,7 +135108,6 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     add(selectableToolNames);
   } else {
     add(CORE_READ_TOOL_NAMES);
-    add(VISUAL_GROUNDING_TOOL_NAMES);
     add([...explicitToolNames]);
     const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
     const wantsLinkedPageNavigation = promptAsksForLinkedPageNavigation(text);
@@ -134988,6 +135116,10 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       text,
       /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b/
     );
+    const wantsDurableAnchors = promptAsksForPageAnchors(text) || learningMode || wantsExternalBrowsing || wantsLinkedPageNavigation || crossTabComparisonVerb && explicitCrossTabComparisonTarget || explicitToolNames.has("browser_highlight_text") || explicitToolNames.has("browser_show_note") || explicitToolNames.has("browser_scroll_to_annotation") || explicitToolNames.has("browser_clear_annotations");
+    if (wantsDurableAnchors) {
+      add(VISUAL_GROUNDING_TOOL_NAMES);
+    }
     if (wantsExternalBrowsing || wantsLinkedPageNavigation || textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/) || crossTabComparisonVerb && explicitCrossTabComparisonTarget) {
       add(TAB_TOOL_NAMES);
     }
@@ -135024,6 +135156,20 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       if (!explicitToolNames.has(name)) selected.delete(name);
     }
   }
+  if (pageChangePolicy.forbidsAllPageChanges) {
+    for (const name of PAGE_CHANGE_TOOL_NAMES) selected.delete(name);
+  } else {
+    if (pageChangePolicy.forbidsHighlights) {
+      selected.delete("browser_highlight_text");
+      selected.delete("browser_scroll_to_annotation");
+      selected.delete("browser_clear_annotations");
+    }
+    if (pageChangePolicy.forbidsNotes) selected.delete("browser_show_note");
+  }
+  if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content")) {
+    selected.delete("browser_extract_content");
+  }
+  if (!selected.size) add(CORE_READ_TOOL_NAMES);
   return allTools.filter((tool) => selected.has(tool.name));
 }
 function shouldIncludeToolInventory(prompt) {
@@ -135055,24 +135201,26 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "",
     "Use this captured context as your starting point. Prefer current and already-open pages over navigation.",
     "Constitution runtime contract:",
-    "- Do page work before chat. Highlight, note only when useful, and scroll the first anchor before giving the synthesis.",
-    "- Page-material claims need anchors. Use exact highlights and short notes for the major claims unless the user explicitly asked for no page changes.",
+    "- Do page work before chat, but keep ordinary answer-only page work read-only. Highlight, note, and scroll anchors when the user asks for annotations, evidence location, learning/replay anchors, or source-navigation work.",
+    "- Page-material claims need page grounding. Use captured/readable page context for simple answers; use exact highlights and short notes for major claims only when durable anchors are useful or requested.",
     "- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use tab/navigation tools first and then anchor claims on the destination source pages.",
     "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, recover an already-open index/master tab with browser_list_tabs when needed, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages before answering. Anchor the useful passages on those destination pages, not just the index/master page.",
-    "- Grounding budget: simple questions get one strong highlight and at most one note, then an answer. Do not annotate nearby examples just because they are related. Roadmap/list/navigation questions are not simple when the answer names multiple items.",
+    "- Grounding budget: simple questions get read-only grounding and a short answer. If annotation is needed, use one strong highlight and at most one note. Do not annotate nearby examples just because they are related. Roadmap/list/navigation questions are not simple when the answer names multiple items.",
     "- Notes are not mini-summaries. Add one only when it explains how to read the highlighted passage or leaves useful marginalia for replay.",
     "- Failed highlight attempts are not anchors. Retry with a smaller exact visible span, or leave that claim out of the answer.",
-    "- If the captured context already includes the needed text, use it to choose a short exact highlight and avoid extra read tools.",
+    "- If the captured context already includes the needed text, answer from it and avoid extra read or annotation tools unless the user asked for anchors.",
     "- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, anchor each key point, but keep the answer concise.",
     "- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only anchor. Every named step/item in chat needs a matching anchor, or it should be omitted/qualified as unanchored.",
     "- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
     "- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
+    "- If the user asks about a named section, heading, phrase, table, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing or not visible.",
     "- Do not call browser_extract_content more than once unless the first result is unusable.",
     "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
     "- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
     "- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
     "- browser_run_js is a last-resort runtime-state escape hatch for complex client-side pages. Use it only when explicitly requested or when readable text, DOM, screenshot, console, network, and selector tools cannot answer a dynamic/hidden-state question.",
     "- Keep browser_run_js read-only unless the user explicitly asks for page interaction. Do not use it to inspect cookies, local/session storage, authentication material, secrets, payment fields, or unrelated page data.",
+    "- For DOM value checks with browser_run_js, read .value for form controls and .textContent or relevant ARIA attributes for ordinary elements. Do not use getComputedStyle(...).content unless the user asks about CSS-generated content.",
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
     "Use markdown emphasis sparingly and only for short phrases that really matter.",
     ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
@@ -135494,9 +135642,15 @@ ${text}` : `${heading}
       const region = details.region || {};
       const viewport = details.viewport || {};
       const label = details.label || "visible region";
+      const warnings = [];
+      if (region.clipped) warnings.push(`Warning: the selector region was clipped by the viewport; visible ratio ${Math.round(Number(region.visibleRatio || 0) * 100)}%.`);
+      if (region.smallRegion || Number(region.width || 0) < 120 || Number(region.height || 0) < 120) {
+        warnings.push("Warning: the captured region is very small and may not contain the requested figure, plot, or diagram.");
+      }
       return [
         `Captured visible region image from ${formatCompactTab(tab)}.`,
         `Region: ${label}; ${region.width || "?"}x${region.height || "?"} CSS px at ${region.x || 0},${region.y || 0}; viewport ${viewport.width || "?"}x${viewport.height || "?"}.`,
+        ...warnings,
         "Use this image for visual grounding only; cite exact page text too when text is available."
       ].join("\n");
     }
@@ -135504,9 +135658,16 @@ ${text}` : `${heading}
       const content = details.content || details.extracted || {};
       const text = String(content.markdown || content.text || content.reason || content || "").trim();
       const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
+      const outlineText = typeof content.headingOutlineMarkdown === "string" ? content.headingOutlineMarkdown.trim() : Array.isArray(content.headingOutline) ? content.headingOutline.map((entry) => String(entry?.markdown || entry?.text || "").trim()).filter(Boolean).join("\n") : "";
+      const outline = outlineText ? `Page heading outline with section snippets:
+${truncateStructuredText(outlineText, 12e3)}
+
+` : "";
+      const truncationNote = content.truncated ? "\n\n(Note: readable body excerpt was truncated; use the heading outline to notice later sections.)" : "";
       return text ? `${heading}
-${truncateStructuredText(text, 8e3)}` : `${heading}
-(No readable content returned.)`;
+${outline}Readable body excerpt:
+${truncateStructuredText(text, 8e3)}${truncationNote}` : `${heading}
+${outline || "(No readable content returned.)"}`;
     }
     case "browser_get_selection": {
       const selection = details.selection || {};
@@ -135625,6 +135786,7 @@ var __browserRuntimeTest = {
   validateProviderApiKey,
   getReplayHighlightCandidates,
   getPublicActivities,
+  buildPriorExtractedPageContextForTest: buildPriorExtractedPageContext,
   finalizePublicActivitiesForTest: finalizePublicActivities,
   summarizeToolReliabilityForTest: summarizeToolReliability,
   getSelectionText,
@@ -135960,7 +136122,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     {
       name: "browser_get_visible_region_image",
       label: "Browser Visible Region Image",
-      description: "Capture the visible viewport, a CSS-selector bounding box, or viewport coordinates as an image for equations, charts, diagrams, figures, screenshots, and weak text extraction. Use this before making visual claims when text tools are insufficient.",
+      description: "Capture the visible viewport, a CSS-selector bounding box, or viewport coordinates as an image for equations, charts, diagrams, figures, screenshots, and weak text extraction. Selector captures scroll into view by default and report clipping/tiny-region warnings. Use this before making visual claims when text tools are insufficient; if the warning says the capture is clipped or tiny, capture a better region before answering.",
       parameters: VISIBLE_REGION_IMAGE_SCHEMA,
       async execute(_toolCallId, params) {
         const result = await host.runCommand("get_visible_region_image", prepareCommandParams(params, "get_visible_region_image"));
@@ -136166,7 +136328,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_run_js",
       "Browser Run JS",
-      "Last-resort read-only JavaScript evaluation for complex client-side runtime state when safer browser tools cannot answer the user's question. Do not inspect cookies, storage, secrets, payment fields, or unrelated page data.",
+      "Last-resort read-only JavaScript evaluation for complex client-side runtime state when safer browser tools cannot answer the user's question. For DOM values, read .value on controls and .textContent on ordinary elements. Do not inspect cookies, storage, secrets, payment fields, or unrelated page data.",
       RUN_JS_SCHEMA,
       "run_js"
     )
@@ -136615,6 +136777,49 @@ function createOnhandBrowserRuntime(host) {
     text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  function redactTraceText(value, maxLength = 3e3) {
+    let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return "";
+    text = text.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]");
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  function serializeTraceValue(value, options = {}) {
+    const depth = Number(options.depth ?? 4);
+    const maxStringLength = Number(options.maxStringLength ?? 3e3);
+    const maxArrayItems = Number(options.maxArrayItems ?? 24);
+    const maxObjectKeys = Number(options.maxObjectKeys ?? 48);
+    const visit4 = (entry, remainingDepth) => {
+      if (entry == null || typeof entry === "number" || typeof entry === "boolean") return entry;
+      if (typeof entry === "string") {
+        if (/^data:image\//i.test(entry)) return "[image data omitted]";
+        if (entry.length > 120 && /^[A-Za-z0-9+/]+=*$/.test(entry)) return "[base64-like data omitted]";
+        return redactTraceText(entry, maxStringLength);
+      }
+      if (typeof entry !== "object") return redactTraceText(String(entry), maxStringLength);
+      if (remainingDepth <= 0) return "[nested value omitted]";
+      if (Array.isArray(entry)) return entry.slice(0, maxArrayItems).map((item) => visit4(item, remainingDepth - 1));
+      const output = {};
+      for (const [key, rawValue] of Object.entries(entry).slice(0, maxObjectKeys)) {
+        if (/^(data|dataUrl|screenshot|screenshotDataUrl|image|outerHTML|html)$/i.test(key) && typeof rawValue === "string") {
+          output[key] = `[${key} omitted: ${rawValue.length} chars]`;
+          continue;
+        }
+        if (/^(apiKey|api_key|token|accessToken|access_token|refreshToken|refresh_token|secret|password)$/i.test(key)) {
+          output[key] = "[redacted]";
+          continue;
+        }
+        output[key] = visit4(rawValue, remainingDepth - 1);
+      }
+      return output;
+    };
+    return visit4(value, depth);
+  }
+  function traceResultDetails(result) {
+    if (!result || typeof result !== "object") return serializeTraceValue(result, { depth: 2, maxStringLength: 1200 });
+    const details = Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
+    return serializeTraceValue(details, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
   }
   function normalizeSentryFramePath(value) {
     const redacted = redactDiagnosticText(value, 240);
@@ -137102,6 +137307,88 @@ function createOnhandBrowserRuntime(host) {
     }
     uiState.updatedAt = Date.now();
   }
+  function toolTraceKey(toolCallId, toolName) {
+    return `${toolCallId || toolName || "tool"}:${toolName || "tool"}`;
+  }
+  function findToolTrace(toolCallId, toolName) {
+    const traces = Array.isArray(activeRequest?.toolTraces) ? activeRequest.toolTraces : [];
+    const key = toolTraceKey(toolCallId, toolName);
+    return [...traces].reverse().find((trace) => toolTraceKey(trace.toolCallId, trace.toolName) === key) || null;
+  }
+  function recordToolTraceStart(toolName, toolCallId, args = {}) {
+    if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
+    if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
+    const existing = findToolTrace(toolCallId, toolName);
+    const entry = existing || {
+      id: `trace:${toolCallId || crypto.randomUUID()}`,
+      toolCallId: toolCallId || "",
+      toolName,
+      state: "running",
+      startedAt: nowIso()
+    };
+    entry.state = "running";
+    entry.args = serializeTraceValue(args, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
+    if (!existing) activeRequest.toolTraces.push(entry);
+  }
+  function extractToolErrorText(result) {
+    const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
+    const textFrom = (value) => {
+      if (value == null) return "";
+      if (typeof value === "string") return value.trim();
+      if (typeof value === "number" || typeof value === "boolean") return String(value);
+      if (typeof value === "object") {
+        for (const nested of [
+          value.error,
+          value.message,
+          value.reason,
+          value.details,
+          value.cause
+        ]) {
+          const text = textFrom(nested);
+          if (text) return text;
+        }
+      }
+      return "";
+    };
+    for (const value of [
+      details?.error,
+      details?.message,
+      details?.reason,
+      result?.error,
+      result?.message
+    ]) {
+      const text = textFrom(value);
+      if (text) return text;
+    }
+    if (typeof result === "string" && result.trim()) return result.trim();
+    return "Tool failed.";
+  }
+  function recordToolTraceEnd(toolName, toolCallId, result, isError2) {
+    if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
+    if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
+    let entry = findToolTrace(toolCallId, toolName);
+    if (!entry) {
+      entry = {
+        id: `trace:${toolCallId || crypto.randomUUID()}`,
+        toolCallId: toolCallId || "",
+        toolName,
+        state: "running",
+        startedAt: nowIso()
+      };
+      activeRequest.toolTraces.push(entry);
+    }
+    entry.endedAt = nowIso();
+    entry.state = isError2 ? "error" : "complete";
+    let errorText = isError2 ? extractToolErrorText(result) : "";
+    if (isError2 && errorText === "Tool failed." && toolName === "browser_highlight_text") {
+      const attemptedText = String(entry.args?.text || "").trim();
+      if (attemptedText) errorText = `No visible text matched: ${attemptedText}`;
+    }
+    const summary = isError2 ? `${toolName} failed: ${errorText}` : toolResultTextForModel(toolName, result);
+    entry.resultSummary = redactTraceText(summary, TOOL_TRACE_RESULT_SUMMARY_MAX_CHARS);
+    entry.resultDetails = traceResultDetails(result);
+    if (isError2) entry.error = redactTraceText(errorText, 1200);
+  }
   function shouldAutoPersistReviewSnapshot(request) {
     if (!request || request.aborted) return false;
     if (Array.isArray(request.artifactIds) && request.artifactIds.length > 0) return false;
@@ -137134,9 +137421,11 @@ function createOnhandBrowserRuntime(host) {
       toolName,
       state: "running"
     });
+    recordToolTraceStart(toolName, activityId, params);
     await publishState({ status: getToolStatusMessage(toolName) });
     try {
       const result = await host.runCommand(commandName, withTargetWindowId(params, targetWindowId));
+      recordToolTraceEnd(toolName, activityId, { details: result }, false);
       appendActivity({
         id: activityId,
         kind: "tool",
@@ -137151,6 +137440,7 @@ function createOnhandBrowserRuntime(host) {
       });
       return result;
     } catch (error52) {
+      recordToolTraceEnd(toolName, activityId, { details: { error: error52?.message || String(error52) } }, true);
       appendActivity({
         id: activityId,
         kind: "tool",
@@ -137234,6 +137524,7 @@ function createOnhandBrowserRuntime(host) {
       userPrompt: activeRequest.displayPrompt,
       reply,
       activities: publicActivities,
+      toolTraces: Array.isArray(activeRequest.toolTraces) ? [...activeRequest.toolTraces] : [],
       pageActions: [...activeRequest.pageActions],
       pending: false,
       error: Boolean(finalError),
@@ -137304,6 +137595,7 @@ function createOnhandBrowserRuntime(host) {
           void publishState({ status: getToolStatusMessage(toolName) });
           break;
         }
+        recordToolTraceStart(toolName, event.toolCallId || toolName, event.args || {});
         appendActivity({
           id: `tool:${event.toolCallId || toolName}`,
           kind: "tool",
@@ -137326,6 +137618,12 @@ function createOnhandBrowserRuntime(host) {
         }
         const activityId = `tool:${event.toolCallId || toolName}`;
         if (event.isError) {
+          recordToolTraceEnd(
+            toolName,
+            event.toolCallId || toolName,
+            { details: { error: event.error || event.message || event.result || "Tool failed." } },
+            true
+          );
           appendActivity({
             id: activityId,
             kind: "tool",
@@ -137339,6 +137637,7 @@ function createOnhandBrowserRuntime(host) {
           }
           void publishState({ status: "Trying a different approach..." });
         } else {
+          recordToolTraceEnd(toolName, event.toolCallId || toolName, event.result, false);
           markRecoveredToolRetries(uiState?.activities || [], toolName);
           appendActivity({
             id: activityId,
@@ -138998,6 +139297,7 @@ function createOnhandBrowserRuntime(host) {
         displayPrompt,
         reply: "",
         pageActions: [],
+        toolTraces: [],
         artifactIds: [],
         createdAt: nowIso(),
         aborted: false,
@@ -139033,6 +139333,8 @@ function createOnhandBrowserRuntime(host) {
         }
         const browserContextDetails = await renderBrowserContextDetails(host, { targetWindowId });
         const browserContext = browserContextDetails.text;
+        const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
+        const sessionContext = [recentConversation, priorPageContext].filter(Boolean).join("\n\n");
         activeRequest.initialSelection = browserContextDetails.selection;
         const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
         const tools = selectToolsForPrompt(
@@ -139048,7 +139350,8 @@ function createOnhandBrowserRuntime(host) {
           session.learnerState,
           {
             forcePdfTools,
-            advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled
+            advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
+            suppressExtractContent: Boolean(priorPageContext)
           }
         );
         activeAgent = new Agent({
@@ -139081,7 +139384,7 @@ function createOnhandBrowserRuntime(host) {
             learningMode,
             reasoningProfile,
             tools,
-            recentConversation,
+            sessionContext,
             session.learnerState
           ),
           buildPromptImages(attachments)

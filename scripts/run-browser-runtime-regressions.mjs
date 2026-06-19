@@ -606,6 +606,41 @@ async function assertSelectionFormatting() {
 		}),
 		/## You will learn\n\n- How to create and nest components/,
 	);
+	const longPageExtract = formatToolResultForModel("browser_extract_content", {
+		tab: replaySmokeTab(),
+		content: {
+			markdown: "## 1. Intro\n\nEarly page excerpt only.",
+			truncated: true,
+			headingOutline: [
+				{ text: "## 1. Intro" },
+				{
+					text: "## 3. Positional Encodings (part 1)",
+					markdown: "## 3. Positional Encodings (part 1)\n  To incorporate sequence order information, add positional encodings P to input embeddings: X' = X + P.",
+				},
+				{ text: "## 4. Transformer Block = Attention Graph Representations + Positional Encodings" },
+			],
+		},
+	});
+	assert.match(longPageExtract, /Page heading outline with section snippets/);
+	assert.match(longPageExtract, /3\. Positional Encodings \(part 1\)/);
+	assert.match(longPageExtract, /X' = X \+ P/);
+	assert.match(longPageExtract, /body excerpt was truncated/);
+	const tinyVisualCapture = formatToolResultForModel("browser_get_visible_region_image", {
+		tab: replaySmokeTab(),
+		label: "div.jp-Cell.jp-CodeCell:nth-of-type(15)",
+		region: {
+			x: 0,
+			y: 770,
+			width: 1060,
+			height: 41,
+			clipped: true,
+			visibleRatio: 0.24,
+			smallRegion: true,
+		},
+		viewport: { width: 1060, height: 820 },
+	});
+	assert.match(tinyVisualCapture, /visible ratio 24%/);
+	assert.match(tinyVisualCapture, /very small and may not contain the requested figure/);
 	assert.match(
 		formatToolResultForModel("browser_find_elements", {
 			matches: [
@@ -874,22 +909,23 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 
 async function assertConstitutionPromptContract() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { classifyPromptForReasoning, getPromptContractForTest, getToolNamesForTest } = __browserRuntimeTest || {};
+	const { buildPriorExtractedPageContextForTest, classifyPromptForReasoning, getPromptContractForTest, getToolNamesForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof buildPriorExtractedPageContextForTest, "function", "browser runtime prior page context export is missing");
 	assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
 	assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
 	assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
 
 	const contract = getPromptContractForTest();
 	assert.match(contract.systemPrompt, /The page is the canvas/);
-	assert.match(contract.systemPrompt, /Every material claim is anchored/);
-	assert.match(contract.systemPrompt, /Do the page work before the chat answer/);
+	assert.match(contract.systemPrompt, /Every material page claim must be grounded/);
+	assert.match(contract.systemPrompt, /Read the page before answering/);
 	assert.match(contract.systemPrompt, /focused pass/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
 	assert.match(contract.systemPrompt, /explicitly asks to search online/);
 	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
-	assert.match(contract.systemPrompt, /Chat should be a brief guide to what the annotations show/);
+	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
 	assert.match(contract.systemPrompt, /every named step or item in chat must be anchored/);
 	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
@@ -902,11 +938,11 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /anchor each substantive claim in the source that supports it/);
 	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not anchored in/);
 	assert.match(contract.systemPrompt, /links\/notes\/readings\/resources listed on the current page/);
-	assert.match(contract.answerPrompt, /Page-material claims need anchors/);
+	assert.match(contract.answerPrompt, /Page-material claims need page grounding/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Linked-note\/resource requests are navigation tasks/);
-	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong highlight/);
+	assert.match(contract.answerPrompt, /Grounding budget: simple questions get read-only grounding/);
 	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not anchors/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
@@ -917,6 +953,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
 	assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
 	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
+	assert.match(contract.answerPrompt, /\.value for form controls and \.textContent/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
 	assert.match(contract.learningModeAppend, /give a concise anchored answer first/);
@@ -994,9 +1031,50 @@ async function assertConstitutionPromptContract() {
 	const explicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false);
 	const dynamicRuntimeToolNames = getToolNamesForTest("Inspect the React app state and selected value on this dynamic page.", false);
 	const disabledExplicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false, null, { advancedRuntimeInspectionEnabled: false });
+	const noPageChangeToolNames = getToolNamesForTest("Answer from this page. Do not add highlights or notes.", false);
+	const highlightWithoutNotesToolNames = getToolNamesForTest("Try to highlight the exact phrase Alpha smoke content. Do not add notes.", false);
+	const cachedFollowupToolNames = getToolNamesForTest("What activation functions are listed for FFNs on this page?", false, null, { suppressExtractContent: true });
+	const priorPageContext = buildPriorExtractedPageContextForTest(
+		{
+			turns: [
+				{
+					createdAt: "2026-06-19T20:00:00.000Z",
+					toolTraces: [
+						{
+							toolName: "browser_extract_content",
+							state: "complete",
+							resultDetails: {
+								tab: { title: "transformers_part1", url: "https://example.test/transformers_part1.html" },
+								content: { url: "https://example.test/transformers_part1.html" },
+							},
+							resultSummary:
+								"Readable content from transformers_part1:\nPage heading outline with section snippets:\n### 4.1. Attention variants\nMQA and GQA reduce KV cache cost.\n#### Activation Functions\nThe table lists ReLU with Original Transformer (Vaswani et al., 2017), GELU with BERT and GPT-2, and SwiGLU with Llama 2/3, PaLM, Gemma.\n#### Parameter Count Example\nLarge MoE layers have many FFN expert parameters.\n\nReadable body excerpt:\nEarly page excerpt.",
+						},
+					],
+				},
+			],
+		},
+		{ title: "transformers_part1", url: "https://example.test/transformers_part1.html#section" },
+		"What activation functions are listed for FFNs and which models or papers are associated with them?",
+	);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
+	assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
+	assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
+	assert.equal(noPageChangeToolNames.includes("browser_extract_content"), true, "no-page-change prompts still need read tools");
+	assert.equal(noPageChangeToolNames.includes("browser_highlight_text"), false, "explicit no-highlight prompts must not expose highlighter");
+	assert.equal(noPageChangeToolNames.includes("browser_show_note"), false, "explicit no-note prompts must not expose note tool");
+	assert.equal(noPageChangeToolNames.includes("browser_capture_state"), false, "explicit no-page-change prompts must not expose capture-state");
+	assert.equal(noPageChangeToolNames.includes("browser_restore_state"), false, "explicit no-page-change prompts must not expose restore-state");
+	assert.equal(highlightWithoutNotesToolNames.includes("browser_highlight_text"), true, "explicit highlight prompts must keep the highlighter even when notes are forbidden");
+	assert.equal(highlightWithoutNotesToolNames.includes("browser_show_note"), false, "no-note highlight prompts must still hide note creation");
+	assert.equal(cachedFollowupToolNames.includes("browser_extract_content"), false, "same-page cached followups should not re-extract full page content");
+	assert.equal(cachedFollowupToolNames.includes("browser_get_visible_text"), true, "same-page cached followups should retain lightweight read tools");
+	assert.match(priorPageContext, /Session page context already read/);
+	assert.match(priorPageContext, /Activation Functions/);
+	assert.match(priorPageContext, /ReLU with Original Transformer/);
+	assert.doesNotMatch(priorPageContext, /Early page excerpt/);
 	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
 	assert.equal(debugToolNames.includes("browser_collect_console"), true, "debug prompts should get console inspection");
 	assert.equal(debugToolNames.includes("browser_run_js"), false, "generic debug prompts should not expose JavaScript execution");
@@ -1985,6 +2063,13 @@ async function assertSessionReplayRestore() {
 	const session = store.sessions[store.currentSessionId];
 	assert.equal(session.artifactIds.length, 1, "annotated turns should auto-save a review snapshot");
 	assert.equal(session.pageActions.some((action) => action.key === "highlight:replay-highlight"), true);
+	const toolTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_highlight_text");
+	assert.ok(toolTrace, "session replay should retain detailed tool traces for debugging");
+	assert.equal(toolTrace.state, "complete");
+	assert.equal(toolTrace.args.text, "Alpha smoke content");
+	assert.match(toolTrace.resultSummary, /Highlighted "Alpha smoke content"/);
+	assert.equal(toolTrace.resultDetails.annotation.annotationId, "replay-highlight");
+	assert.equal(toolTrace.resultDetails.annotation.matchedText, "Alpha smoke content");
 	session.artifactIds = [];
 	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
@@ -1995,6 +2080,12 @@ async function assertSessionReplayRestore() {
 	assert.equal(listed.sessions[0].highlightCount, 1);
 	assert.equal(listed.sessions[0].replayableCount, 1);
 	assert.equal(listed.sessions[0].canRestore, true);
+	const replay = await runtime.getSessionReplay(session.id);
+	assert.equal(
+		replay.turns[0].toolTraces.some((trace) => trace.toolName === "browser_highlight_text" && trace.args.text === "Alpha smoke content"),
+		true,
+		"getSessionReplay should expose persisted tool traces for CLI debugging",
+	);
 
 	const callCountBeforeRestore = host.calls.length;
 	const restored = await runtime.restoreSession();
@@ -2008,6 +2099,36 @@ async function assertSessionReplayRestore() {
 		true,
 		);
 	}
+
+async function assertFailedToolTraceSummarizesError() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({ rejectHighlightText: () => true });
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "Try to highlight Alpha smoke content.",
+		displayPrompt: "failed trace smoke",
+		attachments: [],
+		learningMode: false,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete failed-trace regression");
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	const toolTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_highlight_text");
+	assert.ok(toolTrace, "failed tool should retain a trace entry for CLI debugging");
+	assert.equal(toolTrace.state, "error");
+	assert.match(toolTrace.resultSummary || "", /^browser_highlight_text failed: No visible text matched: Alpha smoke content/);
+	assert.doesNotMatch(toolTrace.resultSummary || "", /Highlighted "Alpha smoke content"/);
+	assert.match(toolTrace.error || "", /No visible text matched: Alpha smoke content/);
+	assert.equal(session.pageActions.length, 0, "failed highlight should not create replayable page actions");
+}
 
 async function assertSelectedPdfAnchorIsReusedForPromptHighlight() {
 	installChromeStorageStub();
@@ -2054,7 +2175,7 @@ async function assertSelectedPdfAnchorIsReusedForPromptHighlight() {
 		authMode: "api-key",
 	});
 	await runtime.submitPrompt({
-		prompt: "Explain the selected PDF text.",
+		prompt: "Highlight and explain the selected PDF text.",
 		displayPrompt: "selected PDF smoke",
 		attachments: [],
 		learningMode: false,
@@ -5045,7 +5166,10 @@ async function assertReplayActionActivationDoesNotUseLooseSourceCandidates() {
 async function assertSidePanelPromptTargetsOriginWindow() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const longTraceMarker = "Late trace evidence marker after former five-thousand-char cap.";
+	const longExtractedMarkdown = `# Trace retention smoke\n\n${"Alpha smoke content ".repeat(330)}\n\n${longTraceMarker}`;
 	const host = createReplayHost({
+		extractedMarkdown: longExtractedMarkdown,
 		tabs: [
 			replaySmokeTab({
 				id: 7,
@@ -5090,6 +5214,12 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 	assert.equal(host.calls.some((call) => call.name === "get_visible_region_image" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "capture_state" && call.args.windowId === 3), false);
 	assert.equal(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer" && call.args.windowId === 3), false);
+	const stored = getStoredStore();
+	const session = stored.sessions[stored.currentSessionId];
+	const extractTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_extract_content");
+	assert.ok(extractTrace, "ports smoke should retain extract-content trace details");
+	assert.ok((extractTrace.resultSummary || "").length > 5000, "extract-content trace summary should survive beyond the former 5000-char cap");
+	assert.match(extractTrace.resultSummary || "", new RegExp(longTraceMarker));
 }
 
 async function assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled() {
@@ -5440,6 +5570,7 @@ async function main() {
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
 	await assertLegacySessionBlobMigratesToSessionRecords();
 	await assertSessionReplayRestore();
+	await assertFailedToolTraceSummarizesError();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertSessionReplayDoesNotReuseSameTitleWrongUrl();
