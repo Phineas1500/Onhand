@@ -45,6 +45,7 @@
     "@earendil-works/pi-ai": "^0.79.7",
     "@mozilla/readability": "^0.6.0",
     "@sentry/browser": "^10.57.0",
+    "@vercel/speed-insights": "^2.0.0",
     "jsdom": "^26.1.0",
     "pdfjs-dist": "^4.10.38",
     "turndown": "^7.2.0",
