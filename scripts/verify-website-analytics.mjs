@@ -10,6 +10,7 @@ const EXPECTED_EVENTS = {
 	releaseDownloadEvent: "download_zip_click",
 	githubSourceEvent: "github_source_click",
 };
+const WEBSITE_PAGES = ["index.html", "404.html", "privacy.html", "support.html"];
 
 async function loadPage(fileName) {
 	const html = await readFile(join(WEBSITE_DIR, fileName), "utf8");
@@ -21,6 +22,9 @@ async function loadPage(fileName) {
 	const gaEvents = [];
 	const umamiEvents = [];
 
+	window.CSS = window.CSS || {};
+	window.CSS.escape = window.CSS.escape || ((value) => String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&"));
+	window.HTMLElement.prototype.scrollTo = window.HTMLElement.prototype.scrollTo || (() => {});
 	window.dataLayer = window.dataLayer || [];
 	window.gtag = (...args) => {
 		window.dataLayer.push(args);
@@ -33,6 +37,13 @@ async function loadPage(fileName) {
 			umamiEvents.push({ name, data });
 		},
 	};
+	window.document.addEventListener(
+		"click",
+		(event) => {
+			if (event.target?.closest?.("a[href]")) event.preventDefault();
+		},
+		{ capture: true },
+	);
 
 	window.eval(await readFile(join(WEBSITE_DIR, "site.js"), "utf8"));
 
@@ -117,7 +128,35 @@ async function verifyEventNamesDocumented() {
 	}
 }
 
+async function verifyAnalyticsScriptTags() {
+	for (const fileName of WEBSITE_PAGES) {
+		const html = await readFile(join(WEBSITE_DIR, fileName), "utf8");
+		const dom = new JSDOM(html);
+		const scripts = [...dom.window.document.querySelectorAll("script")];
+		const inlineScripts = scripts.map((script) => script.textContent || "");
+		const scriptSources = scripts.map((script) => script.getAttribute("src") || "");
+
+		assert(
+			inlineScripts.some((script) => /window\.si\s*=/.test(script)),
+			`${fileName} should initialize Vercel Speed Insights inside a script tag`,
+		);
+		assert(
+			scriptSources.includes("/_vercel/speed-insights/script.js"),
+			`${fileName} should load Vercel Speed Insights script`,
+		);
+		assert(
+			inlineScripts.some((script) => /window\.va\s*=/.test(script)),
+			`${fileName} should initialize Vercel Analytics inside a script tag`,
+		);
+		assert(
+			scriptSources.includes("/_vercel/insights/script.js"),
+			`${fileName} should load Vercel Analytics script`,
+		);
+	}
+}
+
 async function main() {
+	await verifyAnalyticsScriptTags();
 	await verifyEventNamesDocumented();
 	await verifyIndexPage();
 	await verifySupportPage();
