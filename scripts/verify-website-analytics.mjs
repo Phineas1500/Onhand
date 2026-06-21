@@ -9,6 +9,7 @@ const EXPECTED_EVENTS = {
 	chromeStoreEvent: "chrome_store_click",
 	releaseDownloadEvent: "download_zip_click",
 	githubSourceEvent: "github_source_click",
+	sponsorEvent: "sponsor_click",
 };
 const WEBSITE_PAGES = ["index.html", "404.html", "privacy.html", "support.html"];
 
@@ -70,10 +71,12 @@ async function verifyIndexPage() {
 	assert(document.querySelectorAll("[data-onhand-store-link]").length >= 3, "index should wire Chrome Store CTAs");
 	assert(document.querySelectorAll("[data-onhand-release-download]").length >= 1, "index should wire ZIP download CTA");
 	assert(document.querySelectorAll("[data-onhand-source-link]").length >= 3, "index should wire GitHub source CTAs");
+	assert(document.querySelectorAll("[data-onhand-sponsor-link]").length >= 1, "index should wire GitHub Sponsors CTA");
 
 	click(document.querySelector("[data-onhand-store-link]"));
 	click(document.querySelector("[data-onhand-release-download]"), { ctrlKey: true });
 	click(document.querySelector("[data-onhand-source-link]"));
+	click(document.querySelector("[data-onhand-sponsor-link]"));
 
 	for (const eventName of Object.values(EXPECTED_EVENTS)) {
 		assert(
@@ -96,6 +99,10 @@ async function verifyIndexPage() {
 	const sourceEvent = gaEvents.find((event) => event.name === EXPECTED_EVENTS.githubSourceEvent);
 	assert(sourceEvent.data.event_category === "source", "github_source_click should use source category");
 	assert(sourceEvent.data.link_url.includes("github.com"), "github_source_click should include repo URL");
+
+	const sponsorEvent = gaEvents.find((event) => event.name === EXPECTED_EVENTS.sponsorEvent);
+	assert(sponsorEvent.data.event_category === "support", "sponsor_click should use support category");
+	assert(sponsorEvent.data.link_url.includes("github.com/sponsors"), "sponsor_click should include Sponsors URL");
 }
 
 async function verifySupportPage() {
@@ -104,9 +111,11 @@ async function verifySupportPage() {
 
 	assert(document.querySelector("[data-onhand-release-download]"), "support should wire ZIP download CTA");
 	assert(document.querySelector("[data-onhand-source-link]"), "support should wire GitHub source CTA");
+	assert(document.querySelector("[data-onhand-sponsor-link]"), "support should wire GitHub Sponsors CTA");
 
 	click(document.querySelector("[data-onhand-release-download]"), { ctrlKey: true });
 	click(document.querySelector("[data-onhand-source-link]"));
+	click(document.querySelector("[data-onhand-sponsor-link]"));
 
 	assert(
 		gaEvents.some((event) => event.name === EXPECTED_EVENTS.releaseDownloadEvent),
@@ -115,6 +124,14 @@ async function verifySupportPage() {
 	assert(
 		umamiEvents.some((event) => event.name === EXPECTED_EVENTS.githubSourceEvent),
 		"support GitHub CTA should fire github_source_click",
+	);
+	assert(
+		gaEvents.some((event) => event.name === EXPECTED_EVENTS.sponsorEvent),
+		"support Sponsor CTA should fire sponsor_click",
+	);
+	assert(
+		umamiEvents.some((event) => event.name === EXPECTED_EVENTS.sponsorEvent),
+		"support Sponsor CTA should fire sponsor_click in Umami",
 	);
 }
 

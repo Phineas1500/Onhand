@@ -55,6 +55,7 @@ The site uses Google Analytics 4 (`G-JQ159C5BGF`) and Umami. Custom conversion e
 | `chrome_store_click` | Chrome Web Store install | `data-onhand-store-link` | `install` |
 | `download_zip_click` | Manual ZIP download / load unpacked | `data-onhand-release-download` | `release` |
 | `github_source_click` | View repo / build from source | `data-onhand-source-link` | `source` |
+| `sponsor_click` | Open GitHub Sponsors | `data-onhand-sponsor-link` | `support` |
 
 Tracked elements also receive `data-onhand-analytics-event` with the event name for inspection in DevTools.
 

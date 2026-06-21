@@ -3,12 +3,14 @@
 const ONHAND_RELEASE = {
   version: '0.3.7',
   repo: 'https://github.com/Phineas1500/Onhand',
+  sponsor: 'https://github.com/sponsors/Phineas1500',
 };
 
 const ONHAND_ANALYTICS = {
   chromeStoreEvent: 'chrome_store_click',
   releaseDownloadEvent: 'download_zip_click',
   githubSourceEvent: 'github_source_click',
+  sponsorEvent: 'sponsor_click',
 };
 
 const ONHAND_STORE = {
@@ -27,6 +29,7 @@ const ONHAND_STORE = {
   const downloadEventName = ONHAND_ANALYTICS.releaseDownloadEvent;
   const chromeStoreEventName = ONHAND_ANALYTICS.chromeStoreEvent;
   const githubSourceEventName = ONHAND_ANALYTICS.githubSourceEvent;
+  const sponsorEventName = ONHAND_ANALYTICS.sponsorEvent;
 
   function releaseDownloadData(node){
     return {
@@ -124,6 +127,17 @@ const ONHAND_STORE = {
       trackConversion(githubSourceEventName, 'source', ONHAND_RELEASE.repo, {
         release_version: versionLabel,
         link_url: ONHAND_RELEASE.repo,
+        link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+      });
+    });
+  });
+  document.querySelectorAll('[data-onhand-sponsor-link]').forEach((node) => {
+    node.href = ONHAND_RELEASE.sponsor;
+    node.setAttribute('data-onhand-analytics-event', sponsorEventName);
+    node.addEventListener('click', () => {
+      trackConversion(sponsorEventName, 'support', ONHAND_RELEASE.sponsor, {
+        release_version: versionLabel,
+        link_url: ONHAND_RELEASE.sponsor,
         link_text: node.textContent.replace(/\s+/g, ' ').trim(),
       });
     });
