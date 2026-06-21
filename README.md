@@ -178,6 +178,10 @@ Voice requires an OpenAI platform API key saved in the Onhand options page. Open
 - Some pages cannot be debugged, such as privileged browser pages.
 - Session restore/review is now artifact-backed for annotated turns. The side panel's Review action can preview saved snapshots/transcripts, and annotated replies automatically save an HTML/screenshot snapshot when the model did not explicitly capture one. Restore fidelity for changed pages and missing tabs is still in progress.
 
+## Support
+
+If Onhand is useful to you, you can support ongoing development through [GitHub Sponsors](https://github.com/sponsors/Phineas1500).
+
 ## License
 
 Onhand is licensed under the Apache License, Version 2.0. See `LICENSE` for details.
