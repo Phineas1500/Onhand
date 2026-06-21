@@ -132109,11 +132109,14 @@ var ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS = 48e3;
 var ONHAND_FREE_VISUAL_RECENT_TEXT_BLOCK_MAX_CHARS = 9e3;
 var ONHAND_FREE_VISUAL_OLD_TOOL_TEXT_BLOCK_MAX_CHARS = 2200;
 var ONHAND_FREE_VISUAL_OLD_TEXT_BLOCK_MAX_CHARS = 3600;
-var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
+var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "";
 var ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 var ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
 var ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
+var ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY = "onhandFreeTierQuotaBypassSecret";
+var ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY = "onhandFreeTierQuotaBypassExpiresAt";
+var ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 var ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 var ONHAND_SENTRY_DIST = "chrome";
 var ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
@@ -132248,9 +132251,9 @@ Onhand's constitution:
 Default answer mode:
 - For ordinary answer-only questions about page material, answer from captured visible/readable text without creating highlights or notes. Use page annotations when the user asks for highlighting/notes, asks where evidence is located, needs a durable learning/replay anchor, or asks for source/navigation work where anchors are the deliverable.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
-- If the user asks about a named section, heading, phrase, table, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing or not visible.
+- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session anchor when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
-- Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
+- Grounding budget: simple answer-only questions use read-only grounding and a short answer. If the user asks for annotations, evidence location, learning/replay anchors, or source-navigation work, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
 - Do not add notes that merely paraphrase the highlight. A note should name the role of the passage, explain a hard step, or leave useful marginalia for session replay.
 - Only successful highlight/note tool results count as anchors. If a highlight attempt fails, retry with a smaller exact visible span or omit/qualify that claim in chat.
 - For multi-part, comparative, "show evidence", or confused follow-up questions, anchor each distinct key point, but keep each note and chat paragraph short. Stop once the answer is supported.
@@ -132360,7 +132363,8 @@ var VISIBLE_TEXT_SCHEMA = typebox_exports.Object({
 });
 var EXTRACT_CONTENT_SCHEMA = typebox_exports.Object({
   ...READ_TAB_SELECTOR_SCHEMA,
-  maxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum characters of readable page content to return" }))
+  maxChars: typebox_exports.Optional(typebox_exports.Number({ description: "Maximum characters of readable page content to return" })),
+  query: typebox_exports.Optional(typebox_exports.String({ description: "Short search query used to prioritize matching headings, tables, rows, or values in long pages" }))
 });
 var VIEWPORT_HEADINGS_SCHEMA = typebox_exports.Object({
   ...READ_TAB_SELECTOR_SCHEMA,
@@ -132565,12 +132569,12 @@ function promptAsksForLinkedPageNavigation(text) {
   const hasNavigationVerb = textHasAny(text, /\b(open(?: up)?|follow|click|visit|navigate(?: to)?|go to|load|pull up|bring up|inspect|look at|check|review|read|scan)\b/);
   const hasLinkedPageTarget = textHasAny(
     text,
-    /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|pages?|articles?|papers?|documents?)\b/
+    /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b/
   );
   if (hasNavigationVerb && hasLinkedPageTarget) return true;
   return textHasAny(
     text,
-    /\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|pages?|readings?|resources?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/
+    /\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/
   );
 }
 function nowIso() {
@@ -133112,7 +133116,21 @@ function normalizeReviewConceptKey(label) {
 async function getFreeTierBaseUrl() {
   const stored = await chrome.storage.local.get({ [ONHAND_FREE_BASE_URL_STORAGE_KEY]: "" });
   const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
-  return (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const baseUrl = (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  if (!baseUrl) {
+    throw new Error("Onhand Free is not configured. Set chrome.storage.local.onhandFreeTierBaseUrl to the deployed free-tier Worker URL.");
+  }
+  return baseUrl;
+}
+async function getFreeTierQuotaBypassSecret() {
+  const stored = await chrome.storage.local.get({
+    [ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY]: "",
+    [ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY]: ""
+  });
+  const expiresAt2 = String(stored[ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY] || "").trim();
+  const expiresAtMs = expiresAt2 ? Date.parse(expiresAt2) : NaN;
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) return "";
+  return String(stored[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY] || "").trim();
 }
 async function getOrRegisterFreeTierToken() {
   const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
@@ -133136,6 +133154,7 @@ async function getOrRegisterFreeTierToken() {
 }
 async function buildFreeTierModel() {
   const baseUrl = await getFreeTierBaseUrl();
+  const quotaBypassSecret = await getFreeTierQuotaBypassSecret();
   return {
     id: ONHAND_FREE_MODEL,
     name: "Onhand Free (DeepSeek + Mistral Vision)",
@@ -133146,6 +133165,7 @@ async function buildFreeTierModel() {
     input: ["text", "image"],
     contextWindow: ONHAND_FREE_TEXT_CONTEXT_WINDOW,
     maxTokens: 32768,
+    ...quotaBypassSecret ? { headers: { [ONHAND_FREE_QUOTA_BYPASS_HEADER]: quotaBypassSecret } } : {},
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   };
 }
@@ -133727,13 +133747,13 @@ function openRuntimeDb() {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(ARTIFACT_STORE_NAME)) {
-        const store = db.createObjectStore(ARTIFACT_STORE_NAME, { keyPath: "id" });
-        store.createIndex("createdAt", "createdAt", { unique: false });
-        store.createIndex("sessionId", "sessionId", { unique: false });
+        const store2 = db.createObjectStore(ARTIFACT_STORE_NAME, { keyPath: "id" });
+        store2.createIndex("createdAt", "createdAt", { unique: false });
+        store2.createIndex("sessionId", "sessionId", { unique: false });
       }
       if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {
-        const store = db.createObjectStore(SESSION_STORE_NAME, { keyPath: "id" });
-        store.createIndex("updatedAt", "updatedAt", { unique: false });
+        const store2 = db.createObjectStore(SESSION_STORE_NAME, { keyPath: "id" });
+        store2.createIndex("updatedAt", "updatedAt", { unique: false });
       }
     };
     request.onerror = () => reject(request.error || new Error("Could not open Onhand runtime store."));
@@ -133745,9 +133765,9 @@ async function withRuntimeStore(storeName, mode, callback) {
   try {
     return await new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, mode);
-      const store = transaction.objectStore(storeName);
+      const store2 = transaction.objectStore(storeName);
       let settled = false;
-      Promise.resolve(callback(store)).then((value) => {
+      Promise.resolve(callback(store2)).then((value) => {
         settled = true;
         resolve(value);
       }).catch((error52) => {
@@ -133781,7 +133801,7 @@ async function writeFallbackSessions(sessions) {
 }
 async function getAllSessionRecords() {
   if (canUseIndexedDb()) {
-    const all = await withRuntimeStore(SESSION_STORE_NAME, "readonly", async (store) => await requestToPromise(store.getAll()));
+    const all = await withRuntimeStore(SESSION_STORE_NAME, "readonly", async (store2) => await requestToPromise(store2.getAll()));
     return Array.isArray(all) ? all : [];
   }
   return Object.values(await readFallbackSessions());
@@ -133790,8 +133810,8 @@ async function putSessionRecords(sessions) {
   const records = (Array.isArray(sessions) ? sessions : []).filter((session) => session && typeof session.id === "string" && session.id);
   if (!records.length) return;
   if (canUseIndexedDb()) {
-    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store) => {
-      await Promise.all(records.map((session) => requestToPromise(store.put(session))));
+    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store2) => {
+      await Promise.all(records.map((session) => requestToPromise(store2.put(session))));
     });
     return;
   }
@@ -133803,8 +133823,8 @@ async function deleteSessionRecords(sessionIds) {
   const ids = (Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || "").trim()).filter(Boolean);
   if (!ids.length) return;
   if (canUseIndexedDb()) {
-    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store) => {
-      await Promise.all(ids.map((id) => requestToPromise(store.delete(id))));
+    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store2) => {
+      await Promise.all(ids.map((id) => requestToPromise(store2.delete(id))));
     });
     return;
   }
@@ -133822,8 +133842,8 @@ async function writeFallbackArtifacts(artifacts) {
 }
 async function putBrowserArtifact(artifact) {
   if (canUseIndexedDb()) {
-    await withArtifactStore("readwrite", async (store) => {
-      await requestToPromise(store.put(artifact));
+    await withArtifactStore("readwrite", async (store2) => {
+      await requestToPromise(store2.put(artifact));
     });
     return;
   }
@@ -133835,7 +133855,7 @@ async function getBrowserArtifact(artifactId) {
   const id = String(artifactId || "").trim();
   if (!id) return null;
   if (canUseIndexedDb()) {
-    return await withArtifactStore("readonly", async (store) => await requestToPromise(store.get(id)) || null);
+    return await withArtifactStore("readonly", async (store2) => await requestToPromise(store2.get(id)) || null);
   }
   const artifacts = await readFallbackArtifacts();
   return artifacts[id] || null;
@@ -133845,8 +133865,8 @@ async function listBrowserArtifacts(params = {}) {
   const query = String(params.query || "").trim().toLowerCase();
   let artifacts = [];
   if (canUseIndexedDb()) {
-    artifacts = await withArtifactStore("readonly", async (store) => {
-      const all = await requestToPromise(store.getAll());
+    artifacts = await withArtifactStore("readonly", async (store2) => {
+      const all = await requestToPromise(store2.getAll());
       return Array.isArray(all) ? all : [];
     });
   } else {
@@ -134235,6 +134255,54 @@ function extractAssistantFailure(messages = [], userAborted = false) {
   }
   return null;
 }
+function hasCompletedUserToolTrace(request) {
+  return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+    (trace) => trace?.state === "complete" && trace?.toolName && !isInternalToolName(trace.toolName)
+  );
+}
+function hasCompletedTabInventory(request) {
+  return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+    (trace) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs"
+  );
+}
+function annotationIdParts(annotationId) {
+  const match2 = String(annotationId || "").trim().match(/^onhand-(\d+)-([A-Za-z0-9]+)$/);
+  return match2 ? { stamp: match2[1], suffix: match2[2] } : null;
+}
+function resolveActiveAnnotationId(request, annotationId, noteText = "") {
+  const requested = compactActionText(annotationId);
+  if (!requested || !request) return requested;
+  const annotations = (Array.isArray(request.pageActions) ? request.pageActions : []).filter((action) => action?.type === "annotation" && compactActionText(action.annotationId)).map((action) => ({
+    annotationId: compactActionText(action.annotationId),
+    text: `${action.detail || ""} ${action.citationText || ""}`.toLowerCase(),
+    parts: annotationIdParts(action.annotationId)
+  }));
+  if (!annotations.length || annotations.some((entry) => entry.annotationId === requested)) return requested;
+  const requestedParts = annotationIdParts(requested);
+  if (!requestedParts) return requested;
+  const noteWords = new Set(String(noteText || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+  const scored = annotations.map((entry) => {
+    let score = 0;
+    if (entry.parts?.stamp === requestedParts.stamp) score += 30;
+    if (entry.parts?.suffix === requestedParts.suffix) score += 20;
+    for (const word of noteWords) {
+      if (entry.text.includes(word)) score += 1;
+    }
+    return { ...entry, score };
+  }).filter((entry) => entry.score >= 20).sort((left, right) => right.score - left.score);
+  return scored[0]?.annotationId || requested;
+}
+function buildBlankReplyRetryPrompt(request) {
+  const latestTrace = (Array.isArray(request?.toolTraces) ? [...request.toolTraces] : []).reverse().find((trace) => trace?.state === "complete" && trace?.resultSummary);
+  const toolExcerpt = latestTrace?.resultSummary ? truncateStructuredText(String(latestTrace.resultSummary), 7e3) : "";
+  return [
+    "You completed browser/tool work but returned no answer.",
+    "Answer the original user question now using the completed tool result below. Do not call more tools.",
+    `Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
+    toolExcerpt ? `Completed tool result:
+${toolExcerpt}` : ""
+  ].filter(Boolean).join("\n\n");
+}
 function buildSessionTitleFromPrompt(prompt) {
   const cleaned = String(prompt || "").replace(/\s+/g, " ").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/[?.!]+$/g, "") || "New session";
   return truncate2(cleaned, 80);
@@ -134307,6 +134375,18 @@ function promptKeywordsForPriorPageContext(prompt) {
     )
   ).filter((word) => !stop.has(word)).slice(0, 24);
 }
+function promptReferencesPriorPageContext(prompt) {
+  const text = String(prompt || "").toLowerCase();
+  return /\b(?:using|from|based on|with)\s+(?:the\s+)?(?:same|previous|prior|earlier|above)\s+(?:page|document|doc|article|paper|source|context|extract|lecture|notes?)\b/.test(text) || /\b(?:same|previous|prior|earlier|above)\s+(?:page|document|doc|article|paper|source|context|extract|lecture|notes?)\b/.test(text);
+}
+function promptNeedsExactReadableContext(prompt) {
+  return /\b(?:exact|verbatim|quote|quoted|formula|equation|symbol|notation|math|sinusoidal|sine|cosine|table|tables|row|rows|column|columns|tensor|tensors|parameter(?:[-\s]?count)?|parameters?|params?|percent|percentage|value|values)\b|%/i.test(String(prompt || ""));
+}
+function buildReadableContentQuery(prompt) {
+  const clean = stripVoicePromptPrefix(prompt).replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return clean.slice(0, 320);
+}
 function splitPriorExtractSections(summary) {
   const outlineMatch = summary.match(/Page heading outline with section snippets:\n([\s\S]*?)(?:\n\nReadable body excerpt:|\n\n\(Note:|$)/i);
   const source = (outlineMatch?.[1] || summary).replace(/¶/g, "");
@@ -134325,8 +134405,10 @@ function splitPriorExtractSections(summary) {
   return sections.length ? sections : [truncateStructuredText(source, PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS)];
 }
 function buildPriorExtractedPageContext(session, activeTab, prompt) {
+  if (promptNeedsExactReadableContext(prompt)) return "";
   const activeUrl = normalizeUrlForPriorPageContext(activeTab?.url);
-  if (!activeUrl) return "";
+  const referencesPriorPage = promptReferencesPriorPageContext(prompt);
+  if (!activeUrl && !referencesPriorPage) return "";
   const keywords = promptKeywordsForPriorPageContext(prompt);
   const candidates = [];
   for (const turn of Array.isArray(session.turns) ? session.turns : []) {
@@ -134335,7 +134417,8 @@ function buildPriorExtractedPageContext(session, activeTab, prompt) {
       if (trace?.toolName !== "browser_extract_content" || trace.state !== "complete") continue;
       const details = trace.resultDetails || {};
       const traceUrl = normalizeUrlForPriorPageContext(details?.tab?.url || details?.content?.url);
-      if (!traceUrl || traceUrl !== activeUrl) continue;
+      const activeMatch = Boolean(activeUrl && traceUrl && traceUrl === activeUrl);
+      if (!traceUrl || !activeMatch && !referencesPriorPage) continue;
       const summary = String(trace.resultSummary || "").trim();
       if (!summary) continue;
       for (const section of splitPriorExtractSections(summary)) {
@@ -134343,10 +134426,13 @@ function buildPriorExtractedPageContext(session, activeTab, prompt) {
         const score = keywords.reduce((total, keyword) => total + (lower.includes(keyword) ? 1 : 0), 0);
         if (score <= 0) continue;
         candidates.push({
-          score,
+          score: score + (activeMatch ? 100 : 0) + (referencesPriorPage ? 10 : 0),
           createdAt: String(turn.createdAt || ""),
           text: truncateStructuredText(section, PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS),
-          summaryLength: summary.length
+          summaryLength: summary.length,
+          title: String(details?.tab?.title || details?.content?.title || activeTab?.title || ""),
+          url: traceUrl,
+          activeMatch
         });
       }
     }
@@ -134355,9 +134441,10 @@ function buildPriorExtractedPageContext(session, activeTab, prompt) {
   const selected = candidates.sort((left, right) => right.score - left.score || String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, PRIOR_PAGE_CONTEXT_MAX_SECTIONS);
   const body = selected.map((entry) => entry.text).join("\n\n");
   if (!body.trim()) return "";
+  const source = selected[0];
   return [
-    "Session page context already read from the active page:",
-    `Source: ${activeTab?.title || "(untitled)"} - ${activeUrl}`,
+    `Session page context already read from ${source.activeMatch ? "the active page" : "a prior page in this session"}:`,
+    `Source: ${source.title || activeTab?.title || "(untitled)"} - ${source.url || activeUrl}`,
     "Use this cached extract before calling browser_extract_content again. If it answers the follow-up, do not re-extract the page.",
     truncateStructuredText(body, PRIOR_PAGE_CONTEXT_MAX_CHARS)
   ].join("\n");
@@ -134507,7 +134594,7 @@ function classifyPromptForReasoning(prompt, attachments = [], learningMode = fal
   const text = String(prompt || "").toLowerCase();
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
   if (hasAttachments) return "deep";
-  const asksForToolSmoke = /\bbrowser_[a-z_]+\b|\b(port smoke|smoke test|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
+  const asksForToolSmoke = /\bbrowser_[a-z_]+\b|\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
   const asksForPageAction = /\b(highlight|annotate|note|scroll|click|open|navigate|go to|fill|type|select|press|mark|point (?:me )?to|show me where)\b/.test(text);
   const asksForDeepWork = /\b(compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs)\b/.test(
     text
@@ -135094,7 +135181,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
   const text = String(prompt || "").toLowerCase();
   const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
   const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
-  const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
+  const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b/.test(text);
   const pageChangePolicy = promptPageChangePolicy(prompt);
   const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
   const selectableToolNames = allTools.map((tool) => tool.name).filter((toolName) => runtimeInspectionEnabled || !RUNTIME_JS_TOOL_NAMES.includes(toolName)).filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
@@ -135166,15 +135253,19 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     }
     if (pageChangePolicy.forbidsNotes) selected.delete("browser_show_note");
   }
-  if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content")) {
+  const needsExactReadableContext = promptNeedsExactReadableContext(text);
+  if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content") && !needsExactReadableContext) {
     selected.delete("browser_extract_content");
+  }
+  if (needsExactReadableContext && selected.has("browser_extract_content") && !explicitToolNames.has("browser_get_visible_text")) {
+    selected.delete("browser_get_visible_text");
   }
   if (!selected.size) add(CORE_READ_TOOL_NAMES);
   return allTools.filter((tool) => selected.has(tool.name));
 }
 function shouldIncludeToolInventory(prompt) {
   const text = String(prompt || "").toLowerCase();
-  return Boolean(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN)) || /\b(port smoke|smoke test|ports?|tools?|debug(?:ging)?|diagnostic)\b/.test(text);
+  return Boolean(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN)) || /\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic)\b/.test(text);
 }
 function buildToolInventory(prompt, tools) {
   if (!shouldIncludeToolInventory(prompt) || !tools.length) return "";
@@ -135213,7 +135304,7 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only anchor. Every named step/item in chat needs a matching anchor, or it should be omitted/qualified as unanchored.",
     "- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
     "- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
-    "- If the user asks about a named section, heading, phrase, table, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing or not visible.",
+    "- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.",
     "- Do not call browser_extract_content more than once unless the first result is unusable.",
     "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
     "- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
@@ -135977,7 +136068,8 @@ function createRecordLearningEventTool(recordLearningEvent) {
     }
   };
 }
-function createTools(host, artifactHooks, prepareCommandParams = (params) => params, recordLearningEvent = async (event) => applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" })) {
+function createTools(host, artifactHooks, prepareCommandParams = (params) => params, recordLearningEvent = async (event) => applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" }), recordEffectiveCommandParams = () => {
+}) {
   const commandTool = (name, label, description, parameters, commandName, options = {}) => ({
     name,
     label,
@@ -135987,17 +136079,19 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     async execute(_toolCallId, params) {
       let result;
       try {
-        result = await host.runCommand(commandName, prepareCommandParams(params, commandName));
+        const effectiveParams = prepareCommandParams(params, commandName);
+        recordEffectiveCommandParams(name, String(_toolCallId || name), params, effectiveParams, commandName);
+        result = await host.runCommand(commandName, effectiveParams);
       } catch (error52) {
         if (commandName !== "highlight_text") throw error52;
         const candidates = buildHighlightRetryCandidates(params?.text);
         let lastError = error52;
         for (const candidate of candidates) {
           try {
-            result = await host.runCommand(
-              commandName,
-              prepareCommandParams({ ...params, text: candidate }, commandName)
-            );
+            const retryParams = { ...params, text: candidate };
+            const effectiveRetryParams = prepareCommandParams(retryParams, commandName);
+            recordEffectiveCommandParams(name, String(_toolCallId || name), params, effectiveRetryParams, commandName);
+            result = await host.runCommand(commandName, effectiveRetryParams);
             result = {
               ...result,
               highlightRetry: {
@@ -136144,7 +136238,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     commandTool(
       "browser_extract_content",
       "Browser Extract Content",
-      "Extract readable article or document text from the live page. Use at most once per response unless the first result is unusable.",
+      "Extract readable article or document text from the live page. For named sections, tables, rows, formulas, tensors, or exact values, pass a short query so matching long-page sections are prioritized. Use at most once per response unless the first result is unusable.",
       EXTRACT_CONTENT_SCHEMA,
       "extract_content"
     ),
@@ -136716,12 +136810,12 @@ function createOnhandBrowserRuntime(host) {
     })();
     return await storePromise;
   }
-  async function saveStore(store, changed) {
-    storePromise = Promise.resolve(store);
+  async function saveStore(store2, changed) {
+    storePromise = Promise.resolve(store2);
     try {
       await putSessionRecords(changed?.sessions || []);
       await deleteSessionRecords(changed?.deletedSessionIds || []);
-      await chrome.storage.local.set({ [STORAGE_KEY]: { settings: store.settings, currentSessionId: store.currentSessionId } });
+      await chrome.storage.local.set({ [STORAGE_KEY]: { settings: store2.settings, currentSessionId: store2.currentSessionId } });
     } catch (error52) {
       host.log?.("onhand store save failed", error52);
       try {
@@ -136740,6 +136834,9 @@ function createOnhandBrowserRuntime(host) {
   }
   function telemetryEventData(settings2, data = {}) {
     return {
+      source: compactTelemetryValue(data.source || "extension", 48),
+      turn_id: compactOnhandTelemetryId(data.turn_id ?? data.turnId),
+      session_id: compactOnhandTelemetryId(data.session_id ?? data.sessionId),
       auth_mode: compactTelemetryValue(settings2.authMode, 40),
       ai_provider: compactTelemetryValue(settings2.aiProvider, 80),
       ai_model: compactTelemetryValue(settings2.aiModel, 120),
@@ -136763,6 +136860,7 @@ function createOnhandBrowserRuntime(host) {
   function classifyTelemetryError(error52) {
     const message = compactTelemetryValue(error52?.message || error52, 240).toLowerCase();
     if (!message) return "";
+    if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current reply)/.test(message)) return "busy";
     if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
     if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
     if (/network|fetch|connection|offline|reach/.test(message)) return "network";
@@ -136770,6 +136868,26 @@ function createOnhandBrowserRuntime(host) {
     if (/aborted|cancelled|stopped/.test(message)) return "aborted";
     if (/permission|debugger|side panel|tab|chrome/.test(message)) return "browser_permission";
     return "runtime_error";
+  }
+  function shouldSuppressSentryException(kind, error52, data = {}) {
+    if (data.force_sentry_capture || data.forceSentryCapture) return false;
+    const message = compactTelemetryValue(error52?.message || error52, 500).toLowerCase();
+    const messageType = compactTelemetryValue(data.message_type || data.messageType, 120);
+    const errorKind = compactTelemetryValue(data.error_kind || data.errorKind || classifyTelemetryError(error52), 80);
+    if (errorKind === "aborted" || errorKind === "busy") return true;
+    if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
+      return true;
+    }
+    if (kind !== "runtime_exception") return false;
+    if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
+    if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;
+    if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
+      return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
+    }
+    if (/^sidebar:realtime-(?:browser|pdf)-tool$/.test(messageType)) {
+      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
+    }
+    return false;
   }
   function redactDiagnosticText(value, maxLength = 1200) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -136907,6 +137025,7 @@ function createOnhandBrowserRuntime(host) {
     const explicitUserReport = Boolean(data.explicit_user_report);
     sentryDiagnosticsAllowed = diagnosticsAllowed;
     if (!diagnosticsAllowed && !explicitUserReport) return false;
+    if (shouldSuppressSentryException(kind, error52, data)) return false;
     if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
     initializeSentryIfNeeded();
     const message = redactDiagnosticText(error52?.message || error52 || kind, 500);
@@ -136984,29 +137103,39 @@ function createOnhandBrowserRuntime(host) {
       })).filter((activity) => activity.kind || activity.tool_name || activity.state)
     };
   }
-  async function ensureDiagnosticsClientId(store) {
-    const settings2 = store.settings;
+  async function ensureDiagnosticsClientId(store2) {
+    const settings2 = store2.settings;
     if (settings2.diagnosticsClientId) return settings2.diagnosticsClientId;
     settings2.diagnosticsClientId = crypto.randomUUID();
-    store.settings = settings2;
-    await saveStore(store, {});
+    store2.settings = settings2;
+    await saveStore(store2, {});
     return settings2.diagnosticsClientId;
   }
   async function trackExtensionEvent(eventName, data = {}) {
     const name = compactTelemetryValue(eventName, 80);
     if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
-    const store = await loadStore();
-    const settings2 = store.settings;
+    const store2 = await loadStore();
+    const settings2 = store2.settings;
     if (!settings2.diagnosticsEnabled) return false;
-    const clientId = await ensureDiagnosticsClientId(store);
+    const clientId = await ensureDiagnosticsClientId(store2);
     const baseUrl = await getFreeTierBaseUrl();
     const manifest = chrome.runtime?.getManifest?.() || {};
+    const freeTierBypassActive = settings2.aiProvider === ONHAND_FREE_PROVIDER && Boolean(await getFreeTierQuotaBypassSecret().catch(() => ""));
+    const currentTurnId = data.turn_id ?? data.turnId ?? activeRequest?.id ?? "";
+    const currentSessionId = data.session_id ?? data.sessionId ?? store2.currentSessionId ?? "";
+    const requestSource = compactTelemetryValue(activeRequest?.source || "", 32);
+    const telemetrySource = data.source || (requestSource && requestSource !== "sidebar" ? `extension-${requestSource}` : freeTierBypassActive ? "extension-free-tier-bypass" : "extension");
     const payload = {
       event_name: name,
       client_id: clientId,
       extension_version: compactTelemetryValue(manifest.version, 40),
       runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
-      data: telemetryEventData(settings2, data)
+      data: telemetryEventData(settings2, {
+        ...data,
+        turn_id: currentTurnId,
+        session_id: currentSessionId,
+        source: telemetrySource
+      })
     };
     await fetch(`${baseUrl}/telemetry`, {
       method: "POST",
@@ -137017,33 +137146,33 @@ function createOnhandBrowserRuntime(host) {
     return true;
   }
   async function getCurrentSession() {
-    const store = await loadStore();
-    return store.sessions[store.currentSessionId];
+    const store2 = await loadStore();
+    return store2.sessions[store2.currentSessionId];
   }
-  async function ensureSessionLoaded(store, sessionId) {
-    if (!sessionId || store.sessions[sessionId]) return;
+  async function ensureSessionLoaded(store2, sessionId) {
+    if (!sessionId || store2.sessions[sessionId]) return;
     try {
       for (const record2 of await getAllSessionRecords()) {
         const session = normalizeSession(record2);
-        if (!store.sessions[session.id]) store.sessions[session.id] = session;
+        if (!store2.sessions[session.id]) store2.sessions[session.id] = session;
       }
     } catch (error52) {
       host.log?.("onhand session reload failed", error52);
     }
   }
   async function replaceCurrentSession(session) {
-    const store = await loadStore();
+    const store2 = await loadStore();
     session.updatedAt = nowIso();
-    store.sessions[session.id] = session;
-    store.currentSessionId = session.id;
-    await saveStore(store, { sessions: [session] });
+    store2.sessions[session.id] = session;
+    store2.currentSessionId = session.id;
+    await saveStore(store2, { sessions: [session] });
     return session;
   }
   async function ensureUiState() {
     if (uiState) return uiState;
-    const store = await loadStore();
-    const session = store.sessions[store.currentSessionId];
-    uiState = createEmptyState(session, store.settings);
+    const store2 = await loadStore();
+    const session = store2.sessions[store2.currentSessionId];
+    uiState = createEmptyState(session, store2.settings);
     uiState.messages = buildConversationMessages(session.messages);
     return uiState;
   }
@@ -137075,17 +137204,17 @@ function createOnhandBrowserRuntime(host) {
     };
   }
   async function recordLearningEventForSession(session, event, mode) {
-    const store = await loadStore();
-    const storedSession = store.sessions[session.id] || session;
+    const store2 = await loadStore();
+    const storedSession = store2.sessions[session.id] || session;
     const enrichedEvent = enrichLearningEventSource(storedSession, event);
     storedSession.learnerState = applyLearningEvent(setLearnerStateMode(storedSession.learnerState, mode), enrichedEvent, { mode });
     storedSession.updatedAt = nowIso();
-    store.sessions[storedSession.id] = storedSession;
-    if (store.currentSessionId === storedSession.id) {
+    store2.sessions[storedSession.id] = storedSession;
+    if (store2.currentSessionId === storedSession.id) {
       session.learnerState = storedSession.learnerState;
       session.updatedAt = storedSession.updatedAt;
     }
-    await saveStore(store, { sessions: [storedSession] });
+    await saveStore(store2, { sessions: [storedSession] });
     await publishState({
       currentSession: buildSessionState(storedSession),
       learnerState: storedSession.learnerState
@@ -137093,8 +137222,8 @@ function createOnhandBrowserRuntime(host) {
     return storedSession.learnerState;
   }
   async function recordRealtimeVoiceTurn(request = {}) {
-    const store = await loadStore();
-    const session = store.sessions[store.currentSessionId];
+    const store2 = await loadStore();
+    const session = store2.sessions[store2.currentSessionId];
     const voiceTurnId = String(request.voiceTurnId || crypto.randomUUID()).trim();
     const userPrompt = truncate2(String(request.userPrompt || "").trim(), RECENT_CONTEXT_PROMPT_MAX_CHARS);
     const reply = truncate2(String(request.reply || "").trim(), RECENT_CONTEXT_REPLY_MAX_CHARS);
@@ -137190,8 +137319,8 @@ function createOnhandBrowserRuntime(host) {
     return extractAssistantText(agent.state.messages);
   }
   async function runRealtimePedagogicalPlanner(request) {
-    const store = await loadStore();
-    const session = store.sessions[store.currentSessionId];
+    const store2 = await loadStore();
+    const session = store2.sessions[store2.currentSessionId];
     const userQuestion = compactInternalText(request?.userQuestion || request?.user_question || request?.prompt, 600);
     if (!userQuestion) throw new Error("userQuestion is required.");
     const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
@@ -137230,7 +137359,7 @@ function createOnhandBrowserRuntime(host) {
           recentConversation,
           learnerState
         }),
-        store.settings,
+        store2.settings,
         850,
         15e3,
         buildVisualRegionPromptImages(browserContextDetails.visualRegion)
@@ -137242,13 +137371,13 @@ function createOnhandBrowserRuntime(host) {
     return {
       move: normalizePlannerMove(raw, { userQuestion, browserContext, anchorCandidates }),
       raw,
-      model: store.settings.aiModel,
-      provider: store.settings.aiProvider
+      model: store2.settings.aiModel,
+      provider: store2.settings.aiProvider
     };
   }
   async function runRealtimePedagogicalEvaluator(request) {
-    const store = await loadStore();
-    const session = store.sessions[store.currentSessionId];
+    const store2 = await loadStore();
+    const session = store2.sessions[store2.currentSessionId];
     const userResponse = compactInternalText(request?.userResponse || request?.user_response || request?.response, 800);
     if (!userResponse) throw new Error("userResponse is required.");
     const previousMove = request?.previousMove || request?.previous_move || {};
@@ -137274,7 +137403,7 @@ function createOnhandBrowserRuntime(host) {
           recentConversation,
           learnerState
         }),
-        store.settings,
+        store2.settings,
         850,
         15e3,
         buildVisualRegionPromptImages(browserContextDetails.visualRegion)
@@ -137286,8 +137415,8 @@ function createOnhandBrowserRuntime(host) {
     return {
       evaluation: normalizeEvaluatorMove(raw, { userResponse, previousMove }),
       raw,
-      model: store.settings.aiModel,
-      provider: store.settings.aiProvider
+      model: store2.settings.aiModel,
+      provider: store2.settings.aiProvider
     };
   }
   function updateAssistantDraft(requestId, text, extra = {}) {
@@ -137329,6 +137458,13 @@ function createOnhandBrowserRuntime(host) {
     entry.state = "running";
     entry.args = serializeTraceValue(args, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
     if (!existing) activeRequest.toolTraces.push(entry);
+  }
+  function recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveArgs = {}) {
+    if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
+    if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
+    const entry = findToolTrace(toolCallId, toolName);
+    if (!entry) return;
+    entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
   }
   function extractToolErrorText(result) {
     const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
@@ -137512,8 +137648,18 @@ function createOnhandBrowserRuntime(host) {
   async function finalizeRequest(session, requestId, error52 = null, messagesOverride = null) {
     if (!activeRequest || activeRequest.id !== requestId) return;
     const agentMessages = messagesOverride || activeAgent?.state.messages || [];
-    const finalError = error52 || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
-    const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
+    let finalError = error52 || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
+    let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+    if (!finalError && !activeRequest.aborted && !assistantText && hasCompletedUserToolTrace(activeRequest)) {
+      if (!activeRequest.blankReplyRetry && activeAgent) {
+        activeRequest.blankReplyRetry = true;
+        await publishState({ status: "Writing answer..." });
+        void activeAgent.prompt(buildBlankReplyRetryPrompt(activeRequest)).catch((retryError) => finalizeRequest(session, requestId, retryError instanceof Error ? retryError : new Error(String(retryError))));
+        return;
+      }
+      finalError = new Error("The model returned an empty answer after reading page context.");
+    }
+    const reply = assistantText || (finalError ? `Error: ${finalError.message}` : "(No reply generated.)");
     await autoPersistReviewSnapshot(session, activeRequest, finalError);
     const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
     const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
@@ -137539,6 +137685,7 @@ function createOnhandBrowserRuntime(host) {
       session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
     }
     await replaceCurrentSession(session);
+    activeAgent = null;
     await publishState({
       currentSession: buildSessionState(session),
       turns: session.turns,
@@ -137551,7 +137698,12 @@ function createOnhandBrowserRuntime(host) {
     });
     const startedAtMs = Date.parse(activeRequest.createdAt || "");
     const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
+    const requestSource = compactTelemetryValue(activeRequest.source || "", 32);
+    const telemetrySource = requestSource && requestSource !== "sidebar" ? `extension-${requestSource}` : "";
     void trackExtensionEvent(telemetryEventName, {
+      ...telemetrySource ? { source: telemetrySource } : {},
+      turn_id: activeRequest.id,
+      session_id: session.id || store.currentSessionId || "",
       result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok",
       duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
       action_count: activeRequest.pageActions?.length || 0,
@@ -137569,7 +137721,6 @@ function createOnhandBrowserRuntime(host) {
         ...toolReliability
       });
     }
-    activeAgent = null;
     activeRequest = null;
   }
   function handleAgentEvent(session, requestId, event) {
@@ -137689,8 +137840,8 @@ function createOnhandBrowserRuntime(host) {
   }
   async function resolveApiKey2(provider) {
     if (provider === ONHAND_FREE_PROVIDER) return await getOrRegisterFreeTierToken();
-    const store = await loadStore();
-    const settings2 = store.settings;
+    const store2 = await loadStore();
+    const settings2 = store2.settings;
     const apiKey = getApiKeyForProvider(settings2, provider);
     if (apiKey) return apiKey;
     if (provider === settings2.aiProvider && settings2.authMode === "api-key") {
@@ -137708,8 +137859,8 @@ function createOnhandBrowserRuntime(host) {
         ...settings2.oauthCredentials || {},
         [provider]: result.credentials
       };
-      store.settings = settings2;
-      await saveStore(store, {});
+      store2.settings = settings2;
+      await saveStore(store2, {});
       await publishState({
         preferences: {
           runtime: "browser-extension",
@@ -137721,17 +137872,37 @@ function createOnhandBrowserRuntime(host) {
   }
   function withDefaultBrowserTarget(params = {}) {
     const targetWindowId = activeRequest?.targetWindowId;
-    if (typeof targetWindowId !== "number") return params || {};
-    if (typeof params?.tabId === "number") {
+    if (typeof params?.tabId === "number" && hasCompletedTabInventory(activeRequest)) {
       return params || {};
     }
-    return {
-      ...params || {},
-      windowId: targetWindowId
+    const targeted = {
+      ...params || {}
     };
+    if (typeof targetWindowId === "number") targeted.windowId = targetWindowId;
+    delete targeted.tabId;
+    delete targeted.titleContains;
+    delete targeted.urlContains;
+    return targeted;
   }
   function withRequestBrowserContext(params = {}, commandName = "") {
     const targetedParams = withDefaultBrowserTarget(params);
+    if (commandName === "show_note") {
+      const noteText = targetedParams?.note || targetedParams?.text || targetedParams?.label || "";
+      return {
+        ...targetedParams || {},
+        annotationId: resolveActiveAnnotationId(activeRequest, targetedParams?.annotationId, noteText)
+      };
+    }
+    if (commandName === "extract_content") {
+      const prompt = activeRequest?.displayPrompt || "";
+      if (!promptNeedsExactReadableContext(prompt) || targetedParams?.query) return targetedParams;
+      const requestedMaxChars = Number(targetedParams?.maxChars || 0) || 0;
+      return {
+        ...targetedParams || {},
+        query: buildReadableContentQuery(prompt),
+        maxChars: Math.max(requestedMaxChars, 3e4)
+      };
+    }
     if (commandName !== "highlight_text" || targetedParams?.pdfAnchor) return targetedParams;
     const initialSelection = activeRequest?.initialSelection;
     if (!selectionMatchesHighlightText(initialSelection, targetedParams?.text)) return targetedParams;
@@ -137753,11 +137924,11 @@ function createOnhandBrowserRuntime(host) {
     }
   }
   async function getPublicSettings() {
-    const store = await loadStore();
-    return buildPublicSettings(store.settings);
+    const store2 = await loadStore();
+    return buildPublicSettings(store2.settings);
   }
   async function getDueReviews(params = {}) {
-    const store = await loadStore();
+    const store2 = await loadStore();
     const snoozes = await readReviewSnoozes();
     let activeUrl = "";
     try {
@@ -137766,7 +137937,7 @@ function createOnhandBrowserRuntime(host) {
       activeUrl = String(activeTab?.url || "");
     } catch {
     }
-    return computeDueReviews(Object.values(store.sessions), {
+    return computeDueReviews(Object.values(store2.sessions), {
       now: params?.now,
       limit: params?.limit,
       activeUrl,
@@ -138828,8 +138999,8 @@ function createOnhandBrowserRuntime(host) {
   };
   return {
     async getState() {
-      const store = await loadStore();
-      const session = store.sessions[store.currentSessionId];
+      const store2 = await loadStore();
+      const session = store2.sessions[store2.currentSessionId];
       const state = await ensureUiState();
       const dueReviews = await getDueReviews().catch(() => []);
       return {
@@ -138839,14 +139010,14 @@ function createOnhandBrowserRuntime(host) {
         preferences: {
           ...state.preferences,
           runtime: "browser-extension",
-          ...buildPublicSettings(store.settings)
+          ...buildPublicSettings(store2.settings)
         }
       };
     },
     async recordLearningEvent(event) {
-      const store = await loadStore();
-      const session = store.sessions[store.currentSessionId];
-      const mode = store.settings.learningMode ? "learning" : "answer";
+      const store2 = await loadStore();
+      const session = store2.sessions[store2.currentSessionId];
+      const mode = store2.settings.learningMode ? "learning" : "answer";
       const learnerState = await recordLearningEventForSession(session, event, mode);
       return {
         currentSession: buildSessionState(session),
@@ -138869,20 +139040,20 @@ function createOnhandBrowserRuntime(host) {
       return { tracked: await trackExtensionEvent(eventName, data) };
     },
     async captureRuntimeException(request = {}) {
-      const store = await loadStore();
+      const store2 = await loadStore();
       const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
       const error52 = new Error(message || "Onhand runtime exception");
       if (request?.stack) error52.stack = redactDiagnosticStack(request.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
       return {
-        captured: captureSentryException(error52, store.settings, "runtime_exception", {
+        captured: captureSentryException(error52, store2.settings, "runtime_exception", {
           message_type: request?.messageType,
           error_kind: classifyTelemetryError(message)
         })
       };
     },
     async submitErrorReport(turnId) {
-      const store = await loadStore();
-      const session = store.sessions[store.currentSessionId];
+      const store2 = await loadStore();
+      const session = store2.sessions[store2.currentSessionId];
       const id = String(turnId || "").trim();
       const turn = (Array.isArray(session.turns) ? session.turns : []).find((candidate) => String(candidate?.id || "") === id);
       if (!turn) throw new Error("Could not find that failed Onhand turn.");
@@ -138891,7 +139062,7 @@ function createOnhandBrowserRuntime(host) {
       if (existingReport?.report_id) {
         return { reportId: existingReport.report_id, alreadySubmitted: true };
       }
-      const report = existingReport || buildErrorReportSnapshotFromTurn(turn, store.settings);
+      const report = existingReport || buildErrorReportSnapshotFromTurn(turn, store2.settings);
       const baseUrl = await getFreeTierBaseUrl();
       const response = await fetch(`${baseUrl}/error-reports`, {
         method: "POST",
@@ -138908,7 +139079,7 @@ function createOnhandBrowserRuntime(host) {
         report_id: String(body.report_id)
       };
       session.turns = session.turns.map((candidate) => String(candidate?.id || "") === id ? turn : candidate);
-      await saveStore(store, { sessions: [session] });
+      await saveStore(store2, { sessions: [session] });
       await publishState({
         currentSession: buildSessionState(session),
         turns: session.turns,
@@ -138917,7 +139088,7 @@ function createOnhandBrowserRuntime(host) {
       });
       const sentryReportError = new Error(report.error_message || report.error_kind || "Onhand anonymized error report");
       if (report.error_stack) sentryReportError.stack = report.error_stack;
-      captureSentryException(sentryReportError, store.settings, "explicit_error_report", {
+      captureSentryException(sentryReportError, store2.settings, "explicit_error_report", {
         explicit_user_report: true,
         report_id: turn.errorReport.report_id,
         error_kind: report.error_kind,
@@ -138927,8 +139098,8 @@ function createOnhandBrowserRuntime(host) {
       return { reportId: turn.errorReport.report_id, alreadySubmitted: false };
     },
     async getOpenAIRealtimeCredential() {
-      const store = await loadStore();
-      const settings2 = store.settings;
+      const store2 = await loadStore();
+      const settings2 = store2.settings;
       if (!settings2.realtimeVoiceEnabled) {
         throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
       }
@@ -138942,45 +139113,45 @@ function createOnhandBrowserRuntime(host) {
       throw new Error("Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.");
     },
     async updateSettings(partial2) {
-      const store = await loadStore();
+      const store2 = await loadStore();
       const nextPartial = partial2 || {};
-      const wasDiagnosticsEnabled = Boolean(store.settings.diagnosticsEnabled);
-      const nextOAuthCredentials = nextPartial.oauthCredentials && typeof nextPartial.oauthCredentials === "object" ? normalizeOAuthCredentials(nextPartial.oauthCredentials) : store.settings.oauthCredentials;
-      const authMode = normalizeAuthMode(nextPartial.authMode ?? store.settings.authMode);
+      const wasDiagnosticsEnabled = Boolean(store2.settings.diagnosticsEnabled);
+      const nextOAuthCredentials = nextPartial.oauthCredentials && typeof nextPartial.oauthCredentials === "object" ? normalizeOAuthCredentials(nextPartial.oauthCredentials) : store2.settings.oauthCredentials;
+      const authMode = normalizeAuthMode(nextPartial.authMode ?? store2.settings.authMode);
       const aiProvider = normalizeProviderForAuthMode(
-        String(nextPartial.aiProvider || store.settings.aiProvider || DEFAULT_SETTINGS.aiProvider).trim(),
+        String(nextPartial.aiProvider || store2.settings.aiProvider || DEFAULT_SETTINGS.aiProvider).trim(),
         authMode,
         true
       );
       const aiModel = normalizeModelForProvider(
-        String(nextPartial.aiModel || store.settings.aiModel || DEFAULT_SETTINGS.aiModel),
+        String(nextPartial.aiModel || store2.settings.aiModel || DEFAULT_SETTINGS.aiModel),
         aiProvider,
         authMode
       );
-      store.settings = {
-        ...store.settings,
+      store2.settings = {
+        ...store2.settings,
         ...nextPartial,
-        learningMode: Boolean(nextPartial.learningMode ?? store.settings.learningMode),
-        realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store.settings.realtimeVoiceEnabled),
-        speedMode: normalizeSpeedMode(nextPartial.speedMode ?? store.settings.speedMode),
+        learningMode: Boolean(nextPartial.learningMode ?? store2.settings.learningMode),
+        realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store2.settings.realtimeVoiceEnabled),
+        speedMode: normalizeSpeedMode(nextPartial.speedMode ?? store2.settings.speedMode),
         aiProvider,
         aiModel,
-        aiApiKey: typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey.trim() : store.settings.aiApiKey,
-        aiApiKeys: normalizeApiKeys(nextPartial.aiApiKeys ?? store.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store.settings.aiApiKey),
+        aiApiKey: typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey.trim() : store2.settings.aiApiKey,
+        aiApiKeys: normalizeApiKeys(nextPartial.aiApiKeys ?? store2.settings.aiApiKeys, typeof nextPartial.aiApiKey === "string" ? nextPartial.aiApiKey : store2.settings.aiApiKey),
         authMode,
         oauthCredentials: nextOAuthCredentials,
-        diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled, authMode, aiProvider),
-        diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
-        advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false
+        diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store2.settings.diagnosticsEnabled, authMode, aiProvider),
+        diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store2.settings.diagnosticsClientId,
+        advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false
       };
-      sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
-      const session = store.sessions[store.currentSessionId];
-      session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
-      store.sessions[session.id] = session;
-      await saveStore(store, { sessions: [session] });
-      uiState = createEmptyState(session, store.settings);
+      sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
+      const session = store2.sessions[store2.currentSessionId];
+      session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+      store2.sessions[session.id] = session;
+      await saveStore(store2, { sessions: [session] });
+      uiState = createEmptyState(session, store2.settings);
       uiState.messages = buildConversationMessages(session.messages);
-      if (!wasDiagnosticsEnabled && store.settings.diagnosticsEnabled) {
+      if (!wasDiagnosticsEnabled && store2.settings.diagnosticsEnabled) {
         void trackExtensionEvent("diagnostics_enabled", { result: "ok" }).catch(() => {
         });
       }
@@ -139002,25 +139173,25 @@ function createOnhandBrowserRuntime(host) {
         providerId,
         onProgress: (event) => host.notifyAuthProgress?.(event)
       });
-      const store = await loadStore();
+      const store2 = await loadStore();
       const nextModel = normalizeModelForProvider(
-        String(request.aiModel || store.settings.aiModel || getDefaultOAuthModel(providerId) || OPENAI_CODEX_MODEL),
+        String(request.aiModel || store2.settings.aiModel || getDefaultOAuthModel(providerId) || OPENAI_CODEX_MODEL),
         providerId,
         "oauth"
       );
-      store.settings = {
-        ...store.settings,
+      store2.settings = {
+        ...store2.settings,
         authMode: "oauth",
         aiProvider: providerId,
         aiModel: nextModel,
         oauthCredentials: {
-          ...store.settings.oauthCredentials || {},
+          ...store2.settings.oauthCredentials || {},
           [providerId]: credentials
         }
       };
-      await saveStore(store, {});
-      const session = store.sessions[store.currentSessionId];
-      uiState = createEmptyState(session, store.settings);
+      await saveStore(store2, {});
+      const session = store2.sessions[store2.currentSessionId];
+      uiState = createEmptyState(session, store2.settings);
       uiState.messages = buildConversationMessages(session.messages);
       host.notifyAuthProgress?.({
         providerId,
@@ -139030,45 +139201,45 @@ function createOnhandBrowserRuntime(host) {
       return await getPublicSettings();
     },
     async validateApiKey(request = {}) {
-      const store = await loadStore();
-      const providerId = normalizeProviderForAuthMode(String(request.providerId || store.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
-      const apiKey = typeof request.apiKey === "string" ? request.apiKey : getApiKeyForProvider(store.settings, providerId);
+      const store2 = await loadStore();
+      const providerId = normalizeProviderForAuthMode(String(request.providerId || store2.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
+      const apiKey = typeof request.apiKey === "string" ? request.apiKey : getApiKeyForProvider(store2.settings, providerId);
       return validateProviderApiKey(providerId, apiKey);
     },
     async removeApiKey(providerId) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before changing API keys.");
-      const store = await loadStore();
-      const targetProviderId = normalizeProviderForAuthMode(String(providerId || store.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
-      const aiApiKeys = { ...store.settings.aiApiKeys || {} };
+      const store2 = await loadStore();
+      const targetProviderId = normalizeProviderForAuthMode(String(providerId || store2.settings.aiProvider || OPENAI_API_PROVIDER).trim(), "api-key", true);
+      const aiApiKeys = { ...store2.settings.aiApiKeys || {} };
       delete aiApiKeys[targetProviderId];
-      store.settings = {
-        ...store.settings,
+      store2.settings = {
+        ...store2.settings,
         aiApiKeys,
-        aiApiKey: targetProviderId === OPENAI_API_PROVIDER ? "" : store.settings.aiApiKey
+        aiApiKey: targetProviderId === OPENAI_API_PROVIDER ? "" : store2.settings.aiApiKey
       };
-      await saveStore(store, {});
-      const session = store.sessions[store.currentSessionId];
-      uiState = createEmptyState(session, store.settings);
+      await saveStore(store2, {});
+      const session = store2.sessions[store2.currentSessionId];
+      uiState = createEmptyState(session, store2.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return await getPublicSettings();
     },
     async signOut(providerId) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before changing sign-in.");
-      const store = await loadStore();
-      const targetProviderId = String(providerId || store.settings.aiProvider || "").trim();
+      const store2 = await loadStore();
+      const targetProviderId = String(providerId || store2.settings.aiProvider || "").trim();
       if (!targetProviderId) throw new Error("Provider id is required.");
-      const oauthCredentials = { ...store.settings.oauthCredentials || {} };
+      const oauthCredentials = { ...store2.settings.oauthCredentials || {} };
       delete oauthCredentials[targetProviderId];
-      store.settings = {
-        ...store.settings,
+      store2.settings = {
+        ...store2.settings,
         oauthCredentials,
         authMode: "oauth",
         aiProvider: OPENAI_CODEX_PROVIDER,
-        aiModel: normalizeModelForProvider(store.settings.aiModel || OPENAI_CODEX_MODEL, OPENAI_CODEX_PROVIDER, "oauth")
+        aiModel: normalizeModelForProvider(store2.settings.aiModel || OPENAI_CODEX_MODEL, OPENAI_CODEX_PROVIDER, "oauth")
       };
-      await saveStore(store, {});
-      const session = store.sessions[store.currentSessionId];
-      uiState = createEmptyState(session, store.settings);
+      await saveStore(store2, {});
+      const session = store2.sessions[store2.currentSessionId];
+      uiState = createEmptyState(session, store2.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return await getPublicSettings();
     },
@@ -139084,18 +139255,18 @@ function createOnhandBrowserRuntime(host) {
       return { snoozedUntil, reviews: await getDueReviews(params) };
     },
     async listSessions(limit2 = 20) {
-      const store = await loadStore();
-      const sessions = Object.values(store.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))).slice(0, Math.max(1, limit2)).map((session) => buildSessionListItem(session, store.currentSessionId));
+      const store2 = await loadStore();
+      const sessions = Object.values(store2.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))).slice(0, Math.max(1, limit2)).map((session) => buildSessionListItem(session, store2.currentSessionId));
       return {
-        currentSession: buildSessionState(store.sessions[store.currentSessionId]),
+        currentSession: buildSessionState(store2.sessions[store2.currentSessionId]),
         sessions
       };
     },
     async getSessionReplay(sessionId) {
-      const store = await loadStore();
-      const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
-      await ensureSessionLoaded(store, targetSessionId);
-      const session = store.sessions[targetSessionId];
+      const store2 = await loadStore();
+      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+      await ensureSessionLoaded(store2, targetSessionId);
+      const session = store2.sessions[targetSessionId];
       if (!session) throw new Error("Session not found.");
       const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
       const artifacts = [];
@@ -139106,8 +139277,8 @@ function createOnhandBrowserRuntime(host) {
       const pageActions = collectSessionPageActions(session);
       const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
       return {
-        currentSession: buildSessionState(store.sessions[store.currentSessionId]),
-        session: buildSessionListItem(session, store.currentSessionId),
+        currentSession: buildSessionState(store2.sessions[store2.currentSessionId]),
+        session: buildSessionListItem(session, store2.currentSessionId),
         turns: Array.isArray(session.turns) ? session.turns : [],
         pageActions,
         artifacts,
@@ -139126,13 +139297,13 @@ function createOnhandBrowserRuntime(host) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
       const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
       await clearActivePageAnnotations(targetWindowId);
-      const store = await loadStore();
+      const store2 = await loadStore();
       const session = createSession();
-      session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
-      store.sessions[session.id] = session;
-      store.currentSessionId = session.id;
-      await saveStore(store, { sessions: [session] });
-      uiState = createEmptyState(session, store.settings);
+      session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+      store2.sessions[session.id] = session;
+      store2.currentSessionId = session.id;
+      await saveStore(store2, { sessions: [session] });
+      uiState = createEmptyState(session, store2.settings);
       void trackExtensionEvent("session_started", { result: "ok" }).catch(() => {
       });
       return {
@@ -139144,15 +139315,15 @@ function createOnhandBrowserRuntime(host) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
       const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
       await clearActivePageAnnotations(targetWindowId);
-      const store = await loadStore();
-      await ensureSessionLoaded(store, sessionId);
-      if (!store.sessions[sessionId]) throw new Error("Session not found.");
-      store.currentSessionId = sessionId;
-      const session = store.sessions[sessionId];
-      session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
-      store.sessions[session.id] = session;
-      await saveStore(store, { sessions: [session] });
-      uiState = createEmptyState(session, store.settings);
+      const store2 = await loadStore();
+      await ensureSessionLoaded(store2, sessionId);
+      if (!store2.sessions[sessionId]) throw new Error("Session not found.");
+      store2.currentSessionId = sessionId;
+      const session = store2.sessions[sessionId];
+      session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+      store2.sessions[session.id] = session;
+      await saveStore(store2, { sessions: [session] });
+      uiState = createEmptyState(session, store2.settings);
       uiState.messages = buildConversationMessages(session.messages);
       return {
         switched: { cancelled: false },
@@ -139161,31 +139332,31 @@ function createOnhandBrowserRuntime(host) {
     },
     async deleteSession(sessionId, options = {}) {
       if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
-      const store = await loadStore();
-      const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
-      await ensureSessionLoaded(store, targetSessionId);
-      const targetSession = store.sessions[targetSessionId];
+      const store2 = await loadStore();
+      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+      await ensureSessionLoaded(store2, targetSessionId);
+      const targetSession = store2.sessions[targetSessionId];
       if (!targetSession) throw new Error("Session not found.");
-      const wasCurrentSession = targetSessionId === store.currentSessionId;
+      const wasCurrentSession = targetSessionId === store2.currentSessionId;
       if (wasCurrentSession) {
         const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
         await clearActivePageAnnotations(targetWindowId);
       }
-      delete store.sessions[targetSessionId];
-      let currentSession = store.sessions[store.currentSessionId];
+      delete store2.sessions[targetSessionId];
+      let currentSession = store2.sessions[store2.currentSessionId];
       if (wasCurrentSession || !currentSession) {
-        currentSession = Object.values(store.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+        currentSession = Object.values(store2.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
         if (!currentSession) {
           currentSession = createSession();
-          store.sessions[currentSession.id] = currentSession;
+          store2.sessions[currentSession.id] = currentSession;
         }
-        currentSession.learnerState = setLearnerStateMode(currentSession.learnerState, store.settings.learningMode ? "learning" : "answer");
-        store.sessions[currentSession.id] = currentSession;
-        store.currentSessionId = currentSession.id;
-        uiState = createEmptyState(currentSession, store.settings);
+        currentSession.learnerState = setLearnerStateMode(currentSession.learnerState, store2.settings.learningMode ? "learning" : "answer");
+        store2.sessions[currentSession.id] = currentSession;
+        store2.currentSessionId = currentSession.id;
+        uiState = createEmptyState(currentSession, store2.settings);
         uiState.messages = buildConversationMessages(currentSession.messages);
       }
-      await saveStore(store, { sessions: currentSession ? [currentSession] : [], deletedSessionIds: [targetSessionId] });
+      await saveStore(store2, { sessions: currentSession ? [currentSession] : [], deletedSessionIds: [targetSessionId] });
       if (!wasCurrentSession) {
         await publishState({ status: "Deleted session." });
       }
@@ -139202,10 +139373,10 @@ function createOnhandBrowserRuntime(host) {
       return { currentSession: buildSessionState(session) };
     },
     async restoreSession(sessionId) {
-      const store = await loadStore();
-      const targetSessionId = String(sessionId || store.currentSessionId || "").trim();
-      await ensureSessionLoaded(store, targetSessionId);
-      const session = store.sessions[targetSessionId];
+      const store2 = await loadStore();
+      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+      await ensureSessionLoaded(store2, targetSessionId);
+      const session = store2.sessions[targetSessionId];
       if (!session) throw new Error("Session not found.");
       const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
       const pageActions = collectSessionPageActions(session);
@@ -139252,10 +139423,10 @@ function createOnhandBrowserRuntime(host) {
       const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
       const status = artifactPages.length && replayPages.length ? `Restored ${artifactPages.length} saved page state${artifactPages.length === 1 ? "" : "s"} and replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"}.` : artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
       session.updatedAt = nowIso();
-      store.sessions[targetSessionId] = session;
-      await saveStore(store, { sessions: [session] });
+      store2.sessions[targetSessionId] = session;
+      await saveStore(store2, { sessions: [session] });
       await publishState(
-        targetSessionId === store.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
+        targetSessionId === store2.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
       );
       void trackExtensionEvent("session_restored", {
         result: restored.some((page) => Array.isArray(page?.failures) && page.failures.length) ? "partial" : "ok",
@@ -139271,20 +139442,20 @@ function createOnhandBrowserRuntime(host) {
       };
     },
     async submitPrompt(request) {
-      if (activeRequest) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
-      const store = await loadStore();
-      const session = store.sessions[store.currentSessionId];
+      if (activeRequest || activeAgent) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
+      const store2 = await loadStore();
+      const session = store2.sessions[store2.currentSessionId];
       const prompt = String(request?.prompt || "").trim();
       const displayPrompt = String(request?.displayPrompt || prompt || "").trim() || "Attached files";
       const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
       const requestId = crypto.randomUUID();
       const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
       const recentConversation = buildRecentConversationContext(session);
-      const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
+      const learningMode = Boolean(request?.learningMode ?? store2.settings.learningMode);
       const requestSettings = {
-        ...store.settings,
+        ...store2.settings,
         learningMode,
-        speedMode: normalizeSpeedMode(request?.speedMode ?? store.settings.speedMode)
+        speedMode: normalizeSpeedMode(request?.speedMode ?? store2.settings.speedMode)
       };
       session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
       const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
@@ -139295,6 +139466,7 @@ function createOnhandBrowserRuntime(host) {
       activeRequest = {
         id: requestId,
         displayPrompt,
+        source: compactTelemetryValue(request?.source || "sidebar", 32),
         reply: "",
         pageActions: [],
         toolTraces: [],
@@ -139326,7 +139498,7 @@ function createOnhandBrowserRuntime(host) {
           await finalizeRequest(session, requestId, null, []);
           return { requestId };
         }
-        const model = await getConfiguredModel(store.settings);
+        const model = await getConfiguredModel(store2.settings);
         let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
         if (!pdfHandoff) {
           pdfHandoff = await runAutomaticPdfHandoffIfNeeded(targetWindowId);
@@ -139342,7 +139514,8 @@ function createOnhandBrowserRuntime(host) {
             host,
             artifactHooks,
             withRequestBrowserContext,
-            (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer")
+            (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+            (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams)
           ),
           prompt,
           attachments,
@@ -139405,12 +139578,12 @@ function createOnhandBrowserRuntime(host) {
       };
     },
     async activateAction(actionKey, options = {}) {
-      const store = await loadStore();
-      const requestedSessionId = String(options?.sessionId || options?.sessionPath || store.currentSessionId || "").trim();
-      await ensureSessionLoaded(store, requestedSessionId);
-      const session = store.sessions[requestedSessionId];
+      const store2 = await loadStore();
+      const requestedSessionId = String(options?.sessionId || options?.sessionPath || store2.currentSessionId || "").trim();
+      await ensureSessionLoaded(store2, requestedSessionId);
+      const session = store2.sessions[requestedSessionId];
       if (!session) throw new Error("Session not found.");
-      const isCurrentSession = requestedSessionId === store.currentSessionId;
+      const isCurrentSession = requestedSessionId === store2.currentSessionId;
       const state = isCurrentSession ? await ensureUiState() : null;
       const sessionActions = collectSessionPageActions(session);
       const stateActions = state ? [
@@ -139514,8 +139687,8 @@ function createOnhandBrowserRuntime(host) {
       }
       if (changed && actionBelongsToSession) {
         session.updatedAt = nowIso();
-        store.sessions[requestedSessionId] = session;
-        await saveStore(store, { sessions: [session] });
+        store2.sessions[requestedSessionId] = session;
+        await saveStore(store2, { sessions: [session] });
         if (isCurrentSession) {
           await publishState({
             currentSession: buildSessionState(session),
@@ -139542,8 +139715,8 @@ function createOnhandBrowserRuntime(host) {
       let title = compactActionText(params?.tabTitle || params?.title);
       let recoveredPdfAnchor = null;
       if (!matchedText && annotationId) {
-        const store = await loadStore();
-        for (const session of Object.values(store.sessions)) {
+        const store2 = await loadStore();
+        for (const session of Object.values(store2.sessions)) {
           const action = collectSessionPageActions(session).find(
             (candidate) => compactActionText(candidate?.annotationId) === annotationId || actionKeySuffix(candidate, "highlight:") === annotationId || actionKeySuffix(candidate, "note:") === annotationId
           );
@@ -139561,10 +139734,10 @@ function createOnhandBrowserRuntime(host) {
       if (!matchedText && conceptLabel && url2) {
         const labelTokens = new Set(learnerLabelTokens(conceptLabel));
         if (labelTokens.size) {
-          const store = await loadStore();
+          const store2 = await loadStore();
           let best = null;
           const sameUrl = url2.split("#")[0];
-          for (const session of Object.values(store.sessions)) {
+          for (const session of Object.values(store2.sessions)) {
             const actions = collectSessionPageActions(session);
             for (const action of actions) {
               if (compactActionText(action.url).split("#")[0] !== sameUrl) continue;

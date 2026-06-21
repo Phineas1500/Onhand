@@ -71,10 +71,14 @@ datasets are normally created automatically after the binding exists and
 the Worker first writes to them, but the account-level setup gate can
 still need this one-time dashboard step.
 
-Then point the extension at the deployed URL by updating
-`ONHAND_FREE_TIER_DEFAULT_BASE_URL` in
-`packages/browser-extension/src/browser-runtime.ts` (and rebuild), or —
-without rebuilding — set the override in extension storage:
+Then point the extension at the deployed URL without committing the public
+endpoint to the repo. Keep it in your ignored local `.env`:
+
+```sh
+ONHAND_FREE_TIER_BASE_URL=https://<your-worker>.workers.dev/v1
+```
+
+Then set the override in extension storage:
 
 ```js
 chrome.storage.local.set({ onhandFreeTierBaseUrl: "https://<your-worker>.workers.dev/v1" })

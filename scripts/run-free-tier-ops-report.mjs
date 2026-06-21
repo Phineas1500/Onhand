@@ -1,11 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_DATASET = "onhand_events";
 const DEFAULT_DAYS = 7;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_OUT_DIR = "tmp/free-tier-ops";
 const API_BASE = "https://api.cloudflare.com/client/v4";
+const DEFAULT_HEALTH_SOURCES = ["free-tier", "extension"];
+const SESSION_CLI = fileURLToPath(new URL("./dump-onhand-sessions.mjs", import.meta.url));
 const DEFAULT_THRESHOLDS = {
 	maxDailyCostUsd: 1,
 	maxAvgCostUsd: 0.01,
@@ -29,10 +33,12 @@ function parseArgs(argv) {
 		dryRun: false,
 		failOnAlert: false,
 		failOnCritical: false,
+		healthSources: parseSourceList(process.env.FREE_TIER_HEALTH_SOURCES, DEFAULT_HEALTH_SOURCES),
 		json: false,
 		limit: DEFAULT_LIMIT,
 		outDir: DEFAULT_OUT_DIR,
 		printSql: false,
+		testDeviceHashes: parseIdentifierList(process.env.FREE_TIER_TEST_DEVICE_HASHES, [], "test device hash"),
 		thresholds: buildDefaultThresholds(),
 	};
 	for (const value of argv) {
@@ -72,6 +78,14 @@ function parseArgs(argv) {
 		}
 		if (value.startsWith("--dataset=")) {
 			args.dataset = value.slice("--dataset=".length).trim();
+			continue;
+		}
+		if (value.startsWith("--health-sources=")) {
+			args.healthSources = parseSourceList(value.slice("--health-sources=".length), DEFAULT_HEALTH_SOURCES);
+			continue;
+		}
+		if (value.startsWith("--test-device-hashes=")) {
+			args.testDeviceHashes = parseIdentifierList(value.slice("--test-device-hashes=".length), [], "test device hash");
 			continue;
 		}
 		if (value.startsWith("--days=")) {
@@ -153,6 +167,9 @@ Options:
   --print-sql                    Print SQL queries
   --json                         Print summary JSON
   --dataset=<name>               Analytics Engine dataset/table name
+  --health-sources=<csv>         Sources used for summaries/checks; default ${DEFAULT_HEALTH_SOURCES.join(",")}
+  --test-device-hashes=<csv>     Device hashes whose quota denials are classified as test cap hits.
+                                  Use "auto" to read the current local Onhand Free device hash.
   --days=<n>                     Lookback window
   --limit=<n>                    Max rows for top-N sections
   --out-dir=<path>               Output directory for JSON and Markdown reports
@@ -175,6 +192,8 @@ Threshold options:
   --max-heavy-turns=<n>          Default ${DEFAULT_THRESHOLDS.maxHeavyTurns}
 
 Threshold env overrides:
+  FREE_TIER_HEALTH_SOURCES
+  FREE_TIER_TEST_DEVICE_HASHES
   FREE_TIER_ALERT_MAX_DAILY_COST_USD
   FREE_TIER_ALERT_MAX_AVG_COST_USD
   FREE_TIER_ALERT_MAX_PROMPT_FAILURES
@@ -223,14 +242,32 @@ function parseNonNegativeNumber(value, prefix) {
 	return parsed;
 }
 
+function parseSourceList(value, fallback) {
+	return parseIdentifierList(value, fallback, "health source");
+}
+
+function parseIdentifierList(value, fallback, label) {
+	const values = String(value || "")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+	const selected = values.length ? values : fallback;
+	for (const entry of selected) {
+		if (!/^[A-Za-z0-9_.:-]+$/.test(entry)) throw new Error(`Invalid ${label}: ${entry}`);
+	}
+	return selected;
+}
+
 function validateIdentifier(value, label) {
 	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error(`Invalid ${label}: ${value}`);
 }
 
 function buildQueries({ dataset, days, limit }) {
 	const where = `timestamp >= NOW() - INTERVAL '${days}' DAY`;
+	const sourceExpr = `if(blob2 = '', 'unknown', blob2)`;
 	const chatEvents = [
 		"chat_upstream_response",
+		"chat_upstream_retry",
 		"chat_stream_complete",
 		"chat_stream_error",
 		"chat_stream_cancelled",
@@ -265,10 +302,25 @@ ORDER BY events DESC
 LIMIT ${limit}`,
 		},
 		{
+			name: "source_counts",
+			description: "Sampled event counts by telemetry source.",
+			sql: `
+SELECT
+  ${sourceExpr} AS source,
+  blob1 AS event,
+  SUM(_sample_interval) AS events
+FROM ${dataset}
+WHERE ${where}
+GROUP BY source, event
+ORDER BY source, events DESC
+LIMIT ${limit}`,
+		},
+		{
 			name: "chat_latency",
 			description: "Request and stream latency by chat event/result.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob3 AS result,
   SUM(_sample_interval) AS events,
@@ -280,14 +332,15 @@ FROM ${dataset}
 WHERE ${where}
   AND blob1 IN (${quotedList(chatEvents)})
   AND double3 > 0
-GROUP BY event, result
-ORDER BY event, result`,
+GROUP BY source, event, result
+ORDER BY source, event, result`,
 		},
 		{
 			name: "chat_cost",
 			description: "Completion tokens and OpenRouter reported/forwarded cost.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   SUM(_sample_interval) AS completions,
   SUM(_sample_interval * double7) AS prompt_tokens,
   SUM(_sample_interval * double8) AS completion_tokens,
@@ -297,13 +350,16 @@ SELECT
   SUM(_sample_interval * double9) / SUM(_sample_interval) AS avg_tokens
 FROM ${dataset}
 WHERE ${where}
-  AND blob1 = 'chat_stream_complete'`,
+  AND blob1 = 'chat_stream_complete'
+GROUP BY source
+ORDER BY completions DESC`,
 		},
 		{
 			name: "model_provider_health",
 			description: "Model/provider routing, errors, latency, cost, and tokens by chat event.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob4 AS model,
   blob5 AS provider,
@@ -316,8 +372,29 @@ SELECT
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('chat_upstream_response', 'chat_stream_complete', 'chat_stream_error')
-GROUP BY event, model, provider, result
-ORDER BY event, events DESC
+GROUP BY source, event, model, provider, result
+ORDER BY source, event, events DESC
+LIMIT ${limit}`,
+		},
+		{
+			name: "upstream_retries",
+			description: "Recovered upstream model/provider failures that were retried before returning to the user.",
+			sql: `
+SELECT
+  ${sourceExpr} AS source,
+  blob4 AS model,
+  blob5 AS provider,
+  blob15 AS error_code,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
+  blob14 AS device_hash,
+  SUM(_sample_interval) AS events,
+  MAX(timestamp) AS last_seen
+FROM ${dataset}
+WHERE ${where}
+  AND blob1 = 'chat_upstream_retry'
+GROUP BY source, model, provider, error_code, turn_id, session_id, device_hash
+ORDER BY events DESC, last_seen DESC
 LIMIT ${limit}`,
 		},
 		{
@@ -325,6 +402,7 @@ LIMIT ${limit}`,
 			description: "Per Onhand turn cost, tokens, latency, and model-call count.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   if(blob16 = '', 'unknown', blob16) AS turn_id,
   blob17 AS session_id,
   blob4 AS model,
@@ -339,7 +417,7 @@ SELECT
 FROM ${dataset}
 WHERE ${where}
   AND blob1 = 'chat_stream_complete'
-GROUP BY turn_id, session_id, model, provider
+GROUP BY source, turn_id, session_id, model, provider
 ORDER BY cost DESC, model_calls DESC
 LIMIT ${limit}`,
 		},
@@ -348,11 +426,16 @@ LIMIT ${limit}`,
 			description: "Quota denials, rejected requests, and rate-limited diagnostics.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob15 AS error_code,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
+  blob14 AS device_hash,
   SUM(_sample_interval) AS events,
   MAX(double5) AS max_current,
-  MAX(double6) AS cap
+  MAX(double6) AS cap,
+  MAX(timestamp) AS last_seen
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN (
@@ -365,8 +448,8 @@ WHERE ${where}
     'error_report_rate_limited',
     'error_report_rejected'
   )
-GROUP BY event, error_code
-ORDER BY events DESC
+GROUP BY source, event, error_code, turn_id, session_id, device_hash
+ORDER BY events DESC, last_seen DESC
 LIMIT ${limit}`,
 		},
 		{
@@ -374,6 +457,7 @@ LIMIT ${limit}`,
 			description: "Free-tier cost and heavy-turn guardrails.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob3 AS result,
   blob15 AS reason,
@@ -388,7 +472,7 @@ SELECT
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('free_tier_heavy_turn', 'chat_turn_quota_denied', 'chat_cost_quota_denied')
-GROUP BY event, result, reason, model, provider
+GROUP BY source, event, result, reason, model, provider
 ORDER BY events DESC
 LIMIT ${limit}`,
 		},
@@ -397,16 +481,22 @@ LIMIT ${limit}`,
 			description: "Provider/runtime error codes by event.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
+  blob4 AS model,
   blob15 AS error_code,
   blob5 AS provider,
   double2 AS status,
-  SUM(_sample_interval) AS events
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
+  blob14 AS device_hash,
+  SUM(_sample_interval) AS events,
+  MAX(timestamp) AS last_seen
 FROM ${dataset}
 WHERE ${where}
   AND (blob3 = 'error' OR (blob15 != '' AND blob1 != 'free_tier_heavy_turn'))
-GROUP BY event, error_code, provider, status
-ORDER BY events DESC
+GROUP BY source, event, model, error_code, provider, status, turn_id, session_id, device_hash
+ORDER BY events DESC, last_seen DESC
 LIMIT ${limit}`,
 		},
 		{
@@ -414,14 +504,17 @@ LIMIT ${limit}`,
 			description: "Advanced runtime-inspection usage and failures.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob3 AS result,
   blob13 AS ai_model,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
   SUM(_sample_interval) AS events
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('browser_run_js_started', 'browser_run_js_succeeded', 'browser_run_js_failed')
-GROUP BY event, result, ai_model
+GROUP BY source, event, result, ai_model, turn_id, session_id
 ORDER BY events DESC
 LIMIT ${limit}`,
 		},
@@ -430,16 +523,19 @@ LIMIT ${limit}`,
 			description: "Extension-side prompt lifecycle diagnostics.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob3 AS result,
   blob13 AS ai_model,
   blob15 AS error_code,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
   SUM(_sample_interval) AS events,
   SUM(_sample_interval * double3) / SUM(_sample_interval) AS avg_ms
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('prompt_submitted', 'prompt_succeeded', 'prompt_failed', 'prompt_stopped')
-GROUP BY event, result, ai_model, error_code
+GROUP BY source, event, result, ai_model, error_code, turn_id, session_id
 ORDER BY events DESC
 LIMIT ${limit}`,
 		},
@@ -448,9 +544,12 @@ LIMIT ${limit}`,
 			description: "Extension-side browser/PDF tool retries and final failures by prompt outcome.",
 			sql: `
 SELECT
+  ${sourceExpr} AS source,
   blob1 AS event,
   blob3 AS result,
   blob13 AS ai_model,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
   SUM(_sample_interval) AS prompts,
   SUM(_sample_interval * if(double13 > double11, double13, double11)) AS tool_steps,
   SUM(_sample_interval * double14) AS tool_failures,
@@ -461,7 +560,7 @@ SELECT
 FROM ${dataset}
 WHERE ${where}
   AND blob1 IN ('prompt_succeeded', 'prompt_failed', 'prompt_stopped')
-GROUP BY event, result, ai_model
+GROUP BY source, event, result, ai_model, turn_id, session_id
 ORDER BY final_tool_failures DESC, recovered_tool_failures DESC, prompts DESC
 LIMIT ${limit}`,
 		},
@@ -480,13 +579,16 @@ async function runReport(args) {
 	const queries = buildQueries(args);
 	const runId = new Date().toISOString().replaceAll(":", "-").replace(/\.\d+Z$/, "Z");
 	const checksEnabled = shouldEvaluateChecks(args);
+	const testDeviceHashes = await resolveTestDeviceHashes(args.testDeviceHashes);
 	const plan = {
 		runId,
 		accountId: args.accountId ? maskAccountId(args.accountId) : "",
 		checksEnabled,
 		dataset: args.dataset,
 		days: args.days,
+		healthSources: args.healthSources,
 		limit: args.limit,
+		testDeviceHashes,
 		queries: queries.map(({ name, description, sql }) => ({ name, description, sql })),
 		thresholds: checksEnabled ? args.thresholds : undefined,
 	};
@@ -506,6 +608,9 @@ async function runReport(args) {
 	for (const query of queries) {
 		sections[query.name] = await runSql({ accountId: args.accountId, apiToken, sql: query.sql });
 	}
+	sections.quota_classification = classifyQuotaRows(sections.quota_and_rejections, testDeviceHashes);
+	sections.error_classification = classifyErrorRows(sections.top_errors, testDeviceHashes);
+	sections.tool_reliability_classification = classifyToolReliabilityRows(sections.tool_reliability);
 
 	const report = { plan, sections };
 	if (checksEnabled) report.checks = evaluateChecks(report, args.thresholds);
@@ -517,6 +622,51 @@ async function runReport(args) {
 
 function shouldEvaluateChecks(args) {
 	return Boolean(args.check || args.failOnAlert || args.failOnCritical);
+}
+
+async function resolveTestDeviceHashes(values = []) {
+	const selected = new Set((values || []).filter((value) => value !== "auto"));
+	if ((values || []).includes("auto")) {
+		const autoHash = await readCurrentFreeTierDeviceHash().catch((error) => {
+			console.warn(`Warning: could not auto-read current Onhand Free test device hash: ${error.message}`);
+			return "";
+		});
+		if (autoHash) selected.add(autoHash);
+	}
+	return [...selected];
+}
+
+async function readCurrentFreeTierDeviceHash() {
+	const result = await runChild(process.execPath, [SESSION_CLI, "free-tier-bypass", "device-hash", "--json"]);
+	const parsed = JSON.parse(result.stdout || "{}");
+	const deviceHash = String(parsed.deviceHash || "").trim();
+	if (!/^[a-f0-9]{32}$/i.test(deviceHash)) throw new Error("debug:sessions did not return a valid device hash.");
+	return deviceHash;
+}
+
+function runChild(command, args) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, {
+			cwd: process.cwd(),
+			env: process.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
+		child.stdout.on("data", (chunk) => {
+			stdout += chunk;
+		});
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk;
+		});
+		child.on("error", reject);
+		child.on("close", (code) => {
+			if (code === 0) resolve({ stdout, stderr });
+			else reject(new Error(`${command} ${args.join(" ")} exited ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
+		});
+	});
 }
 
 async function runSql({ accountId, apiToken, sql }) {
@@ -559,21 +709,26 @@ function parseSqlResponse(text) {
 function evaluateChecks(report, thresholds) {
 	const sections = report.sections || {};
 	const days = Math.max(1, Number(report.plan.days || 1));
-	const cost = first(sections.chat_cost);
-	const extensionPrompts = sections.extension_prompts || [];
-	const modelProviderHealth = sections.model_provider_health || [];
-	const quotaAndRejections = sections.quota_and_rejections || [];
-	const guardrailEvents = sections.guardrail_events || [];
-	const browserRunJs = sections.browser_run_js || [];
-	const toolReliability = sections.tool_reliability || [];
+	const healthSources = report.plan.healthSources || DEFAULT_HEALTH_SOURCES;
+	const cost = aggregateChatCost(filterRowsBySource(sections.chat_cost, healthSources));
+	const errorClassification = filterRowsBySource(sections.error_classification || classifyErrorRows(sections.top_errors, report.plan.testDeviceHashes), healthSources);
+	const healthErrors = errorClassification.filter((row) => row.classification === "health_error");
+	const quotaClassification = filterRowsBySource(sections.quota_classification || classifyQuotaRows(sections.quota_and_rejections, report.plan.testDeviceHashes), healthSources);
+	const guardrailEvents = filterRowsBySource(sections.guardrail_events, healthSources);
+	const browserRunJs = filterRowsBySource(sections.browser_run_js, healthSources);
+	const toolReliability = filterRowsBySource(
+		sections.tool_reliability_classification || classifyToolReliabilityRows(sections.tool_reliability),
+		healthSources,
+	).filter((row) => row.classification === "health_tool_reliability");
 	const checks = [];
 
 	const totalCost = numberValue(cost?.total_cost);
 	const avgDailyCost = totalCost / days;
 	const avgCost = numberValue(cost?.avg_cost);
-	const promptFailures = sumRows(extensionPrompts, "events", (row) => row.event === "prompt_failed");
-	const providerErrors = sumRows(modelProviderHealth, "events", (row) => row.event === "chat_stream_error" || row.result === "error");
-	const quotaDenials = sumRows(quotaAndRejections, "events", (row) => String(row.event || "").endsWith("_quota_denied"));
+	const promptFailures = sumRows(healthErrors, "events", (row) => row.event === "prompt_failed");
+	const providerErrors = sumRows(healthErrors, "events", isProviderErrorRow);
+	const quotaDenials = sumRows(quotaClassification, "events", (row) => row.classification === "health_quota_denial");
+	const testQuotaDenials = sumRows(quotaClassification, "events", (row) => row.classification === "test_device_quota_denial");
 	const finalToolFailures = sumRows(toolReliability, "final_tool_failures");
 	const recoveredToolFailures = sumRows(toolReliability, "recovered_tool_failures");
 	const browserRunJsFailures = sumRows(browserRunJs, "events", (row) => row.event === "browser_run_js_failed");
@@ -585,35 +740,42 @@ function evaluateChecks(report, thresholds) {
 		actual: avgDailyCost,
 		limit: thresholds.maxDailyCostUsd,
 		severity: "critical",
-		message: "Average daily free-tier Worker spend across the report window.",
+		message: `Average daily free-tier Worker spend for health sources (${healthSources.join(", ")}).`,
 	});
 	addThresholdCheck(checks, {
 		metric: "avg_completion_cost_usd",
 		actual: avgCost,
 		limit: thresholds.maxAvgCostUsd,
 		severity: "warn",
-		message: "Average OpenRouter cost per completed free-tier response.",
+		message: `Average OpenRouter cost per completed response for health sources (${healthSources.join(", ")}).`,
 	});
 	addThresholdCheck(checks, {
 		metric: "prompt_failures",
 		actual: promptFailures,
 		limit: thresholds.maxPromptFailures,
 		severity: "critical",
-		message: "Extension-side prompt failures reported by opted-in diagnostics.",
+		message: `Extension-side prompt failures for health sources (${healthSources.join(", ")}).`,
 	});
 	addThresholdCheck(checks, {
 		metric: "provider_errors",
 		actual: providerErrors,
 		limit: thresholds.maxProviderErrors,
 		severity: "critical",
-		message: "Worker-side free-tier chat stream errors.",
+		message: `Worker-side free-tier chat stream errors for health sources (${healthSources.join(", ")}).`,
 	});
 	addThresholdCheck(checks, {
 		metric: "quota_denials",
 		actual: quotaDenials,
 		limit: thresholds.maxQuotaDenials,
 		severity: "critical",
-		message: "User-visible free-tier quota or cost-cap denials.",
+		message: `User-visible free-tier quota or cost-cap denials for health sources (${healthSources.join(", ")}).`,
+	});
+	addThresholdCheck(checks, {
+		metric: "test_device_quota_denials",
+		actual: testQuotaDenials,
+		limit: 0,
+		severity: "warn",
+		message: "Quota denials from known test devices; visible for load-test hygiene but not counted as real-user quota health.",
 	});
 	addThresholdCheck(checks, {
 		metric: "final_tool_failures",
@@ -693,17 +855,17 @@ function printReport(report, args) {
 		console.log(JSON.stringify(report, null, 2));
 		return;
 	}
-	const cost = first(report.sections.chat_cost);
+	const cost = healthChatCost(report);
 	const overview = first(report.sections.overview);
 	console.log("");
 	console.log(`Free tier ops report: ${report.plan.dataset}, last ${report.plan.days} day(s)`);
+	console.log(`Health sources: ${(report.plan.healthSources || DEFAULT_HEALTH_SOURCES).join(", ")}`);
+	if (report.plan.testDeviceHashes?.length) console.log(`Known test devices: ${report.plan.testDeviceHashes.length}`);
 	if (overview) console.log(`Events: ${formatInteger(overview.events)} (${formatNumber(Number(overview.events || 0) / report.plan.days)}/day)`);
-	if (cost) {
-		console.log(`Completions: ${formatInteger(cost.completions)} (${formatNumber(Number(cost.completions || 0) / report.plan.days)}/day)`);
-		console.log(`Cost: ${formatDollars(cost.total_cost)} total, ${formatDollars(cost.avg_cost)} avg/completion`);
-		console.log(`Tokens: ${formatInteger(cost.total_tokens)} total, ${formatInteger(cost.avg_tokens)} avg/completion`);
-	}
-	const toolReliability = report.sections.tool_reliability || [];
+	console.log(`Completions: ${formatInteger(cost.completions)} (${formatNumber(Number(cost.completions || 0) / report.plan.days)}/day)`);
+	console.log(`Cost: ${formatDollars(cost.total_cost)} total, ${formatDollars(cost.avg_cost)} avg/completion`);
+	console.log(`Tokens: ${formatInteger(cost.total_tokens)} total, ${formatInteger(cost.avg_tokens)} avg/completion`);
+	const toolReliability = healthToolReliabilityRows(report);
 	if (toolReliability.length) {
 		console.log(
 			`Tool reliability: ${formatInteger(sumRows(toolReliability, "recovered_tool_failures"))} recovered retries, ${formatInteger(
@@ -730,10 +892,12 @@ function renderMarkdown(report) {
 	lines.push("");
 	lines.push(`Dataset: \`${report.plan.dataset}\``);
 	lines.push(`Window: last ${report.plan.days} day(s)`);
+	lines.push(`Health sources: \`${(report.plan.healthSources || DEFAULT_HEALTH_SOURCES).join(", ")}\``);
+	if (report.plan.testDeviceHashes?.length) lines.push(`Known test devices: \`${report.plan.testDeviceHashes.length}\``);
 	lines.push("");
 
 	const overview = first(report.sections.overview);
-	const cost = first(report.sections.chat_cost);
+	const cost = healthChatCost(report);
 	lines.push("## Summary");
 	lines.push("");
 	if (overview) {
@@ -741,29 +905,51 @@ function renderMarkdown(report) {
 		lines.push(`- First seen: ${overview.first_seen || "-"}`);
 		lines.push(`- Last seen: ${overview.last_seen || "-"}`);
 	}
-	if (cost) {
-		lines.push(`- Chat completions: ${formatInteger(cost.completions)} (${formatNumber(Number(cost.completions || 0) / report.plan.days)}/day)`);
-		lines.push(`- Total cost: ${formatDollars(cost.total_cost)}`);
-		lines.push(`- Average cost/completion: ${formatDollars(cost.avg_cost)}`);
-		lines.push(`- Total tokens: ${formatInteger(cost.total_tokens)}`);
-		lines.push(`- Average tokens/completion: ${formatInteger(cost.avg_tokens)}`);
-	}
+	lines.push(`- Chat completions: ${formatInteger(cost.completions)} (${formatNumber(Number(cost.completions || 0) / report.plan.days)}/day)`);
+	lines.push(`- Total cost: ${formatDollars(cost.total_cost)}`);
+	lines.push(`- Average cost/completion: ${formatDollars(cost.avg_cost)}`);
+	lines.push(`- Total tokens: ${formatInteger(cost.total_tokens)}`);
+	lines.push(`- Average tokens/completion: ${formatInteger(cost.avg_tokens)}`);
 	lines.push("");
 
 	if (report.checks) addTable(lines, "Checks", report.checks, ["status", "metric", "actual", "limit", "message"]);
 	addTable(lines, "Event Counts", report.sections.event_counts, ["event", "events"]);
-	addTable(lines, "Chat Latency", report.sections.chat_latency, ["event", "result", "events", "avg_ms", "p50_ms", "p95_ms", "avg_body_bytes"]);
-	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
-	addTable(lines, "Turn Costs", report.sections.turn_costs, ["turn_id", "session_id", "model", "provider", "model_calls", "cost", "total_tokens", "prompt_tokens", "completion_tokens", "total_ms", "last_seen"]);
-	addTable(lines, "Quota And Rejections", report.sections.quota_and_rejections, ["event", "error_code", "events", "max_current", "cap"]);
-	addTable(lines, "Guardrail Events", report.sections.guardrail_events, ["event", "result", "reason", "model", "provider", "events", "max_current", "cap", "cost", "total_tokens", "max_turn_model_calls"]);
-	addTable(lines, "Top Errors", report.sections.top_errors, ["event", "error_code", "provider", "status", "events"]);
-	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["event", "result", "ai_model", "events"]);
-	addTable(lines, "Extension Prompts", report.sections.extension_prompts, ["event", "result", "ai_model", "error_code", "events", "avg_ms"]);
+	addTable(lines, "Source Counts", report.sections.source_counts, ["source", "event", "events"]);
+	addTable(lines, "Chat Cost By Source", report.sections.chat_cost, ["source", "completions", "prompt_tokens", "completion_tokens", "total_tokens", "total_cost", "avg_cost", "avg_tokens"]);
+	addTable(lines, "Chat Latency", report.sections.chat_latency, ["source", "event", "result", "events", "avg_ms", "p50_ms", "p95_ms", "avg_body_bytes"]);
+	addTable(lines, "Model Provider Health", report.sections.model_provider_health, ["source", "event", "model", "provider", "result", "events", "cost", "total_tokens", "avg_ms", "p95_ms"]);
+	addTable(lines, "Upstream Retries", report.sections.upstream_retries, ["source", "model", "provider", "error_code", "turn_id", "session_id", "device_hash", "events", "last_seen"]);
+	addTable(lines, "Turn Costs", report.sections.turn_costs, ["source", "turn_id", "session_id", "model", "provider", "model_calls", "cost", "total_tokens", "prompt_tokens", "completion_tokens", "total_ms", "last_seen"]);
+	addTable(lines, "Quota Classification", report.sections.quota_classification, ["source", "event", "classification", "error_code", "turn_id", "session_id", "device_hash", "events", "max_current", "cap", "last_seen"]);
+	addTable(lines, "Quota And Rejections", report.sections.quota_and_rejections, ["source", "event", "error_code", "turn_id", "session_id", "device_hash", "events", "max_current", "cap", "last_seen"]);
+	addTable(lines, "Guardrail Events", report.sections.guardrail_events, ["source", "event", "result", "reason", "model", "provider", "events", "max_current", "cap", "cost", "total_tokens", "max_turn_model_calls"]);
+	addTable(lines, "Error Classification", report.sections.error_classification, ["source", "event", "classification", "model", "error_code", "provider", "status", "turn_id", "session_id", "device_hash", "events", "last_seen"]);
+	addTable(lines, "Top Errors", report.sections.top_errors, ["source", "event", "model", "error_code", "provider", "status", "turn_id", "session_id", "device_hash", "events", "last_seen"]);
+	addTable(lines, "Browser Run JS", report.sections.browser_run_js, ["source", "event", "result", "ai_model", "turn_id", "session_id", "events"]);
+	addTable(lines, "Extension Prompts", report.sections.extension_prompts, ["source", "event", "result", "ai_model", "error_code", "turn_id", "session_id", "events", "avg_ms"]);
+	addTable(lines, "Tool Reliability Classification", report.sections.tool_reliability_classification, [
+		"source",
+		"event",
+		"classification",
+		"result",
+		"ai_model",
+		"turn_id",
+		"session_id",
+		"prompts",
+		"tool_steps",
+		"tool_failures",
+		"recovered_tool_failures",
+		"final_tool_failures",
+		"avg_recovered_failures",
+		"avg_final_failures",
+	]);
 	addTable(lines, "Tool Reliability", report.sections.tool_reliability, [
+		"source",
 		"event",
 		"result",
 		"ai_model",
+		"turn_id",
+		"session_id",
 		"prompts",
 		"tool_steps",
 		"tool_failures",
@@ -804,6 +990,130 @@ function addTable(lines, title, rows = [], columns = []) {
 
 function first(rows) {
 	return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+function rowSource(row) {
+	return String(row?.source || "unknown");
+}
+
+function rowDeviceHash(row) {
+	return String(row?.device_hash || row?.deviceHash || "");
+}
+
+function rowTurnId(row) {
+	return String(row?.turn_id || row?.turnId || "");
+}
+
+function rowSessionId(row) {
+	return String(row?.session_id || row?.sessionId || "");
+}
+
+function isUnknownIdentifier(value) {
+	const text = String(value || "").trim().toLowerCase();
+	return !text || text === "-" || text === "unknown";
+}
+
+function rowHasKnownTestDevice(row, testDeviceHashes = []) {
+	return new Set(testDeviceHashes || []).has(rowDeviceHash(row));
+}
+
+function isProbeDiagnosticRow(row) {
+	const text = `${rowTurnId(row)} ${rowSessionId(row)}`.toLowerCase();
+	return /\bprobe\b|codex-free-tier-probe|free-tier-probe|image-probe|probe-image/.test(text);
+}
+
+function isUnattributedExtensionError(row) {
+	return rowSource(row) === "extension" && isUnknownIdentifier(rowTurnId(row)) && isUnknownIdentifier(rowSessionId(row));
+}
+
+function isProviderErrorRow(row) {
+	const event = String(row?.event || "");
+	return event === "chat_stream_error" || event === "chat_upstream_response" || event === "chat_request_rejected";
+}
+
+function isQuotaDenial(row) {
+	return String(row?.event || "").endsWith("_quota_denied");
+}
+
+function classifyQuotaRows(rows, testDeviceHashes = []) {
+	const testDevices = new Set(testDeviceHashes || []);
+	return (Array.isArray(rows) ? rows : []).map((row) => {
+		const testDevice = testDevices.has(rowDeviceHash(row));
+		const classification = isQuotaDenial(row)
+			? testDevice
+				? "test_device_quota_denial"
+				: "health_quota_denial"
+			: "non_quota_rejection";
+		return {
+			...row,
+			classification,
+		};
+	});
+}
+
+function classifyErrorRows(rows, testDeviceHashes = []) {
+	return (Array.isArray(rows) ? rows : []).map((row) => {
+		const testDevice = rowHasKnownTestDevice(row, testDeviceHashes);
+		const probe = isProbeDiagnosticRow(row);
+		let classification = "health_error";
+		if (testDevice && probe) classification = "test_device_probe_error";
+		else if (testDevice) classification = "test_device_error";
+		else if (probe) classification = "probe_error";
+		else if (isUnattributedExtensionError(row)) classification = "unattributed_extension_error";
+		return {
+			...row,
+			classification,
+		};
+	});
+}
+
+function classifyToolReliabilityRows(rows) {
+	return (Array.isArray(rows) ? rows : []).map((row) => {
+		let classification = "health_tool_reliability";
+		if (String(row?.event || "") === "prompt_stopped" || String(row?.result || "") === "stopped") {
+			classification = "stopped_prompt_tool_reliability";
+		} else if (isProbeDiagnosticRow(row)) {
+			classification = "probe_tool_reliability";
+		}
+		return {
+			...row,
+			classification,
+		};
+	});
+}
+
+function filterRowsBySource(rows, sources = DEFAULT_HEALTH_SOURCES) {
+	const allowed = new Set(sources || DEFAULT_HEALTH_SOURCES);
+	return (Array.isArray(rows) ? rows : []).filter((row) => allowed.has(rowSource(row)));
+}
+
+function aggregateChatCost(rows) {
+	const selected = Array.isArray(rows) ? rows : [];
+	const completions = sumRows(selected, "completions");
+	const promptTokens = sumRows(selected, "prompt_tokens");
+	const completionTokens = sumRows(selected, "completion_tokens");
+	const totalTokens = sumRows(selected, "total_tokens");
+	const totalCost = sumRows(selected, "total_cost");
+	return {
+		completions,
+		prompt_tokens: promptTokens,
+		completion_tokens: completionTokens,
+		total_tokens: totalTokens,
+		total_cost: totalCost,
+		avg_cost: completions > 0 ? totalCost / completions : 0,
+		avg_tokens: completions > 0 ? totalTokens / completions : 0,
+	};
+}
+
+function healthChatCost(report) {
+	return aggregateChatCost(filterRowsBySource(report.sections?.chat_cost, report.plan?.healthSources || DEFAULT_HEALTH_SOURCES));
+}
+
+function healthToolReliabilityRows(report) {
+	return filterRowsBySource(
+		report.sections?.tool_reliability_classification || classifyToolReliabilityRows(report.sections?.tool_reliability),
+		report.plan?.healthSources || DEFAULT_HEALTH_SOURCES,
+	).filter((row) => row.classification === "health_tool_reliability");
 }
 
 function sumRows(rows, column, predicate = () => true) {

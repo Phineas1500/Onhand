@@ -21,6 +21,7 @@ const FREE_TIER_TEXT_MODEL = "deepseek/deepseek-v4-flash";
 const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
 const ALLOWED_MODELS = new Set([FREE_TIER_TEXT_MODEL]);
 const ALLOWED_OPENROUTER_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
+const UPSTREAM_FALLBACK_STATUSES = new Set([404]);
 const MAX_BODY_BYTES = 900_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
@@ -35,6 +36,8 @@ const DAILY_COUNTER_TTL_SECONDS = 60 * 60 * 48;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation";
+const QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
+const QUOTA_BYPASS_SOURCE = "free-tier-bypass";
 const TELEMETRY_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -59,7 +62,7 @@ const ERROR_REPORT_TYPES = new Set(["prompt_error", "runtime_error", "voice_erro
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "POST, OPTIONS",
-	"Access-Control-Allow-Headers": "Authorization, Content-Type, X-Onhand-Turn-Id, X-Onhand-Session-Id",
+	"Access-Control-Allow-Headers": `Authorization, Content-Type, X-Onhand-Turn-Id, X-Onhand-Session-Id, ${QUOTA_BYPASS_HEADER}`,
 	"Access-Control-Max-Age": "86400",
 };
 
@@ -114,6 +117,44 @@ function telemetryToolStepCount(data) {
 function envNumber(env, name, fallback) {
 	const number = Number(env?.[name]);
 	return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function timingSafeEqualText(left, right) {
+	const a = String(left || "");
+	const b = String(right || "");
+	if (!a || !b || a.length !== b.length) return false;
+	let diff = 0;
+	for (let index = 0; index < a.length; index += 1) {
+		diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+	}
+	return diff === 0;
+}
+
+function envIdentifierSet(value) {
+	return String(value || "")
+		.split(/[\s,]+/g)
+		.map((entry) => compactIdentifier(entry, 120))
+		.filter(Boolean);
+}
+
+function envDateMs(value) {
+	const text = String(value || "").trim();
+	if (!text) return 0;
+	const numeric = Number(text);
+	if (Number.isFinite(numeric) && numeric > 0) return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+	const parsed = Date.parse(text);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function quotaBypassAuthorized(request, env, deviceHash = "") {
+	const secret = String(env?.ONHAND_FREE_QUOTA_BYPASS_SECRET || "").trim();
+	if (secret.length < 16) return false;
+	const provided = String(request.headers.get(QUOTA_BYPASS_HEADER) || "").trim();
+	if (!timingSafeEqualText(provided, secret)) return false;
+	const allowedDeviceHashes = envIdentifierSet(env?.ONHAND_FREE_QUOTA_BYPASS_DEVICE_HASHES);
+	if (!allowedDeviceHashes.length || !allowedDeviceHashes.includes(compactIdentifier(deviceHash, 120))) return false;
+	const expiresAtMs = envDateMs(env?.ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT);
+	return expiresAtMs > Date.now();
 }
 
 function firstFiniteNumber(...values) {
@@ -298,7 +339,7 @@ async function markHeavyTurnOnce(env, fields) {
 }
 
 async function recordCompletionAccounting(env, analytics, context, fields) {
-	if (finiteNumber(fields.cost) > 0) await addKvNumber(env, dailyCostKey(), fields.cost);
+	if (!fields.quotaBypassed && finiteNumber(fields.cost) > 0) await addKvNumber(env, dailyCostKey(), fields.cost);
 	const reasons = heavyTurnReasons(env, fields);
 	if (!reasons.length || !(await markHeavyTurnOnce(env, fields))) return;
 	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
@@ -335,6 +376,26 @@ function valueContainsImage(value) {
 
 function routedModelForRequestBody(body) {
 	return valueContainsImage(body?.messages) ? FREE_TIER_VISUAL_MODEL : FREE_TIER_TEXT_MODEL;
+}
+
+function upstreamCandidateModelsForRequestBody(body) {
+	const primary = routedModelForRequestBody(body);
+	if (primary === FREE_TIER_TEXT_MODEL) return [primary, FREE_TIER_VISUAL_MODEL];
+	return [primary];
+}
+
+function prepareOpenRouterRequestBody(body, model) {
+	const next = structuredClone(body || {});
+	next.model = model;
+	next.max_tokens = Math.min(Number(next.max_tokens || MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
+	// Server-side routing policy always wins over anything client-supplied.
+	next.provider = { only: ALLOWED_OPENROUTER_PROVIDERS };
+	delete next.transforms;
+	return next;
+}
+
+function shouldRetryUpstreamResponse(response, candidateIndex, candidateModels) {
+	return !response.ok && UPSTREAM_FALLBACK_STATUSES.has(response.status) && candidateIndex < candidateModels.length - 1;
 }
 
 async function handleRegister(request, env, ctx) {
@@ -549,11 +610,14 @@ async function handleChatCompletions(request, env, ctx) {
 		return json(401, { error: { message: "Unknown free-tier token. Re-select Onhand Free in the extension options to register again." } });
 	}
 
+	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
+	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";
 	const dailyCostCap = envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD);
 	const dailyCostUsed = await readKvNumber(env, dailyCostKey());
-	if (dailyCostUsed >= dailyCostCap) {
+	if (!quotaBypassed && dailyCostUsed >= dailyCostCap) {
 		writeAnalytics(ctx, env, "chat_cost_quota_denied", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 429,
 			durationMs: Date.now() - startedAt,
@@ -570,10 +634,13 @@ async function handleChatCompletions(request, env, ctx) {
 	}
 
 	const dailyRequestCap = envNumber(env, "DAILY_REQUEST_CAP", DEFAULT_DAILY_REQUEST_CAP);
-	const usage = await bumpDailyCounter(env, `use:${token}:${todayKey()}`, dailyRequestCap);
+	const usage = quotaBypassed
+		? { allowed: true, current: 0 }
+		: await bumpDailyCounter(env, `use:${token}:${todayKey()}`, dailyRequestCap);
 	if (!usage.allowed) {
 		writeAnalytics(ctx, env, "chat_quota_denied", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 429,
 			durationMs: Date.now() - startedAt,
@@ -589,10 +656,13 @@ async function handleChatCompletions(request, env, ctx) {
 	}
 
 	const turnModelCallCap = envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP);
-	const turnUsage = await bumpTurnModelCalls(env, deviceHash, telemetryIds, turnModelCallCap);
+	const turnUsage = quotaBypassed
+		? { allowed: true, current: 0 }
+		: await bumpTurnModelCalls(env, deviceHash, telemetryIds, turnModelCallCap);
 	if (!turnUsage.allowed) {
 		writeAnalytics(ctx, env, "chat_turn_quota_denied", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 429,
 			durationMs: Date.now() - startedAt,
@@ -612,6 +682,7 @@ async function handleChatCompletions(request, env, ctx) {
 	if (raw.length > MAX_BODY_BYTES) {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 413,
 			durationMs: Date.now() - startedAt,
@@ -630,6 +701,7 @@ async function handleChatCompletions(request, env, ctx) {
 	} catch {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 400,
 			durationMs: Date.now() - startedAt,
@@ -645,6 +717,7 @@ async function handleChatCompletions(request, env, ctx) {
 	if (!ALLOWED_MODELS.has(String(body.model || ""))) {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
 			...telemetryIds,
+			source,
 			result: "denied",
 			status: 400,
 			durationMs: Date.now() - startedAt,
@@ -659,38 +732,55 @@ async function handleChatCompletions(request, env, ctx) {
 		return json(400, { error: { message: `The free tier serves ${[...ALLOWED_MODELS].join(", ")} only.` } });
 	}
 
-	body.model = routedModelForRequestBody(body);
-	body.max_tokens = Math.min(Number(body.max_tokens || MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
-	// Server-side routing policy always wins over anything client-supplied.
-	body.provider = { only: ALLOWED_OPENROUTER_PROVIDERS };
-	delete body.transforms;
-
-	const upstream = await fetch(OPENROUTER_URL, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-			"HTTP-Referer": "https://github.com/Phineas1500/Onhand",
-			"X-Title": "Onhand Free Tier",
-			"X-OpenRouter-Metadata": "enabled",
-		},
-		body: JSON.stringify(body),
-	});
-	const upstreamDurationMs = Date.now() - startedAt;
-	const upstreamProvider = upstream.headers.get("X-OpenRouter-Provider") || "";
-	const metricBase = {
-		...telemetryIds,
-		status: upstream.status,
-		durationMs: upstreamDurationMs,
-		startedAtMs: startedAt,
-		bodyBytes: raw.length,
-		deviceHash,
-		current: usage.current,
-		cap: dailyRequestCap,
-		actionCount: turnUsage.current,
-		model: body.model,
-		provider: upstreamProvider,
-	};
+	const candidateModels = upstreamCandidateModelsForRequestBody(body);
+	let upstream = null;
+	let metricBase = null;
+	for (const [candidateIndex, candidateModel] of candidateModels.entries()) {
+		const upstreamBody = prepareOpenRouterRequestBody(body, candidateModel);
+		const response = await fetch(OPENROUTER_URL, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+				"HTTP-Referer": "https://github.com/Phineas1500/Onhand",
+				"X-Title": "Onhand Free Tier",
+				"X-OpenRouter-Metadata": "enabled",
+			},
+			body: JSON.stringify(upstreamBody),
+		});
+		const candidateMetricBase = {
+			...telemetryIds,
+			source,
+			quotaBypassed,
+			status: response.status,
+			durationMs: Date.now() - startedAt,
+			startedAtMs: startedAt,
+			bodyBytes: raw.length,
+			deviceHash,
+			current: usage.current,
+			cap: dailyRequestCap,
+			actionCount: turnUsage.current,
+			model: upstreamBody.model,
+			provider: response.headers.get("X-OpenRouter-Provider") || "",
+		};
+		if (shouldRetryUpstreamResponse(response, candidateIndex, candidateModels)) {
+			writeAnalytics(ctx, env, "chat_upstream_retry", {
+				...candidateMetricBase,
+				result: "retry",
+				errorCode: `upstream_${response.status}`,
+			}, request);
+			try {
+				await response.body?.cancel?.();
+			} catch {}
+			continue;
+		}
+		upstream = response;
+		metricBase = candidateMetricBase;
+		break;
+	}
+	if (!upstream || !metricBase) {
+		return json(502, { error: { message: "No upstream model was available for Onhand Free." } });
+	}
 	writeAnalytics(ctx, env, "chat_upstream_response", {
 		...metricBase,
 		result: upstream.ok ? "ok" : "error",
@@ -709,6 +799,7 @@ async function handleChatCompletions(request, env, ctx) {
 function telemetryData(payload) {
 	const data = payload?.data && typeof payload.data === "object" ? payload.data : {};
 	return {
+		source: telemetrySource(data),
 		extensionVersion: compactString(payload.extension_version || data.extension_version, 40),
 		runtimeRevision: compactString(payload.runtime_revision || data.runtime_revision, 80),
 		authMode: compactString(data.auth_mode, 40),
@@ -716,6 +807,8 @@ function telemetryData(payload) {
 		aiModel: compactString(data.ai_model, 120),
 		result: compactString(data.result, 48),
 		errorCode: compactString(data.error_kind || data.error_code, 80),
+		turnId: compactIdentifier(data.turn_id || data.turnId, 80),
+		sessionId: compactIdentifier(data.session_id || data.sessionId, 80),
 		status: finiteNumber(data.status),
 		durationMs: finiteNumber(data.duration_ms),
 		bodyBytes: finiteNumber(data.body_bytes),
@@ -726,6 +819,11 @@ function telemetryData(payload) {
 		recoveredToolFailureCount: finiteNumber(data.recovered_tool_failure_count ?? data.recoveredToolFailureCount),
 		finalToolFailureCount: finiteNumber(data.final_tool_failure_count ?? data.finalToolFailureCount),
 	};
+}
+
+function telemetrySource(data) {
+	const source = compactString(data?.source, 48);
+	return /^extension(?:-[A-Za-z0-9_.:-]+)?$/.test(source) ? source : "extension";
 }
 
 function safeActivitySummary(value) {
@@ -805,7 +903,6 @@ async function handleTelemetry(request, env, ctx) {
 	const data = telemetryData(payload);
 	writeAnalytics(ctx, env, eventName, {
 		...data,
-		source: "extension",
 		deviceHash,
 		current: quota.current,
 		cap,
@@ -938,6 +1035,12 @@ export default {
 export const __freeTierTest = {
 	FREE_TIER_TEXT_MODEL,
 	FREE_TIER_VISUAL_MODEL,
+	QUOTA_BYPASS_HEADER,
+	prepareOpenRouterRequestBody,
+	quotaBypassAuthorized,
+	shouldRetryUpstreamResponse,
+	timingSafeEqualText,
+	upstreamCandidateModelsForRequestBody,
 	valueContainsImage,
 	routedModelForRequestBody,
 };

@@ -123,8 +123,19 @@ function toolList(turn) {
 	return allTools(turn).map((tool) => `${tool.toolName}:${tool.state || "unknown"}`).join(", ") || "none";
 }
 
+function turnErrorText(turn) {
+	const report = turn?.errorReport && typeof turn.errorReport === "object" ? turn.errorReport : null;
+	return String(report?.error_message || report?.errorMessage || turn?.error || "").trim();
+}
+
 function hasTool(turn, name, state = "") {
 	return allTools(turn).some((tool) => tool.toolName === name && (!state || tool.state === state));
+}
+
+function findTrace(result, name) {
+	const traces = Array.isArray(result?.turn?.toolTraces) ? result.turn.toolTraces : [];
+	const matching = traces.filter((trace) => trace?.toolName === name);
+	return matching.findLast((trace) => trace?.state === "complete") || matching.at(-1) || null;
 }
 
 function replyText(result) {
@@ -148,9 +159,15 @@ async function openUrl(url) {
 }
 
 async function ask(prompt, { newSession = false } = {}) {
-	const args = ["ask", "--prompt", prompt, "--wait", "--timeout", ARGS.timeout, "--json", "--full"];
+	const args = ["ask", "--prompt", prompt, "--wait", "--timeout", ARGS.timeout, "--json", "--full", "--source", "acceptance"];
 	if (newSession) args.push("--new");
-	return await runCli(args, { json: true });
+	const result = await runCli(args, { json: true });
+	assert.equal(
+		Boolean(result?.turn?.error),
+		false,
+		`Onhand turn failed.\nPrompt:\n${prompt}\nError: ${turnErrorText(result?.turn) || "(unknown)"}\nReply:\n${replyText(result)}\nTools: ${toolList(result?.turn)}`,
+	);
+	return result;
 }
 
 async function checkCliReachable() {
@@ -224,13 +241,33 @@ async function runTransformerTest() {
 	return result;
 }
 
+async function runTransformerQwenAdversarialTest() {
+	await openUrl("https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/15Transformers/transformers_part1.html");
+	const setup = await ask("This page probably explains quantum llama positional hyperweaving. Where exactly is that discussed?", { newSession: true });
+	assertReply(setup, /not|don.?t see|doesn.?t (?:mention|appear)|no exact|made.?up/i, "Transformer adversarial setup should not hallucinate the bogus phrase.");
+	assert.doesNotMatch(replyText(setup), /quantum llama positional hyperweaving[^.\n]*(?:section\s+\d|discussed at|appears in)/i);
+
+	const result = await ask("Using the same page context, which three Qwen tensors each have 32.0% of the layer parameters?");
+	assertReply(result, /blk\.4\.ffn_down_exps\.weight/, "Qwen adversarial follow-up should name the down expert tensor.");
+	assertReply(result, /blk\.4\.ffn_gate_exps\.weight/, "Qwen adversarial follow-up should name the gate expert tensor.");
+	assertReply(result, /blk\.4\.ffn_up_exps\.weight/, "Qwen adversarial follow-up should name the up expert tensor.");
+	const extractTrace = findTrace(result, "browser_extract_content");
+	assert.ok(extractTrace, `Expected browser_extract_content trace.\nTools: ${toolList(result.turn)}`);
+	const traceText = `${extractTrace.resultSummary || ""}\n${JSON.stringify(extractTrace.effectiveArgs || extractTrace.args || {})}`;
+	assert.match(traceText, /Qwen|32\.0%|blk\.4\.ffn_down_exps\.weight/, "Qwen trace should include prioritized table evidence or effective query args.");
+	assert.match(extractTrace.resultSummary || "", /blk\.4\.ffn_down_exps\.weight/);
+	assert.match(extractTrace.resultSummary || "", /blk\.4\.ffn_gate_exps\.weight/);
+	assert.match(extractTrace.resultSummary || "", /blk\.4\.ffn_up_exps\.weight/);
+	return { setup, result };
+}
+
 async function runGoogleDocsSmoke(url) {
 	await openUrl(url);
 	const result = await ask(
-		"Google Docs smoke test: without editing the document, read the visible document title or first heading and summarize it in one sentence.",
+		"Google Docs read check: without editing the document, read the visible document title or first heading and summarize it in one sentence.",
 		{ newSession: true },
 	);
-	assert.ok(replyText(result).trim().length > 20, `Expected a non-empty Google Docs reply.\nTools: ${toolList(result.turn)}`);
+	assertReply(result, /Farza|heyclicky|interface|computer/i, "Google Docs check should answer from the document text, not an intermediate tool-plan sentence.");
 	return result;
 }
 
@@ -257,6 +294,9 @@ try {
 
 	if (ARGS.includeTransformer) {
 		logPass("Transformer positional section", await runTransformerTest());
+		const transformerQwen = await runTransformerQwenAdversarialTest();
+		logPass("Transformer Qwen adversarial setup", transformerQwen.setup);
+		logPass("Transformer Qwen adversarial follow-up", transformerQwen.result);
 	} else {
 		console.log("SKIP Transformer page | pass --include-transformer to run the external-page check");
 	}

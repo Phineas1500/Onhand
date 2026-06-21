@@ -1,6 +1,6 @@
 {
   "name": "onhand",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Onhand: contextual AI assistant for learning and research running in a browser extension",
   "license": "Apache-2.0",
   "type": "module",
@@ -29,7 +29,8 @@
     "sentry:sourcemaps": "node ./scripts/upload-sentry-sourcemaps.mjs",
     "sentry:smoke": "node ./scripts/run-sentry-source-map-smoke.mjs",
     "ops:free-tier": "node ./scripts/run-free-tier-ops-report.mjs",
-    "ops:free-tier:check": "node ./scripts/run-free-tier-ops-report.mjs --days=1 --check --fail-on-critical",
+    "ops:free-tier:check": "node ./scripts/run-free-tier-ops-report.mjs --days=1 --check --fail-on-critical --test-device-hashes=auto",
+    "free-tier:bypass": "node ./scripts/free-tier-bypass.mjs",
     "debug:sessions": "node ./scripts/dump-onhand-sessions.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",

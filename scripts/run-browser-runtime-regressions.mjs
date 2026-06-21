@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 
+const GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL = "https://docs.google.com/document/d/onhand-fixture-doc-id/export?format=pdf";
+
 function installChromeStorageStub() {
 	globalThis.chrome = {
 		runtime: {
@@ -281,7 +283,12 @@ async function assertProviderApiKeyStorageAndRouting() {
 		// the options page must not offer a custom-model entry for it.
 		const { readFile } = await import("node:fs/promises");
 		const optionsSource = await readFile(new URL("../packages/browser-extension/options.js", import.meta.url), "utf8");
+		const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+		const runtimeBundle = await readFile(new URL("../packages/browser-extension/onhand-runtime.bundle.js", import.meta.url), "utf8");
 		assert.match(optionsSource, /lockedModels/, "options page should lock the free-tier model dropdown to curated entries");
+		assert.match(runtimeSource, /ONHAND_FREE_TIER_DEFAULT_BASE_URL = ""/, "free-tier base URL should be configured outside tracked source");
+		assert.doesNotMatch(runtimeSource, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "source must not hard-code a public free-tier Worker URL");
+		assert.doesNotMatch(runtimeBundle, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "bundle must not hard-code a public free-tier Worker URL");
 	}
 	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
 	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
@@ -457,6 +464,52 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		assert.match(sentryPayload, /"dist":"chrome"/);
 		assert.match(sentryPayload, /sentry_smoke/);
 		assert.match(sentryPayload, /openai-codex/);
+
+		fetchCalls.length = 0;
+		const suppressedCases = [
+			{
+				label: "aborted request",
+				messageType: "sidebar:submit-prompt",
+				message: "Request was aborted",
+			},
+			{
+				label: "busy prompt",
+				messageType: "sidebar:submit-prompt",
+				message: "Agent is already processing a prompt. Use steer() or followUp() to queue messages.",
+			},
+			{
+				label: "OAuth cancellation",
+				messageType: "browser-runtime:oauth-sign-in",
+				message: "OAuth sign-in tab was closed before authorization completed.",
+			},
+			{
+				label: "stale replay anchor",
+				messageType: "sidebar:activate-action",
+				message: "Source not found on this page: private source",
+			},
+			{
+				label: "realtime tool target miss",
+				messageType: "sidebar:realtime-browser-tool",
+				message: "Onhand page tools only run on web or local-file tabs, not Onhand Sidebar",
+			},
+		];
+		for (const entry of suppressedCases) {
+			const suppressed = await runtime.captureRuntimeException({
+				messageType: entry.messageType,
+				message: entry.message,
+				stack: `Error: ${entry.message}\n    at smoke (${extensionFrame})`,
+			});
+			assert.equal(suppressed.captured, false, `${entry.label} should be suppressed even when diagnostics are on`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.equal(fetchCalls.length, 0, "suppressed Sentry capture should not call fetch");
+
+		const unexpected = await runtime.captureRuntimeException({
+			messageType: "sidebar:submit-prompt",
+			message: "Unexpected runtime explosion",
+			stack: `Error: Unexpected runtime explosion\n    at smoke (${extensionFrame})`,
+		});
+		assert.equal(unexpected.captured, true, "unexpected runtime exceptions should still create Sentry issues");
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -926,6 +979,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
 	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
+	assert.match(contract.systemPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
+	assert.match(contract.systemPrompt, /simple answer-only questions use read-only grounding/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
 	assert.match(contract.systemPrompt, /every named step or item in chat must be anchored/);
 	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
@@ -950,6 +1005,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Every named step\/item in chat needs a matching anchor/);
 	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
+	assert.match(contract.answerPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
 	assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
 	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
@@ -1012,6 +1068,7 @@ async function assertConstitutionPromptContract() {
 	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
 	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
+	const genericSmokeToolNames = getToolNamesForTest("Google Docs smoke test: read the document title without editing it.", false);
 	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
 	const externalSourceToolNames = getToolNamesForTest("Could you take me to these sources and highlight the parts that discuss attention?", false);
 	const linkedNotesToolNames = getToolNamesForTest(
@@ -1033,7 +1090,23 @@ async function assertConstitutionPromptContract() {
 	const disabledExplicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false, null, { advancedRuntimeInspectionEnabled: false });
 	const noPageChangeToolNames = getToolNamesForTest("Answer from this page. Do not add highlights or notes.", false);
 	const highlightWithoutNotesToolNames = getToolNamesForTest("Try to highlight the exact phrase Alpha smoke content. Do not add notes.", false);
+	const answerOnlySectionValueToolNames = getToolNamesForTest(
+		"Read the current page and answer: what output text is shown in the Network Section before clicking? Keep the answer short.",
+		false,
+	);
 	const cachedFollowupToolNames = getToolNamesForTest("What activation functions are listed for FFNs on this page?", false, null, { suppressExtractContent: true });
+	const exactCachedFollowupToolNames = getToolNamesForTest(
+		"Using the same page context, what is the exact sinusoidal positional encoding formula?",
+		false,
+		null,
+		{ suppressExtractContent: true },
+	);
+	const tableCachedFollowupToolNames = getToolNamesForTest(
+		"Using the same page context, which three Qwen tensors each have 32.0% of the layer parameters?",
+		false,
+		null,
+		{ suppressExtractContent: true },
+	);
 	const priorPageContext = buildPriorExtractedPageContextForTest(
 		{
 			turns: [
@@ -1057,11 +1130,82 @@ async function assertConstitutionPromptContract() {
 		{ title: "transformers_part1", url: "https://example.test/transformers_part1.html#section" },
 		"What activation functions are listed for FFNs and which models or papers are associated with them?",
 	);
+	const exactPriorPageContext = buildPriorExtractedPageContextForTest(
+		{
+			turns: [
+				{
+					createdAt: "2026-06-19T20:00:00.000Z",
+					toolTraces: [
+						{
+							toolName: "browser_extract_content",
+							state: "complete",
+							resultDetails: {
+								tab: { title: "transformers_part1", url: "https://example.test/transformers_part1.html" },
+								content: { url: "https://example.test/transformers_part1.html" },
+							},
+							resultSummary:
+								"Readable content from transformers_part1:\nPage heading outline with section snippets:\n### Positional Encodings\nThe section starts with P in R and then truncates before later equations...",
+						},
+					],
+				},
+			],
+		},
+		{ title: "transformers_part1", url: "https://example.test/transformers_part1.html" },
+		"Using the same page context, what is the exact sinusoidal positional encoding formula?",
+	);
+	const priorDocContextWithActiveTabDrift = buildPriorExtractedPageContextForTest(
+		{
+			turns: [
+				{
+					createdAt: "2026-06-19T20:05:00.000Z",
+					toolTraces: [
+						{
+							toolName: "browser_extract_content",
+							state: "complete",
+							resultDetails: {
+								tab: { title: "heyclicky vision - Google Docs", url: "https://docs.google.com/document/d/example/edit?tab=t.0" },
+								content: { url: "https://docs.google.com/document/d/example/edit?tab=t.0" },
+							},
+							resultSummary:
+								"Readable content from heyclicky vision - Google Docs:\nReadable body excerpt:\nThe iMac took the same chip, memory, and storage everyone else was using and made it 100x more accessible. I wanna take the same frontier models everyone else is using, and make it so that the power of this technology can break out of uninspired chat interfaces.",
+						},
+					],
+				},
+			],
+		},
+		{ title: "Unrelated video", url: "https://www.youtube.com/watch?v=example" },
+		"Using the same document context, what analogy does the author make with the iMac?",
+	);
+	const unrelatedActiveTabShouldNotUsePriorDocContext = buildPriorExtractedPageContextForTest(
+		{
+			turns: [
+				{
+					createdAt: "2026-06-19T20:05:00.000Z",
+					toolTraces: [
+						{
+							toolName: "browser_extract_content",
+							state: "complete",
+							resultDetails: {
+								tab: { title: "heyclicky vision - Google Docs", url: "https://docs.google.com/document/d/example/edit?tab=t.0" },
+								content: { url: "https://docs.google.com/document/d/example/edit?tab=t.0" },
+							},
+							resultSummary: "Readable content from heyclicky vision - Google Docs:\nReadable body excerpt:\nThe iMac made computing more accessible.",
+						},
+					],
+				},
+			],
+		},
+		{ title: "Unrelated video", url: "https://www.youtube.com/watch?v=example" },
+		"What does the current page say about the iMac?",
+	);
 	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 	assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
 	assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
+	assert.equal(answerAllToolNames.includes("browser_get_visible_region_image"), true, "explicit port smoke should expose all browser tools");
+	assert.equal(genericSmokeToolNames.includes("browser_get_visible_region_image"), false, "generic smoke wording should not expose visual capture");
+	assert.equal(genericSmokeToolNames.includes("browser_run_js"), false, "generic smoke wording should not expose runtime inspection");
 	assert.equal(noPageChangeToolNames.includes("browser_extract_content"), true, "no-page-change prompts still need read tools");
 	assert.equal(noPageChangeToolNames.includes("browser_highlight_text"), false, "explicit no-highlight prompts must not expose highlighter");
 	assert.equal(noPageChangeToolNames.includes("browser_show_note"), false, "explicit no-note prompts must not expose note tool");
@@ -1069,12 +1213,24 @@ async function assertConstitutionPromptContract() {
 	assert.equal(noPageChangeToolNames.includes("browser_restore_state"), false, "explicit no-page-change prompts must not expose restore-state");
 	assert.equal(highlightWithoutNotesToolNames.includes("browser_highlight_text"), true, "explicit highlight prompts must keep the highlighter even when notes are forbidden");
 	assert.equal(highlightWithoutNotesToolNames.includes("browser_show_note"), false, "no-note highlight prompts must still hide note creation");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_highlight_text"), false, "answer-only section/value prompts should not expose highlighter");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_show_note"), false, "answer-only section/value prompts should not expose note creation");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_navigate"), false, "read current page prompts should not be treated as linked-page navigation");
 	assert.equal(cachedFollowupToolNames.includes("browser_extract_content"), false, "same-page cached followups should not re-extract full page content");
 	assert.equal(cachedFollowupToolNames.includes("browser_get_visible_text"), true, "same-page cached followups should retain lightweight read tools");
+	assert.equal(exactCachedFollowupToolNames.includes("browser_extract_content"), true, "exact formula followups should keep extraction available even with cached context");
+	assert.equal(exactCachedFollowupToolNames.includes("browser_get_visible_text"), false, "exact formula followups should prefer full extraction over visible-only reads");
+	assert.equal(tableCachedFollowupToolNames.includes("browser_extract_content"), true, "table/value followups should keep full extraction available even with cached context");
+	assert.equal(tableCachedFollowupToolNames.includes("browser_get_visible_text"), false, "table/value followups should prefer full extraction over visible-only reads");
 	assert.match(priorPageContext, /Session page context already read/);
 	assert.match(priorPageContext, /Activation Functions/);
 	assert.match(priorPageContext, /ReLU with Original Transformer/);
 	assert.doesNotMatch(priorPageContext, /Early page excerpt/);
+	assert.equal(exactPriorPageContext, "", "exact formula prompts should not inject truncated cached page context");
+	assert.match(priorDocContextWithActiveTabDrift, /prior page in this session/);
+	assert.match(priorDocContextWithActiveTabDrift, /docs\.google\.com/);
+	assert.match(priorDocContextWithActiveTabDrift, /iMac took the same chip/);
+	assert.equal(unrelatedActiveTabShouldNotUsePriorDocContext, "", "prior document context should not override an unrelated current-page question");
 	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
 	assert.equal(debugToolNames.includes("browser_collect_console"), true, "debug prompts should get console inspection");
 	assert.equal(debugToolNames.includes("browser_run_js"), false, "generic debug prompts should not expose JavaScript execution");
@@ -3352,7 +3508,7 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 async function assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const pdfUrl = "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf";
+	const pdfUrl = GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL;
 	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`;
 	const pdfAnchor = {
 		surface: "pdf",
@@ -5222,6 +5378,54 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 	assert.match(extractTrace.resultSummary || "", new RegExp(longTraceMarker));
 }
 
+async function assertExactExtractContentPromptsInjectQuery() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 8,
+				windowId: 4,
+				active: true,
+				title: "transformers_part1",
+				url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/15Transformers/transformers_part1.html",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-ports-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const qwenPrompt = "Using the same page context, which three Qwen tensors each have 32.0% of the layer parameters?";
+	await runtime.submitPrompt({
+		prompt: `Port smoke all browser tools, then answer this exact table question: ${qwenPrompt}`,
+		displayPrompt: qwenPrompt,
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 4,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete exact extract query regression");
+	const extractCall = host.calls.find((call) => call.name === "extract_content");
+	assert.ok(extractCall, "expected the smoke path to call extract_content");
+	assert.equal(extractCall.args.windowId, 4);
+	assert.match(extractCall.args.query || "", /Qwen tensors/);
+	assert.match(extractCall.args.query || "", /32\.0%/);
+	assert.equal(extractCall.args.maxChars >= 30000, true, "exact/table prompts should expand extract_content maxChars");
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	const extractTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_extract_content");
+	assert.ok(extractTrace, "expected extract_content trace for exact extract query regression");
+	assert.equal(extractTrace.args.query, undefined, "requested model args should remain separate from runtime-injected query");
+	assert.equal(extractTrace.args.maxChars, 800);
+	assert.match(extractTrace.effectiveArgs.query || "", /Qwen tensors/);
+	assert.match(extractTrace.effectiveArgs.query || "", /32\.0%/);
+	assert.equal(extractTrace.effectiveArgs.maxChars >= 30000, true);
+}
+
 async function assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -5612,6 +5816,7 @@ async function main() {
 	await assertPdfReplayActionActivationRepairsWithPdfAnchor();
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
+	await assertExactExtractContentPromptsInjectQuery();
 	await assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled();
 	await assertRealtimePlannerOpensDirectPdfBeforePlanning();
 	await assertRealtimePlannerCapturesVisualRegionForVisualQuestions();

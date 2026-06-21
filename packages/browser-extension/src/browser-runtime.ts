@@ -101,6 +101,7 @@ interface ToolTraceEntry {
 	startedAt: string;
 	endedAt?: string;
 	args?: unknown;
+	effectiveArgs?: unknown;
 	resultSummary?: string;
 	resultDetails?: unknown;
 	error?: string;
@@ -307,14 +308,17 @@ const ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS = 48000;
 const ONHAND_FREE_VISUAL_RECENT_TEXT_BLOCK_MAX_CHARS = 9000;
 const ONHAND_FREE_VISUAL_OLD_TOOL_TEXT_BLOCK_MAX_CHARS = 2200;
 const ONHAND_FREE_VISUAL_OLD_TEXT_BLOCK_MAX_CHARS = 3600;
-// The deployed workers/free-tier proxy. Override without rebuilding via
-// the onhandFreeTierBaseUrl key in chrome.storage.local (used by tests
-// and staged deployments). See docs/FREE_TIER.md.
-const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "https://onhand-free-tier.sriram-kiron.workers.dev/v1";
+// Public builds do not hard-code the hosted workers/free-tier proxy. Configure
+// it locally with the onhandFreeTierBaseUrl key in chrome.storage.local. See
+// docs/FREE_TIER.md.
+const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "";
 const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 const ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
 const ONHAND_FREE_SESSION_ID_HEADER = "X-Onhand-Session-Id";
+const ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY = "onhandFreeTierQuotaBypassSecret";
+const ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY = "onhandFreeTierQuotaBypassExpiresAt";
+const ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 const ONHAND_SENTRY_DIST = "chrome";
 const ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
@@ -459,9 +463,9 @@ Onhand's constitution:
 Default answer mode:
 - For ordinary answer-only questions about page material, answer from captured visible/readable text without creating highlights or notes. Use page annotations when the user asks for highlighting/notes, asks where evidence is located, needs a durable learning/replay anchor, or asks for source/navigation work where anchors are the deliverable.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
-- If the user asks about a named section, heading, phrase, table, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing or not visible.
+- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session anchor when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
-- Grounding budget: for simple definition or "what/why" questions, use one strong anchor, at most one short note, then answer. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
+- Grounding budget: simple answer-only questions use read-only grounding and a short answer. If the user asks for annotations, evidence location, learning/replay anchors, or source-navigation work, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
 - Do not add notes that merely paraphrase the highlight. A note should name the role of the passage, explain a hard step, or leave useful marginalia for session replay.
 - Only successful highlight/note tool results count as anchors. If a highlight attempt fails, retry with a smaller exact visible span or omit/qualify that claim in chat.
 - For multi-part, comparative, "show evidence", or confused follow-up questions, anchor each distinct key point, but keep each note and chat paragraph short. Stop once the answer is supported.
@@ -586,6 +590,7 @@ const VISIBLE_TEXT_SCHEMA = Type.Object({
 const EXTRACT_CONTENT_SCHEMA = Type.Object({
 	...READ_TAB_SELECTOR_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of readable page content to return" })),
+	query: Type.Optional(Type.String({ description: "Short search query used to prioritize matching headings, tables, rows, or values in long pages" })),
 });
 
 const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
@@ -816,12 +821,12 @@ function promptAsksForLinkedPageNavigation(text: string) {
 	const hasNavigationVerb = textHasAny(text, /\b(open(?: up)?|follow|click|visit|navigate(?: to)?|go to|load|pull up|bring up|inspect|look at|check|review|read|scan)\b/);
 	const hasLinkedPageTarget = textHasAny(
 		text,
-		/\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|pages?|articles?|papers?|documents?)\b/,
+		/\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b/,
 	);
 	if (hasNavigationVerb && hasLinkedPageTarget) return true;
 	return textHasAny(
 		text,
-		/\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|pages?|readings?|resources?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/,
+		/\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/,
 	);
 }
 
@@ -1460,7 +1465,22 @@ function normalizeReviewConceptKey(label: string) {
 async function getFreeTierBaseUrl(): Promise<string> {
 	const stored = await chrome.storage.local.get({ [ONHAND_FREE_BASE_URL_STORAGE_KEY]: "" });
 	const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
-	return (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+	const baseUrl = (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+	if (!baseUrl) {
+		throw new Error("Onhand Free is not configured. Set chrome.storage.local.onhandFreeTierBaseUrl to the deployed free-tier Worker URL.");
+	}
+	return baseUrl;
+}
+
+async function getFreeTierQuotaBypassSecret(): Promise<string> {
+	const stored = await chrome.storage.local.get({
+		[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY]: "",
+		[ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY]: "",
+	});
+	const expiresAt = String(stored[ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY] || "").trim();
+	const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN;
+	if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) return "";
+	return String(stored[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY] || "").trim();
 }
 
 // The free tier identifies devices with an anonymous token issued by the
@@ -1488,6 +1508,7 @@ async function getOrRegisterFreeTierToken(): Promise<string> {
 
 async function buildFreeTierModel() {
 	const baseUrl = await getFreeTierBaseUrl();
+	const quotaBypassSecret = await getFreeTierQuotaBypassSecret();
 	// Always the worker's allowlisted model: anything else stored in
 	// settings (e.g. from an older UI) would only bounce off the worker.
 	// Image-capable input is advertised here so user attachments and visual
@@ -1504,6 +1525,9 @@ async function buildFreeTierModel() {
 		input: ["text", "image"],
 		contextWindow: ONHAND_FREE_TEXT_CONTEXT_WINDOW,
 		maxTokens: 32768,
+		...(quotaBypassSecret
+			? { headers: { [ONHAND_FREE_QUOTA_BYPASS_HEADER]: quotaBypassSecret } }
+			: {}),
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
 }
@@ -2726,6 +2750,65 @@ function extractAssistantFailure(messages: AgentMessage[] = [], userAborted = fa
 	return null;
 }
 
+function hasCompletedUserToolTrace(request: any) {
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+		(trace: any) => trace?.state === "complete" && trace?.toolName && !isInternalToolName(trace.toolName),
+	);
+}
+
+function hasCompletedTabInventory(request: any) {
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+		(trace: any) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs",
+	);
+}
+
+function annotationIdParts(annotationId: unknown) {
+	const match = String(annotationId || "").trim().match(/^onhand-(\d+)-([A-Za-z0-9]+)$/);
+	return match ? { stamp: match[1], suffix: match[2] } : null;
+}
+
+function resolveActiveAnnotationId(request: any, annotationId: unknown, noteText: unknown = "") {
+	const requested = compactActionText(annotationId);
+	if (!requested || !request) return requested;
+	const annotations = (Array.isArray(request.pageActions) ? request.pageActions : [])
+		.filter((action: any) => action?.type === "annotation" && compactActionText(action.annotationId))
+		.map((action: any) => ({
+			annotationId: compactActionText(action.annotationId),
+			text: `${action.detail || ""} ${action.citationText || ""}`.toLowerCase(),
+			parts: annotationIdParts(action.annotationId),
+		}));
+	if (!annotations.length || annotations.some((entry) => entry.annotationId === requested)) return requested;
+	const requestedParts = annotationIdParts(requested);
+	if (!requestedParts) return requested;
+	const noteWords = new Set(String(noteText || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+	const scored = annotations
+		.map((entry) => {
+			let score = 0;
+			if (entry.parts?.stamp === requestedParts.stamp) score += 30;
+			if (entry.parts?.suffix === requestedParts.suffix) score += 20;
+			for (const word of noteWords) {
+				if (entry.text.includes(word)) score += 1;
+			}
+			return { ...entry, score };
+		})
+		.filter((entry) => entry.score >= 20)
+		.sort((left, right) => right.score - left.score);
+	return scored[0]?.annotationId || requested;
+}
+
+function buildBlankReplyRetryPrompt(request: any) {
+	const latestTrace = (Array.isArray(request?.toolTraces) ? [...request.toolTraces] : [])
+		.reverse()
+		.find((trace: any) => trace?.state === "complete" && trace?.resultSummary);
+	const toolExcerpt = latestTrace?.resultSummary ? truncateStructuredText(String(latestTrace.resultSummary), 7000) : "";
+	return [
+		"You completed browser/tool work but returned no answer.",
+		"Answer the original user question now using the completed tool result below. Do not call more tools.",
+		`Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
+		toolExcerpt ? `Completed tool result:\n${toolExcerpt}` : "",
+	].filter(Boolean).join("\n\n");
+}
+
 function buildSessionTitleFromPrompt(prompt: string) {
 	const cleaned =
 		String(prompt || "")
@@ -2817,6 +2900,24 @@ function promptKeywordsForPriorPageContext(prompt: unknown) {
 	).filter((word) => !stop.has(word)).slice(0, 24);
 }
 
+function promptReferencesPriorPageContext(prompt: unknown) {
+	const text = String(prompt || "").toLowerCase();
+	return (
+		/\b(?:using|from|based on|with)\s+(?:the\s+)?(?:same|previous|prior|earlier|above)\s+(?:page|document|doc|article|paper|source|context|extract|lecture|notes?)\b/.test(text) ||
+		/\b(?:same|previous|prior|earlier|above)\s+(?:page|document|doc|article|paper|source|context|extract|lecture|notes?)\b/.test(text)
+	);
+}
+
+function promptNeedsExactReadableContext(prompt: unknown) {
+	return /\b(?:exact|verbatim|quote|quoted|formula|equation|symbol|notation|math|sinusoidal|sine|cosine|table|tables|row|rows|column|columns|tensor|tensors|parameter(?:[-\s]?count)?|parameters?|params?|percent|percentage|value|values)\b|%/i.test(String(prompt || ""));
+}
+
+function buildReadableContentQuery(prompt: unknown) {
+	const clean = stripVoicePromptPrefix(prompt).replace(/\s+/g, " ").trim();
+	if (!clean) return "";
+	return clean.slice(0, 320);
+}
+
 function splitPriorExtractSections(summary: string) {
 	const outlineMatch = summary.match(/Page heading outline with section snippets:\n([\s\S]*?)(?:\n\nReadable body excerpt:|\n\n\(Note:|$)/i);
 	const source = (outlineMatch?.[1] || summary).replace(/¶/g, "");
@@ -2836,17 +2937,20 @@ function splitPriorExtractSections(summary: string) {
 }
 
 function buildPriorExtractedPageContext(session: RuntimeSession, activeTab: any, prompt: string) {
+	if (promptNeedsExactReadableContext(prompt)) return "";
 	const activeUrl = normalizeUrlForPriorPageContext(activeTab?.url);
-	if (!activeUrl) return "";
+	const referencesPriorPage = promptReferencesPriorPageContext(prompt);
+	if (!activeUrl && !referencesPriorPage) return "";
 	const keywords = promptKeywordsForPriorPageContext(prompt);
-	const candidates: Array<{ score: number; createdAt: string; text: string; summaryLength: number }> = [];
+	const candidates: Array<{ score: number; createdAt: string; text: string; summaryLength: number; title: string; url: string; activeMatch: boolean }> = [];
 	for (const turn of Array.isArray(session.turns) ? session.turns : []) {
 		if (!turn || turn.pending || turn.error || !Array.isArray(turn.toolTraces)) continue;
 		for (const trace of turn.toolTraces) {
 			if (trace?.toolName !== "browser_extract_content" || trace.state !== "complete") continue;
 			const details: any = trace.resultDetails || {};
 			const traceUrl = normalizeUrlForPriorPageContext(details?.tab?.url || details?.content?.url);
-			if (!traceUrl || traceUrl !== activeUrl) continue;
+			const activeMatch = Boolean(activeUrl && traceUrl && traceUrl === activeUrl);
+			if (!traceUrl || (!activeMatch && !referencesPriorPage)) continue;
 			const summary = String(trace.resultSummary || "").trim();
 			if (!summary) continue;
 			for (const section of splitPriorExtractSections(summary)) {
@@ -2854,10 +2958,13 @@ function buildPriorExtractedPageContext(session: RuntimeSession, activeTab: any,
 				const score = keywords.reduce((total, keyword) => total + (lower.includes(keyword) ? 1 : 0), 0);
 				if (score <= 0) continue;
 				candidates.push({
-					score,
+					score: score + (activeMatch ? 100 : 0) + (referencesPriorPage ? 10 : 0),
 					createdAt: String(turn.createdAt || ""),
 					text: truncateStructuredText(section, PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS),
 					summaryLength: summary.length,
+					title: String(details?.tab?.title || details?.content?.title || activeTab?.title || ""),
+					url: traceUrl,
+					activeMatch,
 				});
 			}
 		}
@@ -2868,9 +2975,10 @@ function buildPriorExtractedPageContext(session: RuntimeSession, activeTab: any,
 		.slice(0, PRIOR_PAGE_CONTEXT_MAX_SECTIONS);
 	const body = selected.map((entry) => entry.text).join("\n\n");
 	if (!body.trim()) return "";
+	const source = selected[0];
 	return [
-		"Session page context already read from the active page:",
-		`Source: ${activeTab?.title || "(untitled)"} - ${activeUrl}`,
+		`Session page context already read from ${source.activeMatch ? "the active page" : "a prior page in this session"}:`,
+		`Source: ${source.title || activeTab?.title || "(untitled)"} - ${source.url || activeUrl}`,
 		"Use this cached extract before calling browser_extract_content again. If it answers the follow-up, do not re-extract the page.",
 		truncateStructuredText(body, PRIOR_PAGE_CONTEXT_MAX_CHARS),
 	].join("\n");
@@ -3046,7 +3154,7 @@ function classifyPromptForReasoning(prompt: string, attachments: any[] = [], lea
 	if (hasAttachments) return "deep";
 
 	const asksForToolSmoke =
-		/\bbrowser_[a-z_]+\b|\b(port smoke|smoke test|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
+		/\bbrowser_[a-z_]+\b|\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
 	const asksForPageAction =
 		/\b(highlight|annotate|note|scroll|click|open|navigate|go to|fill|type|select|press|mark|point (?:me )?to|show me where)\b/.test(text);
 	const asksForDeepWork =
@@ -3756,7 +3864,7 @@ function selectToolsForPrompt(
 	const text = String(prompt || "").toLowerCase();
 	const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
 	const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
-	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b|\bsmoke test\b/.test(text);
+	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b/.test(text);
 	const pageChangePolicy = promptPageChangePolicy(prompt);
 	const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
 	const selectableToolNames = allTools
@@ -3853,8 +3961,12 @@ function selectToolsForPrompt(
 		}
 		if (pageChangePolicy.forbidsNotes) selected.delete("browser_show_note");
 	}
-	if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content")) {
+	const needsExactReadableContext = promptNeedsExactReadableContext(text);
+	if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content") && !needsExactReadableContext) {
 		selected.delete("browser_extract_content");
+	}
+	if (needsExactReadableContext && selected.has("browser_extract_content") && !explicitToolNames.has("browser_get_visible_text")) {
+		selected.delete("browser_get_visible_text");
 	}
 	if (!selected.size) add(CORE_READ_TOOL_NAMES);
 	return allTools.filter((tool) => selected.has(tool.name));
@@ -3862,7 +3974,7 @@ function selectToolsForPrompt(
 
 function shouldIncludeToolInventory(prompt: string) {
 	const text = String(prompt || "").toLowerCase();
-	return Boolean(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN)) || /\b(port smoke|smoke test|ports?|tools?|debug(?:ging)?|diagnostic)\b/.test(text);
+	return Boolean(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN)) || /\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic)\b/.test(text);
 }
 
 function buildToolInventory(prompt: string, tools: AgentTool[]) {
@@ -3911,7 +4023,7 @@ function buildLauncherPrompt(
 		"- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only anchor. Every named step/item in chat needs a matching anchor, or it should be omitted/qualified as unanchored.",
 		"- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
 		"- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
-		"- If the user asks about a named section, heading, phrase, table, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing or not visible.",
+		"- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.",
 		"- Do not call browser_extract_content more than once unless the first result is unusable.",
 		"- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
 		"- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
@@ -4822,6 +4934,13 @@ function createTools(
 	prepareCommandParams: (params: any, commandName?: string) => any = (params) => params,
 	recordLearningEvent: (event: LearningEvent) => Promise<LearnerState> = async (event) =>
 		applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" }),
+	recordEffectiveCommandParams: (
+		toolName: string,
+		toolCallId: string,
+		requestedParams: unknown,
+		effectiveParams: unknown,
+		commandName: string,
+	) => void = () => {},
 ): AgentTool[] {
 	const commandTool = (
 		name: string,
@@ -4836,20 +4955,22 @@ function createTools(
 		description,
 		parameters,
 		executionMode: options.sequential ? "sequential" : undefined,
-			async execute(_toolCallId, params) {
-				let result: any;
-				try {
-					result = await host.runCommand(commandName, prepareCommandParams(params, commandName) as Record<string, unknown>);
-				} catch (error) {
-					if (commandName !== "highlight_text") throw error;
-					const candidates = buildHighlightRetryCandidates((params as any)?.text);
-					let lastError = error;
-					for (const candidate of candidates) {
-						try {
-							result = await host.runCommand(
-								commandName,
-								prepareCommandParams({ ...(params as any), text: candidate }, commandName) as Record<string, unknown>,
-							);
+		async execute(_toolCallId, params) {
+			let result: any;
+			try {
+				const effectiveParams = prepareCommandParams(params, commandName) as Record<string, unknown>;
+				recordEffectiveCommandParams(name, String(_toolCallId || name), params, effectiveParams, commandName);
+				result = await host.runCommand(commandName, effectiveParams);
+			} catch (error) {
+				if (commandName !== "highlight_text") throw error;
+				const candidates = buildHighlightRetryCandidates((params as any)?.text);
+				let lastError = error;
+				for (const candidate of candidates) {
+					try {
+						const retryParams = { ...(params as any), text: candidate };
+						const effectiveRetryParams = prepareCommandParams(retryParams, commandName) as Record<string, unknown>;
+						recordEffectiveCommandParams(name, String(_toolCallId || name), params, effectiveRetryParams, commandName);
+						result = await host.runCommand(commandName, effectiveRetryParams);
 						result = {
 							...result,
 							highlightRetry: {
@@ -4999,7 +5120,7 @@ function createTools(
 		commandTool(
 			"browser_extract_content",
 			"Browser Extract Content",
-			"Extract readable article or document text from the live page. Use at most once per response unless the first result is unusable.",
+			"Extract readable article or document text from the live page. For named sections, tables, rows, formulas, tensors, or exact values, pass a short query so matching long-page sections are prioritized. Use at most once per response unless the first result is unusable.",
 			EXTRACT_CONTENT_SCHEMA,
 			"extract_content",
 		),
@@ -5617,6 +5738,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	function telemetryEventData(settings: RuntimeSettings, data: Record<string, unknown> = {}) {
 		return {
+			source: compactTelemetryValue((data as any).source || "extension", 48),
+			turn_id: compactOnhandTelemetryId((data as any).turn_id ?? (data as any).turnId),
+			session_id: compactOnhandTelemetryId((data as any).session_id ?? (data as any).sessionId),
 			auth_mode: compactTelemetryValue(settings.authMode, 40),
 			ai_provider: compactTelemetryValue(settings.aiProvider, 80),
 			ai_model: compactTelemetryValue(settings.aiModel, 120),
@@ -5641,6 +5765,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function classifyTelemetryError(error: unknown) {
 		const message = compactTelemetryValue((error as any)?.message || error, 240).toLowerCase();
 		if (!message) return "";
+		if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current reply)/.test(message)) return "busy";
 		if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
 		if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
 		if (/network|fetch|connection|offline|reach/.test(message)) return "network";
@@ -5648,6 +5773,27 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (/aborted|cancelled|stopped/.test(message)) return "aborted";
 		if (/permission|debugger|side panel|tab|chrome/.test(message)) return "browser_permission";
 		return "runtime_error";
+	}
+
+	function shouldSuppressSentryException(kind: string, error: unknown, data: Record<string, unknown> = {}) {
+		if ((data as any).force_sentry_capture || (data as any).forceSentryCapture) return false;
+		const message = compactTelemetryValue((error as any)?.message || error, 500).toLowerCase();
+		const messageType = compactTelemetryValue((data as any).message_type || (data as any).messageType, 120);
+		const errorKind = compactTelemetryValue((data as any).error_kind || (data as any).errorKind || classifyTelemetryError(error), 80);
+		if (errorKind === "aborted" || errorKind === "busy") return true;
+		if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
+			return true;
+		}
+		if (kind !== "runtime_exception") return false;
+		if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
+		if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;
+		if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
+			return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
+		}
+		if (/^sidebar:realtime-(?:browser|pdf)-tool$/.test(messageType)) {
+			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
+		}
+		return false;
 	}
 
 	function redactDiagnosticText(value: unknown, maxLength = 1200) {
@@ -5832,6 +5978,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const explicitUserReport = Boolean(data.explicit_user_report);
 		sentryDiagnosticsAllowed = diagnosticsAllowed;
 		if (!diagnosticsAllowed && !explicitUserReport) return false;
+		if (shouldSuppressSentryException(kind, error, data)) return false;
 		if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
 		initializeSentryIfNeeded();
 		const message = redactDiagnosticText((error as any)?.message || error || kind, 500);
@@ -5936,12 +6083,24 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const clientId = await ensureDiagnosticsClientId(store);
 		const baseUrl = await getFreeTierBaseUrl();
 		const manifest = chrome.runtime?.getManifest?.() || {};
+		const freeTierBypassActive = settings.aiProvider === ONHAND_FREE_PROVIDER && Boolean(await getFreeTierQuotaBypassSecret().catch(() => ""));
+		const currentTurnId = (data as any).turn_id ?? (data as any).turnId ?? activeRequest?.id ?? "";
+		const currentSessionId = (data as any).session_id ?? (data as any).sessionId ?? store.currentSessionId ?? "";
+		const requestSource = compactTelemetryValue(activeRequest?.source || "", 32);
+		const telemetrySource =
+			(data as any).source ||
+			(requestSource && requestSource !== "sidebar" ? `extension-${requestSource}` : freeTierBypassActive ? "extension-free-tier-bypass" : "extension");
 		const payload = {
 			event_name: name,
 			client_id: clientId,
 			extension_version: compactTelemetryValue(manifest.version, 40),
 			runtime_revision: compactTelemetryValue(host.runtimeRevision || "", 80),
-			data: telemetryEventData(settings, data),
+			data: telemetryEventData(settings, {
+				...data,
+				turn_id: currentTurnId,
+				session_id: currentSessionId,
+				source: telemetrySource,
+			}),
 		};
 		await fetch(`${baseUrl}/telemetry`, {
 			method: "POST",
@@ -6290,6 +6449,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (!existing) activeRequest.toolTraces.push(entry);
 	}
 
+	function recordToolTraceEffectiveArgs(toolName: string, toolCallId: string, effectiveArgs: unknown = {}) {
+		if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
+		if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
+		const entry = findToolTrace(toolCallId, toolName);
+		if (!entry) return;
+		entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
+	}
+
 	function extractToolErrorText(result: unknown) {
 		const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? (result as any).details : result;
 		const textFrom = (value: unknown): string => {
@@ -6489,8 +6656,20 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	) {
 		if (!activeRequest || activeRequest.id !== requestId) return;
 		const agentMessages = messagesOverride || activeAgent?.state.messages || [];
-		const finalError = error || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
-		const reply = activeRequest.reply.trim() || (finalError ? `Error: ${finalError.message}` : extractAssistantText(agentMessages)) || "(No reply generated.)";
+		let finalError = error || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
+		let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+		if (!finalError && !activeRequest.aborted && !assistantText && hasCompletedUserToolTrace(activeRequest)) {
+			if (!activeRequest.blankReplyRetry && activeAgent) {
+				activeRequest.blankReplyRetry = true;
+				await publishState({ status: "Writing answer..." });
+				void activeAgent
+					.prompt(buildBlankReplyRetryPrompt(activeRequest))
+					.catch((retryError) => finalizeRequest(session, requestId, retryError instanceof Error ? retryError : new Error(String(retryError))));
+				return;
+			}
+			finalError = new Error("The model returned an empty answer after reading page context.");
+		}
+		const reply = assistantText || (finalError ? `Error: ${finalError.message}` : "(No reply generated.)");
 		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
 		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
@@ -6516,6 +6695,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
 		}
 		await replaceCurrentSession(session);
+		activeAgent = null;
 		await publishState({
 			currentSession: buildSessionState(session),
 			turns: session.turns,
@@ -6528,7 +6708,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		});
 		const startedAtMs = Date.parse(activeRequest.createdAt || "");
 		const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
+		const requestSource = compactTelemetryValue(activeRequest.source || "", 32);
+		const telemetrySource = requestSource && requestSource !== "sidebar" ? `extension-${requestSource}` : "";
 		void trackExtensionEvent(telemetryEventName, {
+			...(telemetrySource ? { source: telemetrySource } : {}),
+			turn_id: activeRequest.id,
+			session_id: session.id || store.currentSessionId || "",
 			result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok",
 			duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
 			action_count: activeRequest.pageActions?.length || 0,
@@ -6545,7 +6730,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				...toolReliability,
 			});
 		}
-		activeAgent = null;
 		activeRequest = null;
 	}
 
@@ -6706,18 +6890,38 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	function withDefaultBrowserTarget(params: any = {}) {
 		const targetWindowId = activeRequest?.targetWindowId;
-		if (typeof targetWindowId !== "number") return params || {};
-		if (typeof params?.tabId === "number") {
+		if (typeof params?.tabId === "number" && hasCompletedTabInventory(activeRequest)) {
 			return params || {};
 		}
-		return {
+		const targeted = {
 			...(params || {}),
-			windowId: targetWindowId,
 		};
+		if (typeof targetWindowId === "number") targeted.windowId = targetWindowId;
+		delete targeted.tabId;
+		delete targeted.titleContains;
+		delete targeted.urlContains;
+		return targeted;
 	}
 
 	function withRequestBrowserContext(params: any = {}, commandName = "") {
 		const targetedParams = withDefaultBrowserTarget(params);
+		if (commandName === "show_note") {
+			const noteText = targetedParams?.note || targetedParams?.text || targetedParams?.label || "";
+			return {
+				...(targetedParams || {}),
+				annotationId: resolveActiveAnnotationId(activeRequest, targetedParams?.annotationId, noteText),
+			};
+		}
+		if (commandName === "extract_content") {
+			const prompt = activeRequest?.displayPrompt || "";
+			if (!promptNeedsExactReadableContext(prompt) || targetedParams?.query) return targetedParams;
+			const requestedMaxChars = Number(targetedParams?.maxChars || 0) || 0;
+			return {
+				...(targetedParams || {}),
+				query: buildReadableContentQuery(prompt),
+				maxChars: Math.max(requestedMaxChars, 30000),
+			};
+		}
 		if (commandName !== "highlight_text" || targetedParams?.pdfAnchor) return targetedParams;
 		const initialSelection = activeRequest?.initialSelection;
 		if (!selectionMatchesHighlightText(initialSelection, targetedParams?.text)) return targetedParams;
@@ -8382,7 +8586,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 		},
 
 		async submitPrompt(request: any) {
-			if (activeRequest) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
+			if (activeRequest || activeAgent) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
 			const store = await loadStore();
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			const prompt = String(request?.prompt || "").trim();
@@ -8408,6 +8612,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			activeRequest = {
 				id: requestId,
 				displayPrompt,
+				source: compactTelemetryValue(request?.source || "sidebar", 32),
 				reply: "",
 				pageActions: [] as PageAction[],
 				toolTraces: [] as ToolTraceEntry[],
@@ -8452,8 +8657,12 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 				activeRequest.initialSelection = browserContextDetails.selection;
 				const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
 				const tools = selectToolsForPrompt(
-					createTools(host, artifactHooks, withRequestBrowserContext, (event) =>
-						recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+					createTools(
+						host,
+						artifactHooks,
+						withRequestBrowserContext,
+						(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 					),
 					prompt,
 					attachments,

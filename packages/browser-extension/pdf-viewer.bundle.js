@@ -26225,6 +26225,122 @@ function buildPdfAnchor(page, match, occurrence = 1) {
     fallback: match.fallback
   };
 }
+function getPdfPageForNode(node) {
+  const element = node instanceof Element ? node : node?.parentElement || null;
+  return element?.closest?.(".page[data-page-number]");
+}
+function rectIntersectionArea(a, b) {
+  const left = Math.max(a.left, b.left);
+  const right = Math.min(a.right, b.right);
+  const top = Math.max(a.top, b.top);
+  const bottom = Math.min(a.bottom, b.bottom);
+  return Math.max(0, right - left) * Math.max(0, bottom - top);
+}
+function rangeIntersectsPage(range, page) {
+  const textLayer = page.querySelector(".textLayer, [data-onhand-pdf-text-layer]") || page;
+  try {
+    if (typeof range.intersectsNode === "function" && range.intersectsNode(textLayer)) return true;
+  } catch {
+  }
+  const rangeRects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+  if (!rangeRects.length) return false;
+  const pageRect = page.getBoundingClientRect();
+  return rangeRects.some((rect) => rectIntersectionArea(rect, pageRect) > 0);
+}
+function buildTextQuoteForSelection(page, matchedText) {
+  const textQuote = { exact: matchedText };
+  const pageText = pdfPageText(page);
+  const lowerPageText = pageText.toLowerCase();
+  const lowerMatchedText = matchedText.toLowerCase();
+  const index = lowerMatchedText ? lowerPageText.indexOf(lowerMatchedText) : -1;
+  if (index > 0) textQuote.prefix = pageText.slice(Math.max(0, index - ANCHOR_CONTEXT_LENGTH), index).trim();
+  if (index >= 0) textQuote.suffix = pageText.slice(index + matchedText.length, index + matchedText.length + ANCHOR_CONTEXT_LENGTH).trim();
+  return textQuote;
+}
+function buildPdfAnchorForSelection(range, matchedText) {
+  const startPage = getPdfPageForNode(range.startContainer);
+  const endPage = getPdfPageForNode(range.endContainer);
+  const commonPage = getPdfPageForNode(range.commonAncestorContainer);
+  const entries = getPdfPages().filter((page) => page === startPage || page === endPage || page === commonPage || rangeIntersectsPage(range, page)).map((page) => {
+    const pageNumber = getPageNumber(page);
+    const rects2 = rangeRectsForPage(range, page).filter((rect) => rect.width > 0 && rect.height > 0);
+    return pageNumber && rects2.length ? { page, pageNumber, rects: rects2 } : null;
+  }).filter(Boolean);
+  if (!entries.length) return null;
+  const primary = entries[0];
+  const rects = entries.flatMap((entry) => entry.rects.map((rect) => ({ ...rect, pageNumber: entry.pageNumber })));
+  return {
+    surface: "pdf",
+    viewer: "onhand-pdf-viewer",
+    document: { url: sourceUrl, title: document.title },
+    pageNumber: primary.pageNumber,
+    matchedText,
+    textQuote: buildTextQuoteForSelection(primary.page, matchedText),
+    rects,
+    occurrence: 1
+  };
+}
+function pdfGetSelectionInfo() {
+  const selection = window.getSelection();
+  const base = {
+    surface: "pdf",
+    viewer: "onhand-pdf-viewer",
+    source: "onhand-pdf-viewer",
+    url: sourceUrl,
+    title: document.title,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    viewport: { width: window.innerWidth, height: window.innerHeight }
+  };
+  if (!selection || selection.rangeCount === 0) {
+    return {
+      ...base,
+      hasSelection: false,
+      isCollapsed: true,
+      text: "",
+      rangeCount: 0,
+      rect: null,
+      container: null
+    };
+  }
+  const range = selection.getRangeAt(0);
+  const text = normalizeText(selection.toString());
+  let rect = null;
+  try {
+    rect = typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+  } catch {
+    rect = null;
+  }
+  if (!text) {
+    return {
+      ...base,
+      hasSelection: false,
+      isCollapsed: selection.isCollapsed,
+      text: "",
+      rangeCount: selection.rangeCount,
+      rect: rect && (rect.width || rect.height) ? rectToObject(rect) : null,
+      container: null
+    };
+  }
+  const pdfAnchor = buildPdfAnchorForSelection(range, text);
+  const pageNumber = pdfAnchor?.pageNumber || getPageNumber(getPdfPageForNode(range.startContainer));
+  return {
+    ...base,
+    hasSelection: true,
+    isCollapsed: selection.isCollapsed,
+    text,
+    rangeCount: selection.rangeCount,
+    rect: rect && (rect.width || rect.height) ? rectToObject(rect) : null,
+    container: pageNumber ? {
+      tag: "pdf-page",
+      selector: `.page[data-page-number="${pageNumber}"]`,
+      text: `Page ${pageNumber}`,
+      pageNumber
+    } : null,
+    pageNumber: pageNumber || null,
+    ...pdfAnchor ? { pdfAnchor } : {}
+  };
+}
 function snippetForMatch(pageText, matchedText, maxContextChars) {
   const text = normalizeText(pageText);
   const match = normalizeText(matchedText);
@@ -26618,7 +26734,7 @@ async function runPdfToolkitMethod(methodName, args = []) {
     case "clearAnnotations":
       return pdfClearAnnotations();
     case "getSelectionInfo":
-      return { hasSelection: false, text: "", source: "onhand-pdf-viewer" };
+      return pdfGetSelectionInfo();
     default:
       throw new Error(`Unsupported Onhand PDF viewer toolkit method: ${methodName || "(blank)"}`);
   }

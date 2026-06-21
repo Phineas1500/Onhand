@@ -5,6 +5,10 @@ import { JSDOM } from "jsdom";
 import { scholarPdfHtml } from "./serve-browser-runtime-fixture.mjs";
 
 const PROJECT_ROOT = process.cwd();
+const GOOGLE_DOCS_FIXTURE_ID = "onhand-fixture-doc-id";
+const GOOGLE_DOCS_FIXTURE_EDIT_URL = `https://docs.google.com/document/d/${GOOGLE_DOCS_FIXTURE_ID}/edit?tab=t.0`;
+const GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL = `https://docs.google.com/document/d/${GOOGLE_DOCS_FIXTURE_ID}/export?format=pdf`;
+const GOOGLE_DOCS_FIXTURE_TEXT_EXPORT_PATTERN = new RegExp(`/document/d/${GOOGLE_DOCS_FIXTURE_ID}/export\\?format=txt$`);
 
 async function loadPageToolkitFactory() {
 	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
@@ -97,9 +101,9 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.equal(
 		helpers.resolvePdfSourceUrlForViewer(
 			{},
-			{ url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0" },
+			{ url: GOOGLE_DOCS_FIXTURE_EDIT_URL },
 		),
-		"https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf",
+		GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL,
 	);
 	assert.equal(
 		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf"),
@@ -286,6 +290,9 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /function pdfReadPages/, "PDF viewer should expose page-specific text reads");
 	assert.match(source, /function pdfJumpToPage/, "PDF viewer should expose page navigation for found PDF matches");
 	assert.match(source, /function pdfCapturePageImage/, "PDF viewer should expose page image capture for visual PDF grounding");
+	assert.match(source, /function pdfGetSelectionInfo\(\)/, "Onhand PDF viewer should expose a real selected-text reader");
+	assert.match(source, /window\.getSelection\(\)/, "Onhand PDF viewer selected-text reader should inspect the current browser selection");
+	assert.match(source, /function buildPdfAnchorForSelection/, "Onhand PDF viewer selected text should retain a PDF anchor for highlight/note follow-up");
 	assert.match(source, /const DEFAULT_SCALE = 1;/, "PDF viewer should not default to an over-zoomed fixed scale");
 	assert.match(source, /function computeFitScale/, "PDF viewer should calculate an initial fit scale from the rendered viewport");
 	assert.match(source, /function parseInitialPageNumber/, "PDF viewer should read an initial page from the viewer URL");
@@ -297,9 +304,28 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /renderDocument\(\{\s*preserveView:\s*true\s*\}\)/, "PDF viewer zoom/resize re-renders should preserve view state");
 	assert.match(source, /case "searchPdf":/, "PDF toolkit bridge should route full-document search");
 	assert.match(source, /case "readPdfPages":/, "PDF toolkit bridge should route page text reads");
+	assert.match(source, /case "getSelectionInfo":\s*return pdfGetSelectionInfo\(\);/, "PDF toolkit bridge should route selected-text reads");
+	assert.doesNotMatch(source, /case "getSelectionInfo":\s*return\s*\{\s*hasSelection:\s*false,\s*text:\s*""/, "PDF toolkit bridge must not hard-code selected text as empty");
 	assert.doesNotMatch(source, /parentBridgeToken/, "PDF viewer bridge must not trust a token supplied by an embedding page");
 	assert.match(source, /const expectedToken = await getBridgeToken\(\)/, "PDF viewer bridge commands should authorize against the session-stored token");
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
+}
+
+async function assertNativeChromePdfViewerSelectionFallback() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(source, /function getNativeChromePdfViewerSelectionExpression\(\)/, "Native Chrome PDF selected text should have a debugger expression");
+	assert.match(source, /source:\s*"native-chrome-pdf-viewer-selection"/, "Native Chrome PDF selection fallback should identify its source");
+	assert.match(source, /function maybeGetNativeChromePdfViewerSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a native PDF empty-selection fallback");
+	assert.match(
+		source,
+		/case "get_selection":\s*{[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getSelectionInfo"\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*pageSelection\)/,
+		"browser_get_selection should retry native Chrome PDF frames when the page toolkit cannot see selected PDF text",
+	);
+	assert.match(
+		source,
+		/catch \(error\) \{[\s\S]*isRestrictedScriptingError\(error\)[\s\S]*isLikelyNativeChromePdfSelectionTab\(tab\)[\s\S]*native-chrome-pdf-viewer-restricted-main-frame/,
+		"browser_get_selection should still try native PDF selection when main-frame scripting is restricted",
+	);
 }
 
 async function assertGoogleDocsReadableContentUsesTextExport() {
@@ -318,7 +344,7 @@ async function assertGoogleDocsReadableContentUsesTextExport() {
 		</html>
 		`,
 		{
-			url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0",
+			url: GOOGLE_DOCS_FIXTURE_EDIT_URL,
 			pretendToBeVisual: true,
 			runScripts: "outside-only",
 		},
@@ -355,7 +381,7 @@ async function assertGoogleDocsReadableContentUsesTextExport() {
 	assert.match(content.text, /new interface for computers/);
 	assert.doesNotMatch(content.text, /Google Docs side panel/);
 	assert.equal(requestedUrls.length, 1);
-	assert.match(requestedUrls[0].url, /\/document\/d\/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8\/export\?format=txt$/);
+	assert.match(requestedUrls[0].url, GOOGLE_DOCS_FIXTURE_TEXT_EXPORT_PATTERN);
 	assert.equal(requestedUrls[0].credentials, "include");
 	assert.equal(requestedUrls[0].cache, "no-store");
 }
@@ -395,6 +421,76 @@ async function assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFa
 	assert.equal(content.unsupported, true);
 	assert.match(content.text, /Could not export this Google Doc as text \(403\)/);
 	assert.doesNotMatch(content.text, /File Edit View/);
+}
+
+async function assertReadableContentChoosesFullRootAndIncludesTables() {
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const longPrefix = Array.from(
+		{ length: 90 },
+		(_, index) => `<p>Early filler paragraph ${index + 1} about tokenization, self-attention, and unrelated notebook setup.</p>`,
+	).join("\n");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Transformer notes</title></head>
+			<body>
+				<main id="first-fragment">
+					<h1>1. Intro</h1>
+					<p>Only the first visible fragment appears here.</p>
+				</main>
+				<main id="full-notes">
+					<h1>1. Intro</h1>
+					<p>Only the first visible fragment appears here.</p>
+					${longPrefix}
+					<h2>Parameter Count Example (Qwen 3.5)</h2>
+					<table>
+						<thead>
+							<tr><th>Tensor</th><th>Shape</th><th># Params</th><th>% Layer</th></tr>
+						</thead>
+						<tbody>
+							<tr><td>blk.4.ffn_down_exps.weight</td><td>256×3072×1024</td><td>805.306 M</td><td>32.0%</td></tr>
+							<tr><td>blk.4.ffn_gate_exps.weight</td><td>256×1024×3072</td><td>805.306 M</td><td>32.0%</td></tr>
+							<tr><td>blk.4.ffn_up_exps.weight</td><td>256×1024×3072</td><td>805.306 M</td><td>32.0%</td></tr>
+						</tbody>
+					</table>
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://example.test/transformers_part1.html",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	Object.defineProperty(dom.window.Element.prototype, "getBoundingClientRect", {
+		configurable: true,
+		value() {
+			return {
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				right: 0,
+				bottom: 0,
+				width: 0,
+				height: 0,
+				toJSON() {
+					return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+				},
+			};
+		},
+	});
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 2000, query: "Qwen tensors 32.0% layer parameters" });
+
+	assert.match(content.headingOutlineMarkdown, /Parameter Count Example \(Qwen 3\.5\)/);
+	assert.match(content.headingOutlineMarkdown, /blk\.4\.ffn_down_exps\.weight/);
+	assert.match(content.markdown, /blk\.4\.ffn_down_exps\.weight/);
+	assert.match(content.markdown, /blk\.4\.ffn_gate_exps\.weight/);
+	assert.match(content.markdown, /blk\.4\.ffn_up_exps\.weight/);
+	assert.match(content.markdown, /32\.0%/);
 }
 
 async function loadGoogleDocsBackgroundExportHelpers(fetchImpl) {
@@ -437,7 +533,7 @@ async function assertGoogleDocsBackgroundExportReadsText() {
 	});
 	const content = await helpers.extractGoogleDocsTextExportForTab(
 		{
-			url: "https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0",
+			url: GOOGLE_DOCS_FIXTURE_EDIT_URL,
 			title: "heyclicky vision - Google Docs",
 		},
 		{ maxChars: 2000 },
@@ -449,13 +545,13 @@ async function assertGoogleDocsBackgroundExportReadsText() {
 	assert.match(content.text, /^My name is Farza/);
 	assert.match(content.text, /new interface for computers/);
 	assert.equal(requestedUrls.length, 1);
-	assert.match(requestedUrls[0].url, /\/document\/d\/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8\/export\?format=txt$/);
+	assert.match(requestedUrls[0].url, GOOGLE_DOCS_FIXTURE_TEXT_EXPORT_PATTERN);
 	assert.equal(requestedUrls[0].credentials, "include");
 	assert.equal(requestedUrls[0].cache, "no-store");
 	assert.equal(requestedUrls[0].redirect, "follow");
 	assert.equal(
-		helpers.buildGoogleDocsPdfExportUrl("https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/edit?tab=t.0"),
-		"https://docs.google.com/document/d/1sfsGQurJ444vXKXcqcHg32SBRYz3LVrvOt4Hwig-ai8/export?format=pdf",
+		helpers.buildGoogleDocsPdfExportUrl(GOOGLE_DOCS_FIXTURE_EDIT_URL),
+		GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL,
 	);
 }
 
@@ -2176,8 +2272,10 @@ async function assertPdfSelectionIncludesAnchor() {
 async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
+	await assertNativeChromePdfViewerSelectionFallback();
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
+	await assertReadableContentChoosesFullRootAndIncludesTables();
 	await assertGoogleDocsBackgroundExportReadsText();
 	await assertGoogleDocsBackgroundExportDoesNotReturnHtml();
 	await assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval();

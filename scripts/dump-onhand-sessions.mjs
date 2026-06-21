@@ -10,11 +10,12 @@ const DEFAULT_LIMIT = 20;
 const DEFAULT_TEXT_LIMIT = 900;
 const DEFAULT_WAIT_TIMEOUT_MS = 120_000;
 const DEFAULT_POLL_MS = 1_000;
+const FREE_TIER_QUOTA_BYPASS_MIN_LENGTH = 16;
 
 const REPLAY_COMMANDS = new Set(["show", "timeline", "tools", "actions", "artifacts", "turn", "grep", "context"]);
 const MAINTENANCE_COMMANDS = new Set(["cleanup-drivers"]);
-const CONTROL_COMMANDS = new Set(["new", "switch", "restore", "stop", "ask", "ask-new-url", "open-url", "artifact", "activate-action", "scroll"]);
-const DIAGNOSTIC_COMMANDS = new Set(["latest-errors", "diff-tools"]);
+const CONTROL_COMMANDS = new Set(["new", "switch", "restore", "stop", "ask", "ask-new-url", "open-url", "artifact", "activate-action", "scroll", "free-tier-bypass"]);
+const DIAGNOSTIC_COMMANDS = new Set(["latest-errors", "tool-retries", "diff-tools"]);
 const ALL_COMMANDS = new Set(["list", "state", "watch", ...REPLAY_COMMANDS, ...CONTROL_COMMANDS, ...DIAGNOSTIC_COMMANDS]);
 
 const DIAGNOSTIC_TOOL_NAMES = [
@@ -42,6 +43,7 @@ function printUsage() {
   npm run debug:sessions -- grep --query <text> [session selector] [options]
   npm run debug:sessions -- context [session selector] [options]
   npm run debug:sessions -- latest-errors [options]
+  npm run debug:sessions -- tool-retries [options]
   npm run debug:sessions -- diff-tools --session-a <id> --session-b <id> [options]
   npm run debug:sessions -- open-url <url> [--new-tab] [options]
   npm run debug:sessions -- ask-new-url <url> "question" [--wait] [options]
@@ -53,6 +55,7 @@ function printUsage() {
   npm run debug:sessions -- artifact [--artifact-id <id>] [session selector] [options]
   npm run debug:sessions -- activate-action --key <action_key> [session selector] [options]
   npm run debug:sessions -- scroll --annotation-id <id> [--target annotation|note] [options]
+  npm run debug:sessions -- free-tier-bypass <status|enable|disable|device-hash> [options]
   npm run debug:sessions -- cleanup-drivers [options]
 
 Session selectors:
@@ -89,6 +92,11 @@ Options:
   --target <kind>        scroll target: annotation or note.
   --learning             Submit ask with learning mode enabled.
   -h, --help             Show this help.
+
+Free-tier bypass:
+  enable reads ONHAND_FREE_QUOTA_BYPASS_SECRET from the shell and stores it in
+  extension-local storage. status never prints the secret value. device-hash
+  prints the allowlist value for the current anonymous free-tier token.
 
 The target browser must be running with a remote debugging port, for example:
   /Applications/Helium.app/Contents/MacOS/Helium --remote-debugging-port=${DEFAULT_PORT}
@@ -526,6 +534,7 @@ function allTurnTools(turn) {
 		endedAt: trace.endedAt || "",
 		duration: durationMs(trace.startedAt, trace.endedAt),
 		args: trace.args ?? null,
+		effectiveArgs: trace.effectiveArgs ?? null,
 		resultSummary: trace.resultSummary || "",
 		resultDetails: trace.resultDetails ?? null,
 		error: trace.error || "",
@@ -545,6 +554,7 @@ function allTurnTools(turn) {
 			endedAt: "",
 			duration: "",
 			args: null,
+			effectiveArgs: null,
 			resultSummary: activity.label || "",
 			resultDetails: null,
 			error: activity.error || "",
@@ -789,7 +799,8 @@ function formatTools(replay, textLimit) {
 			lines.push("", `${count}. Turn ${index + 1} ${tool.toolName || "(unknown)"} ${tool.state || ""} ${tool.duration || ""}`.trim());
 			if (tool.toolCallId) lines.push(`   id: ${tool.toolCallId}`);
 			if (tool.startedAt || tool.endedAt) lines.push(`   time: ${tool.startedAt || "?"}${tool.endedAt ? ` -> ${tool.endedAt}` : ""}`);
-			if (tool.args != null) lines.push(`   args: ${jsonBlock(tool.args, Math.min(textLimit, 1600))}`);
+			if (tool.args != null) lines.push(`   requested args: ${jsonBlock(tool.args, Math.min(textLimit, 1600))}`);
+			if (tool.effectiveArgs != null) lines.push(`   effective args: ${jsonBlock(tool.effectiveArgs, Math.min(textLimit, 1600))}`);
 			if (tool.resultSummary) lines.push(`   result: ${truncateBlock(tool.resultSummary, textLimit)}`);
 			if (tool.error) lines.push(`   error: ${truncateBlock(tool.error, textLimit)}`);
 		}
@@ -886,6 +897,7 @@ function formatTurn(replay, args) {
 	const turns = Array.isArray(replay.turns) ? replay.turns : [];
 	const index = Math.max(0, turns.indexOf(turn)) + 1;
 	const actions = Array.isArray(turn.pageActions) ? turn.pageActions : [];
+	const errorReport = turn.errorReport && typeof turn.errorReport === "object" ? turn.errorReport : null;
 	const lines = [
 		`Turn ${index}: ${turn.id || ""}`,
 		`Created: ${turn.createdAt || ""}${turn.error ? " [error]" : ""}${turn.pending ? " [pending]" : ""}`,
@@ -896,10 +908,17 @@ function formatTurn(replay, args) {
 		"Reply:",
 		truncateBlock(turn.reply || "", args.textLimit) || "(blank)",
 		"",
-		formatTools({ turns: [turn] }, args.textLimit).trimEnd(),
-		"",
-		`Page Actions (${actions.length}):`,
 	];
+	if (errorReport) {
+		lines.push(
+			"Error Report:",
+			`kind: ${errorReport.error_kind || "(unknown)"}`,
+			`message: ${truncateBlock(errorReport.error_message || "", args.textLimit) || "(blank)"}`,
+			`provider: ${errorReport.ai_provider || ""}/${errorReport.ai_model || ""}`,
+			"",
+		);
+	}
+	lines.push(formatTools({ turns: [turn] }, args.textLimit).trimEnd(), "", `Page Actions (${actions.length}):`);
 	for (const [actionIndex, action] of actions.entries()) {
 		lines.push(`${actionIndex + 1}. ${action.type || "(unknown)"} ${action.label || ""}`.trim());
 		if (action.citationText || action.detail) lines.push(`   ${truncateBlock(action.citationText || action.detail, args.textLimit)}`);
@@ -1124,7 +1143,10 @@ async function waitForRequest(driver, args, requestId) {
 		if (currentSessionId) {
 			const replay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
 			const turn = findTurnByRequestId(replay, requestId);
-			if (turn && !turn.pending) return { state, replay, turn };
+			if (turn && !turn.pending && !state.activeRequestId) {
+				await sleep(Math.min(args.pollMs, 250));
+				return { state, replay, turn };
+			}
 		}
 		if (state.activeRequestId && state.activeRequestId !== requestId && currentSessionId) {
 			const replay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
@@ -1221,6 +1243,40 @@ function formatControlResponse(command, response) {
 	}
 }
 
+async function readFreeTierBypassState(driver, action) {
+	const state = await checkedMessage(driver.sendMessage, { type: "debug:free-tier-bypass-state" });
+	return { ...state, action };
+}
+
+async function freeTierBypassCommand(_cdp, driver, args) {
+	const action = String(args.positional[0] || "status").trim().toLowerCase();
+	if (!["status", "enable", "disable", "device-hash"].includes(action)) {
+		throw new Error("free-tier-bypass action must be status, enable, disable, or device-hash.");
+	}
+	if (action === "enable") {
+		const secret = String(process.env.ONHAND_FREE_QUOTA_BYPASS_SECRET || "").trim();
+		const expiresAt = String(process.env.ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT || "").trim();
+		if (secret.length < FREE_TIER_QUOTA_BYPASS_MIN_LENGTH) {
+			throw new Error("Set ONHAND_FREE_QUOTA_BYPASS_SECRET to a 16+ character value before enabling the bypass.");
+		}
+		const result = await checkedMessage(driver.sendMessage, { type: "debug:set-free-tier-bypass", secret, expiresAt });
+		return { ...result, action };
+	}
+	if (action === "disable") {
+		const result = await checkedMessage(driver.sendMessage, { type: "debug:clear-free-tier-bypass" });
+		return { ...result, action };
+	}
+	return await readFreeTierBypassState(driver, action);
+}
+
+function formatFreeTierBypass(result) {
+	const lines = [`Free-tier quota bypass: ${result.enabled ? "enabled" : "disabled"}`];
+	if (result.expiresAt) lines.push(`Expires: ${result.expiresAt}${result.expired ? " (expired)" : ""}`);
+	if (result.deviceHash) lines.push(`Device hash: ${result.deviceHash}`);
+	else lines.push("Device hash: unavailable (free-tier token has not been registered yet)");
+	return `${lines.join("\n")}\n`;
+}
+
 function isCliDriverTarget(target, extensionId = "") {
 	const url = String(target?.url || "");
 	if (!url.startsWith("chrome-extension://")) return false;
@@ -1308,6 +1364,36 @@ function collectReplayErrors(replay, sessionId, textLimit = DEFAULT_TEXT_LIMIT) 
 	return errors;
 }
 
+function collectReplayToolRetries(replay, sessionId, textLimit = DEFAULT_TEXT_LIMIT) {
+	const retries = [];
+	for (const [turnIndex, turn] of (Array.isArray(replay.turns) ? replay.turns : []).entries()) {
+		const tools = allTurnTools(turn);
+		const completedToolNames = new Set(tools.filter((tool) => tool.state === "complete").map((tool) => tool.toolName).filter(Boolean));
+		for (const tool of tools) {
+			if (tool.state !== "error" && !tool.error) continue;
+			const recovered = !turn?.error && (completedToolNames.has(tool.toolName) || String(turn?.reply || "").trim());
+			if (!recovered) continue;
+			retries.push({
+				sessionId,
+				turnIndex: turnIndex + 1,
+				turnId: turn?.id || "",
+				createdAt: turn?.createdAt || "",
+				toolName: tool.toolName || "",
+				toolCallId: tool.toolCallId || "",
+				state: tool.state || "",
+				recovered,
+				message: truncateBlock(tool.error || tool.resultSummary || "Tool failed before retry.", textLimit),
+				resultSummary: truncateBlock(tool.resultSummary || "", textLimit),
+				requestedArgs: tool.args ?? null,
+				effectiveArgs: tool.effectiveArgs ?? null,
+				userPrompt: truncateBlock(turn?.userPrompt || "", textLimit),
+				reply: truncateBlock(turn?.reply || "", textLimit),
+			});
+		}
+	}
+	return retries;
+}
+
 async function collectLatestErrors(driver, args) {
 	const list = await getSessionList(driver, args);
 	const errors = [];
@@ -1335,6 +1421,38 @@ async function collectLatestErrors(driver, args) {
 	return { currentSession: list.currentSession || null, scannedSessions: Math.min(args.limit, list.sessions?.length || 0), errors };
 }
 
+async function collectLatestToolRetries(driver, args) {
+	const list = await getSessionList(driver, args);
+	const retries = [];
+	for (const session of (Array.isArray(list.sessions) ? list.sessions : []).slice(0, args.limit)) {
+		const sessionId = session.path || session.id;
+		if (!sessionId) continue;
+		try {
+			const replay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: sessionId });
+			retries.push(...collectReplayToolRetries(replay, sessionId, args.textLimit));
+		} catch (error) {
+			retries.push({
+				sessionId,
+				turnIndex: 0,
+				turnId: "",
+				createdAt: session.modifiedAt || "",
+				toolName: "",
+				toolCallId: "",
+				state: "error",
+				recovered: false,
+				message: truncateBlock(error?.message || String(error), args.textLimit),
+				resultSummary: "",
+				requestedArgs: null,
+				effectiveArgs: null,
+				userPrompt: "",
+				reply: "",
+			});
+		}
+	}
+	retries.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+	return { currentSession: list.currentSession || null, scannedSessions: Math.min(args.limit, list.sessions?.length || 0), retries };
+}
+
 function formatLatestErrors(result) {
 	const lines = [`Latest errors: ${result.errors.length} error${result.errors.length === 1 ? "" : "s"} across ${result.scannedSessions} session${result.scannedSessions === 1 ? "" : "s"}.`];
 	for (const [index, error] of result.errors.entries()) {
@@ -1347,6 +1465,24 @@ function formatLatestErrors(result) {
 		lines.push(`   error: ${truncateBlock(error.message, 600)}`);
 	}
 	if (!result.errors.length) lines.push("- none found");
+	return `${lines.join("\n")}\n`;
+}
+
+function formatToolRetries(result) {
+	const lines = [`Recovered tool retries: ${result.retries.length} across ${result.scannedSessions} session${result.scannedSessions === 1 ? "" : "s"}.`];
+	for (const [index, retry] of result.retries.entries()) {
+		lines.push(
+			"",
+			`${index + 1}. ${retry.sessionId} turn=${retry.turnIndex || "?"} ${retry.toolName || "(unknown tool)"} ${retry.state || ""}`.trim(),
+		);
+		if (retry.createdAt) lines.push(`   time: ${retry.createdAt}`);
+		if (retry.turnId) lines.push(`   turnId: ${retry.turnId}`);
+		if (retry.toolCallId) lines.push(`   toolCallId: ${retry.toolCallId}`);
+		if (retry.userPrompt) lines.push(`   prompt: ${truncateText(retry.userPrompt, 220)}`);
+		lines.push(`   error: ${truncateBlock(retry.message, 600)}`);
+		if (retry.effectiveArgs) lines.push(`   effective args: ${jsonBlock(retry.effectiveArgs, 600)}`);
+	}
+	if (!result.retries.length) lines.push("- none found");
 	return `${lines.join("\n")}\n`;
 }
 
@@ -1365,6 +1501,8 @@ function replayToolProfile(replay) {
 			toolName: tool.toolName || "",
 			state: tool.state || "",
 			error: tool.error || "",
+			args: tool.args ?? null,
+			effectiveArgs: tool.effectiveArgs ?? null,
 			resultSummary: tool.resultSummary || "",
 		}));
 		return {
@@ -1498,9 +1636,19 @@ async function main() {
 			await writeOutput(args, args.json ? `${JSON.stringify(result, null, 2)}\n` : formatLatestErrors(result));
 			return;
 		}
+		if (args.command === "tool-retries") {
+			const result = await collectLatestToolRetries(driver, args);
+			await writeOutput(args, args.json ? `${JSON.stringify(result, null, 2)}\n` : formatToolRetries(result));
+			return;
+		}
 		if (args.command === "diff-tools") {
 			const result = await diffToolProfiles(driver, args);
 			await writeOutput(args, args.json ? `${JSON.stringify(result, null, 2)}\n` : formatToolDiff(result));
+			return;
+		}
+		if (args.command === "free-tier-bypass") {
+			const result = await freeTierBypassCommand(cdp, driver, args);
+			await writeOutput(args, args.json ? `${JSON.stringify(result, null, 2)}\n` : formatFreeTierBypass(result));
 			return;
 		}
 		if (args.command === "new") {

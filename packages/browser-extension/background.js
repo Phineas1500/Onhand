@@ -21,6 +21,10 @@ const REALTIME_API_KEY_SETUP_MESSAGE =
 	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
 const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
+const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
+const ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY = "onhandFreeTierQuotaBypassSecret";
+const ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY = "onhandFreeTierQuotaBypassExpiresAt";
+const ONHAND_FREE_QUOTA_BYPASS_MIN_LENGTH = 16;
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const GOOGLE_SCHOLAR_READER_EXTENSION_ID = "dahenjhkoodjbpjheillcadbppiidmhp";
 const GOOGLE_SCHOLAR_READER_FRAME_PREFIX = `chrome-extension://${GOOGLE_SCHOLAR_READER_EXTENSION_ID}/reader.html`;
@@ -106,6 +110,38 @@ function restrictStorageToTrustedContexts() {
 	chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch((error) => {
 		log("Could not restrict extension storage access", error?.message || String(error));
 	});
+}
+
+async function hashFreeTierToken(token) {
+	const compact = String(token || "").replace(/\s+/g, " ").trim().slice(0, 512);
+	if (!compact) return "";
+	const bytes = new TextEncoder().encode(compact);
+	const digest = await crypto.subtle.digest("SHA-256", bytes);
+	return Array.from(new Uint8Array(digest))
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("")
+		.slice(0, 32);
+}
+
+async function freeTierBypassState(action = "status") {
+	const stored = await chrome.storage.local.get({
+		[ONHAND_FREE_TOKEN_STORAGE_KEY]: "",
+		[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY]: "",
+		[ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY]: "",
+	});
+	const token = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
+	const expiresAt = String(stored[ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY] || "").trim();
+	const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN;
+	const expired = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+	return {
+		ok: true,
+		action,
+		enabled: String(stored[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY] || "").trim().length >= ONHAND_FREE_QUOTA_BYPASS_MIN_LENGTH && !expired,
+		expiresAt,
+		expired,
+		hasFreeTierToken: Boolean(token),
+		deviceHash: await hashFreeTierToken(token),
+	};
 }
 
 function initializeExtensionSurface() {
@@ -1416,6 +1452,137 @@ async function inferPdfPageNumberFromNativeChromePdfViewerFrame(tabId) {
 		getNativeChromePdfViewerPageExpression(),
 		"No Chrome PDF viewer frame context found",
 	);
+}
+
+function getNativeChromePdfViewerSelectionExpression() {
+	const pageExpression = getNativeChromePdfViewerPageExpression();
+	return `(() => {
+		const normalizeText = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+		const rectToObject = (rect) => rect
+			? {
+				x: Math.round(rect.x || rect.left || 0),
+				y: Math.round(rect.y || rect.top || 0),
+				left: Math.round(rect.left || 0),
+				top: Math.round(rect.top || 0),
+				right: Math.round(rect.right || 0),
+				bottom: Math.round(rect.bottom || 0),
+				width: Math.round(rect.width || 0),
+				height: Math.round(rect.height || 0),
+			}
+			: null;
+		const selection = window.getSelection?.() || document.getSelection?.();
+		const text = normalizeText(selection?.toString?.() || "");
+		let range = null;
+		let rect = null;
+		try {
+			range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+			rect = range && typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+		} catch {}
+		let pageDetection = null;
+		try {
+			pageDetection = (${pageExpression});
+		} catch {}
+		const pageNumber = pageDetection && Number.isFinite(Number(pageDetection.pageNumber)) ? Number(pageDetection.pageNumber) : null;
+		return {
+			surface: "pdf",
+			viewer: "chrome-pdf-viewer",
+			source: "native-chrome-pdf-viewer-selection",
+			hasSelection: Boolean(text),
+			isCollapsed: Boolean(selection?.isCollapsed),
+			text,
+			rangeCount: Number(selection?.rangeCount || 0),
+			rect: rect && (rect.width || rect.height) ? rectToObject(rect) : null,
+			container: pageNumber
+				? {
+					tag: "pdf-page",
+					text: \`Page \${pageNumber}\`,
+					pageNumber,
+				}
+				: null,
+			pageNumber,
+			pageSource: pageDetection?.source || "",
+			pdfAnchor: text
+				? {
+					surface: "pdf",
+					viewer: "chrome-pdf-viewer",
+					pageNumber,
+					matchedText: text,
+					textQuote: { exact: text },
+				}
+				: null,
+		};
+	})()`;
+}
+
+function selectionPayloadHasText(payload) {
+	return Boolean(String(payload?.text || "").replace(/\s+/g, " ").trim());
+}
+
+function isLikelyNativeChromePdfSelectionTab(tab) {
+	const tabUrl = String(tab?.url || "");
+	return tabUrl.startsWith(NATIVE_CHROME_PDF_VIEWER_PREFIX) || isLikelyPdfResourceUrl(tabUrl);
+}
+
+async function getNativeChromePdfViewerSelectionFromTarget(tab) {
+	const expression = getNativeChromePdfViewerSelectionExpression();
+	const targets = await getNativeChromePdfViewerDebuggerTargets(tab);
+	let lastError = null;
+	for (const targetInfo of targets) {
+		const targetId = nativeChromePdfTargetId(targetInfo);
+		if (!targetId) continue;
+		try {
+			return await withDebuggerTarget({ targetId }, async ({ send }) => {
+				await send("Runtime.enable");
+				return await evaluateDebuggerExpression(
+					send,
+					expression,
+					undefined,
+					"Could not read selection from Chrome PDF viewer target",
+				);
+			});
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError) throw lastError;
+	return null;
+}
+
+async function getNativeChromePdfViewerSelectionFromFrame(tabId) {
+	return await evaluateInMatchingFrame(
+		tabId,
+		frameOrContextLooksLikeNativeChromePdfViewer,
+		getNativeChromePdfViewerSelectionExpression(),
+		"No Chrome PDF viewer frame context found",
+	);
+}
+
+async function maybeGetNativeChromePdfViewerSelection(tab, currentSelection) {
+	if (selectionPayloadHasText(currentSelection)) return currentSelection;
+	if (!isLikelyNativeChromePdfSelectionTab(tab)) return currentSelection;
+	let lastError = null;
+	for (const readNativeSelection of [
+		() => getNativeChromePdfViewerSelectionFromTarget(tab),
+		() => getNativeChromePdfViewerSelectionFromFrame(tab.id),
+	]) {
+		try {
+			const selection = await readNativeSelection();
+			if (selectionPayloadHasText(selection)) return selection;
+		} catch (error) {
+			lastError = error;
+		}
+	}
+	if (lastError && currentSelection && typeof currentSelection === "object") {
+		return {
+			...currentSelection,
+			nativePdfSelectionFallback: {
+				attempted: true,
+				ok: false,
+				error: lastError?.message || String(lastError),
+			},
+		};
+	}
+	return currentSelection;
 }
 
 async function inferPdfPageNumberFromNativeChromePdfViewerTarget(tab) {
@@ -8238,6 +8405,35 @@ async function extractReadableContentInPage(options = {}) {
 	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
 	const maxHeadingOutline = Math.max(0, Math.min(160, Number(options.maxHeadingOutline || 80) || 80));
 	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const queryStopWords = new Set([
+		"about",
+		"also",
+		"and",
+		"are",
+		"context",
+		"does",
+		"each",
+		"for",
+		"from",
+		"have",
+		"page",
+		"same",
+		"that",
+		"the",
+		"this",
+		"three",
+		"using",
+		"what",
+		"which",
+		"with",
+	]);
+	const queryTokens = Array.from(
+		new Set(
+			(String(options.query || "").toLowerCase().match(/[a-z][a-z0-9._-]{2,}|[0-9]+(?:\.[0-9]+)?%?/g) || []).filter(
+				(token) => !queryStopWords.has(token),
+			),
+		),
+	).slice(0, 32);
 	const normalizeExportText = (value) =>
 		String(value || "")
 			.replace(/\r\n?/g, "\n")
@@ -8334,9 +8530,10 @@ async function extractReadableContentInPage(options = {}) {
 	const isVisible = (element) => {
 		if (!(element instanceof Element)) return false;
 		const style = window.getComputedStyle(element);
-		if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+		if (style.display === "none" || style.visibility === "hidden" || (style.opacity !== "" && Number(style.opacity) === 0)) return false;
+		if (element.hasAttribute("hidden") || String(element.getAttribute("aria-hidden") || "").toLowerCase() === "true") return false;
 		const rect = element.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
+		return (rect.width > 0 && rect.height > 0) || normalize(element.textContent || "").length > 0;
 	};
 	const selectorFor = (element) => {
 		if (!(element instanceof Element)) return "";
@@ -8346,11 +8543,25 @@ async function extractReadableContentInPage(options = {}) {
 		if (className) bits.push(`.${className}`);
 		return bits.join("");
 	};
+	const readableRootScore = (element) => {
+		if (!(element instanceof Element)) return 0;
+		const clone = element.cloneNode(true);
+		if (clone instanceof Element) {
+			for (const node of Array.from(clone.querySelectorAll("script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea"))) {
+				node.remove();
+			}
+		}
+		return normalize(clone.textContent || "").length;
+	};
+	const rootCandidates = [
+		...Array.from(document.querySelectorAll("article, main, [role='main'], .mw-parser-output")),
+		document.body,
+		document.documentElement,
+	].filter((element, index, list) => element instanceof Element && list.indexOf(element) === index);
 	const root =
-		document.querySelector("article") ||
-		document.querySelector("main") ||
-		document.querySelector('[role="main"]') ||
-		document.querySelector(".mw-parser-output") ||
+		rootCandidates
+			.map((element) => ({ element, score: readableRootScore(element) }))
+			.sort((left, right) => right.score - left.score)[0]?.element ||
 		document.body ||
 		document.documentElement;
 	const ignoredSelector = "script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea";
@@ -8381,6 +8592,36 @@ async function extractReadableContentInPage(options = {}) {
 		headingOutlineElements.push({ entry, element });
 	};
 	const isHeadingElement = (element) => element instanceof Element && /^h[1-6]$/i.test(element.tagName);
+	const tableMarkdown = (table, maxRows = 18, maxTableChars = 2400) => {
+		if (!(table instanceof Element)) return "";
+		const rows = [];
+		const caption = normalize(table.querySelector("caption")?.textContent || "");
+		if (caption) rows.push(`Table: ${caption}`);
+		for (const row of Array.from(table.querySelectorAll("tr"))) {
+			if (!(row instanceof Element) || !isVisible(row)) continue;
+			const cells = Array.from(row.children || [])
+				.filter((cell) => cell instanceof Element && /^(td|th)$/i.test(cell.tagName) && isVisible(cell))
+				.map((cell) => normalize(cell.textContent || "").slice(0, 220))
+				.filter(Boolean);
+			if (!cells.length) continue;
+			rows.push(`| ${cells.join(" | ")} |`);
+			if (rows.length >= maxRows) break;
+		}
+		const text = rows.join("\n");
+		return text.length > maxTableChars ? `${text.slice(0, Math.max(0, maxTableChars - 1))}…` : text;
+	};
+	const queryScore = (value) => {
+		if (!queryTokens.length) return 0;
+		const text = normalize(value).toLowerCase();
+		if (!text) return 0;
+		let score = 0;
+		for (const token of queryTokens) {
+			if (!token) continue;
+			if (text.includes(token)) score += /[0-9.%]/.test(token) ? 5 : Math.min(4, Math.max(1, token.length - 2));
+			if (token.endsWith("s") && token.length > 4 && text.includes(token.slice(0, -1))) score += 1;
+		}
+		return score;
+	};
 	const collectHeadingSnippet = (heading, maxSnippetChars = 280) => {
 		if (!(heading instanceof Element)) return "";
 		const chunks = [];
@@ -8400,6 +8641,10 @@ async function extractReadableContentInPage(options = {}) {
 			if (element.closest(ignoredSelector)) return false;
 			if (isHeadingElement(element)) return true;
 			const tag = element.tagName.toLowerCase();
+			if (tag === "table") {
+				append(tableMarkdown(element, 8, maxSnippetChars));
+				return false;
+			}
 			if (["p", "li", "blockquote", "pre", "figcaption", "caption"].includes(tag)) {
 				append(element.textContent || "");
 				return false;
@@ -8425,6 +8670,28 @@ async function extractReadableContentInPage(options = {}) {
 		}
 		return chunks.join(" ");
 	};
+	const sectionLooksFormulaHeavy = (heading) => {
+		if (!(heading instanceof Element)) return false;
+		let sibling = heading.nextElementSibling;
+		let scanned = 0;
+		let mathHits = 0;
+		while (sibling && scanned < 10) {
+			if (isHeadingElement(sibling)) break;
+			if (sibling instanceof Element && isVisible(sibling) && !sibling.closest(ignoredSelector)) {
+				const text = normalize(sibling.textContent || "");
+				if (
+					sibling.querySelector?.("mjx-container, math, .MathJax, [data-mathml]") ||
+					/[∑∏√∞≈≤≥∈⊙]|\\(?:sin|cos|softmax|frac|mathbf|mathbb)\b|\b(?:sin|cos|softmax|layernorm)\s*\(/i.test(text)
+				) {
+					mathHits += 1;
+					if (mathHits >= 2) return true;
+				}
+				scanned += 1;
+			}
+			sibling = sibling.nextElementSibling;
+		}
+		return false;
+	};
 	const pushBlock = (kind, text, element) => {
 		const clean = normalize(text);
 		if (!clean || clean.length < 2) return;
@@ -8432,7 +8699,12 @@ async function extractReadableContentInPage(options = {}) {
 		if (seen.has(key)) return;
 		seen.add(key);
 		const prefix = /^h[1-6]$/.test(kind) ? `${"#".repeat(Number(kind.slice(1)) || 2)} ` : kind === "li" ? "- " : kind === "blockquote" ? "> " : "";
-		const body = kind === "pre" ? `\`\`\`\n${String(text || "").trim().slice(0, 3000)}\n\`\`\`` : `${prefix}${clean}`;
+		const body =
+			kind === "pre"
+				? `\`\`\`\n${String(text || "").trim().slice(0, 3000)}\n\`\`\``
+				: kind === "table"
+					? String(text || "").trim()
+					: `${prefix}${clean}`;
 		if (usedChars >= maxChars) return;
 		const remaining = maxChars - usedChars;
 		const output = body.length > remaining ? `${body.slice(0, Math.max(0, remaining - 1))}…` : body;
@@ -8451,7 +8723,7 @@ async function extractReadableContentInPage(options = {}) {
 		pushHeadingOutline(element);
 	}
 	for (const { entry: heading, element } of headingOutlineElements) {
-		const snippet = collectHeadingSnippet(element);
+		const snippet = collectHeadingSnippet(element, sectionLooksFormulaHeavy(element) ? 900 : 280);
 		if (snippet) {
 			heading.snippet = snippet;
 			heading.markdown = `${heading.text}\n  ${snippet}`;
@@ -8461,11 +8733,31 @@ async function extractReadableContentInPage(options = {}) {
 	const title = normalize(document.querySelector("h1")?.textContent || document.title);
 	if (title) pushBlock("h1", title, document.querySelector("h1") || document.documentElement);
 
-	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption")) {
+	if (queryTokens.length) {
+		const relevant = [];
+		let index = 0;
+		for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table")) {
+			if (!(element instanceof Element) || !isVisible(element)) continue;
+			if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
+			const tag = element.tagName.toLowerCase();
+			const text = tag === "table" ? tableMarkdown(element) : element.textContent || "";
+			const score = queryScore(text);
+			if (score <= 0) continue;
+			relevant.push({ tag, text, element, score, index: index++ });
+		}
+		const relevantBudget = Math.min(maxChars, Math.max(3000, Math.floor(maxChars * 0.45)));
+		for (const item of relevant.sort((left, right) => right.score - left.score || left.index - right.index).slice(0, 18)) {
+			if (usedChars >= relevantBudget) break;
+			pushBlock(item.tag, item.text, item.element);
+		}
+	}
+
+	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table")) {
 		if (usedChars >= maxChars) break;
 		if (!(element instanceof Element) || !isVisible(element)) continue;
 		if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
-		pushBlock(element.tagName.toLowerCase(), element.textContent || "", element);
+		const tag = element.tagName.toLowerCase();
+		pushBlock(tag, tag === "table" ? tableMarkdown(element) : element.textContent || "", element);
 	}
 
 	if (blocks.length < 3) {
@@ -8892,7 +9184,7 @@ async function handleCommand(name, args = {}) {
 				try {
 					content =
 						(await extractGoogleDocsTextExportForTab(tab, { maxChars: args.maxChars })) ||
-						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars })})`));
+						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars, query: args.query })})`));
 				} catch (error) {
 					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
 					else throw error;
@@ -9098,7 +9390,21 @@ async function handleCommand(name, args = {}) {
 		case "get_selection": {
 			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const selection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
+				let pageSelection;
+				try {
+					pageSelection = await runPageToolkitMethod(tab.id, "getSelectionInfo");
+				} catch (error) {
+					if (!isRestrictedScriptingError(error) || !isLikelyNativeChromePdfSelectionTab(tab)) throw error;
+					pageSelection = {
+						surface: "pdf",
+						viewer: "chrome-pdf-viewer",
+						source: "native-chrome-pdf-viewer-restricted-main-frame",
+						hasSelection: false,
+						text: "",
+						mainFrameSelectionError: error?.message || String(error),
+					};
+				}
+				const selection = await maybeGetNativeChromePdfViewerSelection(tab, pageSelection);
 				return {
 					tab: simplifyTab(tab),
 					selection,
@@ -9774,6 +10080,38 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				},
 			});
+			return;
+		}
+
+		if (message?.type === "debug:free-tier-bypass-state") {
+			sendResponse(await freeTierBypassState("status"));
+			return;
+		}
+
+		if (message?.type === "debug:set-free-tier-bypass") {
+			const secret = String(message.secret || "").trim();
+			if (secret.length < ONHAND_FREE_QUOTA_BYPASS_MIN_LENGTH) {
+				sendResponse({
+					ok: false,
+					error: `Bypass secret must be at least ${ONHAND_FREE_QUOTA_BYPASS_MIN_LENGTH} characters.`,
+				});
+				return;
+			}
+			const expiresAt = String(message.expiresAt || "").trim();
+			await chrome.storage.local.set({
+				[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY]: secret,
+				...(expiresAt ? { [ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY]: expiresAt } : {}),
+			});
+			sendResponse(await freeTierBypassState("enable"));
+			return;
+		}
+
+		if (message?.type === "debug:clear-free-tier-bypass") {
+			await chrome.storage.local.remove([
+				ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY,
+				ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY,
+			]);
+			sendResponse(await freeTierBypassState("disable"));
 			return;
 		}
 
