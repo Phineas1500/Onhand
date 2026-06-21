@@ -28,11 +28,20 @@ jobs:
       - name: Run browser runtime regressions
         run: npm run test:browser-runtime-regressions
 
+      - name: Run free-tier worker regressions
+        run: npm run test:free-tier-worker-regressions
+
+      - name: Verify website analytics instrumentation
+        run: npm run website:verify-analytics
+
       - name: Run browser runtime smoke
         run: npm run smoke:browser-runtime -- --ports --json
 
       - name: Run preflight checks
         run: npm run test:preflight
+
+      - name: Check whitespace errors
+        run: git diff --check
 
       - name: Emit Chrome acceptance plan
         run: npm run acceptance:chrome -- --suite=all --run-id=ci-${{ github.run_id }} --json

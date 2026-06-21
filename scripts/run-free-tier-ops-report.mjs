@@ -355,6 +355,38 @@ GROUP BY source
 ORDER BY completions DESC`,
 		},
 		{
+			name: "usage_devices",
+			description: "Device-level free-tier usage signals for real-user estimates.",
+			sql: `
+SELECT
+  blob14 AS device_hash,
+  ${sourceExpr} AS source,
+  blob1 AS event,
+  if(blob11 = '', 'unknown', blob11) AS auth_mode,
+  if(blob12 = '', 'unknown', blob12) AS ai_provider,
+  if(blob13 = '', 'unknown', blob13) AS ai_model,
+  if(blob16 = '', 'unknown', blob16) AS turn_id,
+  blob17 AS session_id,
+  SUM(_sample_interval) AS events,
+  MIN(timestamp) AS first_seen,
+  MAX(timestamp) AS last_seen
+FROM ${dataset}
+WHERE ${where}
+  AND blob14 != ''
+  AND blob1 IN (
+    'chat_stream_complete',
+    'chat_quota_denied',
+    'prompt_submitted',
+    'prompt_succeeded',
+    'prompt_failed',
+    'prompt_stopped',
+    'session_started',
+    'register_success'
+  )
+GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, session_id
+ORDER BY device_hash, source, event`,
+		},
+		{
 			name: "model_provider_health",
 			description: "Model/provider routing, errors, latency, cost, and tokens by chat event.",
 			sql: `
@@ -611,6 +643,7 @@ async function runReport(args) {
 	sections.quota_classification = classifyQuotaRows(sections.quota_and_rejections, testDeviceHashes);
 	sections.error_classification = classifyErrorRows(sections.top_errors, testDeviceHashes);
 	sections.tool_reliability_classification = classifyToolReliabilityRows(sections.tool_reliability);
+	sections.usage_summary = summarizeUsageDevices(sections.usage_devices, testDeviceHashes, args.days);
 
 	const report = { plan, sections };
 	if (checksEnabled) report.checks = evaluateChecks(report, args.thresholds);
@@ -865,6 +898,14 @@ function printReport(report, args) {
 	console.log(`Completions: ${formatInteger(cost.completions)} (${formatNumber(Number(cost.completions || 0) / report.plan.days)}/day)`);
 	console.log(`Cost: ${formatDollars(cost.total_cost)} total, ${formatDollars(cost.avg_cost)} avg/completion`);
 	console.log(`Tokens: ${formatInteger(cost.total_tokens)} total, ${formatInteger(cost.avg_tokens)} avg/completion`);
+	const usage = first(report.sections.usage_summary);
+	if (usage) {
+		console.log(
+			`Free-tier users: ${formatInteger(usage.estimated_non_test_free_tier_devices)} estimated non-test devices, ${formatInteger(
+				usage.non_test_worker_chat_devices,
+			)} completed-chat devices, ${formatInteger(usage.non_test_worker_chat_completions)} completed chats`,
+		);
+	}
 	const toolReliability = healthToolReliabilityRows(report);
 	if (toolReliability.length) {
 		console.log(
@@ -910,8 +951,26 @@ function renderMarkdown(report) {
 	lines.push(`- Average cost/completion: ${formatDollars(cost.avg_cost)}`);
 	lines.push(`- Total tokens: ${formatInteger(cost.total_tokens)}`);
 	lines.push(`- Average tokens/completion: ${formatInteger(cost.avg_tokens)}`);
+	const usage = first(report.sections.usage_summary);
+	if (usage) {
+		lines.push(`- Estimated non-test free-tier devices: ${formatInteger(usage.estimated_non_test_free_tier_devices)}`);
+		lines.push(`- Non-test completed-chat devices: ${formatInteger(usage.non_test_worker_chat_devices)}`);
+		lines.push(`- Non-test completed chats: ${formatInteger(usage.non_test_worker_chat_completions)}`);
+	}
 	lines.push("");
 
+	addTable(lines, "Usage Summary", report.sections.usage_summary, [
+		"window_days",
+		"raw_free_tier_devices",
+		"excluded_likely_test_devices",
+		"estimated_non_test_free_tier_devices",
+		"non_test_worker_chat_devices",
+		"non_test_worker_chat_completions",
+		"non_test_extension_prompt_succeeded_devices",
+		"non_test_extension_prompt_succeeded_events",
+		"first_seen",
+		"last_seen",
+	]);
 	if (report.checks) addTable(lines, "Checks", report.checks, ["status", "metric", "actual", "limit", "message"]);
 	addTable(lines, "Event Counts", report.sections.event_counts, ["event", "events"]);
 	addTable(lines, "Source Counts", report.sections.source_counts, ["source", "event", "events"]);
@@ -1008,6 +1067,40 @@ function rowSessionId(row) {
 	return String(row?.session_id || row?.sessionId || "");
 }
 
+function rowAiProvider(row) {
+	return String(row?.ai_provider || row?.aiProvider || "");
+}
+
+function rowAiModel(row) {
+	return String(row?.ai_model || row?.aiModel || "");
+}
+
+function isFreeTierUsageRow(row) {
+	const source = rowSource(row);
+	const event = String(row?.event || "");
+	if (source === "free-tier" && (event === "chat_stream_complete" || isQuotaDenial(row))) return true;
+	if (source === "extension" && rowAiProvider(row) === "onhand-free") {
+		return ["prompt_submitted", "prompt_succeeded", "prompt_failed", "prompt_stopped", "session_started", "register_success"].includes(event);
+	}
+	return false;
+}
+
+function isWorkerChatCompletionUsageRow(row) {
+	return rowSource(row) === "free-tier" && String(row?.event || "") === "chat_stream_complete";
+}
+
+function isExtensionPromptSucceededUsageRow(row) {
+	return rowSource(row) === "extension" && rowAiProvider(row) === "onhand-free" && String(row?.event || "") === "prompt_succeeded";
+}
+
+function isLikelyTestUsageRow(row, testDeviceHashes = []) {
+	if (rowHasKnownTestDevice(row, testDeviceHashes)) return true;
+	if (isProbeDiagnosticRow(row)) return true;
+	if (/(^|[-_:])(cli|acceptance|bypass|smoke|test)([-_:]|$)/i.test(rowSource(row))) return true;
+	if (/codex-smoke|acceptance|probe/i.test(rowAiModel(row))) return true;
+	return false;
+}
+
 function isUnknownIdentifier(value) {
 	const text = String(value || "").trim().toLowerCase();
 	return !text || text === "-" || text === "unknown";
@@ -1080,6 +1173,69 @@ function classifyToolReliabilityRows(rows) {
 			classification,
 		};
 	});
+}
+
+function summarizeUsageDevices(rows, testDeviceHashes = [], days = 1) {
+	const allRows = Array.isArray(rows) ? rows : [];
+	const likelyTestDevices = new Set();
+	for (const row of allRows) {
+		const deviceHash = rowDeviceHash(row);
+		if (deviceHash && isLikelyTestUsageRow(row, testDeviceHashes)) likelyTestDevices.add(deviceHash);
+	}
+
+	const devices = new Map();
+	for (const row of allRows) {
+		if (!isFreeTierUsageRow(row)) continue;
+		const deviceHash = rowDeviceHash(row);
+		if (!deviceHash) continue;
+		const device = devices.get(deviceHash) || {
+			deviceHash,
+			isTest: false,
+			workerChatCompletions: 0,
+			extensionPromptSucceededEvents: 0,
+			firstSeen: "",
+			lastSeen: "",
+		};
+		device.isTest ||= likelyTestDevices.has(deviceHash);
+		if (isWorkerChatCompletionUsageRow(row)) device.workerChatCompletions += numberValue(row.events);
+		if (isExtensionPromptSucceededUsageRow(row)) device.extensionPromptSucceededEvents += numberValue(row.events);
+		device.firstSeen = earliestTimestamp(device.firstSeen, row.first_seen);
+		device.lastSeen = latestTimestamp(device.lastSeen, row.last_seen);
+		devices.set(deviceHash, device);
+	}
+
+	const allFreeTierDevices = [...devices.values()];
+	const nonTestDevices = allFreeTierDevices.filter((device) => !device.isTest);
+	const firstSeen = nonTestDevices.reduce((current, device) => earliestTimestamp(current, device.firstSeen), "");
+	const lastSeen = nonTestDevices.reduce((current, device) => latestTimestamp(current, device.lastSeen), "");
+	return [
+		{
+			window_days: days,
+			raw_free_tier_devices: allFreeTierDevices.length,
+			excluded_likely_test_devices: allFreeTierDevices.length - nonTestDevices.length,
+			estimated_non_test_free_tier_devices: nonTestDevices.length,
+			non_test_worker_chat_devices: nonTestDevices.filter((device) => device.workerChatCompletions > 0).length,
+			non_test_worker_chat_completions: sumRows(nonTestDevices, "workerChatCompletions"),
+			non_test_extension_prompt_succeeded_devices: nonTestDevices.filter((device) => device.extensionPromptSucceededEvents > 0).length,
+			non_test_extension_prompt_succeeded_events: sumRows(nonTestDevices, "extensionPromptSucceededEvents"),
+			first_seen: firstSeen || "-",
+			last_seen: lastSeen || "-",
+		},
+	];
+}
+
+function earliestTimestamp(current, value) {
+	const next = String(value || "").trim();
+	if (!next) return current || "";
+	if (!current) return next;
+	return next < current ? next : current;
+}
+
+function latestTimestamp(current, value) {
+	const next = String(value || "").trim();
+	if (!next) return current || "";
+	if (!current) return next;
+	return next > current ? next : current;
 }
 
 function filterRowsBySource(rows, sources = DEFAULT_HEALTH_SOURCES) {

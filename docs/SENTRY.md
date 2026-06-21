@@ -76,6 +76,7 @@ export SENTRY_PROJECT=onhand-browser-extension
 export SENTRY_AUTH_TOKEN=<token-with-project-read-write-and-release-admin>
 export SENTRY_SMOKE_AUTH_TOKEN=<optional-token-with-project-event-read>
 export SENTRY_ALERT_AUTH_TOKEN=<optional-token-with-alert-rule-read-write>
+export SENTRY_ISSUE_AUTH_TOKEN=<optional-token-with-project-issue-read>
 ```
 
 For `npm run sentry:sourcemaps`, the token needs enough access to create/read
@@ -89,6 +90,13 @@ For `npm run sentry:smoke`, set `SENTRY_SMOKE_AUTH_TOKEN` to a separate token
 that can read processed event details for the project. If
 `SENTRY_SMOKE_AUTH_TOKEN` is not set, the smoke script falls back to
 `SENTRY_AUTH_TOKEN`.
+
+For `npm run sentry:issues`, set `SENTRY_ISSUE_AUTH_TOKEN` to a separate
+read-only token that can list project issues. In Sentry's token UI this usually
+means:
+
+- Project: Read
+- Issue & Event: Read
 
 Dry-run the upload flow:
 
@@ -136,6 +144,29 @@ npm run sentry:sourcemaps -- --release=onhand-extension@0.3.7
 npm run sentry:sourcemaps -- --org=ramaway --project=onhand-browser-extension
 npm run sentry:sourcemaps -- --url-prefix=app:///
 npm run sentry:runtime-smoke -- --timeout-ms=120000
+```
+
+## Issue Health
+
+Check unresolved non-smoke issue health with:
+
+```sh
+npm run sentry:issues
+npm run sentry:issues -- --stats-period=14d
+```
+
+The command reads unresolved project issues, filters out the source-map and
+runtime smoke issues used by the validation scripts, and prints the remaining
+non-smoke issues with counts, affected users, last-seen time, and permalink.
+
+The command intentionally supports the issue windows we use operationally:
+`24h` for release-day checks and `14d` for broader regression triage.
+
+If the command fails with HTTP 403, create or update `SENTRY_ISSUE_AUTH_TOKEN`
+with Project Read plus Issue & Event Read access, then rerun:
+
+```sh
+npm run sentry:issues -- --token-env=SENTRY_ISSUE_AUTH_TOKEN
 ```
 
 ## Triage Runbook

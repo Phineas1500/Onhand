@@ -189,6 +189,13 @@ calls after the shared daily hosted-model cost cap has been reached.
 `free_tier_heavy_turn` is warning-only and fires once per turn when a completion
 crosses one of the configured heavy-turn thresholds.
 
+`npm run ops:free-tier` also derives an aggregate usage estimate from the
+Analytics Engine device hash, source, event, auth mode, AI provider, and AI
+model fields. The report counts non-test Onhand Free devices and completed
+free-tier chats, while excluding the current local test device, probe sessions,
+and CLI/acceptance/smoke traffic. The Markdown summary intentionally shows only
+aggregate counts; raw device hashes remain in the JSON artifact for debugging.
+
 Useful first queries:
 
 ```sql
