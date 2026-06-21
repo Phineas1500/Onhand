@@ -2809,6 +2809,28 @@ function buildBlankReplyRetryPrompt(request: any) {
 	].filter(Boolean).join("\n\n");
 }
 
+function queueBlankReplyRetry(agent: Agent, prompt: string, onError: (error: Error) => void) {
+	if (typeof (agent as any).followUp === "function" && typeof (agent as any).waitForIdle === "function" && typeof (agent as any).continue === "function") {
+		(agent as any).followUp({
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+			timestamp: Date.now(),
+		});
+		void (agent as any).waitForIdle().then(
+			() => {
+				void (agent as any).continue().catch((retryError: unknown) => {
+					onError(retryError instanceof Error ? retryError : new Error(String(retryError)));
+				});
+			},
+			(retryError: unknown) => {
+				onError(retryError instanceof Error ? retryError : new Error(String(retryError)));
+			},
+		);
+		return;
+	}
+	void agent.prompt(prompt).catch((retryError) => onError(retryError instanceof Error ? retryError : new Error(String(retryError))));
+}
+
 function buildSessionTitleFromPrompt(prompt: string) {
 	const cleaned =
 		String(prompt || "")
@@ -4719,6 +4741,7 @@ export const __browserRuntimeTest = {
 	getPublicActivities,
 	buildPriorExtractedPageContextForTest: buildPriorExtractedPageContext,
 	finalizePublicActivitiesForTest: finalizePublicActivities,
+	queueBlankReplyRetryForTest: queueBlankReplyRetry,
 	summarizeToolReliabilityForTest: summarizeToolReliability,
 	getSelectionText,
 	browserContextLooksLikePdf,
@@ -6662,9 +6685,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			if (!activeRequest.blankReplyRetry && activeAgent) {
 				activeRequest.blankReplyRetry = true;
 				await publishState({ status: "Writing answer..." });
-				void activeAgent
-					.prompt(buildBlankReplyRetryPrompt(activeRequest))
-					.catch((retryError) => finalizeRequest(session, requestId, retryError instanceof Error ? retryError : new Error(String(retryError))));
+				queueBlankReplyRetry(activeAgent, buildBlankReplyRetryPrompt(activeRequest), (retryError) => {
+					void finalizeRequest(session, requestId, retryError);
+				});
 				return;
 			}
 			finalError = new Error("The model returned an empty answer after reading page context.");

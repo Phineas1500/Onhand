@@ -825,6 +825,54 @@ async function assertSelectionFormatting() {
 	]);
 }
 
+async function assertBlankReplyRetryWaitsForAgentIdle() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { queueBlankReplyRetryForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof queueBlankReplyRetryForTest, "function", "blank-reply retry helper export is missing");
+	const events = [];
+	let resolveIdle;
+	const idlePromise = new Promise((resolve) => {
+		resolveIdle = resolve;
+	});
+	let capturedError = null;
+	const agent = {
+		followUp(message) {
+			events.push({ type: "followUp", message });
+		},
+		waitForIdle() {
+			events.push({ type: "waitForIdle" });
+			return idlePromise;
+		},
+		async continue() {
+			events.push({ type: "continue" });
+		},
+		async prompt() {
+			events.push({ type: "prompt" });
+			throw new Error("prompt should not be used for queued blank-reply retries");
+		},
+	};
+
+	queueBlankReplyRetryForTest(agent, "Answer now from the tool result.", (error) => {
+		capturedError = error;
+	});
+	assert.deepEqual(
+		events.map((event) => event.type),
+		["followUp", "waitForIdle"],
+		"blank reply retry should queue a follow-up and wait for idle before continuing",
+	);
+	assert.equal(events[0].message.role, "user");
+	assert.equal(events[0].message.content[0].text, "Answer now from the tool result.");
+	await Promise.resolve();
+	assert.equal(events.some((event) => event.type === "continue"), false, "retry should not continue before the active run is idle");
+	resolveIdle();
+	for (let attempt = 0; attempt < 10 && !events.some((event) => event.type === "continue"); attempt += 1) {
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	assert.equal(events.some((event) => event.type === "continue"), true, "retry should continue after the active run settles");
+	assert.equal(events.some((event) => event.type === "prompt"), false, "retry should not call Agent.prompt while the original run is active");
+	assert.equal(capturedError, null);
+}
+
 async function assertPublicActivitiesFilterInternalThinking() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { getPublicActivities } = __browserRuntimeTest || {};
@@ -5754,6 +5802,7 @@ async function main() {
 	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
+	await assertBlankReplyRetryWaitsForAgentIdle();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertToolRetryActivitiesFinalizeAsRecovered();
 	await assertConstitutionPromptContract();

@@ -134303,6 +134303,27 @@ function buildBlankReplyRetryPrompt(request) {
 ${toolExcerpt}` : ""
   ].filter(Boolean).join("\n\n");
 }
+function queueBlankReplyRetry(agent, prompt, onError) {
+  if (typeof agent.followUp === "function" && typeof agent.waitForIdle === "function" && typeof agent.continue === "function") {
+    agent.followUp({
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+      timestamp: Date.now()
+    });
+    void agent.waitForIdle().then(
+      () => {
+        void agent.continue().catch((retryError) => {
+          onError(retryError instanceof Error ? retryError : new Error(String(retryError)));
+        });
+      },
+      (retryError) => {
+        onError(retryError instanceof Error ? retryError : new Error(String(retryError)));
+      }
+    );
+    return;
+  }
+  void agent.prompt(prompt).catch((retryError) => onError(retryError instanceof Error ? retryError : new Error(String(retryError))));
+}
 function buildSessionTitleFromPrompt(prompt) {
   const cleaned = String(prompt || "").replace(/\s+/g, " ").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/[?.!]+$/g, "") || "New session";
   return truncate2(cleaned, 80);
@@ -135879,6 +135900,7 @@ var __browserRuntimeTest = {
   getPublicActivities,
   buildPriorExtractedPageContextForTest: buildPriorExtractedPageContext,
   finalizePublicActivitiesForTest: finalizePublicActivities,
+  queueBlankReplyRetryForTest: queueBlankReplyRetry,
   summarizeToolReliabilityForTest: summarizeToolReliability,
   getSelectionText,
   browserContextLooksLikePdf,
@@ -137654,7 +137676,9 @@ function createOnhandBrowserRuntime(host) {
       if (!activeRequest.blankReplyRetry && activeAgent) {
         activeRequest.blankReplyRetry = true;
         await publishState({ status: "Writing answer..." });
-        void activeAgent.prompt(buildBlankReplyRetryPrompt(activeRequest)).catch((retryError) => finalizeRequest(session, requestId, retryError instanceof Error ? retryError : new Error(String(retryError))));
+        queueBlankReplyRetry(activeAgent, buildBlankReplyRetryPrompt(activeRequest), (retryError) => {
+          void finalizeRequest(session, requestId, retryError);
+        });
         return;
       }
       finalError = new Error("The model returned an empty answer after reading page context.");
