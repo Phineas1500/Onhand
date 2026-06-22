@@ -26,14 +26,16 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXT_DIR = fileURLToPath(new URL("../packages/browser-extension", import.meta.url));
-const CDP_PORT = Number(process.env.ONHAND_TEST_CDP_PORT || 9343);
+const CDP_PORT_OVERRIDE = process.env.ONHAND_TEST_CDP_PORT ? Number(process.env.ONHAND_TEST_CDP_PORT) : null;
 const EXT_ID_FALLBACK = "hpjpjeehgbloadhdidmecpijppodibim";
 const VERBOSE = Boolean(process.env.ONHAND_TEST_VERBOSE);
+const RESTORE_TEST_SESSION_ID = "seed-session-anchor-test";
 
 const BROWSER_CANDIDATES = [
 	process.env.ONHAND_TEST_BROWSER,
@@ -155,24 +157,61 @@ function launchBrowser(profile, port) {
 	);
 }
 
+function pickAvailablePort() {
+	if (Number.isFinite(CDP_PORT_OVERRIDE) && CDP_PORT_OVERRIDE > 0) return Promise.resolve(CDP_PORT_OVERRIDE);
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const address = server.address();
+			const port = typeof address === "object" && address ? address.port : 0;
+			server.close(() => {
+				if (port > 0) resolve(port);
+				else reject(new Error("Could not allocate a CDP port"));
+			});
+		});
+	});
+}
+
 // Open a driver page inside the extension origin (for chrome.runtime) and a
 // matching set of helpers bound to it.
 async function openContext(port) {
 	const version = await waitForCdp(port);
 	const cdp = new Cdp(await connect(version.webSocketDebuggerUrl));
-	const targets = (await cdp.send("Target.getTargets")).targetInfos;
-	const sw = targets.find((t) => t.type === "service_worker" && /chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
-	const extId = sw ? new URL(sw.url).host : EXT_ID_FALLBACK;
+	let extId = EXT_ID_FALLBACK;
+	for (let attempt = 0; attempt < 40; attempt += 1) {
+		const targets = (await cdp.send("Target.getTargets")).targetInfos;
+		const target = targets.find((t) => {
+			const url = String(t.url || "");
+			const title = String(t.title || "");
+			return url.startsWith(`chrome-extension://${EXT_ID_FALLBACK}/`) || title.includes("Onhand");
+		});
+		if (target?.url) {
+			extId = new URL(target.url).host;
+			break;
+		}
+		await delay(250);
+	}
 	const driverUrl = `chrome-extension://${extId}/pdf-viewer.html?driver=1`;
 	const { targetId } = await cdp.send("Target.createTarget", { url: driverUrl, background: true });
 	const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
-	await delay(900);
 	const evalIn = async (sid, expression) => {
 		const res = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sid);
 		if (res.exceptionDetails) throw new Error(`page exception: ${res.exceptionDetails.exception?.description || res.exceptionDetails.text}`);
 		return res.result?.value;
 	};
 	const driverEval = (expression) => evalIn(sessionId, expression);
+	for (let attempt = 0; attempt < 40; attempt += 1) {
+		const ready = await driverEval(
+			`JSON.stringify({ href: location.href, ready: document.readyState, hasRuntime: typeof chrome?.runtime?.sendMessage === "function" })`,
+		);
+		const state = JSON.parse(String(ready || "{}"));
+		if (state.hasRuntime) break;
+		if (attempt === 39) {
+			throw new Error(`Extension driver page did not expose chrome.runtime.sendMessage: ${ready}`);
+		}
+		await delay(250);
+	}
 	const sendMessage = (payload) => driverEval(`chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
 	const tool = async (name, args) => {
 		const response = await sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
@@ -182,13 +221,31 @@ async function openContext(port) {
 	return { cdp, extId, evalIn, driverEval, sendMessage, tool };
 }
 
+async function createSourceTab(ctx, url) {
+	const serialized = await ctx.driverEval(`new Promise((resolve, reject) => {
+		chrome.tabs.create({ url: ${JSON.stringify(url)}, active: true }, (tab) => {
+			const error = chrome.runtime.lastError;
+			if (error) {
+				reject(new Error(error.message));
+				return;
+			}
+			resolve(JSON.stringify({ id: tab.id, windowId: tab.windowId, url: tab.url || "", title: tab.title || "" }));
+		});
+	})`);
+	const tab = JSON.parse(String(serialized || "{}"));
+	assert.ok(tab.id, `source tab should be created for ${url}: ${serialized}`);
+	await delay(1200);
+	return tab;
+}
+
 async function openFixtureInViewer(ctx, pdfUrl) {
 	stage("opening pdf in viewer");
+	const sourceTab = await createSourceTab(ctx, pdfUrl);
 	let openResponse = null;
-	openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl });
+	openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl, tabId: sourceTab.id, windowId: sourceTab.windowId });
 	await delay(2500);
 	if (!openResponse?.result?.viewerReady?.ready) {
-		openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl });
+		openResponse = await ctx.tool("browser_open_pdf_in_onhand_viewer", { pdfUrl, tabId: sourceTab.id, windowId: sourceTab.windowId });
 		await delay(2500);
 	}
 	const pdfTab = openResponse?.result?.tab;
@@ -219,11 +276,32 @@ async function waitForViewerSession(ctx) {
 	throw new Error("inline PDF viewer text layer did not render");
 }
 
+async function waitForViewerHighlights(ctx) {
+	stage("waiting for restored viewer highlights");
+	const expression = `(()=>{const els=[...document.querySelectorAll('[data-onhand-highlight-kind="pdf"]')];return JSON.stringify(els.map(e=>{let a={};try{a=JSON.parse(e.getAttribute('data-onhand-pdf-anchor')||'{}')}catch{};return {text:e.getAttribute('data-onhand-matched-text')||'',prefix:(a.textQuote||{}).prefix||''}}))})()`;
+	for (let attempt = 0; attempt < 50; attempt += 1) {
+		const all = (await ctx.cdp.send("Target.getTargets")).targetInfos;
+		const frames = all.filter((t) => (t.type === "iframe" || t.type === "page") && /pdf-viewer\.html\?url=/.test(t.url));
+		for (const frame of frames) {
+			try {
+				const attached = await ctx.cdp.send("Target.attachToTarget", { targetId: frame.targetId, flatten: true });
+				const live = await ctx.evalIn(attached.sessionId, expression);
+				const highlights = JSON.parse(live || "[]");
+				if (highlights.length) return highlights;
+			} catch {
+				// target may navigate while restore is still settling
+			}
+		}
+		await delay(500);
+	}
+	return [];
+}
+
 // --- Group 1: anchoring ------------------------------------------------------
-async function runAnchoringGroup(pdfUrl, profile) {
-	const child = launchBrowser(profile, CDP_PORT);
+async function runAnchoringGroup(pdfUrl, profile, port) {
+	const child = launchBrowser(profile, port);
 	try {
-		const ctx = await openContext(CDP_PORT);
+		const ctx = await openContext(port);
 		const tabId = await openFixtureInViewer(ctx, pdfUrl);
 		const viewerSession = await waitForViewerSession(ctx);
 		const clearAnnotations = () =>
@@ -274,7 +352,7 @@ async function runAnchoringGroup(pdfUrl, profile) {
 // --- Group 2: full session restore cycle ------------------------------------
 function seedExpression(pdfUrl) {
 	const now = new Date().toISOString();
-	const sessionId = "seed-session-anchor-test";
+	const sessionId = RESTORE_TEST_SESSION_ID;
 	const artifactId = "seed-artifact-anchor-test";
 	const pdfAnchor = {
 		surface: "pdf",
@@ -329,12 +407,12 @@ function seedExpression(pdfUrl) {
 	})()`;
 }
 
-async function runRestoreCycleGroup(pdfUrl, profile) {
+async function runRestoreCycleGroup(pdfUrl, profile, port) {
 	// Phase 1: ensure the runtime DB/stores exist, then seed a session+artifact.
 	stage("restore phase 1: seed");
-	let child = launchBrowser(profile, CDP_PORT);
+	let child = launchBrowser(profile, port);
 	try {
-		const ctx = await openContext(CDP_PORT);
+		const ctx = await openContext(port);
 		await ctx.sendMessage({ type: "get-status" }); // makes loadStore create the DB + stores
 		await delay(400);
 		const seeded = await ctx.driverEval(seedExpression(pdfUrl));
@@ -348,14 +426,14 @@ async function runRestoreCycleGroup(pdfUrl, profile) {
 
 	// Phase 2: fresh service worker reads the seed from disk; restore it.
 	stage("restore phase 2: relaunch + restore");
-	child = launchBrowser(profile, CDP_PORT);
+	child = launchBrowser(profile, port);
 	try {
-		const ctx = await openContext(CDP_PORT);
+		const ctx = await openContext(port);
 		await openFixtureInViewer(ctx, pdfUrl);
-		const viewerSession = await waitForViewerSession(ctx);
+		await waitForViewerSession(ctx);
 
-		const restore = await ctx.sendMessage({ type: "sidebar:restore-session" });
-		assert.ok(restore?.ok, "restore-session should succeed");
+		const restore = await ctx.sendMessage({ type: "sidebar:restore-session", sessionPath: RESTORE_TEST_SESSION_ID });
+		assert.ok(restore?.ok, `restore-session should succeed: ${JSON.stringify(restore)}`);
 		const pages = Array.isArray(restore.restoredPages) ? restore.restoredPages : [];
 		const totalFailures = pages.reduce((sum, p) => sum + Number(p?.failedCount || 0), 0);
 		const totalAnnotations = pages.reduce((sum, p) => sum + Number(p?.restoredAnnotations || 0), 0);
@@ -366,12 +444,7 @@ async function runRestoreCycleGroup(pdfUrl, profile) {
 
 		// The highlight must actually be live in the viewer, at occurrence 3
 		// (context overriding the stored occurrence=1).
-		await delay(800);
-		const live = await ctx.evalIn(
-			viewerSession,
-			`(()=>{const els=[...document.querySelectorAll('[data-onhand-highlight-kind="pdf"]')];return JSON.stringify(els.map(e=>{let a={};try{a=JSON.parse(e.getAttribute('data-onhand-pdf-anchor')||'{}')}catch{};return {text:e.getAttribute('data-onhand-matched-text')||'',prefix:(a.textQuote||{}).prefix||''}}))})()`,
-		);
-		const highlights = JSON.parse(live || "[]");
+		const highlights = await waitForViewerHighlights(ctx);
 		assert.ok(highlights.length >= 1, "the restored highlight should be present in the viewer DOM");
 		const gamma = highlights.find((h) => compact(h.text) === "gammamarker");
 		assert.ok(gamma, "the restored highlight should match the seeded passage");
@@ -404,9 +477,11 @@ async function run() {
 	const anchoringProfile = await mkdtemp(join(tmpdir(), "onhand-anchor-test-"));
 	const restoreProfile = await mkdtemp(join(tmpdir(), "onhand-restore-test-"));
 	try {
-		await runAnchoringGroup(pdfUrl, anchoringProfile);
+		const anchoringPort = await pickAvailablePort();
+		const restorePort = await pickAvailablePort();
+		await runAnchoringGroup(pdfUrl, anchoringProfile, anchoringPort);
 		console.log("Real-browser anchoring group: PASS");
-		await runRestoreCycleGroup(pdfUrl, restoreProfile);
+		await runRestoreCycleGroup(pdfUrl, restoreProfile, restorePort);
 		console.log("Real-browser restore-cycle group: PASS");
 		return "passed";
 	} finally {

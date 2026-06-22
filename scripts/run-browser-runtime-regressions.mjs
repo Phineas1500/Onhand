@@ -520,21 +520,43 @@ async function assertSelectionFormatting() {
 	const {
 		buildHighlightRetryCandidates,
 		buildPlannerAnchorCandidates,
+		buildTextbookContextReadyGuardResultForTest,
 		buildReplayAnnotationsFromPageActions,
+		findReadyTextbookContextFromTracesForTest,
 		formatToolResultForModel,
 		formatVisibleTextForModel,
 		getSelectionText,
+		normalizeOptionalBrowserTargetNumbersForTest,
 		normalizePlannerMove,
 		summarizeRestoredArtifact,
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
 	assert.equal(typeof buildPlannerAnchorCandidates, "function", "browser runtime planner anchor export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
+	assert.equal(typeof buildTextbookContextReadyGuardResultForTest, "function", "browser runtime textbook guard export is missing");
+	assert.equal(typeof findReadyTextbookContextFromTracesForTest, "function", "browser runtime ready-textbook detector export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof formatVisibleTextForModel, "function", "browser runtime visible formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
+	assert.equal(typeof normalizeOptionalBrowserTargetNumbersForTest, "function", "browser runtime browser-target normalizer export is missing");
 	assert.equal(typeof normalizePlannerMove, "function", "browser runtime planner normalizer export is missing");
 	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
+
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ query: "x", tabId: "undefined", windowId: "null", maxResults: 5 }),
+		{ query: "x", maxResults: 5 },
+		"stringified missing browser targets should be omitted before command validation",
+	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: "123", windowId: "456" }),
+		{ tabId: 123, windowId: 456 },
+		"string browser target IDs should be coerced to numbers",
+	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: 789, windowId: Number.NaN }),
+		{ tabId: 789 },
+		"non-finite browser target IDs should be omitted",
+	);
 
 	const emptyCases = [
 		undefined,
@@ -555,6 +577,16 @@ async function assertSelectionFormatting() {
 
 	const selectedText = formatToolResultForModel("browser_get_selection", { selection: { text: " Alpha smoke content " } });
 	assert.equal(selectedText, "Selected text:\nAlpha smoke content");
+
+	const selectedFrameText = formatToolResultForModel("browser_get_selection", {
+		selection: {
+			text: " Nested textbook content ",
+			surface: "web",
+			source: "debugger-frame-selection",
+			frameId: "frame-1",
+		},
+	});
+	assert.equal(selectedFrameText, "Selected text (frame):\nNested textbook content");
 
 	const selectedPdfText = formatToolResultForModel("browser_get_selection", {
 		selection: {
@@ -678,6 +710,130 @@ async function assertSelectionFormatting() {
 	assert.match(longPageExtract, /3\. Positional Encodings \(part 1\)/);
 	assert.match(longPageExtract, /X' = X \+ P/);
 	assert.match(longPageExtract, /body excerpt was truncated/);
+	const framePageExtract = formatToolResultForModel("browser_extract_content", {
+		tab: replaySmokeTab({ title: "VitalSource Bookshelf" }),
+		content: {
+			source: "debugger-frame-readable-content",
+			frameTitle: "III. Individual Rights",
+			contextOrigin: "https://jigsaw.vitalsource.com",
+			markdown: "Loaded textbook section content from the nested reader frame.",
+		},
+	});
+	assert.match(framePageExtract, /Source frame: III\. Individual Rights · https:\/\/jigsaw\.vitalsource\.com\./);
+	assert.match(framePageExtract, /Loaded textbook section content from the nested reader frame/);
+	const emptyPageExtract = formatToolResultForModel("browser_extract_content", {
+		tab: replaySmokeTab({ title: "Blank reader" }),
+		content: {
+			markdown: "",
+			text: "",
+			reason: "",
+		},
+	});
+	assert.match(emptyPageExtract, /\(No readable content returned\.\)/);
+	assert.doesNotMatch(emptyPageExtract, /\[object Object\]/);
+	const readerSearch = formatToolResultForModel("browser_textbook_search", {
+		tab: replaySmokeTab({ title: "VitalSource Bookshelf" }),
+		search: {
+			ok: true,
+			query: "Lochner",
+			adapter: { name: "vitalsource-bookshelf" },
+			searchControl: { label: "Search across book" },
+			results: [
+				{
+					index: 1,
+					title: "The Rise of Civil Rights and Civil Liberties",
+					pageLabel: "page 497",
+					snippet: "A short result snippet from the reader search UI.",
+				},
+			],
+			openedResult: {
+				index: 1,
+				title: "The Rise of Civil Rights and Civil Liberties",
+				navigated: true,
+				afterUrl: "https://reader.example.test/book/123/page/497",
+			},
+		},
+	});
+	assert.match(readerSearch, /Reader search for "Lochner"/);
+	assert.match(readerSearch, /vitalsource-bookshelf/);
+	assert.match(readerSearch, /Search control: Search across book/);
+	assert.match(readerSearch, /The Rise of Civil Rights/);
+	assert.match(readerSearch, /Next step: use browser_extract_content once/);
+	assert.match(readerSearch, /Do not switch tabs, close search panels, manually click results, or repeat the reader search/);
+	const readyTextbookTraces = [
+		{
+			toolName: "browser_textbook_search",
+			state: "complete",
+			startedAt: "2026-06-22T03:13:10.000Z",
+			endedAt: "2026-06-22T03:13:15.000Z",
+			resultDetails: {
+				tab: replaySmokeTab({ title: "VitalSource Bookshelf", url: "https://bookshelf.vitalsource.com/reader/books/123/part-11" }),
+				search: {
+					query: "Americans United Moral Majority",
+					openedResult: {
+						index: 1,
+						title: "Americans United and Moral Majority page 502",
+						navigated: true,
+						afterUrl: "https://bookshelf.vitalsource.com/reader/books/123/part-11",
+					},
+				},
+			},
+		},
+		{
+			toolName: "browser_extract_content",
+			state: "complete",
+			startedAt: "2026-06-22T03:13:17.000Z",
+			endedAt: "2026-06-22T03:13:18.000Z",
+			resultDetails: {
+				tab: replaySmokeTab({ title: "VitalSource Bookshelf", url: "https://bookshelf.vitalsource.com/reader/books/123/part-11" }),
+				content: {
+					source: "debugger-frame-readable-content",
+					frameTitle: "III. Individual Rights",
+					contextOrigin: "https://jigsaw.vitalsource.com",
+					frameUrl: "https://jigsaw.vitalsource.com/books/123/part-11.xhtml",
+					markdown:
+						"The constitutional politics of religious freedom took contemporary shape during the Nixon administration. Political debates over religious exercises in the public sphere and state assistance to religious organizations became struggles between more liberal and more conservative religious groups. Public debates over funding for parochial schools that once pitted Protestants against Catholics now pitted more liberal Protestants, Catholics, and Jews against more conservative Protestants, Catholics, and Jews.",
+				},
+			},
+		},
+	];
+	const readyTextbookContext = findReadyTextbookContextFromTracesForTest(readyTextbookTraces);
+	assert.equal(readyTextbookContext?.content?.frameTitle, "III. Individual Rights");
+	const redundantSearchGuard = buildTextbookContextReadyGuardResultForTest(
+		"browser_textbook_search",
+		"textbook_search",
+		{ query: "Moral Majority became a leading voice" },
+		readyTextbookTraces,
+	);
+	assert.equal(redundantSearchGuard?.guardrail?.kind, "textbook_context_ready");
+	assert.match(formatToolResultForModel("browser_textbook_search", redundantSearchGuard), /Textbook context is already ready/);
+	assert.match(formatToolResultForModel("browser_textbook_search", redundantSearchGuard), /Do not call browser_textbook_search again/);
+	const redundantNavigateGuard = buildTextbookContextReadyGuardResultForTest(
+		"browser_navigate",
+		"navigate",
+		{ url: "https://bookshelf.vitalsource.com/reader/books/123" },
+		readyTextbookTraces,
+	);
+	assert.equal(redundantNavigateGuard?.guardrail?.kind, "textbook_context_ready");
+	const externalNavigateGuard = buildTextbookContextReadyGuardResultForTest(
+		"browser_navigate",
+		"navigate",
+		{ url: "https://example.com/external-source" },
+		readyTextbookTraces,
+	);
+	assert.equal(externalNavigateGuard, null);
+	for (const [toolName, commandName, params] of [
+		["browser_extract_content", "extract_content", { query: "Americans United" }],
+		["browser_find_elements", "find_elements", { text: "Americans United" }],
+		["browser_click_text", "click_text", { text: "Protestants United" }],
+		["browser_wait_for_selector", "wait_for_selector", { selector: "body" }],
+		["browser_pdf_capture_page_image", "pdf_capture_page_image", { pageNumber: 1 }],
+		["browser_get_visible_region_image", "get_visible_region_image", { label: "search panel" }],
+	]) {
+		const guard = buildTextbookContextReadyGuardResultForTest(toolName, commandName, params, readyTextbookTraces);
+		assert.equal(guard?.guardrail?.kind, "textbook_context_ready", `${toolName} should be blocked after textbook context is ready`);
+		assert.match(formatToolResultForModel(toolName, guard), /Textbook context is already ready/);
+	}
 	const tinyVisualCapture = formatToolResultForModel("browser_get_visible_region_image", {
 		tab: replaySmokeTab(),
 		label: "div.jp-Cell.jp-CodeCell:nth-of-type(15)",
@@ -1055,6 +1211,14 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
+	assert.match(contract.answerPrompt, /browser_textbook_search/);
+	assert.match(contract.answerPrompt, /reader's own search UI/);
+	assert.match(contract.answerPrompt, /Do not manually click\/type through the reader search UI/);
+	assert.match(contract.answerPrompt, /openedResult\.navigated=true/);
+	assert.match(contract.answerPrompt, /immediately use browser_extract_content once/);
+	assert.match(contract.answerPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
+	assert.match(contract.answerPrompt, /Use browser_navigate only to reload the current reader URL once/);
+	assert.match(contract.answerPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
 	assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
 	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
 	assert.match(contract.answerPrompt, /\.value for form controls and \.textContent/);
@@ -1132,6 +1296,14 @@ async function assertConstitutionPromptContract() {
 	const differenceToolNames = getToolNamesForTest("What is the difference?", false);
 	const explicitAgreementToolNames = getToolNamesForTest("Do these papers agree?", false);
 	const citationToolNames = getToolNamesForTest("What does reference [2] of this paper actually say?", false);
+	const textbookSearchToolNames = getToolNamesForTest(
+		"Search this VitalSource textbook for Lochner and tell me where it is mentioned elsewhere in the book.",
+		false,
+	);
+	const genericTextbookSearchToolNames = getToolNamesForTest(
+		"Where does this online book mention due process in another chapter that is not loaded?",
+		false,
+	);
 	const debugToolNames = getToolNamesForTest("Debug why this page is logging console errors.", false);
 	const explicitRuntimeToolNames = getToolNamesForTest("Run JavaScript to return document.title.", false);
 	const dynamicRuntimeToolNames = getToolNamesForTest("Inspect the React app state and selected value on this dynamic page.", false);
@@ -1294,6 +1466,10 @@ async function assertConstitutionPromptContract() {
 	assert.equal(differenceToolNames.includes("browser_navigate"), false, "standalone difference prompts must not get navigation");
 	assert.equal(citationToolNames.includes("browser_pdf_find_citation"), true, "citation prompts should get the citation lookup tool");
 	assert.equal(citationToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
+	assert.equal(textbookSearchToolNames.includes("browser_textbook_search"), true, "textbook-wide lookup prompts should get reader search");
+	assert.equal(textbookSearchToolNames.includes("browser_navigate"), true, "textbook-wide lookup prompts should be able to reload a broken reader");
+	assert.equal(genericTextbookSearchToolNames.includes("browser_textbook_search"), true, "generic online-book lookup prompts should get reader search");
+	assert.equal(genericTextbookSearchToolNames.includes("browser_navigate"), true, "generic online-book lookup prompts should be able to reload a broken reader");
 	assert.equal(pdfContextToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_search"), true);
 	assert.equal(pdfContextToolNames.includes("browser_pdf_read_pages"), true);

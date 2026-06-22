@@ -1518,6 +1518,293 @@ function selectionPayloadHasText(payload) {
 	return Boolean(String(payload?.text || "").replace(/\s+/g, " ").trim());
 }
 
+function getDebuggerFrameSelectionExpression() {
+	return `(() => {
+		const normalizeText = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+		const rectToObject = (rect) => rect
+			? {
+				x: Math.round(rect.x || rect.left || 0),
+				y: Math.round(rect.y || rect.top || 0),
+				left: Math.round(rect.left || 0),
+				top: Math.round(rect.top || 0),
+				right: Math.round(rect.right || 0),
+				bottom: Math.round(rect.bottom || 0),
+				width: Math.round(rect.width || 0),
+				height: Math.round(rect.height || 0),
+			}
+			: null;
+		const selection = window.getSelection?.() || document.getSelection?.();
+		const text = normalizeText(selection?.toString?.() || "");
+		let range = null;
+		let rect = null;
+		try {
+			range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+			rect = range && typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+		} catch {}
+		const containerElement = range?.commonAncestorContainer instanceof Element
+			? range.commonAncestorContainer
+			: range?.commonAncestorContainer?.parentElement || null;
+		return {
+			surface: "web",
+			source: "debugger-frame-selection",
+			hasSelection: Boolean(text),
+			isCollapsed: Boolean(selection?.isCollapsed),
+			text,
+			rangeCount: Number(selection?.rangeCount || 0),
+			rect: rect && (rect.width || rect.height) ? rectToObject(rect) : null,
+			container: containerElement
+				? {
+					tag: containerElement.tagName?.toLowerCase?.() || "",
+					id: containerElement.id || "",
+					className: String(containerElement.className || "").slice(0, 120),
+					text: normalizeText(containerElement.textContent || "").slice(0, 160),
+				}
+				: null,
+			url: location.href,
+			title: document.title,
+			scrollX: window.scrollX,
+			scrollY: window.scrollY,
+			viewport: {
+				width: window.innerWidth,
+				height: window.innerHeight,
+			},
+		};
+	})()`;
+}
+
+async function getDebuggerFrameSelection(tabId) {
+	const expression = getDebuggerFrameSelectionExpression();
+	return await withDebuggerFrameContexts(
+		tabId,
+		(frame, context) => {
+			if (!context?.auxData?.isDefault) return false;
+			const url = String(frame?.url || "");
+			if (!url) return false;
+			return /^(https?|file):/i.test(url);
+		},
+		async ({ send, candidates }) => {
+			let bestSelection = null;
+			let lastError = null;
+			for (const context of candidates) {
+				try {
+					const selection = await evaluateDebuggerExpression(
+						send,
+						expression,
+						context.id,
+						"Could not read selected text from frame",
+					);
+					if (!selectionPayloadHasText(selection)) continue;
+					if (!bestSelection || String(selection.text || "").length > String(bestSelection.text || "").length) {
+						bestSelection = {
+							...selection,
+							frameId: context?.auxData?.frameId || "",
+							contextOrigin: context?.origin || "",
+						};
+					}
+				} catch (error) {
+					lastError = error;
+				}
+			}
+			if (bestSelection) return bestSelection;
+			throw lastError || new Error("No selected text found in frame contexts");
+		},
+	);
+}
+
+async function maybeGetDebuggerFrameSelection(tab, currentSelection) {
+	if (selectionPayloadHasText(currentSelection)) return currentSelection;
+	let lastError = null;
+	try {
+		const selection = await getDebuggerFrameSelection(tab.id);
+		if (selectionPayloadHasText(selection)) return selection;
+	} catch (error) {
+		lastError = error;
+	}
+	if (lastError && currentSelection && typeof currentSelection === "object") {
+		return {
+			...currentSelection,
+			debuggerFrameSelectionFallback: {
+				attempted: true,
+				ok: false,
+				error: lastError?.message || String(lastError),
+			},
+		};
+	}
+	return currentSelection;
+}
+
+function normalizeReadableContentText(payload) {
+	return String(payload?.markdown || payload?.text || payload?.reason || "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function readableContentPayloadTextLength(payload) {
+	return normalizeReadableContentText(payload).length;
+}
+
+function readableContentQueryTokens(query) {
+	const stopWords = new Set([
+		"about",
+		"also",
+		"and",
+		"are",
+		"context",
+		"does",
+		"each",
+		"for",
+		"from",
+		"have",
+		"page",
+		"same",
+		"that",
+		"the",
+		"this",
+		"three",
+		"using",
+		"what",
+		"which",
+		"with",
+	]);
+	return Array.from(
+		new Set(
+			String(query || "")
+				.toLowerCase()
+				.match(/[a-z][a-z0-9._-]{2,}|[0-9]+(?:\.[0-9]+)?%?/g) || [],
+		),
+	)
+		.filter((token) => !stopWords.has(token))
+		.slice(0, 32);
+}
+
+function readableContentQueryScore(text, tokens) {
+	if (!tokens.length) return 0;
+	const haystack = String(text || "").toLowerCase();
+	let score = 0;
+	for (const token of tokens) {
+		if (!token) continue;
+		if (haystack.includes(token)) score += /[0-9.%]/.test(token) ? 5 : Math.min(4, Math.max(1, token.length - 2));
+		if (token.endsWith("s") && token.length > 4 && haystack.includes(token.slice(0, -1))) score += 1;
+	}
+	return score;
+}
+
+function isLikelyOnlineTextbookReaderTab(tab) {
+	const text = `${tab?.url || ""} ${tab?.title || ""}`.toLowerCase();
+	return /\b(vitalsource|bookshelf|jigsaw|pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|courseware|ebook|textbook|reader)\b/.test(
+		text,
+	);
+}
+
+function readableContentLooksLikeReaderSearchUi(payload) {
+	const text = normalizeReadableContentText(payload).toLowerCase();
+	if (!text) return false;
+	const searchChromeSignals = [
+		/\bsearch across book\b/,
+		/\bchapters containing search results?\b/,
+		/\bcontent\s*\(\d+\)\s*figures\s*\(\d+\)\s*workbook\s*\(\d+\)/,
+		/\bfigures\s*\(\d+\)\s*workbook\s*\(\d+\)/,
+		/\b\d+\s+results?\b/,
+	];
+	const signalCount = searchChromeSignals.reduce((total, pattern) => total + (pattern.test(text) ? 1 : 0), 0);
+	return signalCount >= 2 || (/^#\s*vitalsource bookshelf\b/.test(text) && /\bsearch\b/.test(text));
+}
+
+function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}) {
+	const url = String(tab?.url || "");
+	if (!/^(https?|file):/i.test(url)) return false;
+	const currentText = normalizeReadableContentText(currentContent);
+	const currentLength = currentText.length;
+	const tokens = readableContentQueryTokens(options.query);
+	if (isLikelyOnlineTextbookReaderTab(tab)) return true;
+	if (readableContentLooksLikeReaderSearchUi(currentContent)) return true;
+	if (tokens.length && readableContentQueryScore(currentText, tokens) <= 0) return true;
+	if (currentLength < 5000) return true;
+	const blockCount = Number(currentContent?.blockCount || currentContent?.blocks?.length || 0);
+	return blockCount > 0 && blockCount < 5;
+}
+
+function debuggerFrameReadableContentIsBetter(candidate, currentContent, options = {}) {
+	const candidateText = normalizeReadableContentText(candidate);
+	const currentText = normalizeReadableContentText(currentContent);
+	const candidateLength = candidateText.length;
+	const currentLength = currentText.length;
+	if (candidateLength < 1000) return false;
+	if (readableContentLooksLikeReaderSearchUi(currentContent) && !readableContentLooksLikeReaderSearchUi(candidate)) return true;
+	const tokens = readableContentQueryTokens(options.query);
+	const candidateQueryScore = readableContentQueryScore(candidateText, tokens);
+	const currentQueryScore = readableContentQueryScore(currentText, tokens);
+	if (tokens.length && candidateQueryScore > currentQueryScore) return true;
+	if (currentLength < 1000) return true;
+	if (candidateLength >= currentLength + 1200 && (currentLength < 5000 || candidateLength >= currentLength * 1.5)) return true;
+	return false;
+}
+
+async function getDebuggerFrameReadableContent(tabId, options = {}, currentContent = null) {
+	const extractOptions = {
+		maxChars: options.maxChars,
+		query: options.query,
+		maxHeadingOutline: options.maxHeadingOutline,
+	};
+	const expression = `(${extractReadableContentInPage.toString()})(${JSON.stringify(extractOptions)})`;
+	const queryTokens = readableContentQueryTokens(options.query);
+	return await withDebuggerFrameContexts(
+		tabId,
+		(frame, context) => {
+			if (!context?.auxData?.isDefault) return false;
+			const url = String(frame?.url || "");
+			if (!url || !/^(https?|file):/i.test(url)) return false;
+			return true;
+		},
+		async ({ send, candidates }) => {
+			let bestContent = null;
+			let bestScore = -Infinity;
+			let lastError = null;
+			for (const context of candidates) {
+				try {
+					const content = await evaluateDebuggerExpression(
+						send,
+						expression,
+						context.id,
+						"Could not read readable content from frame",
+					);
+					if (!content || typeof content !== "object") continue;
+					const text = normalizeReadableContentText(content);
+					if (text.length < 1000) continue;
+					const queryScore = readableContentQueryScore(text, queryTokens);
+					const score = queryScore * 100000 + Math.min(text.length, 50000);
+					const enriched = {
+						...content,
+						surface: content.surface || "web-frame",
+						source: "debugger-frame-readable-content",
+						frameId: context?.auxData?.frameId || "",
+						contextOrigin: context?.origin || "",
+						frameTitle: content.title || "",
+						frameUrl: content.url || "",
+					};
+					if (score > bestScore && debuggerFrameReadableContentIsBetter(enriched, currentContent, options)) {
+						bestScore = score;
+						bestContent = enriched;
+					}
+				} catch (error) {
+					lastError = error;
+				}
+			}
+			if (bestContent) return bestContent;
+			throw lastError || new Error("No readable nested frame content found");
+		},
+	);
+}
+
+async function maybeGetDebuggerFrameReadableContent(tab, currentContent, options = {}) {
+	if (!shouldTryDebuggerFrameReadableContent(tab, currentContent, options)) return currentContent;
+	try {
+		const content = await getDebuggerFrameReadableContent(tab.id, options, currentContent);
+		if (debuggerFrameReadableContentIsBetter(content, currentContent, options)) return content;
+	} catch {}
+	return currentContent;
+}
+
 function isLikelyNativeChromePdfSelectionTab(tab) {
 	const tabUrl = String(tab?.url || "");
 	return tabUrl.startsWith(NATIVE_CHROME_PDF_VIEWER_PREFIX) || isLikelyPdfResourceUrl(tabUrl);
@@ -6874,6 +7161,7 @@ const createPageToolkit = (options = {}) => {
 };
 
 async function evaluateInTab(tabId, expression, options = {}) {
+	const timeoutMs = clampNumber(options.timeoutMs, SCRIPT_EXECUTION_TIMEOUT_MS, { min: SCRIPT_EXECUTION_TIMEOUT_MS, max: 120000 });
 	if (!options.skipScripting) {
 		try {
 			const settledPayload = await withOperationTimeout(
@@ -6903,7 +7191,7 @@ async function evaluateInTab(tabId, expression, options = {}) {
 					},
 					[expression],
 				),
-				SCRIPT_EXECUTION_TIMEOUT_MS,
+				timeoutMs,
 				"Script evaluation timed out",
 			);
 			if (!settledPayload?.ok) {
@@ -6932,7 +7220,7 @@ async function evaluateInTab(tabId, expression, options = {}) {
 					}
 					return normalizeRemoteObject(response.result);
 				}),
-				SCRIPT_EXECUTION_TIMEOUT_MS,
+				timeoutMs,
 				"Debugger evaluation timed out",
 			);
 		}
@@ -6954,7 +7242,7 @@ async function evaluateInTab(tabId, expression, options = {}) {
 			}
 			return normalizeRemoteObject(response.result);
 		}),
-		SCRIPT_EXECUTION_TIMEOUT_MS,
+		timeoutMs,
 		"Debugger evaluation timed out",
 	);
 }
@@ -7538,6 +7826,269 @@ async function executePageToolkitMethodViaGoogleScholarReaderFrame(tabId, method
 	);
 }
 
+const GENERIC_WEB_FRAME_PAGE_TOOLKIT_METHODS = new Set([
+	"highlightText",
+	"showNote",
+	"scrollToAnnotation",
+]);
+
+function shouldTryGenericWebFramePageToolkit(methodName) {
+	return GENERIC_WEB_FRAME_PAGE_TOOLKIT_METHODS.has(methodName);
+}
+
+function shouldAggregateGenericWebFramePageToolkit(methodName) {
+	return methodName === "clearAnnotations" || methodName === "captureState";
+}
+
+function normalizePageToolkitPayloadText(payload) {
+	const parts = [
+		payload?.matchedText,
+		payload?.text,
+		payload?.reason,
+		payload?.container?.text,
+		payload?.container?.selector,
+		payload?.container?.tag,
+	]
+		.filter(Boolean)
+		.map(String);
+	return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function pageToolkitPayloadLooksLikeReaderSearchUi(payload, query = "") {
+	const text = normalizePageToolkitPayloadText(payload).toLowerCase();
+	if (!text) return false;
+	const queryText = String(query || "").replace(/\s+/g, " ").trim().toLowerCase();
+	const searchChromeSignals = [
+		/\bsearch across book\b/,
+		/\bchapters containing search results?\b/,
+		/\bcontent\s*\(\d+\)\s*figures\s*\(\d+\)\s*workbook\s*\(\d+\)/,
+		/\bfigures\s*\(\d+\)\s*workbook\s*\(\d+\)/,
+		/\b\d+\s+results?\b/,
+	];
+	const signalCount = searchChromeSignals.reduce((total, pattern) => total + (pattern.test(text) ? 1 : 0), 0);
+	const hasResultCount = /(?:^|[^0-9])\d{1,6}\s*results?\b/.test(text);
+	const hasEllipsizedSnippets = /(?:\.\.\.|…)/.test(text);
+	const hasRepeatedPageNumbers = (text.match(/\b\d{2,5}\b/g) || []).length >= 2;
+	const looksLikeSingleSearchSnippet = hasEllipsizedSnippets && /(?:^|[^0-9])(?:page\s*)?\d{2,5}(?:\s|$)/i.test(text) && text.length <= 900;
+	const selectorText = String(payload?.container?.selector || "").toLowerCase();
+	if (signalCount >= 2) return true;
+	if (hasResultCount && /\b(content|figures|workbook|search|chapter|page)\b/.test(text)) return true;
+	if (hasResultCount && hasEllipsizedSnippets && hasRepeatedPageNumbers) return true;
+	if (hasResultCount && /\bul\b|\bli(?:[.#:]|$)/.test(selectorText) && text.length > Math.max(160, queryText.length * 2)) return true;
+	if (looksLikeSingleSearchSnippet && /\bul\b|\bli(?:[.#:]|$)|button/.test(selectorText)) return true;
+	if (queryText && hasResultCount && text.includes(queryText) && text.length > Math.max(180, queryText.length * 3)) return true;
+	return false;
+}
+
+function pageToolkitFramePayloadLooksLikeReaderSearchUi(framePayload, query = "") {
+	return pageToolkitPayloadLooksLikeReaderSearchUi(framePayload?.value, query);
+}
+
+function shouldPreferTextbookFramePageToolkit(tab, methodName, payload, args = []) {
+	return methodName === "highlightText" && isLikelyOnlineTextbookReaderTab(tab) && pageToolkitPayloadLooksLikeReaderSearchUi(payload, args?.[0]);
+}
+
+function frameOrContextLooksLikeGenericWebFrame(frame, context) {
+	if (context?.auxData && context.auxData.isDefault === false) return false;
+	const values = [
+		frame?.url,
+		frame?.urlFragment,
+		context?.origin,
+		context?.name,
+		context?.auxData?.name,
+	]
+		.filter(Boolean)
+		.map(String);
+	return values.some((value) => /^(https?|file):/i.test(value));
+}
+
+function annotatePageToolkitFrameValue(value, framePayload, method) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const frameId = framePayload?.frameId;
+	const frameUrl = framePayload?.frameUrl || framePayload?.url || "";
+	const frameTitle = framePayload?.frameTitle || framePayload?.title || "";
+	return {
+		...value,
+		pageToolkitFrameFallback: {
+			attempted: true,
+			ok: true,
+			method,
+			...(typeof frameId === "number" ? { frameId } : {}),
+			...(frameUrl ? { frameUrl } : {}),
+			...(frameTitle ? { frameTitle } : {}),
+		},
+	};
+}
+
+function mergeClearAnnotationResults(primary, secondary) {
+	const first = primary && typeof primary === "object" ? primary : {};
+	const second = secondary && typeof secondary === "object" ? secondary : {};
+	const numericKeys = ["clearedNotes", "clearedInline", "clearedBlock", "clearedPdf", "clearedPdfSegments"];
+	const merged = { ...first };
+	for (const key of numericKeys) {
+		merged[key] = Number(first[key] || 0) + Number(second[key] || 0);
+	}
+	merged.clearedTotal = numericKeys.reduce((total, key) => total + Number(merged[key] || 0), 0);
+	if (second.pageToolkitFrameFallback) {
+		merged.pageToolkitFrameFallback = second.pageToolkitFrameFallback;
+	}
+	return merged;
+}
+
+function aggregateClearAnnotationFrameValues(payloads, method = "chrome-scripting-all-frames") {
+	const numericKeys = ["clearedNotes", "clearedInline", "clearedBlock", "clearedPdf", "clearedPdfSegments"];
+	const totals = Object.fromEntries(numericKeys.map((key) => [key, 0]));
+	const frames = [];
+	for (const payload of payloads) {
+		const value = payload?.value;
+		if (!value || typeof value !== "object") continue;
+		const clearedTotal = Number(value.clearedTotal || 0);
+		for (const key of numericKeys) totals[key] += Number(value[key] || 0);
+		if (clearedTotal > 0) {
+			frames.push({
+				frameId: payload.frameId,
+				frameUrl: payload.frameUrl || payload.url || "",
+				frameTitle: payload.frameTitle || payload.title || "",
+				clearedTotal,
+			});
+		}
+	}
+	return {
+		...totals,
+		clearedTotal: numericKeys.reduce((total, key) => total + Number(totals[key] || 0), 0),
+		pageToolkitFrameFallback: {
+			attempted: true,
+			ok: true,
+			method,
+			frameCount: payloads.length,
+			clearedFrameCount: frames.length,
+			frames: frames.slice(0, 10),
+		},
+	};
+}
+
+function pickBestPageToolkitFramePayload(payloads, methodName, args = []) {
+	const successful = payloads.filter((payload) => payload?.ok);
+	if (!successful.length) return null;
+	if (methodName === "captureState") {
+		return successful
+			.slice()
+			.sort((left, right) => Number(right.value?.annotationCount || 0) - Number(left.value?.annotationCount || 0))[0];
+	}
+	if (methodName === "highlightText") {
+		const query = args?.[0];
+		const nonSearchUiPayload = successful.find((payload) => !pageToolkitFramePayloadLooksLikeReaderSearchUi(payload, query));
+		if (nonSearchUiPayload) return nonSearchUiPayload;
+	}
+	return successful[0];
+}
+
+async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, args = [], toolkitOptions = {}) {
+	const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
+	const frameUrlById = new Map(frameInfos.map((frame) => [frame.frameId, frame.url || ""]));
+	const results = await executeScriptInAllFrames(
+		tabId,
+		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
+			try {
+				const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+				const toolkit = toolkitFactory(targetToolkitOptions);
+				return {
+					ok: true,
+					value: await toolkit[targetMethodName](...(Array.isArray(targetArgs) ? targetArgs : [])),
+					url: location.href,
+					title: document.title,
+				};
+			} catch (error) {
+				return {
+					ok: false,
+					error: error?.message || String(error),
+					url: location.href,
+					title: document.title,
+				};
+			}
+		},
+		[createPageToolkit.toString(), methodName, args, toolkitOptions],
+	);
+	const payloads = (Array.isArray(results) ? results : [])
+		.map((entry) => {
+			const result = entry?.result || {};
+			return {
+				...result,
+				frameId: entry?.frameId,
+				frameUrl: frameUrlById.get(entry?.frameId) || result.url || "",
+				frameTitle: result.title || "",
+			};
+		})
+		.filter((payload) => payload && typeof payload === "object");
+	if (methodName === "clearAnnotations") return aggregateClearAnnotationFrameValues(payloads.filter((payload) => payload.ok));
+	const bestPayload = pickBestPageToolkitFramePayload(payloads, methodName, args);
+	if (bestPayload) {
+		return annotatePageToolkitFrameValue(bestPayload.value, bestPayload, "chrome-scripting-all-frames");
+	}
+	const errors = payloads
+		.map((payload) => payload.error)
+		.filter(Boolean)
+		.filter((message, index, all) => all.indexOf(message) === index);
+	throw new Error(errors.slice(0, 3).join("; ") || `No page toolkit frame could run ${methodName}`);
+}
+
+async function executePageToolkitMethodViaGenericWebFrame(tabId, methodName, args = [], toolkitOptions = {}) {
+	const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
+	const serializedOptions = JSON.stringify(toolkitOptions);
+	const expression = `(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`;
+	const value = await evaluateInMatchingFrame(
+		tabId,
+		frameOrContextLooksLikeGenericWebFrame,
+		expression,
+		`No readable web frame could run page toolkit method: ${methodName}`,
+	);
+	return annotatePageToolkitFrameValue(value, { frameUrl: value?.url || "", frameTitle: value?.title || "" }, "debugger-frame");
+}
+
+async function executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args = [], toolkitOptions = {}) {
+	const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
+	const serializedOptions = JSON.stringify(toolkitOptions);
+	const expression = `(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`;
+	return await withDebugger(tabId, async ({ send }) => {
+		await send("Page.enable");
+		await send("Runtime.enable");
+		const frameTree = await send("Page.getFrameTree");
+		const frames = collectDebuggerFrameTree(frameTree?.frameTree).filter((frame) => frameOrContextLooksLikeGenericWebFrame(frame, null));
+		if (!frames.length) throw new Error(`No readable web frames found for ${methodName}`);
+		const payloads = [];
+		const errors = [];
+		for (const frame of frames) {
+			try {
+				const world = await send("Page.createIsolatedWorld", {
+					frameId: frame.id,
+					worldName: "onhand-frame-aggregate",
+					grantUniversalAccess: true,
+				});
+				if (!world?.executionContextId) throw new Error(`Could not create web frame execution context for ${methodName}`);
+				const value = await evaluateDebuggerExpression(
+					send,
+					expression,
+					world.executionContextId,
+					`Could not run page toolkit method in web frame: ${methodName}`,
+				);
+				payloads.push({
+					ok: true,
+					value,
+					frameId: frame.id,
+					frameUrl: value?.url || frame.url || "",
+					frameTitle: value?.title || frame.name || "",
+				});
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (methodName === "clearAnnotations") return aggregateClearAnnotationFrameValues(payloads, "debugger-frame");
+		const bestPayload = pickBestPageToolkitFramePayload(payloads, methodName, args);
+		if (bestPayload) return annotatePageToolkitFrameValue(bestPayload.value, bestPayload, "debugger-frame");
+		throw errors[0] || new Error(`No readable web frame could run page toolkit method: ${methodName}`);
+	});
+}
+
 async function runPageToolkitMethod(tabId, methodName, ...args) {
 	const tab = await chrome.tabs.get(tabId);
 	if (!canRunPageToolkitOnTab(tab)) {
@@ -7550,6 +8101,30 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			SCRIPT_EXECUTION_TIMEOUT_MS,
 			`Page toolkit scripting timed out: ${methodName}`,
 		);
+		if (shouldPreferTextbookFramePageToolkit(tab, methodName, payload, args)) {
+			let scriptingFramePayload = null;
+			try {
+				scriptingFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					SCRIPT_EXECUTION_TIMEOUT_MS,
+					`Page toolkit textbook-frame scripting timed out: ${methodName}`,
+				);
+				if (!pageToolkitPayloadLooksLikeReaderSearchUi(scriptingFramePayload, args?.[0])) return scriptingFramePayload;
+			} catch (frameError) {
+				log("Page toolkit textbook frame scripting fallback failed", methodName, tab?.url, frameError?.message || String(frameError));
+			}
+			try {
+				const debuggerFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					`Page toolkit textbook-frame debugger timed out: ${methodName}`,
+				);
+				if (!pageToolkitPayloadLooksLikeReaderSearchUi(debuggerFramePayload, args?.[0])) return debuggerFramePayload;
+			} catch (frameError) {
+				log("Page toolkit textbook debugger-frame fallback failed", methodName, tab?.url, frameError?.message || String(frameError));
+			}
+			if (scriptingFramePayload) return scriptingFramePayload;
+		}
 		if (shouldTryOnhandPdfViewerFrameForTab(tab, payload)) {
 			try {
 				return await withOperationTimeout(
@@ -7575,6 +8150,61 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					return annotateGoogleScholarReaderFrameFallbackFailure(payload, frameError);
 				}
 			}
+		}
+		if (methodName === "clearAnnotations") {
+			let clearedPayload = payload;
+			let scriptingFrameError = null;
+			try {
+				const framePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					SCRIPT_EXECUTION_TIMEOUT_MS,
+					`Page toolkit frame clear timed out: ${methodName}`,
+				);
+				const frameCount = Number(framePayload?.pageToolkitFrameFallback?.frameCount || 0);
+				if (frameCount > 0 || Number(framePayload?.clearedTotal || 0) > 0) {
+					clearedPayload = mergeClearAnnotationResults(clearedPayload, framePayload);
+				}
+			} catch (error) {
+				scriptingFrameError = error;
+			}
+			try {
+				const debuggerFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					`Page toolkit debugger-frame clear timed out: ${methodName}`,
+				);
+				return mergeClearAnnotationResults(clearedPayload, debuggerFramePayload);
+			} catch (debuggerFrameError) {
+				if (clearedPayload !== payload) return clearedPayload;
+				if (payload && typeof payload === "object") {
+					return {
+						...payload,
+						pageToolkitFrameFallback: {
+							attempted: true,
+							ok: false,
+							error: debuggerFrameError?.message || scriptingFrameError?.message || String(debuggerFrameError || scriptingFrameError || "Page toolkit frame clear failed"),
+						},
+					};
+				}
+			}
+		}
+		if (methodName === "captureState" && Number(payload?.annotationCount || 0) === 0) {
+			try {
+				const framePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					SCRIPT_EXECUTION_TIMEOUT_MS,
+					`Page toolkit frame capture timed out: ${methodName}`,
+				);
+				if (Number(framePayload?.annotationCount || 0) > Number(payload?.annotationCount || 0)) return framePayload;
+			} catch {}
+			try {
+				const debuggerFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					`Page toolkit debugger-frame capture timed out: ${methodName}`,
+				);
+				if (Number(debuggerFramePayload?.annotationCount || 0) > Number(payload?.annotationCount || 0)) return debuggerFramePayload;
+			} catch {}
 		}
 		return payload;
 	} catch (scriptError) {
@@ -7634,6 +8264,70 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 				throw onhandFrameFallbackError;
 			}
 			throw scriptError;
+		}
+		if (shouldTryGenericWebFramePageToolkit(methodName)) {
+			try {
+				return await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					SCRIPT_EXECUTION_TIMEOUT_MS,
+					`Page toolkit web-frame scripting timed out: ${methodName}`,
+				);
+			} catch (scriptingFrameError) {
+				try {
+					return await withOperationTimeout(
+						executePageToolkitMethodViaGenericWebFrame(tabId, methodName, args, toolkitOptions),
+						SCRIPT_EXECUTION_TIMEOUT_MS,
+						`Page toolkit web-frame debugger timed out: ${methodName}`,
+					);
+				} catch (debuggerFrameError) {
+					log(
+						"Page toolkit generic frame fallback failed",
+						methodName,
+						tab?.url,
+						scriptingFrameError?.message || String(scriptingFrameError),
+						debuggerFrameError?.message || String(debuggerFrameError),
+					);
+				}
+			}
+		}
+		if (shouldAggregateGenericWebFramePageToolkit(methodName)) {
+			let scriptingFramePayload = null;
+			let scriptingFrameError = null;
+			try {
+				scriptingFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					SCRIPT_EXECUTION_TIMEOUT_MS,
+					`Page toolkit web-frame scripting timed out: ${methodName}`,
+				);
+			} catch (error) {
+				scriptingFrameError = error;
+			}
+			if (methodName === "clearAnnotations") {
+				const frameCount = Number(scriptingFramePayload?.pageToolkitFrameFallback?.frameCount || 0);
+				if (frameCount > 0 || Number(scriptingFramePayload?.clearedTotal || 0) > 0) {
+					return scriptingFramePayload;
+				}
+			} else if (methodName === "captureState") {
+				const frameCount = Number(scriptingFramePayload?.pageToolkitFrameFallback?.frameCount || 0);
+				if (frameCount > 0 && Number(scriptingFramePayload?.annotationCount || 0) > 0) {
+					return scriptingFramePayload;
+				}
+			}
+			try {
+				return await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					`Page toolkit web-frame debugger timed out: ${methodName}`,
+				);
+			} catch (debuggerFrameError) {
+				log(
+					"Page toolkit aggregate frame fallback failed",
+					methodName,
+					tab?.url,
+					scriptingFrameError?.message || String(scriptingFrameError),
+					debuggerFrameError?.message || String(debuggerFrameError),
+				);
+			}
 		}
 		const serializedArgs = args.map((arg) => JSON.stringify(arg === undefined ? null : arg)).join(", ");
 		const serializedOptions = JSON.stringify(toolkitOptions);
@@ -8622,6 +9316,70 @@ async function extractReadableContentInPage(options = {}) {
 		}
 		return score;
 	};
+	const queryTokenMatches = (value, token) => {
+		const text = normalize(value).toLowerCase();
+		if (!text || !token) return false;
+		if (text.includes(token)) return true;
+		return token.endsWith("s") && token.length > 4 && text.includes(token.slice(0, -1));
+	};
+	const querySnippet = (value, maxSnippetChars = 1800) => {
+		const clean = normalize(value);
+		if (!queryTokens.length || clean.length <= maxSnippetChars) return clean;
+		const lower = clean.toLowerCase();
+		const hits = [];
+		for (const token of queryTokens) {
+			if (!token) continue;
+			const variants = [token];
+			if (token.endsWith("s") && token.length > 4) variants.push(token.slice(0, -1));
+			for (const variant of variants) {
+				let searchFrom = 0;
+				let perTokenHits = 0;
+				while (perTokenHits < 3) {
+					const index = lower.indexOf(variant, searchFrom);
+					if (index < 0) break;
+					hits.push({ index, length: variant.length });
+					searchFrom = index + Math.max(1, variant.length);
+					perTokenHits += 1;
+				}
+			}
+		}
+		if (!hits.length) return clean.slice(0, Math.max(0, maxSnippetChars - 1)) + "…";
+		hits.sort((left, right) => left.index - right.index);
+		const windows = [];
+		for (const hit of hits) {
+			const start = Math.max(0, hit.index - 420);
+			const end = Math.min(clean.length, hit.index + hit.length + 520);
+			const previous = windows[windows.length - 1];
+			if (previous && start <= previous.end + 80) {
+				previous.end = Math.max(previous.end, end);
+			} else {
+				windows.push({ start, end, focus: hit.index });
+			}
+		}
+		const snippets = [];
+		let usedSnippetChars = 0;
+		for (const windowRange of windows) {
+			if (usedSnippetChars >= maxSnippetChars) break;
+			const separatorLength = snippets.length ? 3 : 0;
+			const remaining = maxSnippetChars - usedSnippetChars - separatorLength;
+			if (remaining <= 0) break;
+			let sliceStart = windowRange.start;
+			let sliceEnd = windowRange.end;
+			if (sliceEnd - sliceStart > remaining) {
+				const focus = Math.max(windowRange.start, Math.min(windowRange.end, windowRange.focus || windowRange.start));
+				sliceStart = Math.max(windowRange.start, focus - Math.floor(remaining / 2));
+				sliceEnd = Math.min(windowRange.end, sliceStart + remaining);
+				if (sliceEnd - sliceStart < remaining) sliceStart = Math.max(windowRange.start, sliceEnd - remaining);
+			}
+			let snippet = clean.slice(sliceStart, sliceEnd);
+			if (sliceStart > 0) snippet = `… ${snippet}`;
+			if (sliceEnd < clean.length) snippet = `${snippet} …`;
+			if (snippet.length > remaining) snippet = `${snippet.slice(0, Math.max(0, remaining - 1))}…`;
+			snippets.push(snippet);
+			usedSnippetChars += snippet.length + separatorLength;
+		}
+		return snippets.join(" … ");
+	};
 	const collectHeadingSnippet = (heading, maxSnippetChars = 280) => {
 		if (!(heading instanceof Element)) return "";
 		const chunks = [];
@@ -8746,9 +9504,29 @@ async function extractReadableContentInPage(options = {}) {
 			relevant.push({ tag, text, element, score, index: index++ });
 		}
 		const relevantBudget = Math.min(maxChars, Math.max(3000, Math.floor(maxChars * 0.45)));
-		for (const item of relevant.sort((left, right) => right.score - left.score || left.index - right.index).slice(0, 18)) {
+		const sortedRelevant = relevant.sort((left, right) => right.score - left.score || left.index - right.index);
+		const orderedRelevant = [];
+		const seenRelevant = new Set();
+		const pushRelevant = (item) => {
+			if (!item || seenRelevant.has(item.element)) return;
+			seenRelevant.add(item.element);
+			orderedRelevant.push(item);
+		};
+		for (const token of queryTokens) {
+			pushRelevant(sortedRelevant.find((item) => queryTokenMatches(item.text, token)));
+		}
+		for (const item of sortedRelevant) pushRelevant(item);
+		const perRelevantSnippetBudget = Math.min(
+			1800,
+			Math.max(650, Math.floor(relevantBudget / Math.max(2, Math.min(8, queryTokens.length + 1)))),
+		);
+		for (const item of orderedRelevant.slice(0, 18)) {
 			if (usedChars >= relevantBudget) break;
-			pushBlock(item.tag, item.text, item.element);
+			const text =
+				item.tag === "table"
+					? item.text
+					: querySnippet(item.text, Math.min(perRelevantSnippetBudget, Math.max(650, relevantBudget - usedChars)));
+			pushBlock(item.tag, text, item.element);
 		}
 	}
 
@@ -8784,6 +9562,568 @@ async function extractReadableContentInPage(options = {}) {
 		blocks,
 		markdown,
 		text: markdown,
+	};
+}
+
+async function searchTextbookReaderInPage(options = {}) {
+	const query = String(options.query || "").trim();
+	const maxResults = Math.max(1, Math.min(20, Number(options.maxResults || 8) || 8));
+	const timeoutMs = Math.max(800, Math.min(8000, Number(options.timeoutMs || 3500) || 3500));
+	const readyTimeoutMs = Math.max(0, Math.min(20000, Number(options.readyTimeoutMs || 10000) || 10000));
+	const openResult = Boolean(options.openResult);
+	const resultIndex = Math.max(1, Math.min(50, Number(options.resultIndex || 1) || 1));
+	const startedAt = Date.now();
+	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const lower = (value) => normalize(value).toLowerCase();
+	const queryTokens = Array.from(
+		new Set(
+			query
+				.toLowerCase()
+				.match(/[a-z][a-z0-9'-]{2,}|[0-9]+/g) || [],
+		),
+	).filter((token) => !new Set(["about", "across", "and", "book", "chapter", "find", "from", "into", "look", "of", "or", "page", "search", "that", "the", "this", "where", "with"]).has(token));
+	const allElements = (selector, root = document) => {
+		try {
+			return Array.from(root.querySelectorAll(selector)).filter((element) => element instanceof Element);
+		} catch {
+			if (!String(selector || "").includes(",")) return [];
+			const elements = [];
+			const seen = new Set();
+			for (const part of String(selector || "").split(",").map((item) => item.trim()).filter(Boolean)) {
+				try {
+					for (const element of Array.from(root.querySelectorAll(part)).filter((candidate) => candidate instanceof Element)) {
+						if (seen.has(element)) continue;
+						seen.add(element);
+						elements.push(element);
+					}
+				} catch {}
+			}
+			return elements;
+		}
+	};
+	const isVisible = (element) => {
+		if (!(element instanceof Element)) return false;
+		if (element.hasAttribute("hidden") || lower(element.getAttribute("aria-hidden")) === "true") return false;
+		const style = window.getComputedStyle(element);
+		if (!style || style.display === "none" || style.visibility === "hidden" || (style.opacity !== "" && Number(style.opacity) === 0)) return false;
+		const rect = element.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0;
+	};
+	const fieldValue = (element) => {
+		if (!element) return "";
+		if ("value" in element) return String(element.value || "");
+		return normalize(element.textContent || "");
+	};
+	const cssEscape = (value) =>
+		globalThis.CSS?.escape ? globalThis.CSS.escape(String(value || "")) : String(value || "").replace(/["\\]/g, "\\$&");
+	const elementLabel = (element) => {
+		if (!(element instanceof Element)) return "";
+		const labelledBy = String(element.getAttribute("aria-labelledby") || "")
+			.split(/\s+/)
+			.map((id) => normalize(document.getElementById(id)?.textContent || ""))
+			.filter(Boolean)
+			.join(" ");
+		const labelFor =
+			element.id && document.querySelector(`label[for="${cssEscape(element.id)}"]`)
+				? normalize(document.querySelector(`label[for="${cssEscape(element.id)}"]`)?.textContent || "")
+				: "";
+		const wrappingLabel = normalize(element.closest("label")?.textContent || "");
+		return normalize(
+			[
+				element.getAttribute("aria-label"),
+				labelledBy,
+				labelFor,
+				wrappingLabel,
+				element.getAttribute("placeholder"),
+				element.getAttribute("title"),
+				element.getAttribute("name"),
+				element.getAttribute("data-testid"),
+				fieldValue(element),
+				element.textContent,
+			]
+				.filter(Boolean)
+				.join(" "),
+		);
+	};
+	const selectorFor = (element) => {
+		if (!(element instanceof Element)) return "";
+		const tag = element.tagName.toLowerCase();
+		const id = element.id ? `#${element.id}` : "";
+		const classes = String(element.className || "")
+			.split(/\s+/)
+			.filter(Boolean)
+			.slice(0, 3)
+			.map((name) => `.${name}`)
+			.join("");
+		const label = elementLabel(element);
+		return `${tag}${id}${classes}${label ? ` [${label.slice(0, 80)}]` : ""}`;
+	};
+	const clickElement = (element) => {
+		if (!(element instanceof Element)) return false;
+		element.scrollIntoView?.({ block: "center", inline: "center" });
+		const rect = element.getBoundingClientRect();
+		const eventOptions = {
+			bubbles: true,
+			cancelable: true,
+			view: window,
+			clientX: Math.round(rect.left + rect.width / 2),
+			clientY: Math.round(rect.top + rect.height / 2),
+		};
+		for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+			element.dispatchEvent(new MouseEvent(type, eventOptions));
+		}
+		if (typeof element.click === "function") element.click();
+		else element.dispatchEvent(new MouseEvent("click", eventOptions));
+		return true;
+	};
+	const classifyAdapter = () => {
+		const host = lower(location.hostname);
+		const title = lower(document.title);
+		const body = lower(document.body?.innerText || "").slice(0, 4000);
+		if (/vitalsource|bookshelf|jigsaw/.test(`${host} ${title} ${body}`)) {
+			return {
+				name: "vitalsource-bookshelf",
+				confidence: "high",
+				reason: "Detected VitalSource/Bookshelf reader signals.",
+			};
+		}
+		if (/pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|courseware|ebook|textbook|reader/.test(`${host} ${title} ${body}`)) {
+			return {
+				name: "generic-textbook-reader",
+				confidence: "medium",
+				reason: "Detected online textbook or reader signals.",
+			};
+		}
+		return {
+			name: "generic-web-reader",
+			confidence: "low",
+			reason: "Using generic accessible search UI detection.",
+		};
+	};
+	const searchIntentScore = (label, element) => {
+		const text = lower(label);
+		if (!text || !/search|find/.test(text)) return 0;
+		let score = 20;
+		if (/\b(search|find)\s+(across|all|inside|in|within|this)?\s*(the\s*)?(book|textbook|ebook|reader|course|chapter|content)\b/.test(text)) score += 40;
+		if (/\b(book|textbook|ebook|reader|chapter|contents|course)\b/.test(text)) score += 20;
+		if (/\bsearch\b/.test(text) && text.length <= 80) score += 10;
+		if (/searchbox|search/.test(lower(element.getAttribute("role")))) score += 16;
+		if (element.matches?.("input, textarea, [contenteditable='true'], [role='searchbox']")) score += 14;
+		if (element.matches?.("button, [role='button'], a")) score += 8;
+		if (/\bclose|clear|cancel|delete|remove\b/.test(text)) score -= 30;
+		return score;
+	};
+	const findSearchControls = () => {
+		const selector = [
+			"input",
+			"textarea",
+			"[contenteditable='true']",
+			"[role='searchbox']",
+			"button",
+			"a",
+			"[role='button']",
+			"[aria-label]",
+			"[placeholder]",
+			"[title]",
+			"[data-testid*='search' i]",
+			"[class*='search' i]",
+			"[id*='search' i]",
+		].join(",");
+		return allElements(selector)
+			.filter(isVisible)
+			.map((element, index) => ({
+				element,
+				index,
+				label: elementLabel(element),
+				score: searchIntentScore(elementLabel(element), element),
+			}))
+			.filter((entry) => entry.score > 0)
+			.sort((left, right) => right.score - left.score || left.index - right.index);
+	};
+	const isSearchInput = (element) => {
+		if (!(element instanceof Element) || !isVisible(element)) return false;
+		if (!element.matches("input, textarea, [contenteditable='true'], [role='searchbox']")) return false;
+		const type = lower(element.getAttribute("type"));
+		if (type && !["search", "text", "email", "url"].includes(type)) return false;
+		return searchIntentScore(elementLabel(element), element) > 0 || /search|find/.test(lower(elementLabel(element)));
+	};
+	const findSearchInput = () =>
+		allElements("input, textarea, [contenteditable='true'], [role='searchbox']")
+			.filter(isSearchInput)
+			.map((element, index) => ({
+				element,
+				index,
+				label: elementLabel(element),
+				score: searchIntentScore(elementLabel(element), element),
+			}))
+			.sort((left, right) => right.score - left.score || left.index - right.index)[0] || null;
+	const setNativeValue = (element, value) => {
+		if (!(element instanceof Element)) return;
+		element.focus?.();
+		if (element.matches("[contenteditable='true']")) {
+			element.textContent = value;
+		} else if ("value" in element) {
+			const prototype = Object.getPrototypeOf(element);
+			const descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+			if (descriptor?.set) descriptor.set.call(element, value);
+			else element.value = value;
+		}
+		element.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: value, inputType: "insertText" }));
+		element.dispatchEvent(new Event("change", { bubbles: true }));
+	};
+	const submitSearch = (input) => {
+		if (!(input instanceof Element)) return false;
+		const eventOptions = { bubbles: true, cancelable: true, key: "Enter", code: "Enter", which: 13, keyCode: 13 };
+		input.dispatchEvent(new KeyboardEvent("keydown", eventOptions));
+		input.dispatchEvent(new KeyboardEvent("keypress", eventOptions));
+		input.dispatchEvent(new KeyboardEvent("keyup", eventOptions));
+		const owner = input.closest("form, [role='search'], [role='dialog'], aside, nav, section, div") || input.form || document;
+		const button = allElements("button, input[type='submit'], [role='button']", owner)
+			.filter(isVisible)
+			.map((element, index) => ({ element, index, label: elementLabel(element), score: searchIntentScore(elementLabel(element), element) }))
+			.filter((entry) => entry.score > 0 && !/\bclose|cancel|clear\b/i.test(entry.label))
+			.sort((left, right) => right.score - left.score || left.index - right.index)[0]?.element;
+		if (button) return clickElement(button);
+		return true;
+	};
+	const queryTokenPattern = (token) => {
+		const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const suffix = token.length >= 6 ? "[a-z0-9'-]*" : "";
+		return new RegExp(`(^|[^a-z0-9])${escaped}${suffix}(?=$|[^a-z0-9])`, "i");
+	};
+	const firstQueryHitIndex = (text) => {
+		const candidate = lower(text);
+		if (!candidate) return -1;
+		if (!queryTokens.length) return candidate.indexOf(lower(query));
+		let best = -1;
+		for (const token of queryTokens) {
+			const match = candidate.match(queryTokenPattern(token));
+			if (!match || typeof match.index !== "number") continue;
+			const index = match.index + Math.max(0, match[0].length - token.length);
+			if (best < 0 || index < best) best = index;
+		}
+		return best;
+	};
+	const queryTokenScore = (text) => {
+		const candidate = lower(text);
+		if (!candidate) return 0;
+		if (!queryTokens.length) return candidate.includes(lower(query)) ? 10 : 0;
+		const tokenMatches = (token) => {
+			return queryTokenPattern(token).test(candidate);
+		};
+		let score = 0;
+		for (const token of queryTokens) {
+			if (tokenMatches(token)) score += Math.min(12, Math.max(3, token.length));
+			else if (token.endsWith("s") && token.length > 4 && tokenMatches(token.slice(0, -1))) score += 2;
+		}
+		return score;
+	};
+	const resultPageLabel = (text) => normalize(text.match(/\b(?:page|p\.?)\s*([A-Za-z]?\d+|[ivxlcdm]+)\b/i)?.[0] || "");
+	const resultTitle = (text) => {
+		const clean = normalize(text);
+		const parts = clean.split(/\s(?:page|p\.?)\s+(?:[A-Za-z]?\d+|[ivxlcdm]+)\b/i);
+		return normalize(parts[0] || clean).slice(0, 160);
+	};
+	const clickableForResult = (element) => {
+		if (!(element instanceof Element)) return null;
+		if (element.matches("a, button, [role='button'], [role='option'], [role='link']")) return element;
+		const closest = element.closest("a, button, [role='button'], [role='option'], [role='link']");
+		if (closest) return closest;
+		return element.querySelector("a, button, [role='button'], [role='option'], [role='link']");
+	};
+	const collectResults = () => {
+		const selector = [
+			"a",
+			"button",
+			"li",
+			"article",
+			"[role='option']",
+			"[role='listitem']",
+			"[role='link']",
+			"[data-testid*='search' i]",
+			"[class*='search' i]",
+			"[id*='search' i]",
+		].join(",");
+		const seen = new Set();
+		const entries = [];
+		for (const element of allElements(selector)) {
+			if (!isVisible(element)) continue;
+			if (element.matches("input, textarea, [contenteditable='true']")) continue;
+			const text = normalize(element.textContent || elementLabel(element));
+			if (text.length < 6 || text.length > 1400) continue;
+			if (/^(search|find|close|cancel|clear|back|menu)$/i.test(text)) continue;
+			const tokenScore = queryTokenScore(text);
+			if (tokenScore <= 0) continue;
+			const firstHit = firstQueryHitIndex(text);
+			const leadingText = text.slice(0, 160);
+			if (
+				firstHit > 180 &&
+				/\b(?:highlights, notes|bookmarks?|flashcards?|bookmark page|search across book|reader preferences|skip to book navigation|previous|more options|table of contents)\b/i.test(
+					leadingText,
+				)
+			) {
+				continue;
+			}
+			const hasSmallerQueryChild = Array.from(element.children || []).some((child) => {
+				if (!(child instanceof Element) || !isVisible(child)) return false;
+				const childText = normalize(child.textContent || "");
+				return childText.length >= 6 && childText.length < text.length * 0.9 && firstQueryHitIndex(childText) >= 0;
+			});
+			if (hasSmallerQueryChild) continue;
+			const searchish = /search|result|hit|chapter|page|book|reader/i.test(
+				`${element.className || ""} ${element.id || ""} ${element.getAttribute("role") || ""} ${element.getAttribute("data-testid") || ""} ${elementLabel(element)}`,
+			);
+			let score = tokenScore;
+			if (resultPageLabel(text)) score += 8;
+			if (clickableForResult(element)) score += 5;
+			if (searchish) score += 4;
+			if (score <= 0) continue;
+			const key = lower(text).slice(0, 360);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			entries.push({
+				element,
+				score,
+				text,
+				title: resultTitle(text),
+				pageLabel: resultPageLabel(text),
+				snippet: text.slice(0, 700),
+				clickable: Boolean(clickableForResult(element)),
+			});
+		}
+		return entries.sort((left, right) => right.score - left.score || left.text.length - right.text.length).slice(0, maxResults);
+	};
+	const readTotalResultCount = () => {
+		const text = normalize(document.body?.innerText || document.body?.textContent || "");
+		const contentMatch = text.match(/\bContent\s*\(\s*(\d{1,6})\s*\)/i);
+		if (contentMatch) return Number(contentMatch[1]) || null;
+		const resultMatch = text.match(/\b(\d{1,6})\s+results?\b/i);
+		return resultMatch ? Number(resultMatch[1]) || null : null;
+	};
+	const waitForResults = async () => {
+		const deadline = Date.now() + timeoutMs;
+		let lastResults = collectResults();
+		while (Date.now() < deadline) {
+			if (lastResults.length) return lastResults;
+			await wait(250);
+			lastResults = collectResults();
+		}
+		return lastResults;
+	};
+	const waitForSearchShell = async () => {
+		const deadline = Date.now() + readyTimeoutMs;
+		let controls = findSearchControls();
+		let input = findSearchInput();
+		while (!input && !controls.length && Date.now() < deadline) {
+			await wait(250);
+			controls = findSearchControls();
+			input = findSearchInput();
+		}
+		return {
+			controls,
+			searchInput: input,
+			waitedMs: Math.max(0, Date.now() - startedAt),
+		};
+	};
+	const waitForResultNavigation = async (previousUrl, previousTitle) => {
+		const deadline = Date.now() + Math.max(1200, Math.min(8000, timeoutMs + 1800));
+		let lastUrl = location.href;
+		let lastTitle = document.title;
+		while (Date.now() < deadline) {
+			lastUrl = location.href;
+			lastTitle = document.title;
+			if (lastUrl !== previousUrl || lastTitle !== previousTitle) {
+				return {
+					afterUrl: lastUrl,
+					afterTitle: lastTitle,
+					navigated: true,
+				};
+			}
+			await wait(250);
+		}
+		return {
+			afterUrl: location.href,
+			afterTitle: document.title,
+			navigated: location.href !== previousUrl || document.title !== previousTitle,
+		};
+	};
+	const pageLooksLikeSearchResults = () => {
+		const text = normalize(document.body?.innerText || document.body?.textContent || "").slice(0, 6000);
+		if (!text) return false;
+		const hasReaderSearch = /\bsearch\s+(?:across|inside|within|this)?\s*(?:the\s*)?(?:book|textbook|ebook|reader|content)\b/i.test(text);
+		const hasCount = /\bContent\s*\(\s*\d{1,6}\s*\)/i.test(text) || /(?:^|[^0-9])\d{1,6}\s*results?\b/i.test(text);
+		return hasReaderSearch && hasCount;
+	};
+	const dismissReaderSearchUi = async () => {
+		if (!pageLooksLikeSearchResults()) {
+			return { attempted: false, dismissed: false, reason: "Reader search results were not visible." };
+		}
+		const candidates = allElements("button, a, [role='button'], [aria-label], [title]")
+			.filter(isVisible)
+			.map((element, index) => {
+				const label = elementLabel(element);
+				let score = 0;
+				if (/\bclose\s+(?:search|results?|panel|dialog|drawer)\b/i.test(label)) score += 80;
+				if (/^close$/i.test(label)) score += 60;
+				if (/\bdismiss|hide|cancel\b/i.test(label)) score += 20;
+				if (/\b(search|results?|panel|dialog|drawer)\b/i.test(label)) score += 12;
+				const ownerText = normalize(element.closest("[role='dialog'], aside, section, nav, div")?.textContent || "");
+				if (/\bsearch\s+(?:across|inside|within|this)?\s*(?:the\s*)?(?:book|textbook|ebook|reader|content)\b/i.test(ownerText)) score += 12;
+				if (/(?:^|[^0-9])\d{1,6}\s*results?\b/i.test(ownerText) || /\bContent\s*\(\s*\d{1,6}\s*\)/i.test(ownerText)) score += 12;
+				if (/\b(skip|bookmark|previous|next|preferences|more options|table of contents|highlight|note)\b/i.test(label)) score -= 50;
+				return { element, index, label, score };
+			})
+			.filter((entry) => entry.score > 0)
+			.sort((left, right) => right.score - left.score || left.index - right.index);
+		const chosen = candidates[0];
+		if (!chosen) return { attempted: true, dismissed: false, reason: "No close control was found for the reader search panel." };
+		clickElement(chosen.element);
+		await wait(500);
+		return {
+			attempted: true,
+			dismissed: !pageLooksLikeSearchResults(),
+			control: {
+				label: chosen.label,
+				selector: selectorFor(chosen.element),
+				score: chosen.score,
+			},
+		};
+	};
+
+	const adapter = classifyAdapter();
+	if (!query) {
+		return {
+			ok: false,
+			unsupported: true,
+			reason: "No search query was provided.",
+			surface: "textbook-search",
+			source: "reader-search-ui",
+			adapter,
+			query,
+			results: [],
+			resultCount: 0,
+			url: location.href,
+			title: document.title,
+		};
+	}
+
+	const beforeUrl = location.href;
+	const beforeTitle = document.title;
+	const shell = await waitForSearchShell();
+	const controls = shell.controls;
+	let searchInput = shell.searchInput;
+	let usedControl = null;
+	if (!searchInput && controls.length) {
+		usedControl = controls[0];
+		clickElement(usedControl.element);
+		await wait(450);
+		searchInput = findSearchInput();
+	}
+	if (!searchInput) {
+		return {
+			ok: false,
+			unsupported: true,
+			reason: "No accessible book-search input or control was found on this reader page.",
+			surface: "textbook-search",
+			source: "reader-search-ui",
+			adapter,
+			query,
+			capabilities: {
+				hasSearchControl: controls.length > 0,
+				hasSearchInput: false,
+				canOpenResult: false,
+			},
+			searchControls: controls.slice(0, 5).map((entry) => ({
+				label: entry.label,
+				selector: selectorFor(entry.element),
+				score: entry.score,
+			})),
+			waitedForSearchMs: shell.waitedMs,
+			results: [],
+			resultCount: 0,
+			url: location.href,
+			title: document.title,
+		};
+	}
+	usedControl = usedControl || searchInput;
+	setNativeValue(searchInput.element, query);
+	await wait(120);
+	submitSearch(searchInput.element);
+	await wait(450);
+	let resultEntries = await waitForResults();
+	if (!resultEntries.length) {
+		submitSearch(searchInput.element);
+		await wait(450);
+		resultEntries = await waitForResults();
+	}
+	const results = resultEntries.map((entry, index) => ({
+		index: index + 1,
+		title: entry.title,
+		pageLabel: entry.pageLabel,
+		snippet: entry.snippet,
+		score: entry.score,
+		clickable: entry.clickable,
+	}));
+	const totalResultCount = readTotalResultCount();
+	let openedResult = null;
+	if (openResult && resultEntries[resultIndex - 1]) {
+		const target = resultEntries[resultIndex - 1];
+		const clickable = clickableForResult(target.element);
+		if (clickable) {
+			clickElement(clickable);
+			const navigation = await waitForResultNavigation(beforeUrl, beforeTitle);
+			const dismissedSearchUi = await dismissReaderSearchUi();
+			openedResult = {
+				index: resultIndex,
+				title: target.title,
+				pageLabel: target.pageLabel,
+				beforeUrl,
+				...navigation,
+				dismissedSearchUi,
+			};
+		} else {
+			openedResult = {
+				index: resultIndex,
+				title: target.title,
+				pageLabel: target.pageLabel,
+				error: "The selected result did not expose a clickable element.",
+				navigated: false,
+			};
+		}
+	}
+	return {
+		ok: true,
+		surface: "textbook-search",
+		source: "reader-search-ui",
+		adapter,
+		query,
+		capabilities: {
+			hasSearchControl: controls.length > 0,
+			hasSearchInput: true,
+			canOpenResult: resultEntries.some((entry) => entry.clickable),
+		},
+		searchControl: usedControl
+			? {
+				label: usedControl.label,
+				selector: selectorFor(usedControl.element),
+				score: usedControl.score,
+			}
+			: null,
+		input: {
+			label: searchInput.label,
+			selector: selectorFor(searchInput.element),
+		},
+		resultCount: results.length,
+		totalResultCount,
+		results,
+		openedResult,
+		waitedForSearchMs: shell.waitedMs,
+		url: location.href,
+		title: document.title,
+		beforeUrl,
+		beforeTitle,
+		elapsedMs: Date.now() - startedAt,
 	};
 }
 
@@ -9185,6 +10525,10 @@ async function handleCommand(name, args = {}) {
 					content =
 						(await extractGoogleDocsTextExportForTab(tab, { maxChars: args.maxChars })) ||
 						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars, query: args.query })})`));
+					content = await maybeGetDebuggerFrameReadableContent(tab, content, {
+						maxChars: args.maxChars,
+						query: args.query,
+					});
 				} catch (error) {
 					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
 					else throw error;
@@ -9192,6 +10536,46 @@ async function handleCommand(name, args = {}) {
 				return {
 					tab: simplifyTab(tab),
 					content,
+				};
+			});
+		}
+		case "textbook_search": {
+			if (typeof args.query !== "string" || !args.query.trim()) {
+				throw new Error("textbook_search requires a non-empty 'query'");
+			}
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				let search;
+				const targetTab =
+					args.waitForLoad === false
+						? tab
+						: await waitForTabComplete(
+							tab.id,
+							clampNumber(args.loadTimeoutMs, 12000, { min: 500, max: 60000 }),
+						);
+				try {
+					const searchTimeoutMs = clampNumber(args.timeoutMs, 3500, { min: 800, max: 8000 });
+					const readyTimeoutMs = clampNumber(args.readyTimeoutMs, 10000, { min: 0, max: 20000 });
+					const evaluationTimeoutMs = searchTimeoutMs + readyTimeoutMs + 2500;
+					search = await evaluateInTab(
+						targetTab.id,
+						`(${searchTextbookReaderInPage.toString()})(${JSON.stringify({
+							query: args.query,
+							maxResults: args.maxResults,
+							openResult: args.openResult,
+							resultIndex: args.resultIndex,
+							timeoutMs: searchTimeoutMs,
+							readyTimeoutMs,
+						})})`,
+						{ timeoutMs: evaluationTimeoutMs },
+					);
+				} catch (error) {
+					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					throw error;
+				}
+				return {
+					tab: simplifyTab(await chrome.tabs.get(targetTab.id)),
+					search,
 				};
 			});
 		}
@@ -9404,7 +10788,8 @@ async function handleCommand(name, args = {}) {
 						mainFrameSelectionError: error?.message || String(error),
 					};
 				}
-				const selection = await maybeGetNativeChromePdfViewerSelection(tab, pageSelection);
+				let selection = await maybeGetNativeChromePdfViewerSelection(tab, pageSelection);
+				selection = await maybeGetDebuggerFrameSelection(tab, selection);
 				return {
 					tab: simplifyTab(tab),
 					selection,
@@ -9964,6 +11349,7 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_pdf_jump_to_page: "pdf_jump_to_page",
 	browser_get_visible_text: "get_visible_text",
 	browser_extract_content: "extract_content",
+	browser_textbook_search: "textbook_search",
 	browser_get_selection: "get_selection",
 	browser_get_viewport_headings: "get_viewport_headings",
 	browser_get_scroll_state: "get_scroll_state",

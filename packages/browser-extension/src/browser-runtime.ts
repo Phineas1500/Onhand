@@ -510,12 +510,16 @@ const LIST_TABS_SCHEMA = Type.Object({
 	onlyActive: Type.Optional(Type.Boolean({ description: "Only include active tabs" })),
 });
 
+const OPTIONAL_NUMBER_OR_STRING_SCHEMA = (description: string) =>
+	Type.Optional(Type.Union([Type.Number(), Type.String()], { description }));
+
 const TAB_SELECTOR_SCHEMA = {
-	tabId: Type.Optional(Type.Number({ description: "Exact browser tab ID to target. Omit this to use the active tab." })),
+	tabId: OPTIONAL_NUMBER_OR_STRING_SCHEMA("Exact browser tab ID to target. Omit this to use the active tab."),
 };
 
 const TAB_MATCH_SCHEMA = {
 	...TAB_SELECTOR_SCHEMA,
+	windowId: OPTIONAL_NUMBER_OR_STRING_SCHEMA("Exact browser window ID to target. Omit this to use the active window."),
 	titleContains: Type.Optional(Type.String({ description: "Case-insensitive substring to match in the tab title" })),
 	urlContains: Type.Optional(Type.String({ description: "Case-insensitive substring to match in the tab URL" })),
 };
@@ -591,6 +595,18 @@ const EXTRACT_CONTENT_SCHEMA = Type.Object({
 	...READ_TAB_SELECTOR_SCHEMA,
 	maxChars: Type.Optional(Type.Number({ description: "Maximum characters of readable page content to return" })),
 	query: Type.Optional(Type.String({ description: "Short search query used to prioritize matching headings, tables, rows, or values in long pages" })),
+});
+
+const TEXTBOOK_SEARCH_SCHEMA = Type.Object({
+	...TAB_MATCH_SCHEMA,
+	query: Type.String({ description: "Word, phrase, name, or concept to search using the current online textbook or reader's own search UI" }),
+	maxResults: Type.Optional(Type.Number({ description: "Maximum reader search results to return" })),
+	openResult: Type.Optional(Type.Boolean({ description: "Open the chosen reader search result. Defaults to false; use only when navigation is needed to answer. After a successful openedResult.navigated=true, use browser_extract_content once on the opened page instead of manually clicking through the reader UI." })),
+	resultIndex: Type.Optional(Type.Number({ description: "1-based search result index to open when openResult is true. Defaults to 1." })),
+	timeoutMs: Type.Optional(Type.Number({ description: "Maximum time in milliseconds to wait for the reader search UI to return results" })),
+	readyTimeoutMs: Type.Optional(Type.Number({ description: "Maximum time in milliseconds to wait for the reader app search shell to hydrate" })),
+	waitForLoad: Type.Optional(Type.Boolean({ description: "Wait for the target tab to finish loading before searching. Defaults to true." })),
+	loadTimeoutMs: Type.Optional(Type.Number({ description: "Maximum time in milliseconds to wait for the reader tab load before searching" })),
 });
 
 const VIEWPORT_HEADINGS_SCHEMA = Type.Object({
@@ -770,6 +786,7 @@ const CORE_READ_TOOL_NAMES = [
 	"browser_get_viewport_headings",
 	"browser_get_scroll_state",
 ];
+const READER_SEARCH_TOOL_NAMES = ["browser_textbook_search"];
 
 const VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
 const VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
@@ -942,6 +959,9 @@ function getSelectionText(selection: unknown) {
 function getSelectionSourceLabel(selection: unknown) {
 	if (!selection || typeof selection !== "object") return "";
 	const details = selection as any;
+	if (details.source === "debugger-frame-selection" || details.frameId || details.contextOrigin) {
+		return "frame";
+	}
 	if (details.surface !== "pdf" && details.pdfAnchor?.surface !== "pdf") return "";
 	const pageNumber = details.pageNumber || details.pdfAnchor?.pageNumber;
 	const viewer = typeof details.viewer === "string" ? details.viewer : typeof details.pdfAnchor?.viewer === "string" ? details.pdfAnchor.viewer : "";
@@ -3945,6 +3965,19 @@ function selectToolsForPrompt(
 		) {
 			add(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]);
 		}
+		if (
+			textHasAny(
+				text,
+				/\b(?:textbooks?|e-?books?|bookshelf|online book|reader|courseware|vitalsource|pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|chapter|section)\b/,
+			) &&
+			textHasAny(
+				text,
+				/\b(?:search|find|where|mention|mentions|mentioned|covered|located|look up|look into|elsewhere|another part|other part|not loaded|not visible|across|entire book|whole book|book-wide)\b/,
+			)
+		) {
+			add(READER_SEARCH_TOOL_NAMES);
+			add(["browser_navigate"]);
+		}
 		if (promptAsksAboutVisualRegion(text)) {
 			add(VISUAL_CONTEXT_TOOL_NAMES);
 		}
@@ -4047,6 +4080,7 @@ function buildLauncherPrompt(
 		"- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
 		"- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.",
 		"- Do not call browser_extract_content more than once unless the first result is unusable.",
+		"- For online textbook/ebook/reader pages where the current loaded section does not contain the requested topic, or the user asks about another part/the whole book, use browser_textbook_search first to search through the reader's own search UI. Do not manually click/type through the reader search UI unless browser_textbook_search is unavailable or reports unsupported. Read results first; open a result only when navigation is needed to answer. If browser_textbook_search returns openedResult.navigated=true, immediately use browser_extract_content once with the same or focused query on the opened page, then answer, highlight, and note from that opened content. Do not switch tabs, close search panels, call generic click/find/wait tools, or repeat book search just to verify the opened result. Use browser_navigate only to reload the current reader URL once if the reader itself is blank, stuck loading, or reports an error. For one explanatory textbook passage, prefer one contiguous highlight spanning the key supporting sentences and one note; do not split nearby sentences into multiple highlights unless the user asks for multiple anchors.",
 		"- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text anchors are available.",
 		"- If a visual answer cannot be anchored to text or a captured visible region, say what visual context is missing instead of guessing.",
 		"- If no reliable anchor is available, say what is missing instead of presenting unsupported page claims.",
@@ -4525,6 +4559,9 @@ function formatPdfPagesForModel(details: any) {
 function toolResultTextForModel(toolName: string, result: any) {
 	const details = result?.details || result || {};
 	const tab = details.tab || null;
+	if (details.guardrail?.kind === "textbook_context_ready") {
+		return String(details.guardrail.message || "Textbook context is already ready. Answer from the opened reader content instead of calling more reader tools.");
+	}
 	switch (toolName) {
 		case "onhand_record_learning_event": {
 			const event = details.event || {};
@@ -4602,7 +4639,8 @@ function toolResultTextForModel(toolName: string, result: any) {
 		}
 		case "browser_extract_content": {
 			const content = details.content || details.extracted || {};
-			const text = String(content.markdown || content.text || content.reason || content || "").trim();
+			const rawText = typeof content === "string" ? content : content.markdown || content.text || content.reason || "";
+			const text = String(rawText || "").trim();
 			const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
 			const outlineText =
 				typeof content.headingOutlineMarkdown === "string"
@@ -4612,9 +4650,39 @@ function toolResultTextForModel(toolName: string, result: any) {
 						: "";
 			const outline = outlineText ? `Page heading outline with section snippets:\n${truncateStructuredText(outlineText, 12000)}\n\n` : "";
 			const truncationNote = content.truncated ? "\n\n(Note: readable body excerpt was truncated; use the heading outline to notice later sections.)" : "";
+			const frameSource =
+				content.source === "debugger-frame-readable-content"
+					? `Source frame: ${[content.frameTitle || content.title, content.contextOrigin || content.frameUrl].filter(Boolean).join(" · ")}.\n`
+					: "";
 			return text
-				? `${heading}\n${outline}Readable body excerpt:\n${truncateStructuredText(text, 8000)}${truncationNote}`
-				: `${heading}\n${outline || "(No readable content returned.)"}`;
+				? `${heading}\n${frameSource}${outline}Readable body excerpt:\n${truncateStructuredText(text, 8000)}${truncationNote}`
+				: `${heading}\n${frameSource}${outline || "(No readable content returned.)"}`;
+		}
+		case "browser_textbook_search": {
+			const search = details.search || details || {};
+			const adapter = search.adapter?.name || "generic-reader";
+			const resultCount = Array.isArray(search.results) ? search.results.length : Number(search.resultCount || 0) || 0;
+			const totalResultCount = Number(search.totalResultCount || 0) || 0;
+			const status = search.ok ? "Reader search" : "Reader search unavailable";
+			const countLabel =
+				totalResultCount > resultCount
+					? `${resultCount} shown, ${totalResultCount} total`
+					: `${resultCount} result${resultCount === 1 ? "" : "s"}`;
+			const header = `${status} for ${JSON.stringify(search.query || "")} on ${formatCompactTab(tab || search)}: ${countLabel} (${adapter}).`;
+			const reason = !search.ok && search.reason ? `\nReason: ${truncate(search.reason, 240)}` : "";
+			const controls = search.searchControl?.label ? `\nSearch control: ${truncate(search.searchControl.label, 160)}` : "";
+			const lines = (Array.isArray(search.results) ? search.results : [])
+				.slice(0, 8)
+				.map((result: any) => {
+					const page = result.pageLabel ? ` ${result.pageLabel}` : "";
+					const title = result.title ? truncate(result.title, 140) : "Untitled result";
+					const snippet = result.snippet ? ` — ${truncate(result.snippet, 220)}` : "";
+					return `${result.index || "?"}. ${title}${page}${snippet}`;
+				});
+			const opened = search.openedResult
+				? `\nOpened result ${search.openedResult.index || "?"}: ${truncate(search.openedResult.title || "", 160)}${search.openedResult.navigated ? `\nCurrent reader URL: ${search.openedResult.afterUrl || search.url || ""}\nNext step: use browser_extract_content once with a focused query on this opened reader page, then answer or annotate from that content. Do not switch tabs, close search panels, manually click results, or repeat the reader search to verify this opened result.` : "\nThe result did not navigate the reader."}`
+				: "";
+			return `${header}${reason}${controls}${lines.length ? `\nResults:\n${lines.join("\n")}` : ""}${opened}`;
 		}
 		case "browser_get_selection": {
 			const selection = details.selection || {};
@@ -4714,6 +4782,109 @@ function toolResultTextForModel(toolName: string, result: any) {
 	}
 }
 
+function traceTimeMs(trace: any, key: "startedAt" | "endedAt" = "endedAt") {
+	const value = Date.parse(String(trace?.[key] || trace?.startedAt || ""));
+	return Number.isFinite(value) ? value : 0;
+}
+
+function traceDetails(trace: any) {
+	return trace && typeof trace === "object" && trace.resultDetails && typeof trace.resultDetails === "object" ? trace.resultDetails : {};
+}
+
+function isLikelyTextbookReaderUrl(value: unknown) {
+	return /\b(vitalsource|bookshelf|jigsaw|pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|courseware|ebook|textbook|reader)\b/i.test(
+		String(value || ""),
+	);
+}
+
+function findReadyTextbookContextFromTraces(traces: unknown) {
+	const entries = Array.isArray(traces) ? traces : [];
+	const openedTrace = entries
+		.slice()
+		.reverse()
+		.find((trace: any) => {
+			const details = traceDetails(trace);
+			const search = details.search || details;
+			return trace?.toolName === "browser_textbook_search" && trace?.state === "complete" && search?.openedResult?.navigated === true;
+		});
+	if (!openedTrace) return null;
+	const openedAt = traceTimeMs(openedTrace);
+	const openedDetails = traceDetails(openedTrace);
+	const openedSearch = openedDetails.search || openedDetails;
+	const bodyExtractTrace = entries
+		.filter((trace: any) => traceTimeMs(trace) >= openedAt)
+		.slice()
+		.reverse()
+		.find((trace: any) => {
+			const details = traceDetails(trace);
+			const content = details.content || details.extracted || {};
+			const text = String(content.markdown || content.text || "").replace(/\s+/g, " ").trim();
+			return trace?.toolName === "browser_extract_content" && trace?.state === "complete" && content.source === "debugger-frame-readable-content" && text.length >= 200;
+		});
+	if (!bodyExtractTrace) return null;
+	const extractDetails = traceDetails(bodyExtractTrace);
+	const content = extractDetails.content || extractDetails.extracted || {};
+	return {
+		openedTrace,
+		bodyExtractTrace,
+		tab: extractDetails.tab || openedDetails.tab || null,
+		search: openedSearch,
+		openedResult: openedSearch.openedResult || null,
+		content,
+	};
+}
+
+function buildTextbookContextReadyGuardResult(toolName: string, commandName: string, params: any, traces: unknown) {
+	const ready = findReadyTextbookContextFromTraces(traces);
+	if (!ready) return null;
+	const blockedReadCommands = new Set([
+		"textbook_search",
+		"extract_content",
+		"get_visible_text",
+		"get_viewport_headings",
+		"get_scroll_state",
+		"find_elements",
+		"click_text",
+		"click",
+		"wait_for_selector",
+		"pdf_search",
+		"pdf_read_pages",
+		"pdf_jump_to_page",
+		"pdf_capture_page_image",
+		"get_visible_region_image",
+	]);
+	const shouldBlockNavigation = commandName === "navigate" && isLikelyTextbookReaderUrl(params?.url);
+	if (!blockedReadCommands.has(commandName) && !shouldBlockNavigation) return null;
+	const sourceName = [ready.content?.frameTitle || ready.content?.title, ready.content?.contextOrigin || ready.content?.frameUrl].filter(Boolean).join(" · ");
+	const openedTitle = ready.openedResult?.title ? ` Opened result: ${truncate(String(ready.openedResult.title), 160)}.` : "";
+	return {
+		tab: ready.tab,
+		guardrail: {
+			kind: "textbook_context_ready",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"Textbook context is already ready from an opened reader search result and a readable body-frame extraction.",
+				sourceName ? `Source frame: ${sourceName}.` : "",
+				openedTitle,
+				`Do not call ${toolName} again for this textbook lookup.`,
+				"Answer now from the readable body excerpt already returned. If the user requested annotations, call browser_highlight_text with exact text from that excerpt, then browser_show_note.",
+			]
+				.filter(Boolean)
+				.join(" "),
+		},
+		textbookContext: {
+			query: ready.search?.query || params?.query || "",
+			openedResult: ready.openedResult,
+			content: {
+				title: ready.content?.frameTitle || ready.content?.title || "",
+				source: ready.content?.source || "",
+				frameUrl: ready.content?.frameUrl || ready.content?.url || "",
+			},
+		},
+	};
+}
+
 export const __browserRuntimeTest = {
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
@@ -4729,6 +4900,9 @@ export const __browserRuntimeTest = {
 	formatPdfCitationForModel,
 	formatVisibleTextForModel,
 	formatToolResultForModel: toolResultTextForModel,
+	findReadyTextbookContextFromTracesForTest: findReadyTextbookContextFromTraces,
+	buildTextbookContextReadyGuardResultForTest: buildTextbookContextReadyGuardResult,
+	normalizeOptionalBrowserTargetNumbersForTest: normalizeOptionalBrowserTargetNumbers,
 	compactFreeTierVisualContextMessagesForTest: compactFreeTierVisualContextMessages,
 	messagesContainImageForTest: messagesContainImage,
 	getMissingApiKeyError,
@@ -4964,6 +5138,7 @@ function createTools(
 		effectiveParams: unknown,
 		commandName: string,
 	) => void = () => {},
+	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
 ): AgentTool[] {
 	const commandTool = (
 		name: string,
@@ -4983,7 +5158,7 @@ function createTools(
 			try {
 				const effectiveParams = prepareCommandParams(params, commandName) as Record<string, unknown>;
 				recordEffectiveCommandParams(name, String(_toolCallId || name), params, effectiveParams, commandName);
-				result = await host.runCommand(commandName, effectiveParams);
+				result = guardCommand(name, commandName, effectiveParams) || (await host.runCommand(commandName, effectiveParams));
 			} catch (error) {
 				if (commandName !== "highlight_text") throw error;
 				const candidates = buildHighlightRetryCandidates((params as any)?.text);
@@ -5146,6 +5321,14 @@ function createTools(
 			"Extract readable article or document text from the live page. For named sections, tables, rows, formulas, tensors, or exact values, pass a short query so matching long-page sections are prioritized. Use at most once per response unless the first result is unusable.",
 			EXTRACT_CONTENT_SCHEMA,
 			"extract_content",
+		),
+		commandTool(
+			"browser_textbook_search",
+			"Browser Textbook Search",
+			"Search the current online textbook, ebook, or protected reader using the reader's own book-search UI. Use when readable extraction does not include the requested topic or the user asks about another part/the whole book. By default this only reads the search results; set openResult=true only when navigating to a result is needed. After openedResult.navigated=true, use browser_extract_content once on the opened reader page and avoid manual search-panel clicks.",
+			TEXTBOOK_SEARCH_SCHEMA,
+			"textbook_search",
+			{ sequential: true },
 		),
 		commandTool(
 			"browser_get_selection",
@@ -5364,6 +5547,8 @@ function getToolStatusMessage(toolName: string) {
 			return "Capturing the visible region...";
 		case "browser_extract_content":
 			return "Extracting readable page content...";
+		case "browser_textbook_search":
+			return "Searching the textbook reader...";
 		case "browser_get_viewport_headings":
 			return "Checking page headings...";
 		case "browser_get_scroll_state":
@@ -5415,6 +5600,7 @@ function isInternalToolName(toolName: string) {
 
 function buildPageAction(toolName: string, result: any): PageAction | null {
 	const details = result?.details || result || {};
+	if (details.guardrail) return null;
 	const tab = details.tab || null;
 	switch (toolName) {
 		case "browser_activate_tab": {
@@ -5463,6 +5649,19 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				windowId: tab?.windowId || null,
 				...pageActionTabFields(tab),
 				label: "Searched PDF",
+				detail,
+			};
+		}
+		case "browser_textbook_search": {
+			const search = details.search || details || {};
+			const detail = truncate(search.query || "Reader search", 72);
+			return {
+				key: `textbook-search:${tab?.id || "tab"}:${detail}`,
+				type: search.openedResult?.navigated ? "tab" : "read",
+				tabId: tab?.id || null,
+				windowId: tab?.windowId || null,
+				...pageActionTabFields(tab),
+				label: search.openedResult?.navigated ? "Opened reader result" : "Searched textbook",
 				detail,
 			};
 		}
@@ -5649,6 +5848,27 @@ function markRecoveredToolRetries(activities: UiActivity[] = [], toolName: strin
 		recovered = true;
 	}
 	return recovered;
+}
+
+function normalizeOptionalBrowserTargetNumber(value: unknown) {
+	if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+	if (typeof value !== "string") return undefined;
+	const text = value.trim();
+	if (!text || /^(?:undefined|null|none|nan)$/i.test(text)) return undefined;
+	const number = Number(text);
+	return Number.isFinite(number) ? number : undefined;
+}
+
+function normalizeOptionalBrowserTargetNumbers(params: any = {}) {
+	if (!params || typeof params !== "object") return {};
+	const normalized = { ...params };
+	for (const key of ["tabId", "windowId"]) {
+		if (!Object.prototype.hasOwnProperty.call(normalized, key)) continue;
+		const number = normalizeOptionalBrowserTargetNumber(normalized[key]);
+		if (typeof number === "number") normalized[key] = number;
+		else delete normalized[key];
+	}
+	return normalized;
 }
 
 export function createOnhandBrowserRuntime(host: RuntimeHost) {
@@ -6912,12 +7132,13 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function withDefaultBrowserTarget(params: any = {}) {
+		const normalizedParams = normalizeOptionalBrowserTargetNumbers(params);
 		const targetWindowId = activeRequest?.targetWindowId;
-		if (typeof params?.tabId === "number" && hasCompletedTabInventory(activeRequest)) {
-			return params || {};
+		if (typeof normalizedParams?.tabId === "number" && hasCompletedTabInventory(activeRequest)) {
+			return normalizedParams || {};
 		}
 		const targeted = {
-			...(params || {}),
+			...(normalizedParams || {}),
 		};
 		if (typeof targetWindowId === "number") targeted.windowId = targetWindowId;
 		delete targeted.tabId;
@@ -8686,6 +8907,7 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 						withRequestBrowserContext,
 						(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
+						(toolName, commandName, effectiveParams) => buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []),
 					),
 					prompt,
 					attachments,

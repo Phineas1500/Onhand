@@ -171,6 +171,21 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(backgroundSource, /function isInjectableFrameUrl/, "frame fallback should skip frames Onhand cannot script");
 	assert.match(backgroundSource, /parsed\.protocol === "file:"/, "frame fallback should include local file frames when Chrome grants file access");
 	assert.match(backgroundSource, /protocol === "file:"/, "page toolkit should allow local file tabs when Chrome grants file access");
+	assert.match(backgroundSource, /function executePageToolkitMethodViaScriptingFrames/, "page toolkit should be able to run annotation commands inside nested web frames");
+	assert.match(backgroundSource, /function executePageToolkitMethodViaGenericWebFrames/, "page toolkit should be able to capture and clear annotations created through debugger-targeted web frames");
+	assert.match(backgroundSource, /GENERIC_WEB_FRAME_PAGE_TOOLKIT_METHODS[\s\S]*"highlightText"[\s\S]*"showNote"[\s\S]*"scrollToAnnotation"/, "web-frame fallback should support highlight, note, and scroll annotation commands");
+	assert.match(backgroundSource, /methodName === "clearAnnotations"[\s\S]*executePageToolkitMethodViaScriptingFrames[\s\S]*mergeClearAnnotationResults/, "clear annotations should also clear nested textbook frames");
+	assert.match(backgroundSource, /methodName === "captureState"[\s\S]*executePageToolkitMethodViaGenericWebFrames/, "capture state should inspect nested textbook frames when the top page has no annotations");
+	assert.match(backgroundSource, /function aggregateClearAnnotationFrameValues\(payloads,\s*method = "chrome-scripting-all-frames"\)/, "clear aggregation should label the frame mechanism that actually ran");
+	assert.match(
+		backgroundSource,
+		/shouldAggregateGenericWebFramePageToolkit\(methodName\)[\s\S]*frameCount > 0 \|\| Number\(scriptingFramePayload\?\.clearedTotal \|\| 0\) > 0[\s\S]*executePageToolkitMethodViaGenericWebFrames/,
+		"aggregate textbook-frame commands should try debugger frames when all-frames scripting finds no usable frames",
+	);
+	assert.ok(
+		backgroundSource.indexOf("if (shouldTryGenericWebFramePageToolkit(methodName))") < backgroundSource.indexOf("{ skipScripting: true }", backgroundSource.indexOf("async function runPageToolkitMethod")),
+		"page toolkit should try ordinary web frames before falling back to whole-tab debugger evaluation",
+	);
 	assert.match(backgroundSource, /Allow access to file URLs/, "local file access failures should tell the user which Chrome extension toggle to enable");
 	assert.match(backgroundSource, /browser_navigate cannot open file:\/\/ URLs/, "browser navigation should not be able to open arbitrary local file URLs");
 	assert.match(backgroundSource, /href: element instanceof HTMLAnchorElement \? element\.href \|\| null : null/, "element search should expose resolved link hrefs for navigation");
@@ -325,6 +340,14 @@ async function assertNativeChromePdfViewerSelectionFallback() {
 		source,
 		/catch \(error\) \{[\s\S]*isRestrictedScriptingError\(error\)[\s\S]*isLikelyNativeChromePdfSelectionTab\(tab\)[\s\S]*native-chrome-pdf-viewer-restricted-main-frame/,
 		"browser_get_selection should still try native PDF selection when main-frame scripting is restricted",
+	);
+	assert.match(source, /function getDebuggerFrameSelectionExpression\(\)/, "Cross-frame selected text should have a debugger expression");
+	assert.match(source, /source:\s*"debugger-frame-selection"/, "Cross-frame selected text fallback should identify its source");
+	assert.match(source, /function maybeGetDebuggerFrameSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a generic frame selected-text fallback");
+	assert.match(
+		source,
+		/case "get_selection":\s*{[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetDebuggerFrameSelection\(tab,\s*selection\)/,
+		"browser_get_selection should retry debugger frame contexts when normal selection readers are empty",
 	);
 }
 
@@ -493,6 +516,152 @@ async function assertReadableContentChoosesFullRootAndIncludesTables() {
 	assert.match(content.markdown, /32\.0%/);
 }
 
+async function assertReadableContentQuerySnippetsCoverDistantTerms() {
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const filler = Array.from({ length: 180 }, (_, index) => `neutral filler ${index}`).join(" ");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Long reader section</title></head>
+			<body>
+				<main>
+					<h1>Long reader section</h1>
+					<blockquote>Alphacase starts the first very long block. ${filler} Betacase ends the first very long block.</blockquote>
+					<p>${filler} Gammacase appears in a separate later paragraph.</p>
+					<p>${filler} Deltacase appears near the end of the loaded section.</p>
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://reader.example.test/section",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+		return {
+			x: 0,
+			y: 0,
+			top: 0,
+			left: 0,
+			right: 800,
+			bottom: 20,
+			width: 800,
+			height: 20,
+			toJSON() {
+				return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
+			},
+		};
+	};
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 2600, query: "Alphacase Betacase Gammacase Deltacase" });
+
+	assert.match(content.markdown, /Alphacase/);
+	assert.match(content.markdown, /Betacase/);
+	assert.match(content.markdown, /Gammacase/);
+	assert.match(content.markdown, /Deltacase/);
+	assert.equal(content.markdown.length <= 2600, true);
+}
+
+async function assertTextbookReaderSearchUsesGenericSearchUi() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(source, /const evaluationTimeoutMs = searchTimeoutMs \+ readyTimeoutMs \+ 2500/, "textbook_search should allow no-result reader searches to outlive the default script timeout");
+	assert.match(source, /evaluateInTab\([\s\S]*\{\s*timeoutMs:\s*evaluationTimeoutMs\s*\}/, "textbook_search should pass a custom page-evaluation timeout");
+	const declaration = await loadBackgroundFunction("searchTextbookReaderInPage");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Generic Online Reader</title></head>
+			<body>
+				<button id="open-search" aria-label="Search across book">Search</button>
+				<button id="reader-highlights">Highlights, Notes, Bookmarks, and Flashcards</button>
+				<section id="search-panel" role="search" hidden>
+					<button id="close-search" aria-label="Close">Close</button>
+					<label for="book-search">Search this book</label>
+					<input id="book-search" type="search" placeholder="Search this book" />
+					<div>Content (2)</div>
+					<ul id="results"></ul>
+				</section>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://reader.example.test/book/123",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+		if (this.hasAttribute("hidden") || this.closest("[hidden]")) {
+			return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+		}
+		return { x: 0, y: 0, top: 0, left: 0, right: 220, bottom: 32, width: 220, height: 32 };
+	};
+	Object.defineProperty(dom.window.HTMLElement.prototype, "innerText", {
+		configurable: true,
+		get() {
+			if (this.hasAttribute("hidden") || this.closest("[hidden]")) return "";
+			const visibleText = (node) => {
+				if (node.nodeType === dom.window.Node.TEXT_NODE) return node.nodeValue || "";
+				if (!(node instanceof dom.window.HTMLElement)) return "";
+				if (node.hasAttribute("hidden") || node.closest("[hidden]")) return "";
+				return Array.from(node.childNodes || []).map(visibleText).join("");
+			};
+			return visibleText(this);
+		},
+	});
+	const document = dom.window.document;
+	const panel = document.getElementById("search-panel");
+	const input = document.getElementById("book-search");
+	const results = document.getElementById("results");
+	document.getElementById("open-search").addEventListener("click", () => {
+		panel.removeAttribute("hidden");
+	});
+	document.getElementById("close-search").addEventListener("click", () => {
+		panel.setAttribute("hidden", "");
+	});
+	input.addEventListener("input", () => {
+		if (!input.value.toLowerCase().includes("lochner")) return;
+		results.innerHTML = `
+			<li class="reader-search-result"><button>Chapter 8 Individual Rights page 497 Lochner and substantive due process</button></li>
+			<li class="reader-search-result"><button>Chapter 10 Modern doctrine page 533 due process after Lochner</button></li>
+		`;
+		results.querySelector("button")?.addEventListener("click", () => {
+			dom.window.history.pushState({}, "", "/book/123/page/497");
+			document.title = "Chapter 8 Individual Rights";
+		});
+	});
+	const searchTextbookReaderInPage = dom.window.eval(`(${declaration})`);
+	const result = await searchTextbookReaderInPage({ query: "Lochner", maxResults: 4, timeoutMs: 1000 });
+
+	assert.equal(result.ok, true);
+	assert.equal(result.surface, "textbook-search");
+	assert.equal(result.source, "reader-search-ui");
+	assert.equal(result.capabilities.hasSearchControl, true);
+	assert.equal(result.capabilities.hasSearchInput, true);
+	assert.equal(result.adapter.name, "generic-textbook-reader");
+	assert.match(result.searchControl.label, /Search across book/);
+	assert.equal(result.resultCount >= 1, true);
+	assert.equal(result.results.some((entry) => /Highlights, Notes/.test(entry.snippet || "")), false);
+	assert.equal(result.results.some((entry) => /Lochner/.test(entry.snippet || "")), true);
+	assert.equal(result.results.some((entry) => /page 497/i.test(entry.pageLabel || "")), true);
+	assert.equal(result.capabilities.canOpenResult, true);
+
+	const opened = await searchTextbookReaderInPage({ query: "Lochner", maxResults: 4, openResult: true, resultIndex: 1, timeoutMs: 1000 });
+	assert.equal(opened.openedResult?.index, 1);
+	assert.equal(opened.openedResult?.error, undefined);
+	assert.match(opened.openedResult?.title || "", /Chapter/);
+	assert.equal(opened.openedResult?.dismissedSearchUi?.dismissed, true, JSON.stringify(opened.openedResult?.dismissedSearchUi));
+
+	const noResult = await searchTextbookReaderInPage({ query: "quantum llama positional hyperweaving", maxResults: 4, timeoutMs: 300, readyTimeoutMs: 300 });
+	assert.equal(noResult.ok, true);
+	assert.equal(noResult.resultCount, 0);
+	assert.equal(noResult.results.length, 0);
+}
+
 async function loadGoogleDocsBackgroundExportHelpers(fetchImpl) {
 	const functionNames = [
 		"normalizeGoogleDocsExportText",
@@ -584,6 +753,95 @@ async function assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval(
 		source,
 		/case "extract_content":\s*{[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*args\.maxChars\s*\}\)[\s\S]*evaluateInTab/,
 		"browser_extract_content should read Google Docs through the background text export before page-world evaluation",
+	);
+}
+
+async function assertExtractContentUsesDebuggerFrameReadableFallback() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(source, /function getDebuggerFrameReadableContent\(tabId,\s*options\s*=\s*\{\},\s*currentContent\s*=\s*null\)/, "browser_extract_content should have a debugger frame readable-content fallback");
+	assert.match(source, /source:\s*"debugger-frame-readable-content"/, "debugger frame readable-content fallback should identify its source");
+	assert.match(source, /function isLikelyOnlineTextbookReaderTab\(tab\)/, "textbook reader tabs should force a nested readable-frame check");
+	assert.match(source, /function readableContentLooksLikeReaderSearchUi\(payload\)/, "reader search panels should not be treated as final readable textbook content");
+	assert.match(
+		source,
+		/readableContentLooksLikeReaderSearchUi\(currentContent\)[\s\S]*!readableContentLooksLikeReaderSearchUi\(candidate\)[\s\S]*return true/,
+		"body-frame content should beat top-level textbook search-result chrome",
+	);
+	assert.match(
+		source,
+		/case "extract_content":\s*{[\s\S]*evaluateInTab\(tab\.id,[\s\S]*maybeGetDebuggerFrameReadableContent\(tab,\s*content,\s*\{[\s\S]*query:\s*args\.query/,
+		"browser_extract_content should try nested readable frames after the main-page extractor",
+	);
+}
+
+async function assertTextbookHighlightPrefersBodyFrameOverSearchUi() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const functionNames = [
+		"normalizePageToolkitPayloadText",
+		"pageToolkitPayloadLooksLikeReaderSearchUi",
+		"pageToolkitFramePayloadLooksLikeReaderSearchUi",
+		"isLikelyOnlineTextbookReaderTab",
+		"shouldPreferTextbookFramePageToolkit",
+		"pickBestPageToolkitFramePayload",
+	];
+	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
+	const helpers = new Function(`${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`)();
+	const query = "Americans United for Separation of Church and State";
+	const searchUiHighlight = {
+		matchedText: `III. Individual Rights 61 results ${query} Content (61) Figures (0) Workbook (0) Page 502`,
+		container: {
+			text: `Search across book 61 results ${query}`,
+		},
+	};
+	const compactVitalSourceSearchUiHighlight = {
+		matchedText:
+			"III. Individual Rights30 results...constitutional politics of religion. “Protestants United for Separation of Church and State” became “Americans...502...Separation of Church and State” became “Americans United for Separation of Church and State.” The “Moral...502The constitutional politics of religious freedom took contemporary shape during...502",
+		container: {
+			selector: "div.sc-dZpvmy.QHjwi:nth-of-type(2) > ul > li.sc-jWULZn.gJkQNN",
+			tag: "li",
+			text: "III. Individual Rights30 results...constitutional politics of religion. “Protestants United for Separation of Church and State” became “Americans...502",
+		},
+	};
+	const singleVitalSourceSearchResultHighlight = {
+		matchedText: "“Americans United for Separation of Church and State.” The “Moral Majority” became a",
+		container: {
+			selector: "li.sc-jWULZn.gJkQNN:nth-of-type(7)",
+			tag: "li",
+			text: "...became “Americans United for Separation of Church and State.” The “Moral Majority” became a leading voice for...502",
+		},
+	};
+	const bodyHighlight = {
+		matchedText: `"Protestants United for Separation of Church and State" became "Americans United for Separation of Church and State."`,
+		container: {
+			text: `Public debates over funding and prayer once pitted Protestants against Catholics, but the Moral Majority changed the alignment.`,
+		},
+	};
+	assert.equal(helpers.pageToolkitPayloadLooksLikeReaderSearchUi(searchUiHighlight, query), true);
+	assert.equal(helpers.pageToolkitPayloadLooksLikeReaderSearchUi(compactVitalSourceSearchUiHighlight, query), true);
+	assert.equal(helpers.pageToolkitPayloadLooksLikeReaderSearchUi(singleVitalSourceSearchResultHighlight, query), true);
+	assert.equal(helpers.pageToolkitPayloadLooksLikeReaderSearchUi(bodyHighlight, query), false);
+	assert.equal(
+		helpers.shouldPreferTextbookFramePageToolkit(
+			{ url: "https://online.vitalsource.com/reader/books/example/page/502", title: "VitalSource Bookshelf" },
+			"highlightText",
+			searchUiHighlight,
+			[query],
+		),
+		true,
+	);
+	const picked = helpers.pickBestPageToolkitFramePayload(
+		[
+			{ ok: true, value: compactVitalSourceSearchUiHighlight, frameUrl: "https://online.vitalsource.com/reader/books/example" },
+			{ ok: true, value: bodyHighlight, frameUrl: "https://jigsaw.vitalsource.com/books/example/content" },
+		],
+		"highlightText",
+		[query],
+	);
+	assert.equal(picked.value, bodyHighlight, "textbook highlights should prefer the body frame over search-result chrome");
+	assert.match(
+		source,
+		/shouldPreferTextbookFramePageToolkit\(tab,\s*methodName,\s*payload,\s*args\)[\s\S]*executePageToolkitMethodViaScriptingFrames[\s\S]*executePageToolkitMethodViaGenericWebFrames/,
+		"suspicious textbook top-frame highlights should retry nested body frames before returning",
 	);
 }
 
@@ -2276,9 +2534,13 @@ async function main() {
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
+	await assertReadableContentQuerySnippetsCoverDistantTerms();
+	await assertTextbookReaderSearchUsesGenericSearchUi();
 	await assertGoogleDocsBackgroundExportReadsText();
 	await assertGoogleDocsBackgroundExportDoesNotReturnHtml();
 	await assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval();
+	await assertExtractContentUsesDebuggerFrameReadableFallback();
+	await assertTextbookHighlightPrefersBodyFrameOverSearchUi();
 	await assertGoogleDocsHighlightUsesPdfViewerHandoff();
 
 	await assertHighlight({
