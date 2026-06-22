@@ -8173,7 +8173,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {
@@ -8291,7 +8291,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {

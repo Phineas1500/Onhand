@@ -50,6 +50,13 @@ function findBrowser() {
 	return null;
 }
 
+function extraBrowserFlags() {
+	return String(process.env.ONHAND_TEST_BROWSER_FLAGS || "")
+		.split(/\s+/)
+		.map((flag) => flag.trim())
+		.filter(Boolean);
+}
+
 const stage = (label) => VERBOSE && console.log(`  [stage] ${label}`);
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const compact = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -151,6 +158,7 @@ function launchBrowser(profile, port) {
 			"--no-first-run",
 			"--no-default-browser-check",
 			"--window-size=1200,1000",
+			...extraBrowserFlags(),
 			"about:blank",
 		],
 		{ stdio: "ignore", detached: false },
