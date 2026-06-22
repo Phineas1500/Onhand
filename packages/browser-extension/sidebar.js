@@ -3803,17 +3803,21 @@
 		return [trimmedPrompt, attachmentLine].filter(Boolean).join("\n\n") || attachmentLine;
 	}
 
-	async function requestSessions(limit = 20) {
+	async function requestSessions(limit) {
 		sessionLoading = true;
 		renderState(currentState || {});
 		try {
-			const response = await chrome.runtime.sendMessage({ type: "sidebar:list-sessions", limit });
+			const message = { type: "sidebar:list-sessions" };
+			if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) message.limit = Math.floor(limit);
+			const response = await chrome.runtime.sendMessage(message);
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not load sessions.");
 			}
 			sessionOverview = {
 				currentSession: response.currentSession || null,
 				sessions: Array.isArray(response.sessions) ? response.sessions : [],
+				totalCount: typeof response.totalCount === "number" ? response.totalCount : null,
+				hasMore: Boolean(response.hasMore),
 			};
 			renderState(currentState || {});
 		} finally {

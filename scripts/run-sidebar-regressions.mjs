@@ -1141,6 +1141,37 @@ async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
 	dom.window.close();
 }
 
+async function assertSessionPickerRequestsAndRendersAllSessions() {
+	const runtimeMessages = [];
+	const state = createState();
+	state.currentSession = {
+		sessionId: "session-00",
+		sessionName: "Session 00",
+	};
+	const sessions = Array.from({ length: 25 }, (_, index) => {
+		const suffix = String(index).padStart(2, "0");
+		return {
+			id: `session-${suffix}`,
+			name: `Session ${suffix}`,
+			path: `session-${suffix}`,
+			title: `Session ${suffix}`,
+		};
+	});
+	const dom = await renderSidebar(state, runtimeMessages, {
+		sessions: () => sessions,
+	});
+	const host = dom.window.document.querySelector("#onhand-extension-sidebar-host");
+	const sessionSelect = host.shadowRoot.getElementById("sessionSelect");
+	assert.equal(sessionSelect.options.length, 25, "expected session picker to render every returned session");
+	assert.equal(sessionSelect.options[24].value, "session-24", "expected sessions beyond the previous 20-item cap to be visible");
+	assert.equal(
+		runtimeMessages.some((message) => message?.type === "sidebar:list-sessions" && Object.hasOwn(message, "limit")),
+		false,
+		"session picker should request the full session list by default",
+	);
+	dom.window.close();
+}
+
 async function assertReviewViewRendersSavedSnapshot() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
@@ -4717,6 +4748,7 @@ await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
+await assertSessionPickerRequestsAndRendersAllSessions();
 await assertReviewViewRendersSavedSnapshot();
 await assertRestoreResultMergesPagesAndStaysQuietOnSuccess();
 await assertRestoreResultShowsDetailOnFailure();

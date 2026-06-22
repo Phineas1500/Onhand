@@ -11823,11 +11823,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:list-sessions") {
 			const runtime = getOnhandBrowserRuntime();
-			const response = await runtime.listSessions(typeof message.limit === "number" && Number.isFinite(message.limit) ? message.limit : 20);
+			const response = await runtime.listSessions(typeof message.limit === "number" && Number.isFinite(message.limit) ? message.limit : undefined);
 			sendResponse({
 				ok: true,
 				currentSession: response.currentSession,
 				sessions: response.sessions,
+				totalCount: response.totalCount,
+				hasMore: response.hasMore,
 			});
 			return;
 		}

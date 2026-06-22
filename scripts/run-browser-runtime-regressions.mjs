@@ -2420,6 +2420,53 @@ async function assertLegacySessionBlobMigratesToSessionRecords() {
 	assert.equal(matches[0].name, "Renamed after migration", "per-session record should win over any stale legacy copy");
 }
 
+async function assertListSessionsReturnsAllSessionsByDefault() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const sessions = Object.fromEntries(
+		Array.from({ length: 25 }, (_, index) => {
+			const suffix = String(index).padStart(2, "0");
+			const session = {
+				id: `session_${suffix}`,
+				name: `Session ${suffix}`,
+				createdAt: `2026-05-01T00:${suffix}:00.000Z`,
+				updatedAt: `2026-05-02T00:${suffix}:00.000Z`,
+				messages: [],
+				turns: [],
+				pageActions: [],
+				artifactIds: [],
+			};
+			return [session.id, session];
+		}),
+	);
+	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
+		settings: {
+			aiProvider: "onhand-smoke",
+			aiModel: "onhand-smoke-1",
+			aiApiKey: "test",
+			authMode: "api-key",
+		},
+		currentSessionId: "session_00",
+	};
+	globalThis.chrome.storage.local.data.onhandBrowserSessions = sessions;
+
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	const allSessions = await runtime.listSessions();
+	assert.equal(allSessions.sessions.length, 25, "listSessions() should return every saved session by default");
+	assert.equal(allSessions.totalCount, 25);
+	assert.equal(allSessions.hasMore, false);
+	assert.equal(
+		allSessions.sessions.some((session) => session.id === "session_24"),
+		true,
+		"full session list should include sessions beyond the previous 20-item cap",
+	);
+
+	const cappedSessions = await runtime.listSessions(20);
+	assert.equal(cappedSessions.sessions.length, 20, "positive listSessions(limit) should remain capped for diagnostic callers");
+	assert.equal(cappedSessions.totalCount, 25);
+	assert.equal(cappedSessions.hasMore, true);
+}
+
 async function assertSessionReplayRestore() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -5998,6 +6045,7 @@ async function main() {
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
 	await assertLegacySessionBlobMigratesToSessionRecords();
+	await assertListSessionsReturnsAllSessionsByDefault();
 	await assertSessionReplayRestore();
 	await assertFailedToolTraceSummarizesError();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();

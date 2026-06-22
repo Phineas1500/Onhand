@@ -139474,12 +139474,19 @@ function createOnhandBrowserRuntime(host) {
       await writeReviewSnooze(conceptKey, snoozedUntil);
       return { snoozedUntil, reviews: await getDueReviews(params) };
     },
-    async listSessions(limit2 = 20) {
+    async listSessions(limit2) {
       const store2 = await loadStore();
-      const sessions = Object.values(store2.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))).slice(0, Math.max(1, limit2)).map((session) => buildSessionListItem(session, store2.currentSessionId));
+      const sortedSessions = Object.values(store2.sessions).sort(
+        (left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
+      );
+      const normalizedLimit = typeof limit2 === "number" && Number.isFinite(limit2) && limit2 > 0 ? Math.floor(limit2) : 0;
+      const listedSessions = normalizedLimit ? sortedSessions.slice(0, normalizedLimit) : sortedSessions;
+      const sessions = listedSessions.map((session) => buildSessionListItem(session, store2.currentSessionId));
       return {
         currentSession: buildSessionState(store2.sessions[store2.currentSessionId]),
-        sessions
+        sessions,
+        totalCount: sortedSessions.length,
+        hasMore: normalizedLimit > 0 && sortedSessions.length > normalizedLimit
       };
     },
     async getSessionReplay(sessionId) {

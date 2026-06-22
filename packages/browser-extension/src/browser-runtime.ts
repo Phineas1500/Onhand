@@ -8620,15 +8620,19 @@ function findPairedHighlightSourceText(action: PageAction, actions: PageAction[]
 			return { snoozedUntil, reviews: await getDueReviews(params) };
 		},
 
-		async listSessions(limit = 20) {
+		async listSessions(limit?: number) {
 			const store = await loadStore();
-			const sessions = Object.values(store.sessions)
-				.sort((left: any, right: any) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
-				.slice(0, Math.max(1, limit))
-				.map((session: any) => buildSessionListItem(session as RuntimeSession, store.currentSessionId));
+			const sortedSessions = Object.values(store.sessions).sort((left: any, right: any) =>
+				String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")),
+			);
+			const normalizedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+			const listedSessions = normalizedLimit ? sortedSessions.slice(0, normalizedLimit) : sortedSessions;
+			const sessions = listedSessions.map((session: any) => buildSessionListItem(session as RuntimeSession, store.currentSessionId));
 			return {
 				currentSession: buildSessionState(store.sessions[store.currentSessionId]),
 				sessions,
+				totalCount: sortedSessions.length,
+				hasMore: normalizedLimit > 0 && sortedSessions.length > normalizedLimit,
 			};
 		},
 
