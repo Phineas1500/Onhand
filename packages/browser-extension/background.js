@@ -3412,8 +3412,10 @@ const createPageToolkit = (options = {}) => {
 			  position: absolute !important;
 			  background: var(--onhand-hl-bg) !important;
 			  border-radius: 2px !important;
-			  pointer-events: auto !important;
-			  cursor: pointer !important;
+			  pointer-events: none !important;
+			  cursor: default !important;
+			  user-select: none !important;
+			  -webkit-user-select: none !important;
 			  scroll-margin-top: 20vh !important;
 			  scroll-margin-bottom: 20vh !important;
 			}
@@ -4094,14 +4096,66 @@ const createPageToolkit = (options = {}) => {
 	const normalizePdfRect = (rect, pageRect, pageNumber) => {
 		const pageWidth = Math.max(1, pageRect.width || 1);
 		const pageHeight = Math.max(1, pageRect.height || 1);
+		const left = clampUnit((rect.left - pageRect.left) / pageWidth);
+		const top = clampUnit((rect.top - pageRect.top) / pageHeight);
+		const rawRight = Number.isFinite(rect.right)
+			? (rect.right - pageRect.left) / pageWidth
+			: (rect.left - pageRect.left + rect.width) / pageWidth;
+		const rawBottom = Number.isFinite(rect.bottom)
+			? (rect.bottom - pageRect.top) / pageHeight
+			: (rect.top - pageRect.top + rect.height) / pageHeight;
+		const right = clampUnit(rawRight);
+		const bottom = clampUnit(rawBottom);
 		return {
 			pageNumber,
-			x: clampUnit((rect.left - pageRect.left) / pageWidth),
-			y: clampUnit((rect.top - pageRect.top) / pageHeight),
-			width: clampUnit(rect.width / pageWidth),
-			height: clampUnit(rect.height / pageHeight),
+			x: left,
+			y: top,
+			width: Math.max(0, right - left),
+			height: Math.max(0, bottom - top),
 			coordinateSpace: "page-normalized",
 		};
+	};
+
+	const MIN_PDF_HIGHLIGHT_RECT_RATIO = 0.0005;
+	const MAX_PDF_HIGHLIGHT_RECT_HEIGHT_RATIO = 0.35;
+
+	const sanitizePdfNormalizedRect = (rect, fallbackPageNumber = null, options = {}) => {
+		if (!rect || typeof rect !== "object") return null;
+		const pageNumber = Number.parseInt(String(rect.pageNumber || fallbackPageNumber || ""), 10);
+		if (!Number.isFinite(pageNumber) || pageNumber <= 0) return null;
+		const x = Number(rect.x ?? rect.left);
+		const y = Number(rect.y ?? rect.top);
+		const width = Number(rect.width);
+		const height = Number(rect.height);
+		if (![x, y, width, height].every(Number.isFinite)) return null;
+		if (width <= 0 || height <= 0) return null;
+		const left = Math.max(0, Math.min(1, x));
+		const top = Math.max(0, Math.min(1, y));
+		const right = Math.max(0, Math.min(1, x + width));
+		const bottom = Math.max(0, Math.min(1, y + height));
+		const boundedWidth = right - left;
+		const boundedHeight = bottom - top;
+		if (boundedWidth <= MIN_PDF_HIGHLIGHT_RECT_RATIO || boundedHeight <= MIN_PDF_HIGHLIGHT_RECT_RATIO) return null;
+		const looksLikeSingleLineRect = boundedHeight >= 0.98 && boundedWidth < 0.95;
+		if (options.rejectTall !== false && boundedHeight > MAX_PDF_HIGHLIGHT_RECT_HEIGHT_RATIO && !looksLikeSingleLineRect) return null;
+		return {
+			pageNumber,
+			x: left,
+			y: top,
+			width: boundedWidth,
+			height: boundedHeight,
+			coordinateSpace: "page-normalized",
+		};
+	};
+
+	const getSanitizedPdfAnchorRectEntries = (pdfAnchor, fallbackPageNumber = null, options = {}) => {
+		const rects = Array.isArray(pdfAnchor?.rects) ? pdfAnchor.rects : [];
+		return rects
+			.map((rect, index) => {
+				const sanitized = sanitizePdfNormalizedRect(rect, fallbackPageNumber, options);
+				return sanitized ? { index, rect: sanitized } : null;
+			})
+			.filter(Boolean);
 	};
 
 	const getPdfPageLayoutSize = (page, pageRect = null) => {
@@ -4167,8 +4221,7 @@ const createPageToolkit = (options = {}) => {
 		if (!pdfAnchor || typeof pdfAnchor !== "object") return null;
 		const anchorPage = findPdfPageByNumber(pdfAnchor.pageNumber);
 		if (anchorPage instanceof HTMLElement) return anchorPage;
-		const rects = Array.isArray(pdfAnchor.rects) ? pdfAnchor.rects : [];
-			for (const rect of rects) {
+		for (const { rect } of getSanitizedPdfAnchorRectEntries(pdfAnchor)) {
 			const page = findPdfPageByNumber(rect?.pageNumber);
 			if (page instanceof HTMLElement) return page;
 		}
@@ -4292,32 +4345,26 @@ const createPageToolkit = (options = {}) => {
 		return note;
 	};
 
-	const bindPdfAnnotationNoteTrigger = (trigger, annotationId) => {
-		const rawAnnotationId = String(annotationId || "").trim();
-		if (!(trigger instanceof HTMLElement) || !rawAnnotationId || trigger.hasAttribute("data-onhand-note-trigger-bound")) return;
-		trigger.setAttribute("data-onhand-note-trigger-bound", "true");
-		trigger.setAttribute("role", "button");
-		trigger.setAttribute("tabindex", "0");
-		trigger.setAttribute("title", "Show Onhand note");
-		setPdfOverlayStyle(trigger, "pointer-events", "auto");
-		setPdfOverlayStyle(trigger, "cursor", "pointer");
-		trigger.addEventListener("click", () => {
-			expandPdfNoteForAnnotation(rawAnnotationId);
-		});
-		trigger.addEventListener("keydown", (event) => {
-			if (event.key !== "Enter" && event.key !== " ") return;
-			event.preventDefault();
-			expandPdfNoteForAnnotation(rawAnnotationId);
-		});
+	const makePdfHighlightOverlayPassive = (element) => {
+		if (!(element instanceof HTMLElement)) return;
+		element.removeAttribute("role");
+		element.removeAttribute("tabindex");
+		element.removeAttribute("title");
+		element.removeAttribute("data-onhand-note-trigger-bound");
+		element.setAttribute("aria-hidden", "true");
+		setPdfOverlayStyle(element, "pointer-events", "none");
+		setPdfOverlayStyle(element, "cursor", "default");
+		setPdfOverlayStyle(element, "user-select", "none");
+		setPdfOverlayStyle(element, "-webkit-user-select", "none");
 	};
 
 	const attachPdfNoteInteractions = (note, annotationElement) => {
 		if (!(note instanceof HTMLElement)) return;
 		const annotationId = String(note.getAttribute("data-onhand-note-for") || annotationElement?.getAttribute?.("data-onhand-annotation-id") || "");
 		if (!annotationId) return;
-		if (annotationElement instanceof HTMLElement) bindPdfAnnotationNoteTrigger(annotationElement, annotationId);
+		if (annotationElement instanceof HTMLElement) makePdfHighlightOverlayPassive(annotationElement);
 		for (const segment of Array.from(document.querySelectorAll(`[data-onhand-pdf-segment-for="${attrEscape(annotationId)}"]`))) {
-			bindPdfAnnotationNoteTrigger(segment, annotationId);
+			makePdfHighlightOverlayPassive(segment);
 		}
 		if (note.hasAttribute("data-onhand-note-toggle-bound")) return;
 		note.setAttribute("data-onhand-note-toggle-bound", "true");
@@ -4370,25 +4417,22 @@ const createPageToolkit = (options = {}) => {
 		return note;
 	};
 
-	const positionPdfHighlightElement = (annotationElement, page, pdfAnchor) => {
+	const positionPdfHighlightElement = (annotationElement, page, pdfAnchor, options = {}) => {
 		if (!(annotationElement instanceof HTMLElement) || !(page instanceof HTMLElement)) return false;
-		const rects = Array.isArray(pdfAnchor?.rects) ? pdfAnchor.rects : [];
+		makePdfHighlightOverlayPassive(annotationElement);
+		const rectEntries = getSanitizedPdfAnchorRectEntries(pdfAnchor, getPdfPageNumber(page), options);
 		const annotationId = String(annotationElement.getAttribute("data-onhand-annotation-id") || "");
 		const pageNumber = getPdfPageNumber(page);
-		const primaryIndex = rects.findIndex(
-			(rect) => rect && Number(rect.pageNumber || pageNumber) === pageNumber && Number(rect.width) > 0 && Number(rect.height) > 0,
-		);
-		const fallbackIndex = rects.findIndex((rect) => rect && Number(rect.width) > 0 && Number(rect.height) > 0);
-		const targetIndex = primaryIndex >= 0 ? primaryIndex : fallbackIndex;
-		const primaryRect = targetIndex >= 0 ? rects[targetIndex] : null;
-		if (!primaryRect) return false;
-		positionPdfVisualRect(annotationElement, page, primaryRect);
-		syncPdfHighlightSegments(annotationId, pdfAnchor, targetIndex);
+		const primaryEntry = rectEntries.find((entry) => Number(entry.rect.pageNumber) === pageNumber) || null;
+		if (!primaryEntry) return false;
+		positionPdfVisualRect(annotationElement, page, primaryEntry.rect);
+		syncPdfHighlightSegments(annotationId, pdfAnchor, primaryEntry.index, options);
 		return true;
 	};
 
 	const positionPdfVisualRect = (element, page, rect) => {
 		if (!(element instanceof HTMLElement) || !(page instanceof HTMLElement) || !rect) return false;
+		makePdfHighlightOverlayPassive(element);
 		const positioned = denormalizePdfRect(rect, page, page.getBoundingClientRect());
 		setPdfOverlayStyle(element, "left", `${positioned.left}px`);
 		setPdfOverlayStyle(element, "top", `${positioned.top}px`);
@@ -4408,14 +4452,14 @@ const createPageToolkit = (options = {}) => {
 		return removed;
 	};
 
-	const syncPdfHighlightSegments = (annotationId, pdfAnchor, primaryRectIndex = 0) => {
+	const syncPdfHighlightSegments = (annotationId, pdfAnchor, primaryRectIndex = 0, options = {}) => {
 		const rawAnnotationId = String(annotationId || "").trim();
 		if (!rawAnnotationId || !pdfAnchor) return 0;
 		removePdfHighlightSegments(rawAnnotationId);
-		const rects = Array.isArray(pdfAnchor.rects) ? pdfAnchor.rects : [];
+		const rectEntries = getSanitizedPdfAnchorRectEntries(pdfAnchor, null, options);
 		let created = 0;
-		for (const [index, rect] of rects.entries()) {
-			if (index === primaryRectIndex || !rect || Number(rect.width) <= 0 || Number(rect.height) <= 0) continue;
+		for (const { index, rect } of rectEntries) {
+			if (index === primaryRectIndex) continue;
 			const page = findPdfPageByNumber(rect.pageNumber);
 			if (!(page instanceof HTMLElement)) continue;
 			const overlayLayer = ensurePdfOverlayLayer(page);
@@ -4427,8 +4471,8 @@ const createPageToolkit = (options = {}) => {
 			segment.setAttribute("data-onhand-matched-text", normalizeText(pdfAnchor.matchedText || pdfAnchor.textQuote?.exact || ""));
 			segment.setAttribute("aria-hidden", "true");
 			applyAnnotationThemeToElement(segment);
+			makePdfHighlightOverlayPassive(segment);
 			if (!positionPdfVisualRect(segment, page, rect)) continue;
-			bindPdfAnnotationNoteTrigger(segment, rawAnnotationId);
 			overlayLayer.appendChild(segment);
 			created += 1;
 		}
@@ -4817,15 +4861,15 @@ const createPageToolkit = (options = {}) => {
 		const surface = options.surface || getAnnotationSurfaceInfo();
 		if (surface.surface !== "pdf") return null;
 		const fallbackLayer = getPdfTextLayer(fallbackPage, { allowPageFallback: surface.likelyPdfDocument });
-		const fallbackRect = fallbackLayer?.getBoundingClientRect?.() || fallbackPage.getBoundingClientRect();
-		const normalizedRects = getPdfRangeClientRects(range, fallbackPage, fallbackRect)
-			.map((rect) => {
-				const page = findPdfPageForViewportRect(rect, fallbackPage);
-				if (!(page instanceof Element)) return null;
-				const pageNumber = getPdfPageNumber(page);
-				return normalizePdfRect(rect, page.getBoundingClientRect(), pageNumber);
-			})
-			.filter((rect) => rect && rect.width > 0 && rect.height > 0);
+			const fallbackRect = fallbackLayer?.getBoundingClientRect?.() || fallbackPage.getBoundingClientRect();
+			const normalizedRects = getPdfRangeClientRects(range, fallbackPage, fallbackRect)
+				.map((rect) => {
+					const page = findPdfPageForViewportRect(rect, fallbackPage);
+					if (!(page instanceof Element)) return null;
+					const pageNumber = getPdfPageNumber(page);
+					return sanitizePdfNormalizedRect(normalizePdfRect(rect, page.getBoundingClientRect(), pageNumber), pageNumber, { rejectTall: false });
+				})
+				.filter(Boolean);
 		if (!normalizedRects.length) return null;
 		const primaryPageNumber = Number(normalizedRects[0].pageNumber || getPdfPageNumber(fallbackPage));
 		const primaryPage = findPdfPageByNumber(primaryPageNumber) || fallbackPage;
@@ -4873,14 +4917,14 @@ const createPageToolkit = (options = {}) => {
 
 	const createPdfOverlayHighlight = (page, pdfAnchor, rawQuery, options = {}) => {
 		if (!(page instanceof HTMLElement)) return null;
-		const rects = Array.isArray(pdfAnchor?.rects) ? pdfAnchor.rects : [];
-		const primaryRect = rects.find((rect) => rect && Number(rect.width) > 0 && Number(rect.height) > 0);
-		if (!primaryRect) return null;
+		const pageNumber = getPdfPageNumber(page);
+		const rectEntries = getSanitizedPdfAnchorRectEntries(pdfAnchor, Number(pdfAnchor?.pageNumber || pageNumber) || pageNumber);
+		const rects = rectEntries.map((entry) => entry.rect);
+		if (!rectEntries.some((entry) => Number(entry.rect.pageNumber) === pageNumber)) return null;
 		const overlayLayer = ensurePdfOverlayLayer(page);
 		if (!overlayLayer) return null;
 		const annotationId = String(options.annotationId || nextAnnotationId());
 		const matchedText = normalizeText(pdfAnchor?.matchedText || pdfAnchor?.textQuote?.exact || rawQuery);
-		const pageNumber = getPdfPageNumber(page);
 		const anchor = {
 			surface: "pdf",
 			viewer: pdfAnchor?.viewer || options.viewer || "unknown-pdf",
@@ -4888,7 +4932,7 @@ const createPageToolkit = (options = {}) => {
 					...buildPdfDocumentInfo(options.surface || {}),
 					...(pdfAnchor?.document || {}),
 				},
-			pageNumber: Number(pdfAnchor?.pageNumber || primaryRect.pageNumber || pageNumber) || pageNumber,
+			pageNumber: Number(pdfAnchor?.pageNumber || pageNumber) || pageNumber,
 			matchedText,
 			textQuote: {
 				...(pdfAnchor?.textQuote || {}),
@@ -4903,8 +4947,7 @@ const createPageToolkit = (options = {}) => {
 		highlight.setAttribute("data-onhand-matched-text", matchedText);
 		highlight.setAttribute("data-onhand-pdf-anchor", JSON.stringify(anchor));
 		applyAnnotationThemeToElement(highlight);
-		positionPdfHighlightElement(highlight, page, anchor);
-		bindPdfAnnotationNoteTrigger(highlight, annotationId);
+		if (!positionPdfHighlightElement(highlight, page, anchor)) return null;
 		overlayLayer.appendChild(highlight);
 		if (options.register !== false) {
 			registerPdfAnnotationRecord(annotationId, {
@@ -5144,7 +5187,9 @@ const createPageToolkit = (options = {}) => {
 			const pageNumber = getPdfPageNumber(page, index);
 			const pageRect = page.getBoundingClientRect();
 			const fallbackRect = textLayer.getBoundingClientRect();
-			const rects = getPdfRangeClientRects(match.range, page, fallbackRect).map((rect) => normalizePdfRect(rect, pageRect, pageNumber));
+			const rects = getPdfRangeClientRects(match.range, page, fallbackRect)
+				.map((rect) => sanitizePdfNormalizedRect(normalizePdfRect(rect, pageRect, pageNumber), pageNumber, { rejectTall: false }))
+				.filter(Boolean);
 			if (!rects.length) continue;
 			const overlayLayer = ensurePdfOverlayLayer(page);
 			if (!overlayLayer) continue;
@@ -5166,12 +5211,11 @@ const createPageToolkit = (options = {}) => {
 				},
 				rects,
 				occurrence,
-			};
-			highlight.setAttribute("data-onhand-pdf-anchor", JSON.stringify(pdfAnchor));
-			applyAnnotationThemeToElement(highlight);
-			positionPdfHighlightElement(highlight, page, pdfAnchor);
-			bindPdfAnnotationNoteTrigger(highlight, annotationId);
-			overlayLayer.appendChild(highlight);
+				};
+				highlight.setAttribute("data-onhand-pdf-anchor", JSON.stringify(pdfAnchor));
+				applyAnnotationThemeToElement(highlight);
+				if (!positionPdfHighlightElement(highlight, page, pdfAnchor, { rejectTall: false })) continue;
+				overlayLayer.appendChild(highlight);
 			registerPdfAnnotationRecord(annotationId, {
 				matchedText: match.matchedText,
 				pdfAnchor,
@@ -11347,6 +11391,8 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_pdf_search: "pdf_search",
 	browser_pdf_read_pages: "pdf_read_pages",
 	browser_pdf_jump_to_page: "pdf_jump_to_page",
+	browser_pdf_capture_page_image: "pdf_capture_page_image",
+	browser_pdf_find_citation: "pdf_find_citation",
 	browser_get_visible_text: "get_visible_text",
 	browser_extract_content: "extract_content",
 	browser_textbook_search: "textbook_search",
@@ -11721,7 +11767,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:realtime-pdf-tool") {
 			const tool = String(message.tool || "");
-			const allowedTools = new Set(["pdf_search", "pdf_read_pages", "pdf_jump_to_page"]);
+			const allowedTools = new Set(["pdf_search", "pdf_read_pages", "pdf_jump_to_page", "pdf_capture_page_image", "pdf_find_citation"]);
 			if (!allowedTools.has(tool)) {
 				throw new Error(`Unsupported realtime PDF tool: ${tool || "(missing)"}`);
 			}

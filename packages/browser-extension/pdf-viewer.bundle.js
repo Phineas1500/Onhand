@@ -25496,14 +25496,27 @@ function textSegmentRectsForPage(range, page) {
     const left = spanRect.left + prefixWidth / fullWidth * spanRect.width;
     const width = Math.min(spanRect.right, left + segmentWidth / fullWidth * spanRect.width) - left;
     if (width <= 0) continue;
-    rects.push({
+    const rect = clampPdfRectToPageSize({
       left: (left - pageRect.left) * scaleX,
       top: (spanRect.top - pageRect.top) * scaleY,
       width: width * scaleX,
       height: spanRect.height * scaleY
-    });
+    }, size);
+    if (rect) rects.push(rect);
   }
   return rects;
+}
+function clampPdfRectToPageSize(rect, size) {
+  const pageWidth = Math.max(1, Number(size.width) || 1);
+  const pageHeight = Math.max(1, Number(size.height) || 1);
+  const left = Math.max(0, Math.min(pageWidth, Number(rect.left) || 0));
+  const top = Math.max(0, Math.min(pageHeight, Number(rect.top) || 0));
+  const right = Math.max(0, Math.min(pageWidth, Number(rect.left + rect.width) || 0));
+  const bottom = Math.max(0, Math.min(pageHeight, Number(rect.top + rect.height) || 0));
+  const width = right - left;
+  const height = bottom - top;
+  if (width <= 0.5 || height <= 0.5) return null;
+  return { left, top, width, height };
 }
 function rangeRectsForPage(range, page) {
   const textSegmentRects = textSegmentRectsForPage(range, page);
@@ -25517,7 +25530,7 @@ function rangeRectsForPage(range, page) {
     top: (rect.top - pageRect.top) * scaleY,
     width: rect.width * scaleX,
     height: rect.height * scaleY
-  }));
+  })).map((rect) => clampPdfRectToPageSize(rect, size)).filter((rect) => Boolean(rect));
 }
 function unionRects(rects) {
   const left = Math.min(...rects.map((rect) => rect.left));
@@ -25529,14 +25542,16 @@ function unionRects(rects) {
 function applyHighlightStyles(highlight, rects, union) {
   highlight.setAttribute("data-onhand-pdf-highlight-container", "true");
   highlight.setAttribute("data-onhand-theme", PDF_VIEWER_ANNOTATION_THEME);
+  makePdfHighlightPassive(highlight);
   Object.assign(highlight.style, {
     position: "absolute",
     left: `${union.left}px`,
     top: `${union.top}px`,
     width: `${union.width}px`,
     height: `${union.height}px`,
-    pointerEvents: "auto",
-    cursor: "pointer",
+    pointerEvents: "none",
+    cursor: "default",
+    userSelect: "none",
     // Highlights and note cards share one annotation layer, so paint
     // order would otherwise follow DOM order — a highlight added after
     // a card would cover it. Pin highlights below cards explicitly.
@@ -25548,6 +25563,7 @@ function applyHighlightStyles(highlight, rects, union) {
     const segment = document.createElement("div");
     segment.setAttribute("data-onhand-pdf-highlight-segment", "true");
     segment.setAttribute("data-onhand-theme", PDF_VIEWER_ANNOTATION_THEME);
+    makePdfHighlightPassive(segment);
     Object.assign(segment.style, {
       position: "absolute",
       left: `${rect.left - union.left}px`,
@@ -25561,6 +25577,21 @@ function applyHighlightStyles(highlight, rects, union) {
   }
   highlight.style.setProperty("background", "transparent", "important");
   highlight.style.setProperty("border-radius", "0", "important");
+  highlight.style.setProperty("pointer-events", "none", "important");
+  highlight.style.setProperty("cursor", "default", "important");
+  highlight.style.setProperty("user-select", "none", "important");
+  highlight.style.setProperty("-webkit-user-select", "none", "important");
+}
+function makePdfHighlightPassive(element) {
+  element.removeAttribute("role");
+  element.removeAttribute("tabindex");
+  element.removeAttribute("title");
+  element.removeAttribute("data-onhand-note-trigger-bound");
+  element.setAttribute("aria-hidden", "true");
+  element.style.setProperty("pointer-events", "none", "important");
+  element.style.setProperty("cursor", "default", "important");
+  element.style.setProperty("user-select", "none", "important");
+  element.style.setProperty("-webkit-user-select", "none", "important");
 }
 function buildAnnotationResult(annotation, rawQuery = "", extra = {}) {
   const page = annotation.closest(".page[data-page-number]");
@@ -25960,20 +25991,7 @@ function expandPdfNoteForAnnotation(annotationId) {
 function attachPdfNoteInteractions(note, annotation) {
   const annotationId = String(note.getAttribute("data-onhand-note-for") || annotation.getAttribute("data-onhand-annotation-id") || "");
   if (!annotationId) return;
-  if (!annotation.hasAttribute("data-onhand-note-trigger-bound")) {
-    annotation.setAttribute("data-onhand-note-trigger-bound", "true");
-    annotation.setAttribute("role", "button");
-    annotation.setAttribute("tabindex", "0");
-    annotation.setAttribute("title", "Show Onhand note");
-    annotation.addEventListener("click", () => {
-      expandPdfNoteForAnnotation(annotationId);
-    });
-    annotation.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      expandPdfNoteForAnnotation(annotationId);
-    });
-  }
+  makePdfHighlightPassive(annotation);
   if (note.hasAttribute("data-onhand-note-toggle-bound")) return;
   note.setAttribute("data-onhand-note-toggle-bound", "true");
   const toggle = note.querySelector("[data-onhand-note-toggle]");

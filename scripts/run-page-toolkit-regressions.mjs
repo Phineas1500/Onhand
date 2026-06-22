@@ -244,6 +244,16 @@ async function assertPdfViewerHandoffHelpers() {
 	);
 	assert.match(backgroundSource, /installInlineOnhandPdfViewer\(finalTab\.id,\s*pdfUrl,\s*viewerOptions\)/, "Inline PDF handoff should pass the inferred page into the viewer URL");
 	assert.match(backgroundSource, /tabId: typeof message\.tabId === "number"/, "Sidebar PDF handoff should preserve the current page tab id");
+	assert.match(
+		backgroundSource,
+		/REALTIME_BROWSER_TOOL_COMMANDS[\s\S]*browser_pdf_capture_page_image:\s*"pdf_capture_page_image"[\s\S]*browser_pdf_find_citation:\s*"pdf_find_citation"/,
+		"Realtime browser bridge should expose PDF page image capture and citation lookup",
+	);
+	assert.match(
+		backgroundSource,
+		/new Set\(\["pdf_search", "pdf_read_pages", "pdf_jump_to_page", "pdf_capture_page_image", "pdf_find_citation"\]\)/,
+		"Realtime PDF bridge should allow search, read, jump, image capture, and citation lookup",
+	);
 }
 
 async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
@@ -296,6 +306,10 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /for \(const prefixIndex of collectMatchIndices\(compactText, compactPrefix\)\)/, "context recovery should consider every prefix occurrence, not just the first");
 	assert.match(source, /function textSegmentRectsForPage/, "PDF viewer highlights should compute text-span segment rects for partial PDF text matches");
 	assert.match(source, /function rangeRectsForPage[\s\S]*textSegmentRectsForPage/, "PDF viewer highlights should prefer text-span segment rects before browser range rects");
+	assert.match(source, /function clampPdfRectToPageSize/, "PDF viewer highlight rects should be clamped to page bounds before rendering");
+	assert.match(source, /function makePdfHighlightPassive/, "PDF viewer highlights should have a shared passive-overlay helper");
+	assert.match(source, /pointerEvents:\s*"none"/, "PDF viewer highlight containers should not intercept text selection or clicks");
+	assert.doesNotMatch(source, /annotation\.setAttribute\("role",\s*"button"\)/, "PDF viewer highlights should not become note trigger buttons");
 	assert.match(htmlSource, /--scale-factor:\s*1/, "PDF viewer text layer should define a default PDF.js scale factor");
 	assert.match(source, /textLayer\.style\.setProperty\("--scale-factor",\s*String\(currentScale\)\)/, "PDF viewer text layer should use the same scale factor as the canvas");
 	assert.match(source, /options\.reuseExisting === true/, "PDF viewer highlight replay should honor reuseExisting");
@@ -947,6 +961,18 @@ function fixedRect({ left, top, width, height }) {
 
 function setElementRect(element, rect) {
 	element.getBoundingClientRect = () => fixedRect(rect);
+}
+
+function assertPassivePdfHighlightElement(element, label = "PDF highlight") {
+	assert.ok(element, `${label} should exist`);
+	assert.equal(element.style.pointerEvents, "none", `${label} should not intercept mouse events`);
+	assert.equal(element.style.getPropertyPriority("pointer-events"), "important", `${label} should force pointer-events through inline style`);
+	assert.equal(element.style.cursor, "default", `${label} should not advertise clickability`);
+	assert.equal(element.style.userSelect, "none", `${label} should not become selectable overlay text`);
+	assert.equal(element.getAttribute("role"), null, `${label} should not be exposed as a button`);
+	assert.equal(element.getAttribute("tabindex"), null, `${label} should not be keyboard-focusable`);
+	assert.equal(element.getAttribute("title"), null, `${label} should not show a click-target tooltip`);
+	assert.equal(element.getAttribute("aria-hidden"), "true", `${label} should be hidden from accessibility navigation`);
 }
 
 async function createToolkit(html, toolkitOptions = {}) {
@@ -1679,6 +1705,17 @@ async function assertPdfHighlightAndNoteUseOverlayAnchors() {
 			</div>
 		</main>
 	`);
+	const page = dom.window.document.querySelector(".page");
+	const textSpans = Array.from(dom.window.document.querySelectorAll(".textLayer span"));
+	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
+	Object.defineProperties(page, {
+		clientWidth: { value: 600, configurable: true },
+		clientHeight: { value: 800, configurable: true },
+	});
+	setElementRect(textSpans[0], { left: 150, top: 230, width: 190, height: 24 });
+	setElementRect(textSpans[1], { left: 340, top: 230, width: 210, height: 24 });
+	setElementRect(textSpans[2], { left: 150, top: 260, width: 300, height: 24 });
+
 	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
 	assert.equal(highlight.kind, "pdf");
 	assert.equal(highlight.surface, "pdf");
@@ -1691,16 +1728,6 @@ async function assertPdfHighlightAndNoteUseOverlayAnchors() {
 	assert.equal(overlay.getAttribute("data-onhand-annotation-id"), highlight.annotationId);
 	assert.equal(overlay.getAttribute("data-onhand-matched-text"), "recurrent neural networks");
 	assert.equal(overlay.style.getPropertyPriority("width"), "important");
-	const page = dom.window.document.querySelector(".page");
-	const textSpans = Array.from(dom.window.document.querySelectorAll(".textLayer span"));
-	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
-	Object.defineProperties(page, {
-		clientWidth: { value: 600, configurable: true },
-		clientHeight: { value: 800, configurable: true },
-	});
-	setElementRect(textSpans[0], { left: 150, top: 230, width: 190, height: 24 });
-	setElementRect(textSpans[1], { left: 340, top: 230, width: 210, height: 24 });
-	setElementRect(textSpans[2], { left: 150, top: 260, width: 300, height: 24 });
 	setElementRect(overlay, { left: 340, top: 230, width: 210, height: 24 });
 
 	const noteResult = await toolkit.showNote(highlight.annotationId, "RNNs carry state across a sequence.", { scrollIntoView: false });
@@ -1720,6 +1747,8 @@ async function assertPdfHighlightAndNoteUseOverlayAnchors() {
 	assert.equal(note.style.padding, "12px 14px", "expanded PDF notes should start with normal card padding");
 	assert.equal(note.style.overflow, "visible", "expanded PDF notes should not clip the note body");
 	assert.equal(note.style.getPropertyPriority("pointer-events"), "important");
+	assert.equal(note.style.pointerEvents, "auto", "PDF note card should remain interactive");
+	assertPassivePdfHighlightElement(overlay, "PDF highlight overlay after note");
 	assert.ok(
 		Number.parseFloat(note.style.top) + 76 < 230,
 		`expanded PDF notes should prefer available whitespace over covering adjacent PDF text; got top=${note.style.top}`,
@@ -1739,7 +1768,11 @@ async function assertPdfHighlightAndNoteUseOverlayAnchors() {
 	assert.equal(collapsedCapture.annotations[0].note.text, "RNNs carry state across a sequence.", "collapsed PDF notes should still be captured");
 
 	overlay.click();
-	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "false", "clicking the highlight should reopen the note");
+	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "true", "clicking the highlight should not reopen the PDF note");
+	assert.equal(noteBody.hidden, true, "highlight clicks should leave collapsed PDF note bodies hidden");
+	assert.equal(note.style.opacity, "0.48", "highlight clicks should leave collapsed PDF notes translucent");
+	note.click();
+	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "false", "clicking the note marker should reopen the note");
 	assert.equal(noteBody.hidden, false, "reopened PDF notes should show their body text");
 	assert.equal(note.style.opacity, "", "reopened PDF notes should not stay translucent");
 
@@ -1887,6 +1920,16 @@ async function assertOnhandPdfViewerSurfaceAndAnchorRestore() {
 	assert.equal(surface.surface, "pdf");
 	assert.equal(surface.hasTextLayer, true);
 	assert.equal(surface.pdfUrl, sourceUrl);
+	const page = dom.window.document.querySelector(".page");
+	const textSpans = Array.from(dom.window.document.querySelectorAll(".textLayer span"));
+	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
+	Object.defineProperties(page, {
+		clientWidth: { value: 600, configurable: true },
+		clientHeight: { value: 800, configurable: true },
+	});
+	setElementRect(textSpans[0], { left: 150, top: 230, width: 190, height: 24 });
+	setElementRect(textSpans[1], { left: 340, top: 230, width: 210, height: 24 });
+	setElementRect(textSpans[2], { left: 150, top: 260, width: 300, height: 24 });
 
 	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
 	assert.equal(highlight.kind, "pdf");
@@ -1955,8 +1998,74 @@ async function assertPdfAnchorRestoreUsesLayoutCoordinatesWhenPageIsScaled() {
 	assert.ok(highlight, "expected restored PDF highlight");
 	assert.equal(highlight.style.left, "300px", "scaled PDF highlights should use page layout coordinates for left");
 	assert.equal(highlight.style.top, "200px", "scaled PDF highlights should use page layout coordinates for top");
-	assert.equal(highlight.style.width, "120px", "scaled PDF highlights should use page layout coordinates for width");
-	assert.equal(highlight.style.height, "40px", "scaled PDF highlights should use page layout coordinates for height");
+	assert.equal(Number.parseFloat(highlight.style.width).toFixed(3), "120.000", "scaled PDF highlights should use page layout coordinates for width");
+	assert.equal(Number.parseFloat(highlight.style.height).toFixed(3), "40.000", "scaled PDF highlights should use page layout coordinates for height");
+}
+
+async function assertPdfAnchorRestoreBoundsAndRejectsBadRects() {
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="1">
+				<div class="textLayer">
+					<span>Visible text does not contain the restored anchor phrase.</span>
+				</div>
+			</div>
+		</main>
+	`);
+	const page = dom.window.document.querySelector(".page");
+	setElementRect(page, { left: 20, top: 40, width: 500, height: 600 });
+	Object.defineProperties(page, {
+		clientWidth: { value: 1000, configurable: true },
+		clientHeight: { value: 1200, configurable: true },
+	});
+
+	const boundedAnchor = {
+		surface: "pdf",
+		viewer: "pdfjs",
+		document: {
+			url: "https://example.test/bounded.pdf",
+			title: "Bounded PDF",
+		},
+		pageNumber: 1,
+		matchedText: "anchor-only phrase",
+		textQuote: { exact: "anchor-only phrase" },
+		rects: [
+			{
+				pageNumber: 1,
+				x: 0.94,
+				y: 0.1,
+				width: 0.2,
+				height: 0.05,
+				coordinateSpace: "page-normalized",
+			},
+		],
+	};
+	const restored = await toolkit.highlightText("anchor-only phrase", {
+		scrollIntoView: false,
+		pdfAnchor: boundedAnchor,
+	});
+	assert.equal(restored.fallback, "pdf-anchor");
+	const highlight = dom.window.document.querySelector('[data-onhand-highlight-kind="pdf"]');
+	assertPassivePdfHighlightElement(highlight, "bounded PDF anchor highlight");
+	assert.equal(highlight.style.left, "940px");
+	assert.equal(Number.parseFloat(highlight.style.width).toFixed(2), "60.00", "overflowing PDF anchor rects should be clipped to the page edge");
+	assert.equal(restored.pdfAnchor.rects[0].width.toFixed(2), "0.06");
+
+	toolkit.clearAnnotations();
+	const invalidAnchor = {
+		...boundedAnchor,
+		matchedText: "missing stale phrase",
+		textQuote: { exact: "missing stale phrase" },
+		rects: [
+			{ pageNumber: 1, x: 2.2, y: 0.1, width: 0.2, height: 0.04, coordinateSpace: "page-normalized" },
+			{ pageNumber: 1, x: 0.1, y: 0.2, width: 0.6, height: 0.8, coordinateSpace: "page-normalized" },
+		],
+	};
+	await assert.rejects(
+		() => toolkit.highlightText("missing stale phrase", { scrollIntoView: false, pdfAnchor: invalidAnchor }),
+		/No visible PDF text matched|No visible text matched/,
+	);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 0, "bad PDF anchor rects should not render random highlights");
 }
 
 async function assertPdfAnchorCanRenderMultipleOverlaySegmentsAcrossPages() {
@@ -2462,6 +2571,8 @@ async function assertPdfHighlightPrefersVisiblePageMatch() {
 	`);
 	const page1 = dom.window.document.querySelector('[data-testid="page-1"]');
 	const page2 = dom.window.document.querySelector('[data-testid="page-2"]');
+	const page1Span = page1.querySelector(".textLayer span");
+	const page2Span = page2.querySelector(".textLayer span");
 	page1.getBoundingClientRect = () => ({
 		x: 16,
 		y: -640,
@@ -2486,8 +2597,10 @@ async function assertPdfHighlightPrefersVisiblePageMatch() {
 		height: 500,
 		toJSON() {
 			return { x: this.x, y: this.y, top: this.top, left: this.left, right: this.right, bottom: this.bottom, width: this.width, height: this.height };
-		},
+			},
 	});
+	setElementRect(page1Span, { left: 32, top: -600, width: 360, height: 24 });
+	setElementRect(page2Span, { left: 32, top: 120, width: 520, height: 24 });
 
 	const highlight = await toolkit.highlightText("recurrent neural networks", { scrollIntoView: false });
 	assert.equal(highlight.kind, "pdf");
@@ -2597,6 +2710,7 @@ async function main() {
 	await assertPdfHighlightUsesTextOffsetsInsideSingleSpan();
 	await assertOnhandPdfViewerSurfaceAndAnchorRestore();
 	await assertPdfAnchorRestoreUsesLayoutCoordinatesWhenPageIsScaled();
+	await assertPdfAnchorRestoreBoundsAndRejectsBadRects();
 	await assertPdfAnchorCanRenderMultipleOverlaySegmentsAcrossPages();
 	await assertPdfAnchorRehydratesVisibleSecondaryPageWhenPrimaryPageMissing();
 	await assertPdfOverlayReprojectsAfterPageResize();
