@@ -72,6 +72,13 @@ function findBrowser() {
 	return null;
 }
 
+function extraBrowserFlags() {
+	return String(process.env.ONHAND_TEST_BROWSER_FLAGS || "")
+		.split(/\s+/)
+		.map((flag) => flag.trim())
+		.filter(Boolean);
+}
+
 const log = (...args) => {
 	if (VERBOSE) console.log(...args);
 };
@@ -110,6 +117,7 @@ function launchBrowser(profile, port) {
 			"--no-first-run",
 			"--no-default-browser-check",
 			"--window-size=1280,1100",
+			...extraBrowserFlags(),
 			"about:blank",
 		],
 		{ stdio: "ignore", detached: false },
