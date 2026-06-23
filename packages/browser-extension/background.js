@@ -723,6 +723,28 @@ function buildOnhandPdfViewerUrl(pdfUrl, options = {}) {
 	return viewerUrl.toString();
 }
 
+async function resolveInlineOnhandPdfViewerSourceUrl(tabId, tab = null) {
+	try {
+		const sourceUrl = await executeScriptInTab(tabId, (expectedViewerUrlPrefix) => {
+			const frame = document.querySelector("#onhand-inline-pdf-viewer-frame, iframe[data-onhand-inline-pdf-frame]");
+			const root = document.querySelector("#onhand-inline-pdf-viewer-root, [data-onhand-inline-pdf-viewer]");
+			const candidates = [
+				root?.getAttribute?.("data-onhand-pdf-url"),
+				frame?.getAttribute?.("data-onhand-pdf-url"),
+			];
+			const frameSrc = String(frame?.getAttribute?.("src") || frame?.src || "");
+			if (frameSrc.startsWith(expectedViewerUrlPrefix)) {
+				try {
+					candidates.push(new URL(frameSrc).searchParams.get("url"));
+				} catch {}
+			}
+			return candidates.find((candidate) => typeof candidate === "string" && candidate.trim()) || "";
+		}, [chrome.runtime.getURL("pdf-viewer.html")]);
+		if (normalizePdfUrlCandidate(sourceUrl)) return String(sourceUrl).trim();
+	} catch {}
+	return resolvePdfSourceUrlForViewer({}, tab || (await chrome.tabs.get(tabId)));
+}
+
 function inlinePdfViewerBridgeStorageKey(pdfUrl) {
 	return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
 }
@@ -7461,9 +7483,9 @@ async function evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, mis
 	throw lastError || new Error(missingMessage);
 }
 
-async function callOnhandPdfViewerFrameViaBridge(tabId, commandPayload, missingMessage) {
+async function callOnhandPdfViewerFrameViaBridge(tabId, commandPayload, missingMessage, sourceUrl = "") {
 	const tab = await chrome.tabs.get(tabId);
-	const pdfUrl = resolvePdfSourceUrlForViewer({}, tab);
+	const pdfUrl = sourceUrl ? String(sourceUrl).trim() : await resolveInlineOnhandPdfViewerSourceUrl(tabId, tab);
 	const token = await ensureInlinePdfViewerBridgeToken(pdfUrl);
 	const viewerUrlPrefix = chrome.runtime.getURL("pdf-viewer.html");
 	const frameResults = await executeScriptInAllFrames(
@@ -7554,9 +7576,9 @@ async function evaluateInOnhandPdfViewerFrameViaBridge(tabId, expression, missin
 	return await callOnhandPdfViewerFrameViaBridge(tabId, { command: "evaluate", expression }, missingMessage);
 }
 
-async function callOnhandPdfViewerFrameViaRuntimePort(tabId, commandPayload, missingMessage) {
+async function callOnhandPdfViewerFrameViaRuntimePort(tabId, commandPayload, missingMessage, sourceUrl = "") {
 	const tab = await chrome.tabs.get(tabId);
-	const pdfUrl = resolvePdfSourceUrlForViewer({}, tab);
+	const pdfUrl = sourceUrl ? String(sourceUrl).trim() : await resolveInlineOnhandPdfViewerSourceUrl(tabId, tab);
 	const record =
 		onhandPdfViewerPortRecords.get(onhandPdfViewerPortKey(tabId, pdfUrl)) ||
 		onhandPdfViewerPortRecords.get(onhandPdfViewerSourcePortKey(pdfUrl));
@@ -8459,7 +8481,7 @@ async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
 	throw new Error(lastError?.message || "Timed out waiting for Onhand PDF viewer to finish rendering.");
 }
 
-async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
+async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
 	const deadline = Date.now() + timeoutMs;
 	let lastError = null;
 	const statusCommand = { command: "status" };
@@ -8474,7 +8496,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
 	})()`;
 	while (Date.now() < deadline) {
 		try {
-			const status = await callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found");
+			const status = await callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found", pdfUrl);
 			if (status?.ready) return { ok: true, ...status };
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
@@ -8483,7 +8505,7 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
 			lastError = runtimePortError;
 		}
 		try {
-			const status = await callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found");
+			const status = await callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found", pdfUrl);
 			if (status?.ready) return { ok: true, ...status };
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
@@ -8627,7 +8649,7 @@ async function openPdfInOnhandViewer(args = {}) {
 			const viewerReady =
 				existingStatus.ready || args.waitForLoad === false
 					? { ok: true, ...existingStatus }
-					: await waitForInlineOnhandPdfViewerReady(sourceTab.id, reuseTimeoutMs);
+					: await waitForInlineOnhandPdfViewerReady(sourceTab.id, reuseTimeoutMs, pdfUrl);
 			return {
 				tab: simplifyTab(focusedTab),
 				sourceTab: simplifyTab(sourceTab),
@@ -8698,7 +8720,7 @@ async function openPdfInOnhandViewer(args = {}) {
 		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
 		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
-		const viewerReady = waitForLoad ? await waitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs) : null;
+		const viewerReady = waitForLoad ? await waitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl) : null;
 		return {
 			tab: simplifyTab(await chrome.tabs.get(finalTab.id)),
 			sourceTab: sourceTabSnapshot,

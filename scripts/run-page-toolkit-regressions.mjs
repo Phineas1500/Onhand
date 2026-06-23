@@ -220,6 +220,18 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(backgroundSource, /Page\.getFrameTree/, "PDF handoff should inspect child frames for Chrome's native PDF viewer controls");
 	assert.match(backgroundSource, /chrome-extension:\/\/mhjfbmdgcfjbbpaeojofohoefgiehjai\//, "PDF handoff should prefer Chrome's native PDF viewer frame");
 	assert.match(backgroundSource, /chrome\.runtime\.getURL\(""\)/, "PDF handoff should avoid reading stale Onhand viewer frames when inferring the source PDF page");
+	assert.match(backgroundSource, /function resolveInlineOnhandPdfViewerSourceUrl/, "inline PDF viewer bridge calls should resolve the source URL from the installed viewer");
+	assert.match(backgroundSource, /data-onhand-pdf-url/, "inline PDF viewer bridge calls should prefer the viewer's own source URL over a normalized PDF tab URL");
+	assert.match(
+		backgroundSource,
+		/callOnhandPdfViewerFrameViaBridge[\s\S]*await resolveInlineOnhandPdfViewerSourceUrl/,
+		"inline PDF viewer postMessage bridge should use the installed viewer source URL for token lookup",
+	);
+	assert.match(
+		backgroundSource,
+		/callOnhandPdfViewerFrameViaRuntimePort[\s\S]*await resolveInlineOnhandPdfViewerSourceUrl/,
+		"inline PDF viewer runtime port should use the installed viewer source URL for port lookup",
+	);
 	assert.match(backgroundSource, /for \(const entry of readableFrameEntries\)[\s\S]*return await readTree\(\);/, "PDF handoff should read PDF viewer frames before falling back to the whole-tab accessibility tree");
 	assert.doesNotMatch(backgroundSource, /frameEntries\s*\.\s*slice\(1\)/, "PDF handoff should not skip the top frame when it may be Chrome's native PDF viewer");
 	assert.ok(
