@@ -3,6 +3,7 @@ import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
 
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
+const PAGE_TOOLKIT_ANNOTATION_TIMEOUT_MS = 12000;
 const PDF_READER_FRAME_EXECUTION_TIMEOUT_MS = 6000;
 const DEBUGGER_ATTACH_RETRY_DELAY_MS = 150;
 const SIDEBAR_WINDOW_STATES_KEY = "onhandSidebarWindowStates";
@@ -5581,7 +5582,8 @@ const createPageToolkit = (options = {}) => {
 	const isMathLikeHighlightQuery = (value) => {
 		const text = String(value || "").trim();
 		if (!text) return false;
-		if (/[=()[\]{}_^√∑∏∫+\-*\/\\]|[₀-₉⁰¹²³⁴⁵⁶⁷⁸⁹ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ]/u.test(text)) return true;
+		if (/[=()[\]{}_^√∑∏∫+*\/\\]|[₀-₉⁰¹²³⁴⁵⁶⁷⁸⁹ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ]/u.test(text)) return true;
+		if (/[−‐‑‒–—―]/u.test(text) && /(?:\d\s*[−‐‑‒–—―]\s*\d|[A-Za-z]\s*[−‐‑‒–—―]\s*\d|\d\s*[−‐‑‒–—―]\s*[A-Za-z])/u.test(text)) return true;
 		const compact = text.replace(/\s+/g, "");
 		return /^[A-Z][A-Za-z0-9]{1,10}$/.test(compact);
 	};
@@ -7350,6 +7352,10 @@ async function executePageToolkitMethodViaScripting(tabId, methodName, args = []
 	return payload.value;
 }
 
+function pageToolkitExecutionTimeoutMs(methodName) {
+	return ["highlightText", "showNote", "scrollToAnnotation"].includes(methodName) ? PAGE_TOOLKIT_ANNOTATION_TIMEOUT_MS : SCRIPT_EXECUTION_TIMEOUT_MS;
+}
+
 async function getAllFramesForTab(tabId) {
 	if (!chrome.webNavigation?.getAllFrames) return [];
 	return await new Promise((resolve, reject) => {
@@ -8161,10 +8167,12 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		throw new Error(`Onhand page tools only run on web or local-file tabs, not ${describeTabForError(tab)}`);
 	}
 	const toolkitOptions = await getPageToolkitOptions(tab);
+	const pageToolkitTimeoutMs = pageToolkitExecutionTimeoutMs(methodName);
+	const pageToolkitFrameTimeoutMs = Math.max(pageToolkitTimeoutMs, PDF_READER_FRAME_EXECUTION_TIMEOUT_MS);
 	try {
 		const payload = await withOperationTimeout(
 			executePageToolkitMethodViaScripting(tabId, methodName, args, toolkitOptions),
-			SCRIPT_EXECUTION_TIMEOUT_MS,
+			pageToolkitTimeoutMs,
 			`Page toolkit scripting timed out: ${methodName}`,
 		);
 		if (shouldPreferTextbookFramePageToolkit(tab, methodName, payload, args)) {
@@ -8172,7 +8180,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				scriptingFramePayload = await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					pageToolkitTimeoutMs,
 					`Page toolkit textbook-frame scripting timed out: ${methodName}`,
 				);
 				if (!pageToolkitPayloadLooksLikeReaderSearchUi(scriptingFramePayload, args?.[0])) return scriptingFramePayload;
@@ -8182,7 +8190,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				const debuggerFramePayload = await withOperationTimeout(
 					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Page toolkit textbook-frame debugger timed out: ${methodName}`,
 				);
 				if (!pageToolkitPayloadLooksLikeReaderSearchUi(debuggerFramePayload, args?.[0])) return debuggerFramePayload;
@@ -8195,7 +8203,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {
@@ -8208,7 +8216,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaGoogleScholarReaderFrame(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Google Scholar PDF Reader frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {
@@ -8223,7 +8231,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				const framePayload = await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					pageToolkitTimeoutMs,
 					`Page toolkit frame clear timed out: ${methodName}`,
 				);
 				const frameCount = Number(framePayload?.pageToolkitFrameFallback?.frameCount || 0);
@@ -8236,7 +8244,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				const debuggerFramePayload = await withOperationTimeout(
 					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Page toolkit debugger-frame clear timed out: ${methodName}`,
 				);
 				return mergeClearAnnotationResults(clearedPayload, debuggerFramePayload);
@@ -8258,7 +8266,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				const framePayload = await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					pageToolkitTimeoutMs,
 					`Page toolkit frame capture timed out: ${methodName}`,
 				);
 				if (Number(framePayload?.annotationCount || 0) > Number(payload?.annotationCount || 0)) return framePayload;
@@ -8266,7 +8274,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				const debuggerFramePayload = await withOperationTimeout(
 					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Page toolkit debugger-frame capture timed out: ${methodName}`,
 				);
 				if (Number(debuggerFramePayload?.annotationCount || 0) > Number(payload?.annotationCount || 0)) return debuggerFramePayload;
@@ -8301,7 +8309,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaGoogleScholarReaderFrame(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Google Scholar PDF Reader frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {
@@ -8313,7 +8321,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaOnhandPdfViewerFrame(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Onhand PDF viewer frame toolkit timed out: ${methodName}`,
 				);
 			} catch (frameError) {
@@ -8335,14 +8343,14 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					pageToolkitTimeoutMs,
 					`Page toolkit web-frame scripting timed out: ${methodName}`,
 				);
 			} catch (scriptingFrameError) {
 				try {
 					return await withOperationTimeout(
 						executePageToolkitMethodViaGenericWebFrame(tabId, methodName, args, toolkitOptions),
-						SCRIPT_EXECUTION_TIMEOUT_MS,
+						pageToolkitTimeoutMs,
 						`Page toolkit web-frame debugger timed out: ${methodName}`,
 					);
 				} catch (debuggerFrameError) {
@@ -8362,7 +8370,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				scriptingFramePayload = await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
-					SCRIPT_EXECUTION_TIMEOUT_MS,
+					pageToolkitTimeoutMs,
 					`Page toolkit web-frame scripting timed out: ${methodName}`,
 				);
 			} catch (error) {
@@ -8382,7 +8390,7 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			try {
 				return await withOperationTimeout(
 					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
-					PDF_READER_FRAME_EXECUTION_TIMEOUT_MS,
+					pageToolkitFrameTimeoutMs,
 					`Page toolkit web-frame debugger timed out: ${methodName}`,
 				);
 			} catch (debuggerFrameError) {
@@ -8403,9 +8411,9 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 				evaluateInTab(
 					tabId,
 					`(async () => { const toolkit = (${createPageToolkit.toString()})(${serializedOptions}); return await toolkit[${JSON.stringify(methodName)}](${serializedArgs}); })()`,
-					{ skipScripting: true },
+					{ skipScripting: true, timeoutMs: pageToolkitTimeoutMs },
 				),
-				SCRIPT_EXECUTION_TIMEOUT_MS,
+				pageToolkitTimeoutMs,
 				`Page toolkit debugger fallback timed out: ${methodName}`,
 			);
 		} catch (debuggerFallbackError) {

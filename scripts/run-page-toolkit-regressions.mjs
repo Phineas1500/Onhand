@@ -1035,6 +1035,30 @@ async function assertNoHighlight({ name, html, query }) {
 	);
 }
 
+async function assertHyphenatedProseHeadingDoesNotWaitForMathJax() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<script type="math/tex">$$q = qP$$</script>
+			<h2>Metropolis-Hastings Sampling</h2>
+			<p>Now we can build a Markov chain whose stationary distribution is the posterior.</p>
+		</main>
+	`);
+	let touchedMathJaxQueue = false;
+	dom.window.MathJax = {
+		startup: {
+			promise: {
+				then() {
+					touchedMathJaxQueue = true;
+					return new Promise(() => {});
+				},
+			},
+		},
+	};
+	const highlight = await toolkit.highlightText("Metropolis-Hastings Sampling", { scrollIntoView: false });
+	assert.match(highlight.matchedText, /Metropolis-Hastings Sampling/, "hyphenated prose heading should be highlighted");
+	assert.equal(touchedMathJaxQueue, false, "hyphenated prose should not be treated as math-like");
+}
+
 async function assertNoteDoesNotClearFloats() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -2690,6 +2714,8 @@ async function main() {
 		query: "Promise represents eventual completion failure asynchronous operation resulting value",
 		expectedText: /Promise object represents the eventual completion/,
 	});
+
+	await assertHyphenatedProseHeadingDoesNotWaitForMathJax();
 
 	await assertNoHighlight({
 		name: "avoid low-coverage missing concept match",
