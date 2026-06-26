@@ -45,6 +45,7 @@
 		browser_pdf_read_pages: "pdf_read_pages",
 		browser_pdf_jump_to_page: "pdf_jump_to_page",
 		browser_get_visible_text: "get_visible_text",
+		browser_get_visible_region_image: "get_visible_region_image",
 		browser_extract_content: "extract_content",
 		browser_get_selection: "get_selection",
 		browser_get_viewport_headings: "get_viewport_headings",
@@ -235,6 +236,7 @@
 	const realtimeAudioFallbackItemIds = new Set();
 	const REALTIME_READ_TOOL_NAMES = new Set([
 		"browser_get_visible_text",
+		"browser_get_visible_region_image",
 		"browser_extract_content",
 		"browser_get_selection",
 		"browser_get_viewport_headings",
@@ -3973,9 +3975,23 @@
 			const initialPageNumber = Number(response.result?.initialPageNumber);
 			const pageSuffix = Number.isFinite(initialPageNumber) && initialPageNumber > 0 ? ` at page ${initialPageNumber}` : "";
 			const sourceSuffix = response.result?.initialPageSource ? ` (${response.result.initialPageSource})` : "";
+			const diagnostics = response.result?.pageLocationDiagnostics;
+			const acceptedDetector = Array.isArray(diagnostics?.detectors)
+				? diagnostics.detectors.find((entry) => entry?.accepted && entry?.detection?.pageNumber)
+				: null;
+			const failedDetectors = Array.isArray(diagnostics?.detectors)
+				? diagnostics.detectors.filter((entry) => entry && entry.ok === false).slice(0, 2)
+				: [];
+			const diagnosticsSuffix = acceptedDetector
+				? ` Detector: ${acceptedDetector.label}.`
+				: failedDetectors.length
+					? ` No page detector succeeded: ${failedDetectors.map((entry) => `${entry.label}: ${entry.error || "failed"}`).join("; ")}.`
+					: "";
 			renderState({
 				...(currentState || {}),
-				status: response.result?.alreadyOpen ? "This PDF is already open in Onhand's viewer." : `Opened PDF in Onhand viewer${pageSuffix}${sourceSuffix}.`,
+				status: response.result?.alreadyOpen
+					? `This PDF is already open in Onhand's viewer${pageSuffix}${sourceSuffix}.${diagnosticsSuffix}`
+					: `Opened PDF in Onhand viewer${pageSuffix}${sourceSuffix}.${diagnosticsSuffix}`,
 			});
 			return response.result;
 		} finally {
@@ -10414,7 +10430,24 @@
 		});
 	});
 
-	chrome.runtime.onMessage.addListener((message) => {
+	chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+		if (message?.target === "sidebar" && message?.type === "sidebar:clipboard-read") {
+			(async () => {
+				if (!navigator.clipboard?.readText) throw new Error("Clipboard read is not available in the sidebar.");
+				const text = await navigator.clipboard.readText();
+				sendResponse({ ok: true, text });
+			})().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+			return true;
+		}
+		if (message?.target === "sidebar" && message?.type === "sidebar:clipboard-write") {
+			(async () => {
+				const text = String(message.text ?? "");
+				if (!navigator.clipboard?.writeText) throw new Error("Clipboard write is not available in the sidebar.");
+				await navigator.clipboard.writeText(text);
+				sendResponse({ ok: true });
+			})().catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+			return true;
+		}
 		if (message?.type === "browser-runtime:auth-progress") {
 			authStatusKind = "";
 			authStatusText = message.detail || message.status || "Signing in...";
