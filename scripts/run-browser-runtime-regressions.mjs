@@ -1486,6 +1486,9 @@ async function assertConstitutionPromptContract() {
 		"Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.",
 		false,
 	);
+	const readCurrentPageToolNames = getToolNamesForTest("Can you read this page?", false);
+	const reviewCurrentArticleToolNames = getToolNamesForTest("Please review this article.", false);
+	const scanCurrentDocumentToolNames = getToolNamesForTest("Can you scan this document?", false);
 	const comparisonToolNames = getToolNamesForTest("Compare how this paper and the other paper I have open handle attention.", false);
 	const agreementToolNames = getToolNamesForTest("Do you agree with this?", false);
 	const differenceToolNames = getToolNamesForTest("What is the difference?", false);
@@ -1893,6 +1896,16 @@ async function assertConstitutionPromptContract() {
 	assert.equal(linkedNotesFollowupToolNames.includes("browser_list_tabs"), true, "other-note followups should be able to find the original notes index tab");
 	assert.equal(linkedNotesFollowupToolNames.includes("browser_activate_tab"), true, "other-note followups should be able to switch back to the original notes index tab");
 	assert.equal(linkedNotesFollowupToolNames.includes("browser_find_elements"), true, "other-note followups should be able to discover additional note links");
+	for (const [prompt, toolNames] of [
+		["read current page", readCurrentPageToolNames],
+		["review current article", reviewCurrentArticleToolNames],
+		["scan current document", scanCurrentDocumentToolNames],
+	]) {
+		assert.equal(toolNames.includes("browser_list_tabs"), false, `${prompt} prompts must not expose tab enumeration`);
+		assert.equal(toolNames.includes("browser_navigate"), false, `${prompt} prompts must not expose navigation`);
+		assert.equal(toolNames.includes("browser_click"), false, `${prompt} prompts must not expose click interaction`);
+		assert.equal(toolNames.includes("browser_type"), false, `${prompt} prompts must not expose type interaction`);
+	}
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), false, "learning mode alone must not expose cross-tab enumeration");
 	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
