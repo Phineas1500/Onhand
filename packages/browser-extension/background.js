@@ -724,24 +724,10 @@ function buildOnhandPdfViewerUrl(pdfUrl, options = {}) {
 }
 
 async function resolveInlineOnhandPdfViewerSourceUrl(tabId, tab = null) {
-	try {
-		const sourceUrl = await executeScriptInTab(tabId, (expectedViewerUrlPrefix) => {
-			const frame = document.querySelector("#onhand-inline-pdf-viewer-frame, iframe[data-onhand-inline-pdf-frame]");
-			const root = document.querySelector("#onhand-inline-pdf-viewer-root, [data-onhand-inline-pdf-viewer]");
-			const candidates = [
-				root?.getAttribute?.("data-onhand-pdf-url"),
-				frame?.getAttribute?.("data-onhand-pdf-url"),
-			];
-			const frameSrc = String(frame?.getAttribute?.("src") || frame?.src || "");
-			if (frameSrc.startsWith(expectedViewerUrlPrefix)) {
-				try {
-					candidates.push(new URL(frameSrc).searchParams.get("url"));
-				} catch {}
-			}
-			return candidates.find((candidate) => typeof candidate === "string" && candidate.trim()) || "";
-		}, [chrome.runtime.getURL("pdf-viewer.html")]);
-		if (normalizePdfUrlCandidate(sourceUrl)) return String(sourceUrl).trim();
-	} catch {}
+	// Do not trust inline viewer DOM attributes or iframe query strings here: they
+	// live in the page DOM and can be spoofed by hostile page JavaScript. Derive
+	// the source only from trusted extension-visible tab state (or explicit
+	// caller-provided source URLs) so PDF commands cannot be routed cross-tab.
 	return resolvePdfSourceUrlForViewer({}, tab || (await chrome.tabs.get(tabId)));
 }
 
@@ -780,7 +766,6 @@ function registerOnhandPdfViewerPort(port, sourceUrl) {
 	if (typeof tabId === "number") {
 		onhandPdfViewerPortRecords.set(onhandPdfViewerPortKey(tabId, normalizedSourceUrl), record);
 	}
-	onhandPdfViewerPortRecords.set(onhandPdfViewerSourcePortKey(normalizedSourceUrl), record);
 	return record;
 }
 
@@ -7579,9 +7564,7 @@ async function evaluateInOnhandPdfViewerFrameViaBridge(tabId, expression, missin
 async function callOnhandPdfViewerFrameViaRuntimePort(tabId, commandPayload, missingMessage, sourceUrl = "") {
 	const tab = await chrome.tabs.get(tabId);
 	const pdfUrl = sourceUrl ? String(sourceUrl).trim() : await resolveInlineOnhandPdfViewerSourceUrl(tabId, tab);
-	const record =
-		onhandPdfViewerPortRecords.get(onhandPdfViewerPortKey(tabId, pdfUrl)) ||
-		onhandPdfViewerPortRecords.get(onhandPdfViewerSourcePortKey(pdfUrl));
+	const record = onhandPdfViewerPortRecords.get(onhandPdfViewerPortKey(tabId, pdfUrl));
 	if (!record?.port) throw new Error(missingMessage || "No Onhand PDF viewer runtime port found");
 	const requestId = `onhand-pdf-viewer-port-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 	return await new Promise((resolve, reject) => {
