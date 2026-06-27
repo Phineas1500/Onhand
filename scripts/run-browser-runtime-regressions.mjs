@@ -65,7 +65,7 @@ function createReplayHost(options = {}) {
 			const explicitTab = tabs.find((candidate) => candidate.id === Number(args.tabId));
 			if (explicitTab) return explicitTab;
 			if (options.strictTabIds) throw new Error(`No tab with id: ${args.tabId}.`);
-		}
+}
 		if (typeof args.windowId === "number") {
 			return tabs.find((candidate) => candidate.windowId === args.windowId && candidate.active) || tabs.find((candidate) => candidate.windowId === args.windowId) || tabs[0] || replaySmokeTab();
 		}
@@ -117,6 +117,9 @@ function createReplayHost(options = {}) {
 					sourceTab: tab,
 					pdfUrl,
 					viewerUrl,
+					initialPageNumber: options.pdfViewerInitialPageNumber || null,
+					initialPageSource: options.pdfViewerInitialPageSource || null,
+					...(options.pdfViewerSelectionHandoff ? { selectionHandoff: options.pdfViewerSelectionHandoff } : {}),
 					alreadyOpen: false,
 					opened: true,
 					replacedCurrentTab: args.newTab !== true,
@@ -152,11 +155,17 @@ function createReplayHost(options = {}) {
 					},
 				};
 			}
-			if (name === "show_note") return { tab, note: { annotationId: String(args.annotationId || "replay-highlight"), note: String(args.note || "") } };
-			if (name === "run_js") {
-				if (options.rejectRunJs) throw new Error(typeof options.rejectRunJs === "string" ? options.rejectRunJs : "run_js failed");
-				const runJsResult = typeof options.runJsResult === "function" ? options.runJsResult(args, calls, tab) : options.runJsResult;
-				return { tab, result: runJsResult ?? true };
+				if (name === "show_note") return { tab, note: { annotationId: String(args.annotationId || "replay-highlight"), note: String(args.note || "") } };
+				if (name === "pdf_jump_to_page") {
+					if (options.rejectPdfJumpToPage?.(args, calls, tab)) {
+						throw new Error(`PDF jump failed: ${args.pageNumber || args.page || ""}`);
+					}
+					return { tab, jump: { pageNumber: Number(args.pageNumber || args.page || args.pdfAnchor?.pageNumber || 0), pdfAnchor: args.pdfAnchor || null } };
+				}
+				if (name === "run_js") {
+					if (options.rejectRunJs) throw new Error(typeof options.rejectRunJs === "string" ? options.rejectRunJs : "run_js failed");
+					const runJsResult = typeof options.runJsResult === "function" ? options.runJsResult(args, calls, tab) : options.runJsResult;
+					return { tab, result: runJsResult ?? true };
 			}
 			if (name === "get_selection") return { selection: options.selection || { text: "" } };
 			if (name === "get_visible_text") {
@@ -602,6 +611,70 @@ async function assertSelectionFormatting() {
 		},
 	});
 	assert.equal(selectedPdfText, "Selected text (PDF, p. 7, pdfjs):\nrecurrent neural networks");
+
+	const openedPdfWithSelection = formatToolResultForModel("browser_open_pdf_in_onhand_viewer", {
+		tab: {
+			id: 88,
+			title: "Attention Is All You Need - Onhand PDF Viewer",
+			url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fattention.pdf&page=2",
+		},
+		pdfUrl: "https://example.test/attention.pdf",
+		opened: true,
+		selectionHandoff: {
+			ok: true,
+			text: "Scaled dot-product attention",
+			pageNumber: 2,
+		},
+	});
+	assert.match(openedPdfWithSelection, /Opened PDF in Onhand viewer/);
+	assert.match(openedPdfWithSelection, /Transferred selected text \(p\. 2\):\nScaled dot-product attention/);
+
+	const blockedPdfSelection = formatToolResultForModel("browser_get_selection", {
+		selection: {
+			surface: "pdf",
+			viewer: "google-scholar",
+			source: "google-scholar-reader-detected",
+			hasSelection: false,
+			text: "",
+			mainFrameSelectionError: "Cannot access a chrome-extension:// URL of different extension",
+			googleScholarReader: {
+				detected: true,
+				readerName: "Google Scholar PDF Reader",
+				selectionTextAvailable: false,
+				selectionState: "unknown",
+			},
+			googleScholarReaderSelectionFallback: {
+				attempted: true,
+				ok: false,
+				error: "Cannot access a chrome-extension:// URL of different extension",
+			},
+			browserClipboardSelectionFallback: {
+				attempted: true,
+				ok: false,
+				error: "Cannot access a chrome-extension:// URL of different extension",
+			},
+		},
+	});
+	assert.match(blockedPdfSelection, /No selected text/);
+	assert.match(blockedPdfSelection, /PDF reader: Google Scholar PDF Reader/);
+	assert.match(blockedPdfSelection, /Google Scholar selected\/highlighted text status: unknown/);
+	assert.match(blockedPdfSelection, /PDF main-frame selection: failed/);
+	assert.match(blockedPdfSelection, /Google Scholar PDF selection: failed/);
+	assert.match(blockedPdfSelection, /Browser PDF copy selection: failed/);
+
+	const selectedGoogleDocsText = formatToolResultForModel("browser_get_selection", {
+		selection: {
+			text: " 3500 WAUs ",
+			surface: "google-docs",
+			source: "google-docs-text-event-iframe-copy",
+			googleDocsSelectionFallback: {
+				attempted: true,
+				ok: true,
+			},
+		},
+	});
+	assert.match(selectedGoogleDocsText, /Selected text \(Google Docs\):\n3500 WAUs/);
+	assert.match(selectedGoogleDocsText, /Google Docs selection fallback: ok/);
 	const emptyPdfSelectionWithFallback = formatToolResultForModel("browser_get_selection", {
 		selection: {
 			hasSelection: false,
@@ -675,15 +748,17 @@ async function assertSelectionFormatting() {
 		}),
 		/PDF search for "perceptron": 1 match/,
 	);
-	assert.match(
-		formatToolResultForModel("browser_pdf_read_pages", {
-			pages: {
-				pageNumbers: [8],
-				blocks: [{ pageNumber: 8, text: "SIMPLE METHOD: PERCEPTRON" }],
-			},
-		}),
-		/\[p\. 8\]\nSIMPLE METHOD: PERCEPTRON/,
-	);
+	const pdfReadPagesText = formatToolResultForModel("browser_pdf_read_pages", {
+		pages: {
+			pageNumbers: [8],
+			blocks: [{ pageNumber: 8, text: "SIMPLE METHOD: PERCEPTRON" }],
+		},
+	});
+	assert.match(pdfReadPagesText, /\[p\. 8\]\nSIMPLE METHOD: PERCEPTRON/);
+	assert.match(pdfReadPagesText, /Next step: if you answer from this offscreen\/deeper PDF text/);
+	assert.match(pdfReadPagesText, /browser_highlight_text/);
+	assert.match(pdfReadPagesText, /browser_show_note/);
+	assert.match(pdfReadPagesText, /under 120 characters/);
 	assert.match(
 		formatToolResultForModel("browser_extract_content", {
 			tab: replaySmokeTab(),
@@ -1162,15 +1237,67 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		"open_pdf_in_onhand_viewer should reuse an existing viewer instead of reinstalling on every prompt",
 	);
 	assert.match(background, /reusedExistingViewer/, "viewer reuse should be reported in the handoff result");
+	assert.doesNotMatch(
+		background,
+		/Refreshing inline Onhand PDF viewer to match source reader page/,
+		"page mismatches should not reload the inline Onhand PDF viewer and wipe existing annotations",
+	);
+	assert.match(
+		background,
+		/Reusing inline Onhand PDF viewer without reload; requested page differs/,
+		"page mismatches should reuse the existing inline Onhand PDF viewer",
+	);
+	assert.match(
+		background,
+		/forceSelectionHandoff === true[\s\S]*getSelectionHandoffResult/,
+		"existing PDF viewers should skip automatic selection replay unless explicitly forced",
+	);
+}
+
+async function assertBrowserContextSnapshotHasTimeoutFallback() {
+	const { readFile } = await import("node:fs/promises");
+	const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(runtimeSource, /function runBrowserContextSnapshot/, "browser context snapshot should have its own timeout wrapper");
+	assert.match(runtimeSource, /withBrowserContextTimeout\("snapshot_state"/, "snapshot timeout should surface a page-context warning");
+	assert.match(
+		runtimeSource,
+		/const state = await runBrowserContextSnapshot\(host\);\s*const activeTab = pickActiveTab\(state, options\.targetWindowId\)/,
+		"initial browser context rendering should use the timeout-backed snapshot",
+	);
+	assert.match(
+		runtimeSource,
+		/async function runAutomaticPdfHandoffIfNeeded[\s\S]*const state = await runBrowserContextSnapshot\(host\);/,
+		"automatic PDF handoff should not hang indefinitely on snapshotState",
+	);
 }
 
 async function assertConstitutionPromptContract() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { buildPriorExtractedPageContextForTest, classifyPromptForReasoning, getPromptContractForTest, getToolNamesForTest } = __browserRuntimeTest || {};
+		const {
+			buildPdfAnchorRetryPromptForTest,
+			buildExistingAnchorContext,
+			buildFinalAssistantReplyForTest,
+			compactOnPageNoteTextForTest,
+			buildPriorExtractedPageContextForTest,
+			buildVisiblePdfSelectionFirstPassGuardResultForTest,
+		classifyPromptForReasoning,
+		formatToolResultForModel,
+		getPromptContractForTest,
+		getToolNamesForTest,
+		shouldDeferPdfViewerForVisibleSelectionPrompt,
+		shouldRequirePdfAnchorRetryForTest,
+	} = __browserRuntimeTest || {};
+	assert.equal(typeof buildPdfAnchorRetryPromptForTest, "function", "browser runtime PDF anchor retry prompt export is missing");
+	assert.equal(typeof buildExistingAnchorContext, "function", "browser runtime existing anchor context export is missing");
 	assert.equal(typeof buildPriorExtractedPageContextForTest, "function", "browser runtime prior page context export is missing");
+	assert.equal(typeof buildVisiblePdfSelectionFirstPassGuardResultForTest, "function", "browser runtime PDF selection guard export is missing");
 	assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
 	assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
-	assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
+	assert.equal(typeof formatToolResultForModel, "function", "browser runtime tool formatter export is missing");
+		assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
+		assert.equal(typeof shouldRequirePdfAnchorRetryForTest, "function", "browser runtime PDF anchor retry export is missing");
+		assert.equal(typeof buildFinalAssistantReplyForTest, "function", "browser runtime final reply helper export is missing");
+		assert.equal(typeof compactOnPageNoteTextForTest, "function", "browser runtime note compactor export is missing");
 
 	const contract = getPromptContractForTest();
 	assert.match(contract.systemPrompt, /The page is the canvas/);
@@ -1181,21 +1308,70 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /explicitly asks to search online/);
 	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
-	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as anchors/);
+	assert.match(contract.systemPrompt, /under 120 characters/);
+	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as source markers/);
 	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
 	assert.match(contract.systemPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.systemPrompt, /simple answer-only questions use read-only grounding/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
-	assert.match(contract.systemPrompt, /every named step or item in chat must be anchored/);
+	assert.match(contract.systemPrompt, /every named step or item in chat must be supported by a highlight\/note/);
+	assert.match(contract.systemPrompt, /do not narrate internal page-work plans/);
+	assert.match(contract.systemPrompt, /Math formatting: when writing LaTeX symbols or equations/);
+	assert.match(contract.systemPrompt, /Never leave raw LaTeX commands/);
+	const existingAnchorContext = buildExistingAnchorContext({
+		pageActions: [],
+		turns: [
+			{
+				pageActions: [
+					{
+						key: "highlight:onhand-1-old",
+						type: "annotation",
+						label: "Highlighted text",
+						detail: "Multi-head attention allows the model to jointly attend to information from different representation subspaces.",
+						citationText: "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions.",
+						annotationId: "onhand-1-old",
+						title: "1706.03762",
+						url: "https://arxiv.org/pdf/1706.03762",
+						pdfAnchor: { pageNumber: 5 },
+					},
+					{
+						key: "note:onhand-1-old",
+						type: "note",
+						label: "Added note",
+						detail: "Multiple heads keep relationships separate.",
+						citationText: "Multiple heads keep relationships separate.",
+						annotationId: "onhand-1-old",
+						title: "1706.03762",
+						url: "https://arxiv.org/pdf/1706.03762",
+						pdfAnchor: { pageNumber: 5 },
+					},
+				],
+			},
+		],
+	});
+	assert.match(existingAnchorContext, /Existing session source highlights already available/);
+	assert.match(existingAnchorContext, /annotationId=onhand-1-old/);
+	assert.match(existingAnchorContext, /p\. 5/);
+	assert.match(existingAnchorContext, /Multiple heads keep relationships separate/);
+	assert.match(existingAnchorContext, /Do not recreate, re-highlight, or re-note/);
+	assert.match(existingAnchorContext, /browser_scroll_to_annotation/);
 	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
 	assert.match(contract.systemPrompt, /do not send a heading-plus-list block as one highlight/);
 	assert.match(contract.systemPrompt, /Do not replace missing list items with nearby headings/);
 	assert.match(contract.systemPrompt, /use browser_pdf_find_citation to look up the bibliography entry/);
-	assert.match(contract.systemPrompt, /explicitly asks to compare or relate the current material to another open tab/);
+	assert.match(contract.systemPrompt, /Chrome's native PDF viewer is usually supported through selection, clipboard, or debugger fallbacks/);
+	assert.match(contract.systemPrompt, /If tool output says the reader is Google Scholar PDF Reader/);
+		assert.match(contract.systemPrompt, /third-party PDF reader blocks selected text/);
+		assert.match(contract.systemPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
+		assert.match(contract.systemPrompt, /selected text is already available in a supported reader/);
+		assert.match(contract.systemPrompt, /Do not treat a selected named concept/);
+		assert.match(contract.systemPrompt, /complete the offered search\/read\/jump\/highlight\/note workflow before answering/);
+		assert.match(contract.systemPrompt, /Never say you will highlight or add a note unless the corresponding tool call already succeeded/);
+		assert.match(contract.systemPrompt, /explicitly asks to compare or relate the current material to another open tab/);
 	assert.match(contract.systemPrompt, /Do not infer cross-tab permission from standalone comparison or agreement wording/);
 	assert.match(contract.systemPrompt, /highlight the key passage in each source/);
-	assert.match(contract.systemPrompt, /anchor each substantive claim in the source that supports it/);
-	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not anchored in/);
+	assert.match(contract.systemPrompt, /highlight or cite each substantive claim in the source that supports it/);
+	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not grounded in/);
 	assert.match(contract.systemPrompt, /links\/notes\/readings\/resources listed on the current page/);
 	assert.match(contract.answerPrompt, /Page-material claims need page grounding/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
@@ -1203,10 +1379,13 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Linked-note\/resource requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Grounding budget: simple questions get read-only grounding/);
 	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
-	assert.match(contract.answerPrompt, /Failed highlight attempts are not anchors/);
+	assert.match(contract.answerPrompt, /Failed highlight attempts are not source markers/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
 	assert.match(contract.answerPrompt, /Roadmap\/list\/navigation answers need the actual supporting list/);
-	assert.match(contract.answerPrompt, /Every named step\/item in chat needs a matching anchor/);
+	assert.match(contract.answerPrompt, /Every named step\/item in chat needs a matching source highlight/);
+	assert.match(contract.answerPrompt, /Do not use the word 'anchor' in user-facing replies/);
+	assert.match(contract.answerPrompt, /Math must be renderable markdown/);
+	assert.match(contract.answerPrompt, /Do not write bare LaTeX commands/);
 	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
@@ -1219,14 +1398,24 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
 	assert.match(contract.answerPrompt, /Use browser_navigate only to reload the current reader URL once/);
 	assert.match(contract.answerPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
-	assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
+	assert.match(contract.answerPrompt, /selected\/highlighted PDF questions/);
+	assert.match(contract.answerPrompt, /Chrome's native PDF viewer usually exposes selection through browser_get_selection/);
+	assert.match(contract.answerPrompt, /If tool output names Google Scholar PDF Reader/);
+		assert.match(contract.answerPrompt, /third-party PDF reader blocks selected text/);
+		assert.match(contract.answerPrompt, /ask the user to highlight the passage there only if selected text did not transfer/);
+		assert.match(contract.answerPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
+		assert.match(contract.answerPrompt, /Open the Onhand PDF viewer when analysis/);
+		assert.match(contract.answerPrompt, /Do not treat selected named concepts/);
+		assert.match(contract.answerPrompt, /finish the search\/read\/jump\/highlight\/note workflow before answering/);
+		assert.match(contract.answerPrompt, /Never say you will highlight or add a note unless that tool call already succeeded/);
+		assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
 	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
 	assert.match(contract.answerPrompt, /\.value for form controls and \.textContent/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
-	assert.match(contract.learningModeAppend, /give a concise anchored answer first/);
+	assert.match(contract.learningModeAppend, /give a concise page-grounded answer first/);
 	assert.match(contract.learningModeAppend, /Do not make the check the whole answer/);
-	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful page anchor/);
+	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful source highlight/);
 	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
 	assert.match(contract.learningModeAppend, /one reviewable learning unit/);
 	assert.match(contract.learningModeAppend, /reuse that conceptId/);
@@ -1237,7 +1426,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.learningModeAppend, /call browser_list_tabs once only if the captured list is missing or ambiguous/);
 	assert.match(contract.learningModeAppend, /Do not switch to, read, highlight, or note a related tab unless the user explicitly asks/);
-	assert.match(contract.learningModeAppend, /anchor each page separately and say which tab supports which claim/);
+	assert.match(contract.learningModeAppend, /highlight each page separately and say which tab supports which claim/);
 	assert.match(contract.learningModeAppend, /Do not record an offered related tab as a learning source/);
 	assert.match(contract.learningModeAppend, /Homework\/problem priority/);
 	assert.match(contract.learningModeAppend, /final numeric, symbolic, or code answer/);
@@ -1263,7 +1452,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /check-rejection-1/);
 	assert.match(contract.learningPrompt, /Likely repeated concepts in the user's latest message/);
 	assert.match(contract.learningPrompt, /keep the turn lightweight/);
-	assert.match(contract.learningPrompt, /use the existing source anchor when possible/);
+	assert.match(contract.learningPrompt, /use the existing source highlight when possible/);
 	assert.match(contract.learningPrompt, /avoid re-running the full teaching flow/);
 	assert.match(contract.learningPrompt, /Page-work budget for repeated concepts/);
 	assert.match(contract.learningPrompt, /at most one fallback read and at most one replacement highlight/);
@@ -1282,6 +1471,12 @@ async function assertConstitutionPromptContract() {
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const genericSmokeToolNames = getToolNamesForTest("Google Docs smoke test: read the document title without editing it.", false);
 	const pdfContextToolNames = getToolNamesForTest("How do perceptrons solve binary classification?", false, null, { forcePdfTools: true });
+	const pdfSelectionToolNames = getToolNamesForTest("What does this mean?", false, null, { forcePdfTools: true });
+	const pdfHighlightedPeopleToolNames = getToolNamesForTest("Who are the people I highlighted?", false, null, { forcePdfTools: true });
+	const pdfSelectionDeepToolNames = getToolNamesForTest("What does this mean? Open it in the Onhand PDF viewer if you need deeper context.", false, null, {
+		forcePdfTools: true,
+	});
+	const pdfAffirmativeFollowupToolNames = getToolNamesForTest("yes", false, null, { forcePdfTools: true });
 	const externalSourceToolNames = getToolNamesForTest("Could you take me to these sources and highlight the parts that discuss attention?", false);
 	const linkedNotesToolNames = getToolNamesForTest(
 		"Could you open the notes that are relevant? Like, could you open them up in another tab and find the exact points that might be relevant?",
@@ -1423,6 +1618,218 @@ async function assertConstitutionPromptContract() {
 	assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
 	assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
+	assert.equal(pdfSelectionToolNames.includes("browser_get_visible_region_image"), false, "PDF selection/deictic prompts should not expose visual capture as the Scholar fallback");
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_open_pdf_in_onhand_viewer"),
+		true,
+		"short PDF selection/deictic prompts should keep viewer handoff available for unknown-selection recovery",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_pdf_read_pages"),
+		true,
+		"short PDF selection/deictic prompts should keep PDF reading available for useful deeper context",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_pdf_search"),
+		true,
+		"short PDF selection/deictic prompts should keep PDF search available for useful deeper context",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_pdf_jump_to_page"),
+		true,
+		"short PDF selection/deictic prompts should keep PDF jump available for useful deeper context",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_highlight_text"),
+		true,
+			"PDF viewer analysis should expose highlighting so important supporting passages can be marked",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_show_note"),
+		true,
+		"PDF viewer analysis should expose notes so important supporting passages can be annotated",
+	);
+	assert.equal(
+		pdfSelectionToolNames.includes("browser_clear_annotations"),
+		false,
+		"PDF viewer analysis should not expose destructive clearing by default",
+	);
+	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_get_visible_region_image"), false, "existing highlighted PDF referents should use viewer handoff instead of visual capture");
+	assert.equal(
+		pdfHighlightedPeopleToolNames.includes("browser_open_pdf_in_onhand_viewer"),
+		true,
+		"non-trivial highlighted PDF referents should keep viewer handoff available for analysis and annotation",
+	);
+	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_navigate"), false, "existing highlighted PDF referents should stay on the current reader");
+	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_highlight_text"), true, "existing highlighted PDF referents should expose highlights for important supporting passages");
+		assert.equal(pdfHighlightedPeopleToolNames.includes("browser_show_note"), true, "existing highlighted PDF referents should expose notes for important supporting passages");
+		assert.equal(pdfHighlightedPeopleToolNames.includes("browser_clear_annotations"), false, "existing highlighted PDF referents should not expose destructive clearing");
+			assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_open_pdf_in_onhand_viewer"), true, "affirmative PDF follow-ups should be able to reopen the viewer before deeper source marking");
+		assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_search"), true, "affirmative PDF follow-ups should keep PDF search available for the accepted deeper pass");
+		assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_read_pages"), true, "affirmative PDF follow-ups should keep PDF page reading available for the accepted deeper pass");
+	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_jump_to_page"), true, "affirmative PDF follow-ups should keep PDF jumping available for source activation");
+	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_highlight_text"), true, "affirmative PDF follow-ups should expose highlights for the accepted deeper pass");
+	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_show_note"), true, "affirmative PDF follow-ups should expose notes for the accepted deeper pass");
+	const pdfReadWithoutAnchorsRequest = {
+		displayPrompt: "What does this mean?",
+		toolTraces: [
+			{ toolName: "browser_pdf_search", state: "complete", resultSummary: "PDF search for \"Multi-Head Attention\": 2 matches" },
+			{
+				toolName: "browser_pdf_read_pages",
+				state: "complete",
+				resultSummary:
+					"PDF page text:\n[p. 5]\nMulti-head attention allows the model to jointly attend to information from different representation subspaces at different positions.",
+			},
+		],
+	};
+	assert.equal(
+		shouldRequirePdfAnchorRetryForTest(pdfReadWithoutAnchorsRequest),
+		true,
+		"PDF page reads that feed an answer should require a retry when no highlight/note succeeded",
+	);
+	assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /You read PDF pages for this answer but did not leave a durable PDF source highlight/);
+		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_highlight_text/);
+		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_show_note/);
+		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /under 120 characters/);
+		assert.equal(
+			buildFinalAssistantReplyForTest(
+				'The user selected "Multi-Head Attention". Let me find the detailed explanation.',
+				new Error("429 You've reached today's Onhand Free limit."),
+				{ pdfAnchorRetry: true, reply: "" },
+			),
+			"Error: 429 You've reached today's Onhand Free limit.",
+			"PDF anchor retry failures should surface the real error instead of a stale preamble",
+		);
+		const longOnPageNote =
+			"Instead of one big attention pass, Multi-Head Attention runs h=8 separate attention heads in parallel on projected Q/K/V so different relationships are not averaged away. The sidebar answer explains the full mechanism and formulas.";
+	const compactedOnPageNote = compactOnPageNoteTextForTest(longOnPageNote);
+	assert.equal(compactedOnPageNote.length <= 120, true, "on-page notes should be clamped to the marginal note budget");
+	assert.equal(compactedOnPageNote.includes("sidebar answer"), false, "on-page notes should leave fuller explanation out of the PDF margin");
+	assert.equal(
+		compactOnPageNoteTextForTest("Eight heads preserve different relationships. The sidebar has the details."),
+		"Eight heads preserve different relationships.",
+		"on-page notes should keep only the first useful sentence",
+	);
+	assert.equal(
+		shouldRequirePdfAnchorRetryForTest({
+			...pdfReadWithoutAnchorsRequest,
+			toolTraces: [
+				...pdfReadWithoutAnchorsRequest.toolTraces,
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text" },
+				{ toolName: "browser_show_note", state: "complete", resultSummary: "Added note" },
+			],
+		}),
+		false,
+		"completed PDF highlights and notes should satisfy the anchor requirement",
+	);
+	assert.equal(
+		shouldRequirePdfAnchorRetryForTest({ ...pdfReadWithoutAnchorsRequest, displayPrompt: "What does this mean? Do not add highlights or notes." }),
+		false,
+		"explicit no-page-change prompts should not trigger the PDF anchor retry",
+	);
+	assert.equal(
+		shouldRequirePdfAnchorRetryForTest({ ...pdfReadWithoutAnchorsRequest, pdfAnchorRetry: true }),
+		false,
+		"the PDF anchor retry should be one-shot",
+	);
+	assert.equal(shouldDeferPdfViewerForVisibleSelectionPrompt("What does this mean?"), true);
+	assert.equal(shouldDeferPdfViewerForVisibleSelectionPrompt("Who are the people I highlighted?"), false);
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest("browser_navigate", "navigate", "Who are the people I highlighted?", true)?.guardrail?.kind,
+		"visible_pdf_selection_first_pass",
+		"selection-first PDF turns should hard-block navigation if a model requests it anyway",
+	);
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_open_pdf_in_onhand_viewer",
+			"open_pdf_in_onhand_viewer",
+			"What does this mean?",
+			true,
+		),
+		null,
+		"selection-first PDF turns should allow viewer handoff for unknown-selection recovery",
+	);
+	const transferredPdfSelectionTraces = [
+		{
+			toolName: "browser_open_pdf_in_onhand_viewer",
+			state: "complete",
+			resultDetails: {
+				selectionHandoff: {
+					ok: true,
+					text: "Multi-Head Attention",
+					pageNumber: 2,
+				},
+			},
+			resultSummary: "Already open PDF in Onhand viewer\nTransferred selected text (p. 2):\nMulti-Head Attention",
+		},
+	];
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_pdf_search",
+			"pdf_search",
+			"What does this mean?",
+			true,
+			transferredPdfSelectionTraces,
+		),
+		null,
+		"selection-first PDF turns should allow PDF search once selected text is transferred",
+	);
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_pdf_read_pages",
+			"pdf_read_pages",
+			"What does this mean?",
+			true,
+			transferredPdfSelectionTraces,
+		),
+		null,
+		"selection-first PDF turns should allow reading PDF pages once selected text is transferred",
+	);
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_pdf_jump_to_page",
+			"pdf_jump_to_page",
+			"What does this mean?",
+			true,
+			transferredPdfSelectionTraces,
+		),
+		null,
+		"selection-first PDF turns should allow jumping to relevant PDF pages once selected text is transferred",
+	);
+	const destructiveClearGuard = buildVisiblePdfSelectionFirstPassGuardResultForTest(
+		"browser_clear_annotations",
+		"clear_annotations",
+		"What does this mean?",
+		true,
+		transferredPdfSelectionTraces,
+	);
+	assert.equal(
+		destructiveClearGuard?.guardrail?.kind,
+		"visible_pdf_selection_first_pass",
+		"selection-first PDF turns should still block destructive annotation clearing",
+	);
+	assert.match(destructiveClearGuard?.guardrail?.message || "", /selected PDF text is already available on page 2/i);
+	assert.match(
+		formatToolResultForModel("browser_pdf_search", { details: destructiveClearGuard }),
+		/selected PDF text is already available on page 2/i,
+		"PDF guardrails must render the guard message instead of a fake no-matches result",
+	);
+	assert.equal(
+		buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_open_pdf_in_onhand_viewer",
+			"open_pdf_in_onhand_viewer",
+			"What does this mean?",
+			true,
+			transferredPdfSelectionTraces,
+		)?.guardrail?.kind,
+		"visible_pdf_selection_first_pass",
+		"selection-first PDF turns should block redundant viewer opens once selected text is transferred",
+	);
+	assert.equal(
+		pdfSelectionDeepToolNames.includes("browser_open_pdf_in_onhand_viewer"),
+		true,
+		"PDF selection prompts should keep viewer handoff available when deeper/viewer reading is requested",
+	);
 	assert.equal(answerAllToolNames.includes("browser_get_visible_region_image"), true, "explicit port smoke should expose all browser tools");
 	assert.equal(genericSmokeToolNames.includes("browser_get_visible_region_image"), false, "generic smoke wording should not expose visual capture");
 	assert.equal(genericSmokeToolNames.includes("browser_run_js"), false, "generic smoke wording should not expose runtime inspection");
@@ -3543,12 +3950,10 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 			},
 		],
 	};
-	const host = createReplayHost({
+	const fastHost = createReplayHost({
 		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
-		rejectScrollToAnnotation: () => true,
-		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "pdf-source-restored" : "text-source-restored"),
 	});
-	const runtime = createOnhandBrowserRuntime(host);
+	const runtime = createOnhandBrowserRuntime(fastHost);
 	await runtime.updateSettings({
 		aiProvider: "onhand-smoke",
 		aiModel: "onhand-smoke-1",
@@ -3566,23 +3971,85 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 			title: "Lecture PDF",
 			url: "https://example.test/lecture.pdf",
 			label: "Highlighted text",
-			citationText: "recurrent neural networks",
+			citationText: "recurrentneural networks",
 			annotationId: "stale-pdf-source",
+			pdfAnchor,
+		},
+		{
+			key: "note:pdf-source",
+			type: "note",
+			tabId: 7,
+			windowId: 3,
+			title: "Lecture PDF",
+			url: "https://example.test/lecture.pdf",
+			label: "Note",
+			detail: "Saved note",
+			annotationId: "stale-pdf-note",
 			pdfAnchor,
 		},
 	];
 	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
 
 	await runtime.activateAction("highlight:pdf-source");
-	const openPdfIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
-	const scrollIndex = host.calls.findIndex((call) => call.name === "scroll_to_annotation");
-	const highlightIndex = host.calls.findIndex((call) => call.name === "highlight_text");
-	assert.notEqual(openPdfIndex, -1, "PDF source activation should hand off to Onhand's PDF viewer surface");
+	const fastScrollIndex = fastHost.calls.findIndex((call) => call.name === "scroll_to_annotation");
+	assert.notEqual(fastScrollIndex, -1, "expected live PDF source activation to scroll directly to the saved annotation");
+	assert.equal(fastHost.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), false);
+	assert.equal(fastHost.calls.some((call) => call.name === "highlight_text"), false);
+	assert.equal(fastHost.calls[fastScrollIndex].args.annotationId, "stale-pdf-source");
+
+	const fallbackHost = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		rejectScrollToAnnotation: () => true,
+		highlightAnnotationId: (_text, args) => (args.pdfAnchor ? "pdf-source-restored" : "text-source-restored"),
+	});
+	const fallbackRuntime = createOnhandBrowserRuntime(fallbackHost);
+	await fallbackRuntime.activateAction("highlight:pdf-source");
+	const scrollIndex = fallbackHost.calls.findIndex((call) => call.name === "scroll_to_annotation");
+	const jumpIndex = fallbackHost.calls.findIndex((call) => call.name === "pdf_jump_to_page");
 	assert.notEqual(scrollIndex, -1, "expected source activation to try the saved annotation before replay fallback");
-	assert.notEqual(highlightIndex, -1, "expected source activation to replay the PDF highlight after stale annotation miss");
-	assert.ok(openPdfIndex < scrollIndex, "PDF source activation should prepare the PDF surface before scrolling to an annotation");
-	assert.ok(openPdfIndex < highlightIndex, "PDF source activation should prepare the PDF surface before replaying a highlight");
-	assert.deepEqual(host.calls[highlightIndex].args.pdfAnchor, pdfAnchor);
+	assert.notEqual(jumpIndex, -1, "stale PDF source activation should jump to the saved page before expensive replay");
+	assert.ok(scrollIndex < jumpIndex, "PDF source activation should try direct annotation scroll before page fallback");
+	assert.equal(fallbackHost.calls[jumpIndex].args.pageNumber, 1);
+	assert.equal("text" in fallbackHost.calls[jumpIndex].args, false, "stale Onhand PDF source jumps should use page anchors, not slow exact text matching");
+	assert.deepEqual(fallbackHost.calls[jumpIndex].args.pdfAnchor, pdfAnchor);
+	assert.equal(fallbackHost.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), false);
+	assert.equal(fallbackHost.calls.some((call) => call.name === "highlight_text"), false);
+
+	const staleNoteHost = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		scrollToAnnotationResult: () => ({ targetKind: "annotation" }),
+	});
+	const staleNoteRuntime = createOnhandBrowserRuntime(staleNoteHost);
+	await staleNoteRuntime.activateAction("note:pdf-source");
+	const noteScrollIndex = staleNoteHost.calls.findIndex((call) => call.name === "scroll_to_annotation");
+	const noteJumpIndex = staleNoteHost.calls.findIndex((call) => call.name === "pdf_jump_to_page");
+	assert.notEqual(noteScrollIndex, -1, "expected stale note activation to try paired highlight scroll first");
+	assert.notEqual(noteJumpIndex, -1, "stale PDF note activation should jump to the saved page when the note card is missing");
+	assert.ok(noteScrollIndex < noteJumpIndex, "stale PDF note activation should try direct scroll before page fallback");
+	assert.equal(staleNoteHost.calls[noteScrollIndex].args.annotationId, "stale-pdf-source");
+	assert.equal(staleNoteHost.calls[noteScrollIndex].args.target, "note");
+	assert.equal(staleNoteHost.calls[noteJumpIndex].args.pageNumber, 1);
+	assert.equal("text" in staleNoteHost.calls[noteJumpIndex].args, false, "stale Onhand PDF note jumps should use page anchors, not slow exact text matching");
+	assert.equal(staleNoteHost.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), false);
+	assert.equal(staleNoteHost.calls.some((call) => call.name === "highlight_text"), false);
+
+	const invalidatedViewerHost = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
+		scrollToAnnotationResult: () => ({ targetKind: "annotation" }),
+		rejectPdfJumpToPage: (_args, calls) => calls.filter((call) => call.name === "pdf_jump_to_page").length === 1,
+	});
+	const invalidatedViewerRuntime = createOnhandBrowserRuntime(invalidatedViewerHost);
+	await invalidatedViewerRuntime.activateAction("note:pdf-source");
+	const invalidatedJumpCalls = invalidatedViewerHost.calls.filter((call) => call.name === "pdf_jump_to_page");
+	const invalidatedOpenIndex = invalidatedViewerHost.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	assert.equal(invalidatedJumpCalls.length, 2, "stale PDF note activation should retry the page jump after refreshing an invalidated viewer");
+	assert.notEqual(invalidatedOpenIndex, -1, "stale PDF note activation should refresh the Onhand viewer when the first page jump fails");
+	assert.equal(invalidatedViewerHost.calls[invalidatedOpenIndex].args.pageNumber, 1);
+	assert.equal(invalidatedViewerHost.calls[invalidatedOpenIndex].args.forceReload, true);
+	assert.equal(invalidatedViewerHost.calls[invalidatedOpenIndex].args.disableSelectionHandoff, true);
+	assert.equal(invalidatedJumpCalls[1].args.pageNumber, 1);
+	assert.equal("text" in invalidatedJumpCalls[1].args, false);
+	assert.equal(invalidatedViewerHost.calls.some((call) => call.name === "highlight_text"), false);
 }
 
 async function assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl() {
@@ -5782,6 +6249,242 @@ async function assertRealtimePlannerCapturesVisualRegionForVisualQuestions() {
 	assert.equal(host.calls[visualIndex].args.label, "current visible region");
 }
 
+async function assertUnknownPdfSelectionOpensViewerAndAsksForReselect() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const blockedScholarSelection = {
+		surface: "pdf",
+		viewer: "google-scholar",
+		source: "google-scholar-reader-restricted-frame",
+		hasSelection: false,
+		text: "",
+		mainFrameSelectionError: "Cannot access a chrome-extension:// URL of different extension",
+		googleScholarReader: {
+			detected: true,
+			readerName: "Google Scholar PDF Reader",
+			selectionTextAvailable: false,
+			selectionState: "unknown",
+		},
+		googleScholarReaderSelectionFallback: {
+			attempted: true,
+			ok: false,
+			error: "Cannot access a chrome-extension:// URL of different extension",
+		},
+		browserClipboardSelectionFallback: {
+			attempted: true,
+			ok: false,
+			error: "Cannot access a chrome-extension:// URL of different extension",
+		},
+	};
+	assert.equal(__browserRuntimeTest.promptReferencesVisiblePdfSelectionOrPage("What does this mean?"), true);
+	assert.equal(__browserRuntimeTest.promptCouldReferToHighlightedPdfText("What does this mean?"), true);
+	assert.equal(__browserRuntimeTest.promptCouldReferToHighlightedPdfText("What page am I on?"), false);
+	assert.equal(__browserRuntimeTest.promptCouldReferToHighlightedPdfText("What does this figure show?"), false);
+	assert.equal(__browserRuntimeTest.promptReferencesVisiblePdfSelectionOrPage("What are the findings of this paper?"), false);
+	assert.equal(__browserRuntimeTest.pdfSelectionAccessWasBlocked(blockedScholarSelection), true);
+	assert.equal(__browserRuntimeTest.pdfSelectionHighlightStatusUnknown(blockedScholarSelection), true);
+	assert.deepEqual(
+		__browserRuntimeTest.inferPdfPageNumberFromBrowserContextDetails({
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: blockedScholarSelection,
+			visible: { text: "Google Scholar PDF Reader 2 / 15 AI Outline Highlights Cite" },
+		}),
+		{ pageNumber: 2, source: "context-page-fraction" },
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldOpenPdfViewerForUnknownPdfSelection("What does this mean?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: blockedScholarSelection,
+			visible: { text: "Google Scholar PDF Reader page text visible on screen." },
+		}),
+		true,
+		"unknown third-party PDF selection state should open the Onhand viewer",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCaptureVisualRegionForPrompt("What does this mean?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: blockedScholarSelection,
+			visible: { text: "Google Scholar PDF Reader page text visible on screen." },
+		}),
+		false,
+		"blocked third-party PDF selections should hand off to the Onhand viewer instead of triggering a visual fallback",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCaptureVisualRegionForPrompt("What does this mean?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: { surface: "pdf", text: "Scaled dot-product attention", pageNumber: 2 },
+			visible: { text: "Scaled dot-product attention" },
+		}),
+		false,
+		"exact selected PDF text should not force a redundant visual capture",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCaptureVisualRegionForPrompt("Who are the people I highlighted?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: {
+				surface: "pdf",
+				viewer: "google-scholar",
+				text: "Llion Jones∗Google Researchllion@google.comAidan N. Gomez∗ †U",
+			},
+			visible: { text: "Google Scholar PDF Reader with a visible highlighted passage on page 1." },
+		}),
+		false,
+		"explicit highlighted PDF questions in third-party readers should hand off to the Onhand viewer instead of using visual capture",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldOpenPdfViewerForUnknownPdfSelection("Who are the people I highlighted?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: {
+				surface: "pdf",
+				viewer: "google-scholar",
+				text: "Llion Jones∗Google Researchllion@google.comAidan N. Gomez∗ †U",
+			},
+			visible: { text: "Google Scholar PDF Reader with a visible highlighted passage on page 1." },
+		}),
+		true,
+		"highlighted PDF questions in Google Scholar should open the Onhand viewer even if partial text leaked through",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCaptureVisualRegionForPrompt("What page am I on?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: { surface: "pdf", text: "", viewer: "google-scholar" },
+			visible: { text: "Google Scholar PDF Reader" },
+		}),
+		false,
+		"page-position questions on third-party PDF readers should not use the selected-text visual fallback",
+	);
+	const wrappedScholarReaderContext = {
+		activeTab: {
+			title: "Google Scholar Reader",
+			url: "chrome-extension://dahenjhkoodjbpjheillcadbppiidmhp/reader.html#https://arxiv.org/pdf/1706.03762",
+		},
+		selection: {
+			text: "ht-1 and the input for position t. This inherently sequential nature precludes parallelization",
+			viewer: "google-scholar",
+		},
+		visible: {
+			text: "Google Scholar Reader 2 / 15 AI Outline Highlights Cite Fit to width",
+		},
+	};
+	assert.equal(
+		__browserRuntimeTest.browserContextLooksLikePdf(wrappedScholarReaderContext),
+		true,
+		"expected wrapped Google Scholar Reader extension tabs to route as PDFs",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCaptureVisualRegionForPrompt("What does the highlighted text mean?", wrappedScholarReaderContext),
+		false,
+		"explicit highlighted-text questions in wrapped PDF readers should hand off to the Onhand viewer",
+	);
+	assert.equal(
+		__browserRuntimeTest.buildVisiblePdfSelectionFirstPassGuardResultForTest(
+			"browser_navigate",
+			"navigate",
+			"What does the highlighted text mean?",
+			__browserRuntimeTest.browserContextLooksLikePdf(wrappedScholarReaderContext),
+		)?.guardrail?.kind,
+		"visible_pdf_selection_first_pass",
+		"wrapped PDF reader selection turns should hard-block navigation",
+	);
+
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 9,
+				windowId: 3,
+				active: true,
+				title: "Google Scholar PDF Reader",
+				url: "https://arxiv.org/pdf/1706.03762",
+			}),
+		],
+		selection: blockedScholarSelection,
+		visibleText: "Google Scholar PDF Reader 2 / 15 with a visible highlighted passage.",
+		pdfViewerInitialPageNumber: 2,
+		pdfViewerInitialPageSource: "google-scholar-page-control",
+		pdfViewerSelectionHandoff: {
+			ok: false,
+			source: "pdf-selection-handoff",
+			error: "No selected PDF text could be captured before opening the Onhand viewer.",
+		},
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "What does this mean?",
+		displayPrompt: "unknown pdf selection handoff",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete unknown PDF selection handoff regression");
+	const selectionIndex = host.calls.findIndex((call) => call.name === "get_selection");
+	const visualIndex = host.calls.findIndex((call) => call.name === "get_visible_region_image");
+	const handoffIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	assert.ok(selectionIndex >= 0, "expected initial PDF selection read");
+	assert.ok(handoffIndex >= 0, "expected unknown PDF selection state to open the Onhand viewer");
+	assert.ok(selectionIndex < handoffIndex, "expected PDF selection read before viewer handoff");
+	assert.equal(visualIndex, -1, "expected unknown selection handoff to avoid drifting into a visual-summary answer");
+	assert.equal(host.calls[handoffIndex].args.windowId, 3);
+	assert.equal(host.calls[handoffIndex].args.newTab, false);
+	assert.equal(host.calls[handoffIndex].args.waitForLoad, true);
+	assert.equal(host.calls[handoffIndex].args.pageNumber, 2);
+	assert.equal(host.calls[handoffIndex].args.initialPageSource, "context-page-fraction");
+	const reply = completedState.turns.at(-1)?.reply || "";
+	assert.match(reply, /opened the PDF in the Onhand viewer on page 2/i);
+	assert.match(reply, /\*\*What happened\*\*/i);
+	assert.match(reply, /\*\*Next step\*\*/i);
+	assert.match(reply, /could not transfer selected or highlighted text from Google Scholar PDF Reader/i);
+	assert.match(reply, /highlight it once in the Onhand viewer/i);
+	assert.match(reply, /Chrome's default PDF viewer or the Onhand viewer/i);
+
+	const unknownPageHost = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 10,
+				windowId: 4,
+				active: true,
+				title: "Google Scholar PDF Reader",
+				url: "https://arxiv.org/pdf/1706.03762",
+			}),
+		],
+		selection: blockedScholarSelection,
+		visibleText: "Google Scholar PDF Reader with selected text unavailable.",
+		pdfViewerSelectionHandoff: {
+			ok: false,
+			source: "pdf-selection-handoff",
+			error: "No selected PDF text could be captured before opening the Onhand viewer.",
+		},
+	});
+	const unknownPageRuntime = createOnhandBrowserRuntime(unknownPageHost);
+	await unknownPageRuntime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await unknownPageRuntime.submitPrompt({
+		prompt: "What does this mean?",
+		displayPrompt: "unknown pdf selection handoff without page",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 4,
+	});
+	const unknownPageState = await waitForRuntimeCompletion(unknownPageRuntime);
+	const unknownPageReply = unknownPageState.turns.at(-1)?.reply || "";
+	assert.match(unknownPageReply, /opened the PDF in the Onhand viewer\./i);
+	assert.match(unknownPageReply, /\n\nI could not determine the original reader's current page/i);
+	assert.match(unknownPageReply, /- I could not transfer selected or highlighted text/i);
+	assert.match(unknownPageReply, /could not determine the original reader's current page/i);
+	assert.match(unknownPageReply, /Chrome's default PDF viewer or the Onhand viewer/i);
+	assert.doesNotMatch(unknownPageReply, /opened the PDF in the Onhand viewer at the current page/i);
+}
+
 async function assertExplicitPdfHandoffRunsBeforeAgentContext() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -6030,6 +6733,7 @@ async function main() {
 	await assertToolRetryActivitiesFinalizeAsRecovered();
 	await assertConstitutionPromptContract();
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
+	await assertBrowserContextSnapshotHasTimeoutFallback();
 	await assertLearnerStateUpdates();
 	await assertFallbackOpenCheckRecording();
 	await assertPdfCitationFormatting();
@@ -6093,6 +6797,7 @@ async function main() {
 	await assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled();
 	await assertRealtimePlannerOpensDirectPdfBeforePlanning();
 	await assertRealtimePlannerCapturesVisualRegionForVisualQuestions();
+	await assertUnknownPdfSelectionOpensViewerAndAsksForReselect();
 	await assertExplicitPdfHandoffRunsBeforeAgentContext();
 	await assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext();
 	await assertFixtureResponses();

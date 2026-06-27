@@ -55,12 +55,15 @@ async function assertPdfViewerHandoffHelpers() {
 		"buildGoogleDocsPdfExportUrl",
 		"resolvePdfSourceUrlForViewer",
 		"normalizePdfPageNumber",
-		"normalizePdfScrollRatio",
-		"buildOnhandPdfViewerUrl",
-		"inferPdfPageNumberFromAccessibilityNodes",
-		"isUnsupportedPdfSurfacePayload",
-		"isLikelyPdfTabUrl",
-		"shouldTryOnhandPdfViewerFrameForTab",
+			"normalizePdfScrollRatio",
+			"buildOnhandPdfViewerUrl",
+			"getPdfPageNumberFromSelectionPayload",
+			"inferPdfPageNumberFromAccessibilityNodes",
+			"inferPdfPageFractionFromDebuggerDomDetails",
+			"getGoogleScholarReaderPageExpression",
+			"isUnsupportedPdfSurfacePayload",
+			"isLikelyPdfTabUrl",
+			"shouldTryOnhandPdfViewerFrameForTab",
 	];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
 	const helpers = new Function(
@@ -121,6 +124,8 @@ async function assertPdfViewerHandoffHelpers() {
 		helpers.buildOnhandPdfViewerUrl("https://example.test/paper.pdf", { pageNumber: 7, scrollRatio: 0.3076923 }),
 		"chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf&page=7",
 	);
+	assert.equal(helpers.getPdfPageNumberFromSelectionPayload({ text: "", viewer: "google-scholar", pageNumber: 13 }), 13);
+	assert.equal(helpers.getPdfPageNumberFromSelectionPayload({ text: "", pdfAnchor: { pageNumber: 9 } }), 9);
 	assert.equal(
 		helpers.shouldTryOnhandPdfViewerFrameForTab({
 			url: "chrome-extension://onhand-test/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf",
@@ -142,6 +147,88 @@ async function assertPdfViewerHandoffHelpers() {
 		]),
 		{ pageNumber: 13, source: "accessibility-page-control" },
 	);
+	assert.deepEqual(
+		helpers.inferPdfPageNumberFromAccessibilityNodes([
+			{ role: "textField", value: "4" },
+			{ role: "text", name: "/" },
+			{ role: "text", name: "15" },
+		]),
+		{ pageNumber: 4, source: "accessibility-page-fraction" },
+	);
+	assert.deepEqual(
+		helpers.inferPdfPageNumberFromAccessibilityNodes([
+			{ role: "textField", value: "4" },
+			{ role: "text", name: "/ 15" },
+			{ role: "spinbutton", name: "Page number", value: "1" },
+			{ role: "text", name: "/ 15" },
+		]),
+		{ pageNumber: 4, source: "accessibility-page-fraction" },
+		"Scholar's current page should win over an already-open Onhand viewer stuck on page 1",
+	);
+		assert.deepEqual(
+			helpers.inferPdfPageNumberFromAccessibilityNodes(
+				[
+					{ role: { value: "button" }, name: { value: "Previous page" } },
+					{ role: { value: "textbox" }, value: { value: "2" } },
+				{ role: { value: "text" }, name: { value: "/" } },
+				{ role: { value: "text" }, name: { value: "15" } },
+				{ role: { value: "button" }, name: { value: "Next page" } },
+			],
+			"google-scholar-accessibility",
+			),
+			{ pageNumber: 2, source: "google-scholar-accessibility-page-fraction" },
+		);
+		assert.equal(
+			helpers.inferPdfPageFractionFromDebuggerDomDetails({
+				value: "4",
+				parentTextContent: "4 / 15",
+				toolbarTextContent: "Previous page 4 / 15 Next page 105%",
+			}),
+			4,
+			"Debugger DOM inference should detect an unlabeled Google Scholar page fraction",
+		);
+		assert.equal(
+			helpers.inferPdfPageFractionFromDebuggerDomDetails({
+				value: "105%",
+				parentTextContent: "Previous page 4 / 15 Next page 105%",
+				toolbarTextContent: "Previous page 4 / 15 Next page 105%",
+			}),
+			null,
+			"Debugger DOM inference should not confuse the zoom input with the current page",
+		);
+		{
+			const dom = new JSDOM(`
+				<!doctype html>
+				<body>
+				<div role="toolbar" class="gsr-toolbar">
+					<button aria-label="Previous page"></button>
+					<input type="text" value="4">
+					<span>/</span>
+					<span>15</span>
+					<button aria-label="Next page"></button>
+					<input type="text" value="105%">
+				</div>
+			</body>
+		`);
+		const previousDocument = globalThis.document;
+		const previousElement = globalThis.Element;
+		const previousWindow = globalThis.window;
+		globalThis.document = dom.window.document;
+		globalThis.Element = dom.window.Element;
+		globalThis.window = dom.window;
+		let detection;
+		try {
+			detection = Function(`return ${helpers.getGoogleScholarReaderPageExpression()};`)();
+		} finally {
+			if (previousDocument === undefined) delete globalThis.document;
+			else globalThis.document = previousDocument;
+			if (previousElement === undefined) delete globalThis.Element;
+			else globalThis.Element = previousElement;
+			if (previousWindow === undefined) delete globalThis.window;
+			else globalThis.window = previousWindow;
+		}
+		assert.deepEqual(detection, { pageNumber: 4, source: "google-scholar-page-fraction", score: -1 });
+	}
 	assert.deepEqual(
 		helpers.inferPdfPageNumberFromAccessibilityNodes([
 			{
@@ -234,6 +321,24 @@ async function assertPdfViewerHandoffHelpers() {
 	);
 	assert.match(backgroundSource, /for \(const entry of readableFrameEntries\)[\s\S]*return await readTree\(\);/, "PDF handoff should read PDF viewer frames before falling back to the whole-tab accessibility tree");
 	assert.doesNotMatch(backgroundSource, /frameEntries\s*\.\s*slice\(1\)/, "PDF handoff should not skip the top frame when it may be Chrome's native PDF viewer");
+	assert.match(backgroundSource, /function getNativeChromePdfViewerSelectionForHandoff/, "PDF handoff should capture selected text from Chrome's native PDF viewer before opening Onhand's viewer");
+	assert.match(backgroundSource, /function getGoogleScholarReaderSelectionForHandoff/, "PDF handoff should capture selected text from Google Scholar PDF Reader before opening Onhand's viewer");
+	assert.match(backgroundSource, /function getGoogleScholarReaderSelectionExpression/, "Google Scholar PDF Reader selected text should have a debugger-target expression");
+	assert.match(backgroundSource, /function maybeGetBrowserClipboardPdfSelection/, "PDF handoff should have a browser-level selected-text clipboard fallback");
+	assert.match(backgroundSource, /function getDebuggerPageTargetForTab/, "PDF selected-text clipboard fallback should resolve the tab's page debugger target");
+	assert.match(backgroundSource, /Input\.dispatchKeyEvent[\s\S]*code:\s*"KeyC"/, "PDF selected-text clipboard fallback should dispatch the copy shortcut to the active PDF tab");
+	assert.match(backgroundSource, /function getPdfSelectionForViewerHandoff/, "PDF handoff should capture selected text from the current PDF reader before opening Onhand's viewer");
+	assert.match(
+		backgroundSource,
+		/getPdfSelectionForViewerHandoff\(sourceTab,\s*pdfUrl\)[\s\S]*PDF_SELECTION_HANDOFF_TIMEOUT_MS/,
+		"PDF handoff should time-bound selected-text capture so Open PDF cannot hang indefinitely",
+	);
+	assert.match(
+		backgroundSource,
+		/getPdfSelectionForViewerHandoff[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getSelectionInfo"\)[\s\S]*getGoogleScholarReaderSelectionForHandoff[\s\S]*getNativeChromePdfViewerSelectionForHandoff[\s\S]*maybeGetBrowserClipboardPdfSelection[\s\S]*maybeGetDebuggerFrameSelection/,
+		"PDF handoff should try reader selections before native and debugger-frame fallbacks",
+	);
+	assert.match(backgroundSource, /function transferPdfSelectionToOnhandViewer/, "PDF handoff should transfer selected PDF text into Onhand's viewer");
 	assert.ok(
 		backgroundSource.indexOf("inferPdfPageNumberFromNativeChromePdfViewerFrame(tab.id)") <
 			backgroundSource.indexOf("inferPdfPageNumberFromDebuggerDefaultContext(tab.id)"),
@@ -255,7 +360,41 @@ async function assertPdfViewerHandoffHelpers() {
 		"PDF handoff should prefer Chrome's native PDF page number before DOM fallbacks",
 	);
 	assert.match(backgroundSource, /installInlineOnhandPdfViewer\(finalTab\.id,\s*pdfUrl,\s*viewerOptions\)/, "Inline PDF handoff should pass the inferred page into the viewer URL");
+	assert.match(backgroundSource, /function runPdfPageLocationDetector/, "PDF handoff should record per-detector page inference diagnostics");
+	assert.match(backgroundSource, /PDF page detector timed out: \$\{label\}/, "PDF page inference detectors should be time-bounded");
+	assert.match(backgroundSource, /pageLocationDiagnostics:\s*diagnostics/, "PDF handoff results should include page-location diagnostics when requested");
+	assert.match(
+		backgroundSource,
+		/existingPageNumber !== initialPageNumber[\s\S]*Reusing inline Onhand PDF viewer without reload; requested page differs/,
+		"Inline PDF handoff should preserve an existing viewer when the source reader reports a different page",
+	);
+	assert.match(
+		backgroundSource,
+		/initialSelectionHandoff\?\.pageNumber[\s\S]*source:\s*`\$\{initialSelectionHandoff\.source[\s\S]*:selection`[\s\S]*inferInitialPdfViewerPageLocation/,
+		"PDF handoff should use the selected native PDF page before generic page inference",
+	);
+	assert.match(
+		backgroundSource,
+		/executePageToolkitMethodViaOnhandPdfViewerFrame\(tabId,\s*"highlightText"[\s\S]*pdfAnchor:\s*handoffSelection\.pdfAnchor[\s\S]*scrollIntoView:\s*true/,
+		"PDF handoff should highlight the transferred selection inside Onhand's PDF viewer",
+	);
+	assert.match(
+		backgroundSource,
+		/function safeWaitForInlineOnhandPdfViewerReady[\s\S]*pdfViewerReadyFailure/,
+		"Inline PDF handoff should report viewer-ready failures instead of aborting the open command",
+	);
+	assert.match(
+		backgroundSource,
+		/getSelectionHandoffResult[\s\S]*transferPdfSelectionToOnhandViewer\(tabId,\s*initialSelectionHandoff,\s*pdfUrl\)[\s\S]*safeWaitForInlineOnhandPdfViewerReady\(finalTab\.id,\s*timeoutMs,\s*pdfUrl\)[\s\S]*getSelectionHandoffResult\(finalTab\.id\)/,
+		"Inline PDF handoff should transfer selection through the safe handoff helper after viewer readiness",
+	);
+	assert.match(
+		backgroundSource,
+		/No selected PDF text could be captured before opening the Onhand viewer[\s\S]*getSelectionHandoffResult[\s\S]*initialSelectionHandoffFailure/,
+		"PDF viewer open should report an explicit failed selection handoff when capture was attempted but no selected text was available",
+	);
 	assert.match(backgroundSource, /tabId: typeof message\.tabId === "number"/, "Sidebar PDF handoff should preserve the current page tab id");
+	assert.match(backgroundSource, /forceReload:\s*true[\s\S]*includeDiagnostics:\s*true/, "Sidebar Open PDF should force a real refresh and request diagnostics");
 	assert.match(
 		backgroundSource,
 		/REALTIME_BROWSER_TOOL_COMMANDS[\s\S]*browser_pdf_capture_page_image:\s*"pdf_capture_page_image"[\s\S]*browser_pdf_find_citation:\s*"pdf_find_citation"/,
@@ -357,10 +496,30 @@ async function assertNativeChromePdfViewerSelectionFallback() {
 	assert.match(source, /function getNativeChromePdfViewerSelectionExpression\(\)/, "Native Chrome PDF selected text should have a debugger expression");
 	assert.match(source, /source:\s*"native-chrome-pdf-viewer-selection"/, "Native Chrome PDF selection fallback should identify its source");
 	assert.match(source, /function maybeGetNativeChromePdfViewerSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a native PDF empty-selection fallback");
+	assert.match(source, /function maybeGetGoogleScholarReaderSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a Google Scholar PDF Reader target-selection fallback");
+	assert.match(source, /function detectGoogleScholarReaderSurface\(tab\s*=\s*null\)/, "browser_get_selection should detect Google Scholar PDF Reader before falling back to native-PDF wording");
+	assert.match(source, /function markGoogleScholarReaderSelectionSurface\(currentSelection,\s*readerSurface\s*=\s*null/, "blocked Google Scholar selections should preserve the Google Scholar reader label");
+	assert.match(source, /viewer:\s*"google-scholar"[\s\S]*readerName:\s*"Google Scholar PDF Reader"/, "Google Scholar reader detection should surface a model-visible reader label");
+	assert.match(source, /function maybeGetBrowserClipboardPdfSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a browser-level PDF clipboard selection fallback");
+	assert.match(source, /function getGoogleScholarReaderPageExpression\(\)/, "Google Scholar PDF Reader should expose a page-only detector for viewer handoff");
+	assert.match(source, /function inferPdfPageNumberFromGoogleScholarReaderTarget\(tab\)/, "PDF viewer handoff should infer the current page from Google Scholar Reader");
+	assert.match(source, /function inferPdfPageNumberFromGoogleScholarReaderFrame\(tabId\)/, "PDF viewer handoff should infer the current page from an embedded Google Scholar Reader frame");
+	assert.match(source, /function inferPdfPageNumberFromGoogleScholarReaderContexts\(tabId\)/, "PDF viewer handoff should infer the current page from non-Onhand debugger contexts");
+	assert.match(source, /function inferPdfPageFractionFromDebuggerDomDetails\(details\)/, "PDF viewer handoff should detect unlabeled debugger DOM page fractions");
 	assert.match(
 		source,
-		/case "get_selection":\s*{[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getSelectionInfo"\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*pageSelection\)/,
-		"browser_get_selection should retry native Chrome PDF frames when the page toolkit cannot see selected PDF text",
+		/fallbackReaders = \[[\s\S]*label:\s*"google-scholar-target"[\s\S]*inferPdfPageNumberFromGoogleScholarReaderTarget\(tab\)[\s\S]*label:\s*"google-scholar-frame"[\s\S]*inferPdfPageNumberFromGoogleScholarReaderFrame\(tab\.id\)[\s\S]*label:\s*"google-scholar-contexts"[\s\S]*inferPdfPageNumberFromGoogleScholarReaderContexts\(tab\.id\)[\s\S]*label:\s*"native-chrome-target"[\s\S]*inferPdfPageNumberFromNativeChromePdfViewerTarget/,
+		"PDF viewer handoff should try Google Scholar Reader page detection before generic PDF fallbacks, including embedded reader frames and contexts",
+	);
+	assert.match(
+		source,
+		/focusTab\(tab\.id\)[\s\S]*dispatchCopyShortcutToTab\(tab\)[\s\S]*readTextFromFocusedBrowserClipboard\(tab\)/,
+		"browser-level PDF copy fallback should focus the source tab, send Copy, then read from the focused browser target",
+	);
+	assert.match(
+		source,
+		/case "get_selection":\s*{[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getSelectionInfo"\)[\s\S]*maybeGetGoogleScholarReaderSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*selection\)[\s\S]*maybeGetBrowserClipboardPdfSelection\(tab,\s*selection\)/,
+		"browser_get_selection should retry Google Scholar and native PDF frames when the page toolkit cannot see selected PDF text",
 	);
 	assert.match(
 		source,
@@ -372,9 +531,25 @@ async function assertNativeChromePdfViewerSelectionFallback() {
 	assert.match(source, /function maybeGetDebuggerFrameSelection\(tab,\s*currentSelection\)/, "browser_get_selection should have a generic frame selected-text fallback");
 	assert.match(
 		source,
-		/case "get_selection":\s*{[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetDebuggerFrameSelection\(tab,\s*selection\)/,
+		/case "get_selection":\s*{[\s\S]*maybeGetGoogleScholarReaderSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*selection\)[\s\S]*maybeGetBrowserClipboardPdfSelection\(tab,\s*selection\)[\s\S]*maybeGetDebuggerFrameSelection\(tab,\s*selection\)/,
 		"browser_get_selection should retry debugger frame contexts when normal selection readers are empty",
 	);
+}
+
+async function assertVisibleRegionCaptureFallsBackWhenDomIsRestricted() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const manifest = JSON.parse(await readFile(join(PROJECT_ROOT, "packages/browser-extension/manifest.json"), "utf8"));
+	assert.ok(manifest.permissions.includes("activeTab"), "visible-region capture should be allowed after the user activates Onhand");
+	assert.match(source, /browser_get_visible_region_image:\s*"get_visible_region_image"/, "visible-region capture should be whitelisted for realtime browser tools");
+	assert.match(source, /function getVisibleRegionViewportFallback\(focusedTab,\s*scriptError\s*=\s*null\)/, "visible-region capture should have a non-DOM viewport fallback");
+	assert.match(
+		source,
+		/catch \(error\) \{[\s\S]*getVisibleRegionViewportFallback\(focusedTab,\s*error\)/,
+		"visible-region capture should fall back when page DOM access is restricted",
+	);
+	assert.match(source, /source:\s*"debugger-layout"/, "visible-region fallback should try debugger layout metrics");
+	assert.match(source, /source:\s*"window-approximation"/, "visible-region fallback should still return a capture target if debugger layout is unavailable");
+	assert.match(source, /viewportScriptError/, "visible-region fallback should surface the page-script failure in metadata");
 }
 
 async function assertGoogleDocsReadableContentUsesTextExport() {
@@ -697,6 +872,9 @@ async function loadGoogleDocsBackgroundExportHelpers(fetchImpl) {
 		"buildGoogleDocsPdfExportUrl",
 		"googleDocsTextExportUnsupportedPayload",
 		"googleDocsTextExportPayloadFromText",
+		"googleDocsCaptureStatePayload",
+		"googleDocsVisibleTextPayloadFromExport",
+		"googleDocsViewportHeadingsPayloadFromExport",
 		"extractGoogleDocsTextExportForTab",
 	];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
@@ -773,12 +951,67 @@ async function assertGoogleDocsBackgroundExportDoesNotReturnHtml() {
 	assert.doesNotMatch(content.text, /toolbar/);
 }
 
+async function assertGoogleDocsBackgroundVisiblePayloadsUseExportShape() {
+	const helpers = await loadGoogleDocsBackgroundExportHelpers(async () => ({
+		ok: true,
+		status: 200,
+		headers: { get: () => "text/plain" },
+		async text() {
+			return [
+				"My name is Farza.",
+				"",
+				"I am going all-in on building a new interface for computers.",
+				"",
+				"My first major swing is heyclicky, a simple AI buddy that lives on your Mac.",
+			].join("\n");
+		},
+	}));
+	const tab = {
+		url: GOOGLE_DOCS_FIXTURE_EDIT_URL,
+		title: "heyclicky vision - Google Docs",
+	};
+	const content = await helpers.extractGoogleDocsTextExportForTab(tab, { maxChars: 2000 });
+	const visible = helpers.googleDocsVisibleTextPayloadFromExport(tab, content, { maxChars: 120, maxBlocks: 2 });
+	const headings = helpers.googleDocsViewportHeadingsPayloadFromExport(tab, content, { maxHeadings: 4 });
+	const capture = helpers.googleDocsCaptureStatePayload(tab);
+
+	assert.equal(visible.surface, "google-docs");
+	assert.equal(visible.source, "google-docs-export-visible-text");
+	assert.equal(visible.blockCount, 2);
+	assert.match(visible.text, /My name is Farza/);
+	assert.match(visible.text, /new interface/);
+	assert.equal(headings.source, "google-docs-export-headings");
+	assert.equal(headings.currentHeading.text, "heyclicky vision");
+	assert.match(headings.message, /inferred from the document title/);
+	assert.equal(capture.source, "google-docs-fast-capture");
+	assert.deepEqual(capture.annotations, []);
+}
+
 async function assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval() {
 	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	assert.match(
 		source,
 		/case "extract_content":\s*{[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*args\.maxChars\s*\}\)[\s\S]*evaluateInTab/,
 		"browser_extract_content should read Google Docs through the background text export before page-world evaluation",
+	);
+}
+
+async function assertGoogleDocsReadCommandsBypassEditorToolkit() {
+	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	assert.match(
+		source,
+		/case "capture_state":\s*{[\s\S]*isGoogleDocsDocumentUrl\(tab\.url\)[\s\S]*googleDocsCaptureStatePayload\(tab\)[\s\S]*runPageToolkitMethod\(tab\.id,\s*"captureState"/,
+		"Google Docs sidebar capture should use a fast payload before the generic editor toolkit",
+	);
+	assert.match(
+		source,
+		/case "get_visible_text":\s*{[\s\S]*isGoogleDocsDocumentUrl\(tab\.url\)[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*args\.maxChars\s*\}\)[\s\S]*googleDocsVisibleTextPayloadFromExport[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getVisibleText"/,
+		"Google Docs visible-text reads should use text export before the generic editor toolkit",
+	);
+	assert.match(
+		source,
+		/case "get_viewport_headings":\s*{[\s\S]*isGoogleDocsDocumentUrl\(tab\.url\)[\s\S]*extractGoogleDocsTextExportForTab\(tab,\s*\{\s*maxChars:\s*2000\s*\}\)[\s\S]*googleDocsViewportHeadingsPayloadFromExport[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getViewportHeadings"/,
+		"Google Docs heading reads should return export-derived context before probing the editor",
 	);
 }
 
@@ -917,6 +1150,39 @@ async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 	);
 }
 
+async function assertGoogleDocsSelectionUsesTextEventClipboardFallback() {
+	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const manifestSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/manifest.json"), "utf8");
+	const offscreenSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/offscreen.js"), "utf8");
+	const sidebarSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/sidebar.js"), "utf8");
+	assert.match(manifestSource, /"clipboardRead"/, "Google Docs selection recovery needs clipboardRead permission");
+	assert.match(manifestSource, /"clipboardWrite"/, "Google Docs selection recovery needs clipboardWrite permission for clipboard restoration");
+	assert.match(offscreenSource, /offscreen:clipboard-read/, "offscreen document should read clipboard text for selection recovery");
+	assert.match(offscreenSource, /offscreen:clipboard-write/, "offscreen document should restore clipboard text after selection recovery");
+	assert.match(sidebarSource, /sidebar:clipboard-read/, "focused sidebar should read clipboard text for Google Docs selection recovery");
+	assert.match(sidebarSource, /sidebar:clipboard-write/, "focused sidebar should write clipboard markers for Google Docs selection recovery");
+	assert.match(
+		backgroundSource,
+		/readTextFromExtensionClipboard\(\)[\s\S]*sendSidebarClipboardMessage\("sidebar:clipboard-read"\)[\s\S]*readTextFromOffscreenClipboard\(\)/,
+		"Google Docs selection recovery should prefer focused sidebar clipboard reads before offscreen fallback",
+	);
+	assert.match(
+		backgroundSource,
+		/function getGoogleDocsTextEventCopyExpression\(\)[\s\S]*iframe\.docs-texteventtarget-iframe[\s\S]*execCommand\?\.\("copy"\)/,
+		"Google Docs selection recovery should copy through the Docs text-event iframe",
+	);
+	assert.match(
+		backgroundSource,
+		/case "get_selection":\s*{[\s\S]*maybeGetGoogleScholarReaderSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*selection\)[\s\S]*maybeGetBrowserClipboardPdfSelection\(tab,\s*selection\)[\s\S]*maybeGetGoogleDocsClipboardSelection\(tab,\s*selection\)[\s\S]*maybeGetDebuggerFrameSelection\(tab,\s*selection\)/,
+		"browser_get_selection should try Google Docs clipboard selection before generic frame fallback",
+	);
+	assert.match(
+		backgroundSource,
+		/googleDocsExportTextContainsSelection\(content,\s*copiedText\)/,
+		"Google Docs copied selection should be checked against document text export",
+	);
+}
+
 function installLayoutShims(window) {
 	Object.defineProperty(window.HTMLElement.prototype, "innerText", {
 		get() {
@@ -1033,6 +1299,30 @@ async function assertNoHighlight({ name, html, query }) {
 		/error|No visible text matched/i,
 		`${name}: expected no highlight`,
 	);
+}
+
+async function assertHyphenatedProseHeadingDoesNotWaitForMathJax() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<script type="math/tex">$$q = qP$$</script>
+			<h2>Metropolis-Hastings Sampling</h2>
+			<p>Now we can build a Markov chain whose stationary distribution is the posterior.</p>
+		</main>
+	`);
+	let touchedMathJaxQueue = false;
+	dom.window.MathJax = {
+		startup: {
+			promise: {
+				then() {
+					touchedMathJaxQueue = true;
+					return new Promise(() => {});
+				},
+			},
+		},
+	};
+	const highlight = await toolkit.highlightText("Metropolis-Hastings Sampling", { scrollIntoView: false });
+	assert.match(highlight.matchedText, /Metropolis-Hastings Sampling/, "hyphenated prose heading should be highlighted");
+	assert.equal(touchedMathJaxQueue, false, "hyphenated prose should not be treated as math-like");
 }
 
 async function assertNoteDoesNotClearFloats() {
@@ -2656,6 +2946,7 @@ async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertNativeChromePdfViewerSelectionFallback();
+	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
@@ -2663,10 +2954,13 @@ async function main() {
 	await assertTextbookReaderSearchUsesGenericSearchUi();
 	await assertGoogleDocsBackgroundExportReadsText();
 	await assertGoogleDocsBackgroundExportDoesNotReturnHtml();
+	await assertGoogleDocsBackgroundVisiblePayloadsUseExportShape();
 	await assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval();
+	await assertGoogleDocsReadCommandsBypassEditorToolkit();
 	await assertExtractContentUsesDebuggerFrameReadableFallback();
 	await assertTextbookHighlightPrefersBodyFrameOverSearchUi();
 	await assertGoogleDocsHighlightUsesPdfViewerHandoff();
+	await assertGoogleDocsSelectionUsesTextEventClipboardFallback();
 
 	await assertHighlight({
 		name: "curly quote exact projection",
@@ -2690,6 +2984,8 @@ async function main() {
 		query: "Promise represents eventual completion failure asynchronous operation resulting value",
 		expectedText: /Promise object represents the eventual completion/,
 	});
+
+	await assertHyphenatedProseHeadingDoesNotWaitForMathJax();
 
 	await assertNoHighlight({
 		name: "avoid low-coverage missing concept match",

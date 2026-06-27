@@ -10,7 +10,7 @@
     "48": "icons/onhand-48.png",
     "128": "icons/onhand-128.png"
   },
-  "permissions": ["tabs", "storage", "unlimitedStorage", "debugger", "sidePanel", "offscreen", "scripting", "webNavigation"],
+  "permissions": ["tabs", "activeTab", "storage", "unlimitedStorage", "debugger", "sidePanel", "offscreen", "scripting", "webNavigation", "clipboardRead", "clipboardWrite"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "http://*/*", "https://*/*", "file:///*"],
   "background": {
     "service_worker": "background.js",
