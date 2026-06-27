@@ -2461,11 +2461,36 @@ function readableContentQueryScore(text, tokens) {
 	return score;
 }
 
+function isLikelyOnlineTextbookReaderUrl(url) {
+	let parsed;
+	try {
+		parsed = new URL(String(url || ""));
+	} catch {
+		return false;
+	}
+	if (!/^(https?|file):$/i.test(parsed.protocol)) return false;
+	const host = parsed.hostname.toLowerCase();
+	if (
+		/(^|\.)(vitalsource\.com|jigsaw\.vitalsource\.com|pearson\.com|cengage\.com|mheducation\.com|mcgrawhill\.com|redshelf\.com|brytewave\.com|perusall\.com|zybooks\.com)$/i.test(
+			host,
+		)
+	) {
+		return true;
+	}
+	const path = parsed.pathname.toLowerCase();
+	return parsed.protocol === "file:" && /\b(ebook|textbook|courseware|reader)\b/.test(path);
+}
+
 function isLikelyOnlineTextbookReaderTab(tab) {
-	const text = `${tab?.url || ""} ${tab?.title || ""}`.toLowerCase();
-	return /\b(vitalsource|bookshelf|jigsaw|pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|courseware|ebook|textbook|reader)\b/.test(
-		text,
-	);
+	return isLikelyOnlineTextbookReaderUrl(tab?.url);
+}
+
+function sameOriginUrls(firstUrl, secondUrl) {
+	try {
+		return new URL(String(firstUrl || "")).origin === new URL(String(secondUrl || "")).origin;
+	} catch {
+		return false;
+	}
 }
 
 function readableContentLooksLikeReaderSearchUi(payload) {
@@ -2488,7 +2513,7 @@ function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}
 	const currentText = normalizeReadableContentText(currentContent);
 	const currentLength = currentText.length;
 	const tokens = readableContentQueryTokens(options.query);
-	if (isLikelyOnlineTextbookReaderTab(tab)) return true;
+	if (!isLikelyOnlineTextbookReaderTab(tab)) return false;
 	if (readableContentLooksLikeReaderSearchUi(currentContent)) return true;
 	if (tokens.length && readableContentQueryScore(currentText, tokens) <= 0) return true;
 	if (currentLength < 5000) return true;
@@ -2512,7 +2537,7 @@ function debuggerFrameReadableContentIsBetter(candidate, currentContent, options
 	return false;
 }
 
-async function getDebuggerFrameReadableContent(tabId, options = {}, currentContent = null) {
+async function getDebuggerFrameReadableContent(tabId, options = {}, currentContent = null, tab = null) {
 	const extractOptions = {
 		maxChars: options.maxChars,
 		query: options.query,
@@ -2526,7 +2551,8 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 			if (!context?.auxData?.isDefault) return false;
 			const url = String(frame?.url || "");
 			if (!url || !/^(https?|file):/i.test(url)) return false;
-			return true;
+			if (tab?.url && sameOriginUrls(tab.url, url)) return true;
+			return isLikelyOnlineTextbookReaderUrl(url);
 		},
 		async ({ send, candidates }) => {
 			let bestContent = null;
@@ -2571,7 +2597,7 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 async function maybeGetDebuggerFrameReadableContent(tab, currentContent, options = {}) {
 	if (!shouldTryDebuggerFrameReadableContent(tab, currentContent, options)) return currentContent;
 	try {
-		const content = await getDebuggerFrameReadableContent(tab.id, options, currentContent);
+		const content = await getDebuggerFrameReadableContent(tab.id, options, currentContent, tab);
 		if (debuggerFrameReadableContentIsBetter(content, currentContent, options)) return content;
 	} catch {}
 	return currentContent;
