@@ -758,7 +758,7 @@ async function assertExtractContentUsesBackgroundGoogleDocsExportBeforePageEval(
 
 async function assertExtractContentUsesDebuggerFrameReadableFallback() {
 	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
-	assert.match(source, /function getDebuggerFrameReadableContent\(tabId,\s*options\s*=\s*\{\},\s*currentContent\s*=\s*null\)/, "browser_extract_content should have a debugger frame readable-content fallback");
+	assert.match(source, /function getDebuggerFrameReadableContent\(tabId,\s*options\s*=\s*\{\},\s*currentContent\s*=\s*null,\s*tab\s*=\s*null\)/, "browser_extract_content should have a debugger frame readable-content fallback");
 	assert.match(source, /source:\s*"debugger-frame-readable-content"/, "debugger frame readable-content fallback should identify its source");
 	assert.match(source, /function isLikelyOnlineTextbookReaderTab\(tab\)/, "textbook reader tabs should force a nested readable-frame check");
 	assert.match(source, /function readableContentLooksLikeReaderSearchUi\(payload\)/, "reader search panels should not be treated as final readable textbook content");
@@ -772,6 +772,34 @@ async function assertExtractContentUsesDebuggerFrameReadableFallback() {
 		/case "extract_content":\s*{[\s\S]*evaluateInTab\(tab\.id,[\s\S]*maybeGetDebuggerFrameReadableContent\(tab,\s*content,\s*\{[\s\S]*query:\s*args\.query/,
 		"browser_extract_content should try nested readable frames after the main-page extractor",
 	);
+
+	const functionNames = [
+		"normalizeReadableContentText",
+		"readableContentQueryTokens",
+		"readableContentQueryScore",
+		"isLikelyOnlineTextbookReaderUrl",
+		"isLikelyOnlineTextbookReaderTab",
+		"sameOriginUrls",
+		"readableContentLooksLikeReaderSearchUi",
+		"shouldTryDebuggerFrameReadableContent",
+	];
+	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
+	const helpers = new Function(`${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`)();
+	const shortContent = { markdown: "# Short page", blockCount: 1 };
+	assert.equal(
+		helpers.shouldTryDebuggerFrameReadableContent({ url: "https://attacker.example/", title: "Reader" }, shortContent, { query: "private" }),
+		false,
+		"generic pages and title-only reader claims must not trigger debugger frame extraction",
+	);
+	assert.equal(
+		helpers.shouldTryDebuggerFrameReadableContent({ url: "https://bookshelf.vitalsource.com/reader/books/123" }, shortContent, { query: "private" }),
+		true,
+		"known textbook reader URLs can still trigger debugger frame extraction",
+	);
+	assert.equal(helpers.isLikelyOnlineTextbookReaderUrl("https://private.example/account"), false);
+	assert.equal(helpers.isLikelyOnlineTextbookReaderUrl("https://jigsaw.vitalsource.com/books/123/part-11.xhtml"), true);
+	assert.equal(helpers.sameOriginUrls("https://example.test/a", "https://example.test/frame"), true);
+	assert.equal(helpers.sameOriginUrls("https://example.test/a", "https://private.example/frame"), false);
 }
 
 async function assertTextbookHighlightPrefersBodyFrameOverSearchUi() {
@@ -780,6 +808,7 @@ async function assertTextbookHighlightPrefersBodyFrameOverSearchUi() {
 		"normalizePageToolkitPayloadText",
 		"pageToolkitPayloadLooksLikeReaderSearchUi",
 		"pageToolkitFramePayloadLooksLikeReaderSearchUi",
+		"isLikelyOnlineTextbookReaderUrl",
 		"isLikelyOnlineTextbookReaderTab",
 		"shouldPreferTextbookFramePageToolkit",
 		"pickBestPageToolkitFramePayload",
