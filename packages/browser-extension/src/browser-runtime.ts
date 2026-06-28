@@ -3982,7 +3982,7 @@ function compactOverbroadPageTeachingReply(value: string, request: any) {
 				: withoutQuestion;
 	const compact = truncateReplyAtWordBudget(focused, compactFirstPass ? 200 : 280);
 	const footer = promptAsksForTeachingPageSourceMarker(request.displayPrompt)
-		? "\n\nThis keeps the first pass focused. Ask for a section-by-section walkthrough to expand it."
+		? ""
 		: "";
 	return normalizeAssistantReplySpacing(`${compact}${footer}`);
 }

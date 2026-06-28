@@ -135208,7 +135208,7 @@ function compactOverbroadPageTeachingReply(value, request) {
     return cleanedSections.length >= 3 ? cleanedSections.slice(0, compactFirstPass ? 2 : 2).join("\n\n") : withoutUnsupportedRoadmap;
   })() : sections.length >= 3 ? sections.slice(0, compactFirstPass ? 3 : 2).join("\n\n") : withoutQuestion;
   const compact2 = truncateReplyAtWordBudget(focused, compactFirstPass ? 200 : 280);
-  const footer = promptAsksForTeachingPageSourceMarker(request.displayPrompt) ? "\n\nThis keeps the first pass focused. Ask for a section-by-section walkthrough to expand it." : "";
+  const footer = promptAsksForTeachingPageSourceMarker(request.displayPrompt) ? "" : "";
   return normalizeAssistantReplySpacing(`${compact2}${footer}`);
 }
 function firstCompletedSourceHighlightCitation(request) {
