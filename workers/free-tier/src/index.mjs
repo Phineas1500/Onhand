@@ -22,13 +22,13 @@ const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
 const ALLOWED_MODELS = new Set([FREE_TIER_TEXT_MODEL]);
 const ALLOWED_OPENROUTER_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
 const UPSTREAM_FALLBACK_STATUSES = new Set([404]);
-const MAX_BODY_BYTES = 900_000;
+const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 const DEFAULT_DAILY_COST_CAP_USD = 5;
 const DEFAULT_DAILY_REQUEST_CAP = 80;
-const DEFAULT_TURN_MODEL_CALL_CAP = 20;
+const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 const DEFAULT_HEAVY_TURN_COST_USD = 0.005;
 const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
@@ -1035,6 +1035,7 @@ export default {
 export const __freeTierTest = {
 	FREE_TIER_TEXT_MODEL,
 	FREE_TIER_VISUAL_MODEL,
+	MAX_BODY_BYTES,
 	QUOTA_BYPASS_HEADER,
 	prepareOpenRouterRequestBody,
 	quotaBypassAuthorized,

@@ -43,6 +43,7 @@
     "test:real-online-pdfs": "node ./scripts/run-real-online-pdf-regressions.mjs",
     "test:live-acceptance": "node ./scripts/run-onhand-live-acceptance.mjs",
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs",
+    "eval:page-prompts": "node ./scripts/run-page-prompt-eval.mjs",
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs"
   },
   "dependencies": {

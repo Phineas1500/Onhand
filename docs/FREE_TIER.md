@@ -12,8 +12,9 @@ completions to OpenRouter with Onhand's key.
   refusal) at roughly a cent per turn measured through OpenRouter.
 - Image-bearing requests route server-side to Mistral Small 3.2 because
   DeepSeek V4 Flash does not support image input. The extension treats
-  that visual route as a 128K-context path and compacts image-bearing
-  agent transcripts before the next model call.
+  that visual route as a 128K-context path, compacts image-bearing
+  agent transcripts, and downscales/compresses retained images before
+  the next free-tier model call.
 - The worker pins OpenRouter routing to US hosts (`deepinfra`,
   `parasail`, `novita`, `wandb`) so free-tier pages and PDFs never
   transit PRC-hosted APIs, and so only hosts with validated tool-call
@@ -29,13 +30,13 @@ completions to OpenRouter with Onhand's key.
   `mistralai/mistral-small-3.2-24b-instruct`
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
-- `TURN_MODEL_CALL_CAP` (default 20 model calls in one Onhand UI turn)
+- `TURN_MODEL_CALL_CAP` (default 50 model calls in one Onhand UI turn)
 - `HEAVY_TURN_MODEL_CALLS`, `HEAVY_TURN_COST_USD`, and
   `HEAVY_TURN_TOKENS` (warning-only ops thresholds)
 - `REGISTRATIONS_PER_IP_PER_DAY` (default 5)
 - `TELEMETRY_EVENTS_PER_IP_PER_DAY` (default 1000 diagnostics events/day)
 - `ERROR_REPORTS_PER_IP_PER_DAY` (default 50 explicit error reports/day)
-- request body capped at ~900KB, `max_tokens` clamped to 16384
+- request body capped at ~2.5MB, `max_tokens` clamped to 16384
 
 The values in this repo are defaults. The deployed worker may run
 different caps (set via wrangler vars), so production limits can be

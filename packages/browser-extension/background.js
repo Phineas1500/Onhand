@@ -931,6 +931,27 @@ function stripUrlHash(value) {
 	}
 }
 
+function navigationUrlMatchKey(value) {
+	const raw = String(value || "").trim();
+	if (!raw) return "";
+	try {
+		const url = new URL(raw);
+		if (!/^https?:$/i.test(url.protocol)) return "";
+		url.hash = "";
+		return url.toString();
+	} catch {
+		return "";
+	}
+}
+
+async function findExistingNavigationTab(url, windowId) {
+	const key = navigationUrlMatchKey(url);
+	if (!key) return null;
+	const tabs = await chrome.tabs.query(typeof windowId === "number" ? { windowId } : {});
+	const matches = tabs.filter((tab) => tab?.id && navigationUrlMatchKey(tab.url) === key);
+	return matches.find((tab) => tab.active) || matches[0] || null;
+}
+
 function shouldInferPdfPageNumberFromTab(tab, pdfUrl) {
 	const tabUrl = String(tab?.url || "");
 	if (!tabUrl) return false;
@@ -3521,10 +3542,11 @@ async function attachDebuggerWithRetry(target) {
 
 async function withDebugger(tabId, fn) {
 	const previousTask = debuggerTaskChains.get(tabId) || Promise.resolve();
-	const scheduledTask = previousTask.catch(() => {}).then(async () => {
-		await assertDebuggerEligibleTab(tabId);
-		const target = { tabId };
-		await attachDebuggerWithRetry(target);
+	const scheduledTask = withOperationTimeout(
+		previousTask.catch(() => {}).then(async () => {
+			await assertDebuggerEligibleTab(tabId);
+			const target = { tabId };
+			await attachDebuggerWithRetry(target);
 			try {
 				return await fn({
 					target,
@@ -3537,11 +3559,14 @@ async function withDebugger(tabId, fn) {
 					},
 				});
 			} finally {
-			try {
-				await chrome.debugger.detach(target);
-			} catch {}
-		}
-	});
+				try {
+					await chrome.debugger.detach(target);
+				} catch {}
+			}
+		}),
+		TAB_COMMAND_TIMEOUT_MS,
+		`Timed out waiting for debugger task on tab ${tabId}`,
+	);
 
 	const trackedTask = scheduledTask.finally(() => {
 		if (debuggerTaskChains.get(tabId) === trackedTask) {
@@ -3559,8 +3584,9 @@ async function withDebuggerTarget(target, fn) {
 		throw new Error("Missing debugger target");
 	}
 	const previousTask = debuggerTaskChains.get(targetKey) || Promise.resolve();
-	const scheduledTask = previousTask.catch(() => {}).then(async () => {
-		await attachDebuggerWithRetry(target);
+	const scheduledTask = withOperationTimeout(
+		previousTask.catch(() => {}).then(async () => {
+			await attachDebuggerWithRetry(target);
 			try {
 				return await fn({
 					target,
@@ -3573,11 +3599,14 @@ async function withDebuggerTarget(target, fn) {
 					},
 				});
 			} finally {
-			try {
-				await chrome.debugger.detach(target);
-			} catch {}
-		}
-	});
+				try {
+					await chrome.debugger.detach(target);
+				} catch {}
+			}
+		}),
+		TAB_COMMAND_TIMEOUT_MS,
+		`Timed out waiting for debugger task on ${targetKey}`,
+	);
 
 	const trackedTask = scheduledTask.finally(() => {
 		if (debuggerTaskChains.get(targetKey) === trackedTask) {
@@ -3591,15 +3620,11 @@ async function withDebuggerTarget(target, fn) {
 
 async function withTabCommand(tabId, fn) {
 	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
-	const scheduledTask = previousTask
-		.catch(() => {})
-		.then(() =>
-			withOperationTimeout(
-				Promise.resolve().then(fn),
-				TAB_COMMAND_TIMEOUT_MS,
-				`Timed out waiting for page command on tab ${tabId}`,
-			),
-		);
+	const scheduledTask = withOperationTimeout(
+		previousTask.catch(() => {}).then(() => Promise.resolve().then(fn)),
+		TAB_COMMAND_TIMEOUT_MS,
+		`Timed out waiting for page command on tab ${tabId}`,
+	);
 	const trackedTask = scheduledTask.finally(() => {
 		if (tabCommandTaskChains.get(tabId) === trackedTask) {
 			tabCommandTaskChains.delete(tabId);
@@ -4773,13 +4798,22 @@ const createPageToolkit = (options = {}) => {
 		'[data-testid="tweetText"]',
 	].join(", ");
 
-	const MATH_CONTAINER_SELECTOR = [
-		"mjx-container",
-		".MathJax",
-		".katex",
-		".math",
-		'[role="math"]',
-	].join(", ");
+		const MATH_CONTAINER_SELECTOR = [
+			"mjx-container",
+			".MathJax",
+			".katex",
+			".math",
+			'[role="math"]',
+		].join(", ");
+
+		const DISPLAY_MATH_HIGHLIGHT_TARGET_SELECTOR = [
+			".MathJax_Display",
+			"mjx-container",
+			".katex-display",
+			".katex",
+			".math",
+			'[role="math"]',
+		].join(", ");
 
 	const EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR = [
 		"nav",
@@ -6737,7 +6771,10 @@ const createPageToolkit = (options = {}) => {
 	const pageHasRenderedMath = () => Boolean(document.querySelector(`${MATH_CONTAINER_SELECTOR}, script[type^="math/tex"]`));
 
 	const waitForMathTypesetting = async (rawQuery) => {
-		if (!isMathLikeHighlightQuery(rawQuery)) return;
+		// Wait whenever the PAGE has math being typeset, regardless of whether the query
+		// itself looks math-like. MathJax reflows and transiently hides the DOM while
+		// typesetting, so even a math-free highlight fails with "No visible text matched"
+		// if it races typesetting on a math-heavy page.
 		if (!pageHasRawTexSource() && !window.MathJax) return;
 
 		const wait = (timeoutMs) => new Promise((resolve) => window.setTimeout(resolve, timeoutMs));
@@ -7021,22 +7058,77 @@ const createPageToolkit = (options = {}) => {
 		}
 	};
 
-	const findStructuredRangeHighlightElement = (range) => {
-		if (!rangeIncludesListStructure(range)) return null;
-		const sharedListItem = getSharedListItemForRange(range);
-		if (sharedListItem && isVisible(sharedListItem)) return sharedListItem;
-		const common =
+		const findStructuredRangeHighlightElement = (range) => {
+			if (!rangeIncludesListStructure(range)) return null;
+			const sharedListItem = getSharedListItemForRange(range);
+			if (sharedListItem && isVisible(sharedListItem)) return sharedListItem;
+			const common =
 			range.commonAncestorContainer instanceof Element
 				? range.commonAncestorContainer
 				: range.commonAncestorContainer?.parentElement;
-		const listContainer = common?.closest?.("li, ol, ul") || common?.querySelector?.("li, ol, ul") || null;
-		return listContainer instanceof Element && isVisible(listContainer) ? listContainer : null;
-	};
+			const listContainer = common?.closest?.("li, ol, ul") || common?.querySelector?.("li, ol, ul") || null;
+			return listContainer instanceof Element && isVisible(listContainer) ? listContainer : null;
+		};
 
-	const findNoteForAnnotation = (annotationId) => {
-		const note = document.querySelector(`[data-onhand-note-for="${attrEscape(annotationId)}"]`);
-		return note instanceof Element ? note : null;
-	};
+		const findMathHighlightTargetForElement = (element) => {
+			if (!(element instanceof Element)) return null;
+			const mathElement = element.matches?.(MATH_CONTAINER_SELECTOR) ? element : element.closest?.(MATH_CONTAINER_SELECTOR);
+			if (!(mathElement instanceof Element) || !isVisible(mathElement)) return null;
+			const displayTarget = mathElement.closest?.(DISPLAY_MATH_HIGHLIGHT_TARGET_SELECTOR);
+			const target = displayTarget instanceof Element ? displayTarget : mathElement;
+			if (target.closest?.("[data-onhand-highlight-kind]")) return null;
+			return isVisible(target) ? target : mathElement;
+		};
+
+		const findMathHighlightElementForRange = (range, rawQuery) => {
+			const common =
+				range.commonAncestorContainer instanceof Element
+					? range.commonAncestorContainer
+					: range.commonAncestorContainer?.parentElement;
+			const candidates = [];
+			const consider = (element) => {
+				const target = findMathHighlightTargetForElement(element);
+				if (!target || candidates.includes(target)) return;
+				try {
+					if (range.intersectsNode(target)) candidates.push(target);
+				} catch {
+					candidates.push(target);
+				}
+			};
+			const startElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer?.parentElement;
+			const endElement = range.endContainer instanceof Element ? range.endContainer : range.endContainer?.parentElement;
+			consider(startElement);
+			consider(endElement);
+			if (common instanceof Element) {
+				if (common.matches?.(MATH_CONTAINER_SELECTOR)) consider(common);
+				for (const element of Array.from(common.querySelectorAll?.(MATH_CONTAINER_SELECTOR) || [])) {
+					try {
+						if (range.intersectsNode(element)) consider(element);
+					} catch {
+						consider(element);
+					}
+				}
+			}
+			if (!candidates.length) return null;
+			if (!isMathLikeHighlightQuery(rawQuery)) {
+				const sharedListItem = getSharedListItemForRange(range);
+				if (sharedListItem && isVisible(sharedListItem)) return sharedListItem;
+				const container = common?.closest?.(ANNOTATION_CONTAINER_SELECTOR);
+				if (container instanceof Element && isVisible(container)) return container;
+			}
+			return candidates
+				.map((element) => ({ element, rect: element.getBoundingClientRect() }))
+				.sort((left, right) => {
+					const leftArea = Math.max(0, left.rect.width) * Math.max(0, left.rect.height);
+					const rightArea = Math.max(0, right.rect.width) * Math.max(0, right.rect.height);
+					return rightArea - leftArea;
+				})[0]?.element || candidates[0];
+		};
+
+		const findNoteForAnnotation = (annotationId) => {
+			const note = document.querySelector(`[data-onhand-note-for="${attrEscape(annotationId)}"]`);
+			return note instanceof Element ? note : null;
+		};
 
 	const buildAnnotationResult = (annotationElement, rawQuery, options = {}) => {
 		const annotationId = String(annotationElement.getAttribute("data-onhand-annotation-id") || "");
@@ -7219,12 +7311,20 @@ const createPageToolkit = (options = {}) => {
 		};
 	};
 
-	const highlightRange = async (range, rawQuery, options = {}) => {
-		const structuredElement = findStructuredRangeHighlightElement(range);
-		if (structuredElement) {
-			return await highlightBlockElement(structuredElement, rawQuery, {
-				scrollIntoView: options.scrollIntoView,
-				approximate: options.approximate,
+		const highlightRange = async (range, rawQuery, options = {}) => {
+			const mathElement = findMathHighlightElementForRange(range, rawQuery);
+			if (mathElement) {
+				return await highlightBlockElement(mathElement, rawQuery, {
+					scrollIntoView: options.scrollIntoView,
+					approximate: options.approximate,
+					fallback: options.fallback || "math-range",
+				});
+			}
+			const structuredElement = findStructuredRangeHighlightElement(range);
+			if (structuredElement) {
+				return await highlightBlockElement(structuredElement, rawQuery, {
+					scrollIntoView: options.scrollIntoView,
+					approximate: options.approximate,
 				fallback: options.fallback,
 			});
 		}
@@ -9815,6 +9915,11 @@ async function navigateBrowser(args = {}) {
 			const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
 			windowId = activeTab?.windowId;
 		}
+		const existingTab = await findExistingNavigationTab(args.url, windowId);
+		if (existingTab?.id) {
+			if (args.active !== false) return await focusTab(existingTab.id);
+			return waitForLoad && existingTab.status !== "complete" ? await waitForTabComplete(existingTab.id, timeoutMs) : existingTab;
+		}
 		const createdTab = await chrome.tabs.create({
 			url: args.url,
 			active: args.active !== false,
@@ -9951,8 +10056,10 @@ async function openPdfInOnhandViewer(args = {}) {
 	// Reuse a viewer that is already rendered for this PDF instead of
 	// reinstalling: re-running the install rewrites the iframe src with a
 	// freshly inferred page param, which reloads the viewer and yanks the
-	// user away from where they were reading on every prompt.
-	if (args.forceReload !== true && !shouldOpenViewerInNewTab && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+	// user away from where they were reading on every prompt. This also
+	// applies when a later tool call asks for a new tab after an automatic
+	// preflight already mounted the inline viewer on the current PDF tab.
+	if (args.forceReload !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		const existingStatus = await probeInlineOnhandPdfViewerStatus(sourceTab.id, pdfUrl);
 		if (existingStatus) {
 			const existingPageNumber = normalizePdfPageNumber(

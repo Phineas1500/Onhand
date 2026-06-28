@@ -275,6 +275,12 @@ async function assertPdfViewerHandoffHelpers() {
 	);
 	assert.match(backgroundSource, /Allow access to file URLs/, "local file access failures should tell the user which Chrome extension toggle to enable");
 	assert.match(backgroundSource, /browser_navigate cannot open file:\/\/ URLs/, "browser navigation should not be able to open arbitrary local file URLs");
+	assert.match(backgroundSource, /function findExistingNavigationTab\(url,\s*windowId\)/, "new-tab navigation should look for an already-open matching URL first");
+	assert.ok(
+		backgroundSource.indexOf("const existingTab = await findExistingNavigationTab(args.url, windowId);") <
+			backgroundSource.indexOf("const createdTab = await chrome.tabs.create", backgroundSource.indexOf("async function navigateBrowser")),
+		"browser_navigate with newTab should reuse an existing distinct URL tab before creating another tab",
+	);
 	assert.match(backgroundSource, /href: element instanceof HTMLAnchorElement \? element\.href \|\| null : null/, "element search should expose resolved link hrefs for navigation");
 	assert.match(backgroundSource, /isRestrictedScriptingError\(error\)/, "frame fallback should only engage on a restricted-scripting error");
 	// A restricted main-frame error on a PDF tab (native viewer is a different
@@ -1473,6 +1479,32 @@ async function assertExactMathSourceModeMatchesRenderedMathJax() {
 	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
 	assert.ok(note, "math-source highlight should support notes");
 	assert.equal(note.previousElementSibling?.getAttribute("data-onhand-highlight-kind"), "block");
+}
+
+async function assertMixedLabelAndRenderedMathUsesBlockHighlight() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p id="posterior">
+				Bayes theorem:
+				<span id="posterior-equation" class="MathJax_Display">
+					<span class="MathJax">p(W|D)=p(D|W)P(W)/p(D)</span>
+				</span>
+			</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("Bayes theorem: p(W|D)=p(D|W)P(W)/p(D)", {
+		scrollIntoView: false,
+	});
+	const equation = dom.window.document.getElementById("posterior-equation");
+
+	assert.equal(highlight.kind, "block", "label-plus-rendered-math matches should use the block formula highlight path");
+	assert.equal(highlight.fallback, "math-range", "mixed math ranges should report the formula-safe fallback");
+	assert.equal(equation?.getAttribute("data-onhand-highlight-kind"), "block", "display equation wrapper should carry the highlight");
+	assert.equal(
+		dom.window.document.querySelectorAll('span[data-onhand-highlight-kind="inline"]').length,
+		0,
+		"rendered math should not be wrapped in an inline highlight span",
+	);
 }
 
 async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
@@ -3000,6 +3032,7 @@ async function main() {
 	await assertTweetTextContainerCanBeHighlightedAcrossNodes();
 	await assertNestedListHighlightUsesBlockContainer();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
+	await assertMixedLabelAndRenderedMathUsesBlockHighlight();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 	await assertPdfTextLayerVisibleTextUsesPdfSurface();
 	await assertPdfDocumentIdentityUsesEmbeddedPdfUrl();

@@ -7294,10 +7294,10 @@
 			makeTool("browser_get_selection", "Read the user's current text selection in a browser tab.", currentTabOnly()),
 			makeTool("browser_get_viewport_headings", "Read the current and nearby headings for section context in a tab.", currentTabOnly({ maxHeadings: { type: "number" } })),
 			makeTool("browser_get_scroll_state", "Read scroll position and page progress for a tab.", currentTabOnly()),
-			makeTool(
-				"browser_highlight_text",
-				"Highlight exact visible or PDF-reader text that supports a material claim. The text argument must be copied from page/PDF text, not paraphrased. Use short, distinctive spans.",
-				currentTabOnly({
+				makeTool(
+					"browser_highlight_text",
+					"Highlight exact visible or PDF-reader text that supports a material claim you actually explain. The text argument must be copied from page/PDF text, not paraphrased. Use short, distinctive spans. If the user explicitly asks to highlight a formula/equation, use the selected formula text when available or the closest visible formula label; rendered math matches are promoted to block highlights. For ordinary source grounding where rendered math extraction is collapsed or fragmented, prefer the nearby explanatory sentence, label, or caption instead of copying broken formula text.",
+					currentTabOnly({
 					text: { type: "string", description: "Exact visible or PDF-reader text to highlight." },
 					occurrence: { type: "number" },
 					clearExisting: { type: "boolean" },
@@ -7472,7 +7472,7 @@
 				"Onhand's constitution: the page is the canvas. Do the page work before the spoken answer: anchored highlights and short marginal notes carry the substance; chat is secondary.",
 				"Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.",
 				"For page, passage, document, PDF, concept, equation, chart, or slide questions, first inspect the page with browser_get_visible_text, browser_get_selection, browser_get_viewport_headings, browser_extract_content, browser_pdf_search, or browser_pdf_read_pages before making page-specific claims.",
-				"After reading page/PDF text for a page-material question, call browser_highlight_text with one short exact source span that supports the answer before speaking the final answer. Add browser_show_note when a short marginal note would help.",
+				"After reading page/PDF text for a page-material question, call browser_highlight_text with one short exact source span that supports a claim you actually explain before speaking the final answer. Add browser_show_note when a short marginal note would help.",
 				"For comparative questions, anchor the specific sentence or list item that names the comparison; for the current Transformers notes, the multi-head attention anchor should be the exact line about multiple weighted graphs in parallel when it supports the answer.",
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
@@ -7480,7 +7480,8 @@
 				"When the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, treat that as permission to navigate within those linked pages. If the current tab is already a destination note, use browser_list_tabs to find the already-open course/index/master page before asking the student for it, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages, inspect them, then anchor useful passages on the destination pages before publishing.",
 				"If a web search results page is only an intermediate step, do not highlight the search-results page as the source. Open the relevant result/source page first, then anchor there.",
 				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
-				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation.",
+				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation, and do not add extra highlights just to increase source count.",
+					"If the user explicitly asks to highlight a formula/equation, use browser_highlight_text with the selected formula text when available or the closest visible formula label; rendered math matches become block highlights. For ordinary source grounding where rendered math extraction is collapsed or fragmented, highlight the nearby explanatory sentence, label, or caption instead of copying broken formula text. Render a clean formula in the answer only when the intended formula is clear.",
 				"If a highlight attempt fails, retry once with a smaller exact visible span. If it still fails, clearly say what source text you read but could not anchor.",
 				"Speak the answer only after the needed tools have succeeded. Keep the sidebar answer, spoken answer, citations, and saved turn consistent.",
 				"Use publish_sidebar_answer only after any needed browser/PDF tool calls; it is never the first tool for a page-material question.",
