@@ -135246,16 +135246,6 @@ function compactTeachingFooter() {
 function removeCompactTeachingFooter(value) {
   return normalizeAssistantReplySpacing(String(value || "").replace(new RegExp(compactTeachingFooter().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), ""));
 }
-function dedupeCompactTeachingFooter(value) {
-  const footer = compactTeachingFooter();
-  const pattern = new RegExp(footer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  let seen = false;
-  return normalizeAssistantReplySpacing(String(value || "").replace(pattern, () => {
-    if (seen) return "";
-    seen = true;
-    return footer;
-  }));
-}
 function cleanCompactTeachingSubject(value) {
   const text = compactActionText(value).replace(/^(?:the|this|current)\s+(?:page|article|lecture|document|chapter)\s+(?:says?|is|covers?|about)\s+/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\s+(?:page|article|lecture|document|chapter)\b.*$/i, "").replace(/[.?!:;,\s]+$/g, "").trim();
   if (!text || text.length < 4 || text.length > 90) return "";
@@ -135414,7 +135404,7 @@ function sanitizeAssistantVisibleReply(value, request = null) {
   text = recoverLowInformationCompactTeachingReply(text, request);
   text = ensureCompactTeachingSubject(text, request);
   text = stripCompactTeachingMathBlocks(text, request);
-  text = dedupeCompactTeachingFooter(text);
+  text = removeCompactTeachingFooter(text);
   text = stripDuplicatedAnswerRestart(text);
   text = stripRedundantHighlightRecap(text);
   text = stripUnsupportedStructuredItemsByHighlights(text, request);
