@@ -44,6 +44,7 @@
     "test:live-acceptance": "node ./scripts/run-onhand-live-acceptance.mjs",
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs",
     "eval:page-prompts": "node ./scripts/run-page-prompt-eval.mjs",
+    "eval:page-teaching-smoke": "node ./scripts/run-page-prompt-eval.mjs --case bayesian-no-page-changes --case mdn-fetch-teach --case energy-heat-pump-summary",
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs"
   },
   "dependencies": {

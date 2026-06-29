@@ -21,8 +21,10 @@ const DEFAULT_JUDGE_API_KEY_ENV = process.env.OPENAI_API_KEY ? "OPENAI_API_KEY" 
 
 const PROCESS_NARRATION_PATTERNS = [
 	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking)\\b" },
+	{ id: "let-me-start-with", pattern: "\\blet me start with\\b" },
 	{ id: "let-me-grab", pattern: "\\blet me grab\\b" },
 	{ id: "let-me-highlight", pattern: "\\blet me highlight\\b|\\bnow let me highlight\\b" },
+	{ id: "let-me-add-notes", pattern: "\\b(?:now\\s+)?let me add\\b[^.!?\\n]{0,120}\\b(?:notes?|highlights?|markers?)\\b" },
 	{ id: "let-me-record", pattern: "\\blet me record\\b" },
 	{ id: "grounding-preamble", pattern: "\\blet me (?:ground|anchor|inspect|extract)\\b" },
 	{ id: "highlighted-above", pattern: "\\bhighlighted above\\b|\\banchored above\\b" },
@@ -68,6 +70,24 @@ const BUILTIN_CASES = [
 			forbidMarkdownTables: true,
 			forbidInlineMarkdownHeadings: true,
 			forbidFragmentedMath: true,
+		},
+	},
+	{
+		id: "bayesian-compare",
+		url: "https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html",
+		prompt: "Compare rejection sampling and Metropolis-Hastings on this page.",
+		expect: {
+			minHighlights: 2,
+			maxHighlights: 4,
+			maxNotes: 2,
+			maxWords: 560,
+			requiredReplyPatterns: ["rejection sampling", "Metropolis-Hastings", "constant\\s+M|global\\s+constant|proposal"],
+			requiredHighlightPatterns: ["rejection sampling", "Metropolis-Hastings"],
+			forbiddenReplyPatterns: PROCESS_NARRATION_PATTERNS.map((entry) => entry.pattern),
+			forbidMarkdownTables: true,
+			forbidInlineMarkdownHeadings: true,
+			forbidFragmentedMath: true,
+			maxHighlightErrors: 0,
 		},
 	},
 	{
@@ -141,9 +161,9 @@ const BUILTIN_CASES = [
 		url: "https://docs.python.org/3/tutorial/datastructures.html",
 		prompt: "Give me a roadmap of the data structures covered on this page.",
 		expect: {
-			minHighlights: 2,
-			maxHighlights: 5,
-			maxNotes: 1,
+			minHighlights: 4,
+			maxHighlights: 9,
+			maxNotes: 5,
 			maxWords: 560,
 			requiredReplyPatterns: ["list|tuple|set|dictionary"],
 			requiredHighlightPatterns: ["list|5\\.1", "tuple|sequence", "sets?", "dictionar"],
@@ -772,7 +792,7 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		elapsedMs,
 		methodMentionCount: methodMentionCount(reply),
 		hasInlineMarkdownHeading: /[^\n][ \t]+#{2,4}[ \t]+\S/.test(reply),
-		hasMarkdownTable: /^\s*\|.+\|\s*$/m.test(reply) || /\|[ \t]+\|(?:-{3,}|:?-{3,}:?)/.test(reply) || reply.split("\n").some((line) => !/[$\\]/.test(line) && /^\s*\S[^\n|]{1,80}\s+\|\s+\S/.test(line)),
+		hasMarkdownTable: /^\s*\|.+\|\s*$/m.test(reply) || /\|[ \t]+\|(?:-{3,}|:?-{3,}:?)/.test(reply) || reply.split("\n").some((line) => !/[$\\`]/.test(line) && /^\s*\S[^\n|]{1,80}\s+\|\s+\S/.test(line)),
 		hasOrphanMarkdownDelimiter: /^\s*(?:\*\*|__|`{1,3})\s*$/m.test(reply),
 		hasDuplicatedOpening: /\b(?:Here(?:'|’)s\s+(?:a|the)|Here\s+are\s+(?:the\s+)?(?:main\s+)?)\s+(?:roadmap|summary|rundown|overview|data structures)[^.!?\n]{0,180}(?:[.!?]|[—–-])\s*Here(?:'|’)s\s+(?:a|the)\s+(?:roadmap|summary|rundown|overview)/i.test(reply),
 		hasRedundantHighlightRecap:
@@ -782,6 +802,8 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		hasDanglingEmptyLabel: /(?:^|\n)\s*(?:#{1,4}\s+\S.{0,120}|\*\*[^*\n]{2,120}\*\*\s*:?[.!?]?|[^.!?\n]{2,90}:[.!?]?)\s*$/.test(reply),
 		hasProcessNarration: /^(?:The\s+)?visible snapshot shows\b[^.!?\n]*(?:but|however)|^Now I have the page content\b|\b(?:Let me|I(?:'|’)ll|I will)\s+(?:add|put)\s+(?:(?:a|an|one|two|three|four|couple\s+of|few|some|durable|quick|additional|key|top-level|main)\s+){0,8}source\s+markers?\b|\bI(?:'|’)ve\s+highlighted\b/im.test(reply),
 		hasInlineHighlightLabel: /[—–-]\s*\*?Highlighted\s+on\s+(?:the\s+)?page\*?|\(\s*\*?highlighted\s+on\s+(?:the\s+)?page\*?\s*\)/i.test(reply),
+		hasHighlightStatusNarration: /\bI(?:(?:'|’)ve| have)\s+(?:marked|highlighted)\b|\bEach\s+(?:section|item|source|passage|point)[^.]{0,160}\bhighlighted\b|\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b|\b(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b|\b(?:the\s+)?(?:one|two|three|four|five|six|\d+)\s+central\s+concepts?\s+are\s+highlighted\s+on\s+(?:the\s+)?page\b|\((?:the\s+)?(?:first|second|third|fourth|fifth|sixth|\d+(?:st|nd|rd|th))\s+(?:source\s+)?highlight|\(\s*\*?(?:not\s+)?highlight(?:ed)?[^)]{0,100}\*?\s*\)/i.test(reply),
+		hasMalformedTableArtifact: /^\s*[-*]\s+[^:\n]{1,80}:\s+Aspect:\s+/im.test(reply),
 		hasFragmentedMath: regex(FRAGMENTED_MATH_PATTERN, "im").test(reply) || regex(MALFORMED_DISPLAY_MATH_PATTERN, "im").test(reply),
 	};
 	const failures = [];
@@ -808,10 +830,12 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 	if (metrics.hasDanglingEmptyLabel) penalty(0.12, "reply ends with an empty heading or label");
 	if (metrics.hasProcessNarration) penalty(0.12, "reply contains process narration");
 	if (metrics.hasInlineHighlightLabel) penalty(0.1, "reply contains inline highlighted-on-page labels");
+	if (metrics.hasHighlightStatusNarration) penalty(0.12, "reply narrates highlight/source-marker status");
+	if (metrics.hasMalformedTableArtifact) penalty(0.14, "reply contains malformed table-conversion artifacts");
 	if (expect.maxHighlightErrors != null && metrics.highlightErrorCount > Number(expect.maxHighlightErrors)) {
 		penalty(0.12, `too many failed highlight attempts: ${metrics.highlightErrorCount} > ${expect.maxHighlightErrors}`);
 	}
-	if (metrics.maxNoteChars > 120) penalty(0.08, `note exceeds 120 chars (${metrics.maxNoteChars})`, false);
+	if (metrics.maxNoteChars > 280) penalty(0.08, `note exceeds 280 chars (${metrics.maxNoteChars})`, false);
 	for (const pattern of expect.forbiddenReplyPatterns || []) {
 		if (regex(pattern, "im").test(reply)) penalty(0.13, `forbidden reply pattern matched: ${pattern}`);
 	}
@@ -867,6 +891,17 @@ function shouldRetryBlankPageAnswer(evaluation) {
 	return /model returned an empty answer after reading page context/i.test(`${reply}\n${failures}`);
 }
 
+function shouldRetryWeakNoSourceAnswer(evaluation) {
+	const reply = String(evaluation?.reply || "").trim();
+	const failures = (evaluation?.failures || []).join("\n");
+	const highlightCount = Number(evaluation?.metrics?.highlightCount || 0);
+	return (
+		highlightCount === 0 &&
+		(/^\(?No reply generated\.?\)?$/i.test(reply) || words(reply) <= 4) &&
+		/(expected at least \d+ highlight|required reply pattern missing|required highlight pattern missing)/i.test(failures)
+	);
+}
+
 async function runOne(testCase, variant, args, runDir, rubric = "") {
 	const cliArgs = [
 		"ask-new-url",
@@ -890,6 +925,7 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 	let evaluation = null;
 	try {
 		let retriedBlankAnswer = false;
+		let retriedWeakNoSourceAnswer = false;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			const startedAt = Date.now();
 			raw = await runCli(cliArgs, args);
@@ -898,12 +934,22 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 				retriedBlankAnswer = true;
 				continue;
 			}
+			if (attempt === 0 && shouldRetryWeakNoSourceAnswer(evaluation)) {
+				retriedWeakNoSourceAnswer = true;
+				continue;
+			}
 			break;
 		}
 		if (retriedBlankAnswer && evaluation) {
 			evaluation = {
 				...evaluation,
 				warnings: [...(evaluation.warnings || []), "retried once after empty answer following page read"],
+			};
+		}
+		if (retriedWeakNoSourceAnswer && evaluation) {
+			evaluation = {
+				...evaluation,
+				warnings: [...(evaluation.warnings || []), "retried once after no-source empty answer"],
 			};
 		}
 		if (args.judge) {

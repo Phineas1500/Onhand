@@ -1183,9 +1183,10 @@ async function waitForRequest(driver, args, requestId) {
 		if (currentSessionId) {
 			const replay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
 			const turn = findTurnByRequestId(replay, requestId);
-			if (turn && !turn.pending) {
+			if (turn && !turn.pending && state.activeRequestId !== requestId) {
 				await sleep(Math.min(args.pollMs, 250));
-				return { state, replay, turn };
+				const latestReplay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
+				return { state, replay: latestReplay, turn: findTurnByRequestId(latestReplay, requestId) || turn };
 			}
 		}
 		if (state.activeRequestId && state.activeRequestId !== requestId && currentSessionId) {

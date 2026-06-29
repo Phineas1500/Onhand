@@ -470,10 +470,10 @@ Onhand's constitution:
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open each distinct linked page once in a tab, inspect it, and ground the final answer on the destination pages. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
-- Be concise in words, thorough in coverage. Highlight each distinct key point the answer makes — roughly one source highlight per point for free-form answers (soft cap about six), each with a short interpretive note — then keep the chat synthesis short and let those marks carry the explanation. For roadmap, list, process, derivation, proof, or other enumerable coverage tasks, suspend the soft cap and cover every required item the answer commits to. Thorough means covering the relevant required points, not annotating everything nearby.
+- Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, choose the strongest one to three source highlights, not every point you mention, and add at most one short interpretive note unless the user explicitly asks for notes. Comparisons usually need two source highlights, one per side, with at most one note on the practical difference. Roadmap, list, process, derivation, proof, or other enumerable coverage tasks may need more highlights for required top-level items, but notes should stay sparse and only explain genuinely hard or reusable points. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
-- Stay unobtrusive but make the marginalia carry weight. Add a short interpretive note (one to two sentences, under ~280 characters) next to each key source highlight — name the passage's role or explain the hard step so the highlights and notes can be read on their own. Place notes near what they explain; put any longer detail in chat.
+- Stay unobtrusive but make the marginalia carry weight. Add short interpretive notes only where they add future replay value — name the passage's role or explain the hard step under ~280 characters. Do not add a note for every highlight, and do not duplicate what the highlight already says. Place any longer detail in chat.
 - Wording hygiene: do not narrate internal page-work plans or grounding preambles with phrases like "let me anchor", "let me ground this", "I'll anchor", "highlighted above", or "I highlighted". Start with the answer, then reference the source naturally.
 - Math formatting: when writing LaTeX symbols or equations, wrap inline math in $...$ and display equations in $$...$$. Never leave raw LaTeX commands such as \\cdot, \\sqrt, \\frac, or \\text{} outside math delimiters, including inside bullets and numbered steps. If extracted page math is fragmented or missing operators, do not copy it verbatim into chat or source highlights; either rewrite a clean formula only when the intended formula is clear from context, or explain the relationship in words.
 
@@ -482,17 +482,17 @@ Default answer mode:
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
-- Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For page teaching/review, highlight each key concept (one per distinct point, soft cap about six) — never the page title, course title, or a generic heading; prefer central definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer, and add a short interpretive note on each. If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items.
+- Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight one to three central concepts — never the page title, course title, or a generic heading; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. Add at most one note unless the user explicitly asks for notes. If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
 - Quick visual questions such as "what does this figure show?", "what is this diagram?", or "try here" should usually be sidebar-only after capturing the visible region or PDF page image. Do not automatically add a note for a quick visual explanation. If a durable source marker is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value beyond a label. This does not limit notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.
-- Add a short interpretive note (one to two sentences, under ~280 characters) on each key highlight that carries explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; a purely confirmatory "where the evidence is" highlight may stand without a note.
+- Add a short interpretive note (one to two sentences, under ~280 characters) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note.
 - Only successful highlight/note tool results count as source markers. If a highlight attempt fails, retry once with a smaller exact visible span, then omit/qualify that claim in chat.
 - For multi-part, comparative, "show evidence", or confused follow-up questions, create a source highlight for each distinct key point you actually explain, but do not add extra highlights just to increase source count. For compare/contrast prompts, usually use two concise source highlights, one for each side, plus one short marginal note on the passage that captures the practical difference or takeaway; add at most one contrast/conclusion highlight when the page states it directly. Do not highlight full algorithms or every sub-step unless the user asks for that level of detail. Keep each note and chat paragraph short. Stop once the answer is supported.
-- For roadmap, list, process, derivation, proof, or navigation questions, treat the prompt as an enumerable coverage task: every required step, item, or top-level peer you name in chat needs its own source highlight/note, unless one highlighted list/table/span literally contains all named items. Mark sibling/top-level items first; do not spend multiple markers on child/subtopic items under one parent while other required top-level items have no marker. Once a parent/top-level item is marked, move to the next sibling item; do not mark child headings, examples, usage patterns, or subfeatures under that same item unless the user specifically asks for that item's internal breakdown. Do not rely on a heading-only highlight if the answer depends on items beneath it. Highlight the sentence, list item, formula label, or linked item that actually supports the claimed path. When the question asks for an overview of several named things, first identify the top-level peer items and highlight each item's own defining sentence or term — do not drill into one item's sub-sections while its sibling items go unmarked. Never include section numbers, list numbers, or "5.1."-style prefixes in browser_highlight_text; copy only the wording, because pages often render the number in a separate element so the prefixed text will not match. Always attempt to anchor a roadmap or overview on the page rather than answering with chat-only prose. If a particular required item's highlight genuinely fails after a retry, keep the item only if readable page context supports it and briefly say that marker could not be placed; never silently drop a required item or fabricate support.
+- For roadmap, list, process, derivation, proof, or navigation questions, treat the prompt as an enumerable coverage task: every required step, item, or top-level peer you name in chat needs its own source highlight unless one highlighted list/table/span literally contains all named items. Mark sibling/top-level items first; do not spend multiple markers on child/subtopic items under one parent while other required top-level items have no marker. Once a parent/top-level item is marked, move to the next sibling item; do not mark child headings, examples, usage patterns, or subfeatures under that same item unless the user specifically asks for that item's internal breakdown. Do not rely on a heading-only highlight if the answer depends on items beneath it. Highlight the sentence, list item, formula label, or linked item that actually supports the claimed path. Use notes sparingly: add them only for the few items where an orienting explanation matters, not for every roadmap item. When the question asks for an overview of several named things, first identify the top-level peer items and highlight each item's own defining sentence or term — do not drill into one item's sub-sections while its sibling items go unmarked. Never include section numbers, list numbers, or "5.1."-style prefixes in browser_highlight_text; copy only the wording, because pages often render the number in a separate element so the prefixed text will not match. Always attempt to anchor a roadmap or overview on the page rather than answering with chat-only prose. If a particular required item's highlight genuinely fails after a retry, keep the item only if readable page context supports it and briefly say that marker could not be placed; never silently drop a required item or fabricate support.
 - For "where does this page explain..." location questions, highlight the explanatory phrase or sentence that names the requested concept, not a math-only formula as the first or only source marker. If a formula is important, use it as a second highlight after the location/explanation highlight.
 - For explicit named formula/equation/theorem requests, locate that named formula or its section first. Do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula.
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
-- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. When annotations are created, describe what those highlights show instead of giving a detached page summary.
+- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary.
 - If the page does not contain the answer, say that briefly and ask whether to use another open tab or navigate elsewhere. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
@@ -1058,11 +1058,25 @@ function trimHighlightCandidateBeforeFormulaNoise(value: unknown) {
 const HIGHLIGHT_RETRY_MAX_CANDIDATES = 5;
 const HIGHLIGHT_RETRY_MAX_CHARS = 180;
 const HIGHLIGHT_FAILURE_ABORT_LIMIT = 4;
+const COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 2;
 const HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
 const HIGHLIGHT_COMMAND_TIMEOUT_MS = 6000;
+const HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12000;
 const ANNOTATION_COMMAND_TIMEOUT_MS = 6000;
-const TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
-const STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 4;
+const TEACHING_SOURCE_HIGHLIGHT_MAX = 3;
+const TEACHING_SOURCE_NOTE_MAX = 1;
+const COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
+const STRUCTURED_SOURCE_NOTE_MAX = 3;
+const COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
+const STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 2;
+
+function shouldTryHighlightScanFallbackBeforeOriginal(value: unknown) {
+	const text = normalizeHighlightRetryCandidate(value);
+	if (!text || text.length > 100) return false;
+	if (/[.!?;:]/.test(text) || /[=∫∏∑√≈≤≥<>|∣\\{}_^]/u.test(text)) return false;
+	const wordCount = (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+	return wordCount >= 1 && wordCount <= 6;
+}
 
 function buildHighlightRetryCandidates(value: unknown) {
 	const raw = String(value || "").trim();
@@ -1169,7 +1183,12 @@ function countToolTracesByState(request: any, toolName: string, states: string[]
 function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 	if (!request || request.aborted) return false;
 	if (countToolTracesByState(request, "browser_highlight_text", ["complete"]) > 0) return false;
-	return countToolTracesByState(request, "browser_highlight_text", ["error"]) >= HIGHLIGHT_FAILURE_ABORT_LIMIT;
+	const prompt = request?.displayPrompt || "";
+	const failureLimit =
+		promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt)
+			? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT
+			: HIGHLIGHT_FAILURE_ABORT_LIMIT;
+	return countToolTracesByState(request, "browser_highlight_text", ["error"]) >= failureLimit;
 }
 
 function buildRepeatedHighlightFailureGuardResult(toolName: string, commandName: string, request: any) {
@@ -3160,7 +3179,9 @@ function buildPageSourceMarkerRetryPrompt(request: any, assistantText: string) {
 	return [
 		markerInstruction,
 		highlightInstruction,
-		"Call browser_show_note for each interpretive highlight that carries explanatory weight; keep notes under 280 characters and make them explain the role or hard step, not paraphrase.",
+		structured
+			? "Call browser_show_note only for the few highlights where a note adds real orientation; keep notes under 280 characters and do not add a note for every marker unless the user explicitly asked for notes."
+			: "Call browser_show_note at most once for this teaching answer, only if one marginal note adds real orientation; keep it under 280 characters and do not paraphrase the highlight.",
 		"If browser_highlight_text fails, retry once with a smaller exact sentence or phrase. If the best support is rendered math, use the formula label or exact formula text; rendered math will be promoted to a block highlight when needed.",
 		structured
 			? "After the source markers succeed, answer the original user question concisely. For roadmap/list/process/derivation/proof answers, include every required item supported by successful source markers or by readable page context when a marker genuinely failed; explicitly note any required item whose marker could not be placed. For compare/contrast answers, keep the comparison scoped to the marked sides. Do not say you highlighted or added a note unless those tool calls succeeded."
@@ -3216,6 +3237,10 @@ function stripOrphanedMarkdownDelimiterLines(value: string) {
 		.join("\n");
 }
 
+function stripDanglingInlineMarkdownDelimiters(value: string) {
+	return String(value || "").replace(/[ \t]+(?:\*\*|__|`{1,3})(?=\s*(?:\n|$))/g, "");
+}
+
 function stripAssistantProcessNarration(value: string) {
 	let text = String(value || "");
 	text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
@@ -3231,9 +3256,11 @@ function stripAssistantProcessNarration(value: string) {
 	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+put\s+(?:a\s+)?(?:durable\s+)?source\s+markers?\b[^.!?\n]*(?:[.!?]+)?/gi, "");
 	text = text.replace(/\bi(?:'|’)ve\s+highlighted\b[^.!?\n]*(?:[.!?]+)?/gi, "");
 	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+by\s+(?:reading|extracting|checking|finding|looking(?:\s+at)?)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
+	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+with\b[^.!?\n]{0,180}(?=(?:here(?:'|’)s|here is|this|the|what)\b)/gi, "");
+	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+with\b[^.!?\n]*(?:[.!?]+)?/gi, "");
 	text = text.replace(/\bi\s+found\s+(?:the\s+)?(?:key|relevant|best|main|core)?\s*(?:explanatory\s+)?(?:passages?|sections?|text|content|source(?:s)?)\.?/gi, "");
 	text = text.replace(
-		/\b(?:(?:now|first|next|also|okay|ok)[,\s]+)?(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly)\s+)?(?:read|extract|inspect|get|look(?:\s+at|\s+through)?|highlight|add\s+(?:(?:a|an|one|two|three|four|[0-9]+|focused|concise|short|key|relevant|source)\s+){0,6}(?:highlights?|markers?|notes?)|create\s+(?:(?:a|an|one|two|three|four|[0-9]+|focused|concise|short|key|relevant|source)\s+){0,6}(?:highlights?|markers?|notes?)|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark)\b[^.!?\n]*(?:[.!?]+)?/gi,
+		/\b(?:(?:now|first|next|also|okay|ok)[,\s]+)?(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly)\s+)?(?:read|extract|inspect|get|look(?:\s+at|\s+through)?|highlight|add\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|create\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark)\b[^.!?\n]*(?:[.!?]+)?/gi,
 		"",
 	);
 	text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
@@ -3273,6 +3300,10 @@ function stripDuplicatedOpeningClause(value: string) {
 		"$1",
 	);
 	text = text.replace(
+		/^\s*(?:Here(?:'|’)s|Here is)\b[^.!?\n]{20,180}(?=(?:Here(?:'|’)s|Here is)\b)\s*((?:Here(?:'|’)s|Here is)\b[^\n]*)/i,
+		"$1",
+	);
+	text = text.replace(
 		/^\s*(?:Here(?:'|’)s|Here is)\b[^—–\n]{20,180}\s+[—–-]\s+((?:Here(?:'|’)s|Here is)\b[^\n]+)/i,
 		"$1",
 	);
@@ -3285,6 +3316,13 @@ function stripDuplicatedOpeningClause(value: string) {
 		"$1",
 	);
 	return text;
+}
+
+function stripLeadingGluedBoldLabels(value: string) {
+	return String(value || "").replace(
+		/^\s*(?:\*\*(?:\d+[.)]?\s*)?[^*\n]{2,140}\*\*){2,}\s*(?=(?:Here(?:'|’)s|Here is|This|The)\b)/i,
+		"",
+	);
 }
 
 function stripIncompleteTrailingLine(value: string) {
@@ -3363,6 +3401,7 @@ const STRUCTURED_ITEM_COMMON_TERMS = new Set([
 	"sequences",
 	"techniques",
 	"statement",
+	"type",
 	"main",
 	"what",
 	"with",
@@ -3382,12 +3421,48 @@ function looksLikeStructuredRoadmapItemLine(line: string) {
 	);
 }
 
+function sourceTextIncludesEntityTerm(normalizedSourceText: string, term: string) {
+	if (!normalizedSourceText || !term) return false;
+	if (normalizedSourceText.includes(term)) return true;
+	if (term.endsWith("ies") && term.length > 4) return normalizedSourceText.includes(`${term.slice(0, -3)}y`);
+	if (term.endsWith("s") && term.length > 4) return normalizedSourceText.includes(term.slice(0, -1));
+	return false;
+}
+
+function structuredItemLabelTerms(value: string) {
+	const trimmed = String(value || "").trim();
+	const boldLabel = trimmed.match(/^(?:[-*]\s+|\d+[.)]\s+)?\*\*([^*\n]{2,120})\*\*/);
+	const headingLabel = trimmed.match(/^\s{0,3}#{1,4}\s+([^\n:—–|-]{2,120})/);
+	const plainLabel = trimmed.match(/^(?:[-*]\s+|\d+[.)]\s+)([^:\n—–|-]{2,120})(?:[:—–-]|\s{2,})/);
+	const label = boldLabel?.[1] || headingLabel?.[1] || plainLabel?.[1] || "";
+	return entityWords(label)
+		.map((term) => term.toLowerCase())
+		.filter((term) => term.length >= 4 && !STRUCTURED_ITEM_COMMON_TERMS.has(term));
+}
+
 function structuredItemLineSupportedByHighlights(line: string, normalizedSourceText: string) {
+	const labelTerms = structuredItemLabelTerms(line);
+	if (labelTerms.length) return labelTerms.some((term) => sourceTextIncludesEntityTerm(normalizedSourceText, term));
 	const terms = entityWords(line)
 		.map((term) => term.toLowerCase())
 		.filter((term) => term.length >= 4 && !STRUCTURED_ITEM_COMMON_TERMS.has(term));
 	if (!terms.length) return true;
-	return terms.some((term) => normalizedSourceText.includes(term));
+	return terms.some((term) => sourceTextIncludesEntityTerm(normalizedSourceText, term));
+}
+
+function looksLikeStructuredRoadmapItemBlock(block: string) {
+	const trimmed = String(block || "").trim();
+	return (
+		/^\*\*[^*\n]{2,120}\*\*\s*(?:[—–-]|:|\n)/.test(trimmed) ||
+		/^(?:[-*]\s+|\d+[.)]\s+)\*\*[^*\n]{2,120}\*\*/.test(trimmed) ||
+		/^\s{0,3}#{1,4}\s+\S/.test(trimmed)
+	);
+}
+
+function looksLikeUnsupportedRemainderBlock(block: string) {
+	return /^(?:This|The)\s+(?:page|chapter|article|document|section)\s+(?:also\s+)?(?:includes?|covers?|mentions?|lists?|continues\s+with|goes\s+on\s+to)\b/i.test(
+		String(block || "").trim(),
+	);
 }
 
 function stripUnsupportedStructuredItemsByHighlights(value: string, request: any) {
@@ -3395,7 +3470,31 @@ function stripUnsupportedStructuredItemsByHighlights(value: string, request: any
 	if (completedSourceHighlightCount(request) < 2) return value;
 	const normalizedSourceText = normalizeEntityText(completedSourceHighlightText(request));
 	if (!normalizedSourceText) return value;
-	const lines = String(value || "").split("\n");
+	const blocks = String(value || "").split(/\n{2,}/);
+	let blockChanged = false;
+	let itemBlocks = 0;
+	let keptItemBlocks = 0;
+	const keptBlocks = blocks.filter((block) => {
+		const trimmed = block.trim();
+		if (!trimmed) return true;
+		if (looksLikeUnsupportedRemainderBlock(trimmed)) {
+			blockChanged = true;
+			return false;
+		}
+		if (!looksLikeStructuredRoadmapItemBlock(trimmed)) return true;
+		itemBlocks += 1;
+		if (!structuredItemLineSupportedByHighlights(trimmed, normalizedSourceText)) {
+			blockChanged = true;
+			return false;
+		}
+		keptItemBlocks += 1;
+		return true;
+	});
+	const blockFilteredValue =
+		blockChanged && (itemBlocks === 0 || keptItemBlocks >= 2)
+			? normalizeAssistantReplySpacing(keptBlocks.join("\n\n"))
+			: String(value || "");
+	const lines = blockFilteredValue.split("\n");
 	const kept: string[] = [];
 	let changed = false;
 	let itemLines = 0;
@@ -3426,7 +3525,7 @@ function stripUnsupportedStructuredItemsByHighlights(value: string, request: any
 		}
 		kept.push(line);
 	}
-	if (!changed || (itemLines > 0 && keptItemLines < 2)) return value;
+	if (!changed || (itemLines > 0 && keptItemLines < 2)) return blockFilteredValue;
 	return normalizeAssistantReplySpacing(kept.join("\n"));
 }
 
@@ -3621,7 +3720,10 @@ function stripInlineHighlightLabels(value: string) {
 			"$1$2",
 		)
 		.replace(/[ \t]*[—–-][ \t]*(?:\*)?Highlighted\s+on\s+(?:the\s+)?page(?:\*)?/gi, "")
-		.replace(/[ \t]*\((?:\*)?highlighted\s+on\s+(?:the\s+)?page(?:\*)?\)/gi, "");
+		.replace(/[ \t]*\((?:\*)?highlighted\s+on\s+(?:the\s+)?page(?:\*)?\)/gi, "")
+		.replace(/[ \t]*\((?:\*)?highlights?\s*\d+(?:\s*(?:&|and|,)\s*\d+)*(?:\*)?\)/gi, "")
+		.replace(/[ \t]*\((?:\*)?highlight\s*\d+(?:\*)?\)/gi, "")
+		.replace(/[ \t]*\((?:\*)?(?:not\s+)?highlighted[^)]{0,100}(?:\*)?\)/gi, "");
 }
 
 function stripOrdinalHighlightParentheticals(value: string) {
@@ -3635,7 +3737,30 @@ function stripHighlightStatusClauses(value: string) {
 	return String(value || "")
 		.replace(/\s+[—–-]\s+I(?:'ve| have)\s+(?:marked|highlighted)\s+[^:\n.]{1,120}:/gi, ":")
 		.replace(/\bI(?:'ve| have)\s+(?:marked|highlighted)\s+[^.\n]{1,120}\.\s*/gi, "")
-		.replace(/(?:^|\n)\s*Each\s+(?:section|item|source|passage|point)[^.\n]{0,160}\bhighlighted\b[^.\n]*\.\s*/gi, "\n");
+		.replace(/(?:^|\n)\s*Each\s+(?:section|item|source|passage|point)[^.\n]{0,160}\bhighlighted\b[^.\n]*\.\s*/gi, "\n")
+		.replace(/\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b[^.!?\n]*(?:[.!?]+)?/gi, "")
+		.replace(/(?:^|\n)\s*(?:the\s+)?(?:source\s+)?markers?[^.\n]{0,220}\b(?:timed\s+out|failed|could(?:\s+not|n't)|cannot|can't|was\s+not|wasn't)\b[^.\n]*(?:[.!?]+)?\s*/gi, "\n")
+		.replace(/\b(?:though|although|while)?\s*(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b[^.!?\n]*(?:[.!?]+)?/gi, "")
+		.replace(/\b(?:the\s+)?(?:one|two|three|four|five|six|\d+)\s+central\s+concepts?\s+are\s+highlighted\s+on\s+(?:the\s+)?page\b[^.!?\n]*(?:[.!?]+)?/gi, "");
+}
+
+function truncateAtMissingHighlightStatus(value: string) {
+	const text = String(value || "");
+	const missingMarker = /\b(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b/i;
+	const blocks = text.split(/\n{2,}/);
+	const missingIndex = blocks.findIndex((block) => missingMarker.test(block));
+	if (missingIndex < 0) return text;
+	return blocks.slice(0, missingIndex).join("\n\n").trim();
+}
+
+function stripUnsupportedRemainingSectionsTail(value: string, request: any) {
+	const text = String(value || "").trim();
+	if (!text || !request || !promptAsksForStructuredPageSourceMarker(request?.displayPrompt)) return text;
+	const match = text.match(
+		/(?:^|\n{2,})\s*(?:(?:the\s+)?remaining\s+sections?|(?:the|this)\s+(?:page|article|chapter|document)\s+also\s+(?:covers?|includes?|mentions?|lists?)|it\s+also\s+(?:covers?|includes?|mentions?|lists?))\b/i,
+	);
+	if (!match || typeof match.index !== "number" || match.index <= 0) return text;
+	return text.slice(0, match.index).trim();
 }
 
 function isSurplusHighlightGuardSummary(value: unknown) {
@@ -3668,11 +3793,20 @@ function completedSourceHighlightCount(request: any) {
 	return Math.max(traceCount, actionCount);
 }
 
-function completedSourceHighlightText(request: any) {
-	const traceText = (Array.isArray(request?.toolTraces) ? request.toolTraces : [])
+function completedSourceHighlightTraceCount(request: any) {
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
+}
+
+function completedSourceHighlightTraceText(request: any) {
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : [])
 		.filter(isCompletedSourceHighlightTrace)
 		.map((trace: any) => `${trace?.resultSummary || ""} ${JSON.stringify(trace?.details || {})}`)
-		.join("\n");
+		.join("\n")
+		.toLowerCase();
+}
+
+function completedSourceHighlightText(request: any) {
+	const traceText = completedSourceHighlightTraceText(request);
 	const actionText = (Array.isArray(request?.pageActions) ? request.pageActions : [])
 		.filter((action: any) => String(action?.key || "").startsWith("highlight:") || action?.label === "Highlighted text" || action?.type === "highlight")
 		.map((action: any) => `${action?.detail || ""} ${action?.citationText || ""}`)
@@ -3916,18 +4050,26 @@ function mentionsUnsupportedRoadmap(value: string) {
 		/\b(?:bulk|remainder) of (?:the )?(?:page|article|lecture|document|chapter)\b.*\b(?:covers?|explains?|walks? through)\b/.test(text) ||
 		(structuredListItemCount(value) >= 3 && /\b(?:methods?|approaches|techniques?|steps?|stages?|phases?|algorithms?|challenge)\b/.test(text)) ||
 		markdownTableRowCount(value) >= 4 ||
+		(substantiveEntityMentionCount(value) >= 3 && /\b(?:covers?|includes?|methods?|approaches|techniques?|lecture|page|article|document|chapter)\b/.test(text)) ||
 		substantiveEntityMentionCount(value) >= 4
 	);
 }
 
 function sourceHighlightsCoverRoadmap(request: any, reply: string) {
-	const sourceText = completedSourceHighlightText(request);
+	const sourceText = completedSourceHighlightTraceText(request) || completedSourceHighlightText(request);
 	if (!sourceText.trim()) return false;
 	if (structuredListItemCount(sourceText) >= 3 || markdownTableRowCount(sourceText) >= 4) return true;
 	const normalizedSource = normalizeEntityText(sourceText);
 	const entities = extractSignificantEntities(reply);
 	if (!entities.length) return false;
-	return entities.filter((entity) => normalizedSource.includes(entity)).length >= Math.min(2, entities.length);
+	const sourceTokens = new Set(normalizedSource.split(/\s+/).filter(Boolean));
+	const sourceCoversEntity = (entity: string) => {
+		if (normalizedSource.includes(entity)) return true;
+		const words = entity.split(/\s+/).filter(Boolean);
+		const acronym = words.map((word) => word[0] || "").join("");
+		return acronym.length >= 2 && sourceTokens.has(acronym);
+	};
+	return entities.every(sourceCoversEntity);
 }
 
 function removeUnsupportedRoadmapSections(value: string) {
@@ -3999,12 +4141,13 @@ function compactOverbroadPageTeachingReply(value: string, request: any) {
 		promptAsksForTeachingPageSourceMarker(request.displayPrompt) ||
 		promptAsksForStructuredPageSourceMarker(request.displayPrompt);
 	if (!isSourceMarkedTeaching) return text;
-	const highlightCount = completedSourceHighlightCount(request);
+	const traceHighlightCount = completedSourceHighlightTraceCount(request);
+	const highlightCount = traceHighlightCount || completedSourceHighlightCount(request);
 	const compactFirstPass = promptAsksForCompactPageTeaching(request.displayPrompt) && highlightCount <= 1;
 	const mathTrimmedText = compactFirstPass ? normalizeAssistantReplySpacing(stripCompactTeachingMathBlocks(text, request)) : text;
 	const unsupportedSamplingRoadmap =
 		highlightCount > 0 &&
-		highlightCount < 3 &&
+		highlightCount <= TEACHING_SOURCE_HIGHLIGHT_MAX &&
 		mentionsUnsupportedRoadmap(mathTrimmedText) &&
 		!sourceHighlightsCoverRoadmap(request, mathTrimmedText);
 	const unsupportedCompactFirstPassRoadmap =
@@ -4261,6 +4404,7 @@ function sanitizeAssistantVisibleReply(value: unknown, request: any = null) {
 	text = stripAssistantProcessNarration(text);
 	text = stripLeadingOrphanedProcessFragment(text);
 	text = stripDuplicatedOpeningClause(text);
+	text = stripLeadingGluedBoldLabels(text);
 	text = stripEmptyCitationParentheses(text.replace(/\s+\(\)\s*:/g, ":"));
 	text = stripHorizontalRuleSeparators(text);
 	text = normalizeMarkdownBlockBoundaries(text);
@@ -4268,10 +4412,13 @@ function sanitizeAssistantVisibleReply(value: unknown, request: any = null) {
 	text = stripMalformedTableBulletArtifacts(text);
 	text = stripFragmentedMathLines(text);
 	text = stripInlineHighlightLabels(text);
+	text = stripDanglingInlineMarkdownDelimiters(text);
 	text = stripOrdinalHighlightParentheticals(text);
+	text = truncateAtMissingHighlightStatus(text);
 	text = stripHighlightStatusClauses(text);
 	text = normalizeAssistantReplySpacing(text);
 	text = compactOverbroadPageTeachingReply(text, request);
+	text = stripUnsupportedRemainingSectionsTail(text, request);
 	text = ensureCompactTeachingSubject(text, request);
 	text = stripEmptyAssistantHeadings(text);
 	text = convertMarkdownTablesToBullets(text);
@@ -6248,10 +6395,10 @@ function buildLauncherPrompt(
 		"- Page-material claims need page grounding. Use captured/readable page context for simple answers; use exact highlights and short notes for major claims only when durable source highlights are useful or requested.",
 		"- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use tab/navigation tools first and then ground claims on the destination source pages.",
 		"- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, recover an already-open index/master tab with browser_list_tabs when needed, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages before answering. Highlight the useful passages on those destination pages, not just the index/master page.",
-			"- Grounding budget: simple questions get one strong source highlight and a short answer. A request to teach, review, walk through, or summarize what a page says needs one durable explanatory source highlight per key concept (free-form soft cap about six) and a short interpretive note on each key highlight. Do not use the page title, course title, reading list, or a generic heading as a source marker; prefer the central definition, mechanism, or conclusion over a motivation-only contrast unless the contrast is the whole answer. If only one highlight succeeds, keep the answer focused on that highlighted passage instead of writing a broad unsupported page summary. Roadmap/list/navigation questions are not simple when the answer names multiple items.",
+			"- Grounding budget: simple questions get one strong source highlight and a short answer. Broad teach/review/walkthrough/summarize requests need one to three durable explanatory source highlights for the central concepts, with at most one short note unless the user explicitly asks for notes. Do not use the page title, course title, reading list, or a generic heading as a source marker; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless the contrast is the whole answer. If only one highlight succeeds, keep the answer focused on that highlighted passage instead of writing a broad unsupported page summary. Roadmap/list/navigation questions are not simple when the answer names multiple items, but notes should still be sparse.",
 		"- Quick visual questions such as what a figure, diagram, chart, equation, screenshot, slide, or visible PDF page shows should usually stay sidebar-only after visual capture. Do not automatically add a note for these quick visual explanations. If durable context is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value. This does not reduce notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.",
-		"- Add a short interpretive note (one to two sentences, under 280 characters) on each key highlight; name its role or explain the hard step, but do not paraphrase the highlight. Put longer detail in chat.",
-		"- Write for the narrow side panel: use short paragraphs, compact labels, bullets, or numbered steps for diagrams, processes, comparisons, lists, and multi-part ideas. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead. Do not use horizontal rules like --- as section separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. For visual explanations, labels like What it shows, How to read it, and Takeaway are preferred when useful.",
+		"- Add short interpretive notes only where they add future replay value; name the passage's role or explain the hard step under 280 characters, but do not paraphrase the highlight. Do not add a note for every highlight. Put longer detail in chat.",
+		"- Write for the narrow side panel: use short paragraphs, compact labels, bullets, or numbered steps for diagrams, processes, comparisons, lists, and multi-part ideas. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead. Do not use horizontal rules like --- as section separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add long unhighlighted 'other topics' or method-roadmap lists; offer to expand instead. For visual explanations, labels like What it shows, How to read it, and Takeaway are preferred when useful.",
 		"- Failed highlight attempts are not source markers. Retry once with a smaller exact visible span, or leave that claim out of the answer.",
 		"- If the captured context already includes the needed text, answer from it and avoid extra read or annotation tools unless the user asked for highlights/citations or the request is a page-level teaching/review summary.",
 			"- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, highlight each key point you actually explain; do not add extra highlights just to increase source count. For comparison prompts, usually create two concise source highlights, one for each side, plus one short marginal note on the practical difference or takeaway; add at most one direct contrast/conclusion highlight when the page states it. For roadmap/list/process/derivation/proof prompts, mark every required top-level item before child/subtopic items; do not silently drop required items that the page contains. Do not highlight full algorithms or every sub-step unless asked. Keep the answer concise.",
@@ -7181,6 +7328,22 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 	if (!promptAsksForSinglePageComparison(prompt)) return null;
 	const highlightCount = completedSourceHighlightCount(request);
 	if (highlightCount < 2) return null;
+	if (highlightCount >= COMPARISON_SOURCE_HIGHLIGHT_MAX) {
+		return {
+			guardrail: {
+				kind: "surplus_comparison_highlight",
+				blockedTool: toolName,
+				blockedCommand: commandName,
+				message: [
+					`${highlightCount} comparison source highlights already succeeded, which is enough for this compare/contrast answer.`,
+					`Do not call ${toolName} again for this turn unless the user explicitly asks for more evidence.`,
+					hasCompletedToolTrace(request, "browser_show_note")
+						? "Answer now from the existing comparison highlights. Keep the comparison concise."
+						: "If one note would clarify the practical difference, add one short browser_show_note under 280 characters; otherwise answer now from the existing comparison highlights.",
+				].join(" "),
+			},
+		};
+	}
 	const comparisonEntities = extractComparisonEntities(prompt);
 	if (comparisonEntities.length >= 2) {
 		const citations = completedSourceHighlightCitations(request);
@@ -7243,6 +7406,37 @@ function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandNa
 				`Do not call ${toolName} with only a section number.`,
 				"Retry with exact visible section-title text that includes the item name, or with the first explanatory sentence/list item under that section.",
 				"If no stronger exact span is available, omit that item from the chat answer.",
+			].join(" "),
+		},
+	};
+}
+
+function looksLikeWeakCompactTeachingHighlightText(value: unknown, request: any) {
+	const text = compactActionText(value);
+	if (!text) return true;
+	if (text.length > 260) return true;
+	const normalized = normalizeEntityText(text);
+	const title = normalizeEntityText(request?.initialActiveTab?.title || "");
+	if (title && normalized === title) return true;
+	const words = entityWords(text);
+	const hasVerb = /\b(?:is|are|means|shows|uses|treats|samples?|draws?|converts?|provides?|returns?|takes?|allows?|works?|captures?|represents?|defines?|explains?)\b/i.test(text);
+	if (words.length <= 10 && !hasVerb && /[:|&–—-]/.test(text)) return true;
+	return false;
+}
+
+function buildWeakCompactTeachingHighlightGuardResult(toolName: string, commandName: string, params: any, prompt: unknown, request: any) {
+	if (commandName !== "highlight_text") return null;
+	if (!promptAsksForCompactPageTeaching(prompt)) return null;
+	if (!looksLikeWeakCompactTeachingHighlightText(params?.text, request)) return null;
+	return {
+		guardrail: {
+			kind: "weak_compact_teaching_highlight",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"That source marker is too weak for a compact teaching answer: it is empty, too long, or title/heading-like.",
+				`Do not call ${toolName} with page titles, generic headings, or large blocks of text.`,
+				"Retry with one short exact explanatory sentence or phrase that states the central definition, mechanism, or conclusion for the user's topic.",
 			].join(" "),
 		},
 	};
@@ -7314,9 +7508,48 @@ function buildSurplusTeachingHighlightGuardResult(toolName: string, commandName:
 				`${completedSourceHighlightCount(request)} source highlights already cover the key concepts for this teaching answer.`,
 				`Do not call ${toolName} again for this turn.`,
 				hasCompletedToolTrace(request, "browser_show_note")
-					? "Make sure each key highlight has a short interpretive browser_show_note (one to two sentences, under 280 characters), then answer concisely from the highlights and notes."
-					: "Make sure each key highlight has a short interpretive browser_show_note (one to two sentences, under 280 characters), then answer concisely from the highlights and notes.",
+					? "Answer now from the existing highlights and note. Keep the answer concise."
+					: "If one short browser_show_note would clarify the central idea, add it under 280 characters; otherwise answer now from the existing highlights.",
 				"Do not use Markdown tables or horizontal rules. Do not claim the highlighter failed.",
+			].join(" "),
+		},
+	};
+}
+
+function buildSurplusTeachingNoteGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "show_note") return null;
+	if (promptExplicitlyRequestsNote(prompt)) return null;
+	if (!promptAsksForCompactPageTeaching(prompt)) return null;
+	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < TEACHING_SOURCE_NOTE_MAX) return null;
+	return {
+		guardrail: {
+			kind: "surplus_teaching_note",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"One teaching note already succeeded for this compact page answer.",
+				`Do not call ${toolName} again for this turn unless the user explicitly asked for multiple notes.`,
+				"Answer now from the existing highlights and note. Keep the sidebar answer compact.",
+			].join(" "),
+		},
+	};
+}
+
+function buildCompactTeachingNoteFailureGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "show_note") return null;
+	if (promptExplicitlyRequestsNote(prompt)) return null;
+	if (!promptAsksForCompactPageTeaching(prompt)) return null;
+	if (countToolTracesByState(request, "browser_show_note", ["complete"]) > 0) return null;
+	if (countToolTracesByState(request, "browser_show_note", ["error"]) < 1) return null;
+	return {
+		guardrail: {
+			kind: "compact_teaching_note_failure",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"A teaching note already failed on this page.",
+				`Do not call ${toolName} again for this compact teaching answer unless the user explicitly asked for notes.`,
+				"Answer now from the existing source highlights. Keep the sidebar answer compact and do not describe tool work.",
 			].join(" "),
 		},
 	};
@@ -7338,8 +7571,33 @@ function buildStructuredHighlightBudgetGuardResult(toolName: string, commandName
 			message: [
 				`${errorCount} highlight attempts have failed after at least one source highlight succeeded.`,
 				`Do not call ${toolName} again for this turn.`,
-				"Answer now from the existing source highlights and readable page context.",
-				"For roadmap, list, process, derivation, or proof answers, include required items supported by readable page context and briefly say that additional markers could not be placed. For compare/contrast answers, keep the comparison scoped to the marked/readable sides.",
+				"Answer now only from the existing successful source highlights.",
+				"For roadmap, list, process, derivation, or proof answers, omit items that lack a successful source highlight unless one existing highlight literally contains the full list. For compare/contrast answers, keep the comparison scoped to the marked sides.",
+				"Do not mention highlight failures, timeouts, or source marker status in the chat answer.",
+			].join(" "),
+		},
+	};
+}
+
+function buildCompactTeachingHighlightBudgetGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "highlight_text") return null;
+	if (!promptAsksForCompactPageTeaching(prompt)) return null;
+	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
+	const highlightCount = completedSourceHighlightTraceCount(request) || completedSourceHighlightCount(request);
+	const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
+	if (!(highlightCount > 0 && errorCount >= COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT)) return null;
+	return {
+		guardrail: {
+			kind: "compact_teaching_highlight_budget",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				`${highlightCount} source highlight already succeeded and ${errorCount} later highlight attempts failed.`,
+				`Do not call ${toolName} again for this compact teaching answer.`,
+				hasCompletedToolTrace(request, "browser_show_note")
+					? "Answer now from the existing source highlight and note."
+					: "If one short browser_show_note would clarify the source, add it under 280 characters; otherwise answer now from the existing highlight.",
+				"Keep the sidebar answer compact. Do not claim the highlighter failed or describe tool work.",
 			].join(" "),
 		},
 	};
@@ -7349,17 +7607,17 @@ function buildStructuredNoteBudgetGuardResult(toolName: string, commandName: str
 	if (commandName !== "show_note") return null;
 	if (promptExplicitlyRequestsNote(prompt)) return null;
 	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
-	if (!promptAsksForComparison(prompt)) return null;
-	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < 1) return null;
+	const maxNotes = promptAsksForComparison(prompt) ? 1 : STRUCTURED_SOURCE_NOTE_MAX;
+	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < maxNotes) return null;
 	return {
 		guardrail: {
 			kind: "structured_note_budget",
 			blockedTool: toolName,
 			blockedCommand: commandName,
 			message: [
-				"One comparison note already succeeded for this structured page answer.",
+				`${maxNotes} note${maxNotes === 1 ? "" : "s"} already succeeded for this structured page answer.`,
 				`Do not call ${toolName} again for this turn unless the user explicitly asked for multiple notes.`,
-				"Answer now from the existing source highlights and note. Keep the comparison compact.",
+				"Answer now from the existing source highlights and notes. Keep the answer compact.",
 			].join(" "),
 		},
 	};
@@ -7672,8 +7930,12 @@ export const __browserRuntimeTest = {
 	buildHighlightRetryCandidates,
 	buildEmptyHighlightTextGuardResultForTest: buildEmptyHighlightTextGuardResult,
 	buildWeakStructuredHighlightTextGuardResultForTest: buildWeakStructuredHighlightTextGuardResult,
+	buildWeakCompactTeachingHighlightGuardResultForTest: buildWeakCompactTeachingHighlightGuardResult,
 	buildSurplusHighlightGuardResultForTest: buildSurplusHighlightGuardResult,
 	buildSurplusTeachingHighlightGuardResultForTest: buildSurplusTeachingHighlightGuardResult,
+	buildSurplusTeachingNoteGuardResultForTest: buildSurplusTeachingNoteGuardResult,
+	buildCompactTeachingNoteFailureGuardResultForTest: buildCompactTeachingNoteFailureGuardResult,
+	buildCompactTeachingHighlightBudgetGuardResultForTest: buildCompactTeachingHighlightBudgetGuardResult,
 	buildStructuredHighlightBudgetGuardResultForTest: buildStructuredHighlightBudgetGuardResult,
 	buildStructuredNoteBudgetGuardResultForTest: buildStructuredNoteBudgetGuardResult,
 	cleanMarkdownHeadingHighlightTextForTest: cleanMarkdownHeadingHighlightText,
@@ -7975,6 +8237,7 @@ function createTools(
 		commandName: string,
 	) => void = () => {},
 	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
+	runHighlightScanFallback: (effectiveParams: Record<string, unknown>, lastError: unknown) => Promise<any | null> = async () => null,
 ): AgentTool[] {
 	const commandTool = (
 		name: string,
@@ -7990,76 +8253,102 @@ function createTools(
 		parameters,
 		executionMode: options.sequential ? "sequential" : undefined,
 		async execute(_toolCallId, params) {
-			let result: any;
-			const runCommandWithParams = async (requestedParams: any) => {
-				const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
-				recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
-				const runEffectiveCommand = async () => guardCommand(name, commandName, effectiveParams) || (await host.runCommand(commandName, effectiveParams));
-				const timeoutMs = annotationCommandTimeoutMs(commandName);
-				return timeoutMs
-					? await withToolCommandTimeout(name, timeoutMs, runEffectiveCommand)
-					: await runEffectiveCommand();
-			};
-			const runHighlightCandidate = async (candidate: string) => {
-				const retryParams = { ...(params as any), text: candidate };
-				const highlighted = await runCommandWithParams(retryParams);
-				return {
-					...highlighted,
-					highlightRetry: {
-						originalText: String((params as any)?.text || ""),
-						usedText: candidate,
-					},
+			const executeCommand = async () => {
+				let result: any;
+				const runCommandWithParams = async (requestedParams: any) => {
+					const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
+					recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
+					const runEffectiveCommand = async () => guardCommand(name, commandName, effectiveParams) || (await host.runCommand(commandName, effectiveParams));
+					const timeoutMs = annotationCommandTimeoutMs(commandName);
+					return timeoutMs
+						? await withToolCommandTimeout(name, timeoutMs, runEffectiveCommand)
+						: await runEffectiveCommand();
 				};
-			};
-			let lastHighlightError: any = null;
-			let attemptedCandidateCount = 0;
-			try {
-				if (commandName === "highlight_text" && shouldTryHighlightRetryCandidatesBeforeOriginal((params as any)?.text)) {
-					const preflightCandidates = buildHighlightRetryCandidates((params as any)?.text);
-					for (const candidate of preflightCandidates) {
-						attemptedCandidateCount += 1;
+				const runHighlightCandidate = async (candidate: string) => {
+					const retryParams = { ...(params as any), text: candidate };
+					const highlighted = await runCommandWithParams(retryParams);
+					return {
+						...highlighted,
+						highlightRetry: {
+							originalText: String((params as any)?.text || ""),
+							usedText: candidate,
+						},
+					};
+				};
+				let lastHighlightError: any = null;
+				const tryHighlightScanFallback = async (requestedParams: any, lastError: any) => {
+					if (commandName !== "highlight_text") return null;
+					const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
+					if (!(effectiveParams as any)?.scanPage) return null;
+					recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
+					return await runHighlightScanFallback(effectiveParams, lastError);
+				};
+				let attemptedCandidateCount = 0;
+				try {
+					if (commandName === "highlight_text" && shouldTryHighlightScanFallbackBeforeOriginal((params as any)?.text)) {
+						try {
+							result = await tryHighlightScanFallback(params, null);
+						} catch (scanError) {
+							lastHighlightError = scanError;
+						}
+					}
+					if (!result && commandName === "highlight_text" && shouldTryHighlightRetryCandidatesBeforeOriginal((params as any)?.text)) {
+						const preflightCandidates = buildHighlightRetryCandidates((params as any)?.text);
+						for (const candidate of preflightCandidates) {
+							attemptedCandidateCount += 1;
+							try {
+								result = await runHighlightCandidate(candidate);
+								break;
+							} catch (candidateError) {
+								lastHighlightError = candidateError;
+							}
+						}
+					}
+					if (!result) {
+						if (commandName === "highlight_text" && shouldSkipOriginalHighlightAttempt((params as any)?.text, attemptedCandidateCount)) {
+							throw lastHighlightError || new Error(`No visible text matched: ${(params as any)?.text || ""}`);
+						}
+						result = await runCommandWithParams(params);
+					}
+				} catch (error) {
+					if (commandName !== "highlight_text") throw error;
+					const attemptedCandidateKeys = new Set<string>();
+					for (const candidate of buildHighlightRetryCandidates((params as any)?.text)) {
+						attemptedCandidateKeys.add(candidate.toLowerCase());
+					}
+					const candidates = buildHighlightRetryCandidates((params as any)?.text).filter((candidate) => {
+						if (!attemptedCandidateCount) return true;
+						const key = candidate.toLowerCase();
+						if (!attemptedCandidateKeys.has(key)) return true;
+						attemptedCandidateKeys.delete(key);
+						return false;
+					});
+					let lastError = error || lastHighlightError;
+					for (const candidate of candidates) {
 						try {
 							result = await runHighlightCandidate(candidate);
 							break;
 						} catch (candidateError) {
-							lastHighlightError = candidateError;
+							lastError = candidateError;
 						}
 					}
-				}
-				if (!result) {
-					if (commandName === "highlight_text" && shouldSkipOriginalHighlightAttempt((params as any)?.text, attemptedCandidateCount)) {
-						throw lastHighlightError || new Error(`No visible text matched: ${(params as any)?.text || ""}`);
+					if (!result) {
+						try {
+							result = await tryHighlightScanFallback(params, lastError);
+						} catch (fallbackError) {
+							lastError = fallbackError || lastError;
+						}
 					}
-					result = await runCommandWithParams(params);
+					if (!result) throw lastError;
 				}
-			} catch (error) {
-				if (commandName !== "highlight_text") throw error;
-				const attemptedCandidateKeys = new Set<string>();
-				for (const candidate of buildHighlightRetryCandidates((params as any)?.text)) {
-					attemptedCandidateKeys.add(candidate.toLowerCase());
-				}
-				const candidates = buildHighlightRetryCandidates((params as any)?.text).filter((candidate) => {
-					if (!attemptedCandidateCount) return true;
-					const key = candidate.toLowerCase();
-					if (!attemptedCandidateKeys.has(key)) return true;
-					attemptedCandidateKeys.delete(key);
-					return false;
-				});
-				let lastError = error || lastHighlightError;
-				for (const candidate of candidates) {
-					try {
-						result = await runHighlightCandidate(candidate);
-						break;
-					} catch (candidateError) {
-						lastError = candidateError;
-					}
-				}
-				if (!result) throw lastError;
-			}
-			return {
-				content: [{ type: "text", text: toolResultTextForModel(name, result) }],
-				details: result,
+				return {
+					content: [{ type: "text", text: toolResultTextForModel(name, result) }],
+					details: result,
+				};
 			};
+			return commandName === "highlight_text"
+				? await withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand)
+				: await executeCommand();
 		},
 	});
 
@@ -8227,7 +8516,7 @@ function createTools(
 		commandTool(
 			"browser_highlight_text",
 			"Browser Highlight Text",
-				"Highlight exact visible/readable text that supports a material claim. The text argument must be copied from page text, not paraphrased from your answer. Use short, distinctive explanatory spans, usually one sentence or phrase under 180 characters. Avoid page-title, course-title, reading-list, and heading-only highlights unless that heading alone answers the user's question. For compare/contrast prompts, prefer one concise support highlight per side, plus at most one direct contrast/conclusion sentence; do not highlight full algorithms or every sub-step unless asked. If the answer names multiple roadmap/list/navigation items, mark every required top-level item the answer names unless one exact visible span literally contains the full named list. Mark top-level sibling items before nested children; after marking a parent/top-level item, move to the next sibling item instead of marking child headings, examples, usage patterns, or subfeatures under the same parent unless the user asks for that breakdown. For list items, send the item words, not a heading-plus-list block; Markdown markers in tool output are structure cues. If the user explicitly asks to highlight a formula/equation, use the selected formula text when available or the closest visible formula label; rendered math matches are promoted to block highlights. For ordinary source grounding where rendered math extraction is collapsed or fragmented, prefer the nearby explanatory sentence, label, or caption instead of copying broken formula text. If an item cannot be highlighted successfully, do not claim it as page-supported. For simple non-list questions, use this at most once before answering.",
+				"Highlight exact visible/readable text that supports a material claim. The text argument must be copied from page text, not paraphrased from your answer. Use short, distinctive explanatory spans, usually one sentence or phrase under 180 characters. Avoid page-title, course-title, reading-list, and heading-only highlights unless that heading alone answers the user's question. For broad teach/review/summarize prompts, use one to three central highlights; do not mark every section or every sentence you mention. For compare/contrast prompts, prefer one concise support highlight per side, plus at most one direct contrast/conclusion sentence; do not highlight full algorithms or every sub-step unless asked. If the answer names multiple roadmap/list/navigation items, mark every required top-level item the answer names unless one exact visible span literally contains the full named list. Mark top-level sibling items before nested children; after marking a parent/top-level item, move to the next sibling item instead of marking child headings, examples, usage patterns, or subfeatures under the same parent unless the user asks for that breakdown. For list items, send the item words, not a heading-plus-list block; Markdown markers in tool output are structure cues. If the user explicitly asks to highlight a formula/equation, use the selected formula text when available or the closest visible formula label; rendered math matches are promoted to block highlights. For ordinary source grounding where rendered math extraction is collapsed or fragmented, prefer the nearby explanatory sentence, label, or caption instead of copying broken formula text. If an item cannot be highlighted successfully, do not claim it as page-supported. For simple non-list questions, use this at most once before answering.",
 			HIGHLIGHT_TEXT_SCHEMA,
 			"highlight_text",
 			{ sequential: true },
@@ -10225,6 +10514,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		};
 		if (promptRequiresPageSourceMarker(activeRequest?.displayPrompt)) {
 			highlightParams.scrollIntoView = true;
+			highlightParams.scanPage = true;
 		}
 		const cleanedHeadingText = cleanMarkdownHeadingHighlightText(highlightParams?.text);
 		if (cleanedHeadingText) highlightParams.text = cleanedHeadingText;
@@ -11029,9 +11319,11 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		for (const candidate of getReplayHighlightCandidates(text)) {
 			if (!candidates.includes(candidate)) candidates.push(candidate);
 		}
-		const initialAttempt = await tryReplayHighlightCandidates(tabId, candidates, options);
-		if (initialAttempt.result) return initialAttempt.result;
-		lastError = initialAttempt.lastError || lastError;
+		if (!options.skipInitialAttempt) {
+			const initialAttempt = await tryReplayHighlightCandidates(tabId, candidates, options);
+			if (initialAttempt.result) return initialAttempt.result;
+			lastError = initialAttempt.lastError || lastError;
+		}
 		if (options.scanPage) {
 			const visibleAttempt = await tryVisibleReplayTextCandidates(tabId, text, options);
 			if (visibleAttempt.result) return visibleAttempt.result;
@@ -12042,13 +12334,35 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
 							buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) ||
 							buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) ||
+							buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 							buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 							buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
+							buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) ||
+							buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
+							buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+						async (effectiveParams) => {
+							if (!(effectiveParams as any)?.scanPage) return null;
+							const text = compactActionText((effectiveParams as any)?.text);
+							if (!text) return null;
+							let tabId = Number((effectiveParams as any)?.tabId || activeRequest?.initialActiveTab?.id || 0);
+							if (!Number.isFinite(tabId) || tabId <= 0) {
+								const state = await host.snapshotState();
+								tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
+							}
+							if (!Number.isFinite(tabId) || tabId <= 0) return null;
+							return await highlightTextWithReplayCandidates(tabId, text, {
+								...(effectiveParams || {}),
+								scanPage: true,
+								skipInitialAttempt: true,
+								scrollIntoView: (effectiveParams as any)?.scrollIntoView !== false,
+								pdfAnchor: (effectiveParams as any)?.pdfAnchor,
+							});
+						},
 					),
 					prompt,
 					attachments,

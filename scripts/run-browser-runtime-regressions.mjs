@@ -621,6 +621,8 @@ async function assertSelectionFormatting() {
 		sourceCitationProvidesExplanatoryComparisonSupportForTest,
 		rewriteHighlightTextToRecentReadableExactPhraseForTest,
 		shouldAbortAfterRepeatedHighlightFailuresForTest,
+		buildCompactTeachingHighlightBudgetGuardResultForTest,
+		buildCompactTeachingNoteFailureGuardResultForTest,
 		buildPlannerAnchorCandidates,
 		buildTextbookContextReadyGuardResultForTest,
 		buildReplayAnnotationsFromPageActions,
@@ -640,6 +642,8 @@ async function assertSelectionFormatting() {
 	assert.equal(typeof sourceCitationProvidesExplanatoryComparisonSupportForTest, "function", "browser runtime comparison support detector export is missing");
 	assert.equal(typeof rewriteHighlightTextToRecentReadableExactPhraseForTest, "function", "browser runtime readable phrase rewriter export is missing");
 	assert.equal(typeof shouldAbortAfterRepeatedHighlightFailuresForTest, "function", "browser runtime highlight failure budget export is missing");
+	assert.equal(typeof buildCompactTeachingHighlightBudgetGuardResultForTest, "function", "browser runtime compact teaching highlight budget export is missing");
+	assert.equal(typeof buildCompactTeachingNoteFailureGuardResultForTest, "function", "browser runtime compact teaching note failure export is missing");
 	assert.equal(typeof buildPlannerAnchorCandidates, "function", "browser runtime planner anchor export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof buildTextbookContextReadyGuardResultForTest, "function", "browser runtime textbook guard export is missing");
@@ -1169,6 +1173,62 @@ async function assertSelectionFormatting() {
 		}),
 		true,
 		"repeated failed highlights should abort instead of leaving the request active indefinitely",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about Bayesian neural networks.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"compact page-teaching prompts should stop failed highlight loops quickly",
+	);
+	const compactTeachingHighlightBudgetGuard = buildCompactTeachingHighlightBudgetGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		"Teach me what this page says about fetch.",
+		{
+			displayPrompt: "Teach me what this page says about fetch.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		compactTeachingHighlightBudgetGuard?.guardrail?.kind,
+		"compact_teaching_highlight_budget",
+		"compact teaching prompts should answer from an existing source after repeated later highlight failures",
+	);
+	assert.match(
+		formatToolResultForModel("browser_highlight_text", compactTeachingHighlightBudgetGuard),
+		/Do not call browser_highlight_text again/,
+		"compact teaching highlight budget should instruct the model to stop retrying markers",
+	);
+	const compactTeachingNoteFailureGuard = buildCompactTeachingNoteFailureGuardResultForTest(
+		"browser_show_note",
+		"show_note",
+		"Teach me what this page says about fetch.",
+		{
+			displayPrompt: "Teach me what this page says about fetch.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
+				{ toolName: "browser_show_note", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		compactTeachingNoteFailureGuard?.guardrail?.kind,
+		"compact_teaching_note_failure",
+		"compact teaching prompts should not retry optional notes after a note failure",
+	);
+	assert.match(
+		formatToolResultForModel("browser_show_note", compactTeachingNoteFailureGuard),
+		/Do not call browser_show_note again/,
+		"compact teaching note failure guard should instruct the model to answer without another note attempt",
 	);
 	assert.equal(
 		shouldAbortAfterRepeatedHighlightFailuresForTest({
@@ -1751,6 +1811,11 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
+		/HIGHLIGHT_TOOL_CALL_TIMEOUT_MS\s*=\s*12000/,
+		"highlight candidate retries should also have an overall per-call timeout",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
 		/if \(\["show_note", "scroll_to_annotation", "clear_annotations"\]\.includes\(commandName\)\) return ANNOTATION_COMMAND_TIMEOUT_MS;/,
 		"note and annotation follow-up commands should have bounded timeouts too",
 	);
@@ -2014,13 +2079,18 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		sessionDumpSource,
-		/if \(turn && !turn\.pending\) \{/,
-		"debug:sessions wait should return the requested completed replay turn even if activeRequestId is stale",
+		/turn && !turn\.pending && state\.activeRequestId !== requestId/,
+		"debug:sessions wait should not return a completed replay turn while the same request is still active",
 	);
 	assert.doesNotMatch(
 		sessionDumpSource,
 		/turn && !turn\.pending && !state\.activeRequestId/,
-		"debug:sessions wait should not require an empty activeRequestId once the requested replay turn is complete",
+		"debug:sessions wait should allow another active request once the requested replay turn is complete",
+	);
+	assert.match(
+		sessionDumpSource,
+		/latestReplay[\s\S]*findTurnByRequestId\(latestReplay,\s*requestId\)/,
+		"debug:sessions wait should refetch replay before returning the completed requested turn",
 	);
 	assert.match(
 		sessionDumpSource,
@@ -2393,7 +2463,7 @@ async function assertConstitutionPromptContract() {
 		);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /durable page source marker/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_highlight_text/);
-		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note for each interpretive highlight/);
+	assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note at most once/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /Do not use the page title, course title, reading list, or a generic heading/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /only one source marker succeeded/);
 		assert.equal(
@@ -2656,7 +2726,7 @@ async function assertConstitutionPromptContract() {
 			assert.equal(structuredFailureBudgetGuard?.guardrail?.kind, "structured_highlight_budget", "structured prompts should stop after repeated failed highlight attempts once at least one source marker exists");
 			assert.match(
 				formatToolResultForModel("browser_highlight_text", structuredFailureBudgetGuard),
-				/Answer now from the existing source highlights/,
+				/Answer now only from the existing successful source highlights/,
 				"structured failure guard should return model instructions instead of pretending another highlight succeeded",
 			);
 			const roadmapNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
@@ -2955,6 +3025,12 @@ async function assertConstitutionPromptContract() {
 				"sanitizer should remove glued colon duplicate openers",
 			);
 			assert.match(colonDuplicatedOpeningReply, /^Here(?:'|’)s the roadmap of \*\*data structures\*\*/i, "sanitizer should keep the cleaner second opener after a glued colon duplicate");
+			const gluedBoldLabelOpeningReply = sanitizeAssistantVisibleReplyForTest(
+				"**1. What it is — central idea****2. How it works — second step**Here's the concise answer.\n\n**What it is** — useful context.",
+				null,
+			);
+			assert.doesNotMatch(gluedBoldLabelOpeningReply, /^\*\*1\./, "glued bold source labels should not remain before the real answer opening");
+			assert.match(gluedBoldLabelOpeningReply, /^Here(?:'|’)s the concise answer\./, "glued bold-label cleanup should preserve the real answer opening");
 			const incompleteTrailingItemReply = buildFinalAssistantReplyForTest(
 				[
 					"Here's the roadmap:",
@@ -3354,6 +3430,64 @@ async function assertConstitutionPromptContract() {
 			);
 			assert.doesNotMatch(inlineHighlightedOnPageLabelReply, /Highlighted on page/i, "visible answers should not include inline highlighted-on-page labels");
 			assert.match(inlineHighlightedOnPageLabelReply, /Dimensional focus/, "highlighted-on-page label cleanup should preserve the surrounding content");
+			const pluralHighlightNumberReply = buildFinalAssistantReplyForTest(
+				"**Why Fetch?** — Fetch is promise-based and integrated with modern web features. **\n\n**Basic call pattern** — Call `fetch(url, options)`. *(highlights 2 & 3)*",
+				null,
+				{ displayPrompt: "Teach me what this page says about using Fetch." },
+			);
+			assert.doesNotMatch(pluralHighlightNumberReply, /highlights?\s*\d|\.\s+\*\*(?:\s|$)/i, "visible answers should remove plural highlight-number labels and dangling bold markers");
+			assert.match(pluralHighlightNumberReply, /Basic call pattern/, "highlight-number cleanup should preserve the surrounding answer text");
+			const missingHighlightTailReply = buildFinalAssistantReplyForTest(
+				[
+					"**What it is** — Photosynthesis converts sunlight into chemical energy.",
+					"",
+					"**Where it happens** — Chloroplast thylakoids host the light reactions.",
+					"",
+					"**Calvin cycle** — Though a separate highlight couldn't be placed, the page describes RuBisCO fixing CO2.",
+					"",
+					"**Efficiency and factors** — The page lists light, water, CO2, and temperature.",
+				].join("\n"),
+				null,
+				{
+					displayPrompt: "Teach me what this page says about photosynthesis.",
+					toolTraces: [
+						{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Photosynthesis changes sunlight into chemical energy." },
+						{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: thylakoids are the site of photosynthesis." },
+					],
+				},
+			);
+			assert.doesNotMatch(missingHighlightTailReply, /couldn't be placed|Calvin cycle|Efficiency and factors/i, "sanitizer should remove unsupported tails after missing-highlight status narration");
+			assert.match(missingHighlightTailReply, /Photosynthesis changes sunlight|thylakoids are the site/i, "sanitizer should preserve source-backed content before the missing-marker tail");
+			const unsupportedRoadmapParagraphReply = buildFinalAssistantReplyForTest(
+				[
+					"Here's the roadmap of data structures covered in this chapter:",
+					"",
+					"**Lists** — the core mutable sequence type, with methods such as append and pop.",
+					"",
+					"**Tuples** — another standard sequence data type, covered under tuples and sequences.",
+					"",
+					"**Sets** — an unordered collection with no duplicate elements.",
+					"",
+					"**Dictionaries** — a mapping type indexed by keys rather than numeric positions.",
+					"",
+					"The chapter also includes practical sections on looping techniques, conditions, and comparing sequences.",
+				].join("\n"),
+				null,
+				{
+					displayPrompt: "Give me a roadmap of the data structures on this page.",
+					toolTraces: [
+						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "The list data type has some more methods."' },
+						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "There is also another standard sequence data type: the tuple."' },
+						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "Python also includes a data type for sets."' },
+					],
+				},
+			);
+			assert.match(unsupportedRoadmapParagraphReply, /Lists|Tuples|Sets/i, "structured sanitizer should keep source-backed roadmap paragraphs");
+			assert.doesNotMatch(
+				unsupportedRoadmapParagraphReply,
+				/Dictionaries|looping techniques|conditions|comparing sequences/i,
+				"structured sanitizer should remove bold-labeled and tail roadmap items without successful source highlights",
+			);
 			const danglingDollarReply = sanitizeAssistantVisibleReplyForTest(
 				'The page explains SG-MCMC and cold posteriors.\n\n- **Metropolis-Hastings** uses a Markov chain proposal.\n- **SG-MCMC** scales with mini-batches and cold posterior temperatures $T',
 				null,
@@ -3559,7 +3693,12 @@ async function assertConstitutionPromptContract() {
 					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted HMC" },
 				],
 			});
-			assert.match(multiHighlightTeachingReply, /Hamiltonian Monte Carlo/, "multi-highlight teaching answers should not be compacted by the one-highlight guard");
+			assert.doesNotMatch(
+				multiHighlightTeachingReply,
+				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC/,
+				"compact broad teaching answers should not keep broad method-roadmap details unless the highlights support them",
+			);
+			assert.match(multiHighlightTeachingReply, /posterior|Bayesian/i, "compact broad teaching answers should preserve the supported core concept");
 			assert.doesNotMatch(multiHighlightTeachingReply, /Let me read|Now let me highlight|Let me record/i, "process narration should still be stripped when source coverage is adequate");
 			const cleanShortCheck = sanitizeAssistantVisibleReplyForTest(
 				"Scaling keeps the softmax from saturating.\n\nHere's a short check: Why does scaling help attention stay stable?",
