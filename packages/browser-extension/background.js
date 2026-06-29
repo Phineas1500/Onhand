@@ -6771,11 +6771,10 @@ const createPageToolkit = (options = {}) => {
 	const pageHasRenderedMath = () => Boolean(document.querySelector(`${MATH_CONTAINER_SELECTOR}, script[type^="math/tex"]`));
 
 	const waitForMathTypesetting = async (rawQuery) => {
-		// Wait whenever the PAGE has math being typeset, regardless of whether the query
-		// itself looks math-like. MathJax reflows and transiently hides the DOM while
-		// typesetting, so even a math-free highlight fails with "No visible text matched"
-		// if it races typesetting on a math-heavy page.
+		// Wait for MathJax's queue only for math-like queries. Prose highlights on math
+		// pages should not get stuck behind a long MathJax startup promise.
 		if (!pageHasRawTexSource() && !window.MathJax) return;
+		const queryLooksMathLike = isMathLikeHighlightQuery(rawQuery);
 
 		const wait = (timeoutMs) => new Promise((resolve) => window.setTimeout(resolve, timeoutMs));
 		const waitForMathJaxQueue = async () => {
@@ -6811,7 +6810,7 @@ const createPageToolkit = (options = {}) => {
 		while (!window.MathJax && pageHasRawTexSource() && Date.now() - startedAt < 2500) {
 			await wait(100);
 		}
-		await waitForMathJaxQueue();
+		if (queryLooksMathLike) await waitForMathJaxQueue();
 		for (let attempt = 0; attempt < 20; attempt += 1) {
 			if (pageHasRenderedMath()) break;
 			if (!pageHasRawTexSource()) break;

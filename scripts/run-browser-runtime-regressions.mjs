@@ -615,6 +615,11 @@ async function assertSelectionFormatting() {
 	const {
 		buildHighlightRetryCandidates,
 		cleanMarkdownHeadingHighlightTextForTest,
+		stripTrailingHeadingAnchorMarkerForTest,
+		looksLikeExpandedMathExtractionCandidateForTest,
+		canRewriteToContainedReadablePhraseForTest,
+		sourceCitationProvidesExplanatoryComparisonSupportForTest,
+		rewriteHighlightTextToRecentReadableExactPhraseForTest,
 		shouldAbortAfterRepeatedHighlightFailuresForTest,
 		buildPlannerAnchorCandidates,
 		buildTextbookContextReadyGuardResultForTest,
@@ -629,6 +634,11 @@ async function assertSelectionFormatting() {
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
 	assert.equal(typeof cleanMarkdownHeadingHighlightTextForTest, "function", "browser runtime heading highlight cleaner export is missing");
+	assert.equal(typeof stripTrailingHeadingAnchorMarkerForTest, "function", "browser runtime heading anchor cleaner export is missing");
+	assert.equal(typeof looksLikeExpandedMathExtractionCandidateForTest, "function", "browser runtime math extraction noise detector export is missing");
+	assert.equal(typeof canRewriteToContainedReadablePhraseForTest, "function", "browser runtime contained readable phrase rewrite guard export is missing");
+	assert.equal(typeof sourceCitationProvidesExplanatoryComparisonSupportForTest, "function", "browser runtime comparison support detector export is missing");
+	assert.equal(typeof rewriteHighlightTextToRecentReadableExactPhraseForTest, "function", "browser runtime readable phrase rewriter export is missing");
 	assert.equal(typeof shouldAbortAfterRepeatedHighlightFailuresForTest, "function", "browser runtime highlight failure budget export is missing");
 	assert.equal(typeof buildPlannerAnchorCandidates, "function", "browser runtime planner anchor export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
@@ -848,7 +858,7 @@ async function assertSelectionFormatting() {
 	assert.match(pdfReadPagesText, /Next step: if you answer from this offscreen\/deeper PDF text/);
 	assert.match(pdfReadPagesText, /browser_highlight_text/);
 	assert.match(pdfReadPagesText, /browser_show_note/);
-	assert.match(pdfReadPagesText, /under 120 characters/);
+	assert.match(pdfReadPagesText, /under 280 characters/);
 	assert.match(
 		formatToolResultForModel("browser_extract_content", {
 			tab: replaySmokeTab(),
@@ -1048,6 +1058,76 @@ async function assertSelectionFormatting() {
 	);
 	assert.equal(cleanMarkdownHeadingHighlightTextForTest("## 5.4. Sets¶"), "5.4. Sets", "markdown heading markers should be stripped before highlight attempts");
 	assert.equal(cleanMarkdownHeadingHighlightTextForTest("Plain source sentence"), "", "ordinary source text should not be rewritten as a heading");
+	assert.equal(stripTrailingHeadingAnchorMarkerForTest("Tuples and Sequences¶"), "Tuples and Sequences", "docs permalink markers should not become literal highlight text");
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Tuples and Sequences", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary: "Readable content:\nTuples and Sequences¶\nSets¶\nDictionaries¶",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not add docs permalink markers",
+	);
+	assert.equal(
+		looksLikeExpandedMathExtractionCandidateForTest(
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM.",
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+		),
+		true,
+		"readable rewrite candidates with duplicated rendered-math tokens should be treated as extraction noise",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary:
+						"Readable content:\nMetropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not replace clean prose with duplicated rendered-math text",
+	);
+	assert.equal(
+		canRewriteToContainedReadablePhraseForTest(
+			"Metropolis-Hastings Sampling",
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+		),
+		false,
+		"readable exact-phrase rewrites should not collapse explanatory spans to heading-only substrings",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_get_viewport_headings",
+					resultSummary: "Nearby headings: 1. Metropolis-Hastings Sampling",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not replace a substantive MH sentence with a heading",
+	);
+	assert.equal(
+		sourceCitationProvidesExplanatoryComparisonSupportForTest("Metropolis-Hastings Sampling", "Metropolis-Hastings"),
+		false,
+		"heading-only comparison highlights should not satisfy a comparison side",
+	);
+	assert.equal(
+		sourceCitationProvidesExplanatoryComparisonSupportForTest(
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+			"Metropolis-Hastings",
+		),
+		true,
+		"explanatory comparison highlights should satisfy the side they explain",
+	);
 	const longBayesianHighlightText = [
 		"In Bayesian modeling, we want to be able to sample from the posterior of models given the data: W_r.v. ~ p(W | {(x_i,y_i)}_i=1^N).",
 		"Each sampled W_r.v. is a model. Then, the label prediction can be described as p_Bayesian model(y | x; {(x_i,y_i)}_i=1^N) = ∫_W p(y | x ; W) p(W | {(x_i,y_i)}_i=1^N ) dW.",
@@ -1274,7 +1354,7 @@ async function assertBlankReplyRetryWaitsForAgentIdle() {
 			},
 		],
 	});
-	assert.match(sourceMarkerRetryPrompt, /needs (?:a durable page source marker|a small set of durable page source markers)/i);
+	assert.match(sourceMarkerRetryPrompt, /needs (?:a durable page source marker|durable page source markers)/i);
 	assert.match(sourceMarkerRetryPrompt, /browser_highlight_text/i);
 	assert.doesNotMatch(
 		sourceMarkerRetryPrompt,
@@ -1500,6 +1580,7 @@ async function assertConstitutionPromptContract() {
 			shouldRequirePdfAnchorRetryForTest,
 			buildEmptyHighlightTextGuardResultForTest,
 			buildWeakStructuredHighlightTextGuardResultForTest,
+			buildSurplusHighlightGuardResultForTest,
 			buildSurplusTeachingHighlightGuardResultForTest,
 			buildStructuredHighlightBudgetGuardResultForTest,
 			buildStructuredNoteBudgetGuardResultForTest,
@@ -1527,6 +1608,7 @@ async function assertConstitutionPromptContract() {
 			assert.equal(typeof shouldRequirePdfAnchorRetryForTest, "function", "browser runtime PDF anchor retry export is missing");
 			assert.equal(typeof buildEmptyHighlightTextGuardResultForTest, "function", "browser runtime empty highlight guard export is missing");
 			assert.equal(typeof buildWeakStructuredHighlightTextGuardResultForTest, "function", "browser runtime weak structured highlight guard export is missing");
+			assert.equal(typeof buildSurplusHighlightGuardResultForTest, "function", "browser runtime comparison surplus highlight guard export is missing");
 			assert.equal(typeof buildSurplusTeachingHighlightGuardResultForTest, "function", "browser runtime surplus teaching highlight guard export is missing");
 			assert.equal(typeof buildStructuredHighlightBudgetGuardResultForTest, "function", "browser runtime structured highlight budget guard export is missing");
 			assert.equal(typeof buildStructuredNoteBudgetGuardResultForTest, "function", "browser runtime structured note budget guard export is missing");
@@ -1541,21 +1623,20 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /The page is the canvas/);
 	assert.match(contract.systemPrompt, /Every material page claim must be grounded/);
 	assert.match(contract.systemPrompt, /Read the page before answering/);
-	assert.match(contract.systemPrompt, /focused pass/);
+	assert.match(contract.systemPrompt, /create one durable source highlight/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
 	assert.match(contract.systemPrompt, /explicitly asks to search online/);
 	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
-	assert.match(contract.systemPrompt, /under 120 characters/);
+	assert.match(contract.systemPrompt, /under ~280 characters/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as source markers/);
-	assert.match(contract.systemPrompt, /not the page title, course title, or a generic heading/);
+	assert.match(contract.systemPrompt, /never the page title, course title, or a generic heading/);
 	assert.match(contract.systemPrompt, /For compare\/contrast prompts, usually use two concise source highlights/);
 	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
 	assert.match(contract.systemPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
-	assert.match(contract.systemPrompt, /simple answer-only questions use read-only grounding/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
-	assert.match(contract.systemPrompt, /use a small set of the strongest source markers/);
-	assert.match(contract.systemPrompt, /Each named step or item you keep in chat must be supported/);
+	assert.match(contract.systemPrompt, /treat the prompt as an enumerable coverage task/);
+	assert.match(contract.systemPrompt, /every required step, item, or top-level peer you name in chat needs its own source highlight/);
 	assert.match(contract.systemPrompt, /do not narrate internal page-work plans/);
 	assert.match(contract.systemPrompt, /let me ground this/);
 	assert.match(contract.systemPrompt, /Do not use horizontal rules as separators/);
@@ -1623,20 +1704,26 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Linked-note\/resource requests are navigation tasks/);
-	assert.match(contract.answerPrompt, /Grounding budget: simple questions get read-only grounding/);
-	assert.match(contract.answerPrompt, /Do not use the page title, course title, reading list, or a generic heading as that source marker/);
-	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
+	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong source highlight/);
+	assert.match(contract.answerPrompt, /Do not use the page title, course title, reading list, or a generic heading as a source marker/);
+	assert.match(contract.answerPrompt, /do not paraphrase the highlight/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not source markers/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
 	assert.match(contract.answerPrompt, /For comparison prompts, usually create two concise source highlights/);
 	assert.match(contract.answerPrompt, /Roadmap\/list\/navigation answers need the actual supporting list/);
-	assert.match(contract.answerPrompt, /Each named step\/item you keep in chat needs a source highlight/);
+	assert.match(contract.answerPrompt, /Each named step\/item in chat needs its own source highlight/);
+	assert.match(contract.answerPrompt, /literally contains every named item/);
 	assert.match(contract.systemPrompt, /where does this page explain/);
 	assert.match(contract.systemPrompt, /not a math-only formula as the first or only source marker/);
 	assert.match(contract.answerPrompt, /Do not use the word 'anchor' in user-facing replies/);
 	assert.match(contract.answerPrompt, /let me ground this/);
 	assert.match(contract.answerPrompt, /Do not use horizontal rules like --- as section separators/);
-	assert.match(contract.answerPrompt, /Do not use Markdown tables unless the user explicitly asks for a table/);
+			assert.match(contract.answerPrompt, /Do not use Markdown tables unless the user explicitly asks for a table/);
+			assert.match(
+				contract.systemPrompt,
+				/Once a parent\/top-level item is marked, move to the next sibling item/,
+				"roadmap prompts should explicitly avoid marking child subtopics after a parent item",
+			);
 	assert.match(contract.answerPrompt, /Math must be renderable markdown/);
 	assert.match(contract.answerPrompt, /Do not write bare LaTeX commands/);
 	assert.match(contract.answerPrompt, /If extracted page math is fragmented or missing operators/);
@@ -1672,15 +1759,25 @@ async function assertConstitutionPromptContract() {
 		/promptRequiresPageSourceMarker\(activeRequest\?\.displayPrompt\)[\s\S]{0,160}highlightParams\.scrollIntoView = true/,
 		"page-grounded source markers should scroll matching offscreen text into view by default",
 	);
-	assert.match(
+	assert.doesNotMatch(
 		runtimeSourceForHighlightPolicy,
-		/STRUCTURED_SOURCE_HIGHLIGHT_MAX\s*=\s*5/,
-		"structured page answers should cap highlight count before source marking becomes noisy",
+		/highlightParams\.scrollIntoView !== false && promptRequiresPageSourceMarker/,
+		"required page source markers should not honor model-provided scrollIntoView:false",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/STRUCTURED_SOURCE_HIGHLIGHT_MAX/,
+		"enumerable structured page answers should not stop after a fixed number of successful markers",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/\b(?:mcmc|monte\s+carlo|metropolis|hamiltonian|stochastic\s+gradient)\b/i,
+		"production runtime behavior heuristics should not be hardcoded to the BayesianDL lecture",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
 		/buildStructuredHighlightBudgetGuardResult\(toolName,\s*commandName,\s*prompt,\s*activeRequest\)/,
-		"structured page prompts should stop runaway highlight loops after enough source markers or failures",
+		"structured page prompts should stop runaway highlight loops after repeated failures",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
@@ -1762,12 +1859,7 @@ async function assertConstitutionPromptContract() {
 			],
 		},
 	);
-	assert.equal(optionalFrameFallbackNoteGuard?.guardrail?.kind, "optional_note_frame_fallback", "optional notes should be skipped after frame-fallback highlights");
-	assert.match(
-		formatToolResultForModel("browser_show_note", optionalFrameFallbackNoteGuard),
-		/Answer now from the existing highlight/,
-		"optional frame-fallback note guard should return user-invisible model instructions instead of a fake note",
-	);
+	assert.equal(optionalFrameFallbackNoteGuard, null, "frame-fallback highlights should still allow notes");
 	assert.equal(
 		buildOptionalFrameFallbackNoteGuardResultForTest(
 			"browser_show_note",
@@ -1777,7 +1869,7 @@ async function assertConstitutionPromptContract() {
 			optionalFrameFallbackNoteGuard,
 		),
 		null,
-		"explicit note requests should not be blocked by the optional-note fallback guard",
+		"explicit note requests should not be blocked by the frame-fallback note path",
 	);
 	const comparisonHighlightRewriteRequest = {
 		displayPrompt: "Compare rejection sampling and Metropolis-Hastings",
@@ -1814,8 +1906,8 @@ async function assertConstitutionPromptContract() {
 			"Compare rejection sampling and Metropolis-Hastings",
 			comparisonHighlightRewriteRequest,
 		),
-		"Rejection sampling is very difficulty in high-dimensional domains (e.g., images) because of the large value of MMM.",
-		"comparison source highlights should rewrite normalized extracted math text to exact readable page text before calling the page tool",
+		"",
+		"comparison source highlights should keep clean prose when readable page text only adds duplicated rendered-math noise",
 	);
 	assert.equal(
 		rewriteComparisonHighlightTextForTest(
@@ -1823,8 +1915,8 @@ async function assertConstitutionPromptContract() {
 			"Compare rejection sampling and Metropolis-Hastings",
 			comparisonHighlightRewriteRequest,
 		),
-		"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM.",
-		"comparison source highlights should rewrite MH constants to exact page text before calling the page tool",
+		"",
+		"comparison source highlights should not rewrite MH constants into duplicated rendered-math text",
 	);
 	const genericFormulaRewriteRequest = {
 		displayPrompt: "Teach me what this article says about the method.",
@@ -2301,7 +2393,7 @@ async function assertConstitutionPromptContract() {
 		);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /durable page source marker/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_highlight_text/);
-		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note only if/);
+		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note for each interpretive highlight/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /Do not use the page title, course title, reading list, or a generic heading/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /only one source marker succeeded/);
 		assert.equal(
@@ -2372,7 +2464,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /You read PDF pages for this answer but did not leave a durable PDF source highlight/);
 		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_highlight_text/);
 		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_show_note/);
-		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /under 120 characters/);
+		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /under 280 characters/);
 		assert.equal(
 			buildFinalAssistantReplyForTest(
 				'The user selected "Multi-Head Attention". Let me find the detailed explanation.',
@@ -2409,8 +2501,22 @@ async function assertConstitutionPromptContract() {
 				oneHighlightTeachingRequest.displayPrompt,
 				oneHighlightTeachingRequest,
 			);
-			assert.equal(surplusTeachingHighlightGuard?.guardrail?.kind, "surplus_teaching_highlight", "first-pass teaching prompts should not keep calling highlight after one source marker succeeds");
-			assert.match(surplusTeachingHighlightGuard?.guardrail?.message || "", /Do not call browser_highlight_text again/, "teaching surplus guard should stop extra source-marker loops");
+			assert.equal(surplusTeachingHighlightGuard, null, "teaching prompts may keep marking after one source marker when more concepts remain");
+			const cappedTeachingHighlightGuard = buildSurplusTeachingHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				oneHighlightTeachingRequest.displayPrompt,
+				{
+					...oneHighlightTeachingRequest,
+					toolTraces: Array.from({ length: 6 }, (_, index) => ({
+						toolName: "browser_highlight_text",
+						state: "complete",
+						resultSummary: `Highlighted text: Teaching concept ${index + 1}.`,
+					})),
+				},
+			);
+			assert.equal(cappedTeachingHighlightGuard?.guardrail?.kind, "surplus_teaching_highlight", "free-form teaching prompts should stop after the teaching source-marker cap");
+			assert.match(cappedTeachingHighlightGuard?.guardrail?.message || "", /Do not call browser_highlight_text again/, "teaching surplus guard should stop extra source-marker loops at the cap");
 			const emptyHighlightGuard = buildEmptyHighlightTextGuardResultForTest("browser_highlight_text", "highlight_text", { text: "" });
 			assert.equal(emptyHighlightGuard?.guardrail?.kind, "empty_highlight_text", "empty highlight calls should be guardrailed before page-tool failure");
 			assert.match(
@@ -2450,6 +2556,58 @@ async function assertConstitutionPromptContract() {
 				null,
 				"section-number guard should stay scoped to structured roadmap/list/comparison source markers",
 			);
+			const headingOnlyComparisonGuard = buildSurplusHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				"Compare rejection sampling and Metropolis-Hastings on this page.",
+				{
+					displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page.",
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "rej-1",
+							label: "Highlighted text",
+							citationText: "In rejection sampling, we want to sample X from p(x)",
+						},
+						{
+							type: "annotation",
+							annotationId: "rej-2",
+							label: "Highlighted text",
+							citationText: "Rejection sampling is very difficulty in high-dimensional domains because of the large value of M.",
+						},
+						{
+							type: "annotation",
+							annotationId: "mh-heading",
+							label: "Highlighted text",
+							citationText: "Metropolis-Hastings Sampling",
+						},
+					],
+				},
+			);
+			assert.equal(headingOnlyComparisonGuard, null, "heading-only comparison highlights should not satisfy a comparison side");
+			const explanatoryComparisonGuard = buildSurplusHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				"Compare CSS Grid and Flexbox on this page.",
+				{
+					displayPrompt: "Compare CSS Grid and Flexbox on this page.",
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "grid-1",
+							label: "Highlighted text",
+							citationText: "CSS Grid is a two-dimensional layout system for rows and columns.",
+						},
+						{
+							type: "annotation",
+							annotationId: "flex-1",
+							label: "Highlighted text",
+							citationText: "Flexbox is a one-dimensional layout method for arranging items in a row or column.",
+						},
+					],
+				},
+			);
+			assert.equal(explanatoryComparisonGuard?.guardrail?.kind, "surplus_comparison_highlight", "comparison highlights should stop once both sides have explanatory support");
 			const structuredBudgetRequest = {
 				displayPrompt: "Give me a roadmap of the sampling methods in this page.",
 				toolTraces: Array.from({ length: 5 }, (_, index) => ({
@@ -2465,13 +2623,7 @@ async function assertConstitutionPromptContract() {
 				structuredBudgetRequest.displayPrompt,
 				structuredBudgetRequest,
 			);
-			assert.equal(structuredBudgetGuard?.guardrail?.kind, "structured_highlight_budget", "structured prompts should stop after the source highlight budget is reached");
-			assert.match(structuredBudgetGuard?.guardrail?.message || "", /Do not call browser_highlight_text again/, "structured highlight budget should tell the model to answer instead of marking more");
-			assert.match(
-				formatToolResultForModel("browser_highlight_text", structuredBudgetGuard),
-				/Answer now from the existing source highlights/,
-				"structured budget guard should return model instructions instead of pretending another highlight succeeded",
-			);
+			assert.equal(structuredBudgetGuard, null, "enumerable structured prompts should not stop after a fixed source highlight budget");
 			assert.equal(
 				buildStructuredHighlightBudgetGuardResultForTest("browser_highlight_text", "highlight_text", structuredBudgetRequest.displayPrompt, {
 					displayPrompt: structuredBudgetRequest.displayPrompt,
@@ -2502,7 +2654,12 @@ async function assertConstitutionPromptContract() {
 				},
 			);
 			assert.equal(structuredFailureBudgetGuard?.guardrail?.kind, "structured_highlight_budget", "structured prompts should stop after repeated failed highlight attempts once at least one source marker exists");
-			const structuredNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", structuredFailureBudgetGuard),
+				/Answer now from the existing source highlights/,
+				"structured failure guard should return model instructions instead of pretending another highlight succeeded",
+			);
+			const roadmapNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
 				"browser_show_note",
 				"show_note",
 				"Give me a roadmap of the data structures on this page.",
@@ -2517,7 +2674,23 @@ async function assertConstitutionPromptContract() {
 					],
 				},
 			);
-			assert.equal(structuredNoteBudgetGuard?.guardrail?.kind, "structured_note_budget", "structured prompts should not add one optional note per highlighted item");
+			assert.equal(roadmapNoteBudgetGuard, null, "enumerable structured prompts should allow notes on each interpretive highlight");
+			const structuredNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
+				"browser_show_note",
+				"show_note",
+				"Compare arrays and linked lists on this page.",
+				{
+					displayPrompt: "Compare arrays and linked lists on this page.",
+					toolTraces: [
+						{
+							toolName: "browser_show_note",
+							state: "complete",
+							resultSummary: "Added note: Arrays optimize indexed lookup; linked lists optimize local insertion.",
+						},
+					],
+				},
+			);
+			assert.equal(structuredNoteBudgetGuard?.guardrail?.kind, "structured_note_budget", "comparison prompts should not add multiple optional takeaway notes");
 			assert.equal(
 				buildStructuredNoteBudgetGuardResultForTest(
 					"browser_show_note",
@@ -2556,7 +2729,7 @@ async function assertConstitutionPromptContract() {
 			assert.doesNotMatch(thinTeachingReply, /ICML|How good is the bayes posterior/i, "thin compact teaching recovery should not use bibliography lines as support");
 			assert.match(thinTeachingReply, /posterior/i, "thin compact teaching replies should recover from the source highlight");
 			assert.match(thinTeachingReply, /weight matrices|same likelihood/i, "thin compact teaching replies should include a supporting source sentence when available");
-			assert.match(thinTeachingReply, /This keeps the first pass focused/, "recovered compact teaching replies should keep the compact footer");
+			assert.doesNotMatch(thinTeachingReply, /This keeps the first pass focused/, "recovered compact teaching replies should not add the removed compact footer");
 			const overbroadTeachingReply = [
 				"Let me read more of the page to give you a thorough, grounded overview.",
 				"Now let me highlight the core passage that explains the Bayesian neural network idea.",
@@ -2580,7 +2753,7 @@ async function assertConstitutionPromptContract() {
 			assert.doesNotMatch(sanitizedTeachingReply, /^p\(W \| D\) =$/m, "sanitizer should remove fragmented empty formula lines");
 			assert.doesNotMatch(sanitizedTeachingReply, /Prediction[^\n:]{0,160}:\s*(?:\n\n|$)/i, "sanitizer should remove dangling formula lead-ins after stripping display math");
 			assert.doesNotMatch(sanitizedTeachingReply, /Hamiltonian Monte Carlo|Stochastic Gradient MCMC/, "one-highlight broad teaching answers should be compacted before unsupported later sections");
-			assert.match(sanitizedTeachingReply, /This keeps the first pass focused/, "compacted teaching answers should explain the compact first-pass behavior");
+			assert.doesNotMatch(sanitizedTeachingReply, /This keeps the first pass focused/, "compacted teaching answers should not add the removed compact first-pass footer");
 			const shortRoadmapDriftReply = buildFinalAssistantReplyForTest(
 				[
 					"Great, I found the core content. Here's what it says about **Bayesian neural networks**:",
@@ -3035,7 +3208,7 @@ async function assertConstitutionPromptContract() {
 				/The Posterior via Bayes Theorem|Why Bother|Bayes theorem/i,
 				"one-highlight broad teaching answers with glued headings should still be compacted before unsupported later sections",
 			);
-			assert.match(sanitizedGluedTeachingReply, /This keeps the first pass focused/, "glued-heading broad teaching answers should still get the compact footer");
+			assert.doesNotMatch(sanitizedGluedTeachingReply, /This keeps the first pass focused/, "glued-heading broad teaching answers should not add the removed compact footer");
 			const tableRoadmapTeachingReply = [
 				"## What this page says about Bayesian neural networks The page frames Bayesian deep learning around a core problem: a standard neural network trained via MLE gives you only one weight configuration, but other weight configurations may fit the data almost as well.",
 				"### The Bayesian setup Instead of finding a single best model, you want to sample from the posterior distribution over weights.",
@@ -3067,7 +3240,7 @@ async function assertConstitutionPromptContract() {
 				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/,
 				"first-pass teaching replies should drop unsupported sampling-method roadmaps when only core Bayesian passages were highlighted",
 			);
-			assert.match(sanitizedTableRoadmapTeachingReply, /This keeps the first pass focused/, "table roadmap teaching replies should still use the compact first-pass footer");
+			assert.doesNotMatch(sanitizedTableRoadmapTeachingReply, /This keeps the first pass focused/, "table roadmap teaching replies should not add the removed compact first-pass footer");
 			const malformedSidebarTableReply = [
 				"Flexbox — what this page says",
 				"",
@@ -3092,6 +3265,66 @@ async function assertConstitutionPromptContract() {
 				sanitizedMalformedSidebarTableReply,
 				/- \*\*Dimension\*\*: \*\*Flexbox\*\*: 1D .* \*\*Grid\*\*: 2D/is,
 				"malformed Markdown tables should become compact labeled bullets instead of being dropped",
+			);
+			const sanitizedAspectTableArtifactReply = buildFinalAssistantReplyForTest(
+				[
+					"Here's the comparison.",
+					"",
+					"- Proposal: Aspect: Fixed q(x); Rejection Sampling: Markov chain q(x_t+1 | x_t); Metropolis-Hastings: depends on current state",
+					"- Key constant: Aspect: Global M; Rejection Sampling: No global constant; Metropolis-Hastings: per-step ratio",
+					"",
+					"The takeaway is that Metropolis-Hastings removes the global constant M.",
+				].join("\n"),
+				null,
+				{ displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page." },
+			);
+			assert.doesNotMatch(
+				sanitizedAspectTableArtifactReply,
+				/Aspect:\s+/,
+				"comparison replies should drop malformed table-conversion bullets that expose header labels as content",
+			);
+			assert.match(
+				sanitizedAspectTableArtifactReply,
+				/Metropolis-Hastings removes the global constant M/,
+				"table-artifact cleanup should preserve surrounding explanatory prose",
+			);
+			const sanitizedOrdinalHighlightReply = buildFinalAssistantReplyForTest(
+				[
+					"**Rejection sampling** (first highlight) is difficult in high-dimensional domains.",
+					"",
+					"**Metropolis-Hastings** (second highlight, with note) gets rid of the problematic constant M.",
+					"",
+					"**The practical trade-off** (third highlight): MH still has a high rejection rate.",
+				].join("\n"),
+				null,
+				{ displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page." },
+			);
+			assert.doesNotMatch(
+				sanitizedOrdinalHighlightReply,
+				/\((?:first|second|third)\s+highlight/i,
+				"visible replies should not mention ordinal highlight numbers that can drift from actual source markers",
+			);
+			assert.match(sanitizedOrdinalHighlightReply, /gets rid of the problematic constant M/, "ordinal highlight cleanup should preserve answer content");
+			const sanitizedMarkedStatusReply = buildFinalAssistantReplyForTest(
+				"Here's the roadmap of data structures on this page — I've marked each section:\n\n1. **Lists** — Methods and comprehensions\n2. **Sets** — Unordered collections",
+				null,
+				{ displayPrompt: "Give me a roadmap of the data structures covered on this page." },
+			);
+			assert.doesNotMatch(
+				sanitizedMarkedStatusReply,
+				/I(?:'ve| have)\s+(?:marked|highlighted)/i,
+				"visible replies should not narrate source-marker status",
+			);
+			assert.match(sanitizedMarkedStatusReply, /Here's the roadmap of data structures on this page:/, "marker-status cleanup should preserve the answer lead-in");
+			const sanitizedEachHighlightedReply = buildFinalAssistantReplyForTest(
+				"Here's the roadmap.\n\n- Lists\n- Sets\n\nEach section is highlighted on the page — scroll to any one to dive deeper.",
+				null,
+				{ displayPrompt: "Give me a roadmap of the data structures covered on this page." },
+			);
+			assert.doesNotMatch(
+				sanitizedEachHighlightedReply,
+				/Each section is highlighted|scroll to any one/i,
+				"visible replies should not include highlight-status recap sentences",
 			);
 			const emptyCitationParenthesesReply = buildFinalAssistantReplyForTest(
 				"**Dimension control** ()\n\nFlexbox is one-dimensional; Grid is two-dimensional.\n\n**Decision rule** ()\n\nUse Flexbox for row-or-column layout and Grid for row-and-column layout.",
@@ -3349,7 +3582,7 @@ async function assertConstitutionPromptContract() {
 			const longOnPageNote =
 				"Instead of one big attention pass, Multi-Head Attention runs h=8 separate attention heads in parallel on projected Q/K/V so different relationships are not averaged away. The sidebar answer explains the full mechanism and formulas.";
 	const compactedOnPageNote = compactOnPageNoteTextForTest(longOnPageNote);
-	assert.equal(compactedOnPageNote.length <= 120, true, "on-page notes should be clamped to the marginal note budget");
+	assert.equal(compactedOnPageNote.length <= 280, true, "on-page notes should be clamped to the marginal note budget");
 	assert.equal(compactedOnPageNote.includes("sidebar answer"), false, "on-page notes should leave fuller explanation out of the PDF margin");
 	assert.equal(
 		compactOnPageNoteTextForTest("Eight heads preserve different relationships. The sidebar has the details."),
