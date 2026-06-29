@@ -1165,6 +1165,24 @@ function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 	return countToolTracesByState(request, "browser_highlight_text", ["error"]) >= HIGHLIGHT_FAILURE_ABORT_LIMIT;
 }
 
+function buildRepeatedHighlightFailureGuardResult(toolName: string, commandName: string, request: any) {
+	if (commandName !== "highlight_text") return null;
+	if (!shouldAbortAfterRepeatedHighlightFailures(request)) return null;
+	return {
+		guardrail: {
+			kind: "repeated_highlight_failure",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"Highlighting has failed repeatedly on this page, so durable source highlights are not available here.",
+				`Do not call ${toolName} again for this turn.`,
+				"Answer the user's question now from the readable page content, and briefly note that you could not add highlights on this page.",
+				"Do not claim the page is highlighted, and do not use Markdown tables or horizontal rules.",
+			].join(" "),
+		},
+	};
+}
+
 function getSelectionText(selection: unknown) {
 	if (typeof selection === "string") return selection.trim();
 	if (selection && typeof selection === "object" && typeof (selection as any).text === "string") {
@@ -9975,16 +9993,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					if (toolName === "browser_run_js") {
 						void trackExtensionEvent("browser_run_js_failed", { result: "error" }).catch(() => {});
 					}
+					// Repeated highlight failures no longer abort the whole request (which discarded the
+					// answer and surfaced "Request was aborted"). buildRepeatedHighlightFailureGuardResult
+					// intercepts further highlight_text calls and tells the model to answer from readable
+					// page content (noting it could not highlight), so the user still gets an answer.
 					if (toolName === "browser_highlight_text" && shouldAbortAfterRepeatedHighlightFailures(activeRequest)) {
-						activeAgent?.abort();
-						void publishState({ status: "Highlighting failed." });
-						void finalizeRequest(
-							session,
-							requestId,
-							new Error("Onhand could not create a source highlight after several attempts."),
-							activeAgent?.state.messages || null,
-						).catch((error) => host.log?.("finalize after repeated highlight failures failed", error));
-						break;
+						void publishState({ status: "Answering without highlights..." });
 					}
 					void publishState({ status: "Trying a different approach..." });
 				} else {
@@ -11943,6 +11957,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 						(toolName, commandName, effectiveParams) =>
+							buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 							buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
 							buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 							buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||

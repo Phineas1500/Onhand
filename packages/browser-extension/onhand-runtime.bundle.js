@@ -132851,6 +132851,23 @@ function shouldAbortAfterRepeatedHighlightFailures(request) {
   if (countToolTracesByState(request, "browser_highlight_text", ["complete"]) > 0) return false;
   return countToolTracesByState(request, "browser_highlight_text", ["error"]) >= HIGHLIGHT_FAILURE_ABORT_LIMIT;
 }
+function buildRepeatedHighlightFailureGuardResult(toolName, commandName, request) {
+  if (commandName !== "highlight_text") return null;
+  if (!shouldAbortAfterRepeatedHighlightFailures(request)) return null;
+  return {
+    guardrail: {
+      kind: "repeated_highlight_failure",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        "Highlighting has failed repeatedly on this page, so durable source highlights are not available here.",
+        `Do not call ${toolName} again for this turn.`,
+        "Answer the user's question now from the readable page content, and briefly note that you could not add highlights on this page.",
+        "Do not claim the page is highlighted, and do not use Markdown tables or horizontal rules."
+      ].join(" ")
+    }
+  };
+}
 function getSelectionText(selection) {
   if (typeof selection === "string") return selection.trim();
   if (selection && typeof selection === "object" && typeof selection.text === "string") {
@@ -140416,15 +140433,7 @@ function createOnhandBrowserRuntime(host) {
             });
           }
           if (toolName === "browser_highlight_text" && shouldAbortAfterRepeatedHighlightFailures(activeRequest)) {
-            activeAgent?.abort();
-            void publishState({ status: "Highlighting failed." });
-            void finalizeRequest(
-              session,
-              requestId,
-              new Error("Onhand could not create a source highlight after several attempts."),
-              activeAgent?.state.messages || null
-            ).catch((error52) => host.log?.("finalize after repeated highlight failures failed", error52));
-            break;
+            void publishState({ status: "Answering without highlights..." });
           }
           void publishState({ status: "Trying a different approach..." });
         } else {
@@ -142238,7 +142247,7 @@ function createOnhandBrowserRuntime(host) {
             withRequestBrowserContext,
             (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
             (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-            (toolName, commandName, effectiveParams) => buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest)
+            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest)
           ),
           prompt,
           attachments,
