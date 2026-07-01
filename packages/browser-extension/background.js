@@ -4113,7 +4113,12 @@ const createPageToolkit = (options = {}) => {
 
 	const isVisible = (element) => {
 		if (!(element instanceof Element)) return false;
-		const style = window.getComputedStyle(element);
+		let style = null;
+		try {
+			style = window.getComputedStyle(element);
+		} catch {
+			return false;
+		}
 		if (!style || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
 			return false;
 		}
@@ -4803,6 +4808,7 @@ const createPageToolkit = (options = {}) => {
 			".MathJax",
 			".katex",
 			".math",
+			"math",
 			'[role="math"]',
 		].join(", ");
 
@@ -4812,6 +4818,7 @@ const createPageToolkit = (options = {}) => {
 			".katex-display",
 			".katex",
 			".math",
+			"math",
 			'[role="math"]',
 		].join(", ");
 
@@ -6520,6 +6527,18 @@ const createPageToolkit = (options = {}) => {
 		target.insertAdjacentElement("afterend", note);
 	};
 
+	const isFootnoteReferenceMarker = (element) => {
+		// Superscript footnote/citation markers ("[1]", "[note 3]") are rendered inside the
+		// prose text stream but are stripped from readable extractions, so copied sentences
+		// that span them would never exact-match unless we skip the marker text.
+		if (!(element instanceof Element)) return false;
+		const sup = element.closest("sup");
+		if (!sup) return false;
+		if (String(sup.getAttribute("role") || "").toLowerCase() === "doc-noteref") return true;
+		if (!sup.querySelector('a[href*="#"]')) return false;
+		return normalizeText(sup.textContent || "").length <= 40;
+	};
+
 	const collectHighlightTextNodes = (root, options = {}) => {
 		const accepted = [];
 		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -6531,11 +6550,20 @@ const createPageToolkit = (options = {}) => {
 				if (!parent) return NodeFilter.FILTER_REJECT;
 					const tag = parent.tagName.toLowerCase();
 					if (["script", "style", "noscript", "textarea", "input"].includes(tag)) return NodeFilter.FILTER_REJECT;
-					if (parent.closest(ONHAND_ANNOTATION_DOM_SELECTOR)) return NodeFilter.FILTER_REJECT;
+					const annotationAncestor = parent.closest(ONHAND_ANNOTATION_DOM_SELECTOR);
+					if (annotationAncestor) {
+						// Inline/block highlights wrap ORIGINAL page text, which must stay
+						// matchable — otherwise a partial highlight from an earlier attempt or
+						// turn permanently blocks exact matches for any span overlapping it.
+						// Onhand-injected content (note cards, PDF overlays) stays excluded.
+						const highlightKind = annotationAncestor.getAttribute("data-onhand-highlight-kind");
+						if (highlightKind !== "inline" && highlightKind !== "block") return NodeFilter.FILTER_REJECT;
+					}
 					if (options.excludePdfViewerUi === true && parent.closest(PDF_VIEWER_UI_TEXT_EXCLUDED_SELECTOR)) return NodeFilter.FILTER_REJECT;
 					if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
 					if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
 				if (parent.closest(EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+				if (isFootnoteReferenceMarker(parent)) return NodeFilter.FILTER_REJECT;
 				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
 				return NodeFilter.FILTER_ACCEPT;
 			},
@@ -6773,7 +6801,14 @@ const createPageToolkit = (options = {}) => {
 	const waitForMathTypesetting = async (rawQuery) => {
 		// Wait for MathJax's queue only for math-like queries. Prose highlights on math
 		// pages should not get stuck behind a long MathJax startup promise.
-		if (!pageHasRawTexSource() && !window.MathJax) return;
+		if (!window.MathJax) {
+			// No typesetting engine present. Pages that already expose rendered math
+			// (MathML, MathJax/KaTeX output) have nothing pending; only unrendered raw
+			// TeX justifies waiting for an engine to appear. Background tabs throttle
+			// timers to ~1s, so needless waiting here can burn the whole tool budget.
+			if (pageHasRenderedMath()) return;
+			if (!pageHasRawTexSource()) return;
+		}
 		const queryLooksMathLike = isMathLikeHighlightQuery(rawQuery);
 
 		const wait = (timeoutMs) => new Promise((resolve) => window.setTimeout(resolve, timeoutMs));
@@ -6811,7 +6846,10 @@ const createPageToolkit = (options = {}) => {
 			await wait(100);
 		}
 		if (queryLooksMathLike) await waitForMathJaxQueue();
-		for (let attempt = 0; attempt < 20; attempt += 1) {
+		// Time-capped rather than iteration-capped: throttled background-tab timers
+		// stretch each wait to ~1s, so counting attempts could block for ~20s.
+		const renderWaitStartedAt = Date.now();
+		while (Date.now() - renderWaitStartedAt < 2000) {
 			if (pageHasRenderedMath()) break;
 			if (!pageHasRawTexSource()) break;
 			await wait(100);
@@ -7410,6 +7448,28 @@ const createPageToolkit = (options = {}) => {
 		return parts.filter((part, index, list) => part && list.indexOf(part) === index);
 	};
 
+	const getMathSourceTextForImage = (image) => {
+		// Some pages render math as SVG/PNG images that carry their TeX or plain-math
+		// source in the alt text while exposing no highlightable text nodes.
+		if (!(image instanceof HTMLImageElement)) return "";
+		const alt = normalizeText(image.getAttribute("alt") || "");
+		if (!alt) return "";
+		return /\\[a-zA-Z]+|[=≤≥≠∈∑∏∫√^_{}|]|\([^)]*\)/.test(alt) ? alt : "";
+	};
+
+	const findMathImageHighlightTarget = (image) => {
+		// Prefer the dedicated math wrapper (often holding hidden MathML plus the visible
+		// image) over the bare <img>, but stop at prose containers or shared wrappers.
+		let target = image;
+		for (let current = image.parentElement, depth = 0; current instanceof Element && depth < 4; current = current.parentElement, depth += 1) {
+			if (current.matches(ANNOTATION_CONTAINER_SELECTOR)) break;
+			if (getElementText(current)) break;
+			if (current.querySelectorAll("img").length > 1) break;
+			target = current;
+		}
+		return target;
+	};
+
 	const mathSourceMatchesQuery = (sourceText, rawQuery) => {
 		const querySearch = normalizeMathSourceSearchText(rawQuery);
 		const queryCompact = compactMathSourceSearchText(rawQuery);
@@ -7439,6 +7499,11 @@ const createPageToolkit = (options = {}) => {
 			if (!isMathTexScript(script)) continue;
 			const target = findRenderedMathTargetForScript(script);
 			consider(target, script.textContent || "", 1200);
+		}
+		for (const image of Array.from(document.querySelectorAll("img[alt]"))) {
+			const sourceText = getMathSourceTextForImage(image);
+			if (!sourceText) continue;
+			consider(findMathImageHighlightTarget(image), sourceText, 1100);
 		}
 		for (const element of Array.from(document.querySelectorAll(MATH_CONTAINER_SELECTOR))) {
 			if (!(element instanceof Element)) continue;
