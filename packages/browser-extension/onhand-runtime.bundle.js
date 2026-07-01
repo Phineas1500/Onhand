@@ -132580,6 +132580,7 @@ var PAGE_CHANGE_TOOL_NAMES = [
 ];
 var TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
 var PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image", "browser_pdf_find_citation"];
+var ELEMENT_READ_TOOL_NAMES = ["browser_find_elements"];
 var INTERACTION_TOOL_NAMES = [
   "browser_find_elements",
   "browser_wait_for_selector",
@@ -132593,6 +132594,21 @@ var DEBUG_INSPECTION_TOOL_NAMES = ["browser_collect_console", "browser_collect_n
 var RUNTIME_JS_TOOL_NAMES = ["browser_run_js"];
 var ARTIFACT_TOOL_NAMES = ["browser_capture_state", "browser_list_artifacts", "browser_restore_state"];
 var LEARNING_TOOL_NAMES = ["onhand_record_learning_event"];
+var BROAD_SOURCE_TOOL_NAMES = [...CORE_READ_TOOL_NAMES, ...TAB_TOOL_NAMES, ...ELEMENT_READ_TOOL_NAMES];
+var KNOWN_BROWSER_TOOL_NAMES = /* @__PURE__ */ new Set([
+  ...CORE_READ_TOOL_NAMES,
+  ...READER_SEARCH_TOOL_NAMES,
+  ...VISUAL_CONTEXT_TOOL_NAMES,
+  ...VISUAL_GROUNDING_TOOL_NAMES,
+  ...PAGE_CHANGE_TOOL_NAMES,
+  ...TAB_TOOL_NAMES,
+  ...PDF_TOOL_NAMES,
+  ...ELEMENT_READ_TOOL_NAMES,
+  ...INTERACTION_TOOL_NAMES,
+  ...DEBUG_INSPECTION_TOOL_NAMES,
+  ...RUNTIME_JS_TOOL_NAMES,
+  ...ARTIFACT_TOOL_NAMES
+]);
 var EXACT_TOOL_NAME_PATTERN = /\bbrowser_[a-z_]+\b/g;
 function promptNeedsRuntimeJavaScript(text, explicitToolNames) {
   if (explicitToolNames.has("browser_run_js")) return true;
@@ -132607,9 +132623,10 @@ function promptNeedsRuntimeJavaScript(text, explicitToolNames) {
   return runtimeStateSignal && inspectionIntent;
 }
 function promptAsksForExternalBrowsing(text) {
+  const normalizedText = String(text || "").toLowerCase();
   return textHasAny(
-    text,
-    /\b(take me to|open (?:up )?(?:the |a |an )?(?:url|link|source|site|page|tab|article|paper|website|result|google|web|browser)|look up|search(?: up)?|google|web|online|external|outside sources?|other sources?|more sources?|find (?:me )?(?:some |a few |more )?sources?|go (?:on|to) google|url)\b/
+    normalizedText,
+    /\b(take me to|open (?:up )?(?:the |a |an )?(?:url|link|source|site|page|tab|article|paper|website|result|google|web|browser)|look up|search(?: up)?|google|web|online|external|outside sources?|other sources?|more sources?|(?:find|show) (?:me )?(?:a |an |one |some |a few |more )?(?:source|sources|reference|references|paper|papers|article|articles)(?:\s+that|\s+which|\s+for|\b)|go (?:on|to) google|url)\b/
   );
 }
 function promptAsksForLinkedPageNavigation(text) {
@@ -132760,8 +132777,10 @@ function trimHighlightCandidateBeforeFormulaNoise(value) {
 var HIGHLIGHT_RETRY_MAX_CANDIDATES = 5;
 var HIGHLIGHT_RETRY_MAX_CHARS = 180;
 var HIGHLIGHT_FAILURE_ABORT_LIMIT = 4;
-var COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 2;
+var COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 3;
 var HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
+var HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_CHARS = 72;
+var HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_WORDS = 10;
 var HIGHLIGHT_COMMAND_TIMEOUT_MS = 6e3;
 var HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12e3;
 var ANNOTATION_COMMAND_TIMEOUT_MS = 6e3;
@@ -132778,12 +132797,16 @@ function shouldTryHighlightScanFallbackBeforeOriginal(value) {
   const wordCount = (text.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
   return wordCount >= 1 && wordCount <= 6;
 }
+function highlightRetryWordCount(value) {
+  return (normalizeHighlightRetryCandidate(value).match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+}
 function buildHighlightRetryCandidates(value) {
   const raw = String(value || "").trim();
   if (!raw) return [];
   const hasListShape = /(?:^|\n)\s*(?:[-*•]|\d+[.)])\s+\S/u.test(raw);
   const hasMultipleLines = raw.split(/\r?\n/).filter((line) => line.trim()).length > 1;
-  const retryLimit = /[=∫∏∑√≈≤≥<>|∣\\{}_^]/u.test(raw) ? 2 : HIGHLIGHT_RETRY_MAX_CANDIDATES;
+  const hasFormulaNoise = /[=∫∏∑√≈≤≥<>|∣\\{}_^]/u.test(raw);
+  const retryLimit = hasFormulaNoise ? 2 : HIGHLIGHT_RETRY_MAX_CANDIDATES;
   const candidates = [];
   const addCandidate = (candidate) => {
     const normalized = normalizeHighlightRetryCandidate(candidate);
@@ -132809,7 +132832,10 @@ function buildHighlightRetryCandidates(value) {
     const parts = normalizedRaw.split(/(?<=[!?;:])\s+|(?<!r\.v\.)(?<!e\.g\.)(?<!i\.e\.)(?<=[.])\s+|\s+[–—-]\s+/iu).map((part) => part.trim()).filter(Boolean);
     for (const part of parts) {
       addCandidateVariants(part);
-      for (const clause of part.split(/\s+(?:which|where|because|but|then|so)\s+/i)) addCandidateVariants(clause);
+      const clausePattern = hasFormulaNoise ? /\s+(?:which|where|because|but|then|so)\s+/i : /\s+(?:which|where|because|but|then|so|from|using|via|through|between|with)\s+/i;
+      for (const clause of part.split(clausePattern)) {
+        addCandidateVariants(clause);
+      }
     }
     if (normalizedRaw.length > HIGHLIGHT_RETRY_MAX_CHARS) {
       const words = normalizedRaw.split(/\s+/).filter(Boolean);
@@ -132826,7 +132852,11 @@ function buildHighlightRetryCandidates(value) {
 }
 function shouldTryHighlightRetryCandidatesBeforeOriginal(value) {
   const normalized = normalizeHighlightRetryCandidate(value);
-  return normalized.length > HIGHLIGHT_RETRY_MAX_CHARS;
+  if (normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return true;
+  if (normalized.length < HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_CHARS) return false;
+  if (highlightRetryWordCount(normalized) < HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_WORDS) return false;
+  if (/[=∫∏∑√≈≤≥<>|∣\\{}_^]/u.test(normalized)) return false;
+  return buildHighlightRetryCandidates(normalized).length > 0;
 }
 function shouldSkipOriginalHighlightAttempt(value, attemptedCandidates) {
   if (!attemptedCandidates) return false;
@@ -132865,26 +132895,117 @@ function countToolTracesByState(request, toolName, states = []) {
     return !allowedStates.size || allowedStates.has(trace?.state);
   }).length;
 }
+function tracePageUrl(trace) {
+  const direct = String(trace?.resultDetails?.tab?.url || trace?.details?.tab?.url || trace?.tab?.url || "");
+  if (direct) return direct;
+  const match2 = String(trace?.resultSummary || "").match(/https?:\/\/[^\s)>\]]+/i);
+  return match2 ? match2[0].replace(/[.,;:]+$/g, "") : "";
+}
+function highlightFailureBudgetTraceWindow(request) {
+  const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+  let lastNavigationIndex = -1;
+  let lastNavigationIdentity = "";
+  traces.forEach((trace, index) => {
+    if (trace?.state !== "complete") return;
+    const toolName = String(trace?.toolName || "");
+    if (toolName !== "browser_navigate" && toolName !== "browser_activate_tab") return;
+    const tabUrl = tracePageUrl(trace);
+    if (!tabUrl) {
+      lastNavigationIdentity = "";
+      lastNavigationIndex = index;
+      return;
+    }
+    if (tabUrl.startsWith("chrome-extension://")) return;
+    const navigationIdentity = normalizeUrlForPriorPageContext(tabUrl);
+    if (navigationIdentity && navigationIdentity === lastNavigationIdentity) return;
+    lastNavigationIdentity = navigationIdentity;
+    lastNavigationIndex = index;
+  });
+  return lastNavigationIndex >= 0 ? traces.slice(lastNavigationIndex + 1) : traces;
+}
+var READABLE_SOURCE_FALLBACK_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "browser_extract_content",
+  "browser_get_visible_text",
+  "browser_get_viewport_headings",
+  "browser_find_elements"
+]);
+function traceHasReadableFallbackContent(trace) {
+  if (!trace || trace.state !== "complete") return false;
+  if (!READABLE_SOURCE_FALLBACK_TOOL_NAMES.has(String(trace.toolName || ""))) return false;
+  const text = [
+    trace.resultSummary,
+    trace.resultText,
+    trace.result,
+    trace.details?.text,
+    trace.details?.content,
+    trace.resultDetails?.text,
+    trace.resultDetails?.content
+  ].map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean).join("\n");
+  return /\S/.test(text);
+}
+function hasReadableSourceContentAfterLatestNavigation(request) {
+  return highlightFailureBudgetTraceWindow(request).some(traceHasReadableFallbackContent);
+}
 function shouldAbortAfterRepeatedHighlightFailures(request) {
   if (!request || request.aborted) return false;
-  if (countToolTracesByState(request, "browser_highlight_text", ["complete"]) > 0) return false;
+  const traces = highlightFailureBudgetTraceWindow(request);
+  if (traces.some(isCompletedSourceHighlightTrace)) return false;
   const prompt = request?.displayPrompt || "";
-  const failureLimit = promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt) ? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT : HIGHLIGHT_FAILURE_ABORT_LIMIT;
-  return countToolTracesByState(request, "browser_highlight_text", ["error"]) >= failureLimit;
+  const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request);
+  const asksForExternalOrLinkedSource = promptAsksForExternalBrowsing(prompt) || promptAsksForLinkedPageNavigation(prompt);
+  const failureLimit = asksForExternalOrLinkedSource && hasReadableSourceContent ? 1 : asksForExternalOrLinkedSource ? 2 : promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt) ? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT : HIGHLIGHT_FAILURE_ABORT_LIMIT;
+  return traces.filter((trace) => trace?.toolName === "browser_highlight_text" && trace?.state === "error").length >= failureLimit;
 }
 function buildRepeatedHighlightFailureGuardResult(toolName, commandName, request) {
   if (commandName !== "highlight_text") return null;
   if (!shouldAbortAfterRepeatedHighlightFailures(request)) return null;
+  const prompt = request?.displayPrompt || request?.prompt || "";
+  const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request);
+  const shouldTryAlternateSource = (promptAsksForExternalBrowsing(prompt) || promptAsksForLinkedPageNavigation(prompt)) && !hasReadableSourceContent;
   return {
     guardrail: {
       kind: "repeated_highlight_failure",
       blockedTool: toolName,
       blockedCommand: commandName,
-      message: [
+      message: shouldTryAlternateSource ? [
+        "Highlighting has failed repeatedly on this source page.",
+        `Do not call ${toolName} again on the same page for this turn.`,
+        "Open or activate a different credible source page, a simpler printable page, or another already-open source tab, then retry one short exact source highlight there before answering.",
+        "Only answer without a durable highlight if the alternate source page also fails. Do not use Markdown tables or horizontal rules."
+      ].join(" ") : [
         "Highlighting has failed repeatedly on this page, so durable source highlights are not available here.",
         `Do not call ${toolName} again for this turn.`,
-        "Answer the user's question now from the readable page content, and briefly note that you could not add highlights on this page.",
-        "Do not claim the page is highlighted, and do not use Markdown tables or horizontal rules."
+        "Answer the user's question now from the readable page content.",
+        "Do not mention highlight failures, source-marker status, or claim the page is highlighted. Do not use Markdown tables or horizontal rules."
+      ].join(" ")
+    }
+  };
+}
+var POST_HIGHLIGHT_FAILURE_ANSWER_NOW_COMMANDS = /* @__PURE__ */ new Set([
+  "activate_tab",
+  "navigate",
+  "click",
+  "extract_content",
+  "find_elements",
+  "get_scroll_state",
+  "get_viewport_headings",
+  "get_visible_text"
+]);
+function buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, request) {
+  if (commandName === "highlight_text") return null;
+  if (!POST_HIGHLIGHT_FAILURE_ANSWER_NOW_COMMANDS.has(commandName)) return null;
+  if (!shouldAbortAfterRepeatedHighlightFailures(request)) return null;
+  if (!hasReadableSourceContentAfterLatestNavigation(request)) return null;
+  return {
+    guardrail: {
+      kind: "post_highlight_failure_answer_now",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        "Highlighting has already failed repeatedly, and readable page content for this source is available.",
+        `Do not call ${toolName} or more page navigation/read tools for this turn.`,
+        "Answer the user's question now from the readable page content.",
+        "Do not mention highlight failures, source-marker status, or claim the page is highlighted."
       ].join(" ")
     }
   };
@@ -134660,280 +134781,6 @@ function stripOrphanedMarkdownDelimiterLines(value) {
 function stripDanglingInlineMarkdownDelimiters(value) {
   return String(value || "").replace(/[ \t]+(?:\*\*|__|`{1,3})(?=\s*(?:\n|$))/g, "");
 }
-function stripAssistantProcessNarration(value) {
-  let text = String(value || "");
-  text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
-  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
-  text = text.replace(
-    /\b(?:[Ll]et me|[Ii](?:'|’)ll|[Ii] will)\s+add\s+(?:durable\s+)?source\s+markers?\b[^\n]{0,180}?(?=(?:[Hh]ere(?:'|’)s|[Hh]ere is|This|The)\b)/g,
-    ""
-  );
-  text = text.replace(
-    /\b(?:let me|i(?:'|’)ll|i will)\s+add\s+(?:(?:a|an|one|two|three|four|couple\s+of|few|some|durable|quick|additional|key|top-level|main)\s+){0,8}source\s+markers?\b[^.!?\n]*[.!?]+/gi,
-    ""
-  );
-  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+put\s+(?:a\s+)?(?:durable\s+)?source\s+markers?\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/\bi(?:'|’)ve\s+highlighted\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+by\s+(?:reading|extracting|checking|finding|looking(?:\s+at)?)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+with\b[^.!?\n]{0,180}(?=(?:here(?:'|’)s|here is|this|the|what)\b)/gi, "");
-  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+start\s+with\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/\bi\s+found\s+(?:the\s+)?(?:key|relevant|best|main|core)?\s*(?:explanatory\s+)?(?:passages?|sections?|text|content|source(?:s)?)\.?/gi, "");
-  text = text.replace(
-    /\b(?:(?:now|first|next|also|okay|ok)[,\s]+)?(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly)\s+)?(?:read|extract|inspect|get|look(?:\s+at|\s+through)?|highlight|add\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|create\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark)\b[^.!?\n]*(?:[.!?]+)?/gi,
-    ""
-  );
-  text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
-  text = text.replace(/^\s*[,.;:]\s*/i, "");
-  text = text.replace(/^\s*the page lays this out clearly\.?\s*/i, "");
-  text = text.replace(/^\s*(?:the\s+)?visible text\b[^.!?\n]*(?:[.!?]+)?\s*/i, "");
-  text = text.replace(/^\s*(?:the\s+)?visible snapshot shows\b[^.!?\n]*(?:but|however)\s*/i, "");
-  text = text.replace(/^\s*(?:now\s+)?i\s+have\s+the\s+page\s+content\.?\s*/i, "");
-  text = text.replace(/^\s*(?:good|ok|okay)[,\s]+(?:ok|okay)[,\s]+/i, "");
-  text = text.replace(/^\s*(?:here(?:'|’)s|here is)\s+how\s+the\s+page\s+(?:presents|compares|explains|frames)\b[^.!?\n]*(?:[.!?]+)?\s*/i, "");
-  text = text.replace(/\b(?:now\s+)?i can see\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/\bthe page is scrolled\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/^\s*the page is only\b[^.\n]*(?:scrolled|below)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
-  text = text.replace(/^\s*good,\s+the page\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
-  text = text.replace(/^\s*the page (?:appears to be|has|is scrollable)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
-  text = text.replace(/^\s*this looks like\b[^.!?\n]*\blet me\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
-  text = text.replace(/\b(?:good point|great question)\.\s*/gi, "");
-  text = text.replace(/\b(?:highlighted above|anchored above|source marker above)\b[.!?]?/gi, "");
-  return text;
-}
-function stripLeadingOrphanedProcessFragment(value) {
-  return String(value || "").replace(
-    /^\s*(?:(?:this|that|it|the\s+page|the\s+passage|the\s+section)\s+)?[a-z][a-z\s]{1,90}[.!?]\s*(?=(?:here(?:'|’)s|here is|this|the|what|how|why)\b)/i,
-    ""
-  );
-}
-function stripDuplicatedOpeningClause(value) {
-  let text = String(value || "");
-  text = text.replace(
-    /^\s*((?:Here(?:'|’)s|Here is)\s+(?:the\s+)?(?:roadmap|summary|answer|rundown|overview)\s*:)\s*((?:Here(?:'|’)s|Here is)\b)/i,
-    "$2"
-  );
-  text = text.replace(
-    /^\s*(?:Here(?:'|’)s|Here is)\s+(?:a|the)\s+(?:roadmap|summary|answer|rundown|overview)\b[^.!?\n]{0,180}[.!?]\s*((?:Here(?:'|’)s|Here is)\s+(?:a|the)\s+(?:roadmap|summary|answer|rundown|overview)\b[^\n]*)/i,
-    "$1"
-  );
-  text = text.replace(
-    /^\s*(?:Here(?:'|’)s|Here is)\b[^.!?\n]{20,180}(?=(?:Here(?:'|’)s|Here is)\b)\s*((?:Here(?:'|’)s|Here is)\b[^\n]*)/i,
-    "$1"
-  );
-  text = text.replace(
-    /^\s*(?:Here(?:'|’)s|Here is)\b[^—–\n]{20,180}\s+[—–-]\s+((?:Here(?:'|’)s|Here is)\b[^\n]+)/i,
-    "$1"
-  );
-  text = text.replace(
-    /^\s*Here\s+are\b[^—–\n]{20,180}\s+[—–-]\s+((?:Here(?:'|’)s|Here is)\b[^\n]+)/i,
-    "$1"
-  );
-  text = text.replace(
-    /^\s*(?:Here(?:'|’)s|Here is)\b[^:\n]{20,180}:\s*((?:Here(?:'|’)s|Here is)\b[^\n]+)/i,
-    "$1"
-  );
-  return text;
-}
-function stripLeadingGluedBoldLabels(value) {
-  return String(value || "").replace(
-    /^\s*(?:\*\*(?:\d+[.)]?\s*)?[^*\n]{2,140}\*\*){2,}\s*(?=(?:Here(?:'|’)s|Here is|This|The)\b)/i,
-    ""
-  );
-}
-function stripIncompleteTrailingLine(value) {
-  const lines = String(value || "").split("\n");
-  const lastNonEmptyIndex = () => {
-    for (let index2 = lines.length - 1; index2 >= 0; index2 -= 1) {
-      if (lines[index2].trim()) return index2;
-    }
-    return -1;
-  };
-  const unbalanced = (line, open, close2) => line.split(open).length - 1 > line.split(close2).length - 1;
-  let index = lastNonEmptyIndex();
-  if (index < 0) return "";
-  const trimmed = lines[index].trim();
-  const danglingDelimiter = unbalanced(trimmed, "(", ")") || unbalanced(trimmed, "[", "]") || unbalanced(trimmed, "{", "}") || (trimmed.match(/`/g) || []).length % 2 === 1 || (trimmed.match(/\$/g) || []).length % 2 === 1;
-  if (danglingDelimiter) {
-    lines.splice(index);
-    index = lastNonEmptyIndex();
-  }
-  if (index >= 0 && /^(?:#{1,4}\s+\S|\*\*[^*\n]{2,120}\*\*\s*:?[.!?]?|[^.!?\n]{2,90}:[.!?]?)$/.test(lines[index].trim())) {
-    lines.splice(index);
-  }
-  return normalizeAssistantReplySpacing(lines.join("\n"));
-}
-function stripDuplicatedAnswerRestart(value) {
-  const text = String(value || "").trim();
-  if (visibleReplyWordCount(text) < 60) return text;
-  const restartPattern = /(?:Here(?:'|’)s\s+(?:(?:the|a)\s+)?(?:compact\s+|concise\s+|short\s+)?(?:roadmap|summary|answer|rundown|overview)\b|Here(?:'|’)s\s+(?:what\s+this\s+(?:page|article|lecture|document)|how\s+the\s+page|the\s+key|a\s+practical|the\s+gist)|(?:This|The)\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap\b|(?:This|The)\s+(?:page|article|chapter|document)\s+covers\s+(?:\*\*)?(?:these|the\s+following|several|multiple|\d+|one|two|three|four|five|six|seven|eight|nine|ten|[a-z-]+\s+(?:core|main|major|supporting)))\b/gi;
-  for (const match2 of text.matchAll(restartPattern)) {
-    const index = Number(match2.index || 0);
-    if (index < 180) continue;
-    const prefix = text.slice(0, index).trim();
-    if (visibleReplyWordCount(prefix) < 45) continue;
-    if (structuredListItemCount(prefix) < 3 && markdownSectionCount(prefix) < 2) continue;
-    const punctuated = /[.!?)]$/.test(prefix) ? prefix : `${prefix}.`;
-    return normalizeAssistantReplySpacing(punctuated);
-  }
-  return text;
-}
-function stripRedundantHighlightRecap(value) {
-  const text = String(value || "").trim();
-  if (visibleReplyWordCount(text) < 30) return text;
-  const recapPattern = /\n{2,}(?:(?:The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap(?:\s+at\s+a\s+glance|\s*\([^)]{0,80}\))?\.?\s*)?(?:Highlighted sections?|Source markers?|Marked sections?)(?:\s+on\s+the\s+page)?|The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap\b|You can see|The highlights?(?:\s+on\s+the\s+page)?|The highlighted sections?)\b[^:\n]{0,180}:\s*\n/i;
-  const sentenceRecapPattern = /\n{2,}(?:The highlights?(?:\s+on\s+the\s+page)?\s+(?:mark|show|cover|identify)|The highlighted (?:passages?|sections?)\s+(?:mark|show|cover|identify))\b/i;
-  const match2 = text.match(recapPattern) || text.match(sentenceRecapPattern);
-  if (!match2 || typeof match2.index !== "number") return text;
-  const prefix = text.slice(0, match2.index).trim();
-  const suffix = text.slice(match2.index + match2[0].length).trim();
-  if (visibleReplyWordCount(prefix) < 10) return text;
-  if (structuredListItemCount(prefix) < 3) return text;
-  if (recapPattern.test(match2[0]) && structuredListItemCount(suffix) < 2) return text;
-  const punctuated = /[.!?)]$/.test(prefix) ? prefix : `${prefix}.`;
-  return normalizeAssistantReplySpacing(punctuated);
-}
-var STRUCTURED_ITEM_COMMON_TERMS = /* @__PURE__ */ new Set([
-  "section",
-  "sections",
-  "chapter",
-  "page",
-  "roadmap",
-  "covered",
-  "covers",
-  "data",
-  "structures",
-  "sequence",
-  "sequences",
-  "techniques",
-  "statement",
-  "type",
-  "main",
-  "what",
-  "with",
-  "from",
-  "using",
-  "more",
-  "other",
-  "types"
-]);
-function looksLikeStructuredRoadmapItemLine(line) {
-  const trimmed = String(line || "").trim();
-  return /^(?:[-*]\s+|\d+[.)]\s+)/.test(trimmed) || /^\*\*[^*\n]{2,120}\*\*\s*(?:[—–-]|:|\|)/.test(trimmed) || /^\d+(?:\.\d+){0,3}\.?\s+\S/.test(trimmed);
-}
-function sourceTextIncludesEntityTerm(normalizedSourceText, term) {
-  if (!normalizedSourceText || !term) return false;
-  if (normalizedSourceText.includes(term)) return true;
-  if (term.endsWith("ies") && term.length > 4) return normalizedSourceText.includes(`${term.slice(0, -3)}y`);
-  if (term.endsWith("s") && term.length > 4) return normalizedSourceText.includes(term.slice(0, -1));
-  return false;
-}
-function structuredItemLabelTerms(value) {
-  const trimmed = String(value || "").trim();
-  const boldLabel = trimmed.match(/^(?:[-*]\s+|\d+[.)]\s+)?\*\*([^*\n]{2,120})\*\*/);
-  const headingLabel = trimmed.match(/^\s{0,3}#{1,4}\s+([^\n:—–|-]{2,120})/);
-  const plainLabel = trimmed.match(/^(?:[-*]\s+|\d+[.)]\s+)([^:\n—–|-]{2,120})(?:[:—–-]|\s{2,})/);
-  const label = boldLabel?.[1] || headingLabel?.[1] || plainLabel?.[1] || "";
-  return entityWords(label).map((term) => term.toLowerCase()).filter((term) => term.length >= 4 && !STRUCTURED_ITEM_COMMON_TERMS.has(term));
-}
-function structuredItemLineSupportedByHighlights(line, normalizedSourceText) {
-  const labelTerms = structuredItemLabelTerms(line);
-  if (labelTerms.length) return labelTerms.some((term) => sourceTextIncludesEntityTerm(normalizedSourceText, term));
-  const terms = entityWords(line).map((term) => term.toLowerCase()).filter((term) => term.length >= 4 && !STRUCTURED_ITEM_COMMON_TERMS.has(term));
-  if (!terms.length) return true;
-  return terms.some((term) => sourceTextIncludesEntityTerm(normalizedSourceText, term));
-}
-function looksLikeStructuredRoadmapItemBlock(block) {
-  const trimmed = String(block || "").trim();
-  return /^\*\*[^*\n]{2,120}\*\*\s*(?:[—–-]|:|\n)/.test(trimmed) || /^(?:[-*]\s+|\d+[.)]\s+)\*\*[^*\n]{2,120}\*\*/.test(trimmed) || /^\s{0,3}#{1,4}\s+\S/.test(trimmed);
-}
-function looksLikeUnsupportedRemainderBlock(block) {
-  return /^(?:This|The)\s+(?:page|chapter|article|document|section)\s+(?:also\s+)?(?:includes?|covers?|mentions?|lists?|continues\s+with|goes\s+on\s+to)\b/i.test(
-    String(block || "").trim()
-  );
-}
-function stripUnsupportedStructuredItemsByHighlights(value, request) {
-  if (!promptAsksForStructuredPageSourceMarker(request?.displayPrompt)) return value;
-  if (completedSourceHighlightCount(request) < 2) return value;
-  const normalizedSourceText = normalizeEntityText(completedSourceHighlightText(request));
-  if (!normalizedSourceText) return value;
-  const blocks = String(value || "").split(/\n{2,}/);
-  let blockChanged = false;
-  let itemBlocks = 0;
-  let keptItemBlocks = 0;
-  const keptBlocks = blocks.filter((block) => {
-    const trimmed = block.trim();
-    if (!trimmed) return true;
-    if (looksLikeUnsupportedRemainderBlock(trimmed)) {
-      blockChanged = true;
-      return false;
-    }
-    if (!looksLikeStructuredRoadmapItemBlock(trimmed)) return true;
-    itemBlocks += 1;
-    if (!structuredItemLineSupportedByHighlights(trimmed, normalizedSourceText)) {
-      blockChanged = true;
-      return false;
-    }
-    keptItemBlocks += 1;
-    return true;
-  });
-  const blockFilteredValue = blockChanged && (itemBlocks === 0 || keptItemBlocks >= 2) ? normalizeAssistantReplySpacing(keptBlocks.join("\n\n")) : String(value || "");
-  const lines = blockFilteredValue.split("\n");
-  const kept = [];
-  let changed = false;
-  let itemLines = 0;
-  let keptItemLines = 0;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed) {
-      kept.push(line);
-      continue;
-    }
-    if (/\|/.test(trimmed) && (/\s\|\s/.test(trimmed) || /^\s*-{2,}:?\s*\|/.test(trimmed))) {
-      changed = true;
-      continue;
-    }
-    if (/^(?:This|The)\s+(?:page|chapter|article|document)\s+covers\b.*\b(?:main\s+)?sections?\b.*\broadmap\b/i.test(trimmed)) {
-      kept.push("Here is the roadmap supported by the source markers:");
-      changed = true;
-      continue;
-    }
-    if (looksLikeStructuredRoadmapItemLine(trimmed)) {
-      itemLines += 1;
-      if (!structuredItemLineSupportedByHighlights(trimmed, normalizedSourceText)) {
-        changed = true;
-        continue;
-      }
-      keptItemLines += 1;
-    }
-    kept.push(line);
-  }
-  if (!changed || itemLines > 0 && keptItemLines < 2) return blockFilteredValue;
-  return normalizeAssistantReplySpacing(kept.join("\n"));
-}
-function renumberTopLevelOrderedListLines(value) {
-  const lines = String(value || "").split("\n");
-  let expected = 1;
-  let inRun = false;
-  const output = lines.map((line) => {
-    const match2 = line.match(/^(\s{0,3})(\d+)([.)])(\s+\S.*)$/);
-    if (!match2) {
-      if (line.trim() && !(inRun && /^\s{1,}[-*]\s+\S/.test(line))) inRun = false;
-      return line;
-    }
-    if (!inRun) {
-      expected = 1;
-      inRun = true;
-    }
-    const next = `${match2[1]}${expected}${match2[3]}${match2[4]}`;
-    expected += 1;
-    return next;
-  });
-  return normalizeAssistantReplySpacing(output.join("\n"));
-}
-function normalizeDanglingTrailingPunctuation(value) {
-  return String(value || "").replace(/[ \t]+[—–-]\s*$/g, ".").replace(/[ \t]+[—–-]\s*(?=\n{2,}|$)/g, ".");
-}
 function stripHorizontalRuleSeparators(value) {
   return String(value || "").replace(/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/gm, "\n").replace(/[ \t]+(?:-{3,}|_{3,}|\*{3,})[ \t]+/g, "\n\n");
 }
@@ -134965,132 +134812,12 @@ ${body}`;
   }).join("\n");
   return text.replace(/^(\s{0,3}#{1,4}\s+\d+[.)]\s+[^.!?\n]{3,90}[.!?])[ \t]+(?=\S)/gim, "$1\n\n");
 }
-function looksLikeStandaloneAssistantHeadingLine(value) {
-  const trimmed = String(value || "").trim();
-  return /^(?:#{1,4}\s+\S.{0,100}|\*\*[^*\n]{2,100}\*\*:?)$/.test(trimmed);
-}
-function stripEmptyAssistantHeadings(value) {
-  const lines = String(value || "").split("\n");
-  const kept = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (looksLikeStandaloneAssistantHeadingLine(line)) {
-      if (/\b(?:what|how|why|where|when)\s*$/i.test(compactActionText(line))) continue;
-      const nextNonEmpty = lines.slice(index + 1).find((candidate) => candidate.trim());
-      if (!nextNonEmpty || looksLikeStandaloneAssistantHeadingLine(nextNonEmpty) || compactActionText(nextNonEmpty) === compactTeachingFooter()) continue;
-    }
-    kept.push(line);
-  }
-  return normalizeAssistantReplySpacing(kept.join("\n"));
-}
-function stripDanglingLineBeforeCompactFooter(value) {
-  const lines = String(value || "").split("\n");
-  const footerIndex = lines.findIndex((line) => compactActionText(line) === compactTeachingFooter());
-  if (footerIndex <= 0) return normalizeAssistantReplySpacing(lines.join("\n"));
-  for (let index = footerIndex - 1; index >= 0; index -= 1) {
-    const trimmed = lines[index].trim();
-    if (!trimmed) continue;
-    const plain = compactActionText(trimmed);
-    const looksDangling = !/[.!?)]$/.test(plain) && (/^\*\*[^*\n]{1,80}$/.test(trimmed) || /^(?:#{1,4}\s*)?(?:what|how|why|where|when)\b[^.!?\n]{0,60}$/i.test(plain) || /[—–-]\s+\S/.test(trimmed) || /\b(?:because|since|when|while|where|which|that|using|from|with|directly|through|via|into|then|therefore)$/i.test(plain) || plain.length > 70);
-    if (looksDangling) lines.splice(index, 1);
-    break;
-  }
-  return normalizeAssistantReplySpacing(lines.join("\n"));
-}
-function markdownTableCells(line) {
-  const trimmed = String(line || "").trim();
-  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) return [];
-  return trimmed.replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
-}
-function isMarkdownTableSeparatorRow(cells) {
-  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
-}
-function convertMarkdownTableBlockToBullets(block) {
-  const rows = block.map(markdownTableCells).filter((cells) => cells.length && cells.some((cell) => cell.trim()));
-  if (rows.length < 2) return block.filter((line) => line.trim() !== "|");
-  let header = rows[0];
-  const separator = rows[1];
-  if (!header.length || !isMarkdownTableSeparatorRow(separator)) return block;
-  const bodyRows = rows.slice(2).filter((cells) => cells.length && !isMarkdownTableSeparatorRow(cells));
-  if (!bodyRows.length) return [];
-  const maxBodyCells = Math.max(...bodyRows.map((cells) => cells.length));
-  if (maxBodyCells === header.length + 1) header = ["Feature", ...header];
-  return bodyRows.map((cells) => {
-    const cleanCells = cells.map((cell) => cell.trim()).filter((cell, index) => cell || index < header.length);
-    if (header.length === 2 && cleanCells.length >= 2) return `- ${cleanCells[0]}: ${cleanCells[1]}`;
-    if (header.length >= 3 && cleanCells.length >= 3) {
-      const label = cleanCells[0];
-      const parts2 = cleanCells.slice(1).map((cell, index) => `${header[index + 1] || `Column ${index + 2}`}: ${cell}`);
-      return `- ${label}: ${parts2.join("; ")}`;
-    }
-    const parts = cells.map((cell, index) => `${header[index] || `Column ${index + 1}`}: ${cell}`);
-    return `- ${parts.join("; ")}`;
-  });
-}
-function convertMarkdownTablesToBullets(value) {
-  const normalizedRows = String(value || "").replace(/\|[ \t]+\|/g, "|\n|");
-  const lines = normalizedRows.split("\n");
-  const output = [];
-  for (let index = 0; index < lines.length; ) {
-    if (!markdownTableCells(lines[index]).length) {
-      output.push(lines[index]);
-      index += 1;
-      continue;
-    }
-    const block = [];
-    while (index < lines.length && markdownTableCells(lines[index]).length) {
-      block.push(lines[index]);
-      index += 1;
-    }
-    output.push(...convertMarkdownTableBlockToBullets(block));
-  }
-  return output.join("\n");
-}
-function stripMalformedTableBulletArtifacts(value) {
-  const lines = String(value || "").split("\n");
-  return lines.filter((line) => !/^\s*[-*]\s+[^:\n]{1,80}:\s+Aspect:\s+/i.test(line)).join("\n");
-}
-function stripFragmentedMathLines(value) {
-  return String(value || "").replace(/^\s*(?:[$]{1,2}\s*)?(?:[pP𝑝]\s*(?:[A-Za-z\s]+)?\s*)?\([^)\n]{1,160}\)\s*=\s*(?:[$]{1,2}\s*)?$/gm, "").replace(/^\s*(?:[$]{1,2}\s*)?(?:[𝑊W]\s*(?:\||∣)[^\n]{1,140})\s*=\s*(?:[$]{1,2}\s*)?$/gm, "");
-}
 function stripEmptyCitationParentheses(value) {
   return String(value || "").replace(/[ \t]+\(\)(?=\s*(?:\n|$))/g, "").replace(/[ \t]+\(\)(?=\s*[-–—:])/g, "");
 }
-function stripInlineHighlightLabels(value) {
-  return String(value || "").replace(
-    /(^|\n)([ \t]*(?:>[ \t]*)?)(?:Highlighted(?:\s+(?:on\s+the\s+page|passage|source))?|Source\s+(?:highlight|marker))\s*:\s*/gi,
-    "$1$2"
-  ).replace(/[ \t]*[—–-][ \t]*(?:\*)?Highlighted\s+on\s+(?:the\s+)?page(?:\*)?/gi, "").replace(/[ \t]*\((?:\*)?highlighted\s+on\s+(?:the\s+)?page(?:\*)?\)/gi, "").replace(/[ \t]*\((?:\*)?highlights?\s*\d+(?:\s*(?:&|and|,)\s*\d+)*(?:\*)?\)/gi, "").replace(/[ \t]*\((?:\*)?highlight\s*\d+(?:\*)?\)/gi, "").replace(/[ \t]*\((?:\*)?(?:not\s+)?highlighted[^)]{0,100}(?:\*)?\)/gi, "");
-}
-function stripOrdinalHighlightParentheticals(value) {
-  return String(value || "").replace(
-    /\s*\((?:the\s+)?(?:first|second|third|fourth|fifth|sixth|\d+(?:st|nd|rd|th))\s+(?:source\s+)?highlight(?:\s*,\s*with\s+note)?\)/gi,
-    ""
-  );
-}
-function stripHighlightStatusClauses(value) {
-  return String(value || "").replace(/\s+[—–-]\s+I(?:'ve| have)\s+(?:marked|highlighted)\s+[^:\n.]{1,120}:/gi, ":").replace(/\bI(?:'ve| have)\s+(?:marked|highlighted)\s+[^.\n]{1,120}\.\s*/gi, "").replace(/(?:^|\n)\s*Each\s+(?:section|item|source|passage|point)[^.\n]{0,160}\bhighlighted\b[^.\n]*\.\s*/gi, "\n").replace(/\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b[^.!?\n]*(?:[.!?]+)?/gi, "").replace(/(?:^|\n)\s*(?:the\s+)?(?:source\s+)?markers?[^.\n]{0,220}\b(?:timed\s+out|failed|could(?:\s+not|n't)|cannot|can't|was\s+not|wasn't)\b[^.\n]*(?:[.!?]+)?\s*/gi, "\n").replace(/\b(?:though|although|while)?\s*(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b[^.!?\n]*(?:[.!?]+)?/gi, "").replace(/\b(?:the\s+)?(?:one|two|three|four|five|six|\d+)\s+central\s+concepts?\s+are\s+highlighted\s+on\s+(?:the\s+)?page\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-}
-function truncateAtMissingHighlightStatus(value) {
-  const text = String(value || "");
-  const missingMarker = /\b(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b/i;
-  const blocks = text.split(/\n{2,}/);
-  const missingIndex = blocks.findIndex((block) => missingMarker.test(block));
-  if (missingIndex < 0) return text;
-  return blocks.slice(0, missingIndex).join("\n\n").trim();
-}
-function stripUnsupportedRemainingSectionsTail(value, request) {
-  const text = String(value || "").trim();
-  if (!text || !request || !promptAsksForStructuredPageSourceMarker(request?.displayPrompt)) return text;
-  const match2 = text.match(
-    /(?:^|\n{2,})\s*(?:(?:the\s+)?remaining\s+sections?|(?:the|this)\s+(?:page|article|chapter|document)\s+also\s+(?:covers?|includes?|mentions?|lists?)|it\s+also\s+(?:covers?|includes?|mentions?|lists?))\b/i
-  );
-  if (!match2 || typeof match2.index !== "number" || match2.index <= 0) return text;
-  return text.slice(0, match2.index).trim();
-}
 function isSurplusHighlightGuardSummary(value) {
   const text = String(value || "").toLowerCase();
-  return text.includes("do not call browser_highlight_text again") || text.includes("source highlights already succeeded") || text.includes("answer now from the existing");
+  return text.includes("guardrail") || text.includes("tool call blocked") || text.includes("highlighting has failed repeatedly") || text.includes("do not call browser_highlight_text again") || text.includes("source highlights already succeeded") || text.includes("answer now from the existing");
 }
 function isCompletedSourceHighlightTrace(trace) {
   if (trace?.state !== "complete" || trace?.toolName !== "browser_highlight_text") return false;
@@ -135125,58 +134852,6 @@ function completedSourceHighlightCitations(request) {
   }).filter(Boolean);
   const actionText = (Array.isArray(request?.pageActions) ? request.pageActions : []).filter((action) => String(action?.key || "").startsWith("highlight:") || action?.label === "Highlighted text" || action?.type === "highlight" || action?.type === "annotation").map((action) => String(action?.citationText || action?.detail || "")).filter(Boolean);
   return Array.from(new Set([...actionText, ...traceText].map((text) => text.trim()).filter(Boolean)));
-}
-function markdownSectionCount(value) {
-  return (String(value || "").match(/(?:^|\n)\s{0,3}#{1,4}\s+\S/g) || []).length;
-}
-function assistantSectionCount(value) {
-  return splitAssistantReplySections(value).length;
-}
-function splitAssistantReplySections(value) {
-  const text = String(value || "").trim();
-  if (!text) return [];
-  return text.split(/\n{2,}(?=(?:\s{0,3}#{1,4}\s+\S|\*\*[^*\n]{3,90}\*\*\s*(?:\n|$)))/).map((section) => section.trim()).filter(Boolean);
-}
-function promptAsksForFormulaOrExactMath(prompt) {
-  return /\b(?:formula|equation|derive|derivation|proof|theorem|math|notation|symbol|verbatim|exact)\b/i.test(String(prompt || ""));
-}
-function stripDisplayMathBlocks(value) {
-  return String(value || "").replace(/\$\$[\s\S]{0,900}?\$\$/g, "").replace(/\\\[[\s\S]{0,900}?\\\]/g, "").replace(/\n{3,}/g, "\n\n");
-}
-function stripDanglingDisplayMathFragments(value) {
-  return String(value || "").replace(/^\s*(?:\$\$\\?|\$\$|\\\[|\\\])\s*$/gm, "").replace(/\$\$\\?\s*(?=\n{2,}|$)/g, "").replace(/\\\[\s*(?=\n{2,}|$)/g, "");
-}
-function stripDanglingMathDefinitionLines(value) {
-  return String(value || "").split("\n").filter((line) => {
-    const trimmed = line.trim();
-    if (!/^where\b/i.test(trimmed)) return true;
-    return !/(?:[$\\{}^_=]|[𝑊𝑝𝑞𝑥𝑦𝑖𝑁𝑲𝑾WpqxyiNK]\b|\b(?:posterior|prior|likelihood|sampled|drawn|normal|distribution)\b)/iu.test(trimmed);
-  }).join("\n");
-}
-function stripDanglingMathLeadIns(value) {
-  const lines = String(value || "").split("\n");
-  const kept = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    const plain = compactActionText(trimmed);
-    const nextNonEmpty = lines.slice(index + 1).find((candidate) => candidate.trim());
-    const looksLikeFormulaLeadIn = (/:$/.test(trimmed) || /\b(?:is|as|by|with|equals?)$/i.test(plain)) && /\b(?:formula|equation|integral|integrates|prediction|posterior|prior|estimate|likelihood|probability|average|averaging|approximate|computed|given by|described as|written as|as follows|in practice)\b/i.test(plain);
-    const followedByNoFormula = !nextNonEmpty || !/^(?:[$]|\\\[|\\\(|[A-Za-z𝑊𝑝𝑞𝑥𝑦𝑖𝑁𝑲𝑾WpqxyiNK][^.!?\n]{0,80}\s*[=∫∏∑≈≤≥<>|∣])/u.test(nextNonEmpty.trim());
-    if (looksLikeFormulaLeadIn && followedByNoFormula) {
-      if (trimmed.length >= 90 || /[.!?]\s+\S/.test(trimmed.replace(/:\s*$/, ""))) {
-        kept.push(line.replace(/:\s*$/, "."));
-      }
-      continue;
-    }
-    kept.push(line);
-  }
-  return normalizeAssistantReplySpacing(kept.join("\n"));
-}
-function stripCompactTeachingMathBlocks(value, request) {
-  if (!request || promptAsksForFormulaOrExactMath(request.displayPrompt)) return value;
-  if (!promptAsksForCompactPageTeaching(request.displayPrompt)) return value;
-  return stripDanglingMathLeadIns(stripDanglingMathDefinitionLines(stripDanglingDisplayMathFragments(stripDisplayMathBlocks(value))));
 }
 var GENERIC_ENTITY_STOPWORDS = /* @__PURE__ */ new Set([
   "a",
@@ -135241,338 +134916,63 @@ function entityWords(value) {
 function compactEntity(value) {
   return entityWords(value).join(" ");
 }
-function extractSignificantEntities(value) {
-  const text = String(value || "");
-  const candidates = /* @__PURE__ */ new Set();
-  for (const match2 of text.matchAll(/\*\*([^*\n]{3,90})\*\*/g)) {
-    const entity = compactEntity(match2[1]);
-    if (entity) candidates.add(entity);
-  }
-  for (const match2 of text.matchAll(/^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?([^:\n.]{3,90})(?:\*\*)?(?::|[—-]|\s{2,})/gm)) {
-    const entity = compactEntity(match2[1]);
-    if (entity) candidates.add(entity);
-  }
-  for (const match2 of text.matchAll(/\b([A-Z][A-Za-z0-9]+(?:[-\s]+[A-Z][A-Za-z0-9]+){1,5})\b/g)) {
-    const entity = compactEntity(match2[1]);
-    if (entity.split(/\s+/).length >= 2) candidates.add(entity);
-  }
-  return [...candidates].filter((entity) => entity.length >= 4).slice(0, 12);
-}
-function substantiveEntityMentionCount(value) {
-  return extractSignificantEntities(value).length;
-}
-function structuredListItemCount(value) {
-  return (String(value || "").match(/(?:^|\n)\s*(?:[-*]|\d+[.)])\s+\S/g) || []).length;
-}
-function markdownTableRowCount(value) {
-  return String(value || "").split("\n").filter((line) => markdownTableCells(line).length > 1).length;
-}
-function looksLikeRoadmapSection(value) {
-  const text = String(value || "").toLowerCase();
-  return /\b(?:rest of (?:the )?(?:page|article|lecture|document|chapter)|what comes next|goes on to|builds up from|spends .* on|practical challenge|how to|roadmap|progression|workflow|pipeline|sequence)\b/.test(text) || /\b(?:sampling|analysis|proof|derivation|workflow|pipeline)\s+methods?\b/.test(text) || /\b(?:bulk|remainder) of (?:the )?(?:page|article|lecture|document|chapter)\b.*\b(?:covers?|explains?|walks? through)\b/.test(text) || /\b(?:methods?|approaches|techniques?|steps?|stages?|phases?|algorithms?)\b/.test(text) || structuredListItemCount(value) >= 3 || markdownTableRowCount(value) >= 4;
-}
-function mentionsUnsupportedRoadmap(value) {
-  const text = String(value || "").toLowerCase();
-  return /\b(?:rest of (?:the )?(?:page|article|lecture|document|chapter)|what comes next|goes on to|builds up from|spends .* on|practical challenge|roadmap|progression)\b/.test(text) || /\b(?:bulk|remainder) of (?:the )?(?:page|article|lecture|document|chapter)\b.*\b(?:covers?|explains?|walks? through)\b/.test(text) || structuredListItemCount(value) >= 3 && /\b(?:methods?|approaches|techniques?|steps?|stages?|phases?|algorithms?|challenge)\b/.test(text) || markdownTableRowCount(value) >= 4 || substantiveEntityMentionCount(value) >= 3 && /\b(?:covers?|includes?|methods?|approaches|techniques?|lecture|page|article|document|chapter)\b/.test(text) || substantiveEntityMentionCount(value) >= 4;
-}
-function sourceHighlightsCoverRoadmap(request, reply) {
-  const sourceText = completedSourceHighlightTraceText(request) || completedSourceHighlightText(request);
-  if (!sourceText.trim()) return false;
-  if (structuredListItemCount(sourceText) >= 3 || markdownTableRowCount(sourceText) >= 4) return true;
-  const normalizedSource = normalizeEntityText(sourceText);
-  const entities = extractSignificantEntities(reply);
-  if (!entities.length) return false;
-  const sourceTokens = new Set(normalizedSource.split(/\s+/).filter(Boolean));
-  const sourceCoversEntity = (entity) => {
-    if (normalizedSource.includes(entity)) return true;
-    const words = entity.split(/\s+/).filter(Boolean);
-    const acronym = words.map((word) => word[0] || "").join("");
-    return acronym.length >= 2 && sourceTokens.has(acronym);
-  };
-  return entities.every(sourceCoversEntity);
-}
-function removeUnsupportedRoadmapSections(value) {
-  const sections = splitAssistantReplySections(value);
-  if (sections.length < 2) return value;
-  const keep = [];
-  for (const section of sections) {
-    if (looksLikeRoadmapSection(section) && keep.length > 0) break;
-    keep.push(section);
-  }
-  return keep.length ? keep.join("\n\n") : value;
-}
-function removeUnsupportedRoadmapLead(value) {
-  const blocks = String(value || "").trim().split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-  if (blocks.length < 2) return value;
-  const first = blocks[0];
-  const firstWords = visibleReplyWordCount(first);
-  const broadPageOverview = firstWords <= 70 && /\b(?:this|the)\s+(?:page|article|lecture|document|chapter)\b/i.test(first) && /\b(?:covers?|introduces?|focus(?:es)?\s+on|walks?\s+through|builds?\s+(?:up\s+)?(?:to|from)|goes?\s+on\s+to)\b/i.test(first);
-  if (!broadPageOverview) return value;
-  return blocks.slice(1).join("\n\n") || value;
-}
-function removeUnsupportedRoadmapTail(value) {
-  const text = String(value || "").trim();
-  const match2 = text.match(
-    /\b(?:the\s+)?(?:rest|bulk|remainder) of (?:the )?(?:page|article|lecture|document|chapter)\b|(?:^|\n)\s*(?:later|next|subsequent)\s+sections?\b|\b(?:sampling|analysis|proof|derivation|workflow|pipeline)\s+methods?\b/i
+function stripTinyVisibleReplyArtifacts(value) {
+  let text = String(value || "");
+  text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
+  text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
+  text = text.replace(
+    /^\s*(?:let me|i(?:'|’)ll|i will)\s+start\s+by\s+(?:reading|extracting|checking|finding|looking(?:\s+at)?)[\s\S]{0,260}?i\s+found\s+(?:the\s+)?(?:key|relevant|best|main|core)?\s*(?:explanatory\s+)?(?:passages?|sections?|text|content|source(?:s)?)\.?\s*/i,
+    ""
   );
-  if (!match2 || typeof match2.index !== "number" || match2.index <= 0) return text;
-  const prefix = text.slice(0, match2.index).replace(/[ \t]*(?:[-–—,:;]\s*)?$/g, "").trim();
-  return prefix || text;
-}
-function removeTrailingQuestionLine(value) {
-  const lines = String(value || "").split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index].trim();
-    if (!line) continue;
-    if (line.endsWith("?")) lines.splice(index, 1);
-    break;
-  }
-  return normalizeAssistantReplySpacing(lines.join("\n"));
-}
-function truncateReplyAtWordBudget(value, maxWords) {
-  const text = String(value || "").trim();
-  const words = [...text.matchAll(/\S+/g)];
-  if (words.length <= maxWords) return text;
-  const last = words[maxWords - 1];
-  const truncated = text.slice(0, Number(last.index || 0) + last[0].length).trim();
-  const sentenceMatch = truncated.match(/^([\s\S]*[.!?])(?:\s|$)/);
-  return (sentenceMatch?.[1] || truncated).trim();
-}
-function compactOverbroadPageTeachingReply(value, request) {
-  const text = normalizeAssistantReplySpacing(stripEmptyAssistantHeadings(value));
-  if (!text || !request || promptForbidsPageChanges(request.displayPrompt)) return text;
-  const isSourceMarkedTeaching = promptAsksForTeachingPageSourceMarker(request.displayPrompt) || promptAsksForStructuredPageSourceMarker(request.displayPrompt);
-  if (!isSourceMarkedTeaching) return text;
-  const traceHighlightCount = completedSourceHighlightTraceCount(request);
-  const highlightCount = traceHighlightCount || completedSourceHighlightCount(request);
-  const compactFirstPass = promptAsksForCompactPageTeaching(request.displayPrompt) && highlightCount <= 1;
-  const mathTrimmedText = compactFirstPass ? normalizeAssistantReplySpacing(stripCompactTeachingMathBlocks(text, request)) : text;
-  const unsupportedSamplingRoadmap = highlightCount > 0 && highlightCount <= TEACHING_SOURCE_HIGHLIGHT_MAX && mentionsUnsupportedRoadmap(mathTrimmedText) && !sourceHighlightsCoverRoadmap(request, mathTrimmedText);
-  const unsupportedCompactFirstPassRoadmap = compactFirstPass && highlightCount <= 1 && mentionsUnsupportedRoadmap(mathTrimmedText);
-  if (highlightCount > 1 && !unsupportedSamplingRoadmap) return text;
-  const overbroad = unsupportedSamplingRoadmap || unsupportedCompactFirstPassRoadmap || compactFirstPass && (visibleReplyWordCount(mathTrimmedText) > 220 || assistantSectionCount(mathTrimmedText) >= 3 || /\$\$|\\\[/.test(text) || mentionsUnsupportedRoadmap(mathTrimmedText)) || visibleReplyWordCount(mathTrimmedText) > 450 || markdownSectionCount(mathTrimmedText) >= 3 || substantiveEntityMentionCount(mathTrimmedText) >= 4;
-  if (!overbroad) return text;
-  const withoutQuestion = removeTrailingQuestionLine(mathTrimmedText);
-  const withoutUnsupportedRoadmap = unsupportedSamplingRoadmap || unsupportedCompactFirstPassRoadmap ? removeUnsupportedRoadmapTail(removeUnsupportedRoadmapSections(removeUnsupportedRoadmapLead(withoutQuestion))) : withoutQuestion;
-  const sections = splitAssistantReplySections(withoutQuestion);
-  const unsupportedRemovalChanged = normalizeAssistantReplySpacing(withoutUnsupportedRoadmap) !== normalizeAssistantReplySpacing(withoutQuestion);
-  const focused = (unsupportedSamplingRoadmap || unsupportedCompactFirstPassRoadmap) && unsupportedRemovalChanged ? (() => {
-    const cleanedSections = splitAssistantReplySections(withoutUnsupportedRoadmap);
-    return cleanedSections.length >= 3 ? cleanedSections.slice(0, compactFirstPass ? 2 : 2).join("\n\n") : withoutUnsupportedRoadmap;
-  })() : sections.length >= 3 ? sections.slice(0, compactFirstPass ? 3 : 2).join("\n\n") : withoutQuestion;
-  const compact2 = truncateReplyAtWordBudget(focused, compactFirstPass ? 200 : 280);
-  const footer = promptAsksForTeachingPageSourceMarker(request.displayPrompt) ? "" : "";
-  return normalizeAssistantReplySpacing(`${compact2}${footer}`);
-}
-function firstCompletedSourceHighlightCitation(request) {
-  const actions = Array.isArray(request?.pageActions) ? request.pageActions : [];
-  for (const action of actions) {
-    const isHighlight = String(action?.key || "").startsWith("highlight:") || action?.label === "Highlighted text" || action?.type === "highlight" || action?.type === "annotation";
-    if (!isHighlight) continue;
-    const text = compactActionText(action.citationText || action.matchedText || action.detail);
-    if (text) return text;
-  }
-  const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
-  for (const trace of traces) {
-    if (!isCompletedSourceHighlightTrace(trace)) continue;
-    const details = trace?.resultDetails || trace?.details || {};
-    const annotation = details?.annotation || {};
-    const text = compactActionText(annotation.matchedText || annotation.container?.text || details?.matchedText);
-    if (text) return text;
-    const summary = String(trace?.resultSummary || "");
-    const match2 = summary.match(/Highlighted\s+"([^"\n]{20,240})"/i);
-    if (match2?.[1]) return compactActionText(match2[1]);
-    const labelMatch = summary.match(/Highlighted(?:\s+text)?:\s*([^\n]{20,320})/i);
-    if (labelMatch?.[1]) return compactActionText(labelMatch[1].replace(/\bannotationId:\s*[a-z0-9_-]+\b.*$/i, ""));
-  }
-  return "";
-}
-function truncateWords(value, maxWords) {
-  const text = compactActionText(value);
-  const words = text.match(/\S+/g) || [];
-  if (words.length <= maxWords) return text;
-  return `${words.slice(0, maxWords).join(" ").replace(/[,:;.!?]+$/, "")}...`;
-}
-function compactTeachingFooter() {
-  return "This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.";
-}
-function removeCompactTeachingFooter(value) {
-  return normalizeAssistantReplySpacing(String(value || "").replace(new RegExp(compactTeachingFooter().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), ""));
-}
-function cleanCompactTeachingSubject(value) {
-  const text = compactActionText(value).replace(/^(?:the|this|current)\s+(?:page|article|lecture|document|chapter)\s+(?:says?|is|covers?|about)\s+/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\s+(?:page|article|lecture|document|chapter)\b.*$/i, "").replace(/[.?!:;,\s]+$/g, "").trim();
-  if (!text || text.length < 4 || text.length > 90) return "";
-  const words = text.match(/[A-Za-z][A-Za-z0-9'’-]*/g) || [];
-  if (words.length < 1 || words.length > 9) return "";
-  const generic = /* @__PURE__ */ new Set(["page", "article", "lecture", "document", "chapter", "source", "this", "that", "current", "it"]);
-  if (words.every((word) => generic.has(word.toLowerCase()))) return "";
+  text = text.replace(
+    /^\s*(?:unfortunately|sorry)[^.!?\n]{0,260}\b(?:durable\s+)?source\s+highlights?\b[^.!?\n]*(?:[.!?]+)\s*/i,
+    ""
+  );
+  text = text.replace(
+    /^\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:add|create|place|put|mark)\b[\s\S]{0,220}?(?=(?:here(?:'|’)s|here is|this page|the page|##|\*\*|\d+[.)]\s|[-*]\s))/i,
+    ""
+  );
+  text = text.replace(
+    /([.!?])\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:add|create|place|put|mark|highlight)\b[^.!?\n]{0,220}(?:[.!?]+)?(?=\s*(?:here(?:'|’)s|here is|this page|the page|##|\*\*|\d+[.)]\s|[-*]\s))/gi,
+    "$1 "
+  );
+  text = text.replace(
+    /^\s*(?:(?:now|first|next|also|okay|ok)[,\s]+)?(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly|retry)\s+)?(?:read|extract|inspect|get|look(?:\s+at|\s+through)?|highlight(?:ing)?|add\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|create\s+(?:(?:[\w'-]+)\s+){0,10}(?:highlights?|markers?|notes?)|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark|try)\b[^.!?\n]*(?:[.!?]+)?\s*/gim,
+    ""
+  );
+  text = text.replace(/\bi(?:'|’)ve\s+highlighted\b[^.!?\n]*(?:[.!?]+)?/gi, "");
+  text = text.replace(/\b(?:highlighted above|anchored above|source marker above)\b[.!?]?/gi, "");
+  text = text.replace(/(?:^|\n)\s*Each\s+(?:section|item|source|passage|point)[^.\n]{0,160}\bhighlighted\b[^.\n]*\.\s*/gi, "\n");
+  text = text.replace(/\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
+  text = text.replace(/(?:^|\n)\s*(?:the\s+)?(?:source\s+)?markers?[^.\n]{0,220}\b(?:timed\s+out|failed|could(?:\s+not|n't)|cannot|can't|was\s+not|wasn't)\b[^.\n]*(?:[.!?]+)?\s*/gi, "\n");
+  text = text.replace(/\b(?:though|although|while)?\s*(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
+  text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
+  text = text.replace(/^\s*(?:the page lays this out clearly|now i have the page content)\.?\s*/i, "");
+  text = text.replace(/^\s*the page is only\b[^.\n]*(?:scrolled|below)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
+  text = text.replace(/^\s*good,\s+the page\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
+  text = text.replace(/^\s*the page (?:appears to be|has|is scrollable)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
+  text = text.replace(/^\s*this looks like\b[^.!?\n]*\blet me\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
+  text = text.replace(/\s*(?:\n{1,2})?(?:want me to|would you like me to|should i)\b[^.!?\n]{0,180}$/i, "");
   return text;
 }
-function extractCompactTeachingSubject(prompt) {
-  const text = stripVoicePromptPrefix(String(prompt || "")).replace(/\s+/g, " ").trim();
-  const patterns = [
-    /\b(?:says?|teaches?|explains?|covers?)\s+about\s+(.+?)\s*[.?!]?$/i,
-    /\b(?:teach|review|summarize|walk\s+through|explain)\s+(?:me\s+)?(?:what\s+)?(?:this|the|current)?\s*(?:page|article|lecture|document|chapter)?\s*(?:says?|teaches?|explains?|covers?)?\s+about\s+(.+?)\s*[.?!]?$/i,
-    /\babout\s+(.+?)\s*[.?!]?$/i
-  ];
-  for (const pattern of patterns) {
-    const match2 = text.match(pattern);
-    const subject = cleanCompactTeachingSubject(match2?.[1] || "");
-    if (subject) return subject;
-  }
-  return "";
-}
-function ensureCompactTeachingSubject(value, request) {
+function looksLikeOnlyVisibleReplyArtifact(value) {
   const text = normalizeAssistantReplySpacing(value);
-  if (!request || !promptAsksForCompactPageTeaching(request.displayPrompt)) return text;
-  const subject = extractCompactTeachingSubject(request.displayPrompt);
-  if (!subject) return text;
-  const subjectTerms = entityWords(subject).filter((term) => term.length >= 4);
-  if (subjectTerms.length && subjectTerms.every((term) => normalizeEntityText(text).includes(term))) return text;
-  const heading = `**What this page says about ${subject}:**`;
-  if (/^\s*\*\*What the highlighted passage says:\*\*/i.test(text)) {
-    return normalizeAssistantReplySpacing(text.replace(/^\s*\*\*What the highlighted passage says:\*\*/i, heading));
-  }
-  if (/^\s*(?:What the highlighted passage says:)/i.test(text)) {
-    return normalizeAssistantReplySpacing(text.replace(/^\s*What the highlighted passage says:/i, heading));
-  }
-  return normalizeAssistantReplySpacing(`${heading}
-
-${text}`);
+  if (!text) return false;
+  return /\b(?:let me|i(?:'|’)ll|i will|i need to|i found|highlight(?:ed|ing)?|source markers?|source highlights?|page is only|page appears to be|page is scrollable)\b/i.test(text);
 }
-function looksLikeThinCompactTeachingReply(value, request) {
-  if (!promptAsksForCompactPageTeaching(request?.displayPrompt)) return false;
-  if (completedSourceHighlightCount(request) < 1) return false;
-  const body = removeCompactTeachingFooter(stripAssistantProcessNarration(value));
-  if (visibleReplyWordCount(body) < 35) return true;
-  if (visibleReplyWordCount(body) < 90 && /\bhighlighted\s+passage\s+(?:captures|shows|gives|contains)\b[\s\S]{0,120}\bcore\s+idea\b/i.test(body)) return true;
-  const promptTerms = extractPromptConceptTerms(request?.displayPrompt || "").slice(0, 5);
-  const highlightTerms = entityWords(firstCompletedSourceHighlightCitation(request)).slice(0, 6);
-  const terms = [.../* @__PURE__ */ new Set([...promptTerms, ...highlightTerms])].filter((term) => term.length >= 4);
-  if (!terms.length) return false;
-  return terms.filter((term) => normalizeEntityText(body).includes(term)).length < Math.min(2, terms.length);
-}
-function cleanFallbackSupportSentence(value) {
-  let text = compactActionText(value);
-  text = text.replace(/^[#*\-\d.)\s]+/, "").trim();
-  text = stripShortLeadingHighlightLabel(text);
-  if (/\b(?:ICML|AAAI|NeurIPS|ICLR|CVPR|ACL|EMNLP|arXiv|preprint|Proceedings|Conference|Journal|Handbook|doi:|https?:\/\/|www\.)\b/i.test(text)) return "";
-  if (/^(?:\(?[A-Z][A-Za-z'’-]+,\s*\d{4}\)?|[A-Z][A-Za-z'’-]+,\s+[A-Z]\.|[A-Z][A-Za-z'’-]+ et al\.?)/.test(text)) return "";
-  const beforeFormulaNoise = trimHighlightCandidateBeforeFormulaNoise(text);
-  if (beforeFormulaNoise.length >= 35) text = beforeFormulaNoise;
-  else {
-    text = text.replace(
-      /\s*[A-Za-z𝑊W*⋆′'{}\\\s^_-]+\s*(?:!=|==|<=|>=|\\neq|≠|≤|≥)\s*[A-Za-z𝑊W*⋆′'{}\\\s^_-]+(?:\s*\([^)]*\))?/gu,
-      " "
-    );
-  }
-  text = text.replace(/\s+/g, " ").trim();
-  if (text.length < 35 || text.length > 320) return "";
-  const formulaSymbolCount = (text.match(/[=∫∏∑√≈≤≥<>|∣]/gu) || []).length;
-  const proseWordCount = (text.match(/[A-Za-z]{3,}/g) || []).length;
-  if (formulaSymbolCount >= 2 && proseWordCount <= 10) return "";
-  if (/[=∫∏∑√≈≤≥<>|∣]/u.test(text) && text.length > 140) return "";
-  if (/^(?:readable content|page heading outline|source frame|warning|note:)/i.test(text)) return "";
-  return text;
-}
-function scoreFallbackSupportSentence(sentence, request, highlightText) {
-  const normalized = normalizeEntityText(sentence);
-  if (!normalized) return 0;
-  const normalizedHighlight = normalizeEntityText(highlightText);
-  if (normalizedHighlight && normalized.includes(normalizedHighlight)) return 0;
-  const promptTerms = extractPromptConceptTerms(request?.displayPrompt || "").filter((term) => term.length >= 4);
-  const highlightTerms = entityWords(highlightText).filter((term) => term.length >= 4);
-  let score = 0;
-  for (const term of /* @__PURE__ */ new Set([...promptTerms, ...highlightTerms])) {
-    if (normalized.includes(term)) score += 2;
-  }
-  const highlightOverlap = [...new Set(highlightTerms)].filter((term) => normalized.includes(term)).length;
-  if (highlightTerms.length >= 3 && highlightOverlap >= Math.ceil(highlightTerms.length * 0.6)) score -= highlightOverlap * 2;
-  if (/\b(?:model|models|data|posterior|prior|method|approach|prediction|estimate|example|result|because|means|shows|uses|works)\b/i.test(sentence)) score += 1;
-  if (/\b(?:weights?|parameters?|configurations?|likelihood|objective|evidence|support|constraint|assumption|trade[-\s]?off)\b/i.test(sentence)) score += 3;
-  if (/[=∫∏∑√≈≤≥<>|∣]/u.test(sentence)) score -= 1;
-  return score;
-}
-function pickFallbackSupportSentence(request, highlightText) {
-  const candidates = [];
-  for (const block of recentReadableTraceBlocks(request)) {
-    const parts = String(block || "").split(/(?<=[.!?])\s+|\n+|(?:\s+-\s+)/).map(cleanFallbackSupportSentence).filter(Boolean);
-    for (const part of parts) {
-      if (!candidates.some((existing) => normalizeEntityText(existing) === normalizeEntityText(part))) candidates.push(part);
-    }
-  }
-  return candidates.map((sentence) => ({ sentence, score: scoreFallbackSupportSentence(sentence, request, highlightText) })).filter((entry) => entry.score > 0).sort((left, right) => right.score - left.score || left.sentence.length - right.sentence.length)[0]?.sentence || "";
-}
-function buildCompactTeachingFallbackReply(request) {
-  const highlightText = firstCompletedSourceHighlightCitation(request);
-  if (!highlightText) return "";
-  const support = pickFallbackSupportSentence(request, highlightText);
-  const lines = [
-    `Core idea: ${truncateWords(highlightText, 26)}`,
-    support ? `Context: ${truncateWords(support, 30)}` : "",
-    `Takeaway: start with that source passage; it is the page's hook for the first explanation.`,
-    compactTeachingFooter()
-  ].filter(Boolean);
-  return normalizeAssistantReplySpacing(lines.join("\n\n"));
-}
-function recoverLowInformationCompactTeachingReply(value, request) {
-  const text = normalizeAssistantReplySpacing(value);
-  if (!looksLikeThinCompactTeachingReply(text, request)) return text;
-  return buildCompactTeachingFallbackReply(request) || text;
-}
-function normalizeTrailingLearningCheck(value, request) {
-  const text = normalizeAssistantReplySpacing(value);
-  if (!text || !request?.learningMode) return text;
-  const check2 = extractTrailingCheckQuestion(text);
-  if (!check2) return text;
-  const shouldDropCheck = Boolean(request?.pageSourceMarkerRetry || request?.pdfAnchorRetry) || visibleReplyWordCount(text) > 220;
-  if (shouldDropCheck) return removeTrailingQuestionLine(text);
-  const lines = text.split("\n");
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (!lines[index].trim()) continue;
-    lines[index] = `Check: ${check2}`;
-    break;
-  }
-  return normalizeAssistantReplySpacing(lines.join("\n"));
-}
-function sanitizeAssistantVisibleReply(value, request = null) {
-  let text = String(value || "").replace(/\r\n?/g, "\n").trim();
+function sanitizeAssistantVisibleReply(value, _request = null) {
+  const original = String(value || "").replace(/\r\n?/g, "\n").trim();
+  let text = original;
   if (!text) return "";
   text = stripOrphanedMarkdownDelimiterLines(text);
-  text = stripAssistantProcessNarration(text);
-  text = stripLeadingOrphanedProcessFragment(text);
-  text = stripDuplicatedOpeningClause(text);
-  text = stripLeadingGluedBoldLabels(text);
+  text = stripTinyVisibleReplyArtifacts(text);
   text = stripEmptyCitationParentheses(text.replace(/\s+\(\)\s*:/g, ":"));
   text = stripHorizontalRuleSeparators(text);
   text = normalizeMarkdownBlockBoundaries(text);
-  text = convertMarkdownTablesToBullets(text);
-  text = stripMalformedTableBulletArtifacts(text);
-  text = stripFragmentedMathLines(text);
-  text = stripInlineHighlightLabels(text);
   text = stripDanglingInlineMarkdownDelimiters(text);
-  text = stripOrdinalHighlightParentheticals(text);
-  text = truncateAtMissingHighlightStatus(text);
-  text = stripHighlightStatusClauses(text);
   text = normalizeAssistantReplySpacing(text);
-  text = compactOverbroadPageTeachingReply(text, request);
-  text = stripUnsupportedRemainingSectionsTail(text, request);
-  text = ensureCompactTeachingSubject(text, request);
-  text = stripEmptyAssistantHeadings(text);
-  text = convertMarkdownTablesToBullets(text);
-  text = stripMalformedTableBulletArtifacts(text);
-  text = normalizeTrailingLearningCheck(text, request);
-  text = recoverLowInformationCompactTeachingReply(text, request);
-  text = ensureCompactTeachingSubject(text, request);
-  text = stripCompactTeachingMathBlocks(text, request);
-  text = removeCompactTeachingFooter(text);
-  text = stripDuplicatedAnswerRestart(text);
-  text = stripRedundantHighlightRecap(text);
-  text = stripUnsupportedStructuredItemsByHighlights(text, request);
-  text = renumberTopLevelOrderedListLines(text);
-  text = normalizeDanglingTrailingPunctuation(text);
-  text = stripDanglingLineBeforeCompactFooter(text);
-  return stripIncompleteTrailingLine(stripEmptyAssistantHeadings(normalizeAssistantReplySpacing(stripOrphanedMarkdownDelimiterLines(text))));
+  text = stripOrphanedMarkdownDelimiterLines(text);
+  return text || (looksLikeOnlyVisibleReplyArtifact(original) ? "" : original);
 }
 function shouldRecordFallbackOpenCheckForRequest(request, reply) {
   if (!request?.learningMode) return false;
@@ -135636,6 +135036,65 @@ function buildBlankReplyRetryPrompt(request) {
     toolExcerpt ? `Completed tool result:
 ${toolExcerpt}` : ""
   ].filter(Boolean).join("\n\n");
+}
+function findMissingKnownBrowserToolTrace(request) {
+  const traces = Array.isArray(request?.toolTraces) ? [...request.toolTraces].reverse() : [];
+  return traces.find((trace) => {
+    const toolName = String(trace?.toolName || "");
+    if (!KNOWN_BROWSER_TOOL_NAMES.has(toolName)) return false;
+    const errorText = `${trace?.error || ""}
+${trace?.resultSummary || ""}
+${JSON.stringify(trace?.resultDetails || {})}`;
+    return /\btool\b[\s\S]{0,80}\bnot found\b/i.test(errorText);
+  }) || null;
+}
+function missingToolRetryToolNamesForPrompt(toolName, prompt, options = {}) {
+  if (!KNOWN_BROWSER_TOOL_NAMES.has(toolName)) return [];
+  const text = String(prompt || "").toLowerCase();
+  const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
+  const explicitlyRequested = explicitToolNames.has(toolName) || Array.isArray(options.forceToolNames) && options.forceToolNames.includes(toolName);
+  const pageChangePolicy = promptPageChangePolicy(prompt);
+  if (BROAD_SOURCE_TOOL_NAMES.includes(toolName)) return BROAD_SOURCE_TOOL_NAMES;
+  if (toolName === "browser_textbook_search") {
+    return textHasAny(
+      text,
+      /\b(?:textbooks?|e-?books?|bookshelf|online book|reader|courseware|chapter|section)\b/
+    ) || explicitlyRequested ? READER_SEARCH_TOOL_NAMES : [];
+  }
+  if (PDF_TOOL_NAMES.includes(toolName) || toolName === "browser_open_pdf_in_onhand_viewer") {
+    return options.forcePdfTools || promptAsksForPdfCorpusOrViewerWork(text) || explicitlyRequested ? ["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES, ...PDF_ANNOTATION_TOOL_NAMES] : [];
+  }
+  if (VISUAL_CONTEXT_TOOL_NAMES.includes(toolName)) {
+    return promptAsksAboutVisualRegion(text) || explicitlyRequested ? VISUAL_CONTEXT_TOOL_NAMES : [];
+  }
+  if (VISUAL_GROUNDING_TOOL_NAMES.includes(toolName) || PAGE_CHANGE_TOOL_NAMES.includes(toolName)) {
+    if (pageChangePolicy.forbidsAllPageChanges) return [];
+    if (pageChangePolicy.forbidsHighlights && ["browser_highlight_text", "browser_scroll_to_annotation", "browser_clear_annotations"].includes(toolName)) return [];
+    if (pageChangePolicy.forbidsNotes && toolName === "browser_show_note") return [];
+    return promptAllowsPageSourceHighlights(prompt) || explicitlyRequested ? VISUAL_GROUNDING_TOOL_NAMES : [];
+  }
+  if (INTERACTION_TOOL_NAMES.includes(toolName)) {
+    const interactionIntent = promptAsksForLinkedPageNavigation(text) || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/);
+    return interactionIntent || explicitlyRequested ? INTERACTION_TOOL_NAMES : [];
+  }
+  if (DEBUG_INSPECTION_TOOL_NAMES.includes(toolName)) {
+    return textHasAny(text, /\b(debug|console|network|dom|html|screenshot)\b/) || explicitlyRequested ? DEBUG_INSPECTION_TOOL_NAMES : [];
+  }
+  if (RUNTIME_JS_TOOL_NAMES.includes(toolName)) {
+    return options.advancedRuntimeInspectionEnabled !== false && (promptNeedsRuntimeJavaScript(text, explicitToolNames) || explicitlyRequested) ? RUNTIME_JS_TOOL_NAMES : [];
+  }
+  if (ARTIFACT_TOOL_NAMES.includes(toolName)) {
+    return textHasAny(text, /\b(artifact|capture state|save state|restore|session replay|saved page|list artifacts?)\b/) || explicitlyRequested ? ARTIFACT_TOOL_NAMES : [];
+  }
+  return [];
+}
+function buildMissingToolRetryPrompt(request, toolName) {
+  return [
+    `The previous attempt tried to use ${toolName}, but that tool was not available in the request's tool pack.`,
+    "The runtime has now enabled the needed tool pack. Retry the original user request from the current browser context.",
+    "Ignore any earlier fallback answer that said the tool was unavailable. Do the browser work first if it is needed, then answer concisely without process narration.",
+    `Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || request?.prompt || "")}`
+  ].join("\n\n");
 }
 function queueBlankReplyRetry(agent, prompt, onError) {
   if (typeof agent.followUp === "function" && typeof agent.waitForIdle === "function" && typeof agent.continue === "function") {
@@ -137059,25 +136518,29 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
       if (toolsByName.has(name)) selected.add(name);
     }
   };
+  const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
+  const wantsLinkedPageNavigation = promptAsksForLinkedPageNavigation(text);
+  const crossTabComparisonVerb = textHasAny(text, /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b/);
+  const explicitCrossTabComparisonTarget = textHasAny(
+    text,
+    /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b/
+  );
+  const sourceOrNavigationPrompt = wantsExternalBrowsing || wantsLinkedPageNavigation || crossTabComparisonVerb && explicitCrossTabComparisonTarget;
   if (wantsAllPorts) {
     add(selectableToolNames);
   } else {
     add(CORE_READ_TOOL_NAMES);
+    add(ELEMENT_READ_TOOL_NAMES);
     add([...explicitToolNames]);
-    const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
-    const wantsLinkedPageNavigation = promptAsksForLinkedPageNavigation(text);
-    const crossTabComparisonVerb = textHasAny(text, /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b/);
+    add(Array.isArray(options.forceToolNames) ? options.forceToolNames : []);
     const needsFocusedReadableContext2 = promptNeedsFocusedReadableContext(text);
-    const explicitCrossTabComparisonTarget = textHasAny(
-      text,
-      /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b/
-    );
     const wantsDurableAnchors = promptAllowsPageSourceHighlights(prompt) || learningMode || needsFocusedReadableContext2 || wantsExternalBrowsing || wantsLinkedPageNavigation || crossTabComparisonVerb && explicitCrossTabComparisonTarget || explicitToolNames.has("browser_highlight_text") || explicitToolNames.has("browser_show_note") || explicitToolNames.has("browser_scroll_to_annotation") || explicitToolNames.has("browser_clear_annotations");
     if (wantsDurableAnchors) {
       add(VISUAL_GROUNDING_TOOL_NAMES);
     }
     if (wantsExternalBrowsing || wantsLinkedPageNavigation || textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/) || crossTabComparisonVerb && explicitCrossTabComparisonTarget) {
       add(TAB_TOOL_NAMES);
+      add(ELEMENT_READ_TOOL_NAMES);
     }
     if (options.forcePdfTools || promptAsksForPdfCorpusOrViewerWork(text)) {
       add(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]);
@@ -137099,7 +136562,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     if (learningMode) {
       add(LEARNING_TOOL_NAMES);
     }
-    if (wantsExternalBrowsing || wantsLinkedPageNavigation || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
+    if (wantsLinkedPageNavigation || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
       add(INTERACTION_TOOL_NAMES);
     }
     if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
@@ -137132,7 +136595,7 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
     if (pageChangePolicy.forbidsNotes) selected.delete("browser_show_note");
   }
   const needsExactReadableContext = promptNeedsExactReadableContext(text);
-  if (options.suppressExtractContent && !explicitToolNames.has("browser_extract_content") && !needsExactReadableContext && !needsFocusedReadableContext) {
+  if (options.suppressExtractContent && !sourceOrNavigationPrompt && !explicitToolNames.has("browser_extract_content") && !needsExactReadableContext && !needsFocusedReadableContext) {
     selected.delete("browser_extract_content");
   }
   if (needsExactReadableContext && selected.has("browser_extract_content") && !explicitToolNames.has("browser_get_visible_text")) {
@@ -137141,6 +136604,11 @@ function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode 
   if (deferPdfViewerForVisiblePdfSelection && !options.forcePdfTools) {
     for (const name of PDF_TOOL_NAMES) {
       if (!explicitToolNames.has(name)) selected.delete(name);
+    }
+  }
+  if (options.forcePdfTools && selectionFirstPdfQuestion && !promptAsksForExternalBrowsing(text) && !promptAsksForLinkedPageNavigation(text)) {
+    for (const name of ["browser_list_tabs", "browser_activate_tab", "browser_navigate"]) {
+      if (!explicitToolNames.has(name) && !(Array.isArray(options.forceToolNames) && options.forceToolNames.includes(name))) selected.delete(name);
     }
   }
   if (!selected.size) add(CORE_READ_TOOL_NAMES);
@@ -137159,6 +136627,16 @@ function buildLauncherPrompt(prompt, browserContext, attachments, learningMode, 
   const toolInventory = buildToolInventory(prompt, tools);
   const learnerStateSummary = learningMode ? buildLearnerStatePromptSummary(learnerState, prompt) : "";
   const evalLauncherAppend = normalizePromptEvalAppend(promptEvalLauncherAppend);
+  const availableToolNames = new Set((Array.isArray(tools) ? tools : []).map((tool) => tool.name));
+  const hasTool = (name) => availableToolNames.has(name);
+  const hasAnyTool = (names) => names.some((name) => availableToolNames.has(name));
+  const linkedNavigationLine = hasTool("browser_click_text") || hasTool("browser_click") ? "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, recover an already-open index/master tab when needed, then use available tab/navigation/link tools to open the relevant linked pages before answering. Highlight the useful passages on the destination pages, not just the index/master page." : "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, use available tab/navigation and element-discovery tools to open or inspect the relevant linked pages before answering. Highlight the useful passages on the destination pages, not just the index/master page.";
+  const toolSpecificPolicyLines = [
+    hasTool("browser_textbook_search") ? "- For online textbook/ebook/reader pages where the current loaded section does not contain the requested topic, or the user asks about another part/the whole book, use browser_textbook_search first to search through the reader's own book-search UI. Do not manually click/type through the reader search UI unless browser_textbook_search is unavailable or reports unsupported. Read results first; open a result only when navigation is needed to answer. If browser_textbook_search returns openedResult.navigated=true, immediately use browser_extract_content once with the same or focused query on the opened page, then answer, highlight, and note from that opened content. Do not switch tabs, close search panels, call generic click/find/wait tools, or repeat book search just to verify this opened result. Use browser_navigate only to reload the current reader URL once if the reader itself is blank, stuck loading, or reports an error. For one explanatory textbook passage, prefer one contiguous highlight spanning the key supporting sentences and one note; do not split nearby sentences into multiple highlights unless the user asks for multiple source highlights." : "",
+    hasAnyTool(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]) ? "- For selected/highlighted PDF questions, use selected text from captured context first. Chrome's native PDF viewer usually exposes selection through browser_get_selection, copy fallback, or debugger fallback, so do not blame Chrome's native viewer unless that is truly the active reader and those fallbacks failed. If tool output names Google Scholar PDF Reader, call it Google Scholar PDF Reader even when the tab URL itself is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open the Onhand PDF viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open the Onhand PDF viewer when analysis, full-PDF search, offscreen context, exact page marking, or durable highlights/notes would improve the answer, and preserve the current page/selection when opening it. For current visible PDF figures/slides/equations/diagrams, use browser_pdf_capture_page_image and answer first; do not automatically search/read/highlight/note for a lightweight prompt such as 'try here' unless the user asks to mark/save/review it, asks where evidence is, or the answer needs a specific text passage. Do not treat selected named concepts, terms, section headings, formulas, or paper mechanisms as quick answers: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. If the user accepts an offer to go deeper in a PDF with yes/please/similar, finish the search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded." : "",
+    hasAnyTool(VISUAL_CONTEXT_TOOL_NAMES) ? "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image or browser_pdf_capture_page_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text sources are needed or requested. If the user explicitly asks to highlight a formula/equation, call browser_highlight_text with the selected formula text or closest visible formula label; the page tool will use a block formula highlight when rendered math is involved. For explicit named formula/equation/theorem requests, locate that named formula or section first; do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula. For ordinary source grounding where rendered math extraction is collapsed or fragmented, prefer the nearby explanatory sentence, label, or caption instead of copying broken formula text." : "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use readable text first. If the user explicitly asks to highlight a formula/equation and highlighting is available, use the selected formula text or closest visible formula label; the page tool will use a block formula highlight when rendered math is involved. For explicit named formula/equation/theorem requests, locate that named formula or section first; do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula. If visual context is required but no visual capture tool is available, say what visual context is missing instead of guessing.",
+    hasAnyTool(RUNTIME_JS_TOOL_NAMES) ? "- browser_run_js is a last-resort runtime-state escape hatch for complex client-side pages. Use it only when explicitly requested or when readable text, DOM, screenshot, console, network, and selector tools cannot answer a dynamic/hidden-state question.\n- Keep browser_run_js read-only unless the user explicitly asks for page interaction. Do not use it to inspect cookies, local/session storage, authentication material, secrets, payment fields, or unrelated page data.\n- For DOM value checks with browser_run_js, read .value for form controls and .textContent or relevant ARIA attributes for ordinary elements. Do not use getComputedStyle(...).content unless the user asks about CSS-generated content." : ""
+  ].filter(Boolean);
   return [
     "The user invoked Onhand from the browser extension side panel.",
     ...recentConversation ? ["", "Recent conversation, summarized:", recentConversation] : [],
@@ -137180,8 +136658,8 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "Constitution runtime contract:",
     "- Do page work before chat: anchor the answer with a source highlight on the supporting text (skip only for no-page-changes requests, quick visual questions, or when the page does not support the claim). Add more highlights, notes, and scroll to existing highlights when the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary.",
     "- Page-material claims need page grounding. Use captured/readable page context for simple answers; use exact highlights and short notes for major claims only when durable source highlights are useful or requested.",
-    "- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use tab/navigation tools first and then ground claims on the destination source pages.",
-    "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, recover an already-open index/master tab with browser_list_tabs when needed, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages before answering. Highlight the useful passages on those destination pages, not just the index/master page.",
+    "- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use available tab/navigation tools first and then ground claims on the destination source pages.",
+    linkedNavigationLine,
     "- Grounding budget: simple questions get one strong source highlight and a short answer. Broad teach/review/walkthrough/summarize requests need one to three durable explanatory source highlights for the central concepts, with at most one short note unless the user explicitly asks for notes. Do not use the page title, course title, reading list, or a generic heading as a source marker; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless the contrast is the whole answer. If only one highlight succeeds, keep the answer focused on that highlighted passage instead of writing a broad unsupported page summary. Roadmap/list/navigation questions are not simple when the answer names multiple items, but notes should still be sparse.",
     "- Quick visual questions such as what a figure, diagram, chart, equation, screenshot, slide, or visible PDF page shows should usually stay sidebar-only after visual capture. Do not automatically add a note for these quick visual explanations. If durable context is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value. This does not reduce notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.",
     "- Add short interpretive notes only where they add future replay value; name the passage's role or explain the hard step under 280 characters, but do not paraphrase the highlight. Do not add a note for every highlight. Put longer detail in chat.",
@@ -137204,11 +136682,16 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "- browser_run_js is a last-resort runtime-state escape hatch for complex client-side pages. Use it only when explicitly requested or when readable text, DOM, screenshot, console, network, and selector tools cannot answer a dynamic/hidden-state question.",
     "- Keep browser_run_js read-only unless the user explicitly asks for page interaction. Do not use it to inspect cookies, local/session storage, authentication material, secrets, payment fields, or unrelated page data.",
     "- For DOM value checks with browser_run_js, read .value for form controls and .textContent or relevant ARIA attributes for ordinary elements. Do not use getComputedStyle(...).content unless the user asks about CSS-generated content.",
+    ...toolSpecificPolicyLines,
     ...evalLauncherAppend ? ["", "Temporary prompt-eval launcher policy candidate:", evalLauncherAppend] : [],
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
     "Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Avoid Markdown tables unless explicitly requested.",
     ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
-  ].join("\n");
+  ].filter((line, index, lines) => {
+    if (typeof line !== "string") return true;
+    if (toolSpecificPolicyLines.includes(line)) return lines.lastIndexOf(line) === index;
+    return !(line.includes("browser_textbook_search first") || line.includes("For selected/highlighted PDF questions") || line.includes("For equations, charts, diagrams, figures") || line.includes("browser_run_js is a last-resort") || line.includes("Keep browser_run_js read-only") || line.includes("For DOM value checks with browser_run_js"));
+  }).join("\n");
 }
 function extractJsonObjectText(value) {
   const text = String(value || "").trim();
@@ -137564,11 +137047,18 @@ ${truncateStructuredText(text, 8e3)}`,
     "Next step: if you answer from this offscreen/deeper PDF text, call browser_highlight_text with an exact supporting passage from these pages, then call browser_show_note with one short note under 280 characters before replying. Do not say the answer is highlighted or sourced unless those calls succeed."
   ].join("\n\n");
 }
+function extractToolResultGuardrail(result) {
+  if (!result || typeof result !== "object") return null;
+  const details = Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
+  if (details && typeof details === "object" && details.guardrail) return details.guardrail;
+  return null;
+}
 function toolResultTextForModel(toolName, result) {
   const details = result?.details || result || {};
   const tab = details.tab || null;
-  if (details.guardrail?.message) {
-    return String(details.guardrail.message);
+  const guardrail = extractToolResultGuardrail(result);
+  if (guardrail?.message) {
+    return `Guardrail blocked ${guardrail.blockedTool || toolName}: ${String(guardrail.message)}`;
   }
   switch (toolName) {
     case "onhand_record_learning_event": {
@@ -138017,20 +137507,44 @@ function isSectionNumberOnlyHighlightText(value) {
   if (new RegExp("\\p{L}", "u").test(text)) return false;
   return /^(?:§\s*)?(?:[0-9]+|[ivxlcdm]+)(?:\.[0-9ivxlcdm]+)*\.?$/i.test(text);
 }
+function promptAsksForDerivationOrProofSourceMarker(prompt) {
+  const text = normalizePageSourcePromptText(prompt);
+  return Boolean(
+    text && promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
+  );
+}
+function looksLikeHeadingOnlyHighlightText(value) {
+  const text = compactActionText(value).replace(/[¶#]+/g, "").trim();
+  if (!text) return false;
+  if (isSectionNumberOnlyHighlightText(text)) return true;
+  if (/[.!?]\s*$/.test(text)) return false;
+  const words = entityWords(text);
+  if (words.length < 2 || words.length > 8) return false;
+  const hasVerb = /\b(?:is|are|was|were|means|shows|uses|treats|samples?|draws?|converts?|provides?|returns?|takes?|allows?|works?|captures?|represents?|defines?|explains?|derives?|equals?|starts?|divid(?:e|es|ing)|substitut(?:e|es|ing))\b/i.test(text);
+  if (hasVerb) return false;
+  return /^[\p{Lu}\p{N}]/u.test(text);
+}
 function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, params, prompt) {
   if (commandName !== "highlight_text") return null;
   if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
-  if (!isSectionNumberOnlyHighlightText(params?.text)) return null;
+  const sectionNumberOnly = isSectionNumberOnlyHighlightText(params?.text);
+  const headingOnlyDerivation = !sectionNumberOnly && promptAsksForDerivationOrProofSourceMarker(prompt) && looksLikeHeadingOnlyHighlightText(params?.text);
+  if (!sectionNumberOnly && !headingOnlyDerivation) return null;
   return {
     guardrail: {
       kind: "weak_structured_highlight_text",
       blockedTool: toolName,
       blockedCommand: commandName,
-      message: [
+      message: sectionNumberOnly ? [
         "That browser_highlight_text span is only a section number, so it is too weak to support a structured roadmap/list/comparison item.",
         `Do not call ${toolName} with only a section number.`,
         "Retry with exact visible section-title text that includes the item name, or with the first explanatory sentence/list item under that section.",
         "If no stronger exact span is available, omit that item from the chat answer."
+      ].join(" ") : [
+        "That browser_highlight_text span is only a heading, so it is too weak to support a derivation/proof/explanation answer.",
+        `Do not call ${toolName} with only the heading for this answer.`,
+        "Retry with exact explanatory text, equation text, or a sentence under that heading that states the derivation step.",
+        "If no stronger exact span is available, answer from readable content without claiming the heading is a source marker."
       ].join(" ")
     }
   };
@@ -138226,10 +137740,21 @@ function buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, req
 function buildOptionalFrameFallbackNoteGuardResult(_toolName, _commandName, _params, _prompt, _request) {
   return null;
 }
+var READABLE_REWRITE_TRACE_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "browser_extract_content",
+  "browser_get_visible_text",
+  "browser_get_viewport_headings",
+  "browser_find_elements",
+  "browser_pdf_search",
+  "browser_pdf_read_pages",
+  "browser_textbook_search"
+]);
 function recentReadableTraceBlocks(request) {
   const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
   const blocks = [];
   for (const trace of traces) {
+    if (trace?.state !== "complete") continue;
+    if (!READABLE_REWRITE_TRACE_TOOL_NAMES.has(String(trace?.toolName || ""))) continue;
     const details = trace?.resultDetails || trace?.details || {};
     for (const key of ["content", "visible"]) {
       const candidateBlocks = details?.[key]?.blocks;
@@ -138324,9 +137849,15 @@ function findRecentReadableExactPhrase(request, proposed) {
   }
   return "";
 }
+function shouldKeepExactHighlightPhrase(value) {
+  const text = normalizeHighlightRetryCandidate(value);
+  if (!text || text.length < 16 || text.length > 90) return false;
+  return highlightRetryWordCount(text) <= 8;
+}
 function rewriteHighlightTextToRecentReadableExactPhrase(value, request) {
   const proposed = String(value || "").trim();
   if (!proposed) return "";
+  if (shouldKeepExactHighlightPhrase(proposed)) return "";
   const rewritten = findRecentReadableExactPhrase(request, proposed);
   if (!rewritten || rewritten === proposed) return "";
   return rewritten;
@@ -138491,6 +138022,7 @@ var __browserRuntimeTest = {
   buildLearnerStatePromptSummary,
   buildExistingAnchorContext,
   buildHighlightRetryCandidates,
+  shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
   buildEmptyHighlightTextGuardResultForTest: buildEmptyHighlightTextGuardResult,
   buildWeakStructuredHighlightTextGuardResultForTest: buildWeakStructuredHighlightTextGuardResult,
   buildWeakCompactTeachingHighlightGuardResultForTest: buildWeakCompactTeachingHighlightGuardResult,
@@ -138506,6 +138038,7 @@ var __browserRuntimeTest = {
   looksLikeExpandedMathExtractionCandidateForTest: looksLikeExpandedMathExtractionCandidate,
   canRewriteToContainedReadablePhraseForTest: canRewriteToContainedReadablePhrase,
   sourceCitationProvidesExplanatoryComparisonSupportForTest: sourceCitationProvidesExplanatoryComparisonSupport,
+  isCompletedSourceHighlightTraceForTest: isCompletedSourceHighlightTrace,
   rewriteHighlightTextToRecentReadableExactPhraseForTest: rewriteHighlightTextToRecentReadableExactPhrase,
   rewriteComparisonHighlightTextForTest: (value, _prompt, request) => rewriteHighlightTextToRecentReadableExactPhrase(value, request),
   shouldAbortAfterRepeatedHighlightFailuresForTest: shouldAbortAfterRepeatedHighlightFailures,
@@ -138527,6 +138060,8 @@ var __browserRuntimeTest = {
   findReadyTextbookContextFromTracesForTest: findReadyTextbookContextFromTraces,
   buildTextbookContextReadyGuardResultForTest: buildTextbookContextReadyGuardResult,
   buildRepeatedViewportReadGuardResultForTest: buildRepeatedViewportReadGuardResult,
+  buildRepeatedHighlightFailureGuardResultForTest: buildRepeatedHighlightFailureGuardResult,
+  buildPostHighlightFailureAnswerNowGuardResultForTest: buildPostHighlightFailureAnswerNowGuardResult,
   buildOptionalFrameFallbackNoteGuardResultForTest: buildOptionalFrameFallbackNoteGuardResult,
   buildVisiblePdfSelectionFirstPassGuardResultForTest: buildVisiblePdfSelectionFirstPassGuardResult,
   promptAsksForTeachingPageSourceMarkerForTest: promptAsksForTeachingPageSourceMarker,
@@ -138611,6 +138146,43 @@ var __browserRuntimeTest = {
       [],
       ""
     );
+    const namedTools = (names) => names.map((name) => ({ name, description: "" }));
+    const textbookPrompt = buildLauncherPrompt(
+      "Search this textbook for proposal sampling.",
+      "Active tab: Example reader\nVisible text snapshot:\nChapter 1",
+      [],
+      false,
+      buildReasoningProfile(DEFAULT_SETTINGS, "Search this textbook for proposal sampling.", [], false),
+      namedTools(READER_SEARCH_TOOL_NAMES),
+      ""
+    );
+    const pdfPrompt = buildLauncherPrompt(
+      "What does this selected PDF passage mean?",
+      "Active tab: Example.pdf\nSelected text:\nProposal sampling draws a candidate.",
+      [],
+      false,
+      buildReasoningProfile(DEFAULT_SETTINGS, "What does this selected PDF passage mean?", [], false),
+      namedTools(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]),
+      ""
+    );
+    const visualPrompt = buildLauncherPrompt(
+      "What does this chart show?",
+      "Active tab: Example lesson\nVisible text snapshot:\nModel accuracy chart.",
+      [],
+      false,
+      buildReasoningProfile(DEFAULT_SETTINGS, "What does this chart show?", [], false),
+      namedTools([...VISUAL_CONTEXT_TOOL_NAMES, ...VISUAL_GROUNDING_TOOL_NAMES]),
+      ""
+    );
+    const runtimeJsPrompt = buildLauncherPrompt(
+      "Debug this dynamic page state.",
+      "Active tab: Example app\nVisible text snapshot:\nDashboard",
+      [],
+      false,
+      buildReasoningProfile(DEFAULT_SETTINGS, "Debug this dynamic page state.", [], false),
+      namedTools(RUNTIME_JS_TOOL_NAMES),
+      ""
+    );
     const learningPrompt = buildLauncherPrompt(
       "How does proposal sampling work on this page?",
       "Active tab: Example lesson\nVisible text snapshot:\nProposal sampling draws a candidate from a simpler distribution before checking whether it fits the target.",
@@ -138650,6 +138222,10 @@ var __browserRuntimeTest = {
       systemPrompt: ONHAND_SYSTEM_PROMPT,
       learningModeAppend: ONHAND_LEARNING_MODE_APPEND,
       answerPrompt,
+      textbookPrompt,
+      pdfPrompt,
+      visualPrompt,
+      runtimeJsPrompt,
       learningPrompt,
       learnerState,
       newConceptLearningPrompt,
@@ -138678,6 +138254,8 @@ var __browserRuntimeTest = {
     };
     return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState, options).map((tool) => tool.name);
   },
+  missingToolRetryToolNamesForTest: missingToolRetryToolNamesForPrompt,
+  findMissingKnownBrowserToolTraceForTest: findMissingKnownBrowserToolTrace,
   buildLearningCheckFollowupForTest(prompt, learnerState) {
     return buildLearningCheckFollowup(prompt, learnerState);
   },
@@ -140341,16 +139919,18 @@ function createOnhandBrowserRuntime(host) {
     if (Number.isFinite(startedAtMs) && Number.isFinite(endedAtMs)) {
       entry.duration_ms = Math.max(0, endedAtMs - startedAtMs);
     }
-    entry.state = isError2 ? "error" : "complete";
-    let errorText = isError2 ? extractToolErrorText(result) : "";
-    if (isError2 && errorText === "Tool failed." && toolName === "browser_highlight_text") {
+    const guardrail = extractToolResultGuardrail(result);
+    const traceIsError = isError2 || Boolean(guardrail);
+    entry.state = traceIsError ? "error" : "complete";
+    let errorText = traceIsError ? guardrail?.message ? `Guardrail blocked ${guardrail.blockedTool || toolName}: ${guardrail.message}` : extractToolErrorText(result) : "";
+    if (traceIsError && !guardrail && errorText === "Tool failed." && toolName === "browser_highlight_text") {
       const attemptedText = String(entry.args?.text || "").trim();
       if (attemptedText) errorText = `No visible text matched: ${attemptedText}`;
     }
-    const summary = isError2 ? `${toolName} failed: ${errorText}` : toolResultTextForModel(toolName, result);
+    const summary = guardrail?.message ? toolResultTextForModel(toolName, result) : traceIsError ? `${toolName} failed: ${errorText}` : toolResultTextForModel(toolName, result);
     entry.resultSummary = redactTraceText(summary, TOOL_TRACE_RESULT_SUMMARY_MAX_CHARS);
     entry.resultDetails = traceResultDetails(result);
-    if (isError2) entry.error = redactTraceText(errorText, 1200);
+    if (traceIsError) entry.error = redactTraceText(errorText, 1200);
   }
   function shouldAutoPersistReviewSnapshot(request) {
     if (!request || request.aborted) return false;
@@ -140555,6 +140135,42 @@ function createOnhandBrowserRuntime(host) {
     );
     return lines.join("\n");
   }
+  function selectRuntimeToolsForRequest(session, prompt, attachments, learningMode, learnerState, options = {}) {
+    const firstPassPdfSelectionQuestion = Boolean(options.visiblePdfSelectionFirstPass);
+    return selectToolsForPrompt(
+      createTools(
+        host,
+        artifactHooks,
+        withRequestBrowserContext,
+        (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+        (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
+        (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+        async (effectiveParams) => {
+          if (!effectiveParams?.scanPage) return null;
+          const text = compactActionText(effectiveParams?.text);
+          if (!text) return null;
+          let tabId = Number(effectiveParams?.tabId || activeRequest?.initialActiveTab?.id || 0);
+          if (!Number.isFinite(tabId) || tabId <= 0) {
+            const state = await host.snapshotState();
+            tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
+          }
+          if (!Number.isFinite(tabId) || tabId <= 0) return null;
+          return await highlightTextWithReplayCandidates(tabId, text, {
+            ...effectiveParams || {},
+            scanPage: true,
+            skipInitialAttempt: true,
+            scrollIntoView: effectiveParams?.scrollIntoView !== false,
+            pdfAnchor: effectiveParams?.pdfAnchor
+          });
+        }
+      ),
+      prompt,
+      attachments,
+      learningMode,
+      learnerState,
+      options
+    );
+  }
   function beginRequest(session, settings2, requestId, displayPrompt) {
     const now = nowIso();
     uiState = {
@@ -140577,6 +140193,42 @@ function createOnhandBrowserRuntime(host) {
     const agentMessages = messagesOverride || activeAgent?.state.messages || [];
     let finalError = error52 || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
     let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+    const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry ? findMissingKnownBrowserToolTrace(activeRequest) : null;
+    if (missingToolTrace && activeAgent) {
+      const missingToolName = String(missingToolTrace.toolName || "");
+      const promptText = String(activeRequest.prompt || activeRequest.displayPrompt || "");
+      const forcedToolNames = missingToolRetryToolNamesForPrompt(
+        missingToolName,
+        promptText,
+        activeRequest.toolSelectionOptions || {}
+      );
+      if (forcedToolNames.length) {
+        activeRequest.missingToolRetry = true;
+        const retryTools = selectRuntimeToolsForRequest(
+          session,
+          promptText,
+          Array.isArray(activeRequest.attachments) ? activeRequest.attachments : [],
+          Boolean(activeRequest.learningMode),
+          session.learnerState,
+          {
+            ...activeRequest.toolSelectionOptions || {},
+            forceToolNames: forcedToolNames
+          }
+        );
+        const existingToolNames = new Set((activeAgent.state.tools || []).map((tool) => tool.name));
+        activeAgent.state.tools = [
+          ...activeAgent.state.tools || [],
+          ...retryTools.filter((tool) => !existingToolNames.has(tool.name))
+        ];
+        resetAssistantDraftText(activeRequest);
+        updateAssistantDraft(requestId, "", { pending: true });
+        await publishState({ status: "Retrying with needed browser tool..." });
+        queueBlankReplyRetry(activeAgent, buildMissingToolRetryPrompt(activeRequest, missingToolName), (retryError) => {
+          void finalizeRequest(session, requestId, retryError);
+        });
+        return;
+      }
+    }
     if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest) && activeAgent) {
       activeRequest.pageSourceMarkerRetry = true;
       resetAssistantDraftText(activeRequest);
@@ -140742,7 +140394,22 @@ function createOnhandBrowserRuntime(host) {
           }
           void publishState({ status: "Trying a different approach..." });
         } else {
+          const guardrail = extractToolResultGuardrail(event.result);
           recordToolTraceEnd(toolName, event.toolCallId || toolName, event.result, false);
+          if (guardrail) {
+            appendActivity({
+              id: activityId,
+              kind: "tool",
+              label: getToolStatusMessage(toolName),
+              toolName,
+              state: "retrying"
+            });
+            void publishState({
+              pageActions: [...activeRequest.pageActions],
+              status: guardrail.kind === "repeated_highlight_failure" ? "Answering without highlights..." : "Trying a different approach..."
+            });
+            break;
+          }
           markRecoveredToolRetries(uiState?.activities || [], toolName);
           appendActivity({
             id: activityId,
@@ -140824,7 +140491,7 @@ function createOnhandBrowserRuntime(host) {
     }
     return result.apiKey;
   }
-  function withDefaultBrowserTarget(params = {}) {
+  function withDefaultBrowserTarget(params = {}, commandName = "") {
     const normalizedParams = normalizeOptionalBrowserTargetNumbers(params);
     const targetWindowId = activeRequest?.targetWindowId;
     if (typeof normalizedParams?.tabId === "number" && hasCompletedTabInventory(activeRequest)) {
@@ -140835,12 +140502,13 @@ function createOnhandBrowserRuntime(host) {
     };
     if (typeof targetWindowId === "number") targeted.windowId = targetWindowId;
     delete targeted.tabId;
+    if (commandName === "activate_tab") return targeted;
     delete targeted.titleContains;
     delete targeted.urlContains;
     return targeted;
   }
   function withRequestBrowserContext(params = {}, commandName = "") {
-    const targetedParams = withDefaultBrowserTarget(params);
+    const targetedParams = withDefaultBrowserTarget(params, commandName);
     if (commandName === "show_note") {
       const noteText = compactOnPageNoteText(targetedParams?.note || targetedParams?.text || targetedParams?.label || "");
       return {
@@ -142469,7 +142137,9 @@ function createOnhandBrowserRuntime(host) {
       beginRequest(session, requestSettings, requestId, displayPrompt);
       activeRequest = {
         id: requestId,
+        prompt,
         displayPrompt,
+        attachments,
         source: compactTelemetryValue(rawSource, 32),
         reply: "",
         replyBlocks: [],
@@ -142550,6 +142220,14 @@ function createOnhandBrowserRuntime(host) {
         activeRequest.initialActiveUrl = String(browserContextDetails.activeTab?.url || "");
         const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
         const firstPassPdfSelectionQuestion = selectionFirstPdfQuestion && browserContextLooksLikePdf(browserContextDetails);
+        const toolSelectionOptions = {
+          forcePdfTools,
+          selectionFirstPdfQuestion,
+          visiblePdfSelectionFirstPass: firstPassPdfSelectionQuestion,
+          advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
+          suppressExtractContent: Boolean(priorPageContext)
+        };
+        activeRequest.toolSelectionOptions = toolSelectionOptions;
         const tools = selectToolsForPrompt(
           createTools(
             host,
@@ -142557,7 +142235,7 @@ function createOnhandBrowserRuntime(host) {
             withRequestBrowserContext,
             (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
             (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
             async (effectiveParams) => {
               if (!effectiveParams?.scanPage) return null;
               const text = compactActionText(effectiveParams?.text);
@@ -142581,12 +142259,7 @@ function createOnhandBrowserRuntime(host) {
           attachments,
           learningMode,
           session.learnerState,
-          {
-            forcePdfTools,
-            selectionFirstPdfQuestion,
-            advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
-            suppressExtractContent: Boolean(priorPageContext)
-          }
+          toolSelectionOptions
         );
         activeAgent = new Agent({
           initialState: {

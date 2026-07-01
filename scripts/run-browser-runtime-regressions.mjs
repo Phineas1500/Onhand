@@ -614,11 +614,13 @@ async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
 		buildHighlightRetryCandidates,
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest,
 		cleanMarkdownHeadingHighlightTextForTest,
 		stripTrailingHeadingAnchorMarkerForTest,
 		looksLikeExpandedMathExtractionCandidateForTest,
 		canRewriteToContainedReadablePhraseForTest,
 		sourceCitationProvidesExplanatoryComparisonSupportForTest,
+		isCompletedSourceHighlightTraceForTest,
 		rewriteHighlightTextToRecentReadableExactPhraseForTest,
 		shouldAbortAfterRepeatedHighlightFailuresForTest,
 		buildCompactTeachingHighlightBudgetGuardResultForTest,
@@ -633,13 +635,21 @@ async function assertSelectionFormatting() {
 		normalizeOptionalBrowserTargetNumbersForTest,
 		normalizePlannerMove,
 		summarizeRestoredArtifact,
+		buildRepeatedHighlightFailureGuardResultForTest,
+		buildPostHighlightFailureAnswerNowGuardResultForTest,
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
+	assert.equal(
+		typeof shouldTryHighlightRetryCandidatesBeforeOriginalForTest,
+		"function",
+		"browser runtime highlight retry preflight export is missing",
+	);
 	assert.equal(typeof cleanMarkdownHeadingHighlightTextForTest, "function", "browser runtime heading highlight cleaner export is missing");
 	assert.equal(typeof stripTrailingHeadingAnchorMarkerForTest, "function", "browser runtime heading anchor cleaner export is missing");
 	assert.equal(typeof looksLikeExpandedMathExtractionCandidateForTest, "function", "browser runtime math extraction noise detector export is missing");
 	assert.equal(typeof canRewriteToContainedReadablePhraseForTest, "function", "browser runtime contained readable phrase rewrite guard export is missing");
 	assert.equal(typeof sourceCitationProvidesExplanatoryComparisonSupportForTest, "function", "browser runtime comparison support detector export is missing");
+	assert.equal(typeof isCompletedSourceHighlightTraceForTest, "function", "browser runtime completed highlight detector export is missing");
 	assert.equal(typeof rewriteHighlightTextToRecentReadableExactPhraseForTest, "function", "browser runtime readable phrase rewriter export is missing");
 	assert.equal(typeof shouldAbortAfterRepeatedHighlightFailuresForTest, "function", "browser runtime highlight failure budget export is missing");
 	assert.equal(typeof buildCompactTeachingHighlightBudgetGuardResultForTest, "function", "browser runtime compact teaching highlight budget export is missing");
@@ -648,6 +658,8 @@ async function assertSelectionFormatting() {
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof buildTextbookContextReadyGuardResultForTest, "function", "browser runtime textbook guard export is missing");
 	assert.equal(typeof findReadyTextbookContextFromTracesForTest, "function", "browser runtime ready-textbook detector export is missing");
+	assert.equal(typeof buildRepeatedHighlightFailureGuardResultForTest, "function", "browser runtime repeated highlight guard export is missing");
+	assert.equal(typeof buildPostHighlightFailureAnswerNowGuardResultForTest, "function", "browser runtime post-highlight-failure guard export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof formatVisibleTextForModel, "function", "browser runtime visible formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
@@ -1060,6 +1072,22 @@ async function assertSelectionFormatting() {
 		["Short retry source sentence"],
 		"automatic highlight retry candidates should avoid long block-like spans",
 	);
+	const mediumDerivationHighlightText = "A theorem may be derived from the relation between joint and conditional probabilities";
+	assert.deepEqual(
+		buildHighlightRetryCandidates(mediumDerivationHighlightText),
+		["A theorem may be derived", "joint and conditional probabilities"],
+		"medium source sentences should shrink to exact clause spans before expensive full-sentence highlighting",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest(mediumDerivationHighlightText),
+		true,
+		"medium source sentences with retry clauses should try concise spans before the original text",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest("Short exact source phrase"),
+		false,
+		"short exact source phrases should not pay the retry preflight cost",
+	);
 	assert.equal(cleanMarkdownHeadingHighlightTextForTest("## 5.4. Sets¶"), "5.4. Sets", "markdown heading markers should be stripped before highlight attempts");
 	assert.equal(cleanMarkdownHeadingHighlightTextForTest("Plain source sentence"), "", "ordinary source text should not be rewritten as a heading");
 	assert.equal(stripTrailingHeadingAnchorMarkerForTest("Tuples and Sequences¶"), "Tuples and Sequences", "docs permalink markers should not become literal highlight text");
@@ -1120,6 +1148,37 @@ async function assertSelectionFormatting() {
 		"readable exact-phrase rewrites should not replace a substantive MH sentence with a heading",
 	);
 	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("joint and conditional probabilities", {
+			toolTraces: [
+				{
+					state: "error",
+					toolName: "browser_highlight_text",
+					resultSummary: "browser_highlight_text failed: No visible text matched: A theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should ignore failed highlight trace summaries",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("joint and conditional probabilities", {
+			toolTraces: [
+				{
+					state: "error",
+					toolName: "browser_highlight_text",
+					resultSummary: "browser_highlight_text failed: No visible text matched: A theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary: "Readable content:\nA theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not expand a short exact phrase into a larger paragraph",
+	);
+	assert.equal(
 		sourceCitationProvidesExplanatoryComparisonSupportForTest("Metropolis-Hastings Sampling", "Metropolis-Hastings"),
 		false,
 		"heading-only comparison highlights should not satisfy a comparison side",
@@ -1162,6 +1221,23 @@ async function assertSelectionFormatting() {
 		/Answer now/,
 		"surplus highlight guardrails should be returned to the model as instructions, not fake highlights",
 	);
+	assert.match(
+		formatToolResultForModel("browser_highlight_text", {
+			guardrail: { blockedTool: "browser_highlight_text", message: "Two comparison source highlights already succeeded. Answer now." },
+		}),
+		/Guardrail blocked browser_highlight_text/i,
+		"guardrail tool results should be explicit blocked instructions in traces/model output",
+	);
+	assert.equal(
+		isCompletedSourceHighlightTraceForTest({
+			toolName: "browser_highlight_text",
+			state: "complete",
+			resultSummary:
+				"Guardrail blocked browser_highlight_text: Highlighting has failed repeatedly on this page. Do not call browser_highlight_text again for this turn.",
+		}),
+		false,
+		"guardrail highlight messages should not count as completed source highlights",
+	);
 	assert.equal(
 		shouldAbortAfterRepeatedHighlightFailuresForTest({
 			toolTraces: [
@@ -1182,8 +1258,159 @@ async function assertSelectionFormatting() {
 				{ toolName: "browser_highlight_text", state: "error" },
 			],
 		}),
+		false,
+		"compact page-teaching prompts should allow one concise retry after two failed exact highlight attempts",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about Bayesian neural networks.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
 		true,
-		"compact page-teaching prompts should stop failed highlight loops quickly",
+		"compact page-teaching prompts should stop failed highlight loops after the concise retry also fails",
+	);
+	const compactTeachingRepeatedFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Teach me what this page says about caching.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.doesNotMatch(
+		compactTeachingRepeatedFailureGuard?.guardrail?.message || "",
+		/briefly note|could not add highlights/i,
+		"repeated highlight failure guard should not instruct the model to mention source-marker failures in chat",
+	);
+	assert.match(
+		compactTeachingRepeatedFailureGuard?.guardrail?.message || "",
+		/Do not mention highlight failures/i,
+		"repeated highlight failure guard should keep marker failure status out of visible answers",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"source discovery prompts phrased as 'show me a source' should use the external-source failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"external source prompts should stop after one failed highlight when readable source content is already available",
+	);
+	const externalSourceReadableFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_navigate", state: "complete", resultSummary: "Navigated to https://example.test/bayes" },
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceReadableFailureGuard?.guardrail?.message || "",
+		/Answer the user's question now from the readable page content/i,
+		"external source prompts should answer from readable source content after repeated highlight failures",
+	);
+	assert.doesNotMatch(
+		externalSourceReadableFailureGuard?.guardrail?.message || "",
+		/different credible source page/i,
+		"readable external source content should not trigger another source-search loop after repeated highlight failures",
+	);
+	const externalSourceUnreadableFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_navigate", state: "complete", resultSummary: "Navigated to https://example.test/bayes" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceUnreadableFailureGuard?.guardrail?.message || "",
+		/different credible source page/i,
+		"external source prompts without readable content may try one alternate source after repeated highlight failures",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_activate_tab",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/bayes" } },
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{
+					toolName: "browser_navigate",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/bayes#proof" } },
+				},
+			],
+		}),
+		true,
+		"same-document anchor navigation should not reset repeated highlight failures",
+	);
+	const postHighlightFailureReadGuard = buildPostHighlightFailureAnswerNowGuardResultForTest(
+		"browser_get_visible_text",
+		"get_visible_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		postHighlightFailureReadGuard?.guardrail?.kind,
+		"post_highlight_failure_answer_now",
+		"read/navigation tools should be blocked after repeated highlight failures when readable source content exists",
+	);
+	assert.match(
+		formatToolResultForModel("browser_get_visible_text", postHighlightFailureReadGuard),
+		/Answer the user's question now from the readable page content/i,
+		"post-highlight-failure guard should steer the model to final answer instead of more page reads",
 	);
 	const compactTeachingHighlightBudgetGuard = buildCompactTeachingHighlightBudgetGuardResultForTest(
 		"browser_highlight_text",
@@ -1234,7 +1461,7 @@ async function assertSelectionFormatting() {
 		shouldAbortAfterRepeatedHighlightFailuresForTest({
 			toolTraces: [
 				{ toolName: "browser_highlight_text", state: "error" },
-				{ toolName: "browser_highlight_text", state: "complete" },
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Source sentence for the answer." },
 				{ toolName: "browser_highlight_text", state: "error" },
 				{ toolName: "browser_highlight_text", state: "error" },
 				{ toolName: "browser_highlight_text", state: "error" },
@@ -1242,6 +1469,85 @@ async function assertSelectionFormatting() {
 		}),
 		false,
 		"a successful highlight should satisfy the source-marker path and prevent failure-budget aborts",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_navigate", state: "complete" },
+			],
+		}),
+		false,
+		"successful navigation to another source page should reset the repeated-highlight failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{
+					toolName: "browser_activate_tab",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/alternate-source" } },
+				},
+			],
+		}),
+		false,
+		"activating another source tab should reset the repeated-highlight failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_navigate", state: "complete" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"highlight failures after the latest source navigation should still trigger the failure guard",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find a source that derives this from first principles.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"external source prompts should switch sources after two highlight failures on the same page",
+	);
+	const externalSourceHighlightFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Find a source that derives this from first principles.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceHighlightFailureGuard?.guardrail?.message || "",
+		/different credible source page|simpler printable page/i,
+		"external source highlight failures should steer the model to another source before answering without a marker",
+	);
+	assert.doesNotMatch(
+		externalSourceHighlightFailureGuard?.guardrail?.message || "",
+		/Answer the user's question now/i,
+		"external source highlight failures should not immediately force an unmarked answer",
 	);
 	const scrolledPagePlannerCandidates = buildPlannerAnchorCandidates({
 		userQuestion: "What does this page say about Alpha smoke content?",
@@ -1648,6 +1954,8 @@ async function assertConstitutionPromptContract() {
 			rewriteComparisonHighlightTextForTest,
 			sanitizeAssistantVisibleReplyForTest,
 			shouldRecordFallbackOpenCheckForTest,
+			missingToolRetryToolNamesForTest,
+			findMissingKnownBrowserToolTraceForTest,
 		} = __browserRuntimeTest || {};
 		assert.equal(typeof buildPdfAnchorRetryPromptForTest, "function", "browser runtime PDF anchor retry prompt export is missing");
 		assert.equal(typeof buildPageSourceMarkerRetryPromptForTest, "function", "browser runtime page source retry prompt export is missing");
@@ -1676,6 +1984,8 @@ async function assertConstitutionPromptContract() {
 			assert.equal(typeof rewriteComparisonHighlightTextForTest, "function", "browser runtime comparison highlight rewrite export is missing");
 			assert.equal(typeof sanitizeAssistantVisibleReplyForTest, "function", "browser runtime visible reply sanitizer export is missing");
 			assert.equal(typeof shouldRecordFallbackOpenCheckForTest, "function", "browser runtime fallback-check gate export is missing");
+			assert.equal(typeof missingToolRetryToolNamesForTest, "function", "browser runtime missing-tool retry export is missing");
+			assert.equal(typeof findMissingKnownBrowserToolTraceForTest, "function", "browser runtime missing-tool trace export is missing");
 		assert.equal(typeof buildFinalAssistantReplyForTest, "function", "browser runtime final reply helper export is missing");
 		assert.equal(typeof compactOnPageNoteTextForTest, "function", "browser runtime note compactor export is missing");
 
@@ -1818,6 +2128,11 @@ async function assertConstitutionPromptContract() {
 		runtimeSourceForHighlightPolicy,
 		/if \(\["show_note", "scroll_to_annotation", "clear_annotations"\]\.includes\(commandName\)\) return ANNOTATION_COMMAND_TIMEOUT_MS;/,
 		"note and annotation follow-up commands should have bounded timeouts too",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/if \(commandName === "activate_tab"\) return targeted;[\s\S]{0,120}delete targeted\.titleContains;[\s\S]{0,80}delete targeted\.urlContains;/,
+		"activate_tab should preserve titleContains/urlContains selectors instead of dropping them like read-only page tools",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
@@ -2100,27 +2415,31 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
-	assert.match(contract.answerPrompt, /browser_textbook_search/);
-	assert.match(contract.answerPrompt, /reader's own search UI/);
-	assert.match(contract.answerPrompt, /Do not manually click\/type through the reader search UI/);
-	assert.match(contract.answerPrompt, /openedResult\.navigated=true/);
-	assert.match(contract.answerPrompt, /immediately use browser_extract_content once/);
-	assert.match(contract.answerPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
-	assert.match(contract.answerPrompt, /Use browser_navigate only to reload the current reader URL once/);
-	assert.match(contract.answerPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
-	assert.match(contract.answerPrompt, /selected\/highlighted PDF questions/);
-	assert.match(contract.answerPrompt, /Chrome's native PDF viewer usually exposes selection through browser_get_selection/);
-	assert.match(contract.answerPrompt, /If tool output names Google Scholar PDF Reader/);
-		assert.match(contract.answerPrompt, /third-party PDF reader blocks selected text/);
-		assert.match(contract.answerPrompt, /ask the user to highlight the passage there only if selected text did not transfer/);
-		assert.match(contract.answerPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
-		assert.match(contract.answerPrompt, /Open the Onhand PDF viewer when analysis/);
-		assert.match(contract.answerPrompt, /Do not treat selected named concepts/);
-		assert.match(contract.answerPrompt, /finish the search\/read\/jump\/highlight\/note workflow before answering/);
-		assert.match(contract.answerPrompt, /Never say you will highlight or add a note unless that tool call already succeeded/);
-		assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
-	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
-	assert.match(contract.answerPrompt, /\.value for form controls and \.textContent/);
+	assert.doesNotMatch(contract.answerPrompt, /browser_textbook_search/);
+	assert.doesNotMatch(contract.answerPrompt, /selected\/highlighted PDF questions/);
+	assert.doesNotMatch(contract.answerPrompt, /browser_get_visible_region_image/);
+	assert.doesNotMatch(contract.answerPrompt, /\.value for form controls and \.textContent/);
+	assert.match(contract.textbookPrompt, /browser_textbook_search/);
+	assert.match(contract.textbookPrompt, /reader's own .*search UI/);
+	assert.match(contract.textbookPrompt, /Do not manually click\/type through the reader search UI/);
+	assert.match(contract.textbookPrompt, /openedResult\.navigated=true/);
+	assert.match(contract.textbookPrompt, /immediately use browser_extract_content once/);
+	assert.match(contract.textbookPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
+	assert.match(contract.textbookPrompt, /Use browser_navigate only to reload the current reader URL once/);
+	assert.match(contract.textbookPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
+	assert.match(contract.pdfPrompt, /selected\/highlighted PDF questions/);
+	assert.match(contract.pdfPrompt, /Chrome's native PDF viewer usually exposes selection through browser_get_selection/);
+	assert.match(contract.pdfPrompt, /If tool output names Google Scholar PDF Reader/);
+	assert.match(contract.pdfPrompt, /third-party PDF reader blocks selected text/);
+	assert.match(contract.pdfPrompt, /ask the user to highlight the passage there only if selected text did not transfer/);
+	assert.match(contract.pdfPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
+	assert.match(contract.pdfPrompt, /Open the Onhand PDF viewer when analysis/);
+	assert.match(contract.pdfPrompt, /Do not treat selected named concepts/);
+	assert.match(contract.pdfPrompt, /finish the search\/read\/jump\/highlight\/note workflow before answering/);
+	assert.match(contract.pdfPrompt, /Never say you will highlight or add a note unless (?:that|the corresponding) tool call already succeeded/);
+	assert.match(contract.visualPrompt, /browser_get_visible_region_image/);
+	assert.match(contract.visualPrompt, /Visual claims must name the captured region/);
+	assert.match(contract.runtimeJsPrompt, /\.value for form controls and \.textContent/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
 	assert.match(contract.learningModeAppend, /give a concise page-grounded answer first/);
@@ -2186,6 +2505,15 @@ async function assertConstitutionPromptContract() {
 		const quizPageToolNames = getToolNamesForTest("Quiz me on this page.", false);
 		const limitationsPageToolNames = getToolNamesForTest("What are the limitations of rejection sampling according to the page?", false);
 		const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
+	const firstPrinciplesSourceToolNames = getToolNamesForTest("could you find a source that derives it from first principles?", false);
+	const firstPrinciplesCachedSourceToolNames = getToolNamesForTest(
+		"could you find a source that derives it from first principles?",
+		false,
+		null,
+		{ suppressExtractContent: true },
+	);
+	const singularSourceToolNames = getToolNamesForTest("find a source that derives Bayes theorem from first principles", false);
+	const ordinarySourceToolNames = getToolNamesForTest("What does this paragraph mean?", false);
 	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const genericSmokeToolNames = getToolNamesForTest("Google Docs smoke test: read the document title without editing it.", false);
@@ -2342,6 +2670,55 @@ async function assertConstitutionPromptContract() {
 		assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
 		assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
 		assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_navigate"), true, "natural singular source-finding prompts should expose navigation");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_extract_content"), true, "source-finding prompts should expose readable extraction");
+		assert.equal(firstPrinciplesCachedSourceToolNames.includes("browser_extract_content"), true, "cached source-navigation followups should still expose extraction for destination pages");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_find_elements"), true, "source-finding prompts should expose element discovery");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_click"), false, "source-finding prompts should not expose risky click tools by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_type"), false, "source-finding prompts should not expose typing tools by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), false, "source-finding prompts should not expose runtime JS by default");
+		assert.equal(singularSourceToolNames.includes("browser_navigate"), true, "find a source that... should route to the source-navigation pack");
+		assert.equal(ordinarySourceToolNames.includes("browser_navigate"), false, "ordinary page questions should stay on the current page");
+		assert.equal(ordinarySourceToolNames.includes("browser_click"), false, "ordinary page questions should still gate click tools");
+		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), false, "ordinary page questions should still gate runtime JS");
+		const missingNavigationRetryTools = missingToolRetryToolNamesForTest(
+			"browser_navigate",
+			"could you find a source that derives it from first principles?",
+			{},
+		);
+		for (const name of [
+			"browser_get_visible_text",
+			"browser_extract_content",
+			"browser_get_selection",
+			"browser_get_viewport_headings",
+			"browser_get_scroll_state",
+			"browser_list_tabs",
+			"browser_activate_tab",
+			"browser_navigate",
+			"browser_open_pdf_in_onhand_viewer",
+			"browser_find_elements",
+		]) {
+			assert.equal(missingNavigationRetryTools.includes(name), true, `missing navigation retry should include ${name}`);
+		}
+		assert.equal(
+			missingToolRetryToolNamesForTest("browser_run_js", "could you find a source that derives it from first principles?", {}).length,
+			0,
+			"missing-tool retry should not enable runtime JS for ordinary source prompts",
+		);
+		assert.equal(
+			findMissingKnownBrowserToolTraceForTest({
+				toolTraces: [
+					{
+						toolName: "browser_navigate",
+						state: "error",
+						error: "Tool failed.",
+						resultDetails: { error: { content: [{ type: "text", text: "Tool browser_navigate not found" }] } },
+					},
+				],
+			})?.toolName,
+			"browser_navigate",
+			"missing browser tool traces should be detected for retry",
+		);
 		assert.equal(teachingPageToolNames.includes("browser_highlight_text"), true, "page-level teaching prompts should expose source highlighting");
 		assert.equal(teachingPageToolNames.includes("browser_show_note"), true, "page-level teaching prompts should expose source notes");
 		for (const [label, toolNames] of [
@@ -2616,6 +2993,32 @@ async function assertConstitutionPromptContract() {
 				null,
 				"structured source markers should still allow section headings that include the item name",
 			);
+			const headingOnlyDerivationGuard = buildWeakStructuredHighlightTextGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				{ text: "Bayes Theorem and Model Posterior" },
+				"How does this page derive Bayes theorem?",
+			);
+			assert.equal(
+				headingOnlyDerivationGuard?.guardrail?.kind,
+				"weak_structured_highlight_text",
+				"derivation prompts should reject heading-only source markers",
+			);
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", headingOnlyDerivationGuard),
+				/only a heading|derivation\/proof\/explanation/i,
+				"heading-only derivation guard should ask for explanatory text under the heading",
+			);
+			assert.equal(
+				buildWeakStructuredHighlightTextGuardResultForTest(
+					"browser_highlight_text",
+					"highlight_text",
+					{ text: "Bayes theorem follows from the product rule for joint probabilities." },
+					"How does this page derive Bayes theorem?",
+				),
+				null,
+				"derivation prompts should allow explanatory sentence source markers",
+			);
 			assert.equal(
 				buildWeakStructuredHighlightTextGuardResultForTest(
 					"browser_highlight_text",
@@ -2771,7 +3174,17 @@ async function assertConstitutionPromptContract() {
 				null,
 				"explicit note requests should bypass the structured optional-note budget",
 			);
-			const thinTeachingReply = buildFinalAssistantReplyForTest(
+			const assertPreservesSubstantiveTerms = (label, input, request, terms, removedPatterns = []) => {
+				const output = sanitizeAssistantVisibleReplyForTest(input, request);
+				for (const pattern of removedPatterns) {
+					assert.doesNotMatch(output, pattern, `${label} should remove only the targeted visible artifact`);
+				}
+				for (const pattern of terms) {
+					assert.match(output, pattern, `${label} should preserve substantive answer content`);
+				}
+				return output;
+			};
+			const artifactOnlyTeachingReply = buildFinalAssistantReplyForTest(
 				"Let me start by reading the page content to find the best teaching passageI found the key explanatory passages.",
 				null,
 				{
@@ -2781,811 +3194,149 @@ async function assertConstitutionPromptContract() {
 							key: "highlight:onhand-source",
 							type: "annotation",
 							label: "Highlighted text",
-							citationText: "In Bayesian modeling, we want to be able to sample from the posterior of models given the data:",
-						},
-					],
-					toolTraces: [
-						...oneHighlightTeachingRequest.toolTraces,
-						{
-							toolName: "browser_extract_content",
-							state: "complete",
-							resultSummary:
-								"Readable content from Example:\nWenzel, Florian, Kevin Roth, and Sebastian Nowozin. \"How good is the bayes posterior in deep neural networks really?.\" ICML 2020.\nBut W* is just one model. There may be weight matrices W' != W* that achieve nearly the same likelihood.\nBayesian models sample from the posterior of models given the data.",
+							citationText: "Bayesian models sample from the posterior of models given the data.",
 						},
 					],
 				},
 			);
-			assert.doesNotMatch(thinTeachingReply, /Let me start|I found the key/i, "thin compact teaching replies should not leak process narration");
-			assert.doesNotMatch(thinTeachingReply, /ICML|How good is the bayes posterior/i, "thin compact teaching recovery should not use bibliography lines as support");
-			assert.match(thinTeachingReply, /posterior/i, "thin compact teaching replies should recover from the source highlight");
-			assert.match(thinTeachingReply, /weight matrices|same likelihood/i, "thin compact teaching replies should include a supporting source sentence when available");
-			assert.doesNotMatch(thinTeachingReply, /This keeps the first pass focused/, "recovered compact teaching replies should not add the removed compact footer");
-			const overbroadTeachingReply = [
+			assert.equal(
+				artifactOnlyTeachingReply,
+				"(No reply generated.)",
+				"tiny visible cleanup should not synthesize a replacement answer from hidden/source state after removing process-only text",
+			);
+			const broadTeachingReply = [
 				"Let me read more of the page to give you a thorough, grounded overview.",
-				"Now let me highlight the core passage that explains the Bayesian neural network idea.",
 				"This page is a lecture on Bayesian Deep Learning.",
 				"---",
 				"## Why go Bayesian?",
-				"Standard training finds one weight vector via MLE, but a Bayesian approach treats weights as random variables.",
-				"---",
+				"Standard training finds one weight vector via MLE, but a Bayesian approach treats weights as random variables. [1]",
 				"## The Bayesian setup",
 				"Posterior (via Bayes' theorem):",
 				"p(W | D) =",
 				"**Prediction** — integrate over possible weights:",
 				"$$p(y|x) = \\int p(y|x,W)p(W|D)dW$$",
 				"## How to sample from the posterior?",
-				"The lecture covers rejection sampling, Metropolis-Hastings, Hamiltonian Monte Carlo, and Stochastic Gradient MCMC.",
+				"The lecture covers rejection sampling, Metropolis-Hastings, Hamiltonian Monte Carlo, and Stochastic Gradient MCMC. [2]",
 				"Let me record the core concept:Want me to walk through Metropolis-Hastings next?",
 			].join("\n\n");
-			const sanitizedTeachingReply = buildFinalAssistantReplyForTest(overbroadTeachingReply, null, oneHighlightTeachingRequest);
-			assert.doesNotMatch(sanitizedTeachingReply, /Let me read|Now let me highlight|Let me record/i, "sanitizer should remove process narration and learning-state narration");
-			assert.doesNotMatch(sanitizedTeachingReply, /---/, "sanitizer should remove horizontal rule separators");
-			assert.doesNotMatch(sanitizedTeachingReply, /^p\(W \| D\) =$/m, "sanitizer should remove fragmented empty formula lines");
-			assert.doesNotMatch(sanitizedTeachingReply, /Prediction[^\n:]{0,160}:\s*(?:\n\n|$)/i, "sanitizer should remove dangling formula lead-ins after stripping display math");
-			assert.doesNotMatch(sanitizedTeachingReply, /Hamiltonian Monte Carlo|Stochastic Gradient MCMC/, "one-highlight broad teaching answers should be compacted before unsupported later sections");
-			assert.doesNotMatch(sanitizedTeachingReply, /This keeps the first pass focused/, "compacted teaching answers should not add the removed compact first-pass footer");
-			const shortRoadmapDriftReply = buildFinalAssistantReplyForTest(
-				[
-					"Great, I found the core content. Here's what it says about **Bayesian neural networks**:",
-					"",
-					"**The core idea** — Bayesian modeling treats weights as random variables and samples from the posterior distribution.",
-					"",
-					"**What this buys you** — Multiple weight samples let you see if different models disagree, giving a measure of uncertainty. The rest of the lecture then builds practical samplers (Metropolis-Hastings, Hamiltonian Monte Carlo, SG-MCMC) to draw these weight samples at scale.",
-					"",
-					"Later sections walk through MCMC samplers tailored for deep learning (Metropolis-Hastings proposals, MALA using gradients, Hamiltonian Monte Carlo for multi-step proposals, and Stochastic Gradient MCMC for scalability).",
-				].join("\n"),
-				null,
+			const sanitizedTeachingReply = assertPreservesSubstantiveTerms(
+				"lecture teaching answer",
+				broadTeachingReply,
 				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(shortRoadmapDriftReply, /Great, I found|Later sections|Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/, "compact first-pass answers with one highlight should drop process filler and unsupported later-section roadmaps even when short");
-			assert.match(shortRoadmapDriftReply, /Bayesian modeling treats weights as random variables/, "compact first-pass roadmap cleanup should preserve the supported core idea");
-			const bulkLectureRoadmapDriftReply = buildFinalAssistantReplyForTest(
 				[
-					"**The core idea** — Bayesian neural networks treat weights as random variables and sample from the posterior.",
-					"",
-					"**The challenge** — the bulk of the lecture covers how to sample from the posterior using MCMC methods (Metropolis-Hastings, Hamiltonian Monte Carlo, Stochastic Gradient MCMC).",
-					"",
-					"**Takeaway**: A Bayesian neural network learns a distribution over weights.",
-				].join("\n"),
-				null,
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(bulkLectureRoadmapDriftReply, /bulk of the lecture|Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/, "compact first-pass answers should drop unsupported roadmap tails introduced with bulk/remainder wording");
-			assert.match(bulkLectureRoadmapDriftReply, /posterior of models|posterior/i, "bulk-roadmap cleanup should preserve a source-supported core explanation");
-			const formulaNoisyFallbackReply = buildFinalAssistantReplyForTest("The highlighted passage captures the core idea.", null, {
-				...oneHighlightTeachingRequest,
-				toolTraces: [
-					...(oneHighlightTeachingRequest.toolTraces || []),
-					{
-						toolName: "browser_extract_content",
-						state: "complete",
-						resultSummary: [
-							"The likelihood of the data given the model is L(W,D)=N∏i=1p(yi|xi;W).",
-							"But W⋆ is just one model. There may be weight matrices W′≠W⋆ that achieve the same or nearly the same likelihood.",
-						].join("\n"),
-					},
+					/Bayesian Deep Learning/,
+					/Standard training finds one weight vector/,
+					/p\(W \| D\) =/,
+					/\\int p\(y\|x,W\)p\(W\|D\)dW/,
+					/Hamiltonian Monte Carlo/,
+					/Want me to walk through Metropolis-Hastings next\?/,
 				],
-			});
-			assert.doesNotMatch(formulaNoisyFallbackReply, /L\(W,D\)=|∏/, "compact fallback support should skip dense formula fragments");
-			assert.match(formulaNoisyFallbackReply, /weight matrices|weights/i, "compact fallback support should prefer explanatory prose about model weights");
-			const compactMathLeadInReply = buildFinalAssistantReplyForTest(
+				[/Let me read more/i, /Let me record the core concept/i, /^---$/m],
+			);
+			assert.equal(
+				shouldRecordFallbackOpenCheckForTest(oneHighlightTeachingRequest, sanitizedTeachingReply),
+				false,
+				"source-marker retry turns should not create fallback open checks",
+			);
+			assertPreservesSubstantiveTerms(
+				"API documentation answer",
 				[
-					"The true Bayesian prediction integrates over all possible weights:",
-					"$$p(y|x)=\\int p(y|x,W)p(W|D)dW$$",
-					"This is intractable directly. In practice, the page shows we approximate it by averaging sampled models:",
-					"$$\\hat p(y|x)=K^{-1}\\sum_k p(y|x,W_k)$$",
-					"Takeaway: use posterior samples instead of one point estimate.",
+					"Now I have the page content.",
+					"",
+					"## Fetch request flow",
+					"",
+					"| Step | Detail |",
+					"| --- | --- |",
+					"| Create request | Build a Request object or pass a URL. |",
+					"| Await response | Check `response.ok` before parsing JSON. |",
+					"",
+					"```js",
+					"const response = await fetch(url);",
+					"```",
+				].join("\n"),
+				null,
+				[/Fetch request flow/, /\| Create request \|/, /response\.ok/, /const response = await fetch\(url\);/],
+				[/Now I have the page content/i],
+			);
+			const mdnLiveStyleReply = assertPreservesSubstantiveTerms(
+				"live documentation answer",
+				[
+					"Let me create the highlights and notes for each stageHere's how the Fetch API request/response flow works, based on the page's structure:",
+					"",
+					"**1. Make a request** — Call `fetch(url)`.",
+					"**2. Promise fulfillment** — The browser receives the response status and headers before the body.",
+					"**3. Check the status** — Use `response.ok` or `response.status` before reading the body.",
+					"Want me to walk through any",
 				].join("\n\n"),
 				null,
-				oneHighlightTeachingRequest,
+				[/^Here's how the Fetch API request\/response flow works/m, /Call `fetch\(url\)`/, /response status and headers/, /response\.ok/],
+				[/Let me create the highlights/i, /Want me to walk through any/i],
 			);
-			assert.doesNotMatch(compactMathLeadInReply, /prediction integrates over all possible weights:\s*(?:\n\n|$)/i, "sanitizer should remove plain dangling prediction formula lead-ins");
-			assert.doesNotMatch(compactMathLeadInReply, /approximate it by averaging sampled models:\s*(?:\n\n|$)/i, "sanitizer should remove plain dangling approximation formula lead-ins");
-			assert.doesNotMatch(compactMathLeadInReply, /\$\$|\\int|\\sum/, "sanitizer should remove display math fragments from compact first-pass teaching replies");
-			assert.match(compactMathLeadInReply, /posterior samples|Core idea: In Bayesian modeling/i, "formula-heavy compact replies should preserve a prose explanation after dangling formula cleanup");
-			const malformedDisplayMathReply = buildFinalAssistantReplyForTest(
+			assert.doesNotMatch(mdnLiveStyleReply, /^(?:Let me|Want me)/im, "live documentation cleanup should not leave the process prefix or incomplete trailing prompt");
+			const midSentenceProcessReply = assertPreservesSubstantiveTerms(
+				"mid-sentence source planning answer",
 				[
-					"**How predictions work**: the Bayesian prediction for a new input is",
+					"This page teaches the comparison directly. Let me mark the key passages.Here's how the page compares the methods:",
 					"",
-					"$$\\",
+					"## Rejection sampling",
+					"Rejection sampling draws independent candidates and needs a global bound M.",
 					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
+					"## Metropolis-Hastings",
+					"Metropolis-Hastings uses a conditional Markov chain proposal and avoids that global M.",
 				].join("\n"),
 				null,
-				oneHighlightTeachingRequest,
+				[/This page teaches the comparison directly\. Here's how the page compares the methods:/, /Rejection sampling draws independent candidates/, /conditional Markov chain proposal/],
+				[/Let me mark the key passages/i],
 			);
-			assert.doesNotMatch(malformedDisplayMathReply, /\$\$|How predictions work/i, "sanitizer should remove malformed dangling display-math markers and their lead-ins");
-			const danglingMathDefinitionReply = buildFinalAssistantReplyForTest(
+			assert.doesNotMatch(midSentenceProcessReply, /passages\.Here's/i, "mid-sentence process cleanup should repair glued answer text");
+			assertPreservesSubstantiveTerms(
+				"news explainer answer",
 				[
-					"This page frames Bayesian modeling as sampling from the posterior:",
+					"Good, OK, Here's what the article says:",
 					"",
-					"$$p(W | D) = p(D | W)p(W)/p(D)$$",
-					"",
-					"where the prior p(W) is a standard Normal and the likelihood is the neural network classifier.",
-					"",
-					"### Why go Bayesian?",
-					"",
-					"- MLE gives one model, but many different weight matrices can give nearly the same likelihood.",
-					"",
-					"$$\\hat p(y|x)=K^{-1}\\sum_k p(y|x,W_k)$$",
-					"",
-					"where each W(k) is drawn from the posterior.",
-					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
+					"- The rule phases in during 2026, starting with large platforms.",
+					"- The enforcement section says civil penalties can apply after a warning period.",
+					"- A later paragraph says small businesses get a delayed deadline.",
 				].join("\n"),
 				null,
-				oneHighlightTeachingRequest,
+				[/large platforms/, /civil penalties/, /small businesses get a delayed deadline/],
+				[/^Good,\s*OK/i],
 			);
-			assert.doesNotMatch(danglingMathDefinitionReply, /^\s*where\b/im, "sanitizer should remove formula definition lines left after display-math stripping");
-			assert.doesNotMatch(danglingMathDefinitionReply, /posterior:\s*(?:\n|$)/i, "sanitizer should repair long formula lead-ins instead of leaving a dangling colon");
-			assert.match(danglingMathDefinitionReply, /sampling from the posterior\.|Core idea: In Bayesian modeling/i, "sanitizer should preserve a focused explanation after removing formula definition remnants");
-			const emptyHeadingAfterMathStripReply = buildFinalAssistantReplyForTest(
+			assertPreservesSubstantiveTerms(
+				"math derivation answer",
 				[
-					"## Core idea",
-					"Bayesian modeling samples from the posterior over models.",
+					"I'll first read the page content to find the derivation.",
+					"## Bayes from conditional probability",
 					"",
-					"## How prediction works",
-					"$$p(y|x)=\\int p(y|x,W)p(W|D)dW$$",
-					"",
-					"## Why bother?",
-					"It captures uncertainty across plausible models.",
+					"Start with p(A | B) = p(A and B) / p(B).",
+					"Because p(A and B) = p(B | A)p(A), substitute and get p(A | B) = p(B | A)p(A) / p(B).",
 				].join("\n"),
 				null,
-				oneHighlightTeachingRequest,
+				[/^## Bayes from conditional probability/m, /p\(A \| B\) = p\(A and B\) \/ p\(B\)/, /p\(B \| A\)p\(A\) \/ p\(B\)/],
+				[/I'll first read/i],
 			);
-			assert.doesNotMatch(emptyHeadingAfterMathStripReply, /How prediction works\s*(?:\n\n##|\n\nThis keeps|$)/i, "sanitizer should remove empty headings left after math stripping");
-			const danglingPreFooterReply = buildFinalAssistantReplyForTest(
+			assertPreservesSubstantiveTerms(
+				"comparison answer with a wide table",
 				[
-					"Core idea: Bayesian modeling samples from the posterior over models.",
+					"Here's how the page distinguishes them.",
 					"",
-					"**The page's main focus** — Since we cannot compute the posterior directly",
-					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
+					"| Feature | Rejection sampling | Metropolis-Hastings |",
+					"| --- | --- | --- |",
+					"| Proposal | Independent proposal distribution q(x). | Conditional Markov chain proposal q(x' | x_t). |",
+					"| Main issue | Needs a global bound M. | Still has rejection, but avoids the global M. |",
 				].join("\n"),
 				null,
-				oneHighlightTeachingRequest,
+				[/\| Feature \| Rejection sampling \| Metropolis-Hastings \|/, /Independent proposal distribution/, /Conditional Markov chain proposal/, /global bound M/],
 			);
-			assert.doesNotMatch(danglingPreFooterReply, /main focus|cannot compute the posterior directly/i, "sanitizer should remove dangling lines immediately before the compact teaching footer");
-			const danglingBoldPreFooterReply = buildFinalAssistantReplyForTest(
-				[
-					"Core idea: Bayesian modeling samples from the posterior over models.",
-					"",
-					"**What",
-					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
-				].join("\n"),
-				null,
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(danglingBoldPreFooterReply, /^\s*\*\*What\s*$/im, "sanitizer should remove dangling bold heading fragments immediately before the compact footer");
-			const orphanedMarkdownDelimiterReply = buildFinalAssistantReplyForTest(
-				[
-					"Core idea: Bayesian modeling samples from the posterior over models.",
-					"",
-					"**",
-					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
-				].join("\n"),
-				null,
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(orphanedMarkdownDelimiterReply, /^\s*\*\*\s*$/m, "sanitizer should remove orphaned Markdown delimiter lines");
-			const danglingEmptyLabelReply = buildFinalAssistantReplyForTest(
-				[
-					"Here is the roadmap:",
-					"",
-					"- **Lists** — methods and stacks.",
-					"- **Dictionaries** — key-value mappings.",
-					"",
-					"**Takeaway:**.",
-				].join("\n"),
-				null,
-				{ displayPrompt: "Give me a roadmap of the data structures on this page." },
-			);
-			assert.doesNotMatch(danglingEmptyLabelReply, /Takeaway:\*\*\./i, "sanitizer should remove final bold labels that have no content");
-			assert.match(danglingEmptyLabelReply, /Dictionaries.*key-value/is, "sanitizer should preserve the roadmap before the empty label");
-			const orphanedProcessFragmentReply = buildFinalAssistantReplyForTest(
-				"this introduces.Here's what this page says about the main idea.\n\nThe highlighted passage gives the core definition.",
-				null,
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(orphanedProcessFragmentReply, /^this introduces\./i, "sanitizer should remove orphaned lowercase process fragments left before the real answer");
-			assert.match(orphanedProcessFragmentReply, /Core idea: In Bayesian modeling/i, "sanitizer should recover a focused highlighted-source answer after removing orphaned fragments");
-			const duplicatedOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's the roadmap of data structures covered on this page — Here's the roadmap of sections covered on Python 3.14.6:\n\n- Lists\n- Tuples",
-				null,
-			);
-			assert.doesNotMatch(duplicatedOpeningReply, /roadmap of data structures covered on this page\s+[—-]\s+Here/i, "sanitizer should remove duplicated opening clauses");
-			assert.match(duplicatedOpeningReply, /^Here(?:'|’)s the roadmap of sections covered/i, "sanitizer should keep the more specific second opener");
-			const shortColonDuplicatedOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's the roadmap:Here's the roadmap of this page — **5. Data Structures** from the Python Tutorial:\n\n- Lists\n- Tuples",
-				null,
-			);
-			assert.doesNotMatch(shortColonDuplicatedOpeningReply, /roadmap:Here's the roadmap/i, "sanitizer should remove short glued colon duplicate openers");
-			assert.match(shortColonDuplicatedOpeningReply, /^Here(?:'|’)s the roadmap of this page/i, "sanitizer should preserve the specific second opener after short colon duplicate");
-			const sentenceDuplicatedOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's a roadmap of the data structures and techniques covered in this chapter. Here's the roadmap of **Chapter 5: Data Structures**:\n\n- Lists\n- Tuples",
-				null,
-			);
-			assert.doesNotMatch(sentenceDuplicatedOpeningReply, /Here's a roadmap of the data structures.*Here's the roadmap/is, "sanitizer should remove sentence-level duplicate openers");
-			assert.match(sentenceDuplicatedOpeningReply, /^Here(?:'|’)s the roadmap of \*\*Chapter 5/i, "sanitizer should keep the more specific second sentence opener");
-			const hereAreDuplicatedOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"Here are the main data structures covered on this page — Here's the roadmap of data structures covered on this page:\n\n- Lists\n- Tuples",
-				null,
-			);
-			assert.doesNotMatch(hereAreDuplicatedOpeningReply, /Here are the main data structures.*Here's the roadmap/is, "sanitizer should remove here-are to here's duplicate openers");
-			assert.match(hereAreDuplicatedOpeningReply, /^Here(?:'|’)s the roadmap of data structures/i, "sanitizer should keep the specific roadmap opener after here-are cleanup");
-			const colonDuplicatedOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's a roadmap of the data structures covered in **§5. Data Structures**:Here's the roadmap of **data structures** covered on this page, with highlights placed on each major section:\n\n- Lists\n- Tuples",
-				null,
-			);
-			assert.doesNotMatch(
-				colonDuplicatedOpeningReply,
-				/Here's a roadmap.*:Here's the roadmap/is,
-				"sanitizer should remove glued colon duplicate openers",
-			);
-			assert.match(colonDuplicatedOpeningReply, /^Here(?:'|’)s the roadmap of \*\*data structures\*\*/i, "sanitizer should keep the cleaner second opener after a glued colon duplicate");
-			const gluedBoldLabelOpeningReply = sanitizeAssistantVisibleReplyForTest(
-				"**1. What it is — central idea****2. How it works — second step**Here's the concise answer.\n\n**What it is** — useful context.",
-				null,
-			);
-			assert.doesNotMatch(gluedBoldLabelOpeningReply, /^\*\*1\./, "glued bold source labels should not remain before the real answer opening");
-			assert.match(gluedBoldLabelOpeningReply, /^Here(?:'|’)s the concise answer\./, "glued bold-label cleanup should preserve the real answer opening");
-			const incompleteTrailingItemReply = buildFinalAssistantReplyForTest(
-				[
-					"Here's the roadmap:",
-					"",
-					"**Core topics:**",
-					"- **Lists** — methods and common operations",
-					"- **The `del` statement** (5.2",
-				].join("\n"),
-				null,
-				{ displayPrompt: "Give me a roadmap of this page.", toolTraces: [] },
-			);
-			assert.doesNotMatch(incompleteTrailingItemReply, /The `del` statement|\*\*Core topics:\*\*\s*$/i, "sanitizer should remove incomplete trailing list items and orphan trailing headings");
-			const duplicatedRoadmapRestartReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"This page covers the following data structures as primary data types:",
-					"",
-					"**Core data types covered:**",
-					"1. **Lists** — methods and common operations",
-					"2. **Tuples** — immutable sequences",
-					"3. **Sets** — unordered collections with no duplicates",
-					"4. **Dictionaries** — key-value mappings",
-					"",
-					"**Related tools:**",
-					"5. **Looping techniques** — items, enumerate, zip, reversed, sorted",
-					"6. **Comparing sequences** — lexicographic orderingHere's the roadmap of what this Python Data Structures chapter covers:",
-					"",
-					"**Primary data types:**",
-					"- **Lists** — methods and common operations",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(duplicatedRoadmapRestartReply, /orderingHere|Here's the roadmap of what this/i, "sanitizer should remove duplicated mid-answer restarts");
-			assert.match(duplicatedRoadmapRestartReply, /Comparing sequences.*lexicographic ordering\./is, "sanitizer should preserve the first complete answer before the duplicated restart");
-			const duplicatedCompactRoadmapRestartReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's the roadmap of data structures and related techniques covered on this page:",
-					"",
-					"**Core data types covered:**",
-					"1. **Lists** — common methods and comprehensions",
-					"2. **Tuples** — immutable sequences",
-					"3. **Sets** — unordered collections with no duplicates",
-					"4. **Dictionaries** — key-value mappings",
-					"",
-					"**Other techniques covered:**",
-					"- **The `del` statement** — remove by index or slice",
-					"",
-					"Here's the compact roadmap of all 8 top-level sections:",
-					"",
-					"**Data structures covered:**",
-					"- **Lists** — methods, stacks, queues, list comprehensions",
-					"- **Dictionaries** — key-value mappings",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(duplicatedCompactRoadmapRestartReply, /compact roadmap|all 8 top-level sections|Data structures covered/is, "sanitizer should remove compact-roadmap restarts after a complete structured answer");
-			assert.match(duplicatedCompactRoadmapRestartReply, /Dictionaries.*key-value mappings/is, "sanitizer should keep the first structured roadmap before the compact restart");
-			const compactTeachingSubjectReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"**What the highlighted passage says:**",
-					"",
-					"- We want to **sample from the posterior** over weights given the training data.",
-					"- Each sampled weight matrix is **one plausible model**.",
-				].join("\n"),
-				{
-					displayPrompt: "Teach me what this page says about Bayesian neural networks.",
-					toolTraces: [
-						{
-							toolName: "browser_highlight_text",
-							state: "complete",
-							resultSummary: "Highlighted text: In Bayesian modeling, we want to be able to sample from the posterior of models given the data.",
-						},
-					],
-				},
-			);
-			assert.match(compactTeachingSubjectReply, /Bayesian neural networks/i, "compact teaching replies should preserve the user's requested topic label");
-			const danglingDashReply = sanitizeAssistantVisibleReplyForTest("The page uses a standard Gaussian prior for $W$ —", {
-				displayPrompt: "What prior does this page use?",
-			});
-			assert.equal(danglingDashReply, "The page uses a standard Gaussian prior for $W$.", "sanitizer should close short answers that end in a dangling dash");
-			const nestedListRenumberedReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"1. **Lists** — mutable sequences",
-					" - list methods",
-					" - list comprehensions",
-					"1. **Tuples** — immutable sequences",
-					"2. **Sets** — unordered collections",
-				].join("\n"),
-				{ displayPrompt: "Give me a roadmap of this page." },
-			);
-			assert.match(nestedListRenumberedReply, /1\. \*\*Lists\*\*[\s\S]*2\. \*\*Tuples\*\*[\s\S]*3\. \*\*Sets\*\*/i, "top-level ordered list numbering should not reset after nested bullets");
-			const duplicatedPageCoversRestartReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's the roadmap of data structures covered on this page:",
-					"",
-					"1. **Lists** — methods and common operations.",
-					"2. **Tuples** — immutable sequences.",
-					"3. **Sets** — unordered collections.",
-					"4. **Dictionaries** — key-value mappings.",
-					"",
-					"**Additional sections** on looping techniques, conditions, and comparing sequences round out the chapter.The page covers these **data structures**:",
-					"",
-					"- **Lists** — mutable ordered sequences.",
-					"- **Tuples** — immutable sequences.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(duplicatedPageCoversRestartReply, /chapter\.The page covers these|The page covers these \*\*data structures\*\*/i, "sanitizer should remove duplicated mid-answer page-covers restarts");
-			assert.match(duplicatedPageCoversRestartReply, /round out the chapter\./i, "sanitizer should preserve the first complete answer before the page-covers restart");
-			const duplicatedChapterCoversRestartReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's the roadmap of data structures covered on this page:",
-					"",
-					"**Core data structures:**",
-					"- **Lists** — mutable sequences.",
-					"- **Tuples** — immutable sequences.",
-					"- **Sets** — unordered collections.",
-					"- **Dictionaries** — key-value mappings.",
-					"",
-					"**Supporting techniques:**",
-					"- **Looping techniques** — items, enumerate, zip.",
-					"- **Comparing sequences** — lexicographic ordering.",
-					"",
-					"The chapter covers **four core data structures** plus supporting technique sections:",
-					"",
-					"### Core data structures",
-					"- **Lists** — list methods and stacks.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(duplicatedChapterCoversRestartReply, /The chapter covers \*\*four core data structures|### Core data structures/i, "sanitizer should remove duplicated chapter-covers roadmap restarts");
-			assert.match(duplicatedChapterCoversRestartReply, /Supporting techniques/i, "sanitizer should preserve the first compact roadmap before a duplicate recap");
-			const redundantHighlightRecapReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's the roadmap of data structures covered on this page:",
-					"",
-					"**Core data structures covered:**",
-					"1. **Lists** — methods and common operations.",
-					"2. **Tuples** — immutable sequences.",
-					"3. **Sets** — unordered collections with no duplicates.",
-					"4. **Dictionaries** — key-value mappings.",
-					"",
-					"**Supporting topics:**",
-					"- **Looping techniques** — items, enumerate, zip.",
-					"- **Comparing sequences** — lexicographic ordering.",
-					"",
-					"You can see the major data structure sections highlighted on the page:",
-					"",
-					"- **Lists** — methods and common operations.",
-					"- **Tuples** — immutable sequences.",
-					"- **Sets** — unordered collections.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(redundantHighlightRecapReply, /You can see the major data structure sections|highlighted on the page/i, "sanitizer should remove redundant highlighted-section recaps after a complete structured answer");
-			assert.match(redundantHighlightRecapReply, /Comparing sequences.*lexicographic ordering\./is, "sanitizer should preserve the complete structured answer before a redundant source-marker recap");
-			const roadmapAtGlanceRecapReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's the roadmap of this page.",
-					"",
-					"- **Lists** — mutable sequences.",
-					"- **Tuples** — immutable sequences.",
-					"- **Sets** — unordered collections.",
-					"- **Dictionaries** — key-value mappings.",
-					"",
-					"The page roadmap at a glance. Highlighted sections on the page:",
-					"",
-					"1. **Lists** (§5.1) — list methods.",
-					"2. **Tuples** (§5.3) — immutable sequences.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(roadmapAtGlanceRecapReply, /roadmap at a glance|Highlighted sections on the page/i, "sanitizer should remove roadmap-at-a-glance source recap duplicates");
-			assert.match(roadmapAtGlanceRecapReply, /Dictionaries.*key-value/is, "sanitizer should keep the first compact roadmap before a roadmap-at-a-glance recap");
-			const pagePossessiveRoadmapRecapReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's a roadmap of the data structures covered on the page:",
-					"",
-					"- **Lists** — methods, stacks, queues, and comprehensions.",
-					"- **Tuples** — immutable sequences.",
-					"- **Sets** — unordered collections.",
-					"- **Dictionaries** — key-value mappings.",
-					"",
-					"The page's roadmap (all sections):",
-					"",
-					"- **Lists** — methods and common operations.",
-					"- **Tuples** — immutable ordered collections.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(pagePossessiveRoadmapRecapReply, /The page's roadmap|all sections/i, "sanitizer should remove possessive page-roadmap duplicate recaps");
-			assert.match(pagePossessiveRoadmapRecapReply, /Dictionaries.*key-value/is, "sanitizer should keep the first roadmap before a possessive recap");
-			const sentenceHighlightRecapReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"Here's a roadmap of the data structures and related topics covered:",
-					"",
-					"1. **Lists** — methods and stacks.",
-					"2. **Tuples** — immutable sequences.",
-					"3. **Sets** — unordered collections.",
-					"4. **Dictionaries** — key-value mappings.",
-					"",
-					"The highlights on the page mark the four core data structures. The rest of the sections cover practical techniques for working with them.",
-				].join("\n"),
-				null,
-			);
-			assert.doesNotMatch(sentenceHighlightRecapReply, /The highlights on the page mark/i, "sanitizer should remove sentence-style highlight recap duplicates");
-			assert.match(sentenceHighlightRecapReply, /Dictionaries.*key-value/is, "sanitizer should preserve the structured roadmap before a sentence-style recap");
-			const sourceScopedRoadmapReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"This page covers **eight main sections** on Python data structures. Here's the roadmap:",
-					"",
-					"1. **More on Lists** — list methods and common list patterns",
-					"2. **The `del` statement** — removing items by index or slice",
-					"3. **Tuples and Sequences** — immutable sequence data",
-					"4. **Sets** — unordered collections with no duplicates",
-					"5. **Dictionaries** — key-value mappings",
-					"6. **Looping Techniques** — items(), enumerate(), zip()",
-					"7. **More on Conditions** — membership and identity checks",
-					"8. **Comparing Sequences and Other Types** — lexicographic ordering",
-					"",
-					"**Section** | **What it covers**",
-					"--: | --",
-					"**5.6 Looping Techniques** | Using items(), enumerate(), and zip()",
-				].join("\n"),
-				{
-					displayPrompt: "Give me a roadmap of the data structures covered on this page.",
-					pageActions: [
-						{ key: "highlight:lists", type: "annotation", label: "Highlighted text", citationText: "More on Lists" },
-						{ key: "highlight:del", type: "annotation", label: "Highlighted text", citationText: "del statement" },
-						{ key: "highlight:tuples", type: "annotation", label: "Highlighted text", citationText: "Tuples and Sequences" },
-						{ key: "highlight:sets", type: "annotation", label: "Highlighted text", citationText: "5.4. Sets" },
-						{ key: "highlight:dictionaries", type: "annotation", label: "Highlighted text", citationText: "Dictionaries are associative arrays" },
-					],
-				},
-			);
-			assert.doesNotMatch(sourceScopedRoadmapReply, /Looping Techniques|More on Conditions|Comparing Sequences|Section\s*\|/i, "structured roadmap sanitizer should drop unhighlighted named items and pipe-table duplicates");
-			assert.match(sourceScopedRoadmapReply, /Lists[\s\S]*Dictionaries/i, "structured roadmap sanitizer should keep highlighted roadmap items");
-			const gluedHeadingTeachingReply = [
-				'The page title says "Bayesian Deep Learning: Markov Chain Monte Carlo & Hamiltonian Monte Carlo" — that is a big topic. It covers Bayesian Deep Learning with a focus on MCMC and Hamiltonian Monte Carlo for sampling neural network weights. ### The Core Idea Instead of finding one best set of weights, Bayesian neural networks treat every possible weight configuration as a hypothesis.',
-				"### How Prediction Works The Bayesian model's prediction is an integral over possible weights, which is intractable.",
-				"### The Posterior via Bayes Theorem The posterior over weights comes from Bayes theorem and combines the likelihood with the prior.",
-				"### Why Bother? The MLE gives just one model, but other models may have similar likelihood.",
-			].join("\n\n");
-			const sanitizedGluedTeachingReply = buildFinalAssistantReplyForTest(gluedHeadingTeachingReply, null, oneHighlightTeachingRequest);
-			assert.doesNotMatch(
-				sanitizedGluedTeachingReply,
-				/weights\.[ \t]+###|The Core Idea Instead|How Prediction Works The|Bayes Theorem The|Why Bother\? The/,
-				"sanitizer should split glued markdown headings from surrounding prose",
-			);
-			assert.doesNotMatch(
-				sanitizedGluedTeachingReply,
-				/The Posterior via Bayes Theorem|Why Bother|Bayes theorem/i,
-				"one-highlight broad teaching answers with glued headings should still be compacted before unsupported later sections",
-			);
-			assert.doesNotMatch(sanitizedGluedTeachingReply, /This keeps the first pass focused/, "glued-heading broad teaching answers should not add the removed compact footer");
-			const tableRoadmapTeachingReply = [
-				"## What this page says about Bayesian neural networks The page frames Bayesian deep learning around a core problem: a standard neural network trained via MLE gives you only one weight configuration, but other weight configurations may fit the data almost as well.",
-				"### The Bayesian setup Instead of finding a single best model, you want to sample from the posterior distribution over weights.",
-				"### How prediction works The Bayesian prediction averages over sampled models from that posterior.",
-				"### The practical challenge The hard part is drawing those samples. | Method | Key idea | |--------|----------| | **Rejection sampling** | Conceptually simple but impractical in high dimensions | | **Metropolis-Hastings** | Uses a Markov chain proposal | | **Hamiltonian Monte Carlo (HMC)** | Uses gradients to take multiple informed steps | | **Stochastic Gradient MCMC** | Scales by using mini-batches |",
-			].join("\n\n");
-			const sanitizedTableRoadmapTeachingReply = buildFinalAssistantReplyForTest(tableRoadmapTeachingReply, null, {
-				...oneHighlightTeachingRequest,
-				toolTraces: [
-					{
-						toolName: "browser_highlight_text",
-						state: "complete",
-						resultSummary: "Highlighted text: In Bayesian modeling, we want to be able to sample from the posterior of models given the data. annotationId: onhand-1",
-					},
-					{
-						toolName: "browser_highlight_text",
-						state: "complete",
-						resultSummary: "Highlighted text: In practice, we will sample a few models i.i.d. annotationId: onhand-2",
-					},
-				],
-			});
-			assert.doesNotMatch(
-				sanitizedTableRoadmapTeachingReply,
-				/[^\n][ \t]+#{2,4}[ \t]+|\|\s*Method\s*\|/,
-				"live-style teaching replies should not keep inline headings or Markdown tables",
-			);
-			assert.doesNotMatch(
-				sanitizedTableRoadmapTeachingReply,
-				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/,
-				"first-pass teaching replies should drop unsupported sampling-method roadmaps when only core Bayesian passages were highlighted",
-			);
-			assert.doesNotMatch(sanitizedTableRoadmapTeachingReply, /This keeps the first pass focused/, "table roadmap teaching replies should not add the removed compact first-pass footer");
-			const malformedSidebarTableReply = [
-				"Flexbox — what this page says",
-				"",
-				"**Flexbox** was designed for one-dimensional layout. **Grid** was designed for two-dimensional layout.",
-				"",
-				"### Summary",
-				"|",
-				"| **Flexbox** | **Grid** |",
-				"|---|---|---|",
-				"| **Dimension** | 1D (row **or** column) | 2D (rows **and** columns) |",
-				"| **Approach** | Content-out | Layout-in |",
-			].join("\n");
-			const sanitizedMalformedSidebarTableReply = buildFinalAssistantReplyForTest(malformedSidebarTableReply, null, {
-				displayPrompt: "Compare CSS Grid and Flexbox on this page.",
-			});
-			assert.doesNotMatch(
-				sanitizedMalformedSidebarTableReply,
-				/^\s*\|.+\|\s*$/m,
-				"malformed Markdown tables should not survive visible-reply sanitization",
-			);
-			assert.match(
-				sanitizedMalformedSidebarTableReply,
-				/- \*\*Dimension\*\*: \*\*Flexbox\*\*: 1D .* \*\*Grid\*\*: 2D/is,
-				"malformed Markdown tables should become compact labeled bullets instead of being dropped",
-			);
-			const sanitizedAspectTableArtifactReply = buildFinalAssistantReplyForTest(
-				[
-					"Here's the comparison.",
-					"",
-					"- Proposal: Aspect: Fixed q(x); Rejection Sampling: Markov chain q(x_t+1 | x_t); Metropolis-Hastings: depends on current state",
-					"- Key constant: Aspect: Global M; Rejection Sampling: No global constant; Metropolis-Hastings: per-step ratio",
-					"",
-					"The takeaway is that Metropolis-Hastings removes the global constant M.",
-				].join("\n"),
-				null,
-				{ displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page." },
-			);
-			assert.doesNotMatch(
-				sanitizedAspectTableArtifactReply,
-				/Aspect:\s+/,
-				"comparison replies should drop malformed table-conversion bullets that expose header labels as content",
-			);
-			assert.match(
-				sanitizedAspectTableArtifactReply,
-				/Metropolis-Hastings removes the global constant M/,
-				"table-artifact cleanup should preserve surrounding explanatory prose",
-			);
-			const sanitizedOrdinalHighlightReply = buildFinalAssistantReplyForTest(
-				[
-					"**Rejection sampling** (first highlight) is difficult in high-dimensional domains.",
-					"",
-					"**Metropolis-Hastings** (second highlight, with note) gets rid of the problematic constant M.",
-					"",
-					"**The practical trade-off** (third highlight): MH still has a high rejection rate.",
-				].join("\n"),
-				null,
-				{ displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page." },
-			);
-			assert.doesNotMatch(
-				sanitizedOrdinalHighlightReply,
-				/\((?:first|second|third)\s+highlight/i,
-				"visible replies should not mention ordinal highlight numbers that can drift from actual source markers",
-			);
-			assert.match(sanitizedOrdinalHighlightReply, /gets rid of the problematic constant M/, "ordinal highlight cleanup should preserve answer content");
-			const sanitizedMarkedStatusReply = buildFinalAssistantReplyForTest(
-				"Here's the roadmap of data structures on this page — I've marked each section:\n\n1. **Lists** — Methods and comprehensions\n2. **Sets** — Unordered collections",
-				null,
-				{ displayPrompt: "Give me a roadmap of the data structures covered on this page." },
-			);
-			assert.doesNotMatch(
-				sanitizedMarkedStatusReply,
-				/I(?:'ve| have)\s+(?:marked|highlighted)/i,
-				"visible replies should not narrate source-marker status",
-			);
-			assert.match(sanitizedMarkedStatusReply, /Here's the roadmap of data structures on this page:/, "marker-status cleanup should preserve the answer lead-in");
-			const sanitizedEachHighlightedReply = buildFinalAssistantReplyForTest(
-				"Here's the roadmap.\n\n- Lists\n- Sets\n\nEach section is highlighted on the page — scroll to any one to dive deeper.",
-				null,
-				{ displayPrompt: "Give me a roadmap of the data structures covered on this page." },
-			);
-			assert.doesNotMatch(
-				sanitizedEachHighlightedReply,
-				/Each section is highlighted|scroll to any one/i,
-				"visible replies should not include highlight-status recap sentences",
-			);
-			const emptyCitationParenthesesReply = buildFinalAssistantReplyForTest(
-				"**Dimension control** ()\n\nFlexbox is one-dimensional; Grid is two-dimensional.\n\n**Decision rule** ()\n\nUse Flexbox for row-or-column layout and Grid for row-and-column layout.",
-				null,
-				{ displayPrompt: "Compare CSS Grid and Flexbox on this page." },
-			);
-			assert.doesNotMatch(
-				emptyCitationParenthesesReply,
-				/\*\*[^*\n]+\*\*\s+\(\)/,
-				"empty source-marker parentheses should not remain visible in sidebar headings",
-			);
-			const inlineHighlightLabelReply = buildFinalAssistantReplyForTest(
-				"> Highlighted: *\"Grid was designed for two-dimensional layout.\"*\n\n> Source highlight: *\"Flexbox works from the content out.\"*",
-				null,
-				{ displayPrompt: "Compare CSS Grid and Flexbox on this page." },
-			);
-			assert.doesNotMatch(
-				inlineHighlightLabelReply,
-				/Highlighted\s*:|Source\s+highlight\s*:/i,
-				"visible answers should not narrate source-marker labels inline; the Sources UI already does that",
-			);
-			assert.match(inlineHighlightLabelReply, /> \*"Grid was designed/i);
-			const inlineHighlightedOnPageLabelReply = buildFinalAssistantReplyForTest(
-				"**1. Dimensional focus** — *Highlighted on page*\n\nFlexbox is one-dimensional; Grid is two-dimensional.",
-				null,
-				{ displayPrompt: "Compare CSS Grid and Flexbox on this page." },
-			);
-			assert.doesNotMatch(inlineHighlightedOnPageLabelReply, /Highlighted on page/i, "visible answers should not include inline highlighted-on-page labels");
-			assert.match(inlineHighlightedOnPageLabelReply, /Dimensional focus/, "highlighted-on-page label cleanup should preserve the surrounding content");
-			const pluralHighlightNumberReply = buildFinalAssistantReplyForTest(
-				"**Why Fetch?** — Fetch is promise-based and integrated with modern web features. **\n\n**Basic call pattern** — Call `fetch(url, options)`. *(highlights 2 & 3)*",
-				null,
-				{ displayPrompt: "Teach me what this page says about using Fetch." },
-			);
-			assert.doesNotMatch(pluralHighlightNumberReply, /highlights?\s*\d|\.\s+\*\*(?:\s|$)/i, "visible answers should remove plural highlight-number labels and dangling bold markers");
-			assert.match(pluralHighlightNumberReply, /Basic call pattern/, "highlight-number cleanup should preserve the surrounding answer text");
-			const missingHighlightTailReply = buildFinalAssistantReplyForTest(
-				[
-					"**What it is** — Photosynthesis converts sunlight into chemical energy.",
-					"",
-					"**Where it happens** — Chloroplast thylakoids host the light reactions.",
-					"",
-					"**Calvin cycle** — Though a separate highlight couldn't be placed, the page describes RuBisCO fixing CO2.",
-					"",
-					"**Efficiency and factors** — The page lists light, water, CO2, and temperature.",
-				].join("\n"),
-				null,
-				{
-					displayPrompt: "Teach me what this page says about photosynthesis.",
-					toolTraces: [
-						{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Photosynthesis changes sunlight into chemical energy." },
-						{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: thylakoids are the site of photosynthesis." },
-					],
-				},
-			);
-			assert.doesNotMatch(missingHighlightTailReply, /couldn't be placed|Calvin cycle|Efficiency and factors/i, "sanitizer should remove unsupported tails after missing-highlight status narration");
-			assert.match(missingHighlightTailReply, /Photosynthesis changes sunlight|thylakoids are the site/i, "sanitizer should preserve source-backed content before the missing-marker tail");
-			const unsupportedRoadmapParagraphReply = buildFinalAssistantReplyForTest(
-				[
-					"Here's the roadmap of data structures covered in this chapter:",
-					"",
-					"**Lists** — the core mutable sequence type, with methods such as append and pop.",
-					"",
-					"**Tuples** — another standard sequence data type, covered under tuples and sequences.",
-					"",
-					"**Sets** — an unordered collection with no duplicate elements.",
-					"",
-					"**Dictionaries** — a mapping type indexed by keys rather than numeric positions.",
-					"",
-					"The chapter also includes practical sections on looping techniques, conditions, and comparing sequences.",
-				].join("\n"),
-				null,
-				{
-					displayPrompt: "Give me a roadmap of the data structures on this page.",
-					toolTraces: [
-						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "The list data type has some more methods."' },
-						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "There is also another standard sequence data type: the tuple."' },
-						{ toolName: "browser_highlight_text", state: "complete", resultSummary: 'Highlighted "Python also includes a data type for sets."' },
-					],
-				},
-			);
-			assert.match(unsupportedRoadmapParagraphReply, /Lists|Tuples|Sets/i, "structured sanitizer should keep source-backed roadmap paragraphs");
-			assert.doesNotMatch(
-				unsupportedRoadmapParagraphReply,
-				/Dictionaries|looping techniques|conditions|comparing sequences/i,
-				"structured sanitizer should remove bold-labeled and tail roadmap items without successful source highlights",
-			);
-			const danglingDollarReply = sanitizeAssistantVisibleReplyForTest(
-				'The page explains SG-MCMC and cold posteriors.\n\n- **Metropolis-Hastings** uses a Markov chain proposal.\n- **SG-MCMC** scales with mini-batches and cold posterior temperatures $T',
-				null,
-			);
-			assert.doesNotMatch(danglingDollarReply, /\$T\s*$/m, "sanitizer should remove incomplete trailing lines with unmatched inline math");
-			assert.match(danglingDollarReply, /Metropolis-Hastings/, "sanitizer should preserve complete preceding lines when trimming a dangling math line");
-			const liveMcmcRoadmapTeachingReply = [
-				"## Bayesian Neural Networks – What This Page Covers This lecture introduces Bayesian deep learning through the lens of sampling rather than a single best set of weights. Here's the core idea:",
-				"### The Problem with Standard Training A standard neural network finds one weight configuration via MLE. But there may be many weight matrices that fit the data equally well.",
-				"### The Bayesian Approach Instead of one W, the page says we want to sample from the posterior. Each sampled W is one model.",
-				"### How prediction works Since integrating over all possible weights is intractable, you approximate it by averaging over K samples.",
-				"### How to Sample? MCMC The page then spends the rest of the lecture on sampling techniques — the real challenge. It builds up from: 1. **Rejection sampling** 2. **Metropolis-Hastings** 3. **Hamiltonian Monte Carlo (HMC)** 4. **Stochastic Gradient MCMC**",
-				"### Key Takeaway Bayesian deep learning replaces one point estimate with a distribution over weights.",
-			].join("\n\n");
-			const sanitizedLiveMcmcRoadmapTeachingReply = buildFinalAssistantReplyForTest(liveMcmcRoadmapTeachingReply, null, oneHighlightTeachingRequest);
-			assert.doesNotMatch(
-				sanitizedLiveMcmcRoadmapTeachingReply,
-				/[^\n][ \t]+#{2,4}[ \t]+|How to Sample\? MCMC|Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/,
-				"live-style first-pass teaching replies should not retain unsupported MCMC roadmap sections or inline headings",
-			);
-			assert.match(sanitizedLiveMcmcRoadmapTeachingReply, /The Bayesian Approach|posterior/i, "live-style compaction should preserve the core posterior explanation");
-			const liveLeakyTeachingReply = sanitizeAssistantVisibleReplyForTest(
-				"Let me locate and highlight the core Bayesian neural network definition from the page.\n\nThe page is scrolled partway down.\n\nNow I can see the exact visible text.\n\nHere's what this lecture page teaches about Bayesian neural networks.",
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(liveLeakyTeachingReply, /Let me locate|page is scrolled|Now I can see/i, "sanitizer should remove live process narration variants");
-			assert.match(liveLeakyTeachingReply, /Core idea: In Bayesian modeling/, "sanitizer should recover a focused highlighted-source answer after removing live process narration variants");
-			const gluedSourceMarkerNarrationReply = sanitizeAssistantVisibleReplyForTest(
-				"Let me add durable source markers for the key top-level sectionsHere's the roadmap:\n\n- Lists\n- Dictionaries",
-				null,
-			);
-			assert.doesNotMatch(gluedSourceMarkerNarrationReply, /Let me add durable source markers/i, "sanitizer should remove glued source-marker process narration");
-			assert.match(gluedSourceMarkerNarrationReply, /^Here's the roadmap:/i, "sanitizer should preserve the answer after removing glued source-marker narration");
-			const putSourceMarkerNarrationReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's the roadmap. Let me put a source marker on the table of contents.\n\n- Lists\n- Dictionaries",
-				null,
-			);
-			assert.doesNotMatch(putSourceMarkerNarrationReply, /put a source marker/i, "sanitizer should remove put-source-marker process narration");
-			const coupleSourceMarkerNarrationReply = sanitizeAssistantVisibleReplyForTest(
-				"Here is the roadmap.\n\nLet me add a couple of source markers on the page for the main sections.\n\n- Lists\n- Dictionaries\n\nI've highlighted each top-level section for quick reference.",
-				null,
-			);
-			assert.doesNotMatch(coupleSourceMarkerNarrationReply, /add a couple of source markers|I've highlighted/i, "sanitizer should remove source-marker status narration");
-			const thinHighlightedPassageShellReply = sanitizeAssistantVisibleReplyForTest(
-				[
-					"## What this page teaches",
-					"",
-					"The highlighted passage captures the core idea:",
-					"",
-					"This keeps the first pass focused. Ask for a section-by-section walkthrough to expand it.",
-				].join("\n"),
-				oneHighlightTeachingRequest,
-			);
-			assert.match(thinHighlightedPassageShellReply, /Core idea: In Bayesian modeling/, "thin highlighted-passage shells should recover from the source highlight text");
-			const markPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"Now let me mark the key teaching passage on the page.\n\nHere's what this lecture page teaches about Bayesian neural networks.",
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(markPreambleReply, /let me mark|mark the key/i, "sanitizer should remove mark-planning preambles");
-			assert.match(markPreambleReply, /Core idea: In Bayesian modeling/, "sanitizer should recover a focused highlighted-source answer after removing a mark preamble");
-			const pageContentProcessReply = sanitizeAssistantVisibleReplyForTest(
-				"Now I have the page content.\n\n**1D vs 2D layout** — Flexbox is one-dimensional; Grid is two-dimensional.",
-				null,
-			);
-			assert.doesNotMatch(pageContentProcessReply, /Now I have the page content/i, "sanitizer should remove page-content process narration");
-			assert.match(pageContentProcessReply, /1D vs 2D layout/, "sanitizer should preserve the actual answer after removing page-content process narration");
-			const visibleSnapshotProcessReply = sanitizeAssistantVisibleReplyForTest(
-				"The visible snapshot shows the title and reading list, but\n\nHere's what this lecture page covers about Bayesian neural networks.",
-				null,
-			);
-			assert.doesNotMatch(visibleSnapshotProcessReply, /visible snapshot shows/i, "sanitizer should remove visible-snapshot process narration");
-			assert.match(visibleSnapshotProcessReply, /^Here's what this lecture page covers/i, "sanitizer should preserve the answer after visible-snapshot process narration");
-			const okFillerReply = sanitizeAssistantVisibleReplyForTest(
-				"Good, OK, Here's what the page shows:\n\nRejection sampling uses a prior-like proposal and rejects many samples.",
-				null,
-			);
-			assert.doesNotMatch(okFillerReply, /^Good,\s*OK/i, "sanitizer should remove stacked acknowledgement filler");
-			assert.match(okFillerReply, /^Here's what the page shows/m, "sanitizer should preserve the comparison answer after filler removal");
-			const liveComparisonFillerReply = sanitizeAssistantVisibleReplyForTest(
-				"Good. The page lays this out clearly.\n\nHere's how the page distinguishes them.\n\nRejection sampling needs a large constant M; Metropolis-Hastings uses a Markov chain proposal.",
-				null,
-			);
-			assert.doesNotMatch(liveComparisonFillerReply, /^(Good|The page lays this out clearly)/i, "sanitizer should remove live comparison filler openers");
-			assert.match(liveComparisonFillerReply, /^Here's how the page distinguishes/m, "sanitizer should preserve the substantive comparison after filler removal");
 			const failedHighlightProcessReply = buildFinalAssistantReplyForTest(
-				"Now let me get the visible text for the rejection sampling section to find exact wording for highlights.Good — the visible text has the key comparison material.",
+				"Now let me get the visible text for the section to find exact wording for highlights.Good — the visible text has the key material.",
 				new Error("Onhand could not create a source highlight after several attempts."),
 				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(
-				failedHighlightProcessReply,
-				/let me get|visible text has|Good/i,
-				"failed highlight replies should not expose source-planning narration",
 			);
 			assert.match(
 				failedHighlightProcessReply,
 				/^Error: Onhand could not create a source highlight after several attempts\.$/,
-				"failed highlight replies should collapse to the actionable error when only process text was drafted",
+				"failed turns with only process text should collapse to the actionable error",
 			);
 			const abortedNavigationLoopReply = buildFinalAssistantReplyForTest(
 				[
@@ -3598,113 +3349,12 @@ async function assertConstitutionPromptContract() {
 				new Error("Request was aborted."),
 				oneHighlightTeachingRequest,
 			);
-			assert.doesNotMatch(
-				abortedNavigationLoopReply,
-				/4% scrolled|dedicated sections|slide-based|let me navigate|scrollable/i,
-				"aborted navigation-loop replies should not expose process narration",
-			);
 			assert.match(abortedNavigationLoopReply, /^Error: Request was aborted\.$/, "aborted navigation-loop replies should collapse to the actual error");
-			const firstReadPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"I'll first read the page content to find the sections on these two methods.## Rejection Sampling vs. Metropolis-Hastings\n\nRejection sampling needs a global bound M.",
-				null,
-			);
-			assert.doesNotMatch(firstReadPreambleReply, /I'll first read/i, "sanitizer should remove first-person read-plan preambles");
-			assert.match(firstReadPreambleReply, /^## Rejection Sampling/m, "sanitizer should preserve the answer heading after removing a glued preamble");
-			const capturePreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"Here's how the page presents the two methods. Let me capture the key comparison points.Here's how the page compares rejection sampling and Metropolis-Hastings.",
-				null,
-			);
-			assert.doesNotMatch(capturePreambleReply, /Let me capture|page presents/i, "sanitizer should remove capture-plan and generic page-presentation preambles");
-			assert.match(capturePreambleReply, /^Here's how the page compares/m, "sanitizer should preserve the substantive comparison answer");
-			const sourceHighlightPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"I'll create source highlights for the key comparison points on the page.Here's what the page teaches about both methods and how they relate.",
-				null,
-			);
-			assert.doesNotMatch(sourceHighlightPreambleReply, /create source highlights/i, "sanitizer should remove source-highlight planning preambles");
-			assert.match(sourceHighlightPreambleReply, /^Here's what the page teaches/m, "sanitizer should preserve the answer after source-highlight preamble removal");
-			const focusedSourceHighlightPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"Now let me add two focused source highlights that directly compare the methods.Here's the comparison from this lecture page.",
-				null,
-			);
-			assert.doesNotMatch(focusedSourceHighlightPreambleReply, /let me add|source highlights/i, "sanitizer should remove numbered/adjectival source-highlight planning preambles");
-			assert.match(focusedSourceHighlightPreambleReply, /^Here's the comparison/m, "sanitizer should preserve the answer after focused source-highlight preamble removal");
-			const fillerPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"The posterior is introduced in the Bayesian models section. Good point.\n\nIt then appears as a formula later.",
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(fillerPreambleReply, /Good point/i, "sanitizer should remove conversational filler that leaks into final answers");
-			const learningSessionPreambleReply = sanitizeAssistantVisibleReplyForTest(
-				"Now for this learning session.\n\nThe key idea (): Bayesian neural networks sample weights from the posterior.",
-				null,
-			);
-			assert.doesNotMatch(learningSessionPreambleReply, /Now for this learning session|\(\)/i, "sanitizer should remove learning-session preambles and empty source-marker parentheses");
-			assert.match(learningSessionPreambleReply, /sample weights from the posterior/, "sanitizer should preserve the real answer after removing the preamble");
-			assert.equal(
-				shouldRecordFallbackOpenCheckForTest(oneHighlightTeachingRequest, sanitizedTeachingReply),
-				false,
-				"source-marker retry turns should not create fallback open checks",
-			);
-			const twoUnsupportedHighlightsReply = buildFinalAssistantReplyForTest(overbroadTeachingReply, null, {
-				...oneHighlightTeachingRequest,
-				pageSourceMarkerRetry: false,
-				toolTraces: [
-					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: In Bayesian modeling, we want to be able to sample from the posterior of models given the data." },
-					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Bayesian view of deep learning, we will sample model parameters according to the posterior." },
-				],
-			});
-			assert.doesNotMatch(
-				twoUnsupportedHighlightsReply,
-				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/,
-				"two posterior-only highlights should not support a broad sampling-method roadmap",
-			);
-			const unsupportedOpeningRoadmapReply = buildFinalAssistantReplyForTest(
-				[
-					"This lecture introduces Bayesian deep learning and then focuses on MCMC methods (Metropolis-Hastings, Hamiltonian Monte Carlo, Stochastic Gradient MCMC) for making it practical. Here's the core idea:",
-					"",
-					"### What makes a neural network Bayesian",
-					"",
-					"- Bayesian modeling treats the weights as random variables and samples from the posterior of models given the data.",
-					"- Each sampled weight configuration is one plausible neural network model.",
-				].join("\n"),
-				null,
-				oneHighlightTeachingRequest,
-			);
-			assert.doesNotMatch(
-				unsupportedOpeningRoadmapReply,
-				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC|Metropolis-Hastings/,
-				"one-highlight compact teaching replies should drop unsupported broad method-list openers",
-			);
-			assert.match(unsupportedOpeningRoadmapReply, /What makes a neural network Bayesian|posterior of models/i, "unsupported opener cleanup should preserve the supported explanation that follows");
-			const targetedBayesReply = buildFinalAssistantReplyForTest(overbroadTeachingReply, null, {
-				...oneHighlightTeachingRequest,
-				displayPrompt: "How does this page derive Bayes theorem?",
-			});
-			assert.doesNotMatch(
-				targetedBayesReply,
-				/This keeps the first pass focused/,
-				"targeted page questions should not receive the broad teaching-summary compacting footer",
-			);
-			const multiHighlightTeachingReply = buildFinalAssistantReplyForTest(overbroadTeachingReply, null, {
-				...oneHighlightTeachingRequest,
-				pageSourceMarkerRetry: false,
-				toolTraces: [
-					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted Bayesian models" },
-					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted Metropolis-Hastings" },
-					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted HMC" },
-				],
-			});
-			assert.doesNotMatch(
-				multiHighlightTeachingReply,
-				/Hamiltonian Monte Carlo|Stochastic Gradient MCMC/,
-				"compact broad teaching answers should not keep broad method-roadmap details unless the highlights support them",
-			);
-			assert.match(multiHighlightTeachingReply, /posterior|Bayesian/i, "compact broad teaching answers should preserve the supported core concept");
-			assert.doesNotMatch(multiHighlightTeachingReply, /Let me read|Now let me highlight|Let me record/i, "process narration should still be stripped when source coverage is adequate");
 			const cleanShortCheck = sanitizeAssistantVisibleReplyForTest(
 				"Scaling keeps the softmax from saturating.\n\nHere's a short check: Why does scaling help attention stay stable?",
 				{ learningMode: true, toolTraces: [] },
 			);
-			assert.match(cleanShortCheck, /Check: Why does scaling help attention stay stable\?$/, "short learning checks should be normalized into a clean check line");
+			assert.match(cleanShortCheck, /Here's a short check: Why does scaling help attention stay stable\?$/, "tiny cleanup should preserve check wording instead of rewriting it");
 			assert.equal(
 				shouldRecordFallbackOpenCheckForTest({ learningMode: true, toolTraces: [] }, cleanShortCheck),
 				true,
@@ -3904,7 +3554,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(pdfContextToolNames.includes("browser_pdf_jump_to_page"), true);
 	assert.equal(externalSourceToolNames.includes("browser_navigate"), true);
 	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
-	assert.equal(externalSourceToolNames.includes("browser_click_text"), true);
+	assert.equal(externalSourceToolNames.includes("browser_click_text"), false, "external-source navigation should not expose click tools unless the prompt asks to open page links");
 	assert.equal(linkedNotesToolNames.includes("browser_navigate"), true, "linked-note requests should be able to open note URLs");
 	assert.equal(linkedNotesToolNames.includes("browser_list_tabs"), true, "linked-note requests should be able to recover an already-open index tab");
 	assert.equal(linkedNotesToolNames.includes("browser_activate_tab"), true, "linked-note requests should be able to activate an already-open index tab");
