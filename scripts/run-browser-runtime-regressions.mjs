@@ -682,6 +682,16 @@ async function assertSelectionFormatting() {
 		{ tabId: 789 },
 		"non-finite browser target IDs should be omitted",
 	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: 0, windowId: -1 }),
+		{},
+		"model-fabricated placeholder ids (0, negative) should fall back to default targeting",
+	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: 12.5 }),
+		{},
+		"fractional ids should fall back to default targeting",
+	);
 
 	const emptyCases = [
 		undefined,

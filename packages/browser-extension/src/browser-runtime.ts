@@ -9470,12 +9470,15 @@ function markRecoveredToolRetries(activities: UiActivity[] = [], toolName: strin
 }
 
 function normalizeOptionalBrowserTargetNumber(value: unknown) {
-	if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+	// Chrome tab/window ids are positive integers; models sometimes fabricate
+	// placeholder ids like 0 or -1, which must fall back to default targeting
+	// instead of reaching chrome.tabs.get() as hard errors.
+	const asValidId = (number: number) => (Number.isInteger(number) && number > 0 ? number : undefined);
+	if (typeof value === "number") return asValidId(value);
 	if (typeof value !== "string") return undefined;
 	const text = value.trim();
 	if (!text || /^(?:undefined|null|none|nan)$/i.test(text)) return undefined;
-	const number = Number(text);
-	return Number.isFinite(number) ? number : undefined;
+	return asValidId(Number(text));
 }
 
 function normalizeOptionalBrowserTargetNumbers(params: any = {}) {

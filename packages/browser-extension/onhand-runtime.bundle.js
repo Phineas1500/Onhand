@@ -139101,12 +139101,12 @@ function markRecoveredToolRetries(activities = [], toolName) {
   return recovered;
 }
 function normalizeOptionalBrowserTargetNumber(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+  const asValidId = (number4) => Number.isInteger(number4) && number4 > 0 ? number4 : void 0;
+  if (typeof value === "number") return asValidId(value);
   if (typeof value !== "string") return void 0;
   const text = value.trim();
   if (!text || /^(?:undefined|null|none|nan)$/i.test(text)) return void 0;
-  const number4 = Number(text);
-  return Number.isFinite(number4) ? number4 : void 0;
+  return asValidId(Number(text));
 }
 function normalizeOptionalBrowserTargetNumbers(params = {}) {
   if (!params || typeof params !== "object") return {};
