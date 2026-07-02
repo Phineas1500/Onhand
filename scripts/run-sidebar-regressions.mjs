@@ -2672,10 +2672,17 @@ async function assertRealtimeSessionUsesRuntimeAgentMode() {
 		{ type: "function", name: "browser_get_visible_text" },
 		"expected any leaked Realtime response to start with the page-read tool",
 	);
-	assert.match(sessionUpdate?.session?.instructions || "", /page-grounded browser agent/i);
+		const instructions = sessionUpdate?.session?.instructions || "";
+		assert.match(instructions, /page-grounded browser agent/i);
+		assert.match(instructions, /do not add extra highlights just to increase source count/i);
+		assert.match(instructions, /rendered math extraction is collapsed or fragmented/i);
+		const highlightTool = sessionUpdate?.session?.tools?.find((tool) => tool?.name === "browser_highlight_text");
+		assert.match(highlightTool?.description || "", /supports a material claim you actually explain/i);
+		assert.match(highlightTool?.description || "", /explicitly asks to highlight a formula\/equation/i);
+		assert.match(highlightTool?.description || "", /block highlights/i);
 
-	dom.window.close();
-}
+		dom.window.close();
+	}
 
 async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion() {
 	const runtimeMessages = [];

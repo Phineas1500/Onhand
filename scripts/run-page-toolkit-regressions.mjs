@@ -275,6 +275,12 @@ async function assertPdfViewerHandoffHelpers() {
 	);
 	assert.match(backgroundSource, /Allow access to file URLs/, "local file access failures should tell the user which Chrome extension toggle to enable");
 	assert.match(backgroundSource, /browser_navigate cannot open file:\/\/ URLs/, "browser navigation should not be able to open arbitrary local file URLs");
+	assert.match(backgroundSource, /function findExistingNavigationTab\(url,\s*windowId\)/, "new-tab navigation should look for an already-open matching URL first");
+	assert.ok(
+		backgroundSource.indexOf("const existingTab = await findExistingNavigationTab(args.url, windowId);") <
+			backgroundSource.indexOf("const createdTab = await chrome.tabs.create", backgroundSource.indexOf("async function navigateBrowser")),
+		"browser_navigate with newTab should reuse an existing distinct URL tab before creating another tab",
+	);
 	assert.match(backgroundSource, /href: element instanceof HTMLAnchorElement \? element\.href \|\| null : null/, "element search should expose resolved link hrefs for navigation");
 	assert.match(backgroundSource, /isRestrictedScriptingError\(error\)/, "frame fallback should only engage on a restricted-scripting error");
 	// A restricted main-frame error on a PDF tab (native viewer is a different
@@ -715,6 +721,56 @@ async function assertReadableContentChoosesFullRootAndIncludesTables() {
 	assert.match(content.markdown, /blk\.4\.ffn_gate_exps\.weight/);
 	assert.match(content.markdown, /blk\.4\.ffn_up_exps\.weight/);
 	assert.match(content.markdown, /32\.0%/);
+}
+
+async function assertReadableContentMatchesHighlightableSurface() {
+	// Everything readable extraction emits must be anchorable by highlightText:
+	// no hidden-dialog headings, no tooltip text, no chrome outside the semantic
+	// root, no nested-list glue, no heading anchor glyphs.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const filler = Array.from({ length: 8 }, (_, index) => `<p>Body paragraph ${index + 1} explains the topic with enough prose to make the main region clearly dominant.</p>`).join("\n");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Article</title></head>
+			<body>
+				<div id="site-banner"><p>Official notice: this banner text lives outside the main content region.</p></div>
+				<div class="overlay"><h1 id="dialog-heading">Search everything from this hidden dialog heading</h1></div>
+				<main>
+					<h1>Visible article title</h1>
+					<h2>Data Structures<a href="#data-structures">¶</a></h2>
+					<p>Lists support appending and iteration with stable ordering guarantees.<tool-tip role="tooltip">You must hover to see this tooltip text.</tool-tip></p>
+					<ul>
+						<li>Browse
+							<ul><li>Table of contents entry one</li><li>Archive entry two</li></ul>
+						</li>
+					</ul>
+					${filler}
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://example.test/article",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	installLayoutShims(dom.window);
+	setElementRect(dom.window.document.getElementById("dialog-heading"), { left: 0, top: 0, width: 0, height: 0 });
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 6000 });
+
+	assert.match(content.markdown, /# Visible article title/, "visible h1 should be the title block");
+	assert.doesNotMatch(content.markdown, /hidden dialog heading/, "zero-rect dialog headings must not become the title");
+	assert.doesNotMatch(content.markdown, /hover to see this tooltip/, "tooltip text is never rendered inside the block");
+	assert.doesNotMatch(content.markdown, /banner text lives outside/, "chrome outside the semantic root should be excluded");
+	assert.doesNotMatch(content.markdown, /Browse\s+Table of contents/, "nested lists must not glue into the parent item");
+	assert.match(content.markdown, /- Table of contents entry one/, "nested list items should appear as their own blocks");
+	assert.match(content.headingOutlineMarkdown, /Data Structures/, "section heading should be in the outline");
+	assert.doesNotMatch(content.headingOutlineMarkdown, /¶/, "heading anchor glyphs must be stripped");
+	assert.doesNotMatch(content.markdown, /Data Structures¶/, "heading blocks must not keep anchor glyphs");
 }
 
 async function assertReadableContentQuerySnippetsCoverDistantTerms() {
@@ -1504,6 +1560,32 @@ async function assertExactMathSourceModeMatchesRenderedMathJax() {
 	assert.equal(note.previousElementSibling?.getAttribute("data-onhand-highlight-kind"), "block");
 }
 
+async function assertMixedLabelAndRenderedMathUsesBlockHighlight() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p id="posterior">
+				Bayes theorem:
+				<span id="posterior-equation" class="MathJax_Display">
+					<span class="MathJax">p(W|D)=p(D|W)P(W)/p(D)</span>
+				</span>
+			</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("Bayes theorem: p(W|D)=p(D|W)P(W)/p(D)", {
+		scrollIntoView: false,
+	});
+	const equation = dom.window.document.getElementById("posterior-equation");
+
+	assert.equal(highlight.kind, "block", "label-plus-rendered-math matches should use the block formula highlight path");
+	assert.equal(highlight.fallback, "math-range", "mixed math ranges should report the formula-safe fallback");
+	assert.equal(equation?.getAttribute("data-onhand-highlight-kind"), "block", "display equation wrapper should carry the highlight");
+	assert.equal(
+		dom.window.document.querySelectorAll('span[data-onhand-highlight-kind="inline"]').length,
+		0,
+		"rendered math should not be wrapped in an inline highlight span",
+	);
+}
+
 async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -1541,6 +1623,154 @@ async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
 	const highlighted = dom.window.document.querySelector("[data-onhand-highlight-kind]");
 	assert.ok(highlighted?.classList.contains("MathJax_Display"), "expected delayed MathJax render target to be highlighted");
 	assert.notEqual(highlighted?.id, "stationary", "raw TeX paragraph should not be highlighted");
+}
+
+async function assertImageRenderedMathMatchesTexAltSource() {
+	// MediaWiki-style rendered math: hidden MathML for a11y plus a visible fallback
+	// image whose alt carries the TeX source. There are no visible math text nodes.
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>
+				Bayes' theorem is stated mathematically as the following equation:
+				<span id="bayes-equation" class="mwe-math-element">
+					<span class="mwe-math-mathml-inline" style="display: none;">
+						<math xmlns="http://www.w3.org/1998/Math/MathML" alttext="{\\displaystyle P(A\\vert B)={\\frac {P(B\\vert A)P(A)}{P(B)}}}">
+							<semantics>
+								<mrow><mi>P</mi><mo>(</mo><mi>A</mi><mo>|</mo><mi>B</mi><mo>)</mo></mrow>
+								<annotation encoding="application/x-tex">{\\displaystyle P(A\\vert B)={\\frac {P(B\\vert A)P(A)}{P(B)}}}</annotation>
+							</semantics>
+						</math>
+					</span>
+					<img src="https://render.example/svg/abc" aria-hidden="true" alt="{\\displaystyle P(A\\vert B)={\\frac {P(B\\vert A)P(A)}{P(B)}}}">
+				</span>
+			</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("P(A|B) = P(B|A)P(A)/P(B)", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+	});
+	assert.equal(highlight.kind, "block", "image-rendered math should use a block highlight");
+	assert.equal(highlight.fallback, "math-source", "image alt TeX should count as math source");
+	const highlighted = dom.window.document.querySelector("[data-onhand-highlight-kind]");
+	assert.equal(highlighted?.id, "bayes-equation", "the math wrapper should carry the highlight, not the prose paragraph");
+}
+
+async function assertRenderedMathPageDoesNotWaitForMathJaxEngine() {
+	// Pages whose math is already rendered (MathML + fallback images) but whose
+	// annotation TeX looks like raw source must not sit in the wait-for-MathJax
+	// loops — background tabs throttle timers to ~1s, which used to burn the
+	// entire highlight tool budget before matching even started.
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>
+				The chain rule expands the joint distribution into conditionals.
+				<span class="mwe-math-element">
+					<span style="display: none;">
+						<math alttext="{\\displaystyle {\\begin{aligned}P(A,B)&=P(A|B)P(B)\\end{aligned}}}">
+							<semantics>
+								<mrow><mi>P</mi></mrow>
+								<annotation encoding="application/x-tex">{\\displaystyle {\\begin{aligned}P(A,B)&amp;=P(A|B)P(B)\\end{aligned}}}</annotation>
+							</semantics>
+						</math>
+					</span>
+					<img src="https://render.example/svg/chain" alt="{\\displaystyle {\\begin{aligned}P(A,B)&amp;=P(A|B)P(B)\\end{aligned}}}">
+				</span>
+			</p>
+		</main>
+	`);
+	const startedAt = Date.now();
+	const highlight = await toolkit.highlightText("The chain rule expands the joint distribution into conditionals.", {
+		scrollIntoView: false,
+	});
+	const elapsedMs = Date.now() - startedAt;
+	assert.match(highlight.matchedText, /chain rule expands/, "prose on a rendered-math page should highlight");
+	assert.ok(elapsedMs < 1500, `highlight should not wait for a MathJax engine on rendered-math pages (took ${elapsedMs}ms)`);
+}
+
+async function assertImageRenderedMathIgnoresUnrelatedImageAlt() {
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>An article about probability pioneers.</p>
+			<img src="https://images.example/portrait" alt="Portrait of a mathematician (1701-1761)">
+		</main>
+	`);
+	await assert.rejects(
+		() => toolkit.highlightText("P(H|E) = P(E|H)P(H)/P(E)", { scrollIntoView: false, exactOnly: true, allowApproximate: false }),
+		/No visible text matched/i,
+		"non-matching image alt text should not produce a math highlight",
+	);
+}
+
+async function assertSentenceSpanningFootnoteMarkerMatchesExactly() {
+	// Footnote/citation markers render inside the prose text stream but are stripped
+	// from readable extractions, so copied sentences that span them must still match.
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>
+				The posterior probability follows from the definition of conditional probability.<sup class="reference"><a href="#cite_note-1"><span>[</span>1<span>]</span></a></sup>
+				This symmetry gives the standard statement of the result.<sup role="doc-noteref"><a href="#fn-2">[note 2]</a></sup>
+				The remainder of the section works an example.
+			</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText(
+		"definition of conditional probability. This symmetry gives the standard statement of the result.",
+		{ scrollIntoView: false, exactOnly: true, allowApproximate: false },
+	);
+	assert.equal(highlight.approximate, false, "sentence spanning a citation marker should exact-match");
+	assert.match(highlight.matchedText, /conditional probability/, "matched text should cover the copied span");
+	assert.match(highlight.matchedText, /statement of the result/, "matched text should cover the second sentence");
+	assert.ok(
+		dom.window.document.querySelector("[data-onhand-highlight-kind]"),
+		"a durable highlight should exist after matching across the citation marker",
+	);
+}
+
+async function assertCitationMarkerInQueryStillMatches() {
+	// Readable extraction keeps bracketed footnote markers while the page text
+	// map skips them; copied text that includes the marker must still match.
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>Interest in the topic revived in the twentieth century.<sup class="reference"><a href="#cite_note-15">[15]</a></sup> Later editions expanded the treatment considerably.</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText(
+		"Interest in the topic revived in the twentieth century.[15] Later editions expanded the treatment considerably.",
+		{ scrollIntoView: false, exactOnly: true, allowApproximate: false },
+	);
+	assert.equal(highlight.fallback, "citation-stripped-text", "marker-stripped query should exact-match against the marker-free map");
+	assert.match(highlight.matchedText, /Later editions expanded/, "match should span across the citation marker");
+}
+
+async function assertExistingInlineHighlightDoesNotBlockLongerExactMatch() {
+	// A partial highlight left by an earlier attempt or turn must not make the
+	// surrounding sentence unmatchable — inline highlight spans wrap original
+	// page text, so longer overlapping spans still need to exact-match.
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>The posterior may be derived from the relation between joint and conditional probabilities. A worked example follows.</p>
+		</main>
+	`);
+	await toolkit.highlightText("may be derived from the relation", { scrollIntoView: false });
+	const highlight = await toolkit.highlightText(
+		"The posterior may be derived from the relation between joint and conditional probabilities.",
+		{ scrollIntoView: false, exactOnly: true, allowApproximate: false, reuseExisting: true },
+	);
+	assert.equal(highlight.approximate, false, "overlapping longer span should exact-match despite the existing highlight");
+	assert.match(highlight.matchedText, /joint and conditional probabilities/, "the full sentence should be covered");
+	assert.ok(dom.window.document.querySelectorAll("[data-onhand-highlight-kind]").length >= 1, "highlights should exist");
+}
+
+async function assertMeaningfulSuperscriptTextStillMatches() {
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>The runtime grows as n<sup>2</sup> in the worst case.</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("grows as n2 in the worst case", { scrollIntoView: false });
+	assert.match(highlight.matchedText, /grows as n2 in the worst case/i, "plain exponent superscripts should stay matchable");
 }
 
 async function assertPdfTextLayerVisibleTextUsesPdfSurface() {
@@ -2979,6 +3209,7 @@ async function main() {
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
+	await assertReadableContentMatchesHighlightableSurface();
 	await assertReadableContentQuerySnippetsCoverDistantTerms();
 	await assertTextbookReaderSearchUsesGenericSearchUi();
 	await assertGoogleDocsBackgroundExportReadsText();
@@ -3029,7 +3260,15 @@ async function main() {
 	await assertTweetTextContainerCanBeHighlightedAcrossNodes();
 	await assertNestedListHighlightUsesBlockContainer();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
+	await assertMixedLabelAndRenderedMathUsesBlockHighlight();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
+	await assertImageRenderedMathMatchesTexAltSource();
+	await assertRenderedMathPageDoesNotWaitForMathJaxEngine();
+	await assertImageRenderedMathIgnoresUnrelatedImageAlt();
+	await assertSentenceSpanningFootnoteMarkerMatchesExactly();
+	await assertCitationMarkerInQueryStillMatches();
+	await assertExistingInlineHighlightDoesNotBlockLongerExactMatch();
+	await assertMeaningfulSuperscriptTextStillMatches();
 	await assertPdfTextLayerVisibleTextUsesPdfSurface();
 	await assertPdfDocumentIdentityUsesEmbeddedPdfUrl();
 	await assertPdfDocumentIdentityUsesViewerFileParameter();

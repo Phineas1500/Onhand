@@ -18,7 +18,7 @@ DAILY_REQUEST_CAP = "80"
 # Shared daily hosted-model spend cap. Set higher/lower in production as needed.
 DAILY_COST_CAP_USD = "5"
 # Stops runaway single turns while still allowing complex pages/PDFs.
-TURN_MODEL_CALL_CAP = "20"
+TURN_MODEL_CALL_CAP = "50"
 # Ops warnings for turns that are unusually expensive or tool-call heavy.
 HEAVY_TURN_MODEL_CALLS = "10"
 HEAVY_TURN_COST_USD = "0.005"

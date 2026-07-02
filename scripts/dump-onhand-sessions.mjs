@@ -13,7 +13,7 @@ const DEFAULT_POLL_MS = 1_000;
 const FREE_TIER_QUOTA_BYPASS_MIN_LENGTH = 16;
 
 const REPLAY_COMMANDS = new Set(["show", "timeline", "tools", "actions", "artifacts", "turn", "grep", "context"]);
-const MAINTENANCE_COMMANDS = new Set(["cleanup-drivers"]);
+const MAINTENANCE_COMMANDS = new Set(["cleanup-drivers", "reload-extension"]);
 const CONTROL_COMMANDS = new Set(["new", "switch", "restore", "stop", "ask", "ask-new-url", "open-url", "artifact", "activate-action", "scroll", "free-tier-bypass"]);
 const DIAGNOSTIC_COMMANDS = new Set(["latest-errors", "tool-retries", "diff-tools"]);
 const ALL_COMMANDS = new Set(["list", "state", "watch", ...REPLAY_COMMANDS, ...CONTROL_COMMANDS, ...DIAGNOSTIC_COMMANDS]);
@@ -57,6 +57,7 @@ function printUsage() {
   npm run debug:sessions -- scroll --annotation-id <id> [--target annotation|note] [options]
   npm run debug:sessions -- free-tier-bypass <status|enable|disable|device-hash> [options]
   npm run debug:sessions -- cleanup-drivers [options]
+  npm run debug:sessions -- reload-extension [options]
 
 Session selectors:
   --current              Use the current Onhand session. Default for replay commands.
@@ -86,6 +87,15 @@ Options:
   --prompt <text>        Prompt text for ask.
   --prompt-file <path>   Read ask prompt from a file. Use - for stdin.
   --display-prompt <txt> Store a different visible prompt title.
+  --eval-variant <name>  Label for a prompt-eval candidate variant.
+  --eval-system-append <text>
+                          Append temporary system policy text for source=prompt-eval asks.
+  --eval-system-append-file <path>
+                          Read temporary system policy append text from a file.
+  --eval-launcher-append <text>
+                          Append temporary launcher policy text for source=prompt-eval asks.
+  --eval-launcher-append-file <path>
+                          Read temporary launcher policy append text from a file.
   --artifact-id <id>     Fetch a specific replay artifact.
   --key <action_key>     Page action key for activate-action.
   --annotation-id <id>   Annotation id for scroll.
@@ -141,6 +151,11 @@ function parseArgs(argv) {
 		prompt: "",
 		promptFile: "",
 		displayPrompt: "",
+		evalVariant: "",
+		evalSystemPromptAppend: "",
+		evalSystemPromptAppendFile: "",
+		evalLauncherPromptAppend: "",
+		evalLauncherPromptAppendFile: "",
 		artifactId: "",
 		key: "",
 		annotationId: "",
@@ -222,6 +237,16 @@ function parseArgs(argv) {
 			args.promptFile = readValue("--prompt-file");
 		} else if (value === "--display-prompt" || value.startsWith("--display-prompt=")) {
 			args.displayPrompt = readValue("--display-prompt");
+		} else if (value === "--eval-variant" || value.startsWith("--eval-variant=")) {
+			args.evalVariant = readValue("--eval-variant");
+		} else if (value === "--eval-system-append" || value.startsWith("--eval-system-append=")) {
+			args.evalSystemPromptAppend = readValue("--eval-system-append");
+		} else if (value === "--eval-system-append-file" || value.startsWith("--eval-system-append-file=")) {
+			args.evalSystemPromptAppendFile = readValue("--eval-system-append-file");
+		} else if (value === "--eval-launcher-append" || value === "--eval-policy-append" || value.startsWith("--eval-launcher-append=") || value.startsWith("--eval-policy-append=")) {
+			args.evalLauncherPromptAppend = readValue(value.startsWith("--eval-policy-append") ? "--eval-policy-append" : "--eval-launcher-append");
+		} else if (value === "--eval-launcher-append-file" || value === "--eval-policy-append-file" || value.startsWith("--eval-launcher-append-file=") || value.startsWith("--eval-policy-append-file=")) {
+			args.evalLauncherPromptAppendFile = readValue(value.startsWith("--eval-policy-append-file") ? "--eval-policy-append-file" : "--eval-launcher-append-file");
 		} else if (value === "--artifact-id" || value === "--artifact" || value.startsWith("--artifact-id=") || value.startsWith("--artifact=")) {
 			args.artifactId = readValue(value.startsWith("--artifact") && !value.startsWith("--artifact-id") ? "--artifact" : "--artifact-id");
 		} else if (value === "--key" || value.startsWith("--key=")) {
@@ -334,11 +359,9 @@ function sleep(ms) {
 function driverTargetScore(target, extensionId) {
 	const url = String(target?.url || "");
 	if (!url.startsWith(`chrome-extension://${extensionId}/`)) return Number.POSITIVE_INFINITY;
-	if (target.type === "page" && url.includes("/sidepanel.html")) return 0;
-	if (target.type === "background_page" && url.includes("/offscreen.html")) return 1;
-	if (target.type === "page" && url.includes("/pdf-viewer.html")) return 2;
-	if (target.type === "service_worker" && url.includes("/background.js")) return 3;
-	return 10;
+	if (target.type === "page" && url.includes("/sidepanel.html") && /[?&]driver=1\b/.test(url)) return 0;
+	if (target.type === "page" && url.includes("/sidepanel.html")) return Number.POSITIVE_INFINITY;
+	return Number.POSITIVE_INFINITY;
 }
 
 async function waitForExtensionMessaging(cdp, sessionId) {
@@ -358,6 +381,16 @@ async function waitForExtensionMessaging(cdp, sessionId) {
 		await sleep(100);
 	}
 	throw lastError || new Error("Timed out waiting for chrome.runtime.sendMessage.");
+}
+
+async function reloadExtensionRuntime(cdp, driver) {
+	const response = await evaluateJson(
+		cdp,
+		driver.sessionId,
+		`JSON.stringify((()=>{ setTimeout(()=>globalThis.chrome.runtime.reload(), 0); return { ok: true, action: "reload-extension" }; })())`,
+	);
+	await sleep(1000);
+	return response;
 }
 
 async function openDriverTarget(cdp, extensionId, target, shouldCloseTarget = false) {
@@ -1121,6 +1154,13 @@ async function readPrompt(args) {
 	return String(args.prompt || "").trim();
 }
 
+async function readOptionalText(value, file) {
+	const direct = String(value || "").trim();
+	if (direct) return direct;
+	if (!file) return "";
+	return String(file === "-" ? await readStdin() : await readFile(file, "utf8")).trim();
+}
+
 function findTurnByRequestId(replay, requestId) {
 	return (Array.isArray(replay?.turns) ? replay.turns : []).find((turn) => turn?.id === requestId) || null;
 }
@@ -1143,9 +1183,10 @@ async function waitForRequest(driver, args, requestId) {
 		if (currentSessionId) {
 			const replay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
 			const turn = findTurnByRequestId(replay, requestId);
-			if (turn && !turn.pending && !state.activeRequestId) {
+			if (turn && !turn.pending && state.activeRequestId !== requestId) {
 				await sleep(Math.min(args.pollMs, 250));
-				return { state, replay, turn };
+				const latestReplay = await checkedMessage(driver.sendMessage, { type: "sidebar:get-session-replay", sessionPath: currentSessionId });
+				return { state, replay: latestReplay, turn: findTurnByRequestId(latestReplay, requestId) || turn };
 			}
 		}
 		if (state.activeRequestId && state.activeRequestId !== requestId && currentSessionId) {
@@ -1176,10 +1217,12 @@ function formatAskResult(result, args) {
 async function handleAsk(driver, args) {
 	const prompt = await readPrompt(args);
 	if (!prompt) throw new Error("ask requires prompt text, --prompt, or --prompt-file.");
+	const evalSystemPromptAppend = await readOptionalText(args.evalSystemPromptAppend, args.evalSystemPromptAppendFile);
+	const evalLauncherPromptAppend = await readOptionalText(args.evalLauncherPromptAppend, args.evalLauncherPromptAppendFile);
 	if (args.newSession) {
 		await checkedMessage(driver.sendMessage, { type: "sidebar:new-session", windowId: args.windowId });
 	}
-	const response = await checkedMessage(driver.sendMessage, {
+	const payload = {
 		type: "sidebar:submit-prompt",
 		prompt,
 		displayPrompt: args.displayPrompt || prompt,
@@ -1187,7 +1230,11 @@ async function handleAsk(driver, args) {
 		source: args.source || "cli",
 		learningMode: Boolean(args.learningMode),
 		windowId: args.windowId,
-	});
+		...(args.evalVariant ? { evalVariant: args.evalVariant } : {}),
+		...(evalSystemPromptAppend ? { evalSystemPromptAppend } : {}),
+		...(evalLauncherPromptAppend ? { evalLauncherPromptAppend } : {}),
+	};
+	const response = await checkedMessage(driver.sendMessage, payload);
 	const requestId = response.requestId;
 	if (!args.wait) return { requestId, submitted: true };
 	const waited = await waitForRequest(driver, args, requestId);
@@ -1620,6 +1667,11 @@ async function main() {
 			const response = args.command === "watch" ? await handleWatch(driver, args) : await checkedMessage(driver.sendMessage, { type: "sidebar:fetch-state", windowId: args.windowId });
 			const outputObject = args.full ? response : response.state || response;
 			await writeOutput(args, args.json ? JSON.stringify(outputObject, null, 2) : formatState(response, args.textLimit));
+			return;
+		}
+		if (args.command === "reload-extension") {
+			const response = await reloadExtensionRuntime(cdp, driver);
+			await writeOutput(args, args.json ? `${JSON.stringify(response, null, 2)}\n` : "Requested Onhand extension reload.\n");
 			return;
 		}
 		if (REPLAY_COMMANDS.has(args.command)) {

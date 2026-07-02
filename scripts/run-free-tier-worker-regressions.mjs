@@ -4,6 +4,7 @@ import { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 const {
 	FREE_TIER_TEXT_MODEL,
 	FREE_TIER_VISUAL_MODEL,
+	MAX_BODY_BYTES,
 	QUOTA_BYPASS_HEADER,
 	prepareOpenRouterRequestBody,
 	quotaBypassAuthorized,
@@ -13,6 +14,8 @@ const {
 	upstreamCandidateModelsForRequestBody,
 	valueContainsImage,
 } = __freeTierTest;
+
+assert.equal(MAX_BODY_BYTES, 2_500_000, "free-tier visual requests should have room for compressed image payloads");
 
 const textOnlyBody = { messages: [{ role: "user", content: "hello" }] };
 assert.equal(routedModelForRequestBody(textOnlyBody), FREE_TIER_TEXT_MODEL);

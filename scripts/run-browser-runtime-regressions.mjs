@@ -223,6 +223,16 @@ function createReplayHost(options = {}) {
 					viewport: { width: 1280, height: 720, devicePixelRatio: 2, scrollX: 0, scrollY: 0 },
 				};
 			}
+			if (name === "pdf_capture_page_image") {
+				return {
+					tab,
+					pageNumber: Number(args.pageNumber || args.page || 1),
+					width: 1024,
+					height: 1325,
+					format: String(args.format || "image/png"),
+					dataUrl: "data:image/png;base64,UERGUEFHRQ==",
+				};
+			}
 			return { tab, ok: true };
 		},
 		async snapshotState(args = {}) {
@@ -343,6 +353,63 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(settings.apiKeyProviders.find((provider) => provider.id === "anthropic").hasApiKey, false);
 }
 
+async function assertAssistantStreamingTextBlocksStaySeparated() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const {
+		appendAssistantDraftTextDeltaForTest,
+		joinAssistantTextBlocksForTest,
+		resetAssistantDraftTextForTest,
+	} = __browserRuntimeTest || {};
+	assert.equal(typeof appendAssistantDraftTextDeltaForTest, "function", "assistant draft delta helper export is missing");
+	assert.equal(typeof joinAssistantTextBlocksForTest, "function", "assistant text-block join helper export is missing");
+	assert.equal(typeof resetAssistantDraftTextForTest, "function", "assistant draft reset helper export is missing");
+
+	const request = { reply: "", replyBlocks: [] };
+	appendAssistantDraftTextDeltaForTest(request, { type: "text_delta", contentIndex: 0, delta: "Let me open both pages" });
+	appendAssistantDraftTextDeltaForTest(request, { type: "text_delta", contentIndex: 2, delta: "Both pages opened." });
+	assert.equal(request.reply, "Let me open both pages\n\nBoth pages opened.");
+	assert.doesNotMatch(request.reply, /pagesBoth/, "separate assistant text blocks must not be glued together");
+
+	const reordered = joinAssistantTextBlocksForTest([
+		{ contentIndex: 2, text: "Both pages opened." },
+		{ contentIndex: 0, text: "Let me open both pages" },
+	]);
+	assert.equal(reordered, "Let me open both pages\n\nBoth pages opened.", "draft blocks should render in content-index order");
+	resetAssistantDraftTextForTest(request);
+	assert.deepEqual(request.replyBlocks, [], "reset should clear stale draft blocks before a retry");
+	assert.equal(request.reply, "");
+}
+
+async function assertDestinationNavigationDefaultsToNewTab() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { applyNavigateNewTabDefaultForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof applyNavigateNewTabDefaultForTest, "function", "navigation new-tab default helper export is missing");
+
+	const request = {
+		initialActiveUrl: "https://react.dev/learn",
+	};
+	assert.deepEqual(
+		applyNavigateNewTabDefaultForTest({ url: "https://react.dev/learn/your-first-component" }, request),
+		{ url: "https://react.dev/learn/your-first-component", newTab: true },
+		"linked destination pages should preserve the starting page by opening a new tab",
+	);
+	assert.deepEqual(
+		applyNavigateNewTabDefaultForTest({ url: "https://react.dev/learn", waitForLoad: true }, request),
+		{ url: "https://react.dev/learn", waitForLoad: true },
+		"same-page reloads should not be forced into a new tab",
+	);
+	assert.deepEqual(
+		applyNavigateNewTabDefaultForTest({ url: "https://react.dev/learn/passing-props-to-a-component", newTab: false }, request),
+		{ url: "https://react.dev/learn/passing-props-to-a-component", newTab: false },
+		"explicit current-tab navigation should remain possible for special cases",
+	);
+	assert.deepEqual(
+		applyNavigateNewTabDefaultForTest({ url: "https://example.test/source" }, {}),
+		{ url: "https://example.test/source", newTab: true },
+		"when the starting URL is unavailable, destination navigation should still preserve the current tab",
+	);
+}
+
 function countImageBlocks(messages) {
 	return messages.reduce((total, message) => {
 		const content = Array.isArray(message?.content) ? message.content : [];
@@ -362,8 +429,9 @@ function textChars(messages) {
 async function assertFreeTierVisualContextBudgeting() {
 	installChromeStorageStub();
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { compactFreeTierVisualContextMessagesForTest, messagesContainImageForTest } = __browserRuntimeTest || {};
+	const { compactFreeTierVisualContextMessagesForTest, compressFreeTierVisualContextMessagesForTest, messagesContainImageForTest } = __browserRuntimeTest || {};
 	assert.equal(typeof compactFreeTierVisualContextMessagesForTest, "function", "free-tier visual compactor export is missing");
+	assert.equal(typeof compressFreeTierVisualContextMessagesForTest, "function", "free-tier visual image compressor export is missing");
 	assert.equal(typeof messagesContainImageForTest, "function", "image detector export is missing");
 	const longText = "Long extracted context. ".repeat(6000);
 	const olderChatter = Array.from({ length: 80 }, (_, index) => ({
@@ -412,6 +480,24 @@ async function assertFreeTierVisualContextBudgeting() {
 	assert.ok(textChars(compacted) < textChars(messages) / 3, "visual compaction should aggressively trim old text context");
 	assert.ok(textChars(compacted) <= 48000, "visual compaction should enforce the free-tier visual text budget");
 	assert.match(JSON.stringify(compacted), /Long extracted context/, "compacted context should retain useful text, not only placeholders");
+
+	const compressed = await compressFreeTierVisualContextMessagesForTest(
+		[
+			{
+				role: "toolResult",
+				content: [
+					{ type: "text", text: "Captured PDF page image." },
+					{ type: "image", data: "A".repeat(900000), mimeType: "image/png" },
+					{ type: "image_url", image_url: { url: `data:image/png;base64,${"B".repeat(900000)}` } },
+				],
+			},
+		],
+		async (dataUrl) => (dataUrl.includes("BBBB") ? "data:image/jpeg;base64,SMALL_URL" : "data:image/jpeg;base64,SMALL_DATA"),
+	);
+	const compressedBlocks = compressed[0].content.filter((block) => block?.type === "image" || block?.type === "image_url");
+	assert.equal(compressedBlocks[0].mimeType, "image/jpeg", "free-tier image blocks should be rewritten to compressed JPEG");
+	assert.equal(compressedBlocks[0].data, "SMALL_DATA");
+	assert.equal(compressedBlocks[1].image_url.url, "data:image/jpeg;base64,SMALL_URL");
 }
 
 async function assertSentryDiagnosticsGateAndScrub() {
@@ -528,6 +614,17 @@ async function assertSelectionFormatting() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
 		buildHighlightRetryCandidates,
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest,
+		cleanMarkdownHeadingHighlightTextForTest,
+		stripTrailingHeadingAnchorMarkerForTest,
+		looksLikeExpandedMathExtractionCandidateForTest,
+		canRewriteToContainedReadablePhraseForTest,
+		sourceCitationProvidesExplanatoryComparisonSupportForTest,
+		isCompletedSourceHighlightTraceForTest,
+		rewriteHighlightTextToRecentReadableExactPhraseForTest,
+		shouldAbortAfterRepeatedHighlightFailuresForTest,
+		buildCompactTeachingHighlightBudgetGuardResultForTest,
+		buildCompactTeachingNoteFailureGuardResultForTest,
 		buildPlannerAnchorCandidates,
 		buildTextbookContextReadyGuardResultForTest,
 		buildReplayAnnotationsFromPageActions,
@@ -538,12 +635,31 @@ async function assertSelectionFormatting() {
 		normalizeOptionalBrowserTargetNumbersForTest,
 		normalizePlannerMove,
 		summarizeRestoredArtifact,
+		buildRepeatedHighlightFailureGuardResultForTest,
+		buildPostHighlightFailureAnswerNowGuardResultForTest,
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
+	assert.equal(
+		typeof shouldTryHighlightRetryCandidatesBeforeOriginalForTest,
+		"function",
+		"browser runtime highlight retry preflight export is missing",
+	);
+	assert.equal(typeof cleanMarkdownHeadingHighlightTextForTest, "function", "browser runtime heading highlight cleaner export is missing");
+	assert.equal(typeof stripTrailingHeadingAnchorMarkerForTest, "function", "browser runtime heading anchor cleaner export is missing");
+	assert.equal(typeof looksLikeExpandedMathExtractionCandidateForTest, "function", "browser runtime math extraction noise detector export is missing");
+	assert.equal(typeof canRewriteToContainedReadablePhraseForTest, "function", "browser runtime contained readable phrase rewrite guard export is missing");
+	assert.equal(typeof sourceCitationProvidesExplanatoryComparisonSupportForTest, "function", "browser runtime comparison support detector export is missing");
+	assert.equal(typeof isCompletedSourceHighlightTraceForTest, "function", "browser runtime completed highlight detector export is missing");
+	assert.equal(typeof rewriteHighlightTextToRecentReadableExactPhraseForTest, "function", "browser runtime readable phrase rewriter export is missing");
+	assert.equal(typeof shouldAbortAfterRepeatedHighlightFailuresForTest, "function", "browser runtime highlight failure budget export is missing");
+	assert.equal(typeof buildCompactTeachingHighlightBudgetGuardResultForTest, "function", "browser runtime compact teaching highlight budget export is missing");
+	assert.equal(typeof buildCompactTeachingNoteFailureGuardResultForTest, "function", "browser runtime compact teaching note failure export is missing");
 	assert.equal(typeof buildPlannerAnchorCandidates, "function", "browser runtime planner anchor export is missing");
 	assert.equal(typeof buildReplayAnnotationsFromPageActions, "function", "browser runtime replay export is missing");
 	assert.equal(typeof buildTextbookContextReadyGuardResultForTest, "function", "browser runtime textbook guard export is missing");
 	assert.equal(typeof findReadyTextbookContextFromTracesForTest, "function", "browser runtime ready-textbook detector export is missing");
+	assert.equal(typeof buildRepeatedHighlightFailureGuardResultForTest, "function", "browser runtime repeated highlight guard export is missing");
+	assert.equal(typeof buildPostHighlightFailureAnswerNowGuardResultForTest, "function", "browser runtime post-highlight-failure guard export is missing");
 	assert.equal(typeof formatToolResultForModel, "function", "browser runtime test formatter export is missing");
 	assert.equal(typeof formatVisibleTextForModel, "function", "browser runtime visible formatter export is missing");
 	assert.equal(typeof getSelectionText, "function", "browser runtime selection formatter export is missing");
@@ -758,7 +874,7 @@ async function assertSelectionFormatting() {
 	assert.match(pdfReadPagesText, /Next step: if you answer from this offscreen\/deeper PDF text/);
 	assert.match(pdfReadPagesText, /browser_highlight_text/);
 	assert.match(pdfReadPagesText, /browser_show_note/);
-	assert.match(pdfReadPagesText, /under 120 characters/);
+	assert.match(pdfReadPagesText, /under 280 characters/);
 	assert.match(
 		formatToolResultForModel("browser_extract_content", {
 			tab: replaySmokeTab(),
@@ -942,6 +1058,497 @@ async function assertSelectionFormatting() {
 		"How to create and nest components",
 		"How to add markup and styles",
 	]);
+	assert.deepEqual(
+		buildHighlightRetryCandidates("- First exact source sentence for retry\n- Second exact source sentence for retry\n- Third exact source sentence for retry"),
+		["First exact source sentence for retry", "Second exact source sentence for retry", "Third exact source sentence for retry"],
+		"automatic highlight retries should stay bounded so a bad span cannot consume the turn",
+	);
+	assert.ok(
+		buildHighlightRetryCandidates(Array.from({ length: 9 }, (_, index) => `- Retry source sentence number ${index + 1}`).join("\n")).length <= 5,
+		"automatic highlight retries should still have a small upper bound",
+	);
+	assert.deepEqual(
+		buildHighlightRetryCandidates("- " + "x".repeat(181) + "\n- Short retry source sentence"),
+		["Short retry source sentence"],
+		"automatic highlight retry candidates should avoid long block-like spans",
+	);
+	const mediumDerivationHighlightText = "A theorem may be derived from the relation between joint and conditional probabilities";
+	assert.deepEqual(
+		buildHighlightRetryCandidates(mediumDerivationHighlightText),
+		["A theorem may be derived", "joint and conditional probabilities"],
+		"medium source sentences should shrink to exact clause spans before expensive full-sentence highlighting",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest(mediumDerivationHighlightText),
+		true,
+		"medium source sentences with retry clauses should try concise spans before the original text",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest("Short exact source phrase"),
+		false,
+		"short exact source phrases should not pay the retry preflight cost",
+	);
+	assert.equal(cleanMarkdownHeadingHighlightTextForTest("## 5.4. Sets¶"), "5.4. Sets", "markdown heading markers should be stripped before highlight attempts");
+	assert.equal(cleanMarkdownHeadingHighlightTextForTest("Plain source sentence"), "", "ordinary source text should not be rewritten as a heading");
+	assert.equal(stripTrailingHeadingAnchorMarkerForTest("Tuples and Sequences¶"), "Tuples and Sequences", "docs permalink markers should not become literal highlight text");
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Tuples and Sequences", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary: "Readable content:\nTuples and Sequences¶\nSets¶\nDictionaries¶",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not add docs permalink markers",
+	);
+	assert.equal(
+		looksLikeExpandedMathExtractionCandidateForTest(
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM.",
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+		),
+		true,
+		"readable rewrite candidates with duplicated rendered-math tokens should be treated as extraction noise",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary:
+						"Readable content:\nMetropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not replace clean prose with duplicated rendered-math text",
+	);
+	assert.equal(
+		canRewriteToContainedReadablePhraseForTest(
+			"Metropolis-Hastings Sampling",
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+		),
+		false,
+		"readable exact-phrase rewrites should not collapse explanatory spans to heading-only substrings",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
+			toolTraces: [
+				{
+					state: "complete",
+					toolName: "browser_get_viewport_headings",
+					resultSummary: "Nearby headings: 1. Metropolis-Hastings Sampling",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not replace a substantive MH sentence with a heading",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("joint and conditional probabilities", {
+			toolTraces: [
+				{
+					state: "error",
+					toolName: "browser_highlight_text",
+					resultSummary: "browser_highlight_text failed: No visible text matched: A theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should ignore failed highlight trace summaries",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("joint and conditional probabilities", {
+			toolTraces: [
+				{
+					state: "error",
+					toolName: "browser_highlight_text",
+					resultSummary: "browser_highlight_text failed: No visible text matched: A theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+				{
+					state: "complete",
+					toolName: "browser_extract_content",
+					resultSummary: "Readable content:\nA theorem may be derived from the relation between joint and conditional probabilities.",
+				},
+			],
+		}),
+		"",
+		"readable exact-phrase rewrites should not expand a short exact phrase into a larger paragraph",
+	);
+	assert.equal(
+		sourceCitationProvidesExplanatoryComparisonSupportForTest("Metropolis-Hastings Sampling", "Metropolis-Hastings"),
+		false,
+		"heading-only comparison highlights should not satisfy a comparison side",
+	);
+	assert.equal(
+		sourceCitationProvidesExplanatoryComparisonSupportForTest(
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+			"Metropolis-Hastings",
+		),
+		true,
+		"explanatory comparison highlights should satisfy the side they explain",
+	);
+	const longBayesianHighlightText = [
+		"In Bayesian modeling, we want to be able to sample from the posterior of models given the data: W_r.v. ~ p(W | {(x_i,y_i)}_i=1^N).",
+		"Each sampled W_r.v. is a model. Then, the label prediction can be described as p_Bayesian model(y | x; {(x_i,y_i)}_i=1^N) = ∫_W p(y | x ; W) p(W | {(x_i,y_i)}_i=1^N ) dW.",
+		"In practice, we will sample a few models and average their predictions.",
+	].join(" ");
+	assert.deepEqual(
+		buildHighlightRetryCandidates(longBayesianHighlightText),
+		[
+			"In Bayesian modeling, we want to be able to sample from the posterior of models given the data:",
+			"Each sampled W_r.v. is a model.",
+		],
+		"long page-teaching highlight text should shrink to short exact source spans before retrying",
+	);
+	const labeledFormulaHighlightText =
+		"Core claim: The method estimates the target quantity from observed data: theta_hat = sum_i x_i / n. Each estimate is one sample from the procedure.";
+	assert.deepEqual(
+		buildHighlightRetryCandidates(labeledFormulaHighlightText),
+		[
+			"The method estimates the target quantity from observed data:",
+			"Core claim: The method estimates the target quantity from observed data:",
+		],
+		"highlight retries should prefer clean prose over labeled prose-plus-formula spans without relying on page-specific terms",
+	);
+	assert.match(
+		formatToolResultForModel("browser_highlight_text", {
+			guardrail: { message: "Two comparison source highlights already succeeded. Answer now." },
+		}),
+		/Answer now/,
+		"surplus highlight guardrails should be returned to the model as instructions, not fake highlights",
+	);
+	assert.match(
+		formatToolResultForModel("browser_highlight_text", {
+			guardrail: { blockedTool: "browser_highlight_text", message: "Two comparison source highlights already succeeded. Answer now." },
+		}),
+		/Guardrail blocked browser_highlight_text/i,
+		"guardrail tool results should be explicit blocked instructions in traces/model output",
+	);
+	assert.equal(
+		isCompletedSourceHighlightTraceForTest({
+			toolName: "browser_highlight_text",
+			state: "complete",
+			resultSummary:
+				"Guardrail blocked browser_highlight_text: Highlighting has failed repeatedly on this page. Do not call browser_highlight_text again for this turn.",
+		}),
+		false,
+		"guardrail highlight messages should not count as completed source highlights",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"repeated failed highlights should abort instead of leaving the request active indefinitely",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about Bayesian neural networks.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		false,
+		"compact page-teaching prompts should allow one concise retry after two failed exact highlight attempts",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about Bayesian neural networks.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"compact page-teaching prompts should stop failed highlight loops after the concise retry also fails",
+	);
+	const compactTeachingRepeatedFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Teach me what this page says about caching.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.doesNotMatch(
+		compactTeachingRepeatedFailureGuard?.guardrail?.message || "",
+		/briefly note|could not add highlights/i,
+		"repeated highlight failure guard should not instruct the model to mention source-marker failures in chat",
+	);
+	assert.match(
+		compactTeachingRepeatedFailureGuard?.guardrail?.message || "",
+		/Do not mention highlight failures/i,
+		"repeated highlight failure guard should keep marker failure status out of visible answers",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"source discovery prompts phrased as 'show me a source' should use the external-source failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"external source prompts should stop after one failed highlight when readable source content is already available",
+	);
+	const externalSourceReadableFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_navigate", state: "complete", resultSummary: "Navigated to https://example.test/bayes" },
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceReadableFailureGuard?.guardrail?.message || "",
+		/Answer the user's question now from the readable page content/i,
+		"external source prompts should answer from readable source content after repeated highlight failures",
+	);
+	assert.doesNotMatch(
+		externalSourceReadableFailureGuard?.guardrail?.message || "",
+		/different credible source page/i,
+		"readable external source content should not trigger another source-search loop after repeated highlight failures",
+	);
+	const externalSourceUnreadableFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{ toolName: "browser_navigate", state: "complete", resultSummary: "Navigated to https://example.test/bayes" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceUnreadableFailureGuard?.guardrail?.message || "",
+		/different credible source page/i,
+		"external source prompts without readable content may try one alternate source after repeated highlight failures",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_activate_tab",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/bayes" } },
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{
+					toolName: "browser_navigate",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/bayes#proof" } },
+				},
+			],
+		}),
+		true,
+		"same-document anchor navigation should not reset repeated highlight failures",
+	);
+	const postHighlightFailureReadGuard = buildPostHighlightFailureAnswerNowGuardResultForTest(
+		"browser_get_visible_text",
+		"get_visible_text",
+		{
+			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
+			toolTraces: [
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary: "Readable content:\nBayes theorem follows from the product rule for joint probabilities.",
+				},
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		postHighlightFailureReadGuard?.guardrail?.kind,
+		"post_highlight_failure_answer_now",
+		"read/navigation tools should be blocked after repeated highlight failures when readable source content exists",
+	);
+	assert.match(
+		formatToolResultForModel("browser_get_visible_text", postHighlightFailureReadGuard),
+		/Answer the user's question now from the readable page content/i,
+		"post-highlight-failure guard should steer the model to final answer instead of more page reads",
+	);
+	const compactTeachingHighlightBudgetGuard = buildCompactTeachingHighlightBudgetGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		"Teach me what this page says about fetch.",
+		{
+			displayPrompt: "Teach me what this page says about fetch.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		compactTeachingHighlightBudgetGuard?.guardrail?.kind,
+		"compact_teaching_highlight_budget",
+		"compact teaching prompts should answer from an existing source after repeated later highlight failures",
+	);
+	assert.match(
+		formatToolResultForModel("browser_highlight_text", compactTeachingHighlightBudgetGuard),
+		/Do not call browser_highlight_text again/,
+		"compact teaching highlight budget should instruct the model to stop retrying markers",
+	);
+	const compactTeachingNoteFailureGuard = buildCompactTeachingNoteFailureGuardResultForTest(
+		"browser_show_note",
+		"show_note",
+		"Teach me what this page says about fetch.",
+		{
+			displayPrompt: "Teach me what this page says about fetch.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
+				{ toolName: "browser_show_note", state: "error" },
+			],
+		},
+	);
+	assert.equal(
+		compactTeachingNoteFailureGuard?.guardrail?.kind,
+		"compact_teaching_note_failure",
+		"compact teaching prompts should not retry optional notes after a note failure",
+	);
+	assert.match(
+		formatToolResultForModel("browser_show_note", compactTeachingNoteFailureGuard),
+		/Do not call browser_show_note again/,
+		"compact teaching note failure guard should instruct the model to answer without another note attempt",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Source sentence for the answer." },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		false,
+		"a successful highlight should satisfy the source-marker path and prevent failure-budget aborts",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_navigate", state: "complete" },
+			],
+		}),
+		false,
+		"successful navigation to another source page should reset the repeated-highlight failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{
+					toolName: "browser_activate_tab",
+					state: "complete",
+					resultDetails: { tab: { url: "https://example.test/alternate-source" } },
+				},
+			],
+		}),
+		false,
+		"activating another source tab should reset the repeated-highlight failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find an external source that derives this.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_navigate", state: "complete" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"highlight failures after the latest source navigation should still trigger the failure guard",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Find a source that derives this from first principles.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		}),
+		true,
+		"external source prompts should switch sources after two highlight failures on the same page",
+	);
+	const externalSourceHighlightFailureGuard = buildRepeatedHighlightFailureGuardResultForTest(
+		"browser_highlight_text",
+		"highlight_text",
+		{
+			displayPrompt: "Find a source that derives this from first principles.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error" },
+				{ toolName: "browser_highlight_text", state: "error" },
+			],
+		},
+	);
+	assert.match(
+		externalSourceHighlightFailureGuard?.guardrail?.message || "",
+		/different credible source page|simpler printable page/i,
+		"external source highlight failures should steer the model to another source before answering without a marker",
+	);
+	assert.doesNotMatch(
+		externalSourceHighlightFailureGuard?.guardrail?.message || "",
+		/Answer the user's question now/i,
+		"external source highlight failures should not immediately force an unmarked answer",
+	);
 	const scrolledPagePlannerCandidates = buildPlannerAnchorCandidates({
 		userQuestion: "What does this page say about Alpha smoke content?",
 		visible: {
@@ -1058,8 +1665,9 @@ async function assertSelectionFormatting() {
 
 async function assertBlankReplyRetryWaitsForAgentIdle() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { queueBlankReplyRetryForTest } = __browserRuntimeTest || {};
+	const { queueBlankReplyRetryForTest, buildBlankReplyRetryPromptForTest } = __browserRuntimeTest || {};
 	assert.equal(typeof queueBlankReplyRetryForTest, "function", "blank-reply retry helper export is missing");
+	assert.equal(typeof buildBlankReplyRetryPromptForTest, "function", "blank-reply retry prompt helper export is missing");
 	const events = [];
 	let resolveIdle;
 	const idlePromise = new Promise((resolve) => {
@@ -1102,6 +1710,23 @@ async function assertBlankReplyRetryWaitsForAgentIdle() {
 	assert.equal(events.some((event) => event.type === "continue"), true, "retry should continue after the active run settles");
 	assert.equal(events.some((event) => event.type === "prompt"), false, "retry should not call Agent.prompt while the original run is active");
 	assert.equal(capturedError, null);
+	const sourceMarkerRetryPrompt = buildBlankReplyRetryPromptForTest({
+		displayPrompt: "Give me a roadmap of the data structures covered on this page.",
+		toolTraces: [
+			{
+				toolName: "browser_extract_content",
+				state: "complete",
+				resultSummary: "Readable content: 5.1. More on Lists 5.3. Tuples and Sequences 5.4. Sets 5.5. Dictionaries",
+			},
+		],
+	});
+	assert.match(sourceMarkerRetryPrompt, /needs (?:a durable page source marker|durable page source markers)/i);
+	assert.match(sourceMarkerRetryPrompt, /browser_highlight_text/i);
+	assert.doesNotMatch(
+		sourceMarkerRetryPrompt,
+		/Do not call more tools/i,
+		"blank retries for source-marker prompts must still allow highlight tools",
+	);
 }
 
 async function assertPublicActivitiesFilterInternalThinking() {
@@ -1236,6 +1861,16 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		/probeInlineOnhandPdfViewerStatus/,
 		"open_pdf_in_onhand_viewer should reuse an existing viewer instead of reinstalling on every prompt",
 	);
+	assert.match(
+		background,
+		/args\.forceReload !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)[\s\S]*probeInlineOnhandPdfViewerStatus\(sourceTab\.id,\s*pdfUrl\)/,
+		"inline PDF viewer reuse should run even when a later tool call asks for a new tab",
+	);
+	assert.doesNotMatch(
+		background,
+		/args\.forceReload !== true && !shouldOpenViewerInNewTab[\s\S]{0,200}probeInlineOnhandPdfViewerStatus/,
+		"newTab should not bypass the existing inline PDF viewer reuse check",
+	);
 	assert.match(background, /reusedExistingViewer/, "viewer reuse should be reported in the handoff result");
 	assert.doesNotMatch(
 		background,
@@ -1246,6 +1881,21 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		background,
 		/Reusing inline Onhand PDF viewer without reload; requested page differs/,
 		"page mismatches should reuse the existing inline Onhand PDF viewer",
+	);
+	assert.match(
+		background,
+		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(\(\) => Promise\.resolve\(\)\.then\(fn\)\),\s*TAB_COMMAND_TIMEOUT_MS,/,
+		"tab command queues should time out the wait behind a prior page command, not only the command body",
+	);
+	assert.match(
+		background,
+		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]{0,220}attachDebuggerWithRetry/,
+		"debugger command queues should time out the wait behind a prior debugger task",
+	);
+	assert.doesNotMatch(
+		background,
+		/previousTask\s*\.\s*catch\(\(\) => \{\}\)\s*\.\s*then\(\s*\(\)\s*=>\s*withOperationTimeout\(/,
+		"tab command queues must not wait forever before starting their timeout wrapper",
 	);
 	assert.match(
 		background,
@@ -1280,22 +1930,62 @@ async function assertConstitutionPromptContract() {
 			compactOnPageNoteTextForTest,
 			buildPriorExtractedPageContextForTest,
 			buildVisiblePdfSelectionFirstPassGuardResultForTest,
+			buildRepeatedViewportReadGuardResultForTest,
+			buildOptionalFrameFallbackNoteGuardResultForTest,
 		classifyPromptForReasoning,
-		formatToolResultForModel,
-		getPromptContractForTest,
-		getToolNamesForTest,
-		shouldDeferPdfViewerForVisibleSelectionPrompt,
-		shouldRequirePdfAnchorRetryForTest,
-	} = __browserRuntimeTest || {};
-	assert.equal(typeof buildPdfAnchorRetryPromptForTest, "function", "browser runtime PDF anchor retry prompt export is missing");
-	assert.equal(typeof buildExistingAnchorContext, "function", "browser runtime existing anchor context export is missing");
-	assert.equal(typeof buildPriorExtractedPageContextForTest, "function", "browser runtime prior page context export is missing");
-	assert.equal(typeof buildVisiblePdfSelectionFirstPassGuardResultForTest, "function", "browser runtime PDF selection guard export is missing");
-	assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
-	assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
-	assert.equal(typeof formatToolResultForModel, "function", "browser runtime tool formatter export is missing");
-		assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
-		assert.equal(typeof shouldRequirePdfAnchorRetryForTest, "function", "browser runtime PDF anchor retry export is missing");
+			formatToolResultForModel,
+			getPromptContractForTest,
+			getToolNamesForTest,
+			promptAsksForTeachingPageSourceMarkerForTest,
+			promptAsksForStructuredPageSourceMarkerForTest,
+			promptAllowsPageSourceHighlightsForTest,
+			promptRequiresPageSourceMarkerForTest,
+			shouldDeferPdfViewerForVisibleSelectionPrompt,
+			shouldRequirePageSourceMarkerRetryForTest,
+			buildPageSourceMarkerRetryPromptForTest,
+			shouldRequirePdfAnchorRetryForTest,
+			buildEmptyHighlightTextGuardResultForTest,
+			buildWeakStructuredHighlightTextGuardResultForTest,
+			buildSurplusHighlightGuardResultForTest,
+			buildSurplusTeachingHighlightGuardResultForTest,
+			buildStructuredHighlightBudgetGuardResultForTest,
+			buildStructuredNoteBudgetGuardResultForTest,
+			cleanMarkdownHeadingHighlightTextForTest,
+			rewriteComparisonHighlightTextForTest,
+			sanitizeAssistantVisibleReplyForTest,
+			shouldRecordFallbackOpenCheckForTest,
+			missingToolRetryToolNamesForTest,
+			findMissingKnownBrowserToolTraceForTest,
+		} = __browserRuntimeTest || {};
+		assert.equal(typeof buildPdfAnchorRetryPromptForTest, "function", "browser runtime PDF anchor retry prompt export is missing");
+		assert.equal(typeof buildPageSourceMarkerRetryPromptForTest, "function", "browser runtime page source retry prompt export is missing");
+		assert.equal(typeof buildExistingAnchorContext, "function", "browser runtime existing anchor context export is missing");
+		assert.equal(typeof buildPriorExtractedPageContextForTest, "function", "browser runtime prior page context export is missing");
+		assert.equal(typeof buildVisiblePdfSelectionFirstPassGuardResultForTest, "function", "browser runtime PDF selection guard export is missing");
+		assert.equal(typeof buildRepeatedViewportReadGuardResultForTest, "function", "browser runtime repeated viewport read guard export is missing");
+		assert.equal(typeof buildOptionalFrameFallbackNoteGuardResultForTest, "function", "browser runtime optional frame-fallback note guard export is missing");
+		assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
+		assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
+		assert.equal(typeof formatToolResultForModel, "function", "browser runtime tool formatter export is missing");
+			assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
+			assert.equal(typeof promptAsksForTeachingPageSourceMarkerForTest, "function", "browser runtime teaching source marker classifier export is missing");
+			assert.equal(typeof promptAsksForStructuredPageSourceMarkerForTest, "function", "browser runtime structured source marker classifier export is missing");
+			assert.equal(typeof promptAllowsPageSourceHighlightsForTest, "function", "browser runtime source marker availability classifier export is missing");
+			assert.equal(typeof promptRequiresPageSourceMarkerForTest, "function", "browser runtime source marker requirement classifier export is missing");
+			assert.equal(typeof shouldRequirePageSourceMarkerRetryForTest, "function", "browser runtime page source retry export is missing");
+			assert.equal(typeof shouldRequirePdfAnchorRetryForTest, "function", "browser runtime PDF anchor retry export is missing");
+			assert.equal(typeof buildEmptyHighlightTextGuardResultForTest, "function", "browser runtime empty highlight guard export is missing");
+			assert.equal(typeof buildWeakStructuredHighlightTextGuardResultForTest, "function", "browser runtime weak structured highlight guard export is missing");
+			assert.equal(typeof buildSurplusHighlightGuardResultForTest, "function", "browser runtime comparison surplus highlight guard export is missing");
+			assert.equal(typeof buildSurplusTeachingHighlightGuardResultForTest, "function", "browser runtime surplus teaching highlight guard export is missing");
+			assert.equal(typeof buildStructuredHighlightBudgetGuardResultForTest, "function", "browser runtime structured highlight budget guard export is missing");
+			assert.equal(typeof buildStructuredNoteBudgetGuardResultForTest, "function", "browser runtime structured note budget guard export is missing");
+			assert.equal(typeof cleanMarkdownHeadingHighlightTextForTest, "function", "browser runtime heading highlight cleaner export is missing");
+			assert.equal(typeof rewriteComparisonHighlightTextForTest, "function", "browser runtime comparison highlight rewrite export is missing");
+			assert.equal(typeof sanitizeAssistantVisibleReplyForTest, "function", "browser runtime visible reply sanitizer export is missing");
+			assert.equal(typeof shouldRecordFallbackOpenCheckForTest, "function", "browser runtime fallback-check gate export is missing");
+			assert.equal(typeof missingToolRetryToolNamesForTest, "function", "browser runtime missing-tool retry export is missing");
+			assert.equal(typeof findMissingKnownBrowserToolTraceForTest, "function", "browser runtime missing-tool trace export is missing");
 		assert.equal(typeof buildFinalAssistantReplyForTest, "function", "browser runtime final reply helper export is missing");
 		assert.equal(typeof compactOnPageNoteTextForTest, "function", "browser runtime note compactor export is missing");
 
@@ -1303,21 +1993,28 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /The page is the canvas/);
 	assert.match(contract.systemPrompt, /Every material page claim must be grounded/);
 	assert.match(contract.systemPrompt, /Read the page before answering/);
-	assert.match(contract.systemPrompt, /focused pass/);
+	assert.match(contract.systemPrompt, /create one durable source highlight/);
 	assert.match(contract.systemPrompt, /The user's pages come first/);
 	assert.match(contract.systemPrompt, /explicitly asks to search online/);
 	assert.match(contract.systemPrompt, /Preserve existing session highlights/);
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
-	assert.match(contract.systemPrompt, /under 120 characters/);
+	assert.match(contract.systemPrompt, /under ~280 characters/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as source markers/);
+	assert.match(contract.systemPrompt, /never the page title, course title, or a generic heading/);
+	assert.match(contract.systemPrompt, /For compare\/contrast prompts, usually use two concise source highlights/);
 	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
 	assert.match(contract.systemPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
-	assert.match(contract.systemPrompt, /simple answer-only questions use read-only grounding/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
-	assert.match(contract.systemPrompt, /every named step or item in chat must be supported by a highlight\/note/);
+	assert.match(contract.systemPrompt, /treat the prompt as an enumerable coverage task/);
+	assert.match(contract.systemPrompt, /every required step, item, or top-level peer you name in chat needs its own source highlight/);
 	assert.match(contract.systemPrompt, /do not narrate internal page-work plans/);
+	assert.match(contract.systemPrompt, /let me ground this/);
+	assert.match(contract.systemPrompt, /Do not use horizontal rules as separators/);
 	assert.match(contract.systemPrompt, /Math formatting: when writing LaTeX symbols or equations/);
 	assert.match(contract.systemPrompt, /Never leave raw LaTeX commands/);
+	assert.match(contract.systemPrompt, /If extracted page math is fragmented or missing operators/);
+	assert.match(contract.systemPrompt, /do not copy it verbatim into chat or source highlights/);
+	assert.match(contract.systemPrompt, /do not add extra highlights just to increase source count/);
 	const existingAnchorContext = buildExistingAnchorContext({
 		pageActions: [],
 		turns: [
@@ -1377,40 +2074,372 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
 	assert.match(contract.answerPrompt, /Linked-note\/resource requests are navigation tasks/);
-	assert.match(contract.answerPrompt, /Grounding budget: simple questions get read-only grounding/);
-	assert.match(contract.answerPrompt, /Notes are not mini-summaries/);
+	assert.match(contract.answerPrompt, /Grounding budget: simple questions get one strong source highlight/);
+	assert.match(contract.answerPrompt, /Do not use the page title, course title, reading list, or a generic heading as a source marker/);
+	assert.match(contract.answerPrompt, /do not paraphrase the highlight/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not source markers/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
+	assert.match(contract.answerPrompt, /For comparison prompts, usually create two concise source highlights/);
 	assert.match(contract.answerPrompt, /Roadmap\/list\/navigation answers need the actual supporting list/);
-	assert.match(contract.answerPrompt, /Every named step\/item in chat needs a matching source highlight/);
+	assert.match(contract.answerPrompt, /Each named step\/item in chat needs its own source highlight/);
+	assert.match(contract.answerPrompt, /literally contains every named item/);
+	assert.match(contract.systemPrompt, /where does this page explain/);
+	assert.match(contract.systemPrompt, /not a math-only formula as the first or only source marker/);
 	assert.match(contract.answerPrompt, /Do not use the word 'anchor' in user-facing replies/);
+	assert.match(contract.answerPrompt, /let me ground this/);
+	assert.match(contract.answerPrompt, /Do not use horizontal rules like --- as section separators/);
+			assert.match(contract.answerPrompt, /Do not use Markdown tables unless the user explicitly asks for a table/);
+			assert.match(
+				contract.systemPrompt,
+				/Once a parent\/top-level item is marked, move to the next sibling item/,
+				"roadmap prompts should explicitly avoid marking child subtopics after a parent item",
+			);
 	assert.match(contract.answerPrompt, /Math must be renderable markdown/);
 	assert.match(contract.answerPrompt, /Do not write bare LaTeX commands/);
+	assert.match(contract.answerPrompt, /If extracted page math is fragmented or missing operators/);
+	assert.match(contract.answerPrompt, /do not copy it verbatim into chat or source highlights/);
+	assert.match(contract.answerPrompt, /explicitly asks to highlight a formula\/equation/);
+	assert.match(contract.answerPrompt, /explicit named formula\/equation\/theorem requests/);
+	assert.match(contract.answerPrompt, /do not substitute a nearby unrelated formula/);
+	assert.match(contract.answerPrompt, /block formula highlight/);
 	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
+	const runtimeSourceForHighlightPolicy = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/reuseExisting:\s*targetedParams\?\.reuseExisting !== false/,
+		"source-marker highlight commands should reuse existing page highlights by default",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/shouldTryHighlightRetryCandidatesBeforeOriginal/,
+		"highlight commands should try short exact candidates before brittle long spans",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/HIGHLIGHT_COMMAND_TIMEOUT_MS\s*=\s*6000/,
+		"highlight commands should have a bounded timeout",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/HIGHLIGHT_TOOL_CALL_TIMEOUT_MS\s*=\s*12000/,
+		"highlight candidate retries should also have an overall per-call timeout",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/if \(\["show_note", "scroll_to_annotation", "clear_annotations"\]\.includes\(commandName\)\) return ANNOTATION_COMMAND_TIMEOUT_MS;/,
+		"note and annotation follow-up commands should have bounded timeouts too",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/if \(commandName === "activate_tab"\) return targeted;[\s\S]{0,120}delete targeted\.titleContains;[\s\S]{0,80}delete targeted\.urlContains;/,
+		"activate_tab should preserve titleContains/urlContains selectors instead of dropping them like read-only page tools",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/promptRequiresPageSourceMarker\(activeRequest\?\.displayPrompt\)[\s\S]{0,160}highlightParams\.scrollIntoView = true/,
+		"page-grounded source markers should scroll matching offscreen text into view by default",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/highlightParams\.scrollIntoView !== false && promptRequiresPageSourceMarker/,
+		"required page source markers should not honor model-provided scrollIntoView:false",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/STRUCTURED_SOURCE_HIGHLIGHT_MAX/,
+		"enumerable structured page answers should not stop after a fixed number of successful markers",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/\b(?:mcmc|monte\s+carlo|metropolis|hamiltonian|stochastic\s+gradient)\b/i,
+		"production runtime behavior heuristics should not be hardcoded to the BayesianDL lecture",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/buildStructuredHighlightBudgetGuardResult\(toolName,\s*commandName,\s*prompt,\s*activeRequest\)/,
+		"structured page prompts should stop runaway highlight loops after repeated failures",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/buildSurplusHighlightGuardResult\(toolName,\s*commandName,\s*prompt,\s*activeRequest\)/,
+		"compare prompts should stop surplus highlight calls once enough source markers exist",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/one short marginal note on the passage that captures the practical difference or takeaway/,
+		"comparison prompts should usually create one concise takeaway note after source highlights",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/isCompletedSourceHighlightTrace/,
+		"runtime source counts should ignore surplus-highlight guardrails as source highlights",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/buildConceptLocationHighlightGuardResult\(toolName,\s*commandName,\s*effectiveParams,\s*prompt,\s*activeRequest\)/,
+		"concept location prompts should reject math-only first highlights in favor of explanatory page text",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/buildNamedFormulaHighlightGuardResult\(toolName,\s*commandName,\s*effectiveParams,\s*prompt,\s*activeRequest\)/,
+		"explicit Bayes formula highlight prompts should reject unrelated nearby formula highlights",
+	);
+	assert.doesNotMatch(
+		runtimeSourceForHighlightPolicy,
+		/if \(!\(\/rejection sampling\/\.test\(sourceText\) && \/metropolis\[-\\s\]\?hastings\/\.test\(sourceText\)\)\) return null;/,
+		"comparison highlight gating should not be hardcoded to one BayesianDL prompt",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/extractComparisonEntities\(prompt\)/,
+		"comparison highlight gating should infer compared entities from the prompt",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/case "browser_highlight_text": \{\s*if \(details\.guardrail\) return null;/,
+		"surplus highlight guardrails should not create fake page highlight actions",
+	);
+	const repeatedViewportGuard = buildRepeatedViewportReadGuardResultForTest("browser_get_scroll_state", "get_scroll_state", {
+		toolTraces: [
+			{ toolName: "browser_get_visible_text", state: "complete", resultSummary: "Visible text from BayesianDL" },
+			{ toolName: "browser_get_visible_text", state: "complete", resultSummary: "Visible text from BayesianDL" },
+			{ toolName: "browser_get_scroll_state", state: "complete", resultSummary: "Scroll state: progress=4%" },
+			{ toolName: "browser_get_visible_text", state: "complete", resultSummary: "Visible text from BayesianDL" },
+			{ toolName: "browser_get_viewport_headings", state: "complete", resultSummary: "Current heading: Bayesian Deep Learning" },
+			{ toolName: "browser_get_visible_text", state: "complete", resultSummary: "Visible text from BayesianDL" },
+		],
+	});
+	assert.equal(repeatedViewportGuard?.guardrail?.kind, "repeated_viewport_read_loop", "repeated viewport probes should be guardrailed before a minute-long loop");
+	assert.match(repeatedViewportGuard?.guardrail?.message || "", /browser_extract_content once/, "read-loop guard should steer to a focused extract or final answer");
+	const shortViewportProbe = buildRepeatedViewportReadGuardResultForTest("browser_get_visible_text", "get_visible_text", {
+		toolTraces: [
+			{ toolName: "browser_get_visible_text", state: "complete", resultSummary: "Visible text from BayesianDL" },
+			{ toolName: "browser_get_scroll_state", state: "complete", resultSummary: "Scroll state: progress=4%" },
+		],
+	});
+	assert.equal(shortViewportProbe, null, "short ordinary read probes should not be blocked");
+	const optionalFrameFallbackNoteGuard = buildOptionalFrameFallbackNoteGuardResultForTest(
+		"browser_show_note",
+		"show_note",
+		{ annotationId: "ann-frame" },
+		"Teach me what this article says.",
+		{
+			toolTraces: [
+				{
+					toolName: "browser_highlight_text",
+					state: "complete",
+					resultSummary: "Highlighted \"Core claim\" on Example. annotationId: ann-frame.",
+					resultDetails: {
+						annotation: {
+							annotationId: "ann-frame",
+							pageToolkitFrameFallback: { attempted: true, ok: true, method: "debugger-frame" },
+						},
+					},
+				},
+			],
+		},
+	);
+	assert.equal(optionalFrameFallbackNoteGuard, null, "frame-fallback highlights should still allow notes");
+	assert.equal(
+		buildOptionalFrameFallbackNoteGuardResultForTest(
+			"browser_show_note",
+			"show_note",
+			{ annotationId: "ann-frame" },
+			"Teach me what this article says and add a note.",
+			optionalFrameFallbackNoteGuard,
+		),
+		null,
+		"explicit note requests should not be blocked by the frame-fallback note path",
+	);
+	const comparisonHighlightRewriteRequest = {
+		displayPrompt: "Compare rejection sampling and Metropolis-Hastings",
+		toolTraces: [
+			{
+				toolName: "browser_extract_content",
+				state: "complete",
+				resultDetails: {
+					content: {
+						blocks: [
+							{ text: "Rejection sampling is very difficulty in high-dimensional domains (e.g., images) because of the large value of MMM." },
+							{ text: "Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant MMM." },
+						],
+					},
+				},
+			},
+			{
+				toolName: "browser_get_visible_text",
+				state: "complete",
+				resultDetails: {
+					visible: {
+						blocks: [
+							{ text: "The trick is finding a proposal Markov chain distribution that keeps the rejection probability low." },
+							{ text: "M′ can be very large for large datasets (N≫1), forcing us to reject most samples." },
+						],
+					},
+				},
+			},
+		],
+	};
+	assert.equal(
+		rewriteComparisonHighlightTextForTest(
+			"Rejection sampling is very difficulty in high-dimensional domains (e.g., images) because of the large value of M.",
+			"Compare rejection sampling and Metropolis-Hastings",
+			comparisonHighlightRewriteRequest,
+		),
+		"",
+		"comparison source highlights should keep clean prose when readable page text only adds duplicated rendered-math noise",
+	);
+	assert.equal(
+		rewriteComparisonHighlightTextForTest(
+			"Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.",
+			"Compare rejection sampling and Metropolis-Hastings",
+			comparisonHighlightRewriteRequest,
+		),
+		"",
+		"comparison source highlights should not rewrite MH constants into duplicated rendered-math text",
+	);
+	const genericFormulaRewriteRequest = {
+		displayPrompt: "Teach me what this article says about the method.",
+		toolTraces: [
+			{
+				toolName: "browser_extract_content",
+				state: "complete",
+				resultDetails: {
+					content: {
+						blocks: [
+							{
+								text:
+									"- Core claim: The method estimates the target quantity from observed data: theta_hat = sum_i x_i / n. Each estimate is one sample from the procedure.",
+							},
+						],
+					},
+				},
+			},
+		],
+	};
+	assert.equal(
+		rewriteComparisonHighlightTextForTest(
+			"The method estimates the target quantity from observed data",
+			"Teach me what this article says about the method.",
+			genericFormulaRewriteRequest,
+		),
+		"The method estimates the target quantity from observed data:",
+		"exact highlight rewriting should prefer clean explanatory prose before formula noise on any page",
+	);
+	assert.equal(
+		rewriteComparisonHighlightTextForTest(
+			"The method estimates the target quantity from observed data: theta_hat = sum_i x_i / n. Each estimate is one sample from the procedure.",
+			"Teach me what this article says about the method.",
+			{
+				displayPrompt: "Teach me what this article says about the method.",
+				toolTraces: [
+					{
+						toolName: "browser_extract_content",
+						state: "complete",
+						resultSummary:
+							"Readable content from Example:\n- Core claim: The method estimates the target quantity from observed data: theta_hat = sum_i x_i / n. Each estimate is one sample from the procedure.",
+					},
+				],
+			},
+		),
+		"The method estimates the target quantity from observed data:",
+		"exact highlight rewriting should use model-facing extract summaries when detailed blocks omit the useful passage",
+	);
+	const pagePromptEvalSource = await (await import("node:fs/promises")).readFile(new URL("../scripts/run-page-prompt-eval.mjs", import.meta.url), "utf8");
+	assert.match(
+		pagePromptEvalSource,
+		/isRealCompletedHighlightTrace/,
+		"page prompt evals should distinguish real completed highlights from guardrail tool messages",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/action\?\.label === "Highlighted text"/,
+		"page prompt evals should count highlighted text actions but not scroll-to-annotation actions as highlights",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/do not call browser_highlight_text again/,
+		"page prompt evals should ignore surplus-highlight guardrail summaries when counting highlights",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/forbidMarkdownTables:\s*true/,
+		"page prompt evals should fail page-teaching replies that render Markdown tables",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/forbidInlineMarkdownHeadings:\s*true/,
+		"page prompt evals should fail glued inline Markdown headings in sidebar replies",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/maxHighlightErrors:\s*0/,
+		"page prompt evals should treat failed surplus source-marker attempts as regressions",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/recoveredCount[\s\S]*Math\.max\(0,\s*errorCount - recoveredCount\)/,
+		"page prompt evals should not fail turns for highlight attempts that were explicitly recovered",
+	);
+	assert.match(
+		pagePromptEvalSource,
+		/shouldRetryBlankPageAnswer[\s\S]*model returned an empty answer after reading page context[\s\S]*attempt < 2/s,
+		"page prompt evals should retry the specific empty-after-read provider failure once",
+	);
+	const sessionDumpSource = await (await import("node:fs/promises")).readFile(new URL("../scripts/dump-onhand-sessions.mjs", import.meta.url), "utf8");
+	assert.match(
+		sessionDumpSource,
+		/url\.includes\("\/sidepanel\.html"\) && \/\[\?&\]driver=1\\b\/\.test\(url\)/,
+		"debug:sessions should prefer dedicated driver side-panel targets",
+	);
+	assert.match(
+		sessionDumpSource,
+		/turn && !turn\.pending && state\.activeRequestId !== requestId/,
+		"debug:sessions wait should not return a completed replay turn while the same request is still active",
+	);
+	assert.doesNotMatch(
+		sessionDumpSource,
+		/turn && !turn\.pending && !state\.activeRequestId/,
+		"debug:sessions wait should allow another active request once the requested replay turn is complete",
+	);
+	assert.match(
+		sessionDumpSource,
+		/latestReplay[\s\S]*findTurnByRequestId\(latestReplay,\s*requestId\)/,
+		"debug:sessions wait should refetch replay before returning the completed requested turn",
+	);
+	assert.match(
+		sessionDumpSource,
+		/if \(target\.type === "page" && url\.includes\("\/sidepanel\.html"\)\) return Number\.POSITIVE_INFINITY;/,
+		"debug:sessions should not attach to a user's visible side panel, which can be stale after rebuilds",
+	);
 	assert.match(contract.answerPrompt, /Do not substitute nearby headings for missing list items/);
 	assert.match(contract.answerPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.answerPrompt, /Do not call browser_extract_content more than once/);
-	assert.match(contract.answerPrompt, /browser_textbook_search/);
-	assert.match(contract.answerPrompt, /reader's own search UI/);
-	assert.match(contract.answerPrompt, /Do not manually click\/type through the reader search UI/);
-	assert.match(contract.answerPrompt, /openedResult\.navigated=true/);
-	assert.match(contract.answerPrompt, /immediately use browser_extract_content once/);
-	assert.match(contract.answerPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
-	assert.match(contract.answerPrompt, /Use browser_navigate only to reload the current reader URL once/);
-	assert.match(contract.answerPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
-	assert.match(contract.answerPrompt, /selected\/highlighted PDF questions/);
-	assert.match(contract.answerPrompt, /Chrome's native PDF viewer usually exposes selection through browser_get_selection/);
-	assert.match(contract.answerPrompt, /If tool output names Google Scholar PDF Reader/);
-		assert.match(contract.answerPrompt, /third-party PDF reader blocks selected text/);
-		assert.match(contract.answerPrompt, /ask the user to highlight the passage there only if selected text did not transfer/);
-		assert.match(contract.answerPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
-		assert.match(contract.answerPrompt, /Open the Onhand PDF viewer when analysis/);
-		assert.match(contract.answerPrompt, /Do not treat selected named concepts/);
-		assert.match(contract.answerPrompt, /finish the search\/read\/jump\/highlight\/note workflow before answering/);
-		assert.match(contract.answerPrompt, /Never say you will highlight or add a note unless that tool call already succeeded/);
-		assert.match(contract.answerPrompt, /browser_get_visible_region_image/);
-	assert.match(contract.answerPrompt, /Visual claims must name the captured region/);
-	assert.match(contract.answerPrompt, /\.value for form controls and \.textContent/);
+	assert.doesNotMatch(contract.answerPrompt, /browser_textbook_search/);
+	assert.doesNotMatch(contract.answerPrompt, /selected\/highlighted PDF questions/);
+	assert.doesNotMatch(contract.answerPrompt, /browser_get_visible_region_image/);
+	assert.doesNotMatch(contract.answerPrompt, /\.value for form controls and \.textContent/);
+	assert.match(contract.textbookPrompt, /browser_textbook_search/);
+	assert.match(contract.textbookPrompt, /reader's own .*search UI/);
+	assert.match(contract.textbookPrompt, /Do not manually click\/type through the reader search UI/);
+	assert.match(contract.textbookPrompt, /openedResult\.navigated=true/);
+	assert.match(contract.textbookPrompt, /immediately use browser_extract_content once/);
+	assert.match(contract.textbookPrompt, /Do not switch tabs, close search panels, call generic click\/find\/wait tools, or repeat book search/);
+	assert.match(contract.textbookPrompt, /Use browser_navigate only to reload the current reader URL once/);
+	assert.match(contract.textbookPrompt, /prefer one contiguous highlight spanning the key supporting sentences and one note/);
+	assert.match(contract.pdfPrompt, /selected\/highlighted PDF questions/);
+	assert.match(contract.pdfPrompt, /Chrome's native PDF viewer usually exposes selection through browser_get_selection/);
+	assert.match(contract.pdfPrompt, /If tool output names Google Scholar PDF Reader/);
+	assert.match(contract.pdfPrompt, /third-party PDF reader blocks selected text/);
+	assert.match(contract.pdfPrompt, /ask the user to highlight the passage there only if selected text did not transfer/);
+	assert.match(contract.pdfPrompt, /Recommend Chrome's default PDF viewer or the Onhand viewer/);
+	assert.match(contract.pdfPrompt, /Open the Onhand PDF viewer when analysis/);
+	assert.match(contract.pdfPrompt, /Do not treat selected named concepts/);
+	assert.match(contract.pdfPrompt, /finish the search\/read\/jump\/highlight\/note workflow before answering/);
+	assert.match(contract.pdfPrompt, /Never say you will highlight or add a note unless (?:that|the corresponding) tool call already succeeded/);
+	assert.match(contract.visualPrompt, /browser_get_visible_region_image/);
+	assert.match(contract.visualPrompt, /Visual claims must name the captured region/);
+	assert.match(contract.runtimeJsPrompt, /\.value for form controls and \.textContent/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
 	assert.match(contract.learningModeAppend, /give a concise page-grounded answer first/);
@@ -1448,8 +2477,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.homeworkLearningPrompt, /homework\/problem priority still wins/);
 	assert.doesNotMatch(contract.homeworkLearningPrompt, /Drop the Socratic stance when the user explicitly asks for the direct answer/);
 	assert.match(contract.learningPrompt, /Current Learning Mode state for this session/);
-	assert.match(contract.learningPrompt, /Rejection sampling \(concept_rejection_sampling\)/);
-	assert.match(contract.learningPrompt, /check-rejection-1/);
+	assert.match(contract.learningPrompt, /Proposal sampling \(concept_proposal_sampling\)/);
+	assert.match(contract.learningPrompt, /check-proposal-1/);
 	assert.match(contract.learningPrompt, /Likely repeated concepts in the user's latest message/);
 	assert.match(contract.learningPrompt, /keep the turn lightweight/);
 	assert.match(contract.learningPrompt, /use the existing source highlight when possible/);
@@ -1463,10 +2492,28 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /reasonable paraphrase/);
 	assert.match(contract.learningPrompt, /Concept hygiene/);
 	assert.match(contract.learningPrompt, /Cross-tab interleaving is offer-first/);
+	assert.match(contract.learningPrompt, /do not start with process narration like "let me ground this"/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
-	assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
-	const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);
-	const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
+		assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
+		const answerToolNames = getToolNamesForTest("How does rejection sampling work?", false);
+		const teachingPageToolNames = getToolNamesForTest("Teach me what this page says about Bayesian neural networks", false);
+		const compareOnPageToolNames = getToolNamesForTest("Compare rejection sampling and Metropolis-Hastings on this page.", false);
+		const differenceLectureToolNames = getToolNamesForTest("What are the differences between rejection sampling and Metropolis-Hastings in this lecture?", false);
+		const roadmapLectureToolNames = getToolNamesForTest("Give me a roadmap of the sampling methods in this lecture.", false);
+		const hmcStepsToolNames = getToolNamesForTest("What are the main steps in the HMC algorithm on this page?", false);
+		const derivationToolNames = getToolNamesForTest("How does this page derive Bayes theorem?", false);
+		const quizPageToolNames = getToolNamesForTest("Quiz me on this page.", false);
+		const limitationsPageToolNames = getToolNamesForTest("What are the limitations of rejection sampling according to the page?", false);
+		const learningToolNames = getToolNamesForTest("How does rejection sampling work?", true);
+	const firstPrinciplesSourceToolNames = getToolNamesForTest("could you find a source that derives it from first principles?", false);
+	const firstPrinciplesCachedSourceToolNames = getToolNamesForTest(
+		"could you find a source that derives it from first principles?",
+		false,
+		null,
+		{ suppressExtractContent: true },
+	);
+	const singularSourceToolNames = getToolNamesForTest("find a source that derives Bayes theorem from first principles", false);
+	const ordinarySourceToolNames = getToolNamesForTest("What does this paragraph mean?", false);
 	const visualToolNames = getToolNamesForTest("What does this chart show about model accuracy?", false);
 	const answerAllToolNames = getToolNamesForTest("Port smoke all browser tools.", false);
 	const genericSmokeToolNames = getToolNamesForTest("Google Docs smoke test: read the document title without editing it.", false);
@@ -1523,6 +2570,12 @@ async function assertConstitutionPromptContract() {
 		"Using the same page context, which three Qwen tensors each have 32.0% of the layer parameters?",
 		false,
 		null,
+		{ suppressExtractContent: true },
+	);
+	const cachedComparisonFollowupToolNames = getToolNamesForTest(
+		"Compare rejection sampling and Metropolis-Hastings",
+		true,
+		contract.learnerState,
 		{ suppressExtractContent: true },
 	);
 	const priorPageContext = buildPriorExtractedPageContextForTest(
@@ -1616,10 +2669,73 @@ async function assertConstitutionPromptContract() {
 		{ title: "Unrelated video", url: "https://www.youtube.com/watch?v=example" },
 		"What does the current page say about the iMac?",
 	);
-	assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
-	assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
-	assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
-	assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
+		assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
+		assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
+		assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
+		assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_navigate"), true, "natural singular source-finding prompts should expose navigation");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_extract_content"), true, "source-finding prompts should expose readable extraction");
+		assert.equal(firstPrinciplesCachedSourceToolNames.includes("browser_extract_content"), true, "cached source-navigation followups should still expose extraction for destination pages");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_find_elements"), true, "source-finding prompts should expose element discovery");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_click"), false, "source-finding prompts should not expose risky click tools by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_type"), false, "source-finding prompts should not expose typing tools by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), false, "source-finding prompts should not expose runtime JS by default");
+		assert.equal(singularSourceToolNames.includes("browser_navigate"), true, "find a source that... should route to the source-navigation pack");
+		assert.equal(ordinarySourceToolNames.includes("browser_navigate"), false, "ordinary page questions should stay on the current page");
+		assert.equal(ordinarySourceToolNames.includes("browser_click"), false, "ordinary page questions should still gate click tools");
+		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), false, "ordinary page questions should still gate runtime JS");
+		const missingNavigationRetryTools = missingToolRetryToolNamesForTest(
+			"browser_navigate",
+			"could you find a source that derives it from first principles?",
+			{},
+		);
+		for (const name of [
+			"browser_get_visible_text",
+			"browser_extract_content",
+			"browser_get_selection",
+			"browser_get_viewport_headings",
+			"browser_get_scroll_state",
+			"browser_list_tabs",
+			"browser_activate_tab",
+			"browser_navigate",
+			"browser_open_pdf_in_onhand_viewer",
+			"browser_find_elements",
+		]) {
+			assert.equal(missingNavigationRetryTools.includes(name), true, `missing navigation retry should include ${name}`);
+		}
+		assert.equal(
+			missingToolRetryToolNamesForTest("browser_run_js", "could you find a source that derives it from first principles?", {}).length,
+			0,
+			"missing-tool retry should not enable runtime JS for ordinary source prompts",
+		);
+		assert.equal(
+			findMissingKnownBrowserToolTraceForTest({
+				toolTraces: [
+					{
+						toolName: "browser_navigate",
+						state: "error",
+						error: "Tool failed.",
+						resultDetails: { error: { content: [{ type: "text", text: "Tool browser_navigate not found" }] } },
+					},
+				],
+			})?.toolName,
+			"browser_navigate",
+			"missing browser tool traces should be detected for retry",
+		);
+		assert.equal(teachingPageToolNames.includes("browser_highlight_text"), true, "page-level teaching prompts should expose source highlighting");
+		assert.equal(teachingPageToolNames.includes("browser_show_note"), true, "page-level teaching prompts should expose source notes");
+		for (const [label, toolNames] of [
+			["same-page comparison", compareOnPageToolNames],
+			["lecture differences", differenceLectureToolNames],
+			["lecture roadmap", roadmapLectureToolNames],
+			["page algorithm steps", hmcStepsToolNames],
+			["page derivation", derivationToolNames],
+			["page quiz", quizPageToolNames],
+			["according-to-page limitations", limitationsPageToolNames],
+		]) {
+			assert.equal(toolNames.includes("browser_highlight_text"), true, `${label} prompts should expose source highlighting`);
+			assert.equal(toolNames.includes("browser_show_note"), true, `${label} prompts should expose source notes`);
+		}
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
 	assert.equal(pdfSelectionToolNames.includes("browser_get_visible_region_image"), false, "PDF selection/deictic prompts should not expose visual capture as the Scholar fallback");
 	assert.equal(
@@ -1673,27 +2789,132 @@ async function assertConstitutionPromptContract() {
 	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_jump_to_page"), true, "affirmative PDF follow-ups should keep PDF jumping available for source activation");
 	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_highlight_text"), true, "affirmative PDF follow-ups should expose highlights for the accepted deeper pass");
 	assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_show_note"), true, "affirmative PDF follow-ups should expose notes for the accepted deeper pass");
-	const pdfReadWithoutAnchorsRequest = {
-		displayPrompt: "What does this mean?",
-		toolTraces: [
-			{ toolName: "browser_pdf_search", state: "complete", resultSummary: "PDF search for \"Multi-Head Attention\": 2 matches" },
+		const pdfReadWithoutAnchorsRequest = {
+			displayPrompt: "What does this mean?",
+			toolTraces: [
+				{ toolName: "browser_pdf_search", state: "complete", resultSummary: "PDF search for \"Multi-Head Attention\": 2 matches" },
 			{
 				toolName: "browser_pdf_read_pages",
 				state: "complete",
 				resultSummary:
 					"PDF page text:\n[p. 5]\nMulti-head attention allows the model to jointly attend to information from different representation subspaces at different positions.",
-			},
-		],
-	};
-	assert.equal(
-		shouldRequirePdfAnchorRetryForTest(pdfReadWithoutAnchorsRequest),
-		true,
+				},
+			],
+		};
+		const pageTeachingWithoutSourceRequest = {
+			displayPrompt: "Teach me what this page says about Bayesian neural networks",
+			toolTraces: [
+				{
+					toolName: "browser_extract_content",
+					state: "complete",
+					resultSummary:
+						"Readable content from BayesianDL:\nReadable body excerpt:\nBayesian models sample from the posterior of models given the data.",
+				},
+			],
+		};
+		assert.equal(promptAsksForTeachingPageSourceMarkerForTest(pageTeachingWithoutSourceRequest.displayPrompt), true);
+		assert.equal(promptAsksForTeachingPageSourceMarkerForTest("Give me a practical summary of this page."), true);
+		assert.equal(promptRequiresPageSourceMarkerForTest("Give me a practical summary of this page."), true);
+		assert.equal(promptAsksForTeachingPageSourceMarkerForTest("How does rejection sampling work?"), false);
+		assert.equal(promptAllowsPageSourceHighlightsForTest("What does the current page say about the iMac?"), false);
+		assert.equal(promptRequiresPageSourceMarkerForTest("What does the current page say about the iMac?"), false);
+		for (const prompt of [
+			"Compare rejection sampling and Metropolis-Hastings on this page.",
+			"What are the differences between rejection sampling and Metropolis-Hastings in this lecture?",
+			"Give me a roadmap of the sampling methods in this lecture.",
+			"What are the main steps in the HMC algorithm on this page?",
+			"How does this page derive Bayes theorem?",
+			"Quiz me on this page.",
+			"What are the limitations of rejection sampling according to the page?",
+		]) {
+			assert.equal(promptAsksForStructuredPageSourceMarkerForTest(prompt), true, `${prompt} should be treated as structured page-grounded work`);
+			assert.equal(promptAllowsPageSourceHighlightsForTest(prompt), true, `${prompt} should allow source highlights`);
+			assert.equal(promptRequiresPageSourceMarkerForTest(prompt), true, `${prompt} should require a source marker before finalizing`);
+			assert.equal(
+				shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, displayPrompt: prompt }),
+				true,
+				`${prompt} should retry if no source highlight succeeded`,
+			);
+		}
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest(pageTeachingWithoutSourceRequest),
+			true,
+			"page-level teaching answers should require a retry when no highlight succeeded",
+		);
+		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /durable page source marker/);
+		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_highlight_text/);
+	assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note at most once/);
+		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /Do not use the page title, course title, reading list, or a generic heading/);
+		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /only one source marker succeeded/);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text" },
+				],
+			}),
+			false,
+			"completed page highlights should satisfy the teaching source-marker requirement",
+		);
+		const structuredOneHighlightRequest = {
+			...pageTeachingWithoutSourceRequest,
+			displayPrompt: "Give me a roadmap of the data structures covered on this page.",
+			toolTraces: [
+				...pageTeachingWithoutSourceRequest.toolTraces,
+				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Using Lists as Stacks" },
+			],
+		};
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest(structuredOneHighlightRequest),
+			true,
+			"structured page prompts should retry when only one source highlight supports a multi-item answer",
+		);
+		assert.match(
+			buildPageSourceMarkerRetryPromptForTest(structuredOneHighlightRequest, "Draft roadmap"),
+			/one more durable source marker|2-4 concise source markers/,
+			"structured source-marker retry prompts should ask for additional concise source markers",
+		);
+		assert.match(
+			buildPageSourceMarkerRetryPromptForTest(structuredOneHighlightRequest, "Draft roadmap"),
+			/distinct top-level sibling items or sections/,
+			"structured source-marker retry prompts should prefer distinct top-level roadmap items over clustered subitems",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...structuredOneHighlightRequest,
+				toolTraces: [
+					...structuredOneHighlightRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: Dictionaries" },
+				],
+			}),
+			false,
+			"two completed highlights should satisfy structured source-marker retry gating",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, displayPrompt: "Teach me what this page says. Do not add highlights or notes." }),
+			false,
+			"explicit no-page-change prompts should not trigger the page source-marker retry",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, pageSourceMarkerRetry: true }),
+			false,
+			"the page source-marker retry should be one-shot",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, displayPrompt: "How does rejection sampling work?" }),
+			false,
+			"ordinary answer-only prompts should not trigger the page source-marker retry",
+		);
+		assert.equal(
+			shouldRequirePdfAnchorRetryForTest(pdfReadWithoutAnchorsRequest),
+			true,
 		"PDF page reads that feed an answer should require a retry when no highlight/note succeeded",
 	);
 	assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /You read PDF pages for this answer but did not leave a durable PDF source highlight/);
 		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_highlight_text/);
 		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /browser_show_note/);
-		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /under 120 characters/);
+		assert.match(buildPdfAnchorRetryPromptForTest(pdfReadWithoutAnchorsRequest, "Draft answer"), /under 280 characters/);
 		assert.equal(
 			buildFinalAssistantReplyForTest(
 				'The user selected "Multi-Head Attention". Let me find the detailed explanation.',
@@ -1703,10 +2924,457 @@ async function assertConstitutionPromptContract() {
 			"Error: 429 You've reached today's Onhand Free limit.",
 			"PDF anchor retry failures should surface the real error instead of a stale preamble",
 		);
-		const longOnPageNote =
-			"Instead of one big attention pass, Multi-Head Attention runs h=8 separate attention heads in parallel on projected Q/K/V so different relationships are not averaged away. The sidebar answer explains the full mechanism and formulas.";
+			assert.equal(
+				buildFinalAssistantReplyForTest(
+					"Let me add a source marker first.",
+					new Error("No visible text matched: Bayesian models"),
+					{ pageSourceMarkerRetry: true, reply: "" },
+				),
+				"Error: No visible text matched: Bayesian models",
+				"page source-marker retry failures should surface the real error instead of a stale preamble",
+			);
+			const oneHighlightTeachingRequest = {
+				displayPrompt: "Teach me what this page says about Bayesian neural networks.",
+				learningMode: true,
+				pageSourceMarkerRetry: true,
+				toolTraces: [
+					{
+						toolName: "browser_highlight_text",
+						state: "complete",
+						resultSummary: "Highlighted text: In Bayesian modeling, we want to be able to sample from the posterior of models given the data.",
+					},
+				],
+			};
+			const surplusTeachingHighlightGuard = buildSurplusTeachingHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				oneHighlightTeachingRequest.displayPrompt,
+				oneHighlightTeachingRequest,
+			);
+			assert.equal(surplusTeachingHighlightGuard, null, "teaching prompts may keep marking after one source marker when more concepts remain");
+			const cappedTeachingHighlightGuard = buildSurplusTeachingHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				oneHighlightTeachingRequest.displayPrompt,
+				{
+					...oneHighlightTeachingRequest,
+					toolTraces: Array.from({ length: 6 }, (_, index) => ({
+						toolName: "browser_highlight_text",
+						state: "complete",
+						resultSummary: `Highlighted text: Teaching concept ${index + 1}.`,
+					})),
+				},
+			);
+			assert.equal(cappedTeachingHighlightGuard?.guardrail?.kind, "surplus_teaching_highlight", "free-form teaching prompts should stop after the teaching source-marker cap");
+			assert.match(cappedTeachingHighlightGuard?.guardrail?.message || "", /Do not call browser_highlight_text again/, "teaching surplus guard should stop extra source-marker loops at the cap");
+			const emptyHighlightGuard = buildEmptyHighlightTextGuardResultForTest("browser_highlight_text", "highlight_text", { text: "" });
+			assert.equal(emptyHighlightGuard?.guardrail?.kind, "empty_highlight_text", "empty highlight calls should be guardrailed before page-tool failure");
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", emptyHighlightGuard),
+				/requires a non-empty exact visible or readable text span/,
+				"empty highlight guard should return actionable model instructions",
+			);
+			const weakStructuredHighlightGuard = buildWeakStructuredHighlightTextGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				{ text: "5.5." },
+				"Give me a roadmap of the sections on this page.",
+			);
+			assert.equal(weakStructuredHighlightGuard?.guardrail?.kind, "weak_structured_highlight_text", "structured source markers should reject section-number-only highlights");
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", weakStructuredHighlightGuard),
+				/only a section number/,
+				"weak structured highlight guard should explain how to retry with meaningful source text",
+			);
+			assert.equal(
+				buildWeakStructuredHighlightTextGuardResultForTest(
+					"browser_highlight_text",
+					"highlight_text",
+					{ text: "5.5. Dictionaries" },
+					"Give me a roadmap of the sections on this page.",
+				),
+				null,
+				"structured source markers should still allow section headings that include the item name",
+			);
+			const headingOnlyDerivationGuard = buildWeakStructuredHighlightTextGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				{ text: "Bayes Theorem and Model Posterior" },
+				"How does this page derive Bayes theorem?",
+			);
+			assert.equal(
+				headingOnlyDerivationGuard?.guardrail?.kind,
+				"weak_structured_highlight_text",
+				"derivation prompts should reject heading-only source markers",
+			);
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", headingOnlyDerivationGuard),
+				/only a heading|derivation\/proof\/explanation/i,
+				"heading-only derivation guard should ask for explanatory text under the heading",
+			);
+			assert.equal(
+				buildWeakStructuredHighlightTextGuardResultForTest(
+					"browser_highlight_text",
+					"highlight_text",
+					{ text: "Bayes theorem follows from the product rule for joint probabilities." },
+					"How does this page derive Bayes theorem?",
+				),
+				null,
+				"derivation prompts should allow explanatory sentence source markers",
+			);
+			assert.equal(
+				buildWeakStructuredHighlightTextGuardResultForTest(
+					"browser_highlight_text",
+					"highlight_text",
+					{ text: "5.5." },
+					"Highlight the formula on this page.",
+				),
+				null,
+				"section-number guard should stay scoped to structured roadmap/list/comparison source markers",
+			);
+			const headingOnlyComparisonGuard = buildSurplusHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				"Compare rejection sampling and Metropolis-Hastings on this page.",
+				{
+					displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page.",
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "rej-1",
+							label: "Highlighted text",
+							citationText: "In rejection sampling, we want to sample X from p(x)",
+						},
+						{
+							type: "annotation",
+							annotationId: "rej-2",
+							label: "Highlighted text",
+							citationText: "Rejection sampling is very difficulty in high-dimensional domains because of the large value of M.",
+						},
+						{
+							type: "annotation",
+							annotationId: "mh-heading",
+							label: "Highlighted text",
+							citationText: "Metropolis-Hastings Sampling",
+						},
+					],
+				},
+			);
+			assert.equal(headingOnlyComparisonGuard, null, "heading-only comparison highlights should not satisfy a comparison side");
+			const explanatoryComparisonGuard = buildSurplusHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				"Compare CSS Grid and Flexbox on this page.",
+				{
+					displayPrompt: "Compare CSS Grid and Flexbox on this page.",
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "grid-1",
+							label: "Highlighted text",
+							citationText: "CSS Grid is a two-dimensional layout system for rows and columns.",
+						},
+						{
+							type: "annotation",
+							annotationId: "flex-1",
+							label: "Highlighted text",
+							citationText: "Flexbox is a one-dimensional layout method for arranging items in a row or column.",
+						},
+					],
+				},
+			);
+			assert.equal(explanatoryComparisonGuard?.guardrail?.kind, "surplus_comparison_highlight", "comparison highlights should stop once both sides have explanatory support");
+			const structuredBudgetRequest = {
+				displayPrompt: "Give me a roadmap of the sampling methods in this page.",
+				toolTraces: Array.from({ length: 5 }, (_, index) => ({
+					toolName: "browser_highlight_text",
+					state: "complete",
+					resultSummary: `Highlighted "Roadmap item ${index + 1}" on Example. annotationId: roadmap-${index + 1}.`,
+					resultDetails: { annotation: { annotationId: `roadmap-${index + 1}`, matchedText: `Roadmap item ${index + 1}` } },
+				})),
+			};
+			const structuredBudgetGuard = buildStructuredHighlightBudgetGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				structuredBudgetRequest.displayPrompt,
+				structuredBudgetRequest,
+			);
+			assert.equal(structuredBudgetGuard, null, "enumerable structured prompts should not stop after a fixed source highlight budget");
+			assert.equal(
+				buildStructuredHighlightBudgetGuardResultForTest("browser_highlight_text", "highlight_text", structuredBudgetRequest.displayPrompt, {
+					displayPrompt: structuredBudgetRequest.displayPrompt,
+					toolTraces: [],
+				}),
+				null,
+				"structured budget guard must not block the first source highlight",
+			);
+			const structuredFailureBudgetGuard = buildStructuredHighlightBudgetGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				"Compare CSS Grid and Flexbox on this page.",
+				{
+					displayPrompt: "Compare CSS Grid and Flexbox on this page.",
+					toolTraces: [
+						{
+							toolName: "browser_highlight_text",
+							state: "complete",
+							resultSummary: "Highlighted \"Grid is two-dimensional\" on Example. annotationId: grid-1.",
+							resultDetails: { annotation: { annotationId: "grid-1", matchedText: "Grid is two-dimensional" } },
+						},
+						...Array.from({ length: 4 }, (_, index) => ({
+							toolName: "browser_highlight_text",
+							state: "error",
+							error: `No visible text matched: failed-${index + 1}`,
+						})),
+					],
+				},
+			);
+			assert.equal(structuredFailureBudgetGuard?.guardrail?.kind, "structured_highlight_budget", "structured prompts should stop after repeated failed highlight attempts once at least one source marker exists");
+			assert.match(
+				formatToolResultForModel("browser_highlight_text", structuredFailureBudgetGuard),
+				/Answer now only from the existing successful source highlights/,
+				"structured failure guard should return model instructions instead of pretending another highlight succeeded",
+			);
+			const roadmapNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
+				"browser_show_note",
+				"show_note",
+				"Give me a roadmap of the data structures on this page.",
+				{
+					displayPrompt: "Give me a roadmap of the data structures on this page.",
+					toolTraces: [
+						{
+							toolName: "browser_show_note",
+							state: "complete",
+							resultSummary: "Added note: Lists are the main mutable sequence type.",
+						},
+					],
+				},
+			);
+			assert.equal(roadmapNoteBudgetGuard, null, "enumerable structured prompts should allow notes on each interpretive highlight");
+			const structuredNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
+				"browser_show_note",
+				"show_note",
+				"Compare arrays and linked lists on this page.",
+				{
+					displayPrompt: "Compare arrays and linked lists on this page.",
+					toolTraces: [
+						{
+							toolName: "browser_show_note",
+							state: "complete",
+							resultSummary: "Added note: Arrays optimize indexed lookup; linked lists optimize local insertion.",
+						},
+					],
+				},
+			);
+			assert.equal(structuredNoteBudgetGuard?.guardrail?.kind, "structured_note_budget", "comparison prompts should not add multiple optional takeaway notes");
+			assert.equal(
+				buildStructuredNoteBudgetGuardResultForTest(
+					"browser_show_note",
+					"show_note",
+					"Give me a roadmap of this page and add notes.",
+					{ toolTraces: [{ toolName: "browser_show_note", state: "complete" }] },
+				),
+				null,
+				"explicit note requests should bypass the structured optional-note budget",
+			);
+			const assertPreservesSubstantiveTerms = (label, input, request, terms, removedPatterns = []) => {
+				const output = sanitizeAssistantVisibleReplyForTest(input, request);
+				for (const pattern of removedPatterns) {
+					assert.doesNotMatch(output, pattern, `${label} should remove only the targeted visible artifact`);
+				}
+				for (const pattern of terms) {
+					assert.match(output, pattern, `${label} should preserve substantive answer content`);
+				}
+				return output;
+			};
+			const artifactOnlyTeachingReply = buildFinalAssistantReplyForTest(
+				"Let me start by reading the page content to find the best teaching passageI found the key explanatory passages.",
+				null,
+				{
+					...oneHighlightTeachingRequest,
+					pageActions: [
+						{
+							key: "highlight:onhand-source",
+							type: "annotation",
+							label: "Highlighted text",
+							citationText: "Bayesian models sample from the posterior of models given the data.",
+						},
+					],
+				},
+			);
+			assert.equal(
+				artifactOnlyTeachingReply,
+				"(No reply generated.)",
+				"tiny visible cleanup should not synthesize a replacement answer from hidden/source state after removing process-only text",
+			);
+			const broadTeachingReply = [
+				"Let me read more of the page to give you a thorough, grounded overview.",
+				"This page is a lecture on Bayesian Deep Learning.",
+				"---",
+				"## Why go Bayesian?",
+				"Standard training finds one weight vector via MLE, but a Bayesian approach treats weights as random variables. [1]",
+				"## The Bayesian setup",
+				"Posterior (via Bayes' theorem):",
+				"p(W | D) =",
+				"**Prediction** — integrate over possible weights:",
+				"$$p(y|x) = \\int p(y|x,W)p(W|D)dW$$",
+				"## How to sample from the posterior?",
+				"The lecture covers rejection sampling, Metropolis-Hastings, Hamiltonian Monte Carlo, and Stochastic Gradient MCMC. [2]",
+				"Let me record the core concept:Want me to walk through Metropolis-Hastings next?",
+			].join("\n\n");
+			const sanitizedTeachingReply = assertPreservesSubstantiveTerms(
+				"lecture teaching answer",
+				broadTeachingReply,
+				oneHighlightTeachingRequest,
+				[
+					/Bayesian Deep Learning/,
+					/Standard training finds one weight vector/,
+					/p\(W \| D\) =/,
+					/\\int p\(y\|x,W\)p\(W\|D\)dW/,
+					/Hamiltonian Monte Carlo/,
+					/Want me to walk through Metropolis-Hastings next\?/,
+				],
+				[/Let me read more/i, /Let me record the core concept/i, /^---$/m],
+			);
+			assert.equal(
+				shouldRecordFallbackOpenCheckForTest(oneHighlightTeachingRequest, sanitizedTeachingReply),
+				false,
+				"source-marker retry turns should not create fallback open checks",
+			);
+			assertPreservesSubstantiveTerms(
+				"API documentation answer",
+				[
+					"Now I have the page content.",
+					"",
+					"## Fetch request flow",
+					"",
+					"| Step | Detail |",
+					"| --- | --- |",
+					"| Create request | Build a Request object or pass a URL. |",
+					"| Await response | Check `response.ok` before parsing JSON. |",
+					"",
+					"```js",
+					"const response = await fetch(url);",
+					"```",
+				].join("\n"),
+				null,
+				[/Fetch request flow/, /\| Create request \|/, /response\.ok/, /const response = await fetch\(url\);/],
+				[/Now I have the page content/i],
+			);
+			const mdnLiveStyleReply = assertPreservesSubstantiveTerms(
+				"live documentation answer",
+				[
+					"Let me create the highlights and notes for each stageHere's how the Fetch API request/response flow works, based on the page's structure:",
+					"",
+					"**1. Make a request** — Call `fetch(url)`.",
+					"**2. Promise fulfillment** — The browser receives the response status and headers before the body.",
+					"**3. Check the status** — Use `response.ok` or `response.status` before reading the body.",
+					"Want me to walk through any",
+				].join("\n\n"),
+				null,
+				[/^Here's how the Fetch API request\/response flow works/m, /Call `fetch\(url\)`/, /response status and headers/, /response\.ok/],
+				[/Let me create the highlights/i, /Want me to walk through any/i],
+			);
+			assert.doesNotMatch(mdnLiveStyleReply, /^(?:Let me|Want me)/im, "live documentation cleanup should not leave the process prefix or incomplete trailing prompt");
+			const midSentenceProcessReply = assertPreservesSubstantiveTerms(
+				"mid-sentence source planning answer",
+				[
+					"This page teaches the comparison directly. Let me mark the key passages.Here's how the page compares the methods:",
+					"",
+					"## Rejection sampling",
+					"Rejection sampling draws independent candidates and needs a global bound M.",
+					"",
+					"## Metropolis-Hastings",
+					"Metropolis-Hastings uses a conditional Markov chain proposal and avoids that global M.",
+				].join("\n"),
+				null,
+				[/This page teaches the comparison directly\. Here's how the page compares the methods:/, /Rejection sampling draws independent candidates/, /conditional Markov chain proposal/],
+				[/Let me mark the key passages/i],
+			);
+			assert.doesNotMatch(midSentenceProcessReply, /passages\.Here's/i, "mid-sentence process cleanup should repair glued answer text");
+			assertPreservesSubstantiveTerms(
+				"news explainer answer",
+				[
+					"Good, OK, Here's what the article says:",
+					"",
+					"- The rule phases in during 2026, starting with large platforms.",
+					"- The enforcement section says civil penalties can apply after a warning period.",
+					"- A later paragraph says small businesses get a delayed deadline.",
+				].join("\n"),
+				null,
+				[/large platforms/, /civil penalties/, /small businesses get a delayed deadline/],
+				[/^Good,\s*OK/i],
+			);
+			assertPreservesSubstantiveTerms(
+				"math derivation answer",
+				[
+					"I'll first read the page content to find the derivation.",
+					"## Bayes from conditional probability",
+					"",
+					"Start with p(A | B) = p(A and B) / p(B).",
+					"Because p(A and B) = p(B | A)p(A), substitute and get p(A | B) = p(B | A)p(A) / p(B).",
+				].join("\n"),
+				null,
+				[/^## Bayes from conditional probability/m, /p\(A \| B\) = p\(A and B\) \/ p\(B\)/, /p\(B \| A\)p\(A\) \/ p\(B\)/],
+				[/I'll first read/i],
+			);
+			assertPreservesSubstantiveTerms(
+				"comparison answer with a wide table",
+				[
+					"Here's how the page distinguishes them.",
+					"",
+					"| Feature | Rejection sampling | Metropolis-Hastings |",
+					"| --- | --- | --- |",
+					"| Proposal | Independent proposal distribution q(x). | Conditional Markov chain proposal q(x' | x_t). |",
+					"| Main issue | Needs a global bound M. | Still has rejection, but avoids the global M. |",
+				].join("\n"),
+				null,
+				[/\| Feature \| Rejection sampling \| Metropolis-Hastings \|/, /Independent proposal distribution/, /Conditional Markov chain proposal/, /global bound M/],
+			);
+			const failedHighlightProcessReply = buildFinalAssistantReplyForTest(
+				"Now let me get the visible text for the section to find exact wording for highlights.Good — the visible text has the key material.",
+				new Error("Onhand could not create a source highlight after several attempts."),
+				oneHighlightTeachingRequest,
+			);
+			assert.match(
+				failedHighlightProcessReply,
+				/^Error: Onhand could not create a source highlight after several attempts\.$/,
+				"failed turns with only process text should collapse to the actionable error",
+			);
+			const abortedNavigationLoopReply = buildFinalAssistantReplyForTest(
+				[
+					"The page is only 4% scrolled — there's much more below.",
+					"Good, the page has dedicated sections.",
+					"The page appears to be a slides-based lecture.",
+					"The page is scrollable — let me navigate to the relevant sections.",
+					"This looks like a slide-based lecture. Let me navigate to the sections on these methods.",
+				].join("\n\n"),
+				new Error("Request was aborted."),
+				oneHighlightTeachingRequest,
+			);
+			assert.match(abortedNavigationLoopReply, /^Error: Request was aborted\.$/, "aborted navigation-loop replies should collapse to the actual error");
+			const cleanShortCheck = sanitizeAssistantVisibleReplyForTest(
+				"Scaling keeps the softmax from saturating.\n\nHere's a short check: Why does scaling help attention stay stable?",
+				{ learningMode: true, toolTraces: [] },
+			);
+			assert.match(cleanShortCheck, /Here's a short check: Why does scaling help attention stay stable\?$/, "tiny cleanup should preserve check wording instead of rewriting it");
+			assert.equal(
+				shouldRecordFallbackOpenCheckForTest({ learningMode: true, toolTraces: [] }, cleanShortCheck),
+				true,
+				"short clean checks may still be tracked as fallback open checks",
+			);
+			assert.equal(
+				shouldRecordFallbackOpenCheckForTest(
+					{ learningMode: true, toolTraces: [] },
+					`${"word ".repeat(230)}\n\nCheck: Why does scaling help attention stay stable?`,
+				),
+				false,
+				"long answers should not create fallback open checks",
+			);
+			const longOnPageNote =
+				"Instead of one big attention pass, Multi-Head Attention runs h=8 separate attention heads in parallel on projected Q/K/V so different relationships are not averaged away. The sidebar answer explains the full mechanism and formulas.";
 	const compactedOnPageNote = compactOnPageNoteTextForTest(longOnPageNote);
-	assert.equal(compactedOnPageNote.length <= 120, true, "on-page notes should be clamped to the marginal note budget");
+	assert.equal(compactedOnPageNote.length <= 280, true, "on-page notes should be clamped to the marginal note budget");
 	assert.equal(compactedOnPageNote.includes("sidebar answer"), false, "on-page notes should leave fuller explanation out of the PDF margin");
 	assert.equal(
 		compactOnPageNoteTextForTest("Eight heads preserve different relationships. The sidebar has the details."),
@@ -1852,6 +3520,9 @@ async function assertConstitutionPromptContract() {
 	assert.equal(exactCachedFollowupToolNames.includes("browser_get_visible_text"), false, "exact formula followups should prefer full extraction over visible-only reads");
 	assert.equal(tableCachedFollowupToolNames.includes("browser_extract_content"), true, "table/value followups should keep full extraction available even with cached context");
 	assert.equal(tableCachedFollowupToolNames.includes("browser_get_visible_text"), false, "table/value followups should prefer full extraction over visible-only reads");
+	assert.equal(cachedComparisonFollowupToolNames.includes("browser_extract_content"), true, "cached comparison followups should keep extraction available for offscreen section coverage");
+	assert.equal(cachedComparisonFollowupToolNames.includes("browser_highlight_text"), true, "cached comparison followups should still be able to create source highlights");
+	assert.equal(cachedComparisonFollowupToolNames.includes("browser_show_note"), true, "cached comparison followups should be able to add one concise comparison note");
 	assert.match(priorPageContext, /Session page context already read/);
 	assert.match(priorPageContext, /Activation Functions/);
 	assert.match(priorPageContext, /ReLU with Original Transformer/);
@@ -1886,7 +3557,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(pdfContextToolNames.includes("browser_pdf_jump_to_page"), true);
 	assert.equal(externalSourceToolNames.includes("browser_navigate"), true);
 	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
-	assert.equal(externalSourceToolNames.includes("browser_click_text"), true);
+	assert.equal(externalSourceToolNames.includes("browser_click_text"), false, "external-source navigation should not expose click tools unless the prompt asks to open page links");
 	assert.equal(linkedNotesToolNames.includes("browser_navigate"), true, "linked-note requests should be able to open note URLs");
 	assert.equal(linkedNotesToolNames.includes("browser_list_tabs"), true, "linked-note requests should be able to recover an already-open index tab");
 	assert.equal(linkedNotesToolNames.includes("browser_activate_tab"), true, "linked-note requests should be able to activate an already-open index tab");
@@ -1908,7 +3579,7 @@ async function assertConstitutionPromptContract() {
 	}
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), false, "learning mode alone must not expose cross-tab enumeration");
-	const repeatedLearningToolNames = getToolNamesForTest("How does rejection sampling work?", true, contract.learnerState);
+	const repeatedLearningToolNames = getToolNamesForTest("How does proposal sampling work?", true, contract.learnerState);
 	assert.equal(repeatedLearningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(repeatedLearningToolNames.includes("browser_scroll_to_annotation"), true);
 	assert.equal(repeatedLearningToolNames.includes("browser_show_note"), false);
@@ -2914,6 +4585,8 @@ async function assertSessionReplayRestore() {
 	assert.ok(toolTrace, "session replay should retain detailed tool traces for debugging");
 	assert.equal(toolTrace.state, "complete");
 	assert.equal(toolTrace.args.text, "Alpha smoke content");
+	assert.equal(typeof toolTrace.duration_ms, "number", "tool traces should expose per-tool duration for slow-turn debugging");
+	assert.equal(toolTrace.duration_ms >= 0, true, "tool trace duration should be non-negative");
 	assert.match(toolTrace.resultSummary, /Highlighted "Alpha smoke content"/);
 	assert.equal(toolTrace.resultDetails.annotation.annotationId, "replay-highlight");
 	assert.equal(toolTrace.resultDetails.annotation.matchedText, "Alpha smoke content");
@@ -6304,6 +7977,49 @@ async function assertUnknownPdfSelectionOpensViewerAndAsksForReselect() {
 		}),
 		{ pageNumber: 2, source: "context-page-fraction" },
 	);
+	assert.deepEqual(
+		__browserRuntimeTest.inferPdfVisualPageNumberFromBrowserContextDetails({
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: { surface: "pdf", text: "Scaled Dot-Product Attention", pageNumber: 4 },
+			visible: { text: "Onhand PDF Viewer 3 / 15 Figure 1: The Transformer - model architecture." },
+		}),
+		{ pageNumber: 3, source: "context-page-fraction" },
+		"visual PDF questions should prefer the current visible page over stale selected text",
+	);
+	assert.deepEqual(
+		__browserRuntimeTest.inferPdfVisualPageNumberFromPdfHandoffResult({
+			initialPageNumber: 3,
+			viewerReady: { pageNumber: 3 },
+			viewerUrl: "chrome-extension://extension/pdf-viewer.html?url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762&page=3",
+		}),
+		{ pageNumber: 3, source: "pdf-handoff" },
+		"visual PDF capture should reuse the page number discovered while opening the Onhand viewer",
+	);
+	assert.equal(
+		__browserRuntimeTest.shouldCapturePdfPageImageForPrompt("What does this figure show?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			visible: { text: "Onhand PDF Viewer 3 / 15 Figure 1: The Transformer - model architecture." },
+		}),
+		true,
+		"visual PDF questions should force an auditable PDF page image capture",
+	);
+	const visualPdfFormatRequirement = __browserRuntimeTest.buildVisualResponseFormatRequirementForTest("What does this figure show?", {
+		activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+		visible: { text: "Onhand PDF Viewer 3 / 15 Figure 1: The Transformer - model architecture." },
+	});
+	assert.match(visualPdfFormatRequirement, /Do not answer as one dense paragraph/);
+	assert.match(visualPdfFormatRequirement, /What it shows/);
+	assert.match(visualPdfFormatRequirement, /How to read it/);
+	assert.match(visualPdfFormatRequirement, /Takeaway/);
+	assert.equal(
+		__browserRuntimeTest.shouldCapturePdfPageImageForPrompt("What does this highlighted text mean?", {
+			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
+			selection: { surface: "pdf", text: "Scaled dot-product attention", pageNumber: 4 },
+			visible: { text: "Scaled dot-product attention" },
+		}),
+		false,
+		"selected-text PDF questions should not force page image capture",
+	);
 	assert.equal(
 		__browserRuntimeTest.shouldOpenPdfViewerForUnknownPdfSelection("What does this mean?", {
 			activeTab: { url: "https://arxiv.org/pdf/1706.03762" },
@@ -6496,6 +8212,112 @@ async function assertUnknownPdfSelectionOpensViewerAndAsksForReselect() {
 	assert.match(unknownPageReply, /could not determine the original reader's current page/i);
 	assert.match(unknownPageReply, /Chrome's default PDF viewer or the Onhand viewer/i);
 	assert.doesNotMatch(unknownPageReply, /opened the PDF in the Onhand viewer at the current page/i);
+}
+
+async function assertVisualPdfQuestionsCaptureCurrentPageImageBeforeAnswering() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 11,
+				windowId: 3,
+				active: true,
+				title: "1706.03762",
+				url: "https://arxiv.org/pdf/1706.03762",
+			}),
+		],
+		selection: { surface: "pdf", text: "Scaled Dot-Product Attention", pageNumber: 4 },
+		visibleText: "Onhand PDF Viewer 3 / 15 Figure 1: The Transformer - model architecture.",
+		extractedMarkdown: "Figure 1: The Transformer - model architecture.",
+		pdfViewerTabId: 11,
+		pdfViewerInitialPageNumber: 3,
+		pdfViewerInitialPageSource: "existing-onhand-pdf-viewer",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await runtime.submitPrompt({
+		prompt: "What does this figure show?",
+		displayPrompt: "visual pdf figure",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete visual PDF capture regression");
+	const handoffIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	const imageIndex = host.calls.findIndex((call) => call.name === "pdf_capture_page_image");
+	const visibleIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
+	assert.ok(handoffIndex >= 0, "expected visual PDF question to reuse or open the Onhand PDF viewer");
+	assert.ok(visibleIndex >= 0, "expected visual PDF question to read current viewer context");
+	assert.ok(imageIndex >= 0, "expected visual PDF question to capture a PDF page image before answering");
+	assert.ok(handoffIndex < imageIndex, "expected PDF viewer handoff before PDF page image capture");
+	assert.equal(host.calls[imageIndex].args.pageNumber, 3, "expected visual PDF capture to use current visible page, not stale selection page");
+	assert.equal(host.calls[imageIndex].args.windowId, 3);
+	const turn = completedState.turns.at(-1);
+	assert.equal(
+		turn?.activities?.some((activity) => activity.toolName === "browser_pdf_capture_page_image" && activity.state === "complete"),
+		true,
+		"expected completed PDF page image activity in the saved turn",
+	);
+	assert.equal(
+		turn?.pageActions?.some((action) => action.label === "Captured PDF page" && action.detail === "p. 3"),
+		true,
+		"expected sidebar-visible captured PDF page action",
+	);
+
+	const handoffPageOnlyHost = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 12,
+				windowId: 4,
+				active: true,
+				title: "1706.03762",
+				url: "https://arxiv.org/pdf/1706.03762",
+			}),
+		],
+		selection: { surface: "pdf", text: "" },
+		visibleText: "Figure 1: The Transformer - model architecture.",
+		extractedMarkdown: "Figure 1: The Transformer - model architecture.",
+		pdfViewerTabId: 12,
+		pdfViewerInitialPageNumber: 3,
+		pdfViewerInitialPageSource: "native-pdf-viewer-page-control",
+		pdfViewerSelectionHandoff: {
+			ok: false,
+			source: "pdf-selection-handoff",
+			error: "No selected PDF text could be captured before opening the Onhand viewer.",
+		},
+	});
+	const handoffPageOnlyRuntime = createOnhandBrowserRuntime(handoffPageOnlyHost);
+	await handoffPageOnlyRuntime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	await handoffPageOnlyRuntime.submitPrompt({
+		prompt: "What does this figure show?",
+		displayPrompt: "visual pdf figure with handoff page only",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 4,
+	});
+	const handoffPageOnlyState = await waitForRuntimeCompletion(handoffPageOnlyRuntime);
+	assert.equal(handoffPageOnlyState?.activeRequestId, null, "runtime did not complete visual PDF handoff page fallback regression");
+	const handoffPageOnlyImageIndex = handoffPageOnlyHost.calls.findIndex((call) => call.name === "pdf_capture_page_image");
+	assert.ok(handoffPageOnlyImageIndex >= 0, "expected visual PDF question to capture the page discovered during PDF handoff");
+	assert.equal(handoffPageOnlyHost.calls[handoffPageOnlyImageIndex].args.pageNumber, 3);
+	assert.equal(handoffPageOnlyHost.calls[handoffPageOnlyImageIndex].args.windowId, 4);
+	assert.equal(
+		handoffPageOnlyState.turns.at(-1)?.activities?.some((activity) => activity.toolName === "browser_pdf_capture_page_image" && activity.state === "complete"),
+		true,
+		"expected handoff-page visual capture activity in the saved turn",
+	);
 }
 
 async function assertExplicitPdfHandoffRunsBeforeAgentContext() {
@@ -6738,6 +8560,8 @@ async function assertFixtureResponses() {
 
 async function main() {
 	await assertProviderApiKeyStorageAndRouting();
+	await assertAssistantStreamingTextBlocksStaySeparated();
+	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
@@ -6811,6 +8635,7 @@ async function main() {
 	await assertRealtimePlannerOpensDirectPdfBeforePlanning();
 	await assertRealtimePlannerCapturesVisualRegionForVisualQuestions();
 	await assertUnknownPdfSelectionOpensViewerAndAsksForReselect();
+	await assertVisualPdfQuestionsCaptureCurrentPageImageBeforeAnswering();
 	await assertExplicitPdfHandoffRunsBeforeAgentContext();
 	await assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext();
 	await assertFixtureResponses();
