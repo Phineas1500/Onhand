@@ -1088,11 +1088,13 @@ const COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
 const STRUCTURED_SOURCE_NOTE_MAX = 3;
 const COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
 const STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 2;
-// Document-review markup: the on-page marks ARE the deliverable, so the
-// budget is wide compared to teaching — roughly one mark per feedback point
-// on a working document — while still bounded against runaway marking.
-const REVIEW_SOURCE_HIGHLIGHT_MAX = 10;
-const REVIEW_SOURCE_NOTE_MAX = 10;
+// Document-review markup: the on-page marks ARE the deliverable, so review
+// budgets must never hard-stop a legitimate pass. The soft target is guidance
+// plus a one-shot mid-pass checkpoint; the hard max exists only as a
+// runaway-loop backstop and sits deliberately far above any real review.
+const REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET = 10;
+const REVIEW_SOURCE_HIGHLIGHT_MAX = 20;
+const REVIEW_SOURCE_NOTE_MAX = 20;
 
 function shouldTryHighlightScanFallbackBeforeOriginal(value: unknown) {
 	const text = normalizeHighlightRetryCandidate(value);
@@ -5297,8 +5299,8 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 				"Runtime policy: Document review markup. The user is applying feedback to the open working document, and the on-page marks are the deliverable.",
 				"Read the ENTIRE document with browser_extract_content before placing any marks — the captured snapshot covers only the visible top of the page.",
 				"Then work through the document start to end: for each distinct feedback point, highlight the exact passage it applies to and attach a browser_show_note (one to two sentences) saying what to change and why, or why the passage already holds up.",
-				`Cover every feedback point that maps to a passage (up to about ${REVIEW_SOURCE_HIGHLIGHT_MAX} marks); when several points hit the same passage, one highlight with a combined note is fine.`,
-				"Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point you could not anchor.",
+				`Cover every feedback point that maps to a passage — typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks, more when the feedback genuinely needs it; when several points hit the same passage, one highlight with a combined note is fine.`,
+				"Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point whose passage you could not anchor. Never mention internal budgets, guardrails, or tool limits in the reply.",
 			].join(" "),
 		};
 	}
@@ -8090,16 +8092,36 @@ function buildReviewExtractionFirstGuardResult(toolName: string, commandName: st
 function buildSurplusReviewHighlightGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
 	if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
-	if (completedSourceHighlightCount(request) < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
+	const highlightCount = completedSourceHighlightCount(request);
+	// Soft checkpoint, once: keep going for genuinely distinct feedback
+	// points; never present the target as a wall the user hears about.
+	if (highlightCount >= REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET && highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) {
+		if (!request || request.reviewMarkCheckpointNudged) return null;
+		request.reviewMarkCheckpointNudged = true;
+		return {
+			guardrail: {
+				kind: "review_mark_checkpoint",
+				blockedTool: toolName,
+				blockedCommand: commandName,
+				message: [
+					`${highlightCount} review marks are already placed.`,
+					"Continue only for passages that a remaining, distinct feedback point directly addresses — one mark per remaining point, no re-marking of covered ground — and stop when the feedback is covered.",
+					"Never mention mark budgets, guardrails, or tool limits in the chat answer.",
+				].join(" "),
+			},
+		};
+	}
+	if (highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
 	return {
 		guardrail: {
 			kind: "surplus_review_highlight",
 			blockedTool: toolName,
 			blockedCommand: commandName,
 			message: [
-				`${completedSourceHighlightCount(request)} review marks already cover this document pass.`,
+				`${highlightCount} review marks already cover this document pass.`,
 				`Do not call ${toolName} again for this turn.`,
 				"Fold any remaining feedback points into the chat synthesis, citing the existing marks.",
+				"Never mention mark budgets, guardrails, or tool limits in the chat answer; if a feedback point had no anchorable passage, say so plainly without referencing limits.",
 			].join(" "),
 		},
 	};
@@ -8117,6 +8139,7 @@ function buildSurplusReviewNoteGuardResult(toolName: string, commandName: string
 			message: [
 				`${countToolTracesByState(request, "browser_show_note", ["complete"])} review notes already landed for this pass.`,
 				`Do not call ${toolName} again for this turn; cover anything left in the chat synthesis.`,
+				"Never mention note budgets, guardrails, or tool limits in the chat answer.",
 			].join(" "),
 		},
 	};
@@ -8595,6 +8618,7 @@ export const __browserRuntimeTest = {
 	laneBudgetsForTest: {
 		TEACHING_SOURCE_HIGHLIGHT_MAX,
 		TEACHING_SOURCE_NOTE_MAX,
+		REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET,
 		REVIEW_SOURCE_HIGHLIGHT_MAX,
 		REVIEW_SOURCE_NOTE_MAX,
 	},
@@ -11158,6 +11182,19 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					void publishState({ status: "Responding..." });
 				} else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
 					void publishState({ status: "Thinking..." });
+				} else if (assistantEvent?.type === "toolcall_start") {
+					// Models batch tool calls: several highlights/notes are drafted in
+					// one long generation before any executes, which used to read as
+					// 10-15 silent seconds followed by a burst of marks. Surface each
+					// drafted call as live progress instead.
+					const draftedBlock: any = assistantEvent.partial?.content?.[assistantEvent.contentIndex];
+					const draftedToolName = String(draftedBlock?.name || "");
+					if (draftedToolName === "browser_highlight_text" || draftedToolName === "browser_show_note") {
+						activeRequest.draftedMarkCount = Number(activeRequest.draftedMarkCount || 0) + 1;
+						void publishState({ status: `Preparing mark ${activeRequest.draftedMarkCount}...` });
+					} else if (draftedToolName && !isInternalToolName(draftedToolName)) {
+						void publishState({ status: getToolStatusMessage(draftedToolName) });
+					}
 				}
 				break;
 			}

@@ -132788,8 +132788,9 @@ var COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
 var STRUCTURED_SOURCE_NOTE_MAX = 3;
 var COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
 var STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 2;
-var REVIEW_SOURCE_HIGHLIGHT_MAX = 10;
-var REVIEW_SOURCE_NOTE_MAX = 10;
+var REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET = 10;
+var REVIEW_SOURCE_HIGHLIGHT_MAX = 20;
+var REVIEW_SOURCE_NOTE_MAX = 20;
 function shouldTryHighlightScanFallbackBeforeOriginal(value) {
   const text = normalizeHighlightRetryCandidate(value);
   if (!text || text.length > 100) return false;
@@ -135501,8 +135502,8 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
         "Runtime policy: Document review markup. The user is applying feedback to the open working document, and the on-page marks are the deliverable.",
         "Read the ENTIRE document with browser_extract_content before placing any marks \u2014 the captured snapshot covers only the visible top of the page.",
         "Then work through the document start to end: for each distinct feedback point, highlight the exact passage it applies to and attach a browser_show_note (one to two sentences) saying what to change and why, or why the passage already holds up.",
-        `Cover every feedback point that maps to a passage (up to about ${REVIEW_SOURCE_HIGHLIGHT_MAX} marks); when several points hit the same passage, one highlight with a combined note is fine.`,
-        "Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point you could not anchor."
+        `Cover every feedback point that maps to a passage \u2014 typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks, more when the feedback genuinely needs it; when several points hit the same passage, one highlight with a combined note is fine.`,
+        "Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point whose passage you could not anchor. Never mention internal budgets, guardrails, or tool limits in the reply."
       ].join(" ")
     };
   }
@@ -137763,16 +137764,34 @@ function buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, re
 function buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
   if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
-  if (completedSourceHighlightCount(request) < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
+  const highlightCount = completedSourceHighlightCount(request);
+  if (highlightCount >= REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET && highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) {
+    if (!request || request.reviewMarkCheckpointNudged) return null;
+    request.reviewMarkCheckpointNudged = true;
+    return {
+      guardrail: {
+        kind: "review_mark_checkpoint",
+        blockedTool: toolName,
+        blockedCommand: commandName,
+        message: [
+          `${highlightCount} review marks are already placed.`,
+          "Continue only for passages that a remaining, distinct feedback point directly addresses \u2014 one mark per remaining point, no re-marking of covered ground \u2014 and stop when the feedback is covered.",
+          "Never mention mark budgets, guardrails, or tool limits in the chat answer."
+        ].join(" ")
+      }
+    };
+  }
+  if (highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
   return {
     guardrail: {
       kind: "surplus_review_highlight",
       blockedTool: toolName,
       blockedCommand: commandName,
       message: [
-        `${completedSourceHighlightCount(request)} review marks already cover this document pass.`,
+        `${highlightCount} review marks already cover this document pass.`,
         `Do not call ${toolName} again for this turn.`,
-        "Fold any remaining feedback points into the chat synthesis, citing the existing marks."
+        "Fold any remaining feedback points into the chat synthesis, citing the existing marks.",
+        "Never mention mark budgets, guardrails, or tool limits in the chat answer; if a feedback point had no anchorable passage, say so plainly without referencing limits."
       ].join(" ")
     }
   };
@@ -137788,7 +137807,8 @@ function buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, reques
       blockedCommand: commandName,
       message: [
         `${countToolTracesByState(request, "browser_show_note", ["complete"])} review notes already landed for this pass.`,
-        `Do not call ${toolName} again for this turn; cover anything left in the chat synthesis.`
+        `Do not call ${toolName} again for this turn; cover anything left in the chat synthesis.`,
+        "Never mention note budgets, guardrails, or tool limits in the chat answer."
       ].join(" ")
     }
   };
@@ -138214,6 +138234,7 @@ var __browserRuntimeTest = {
   laneBudgetsForTest: {
     TEACHING_SOURCE_HIGHLIGHT_MAX,
     TEACHING_SOURCE_NOTE_MAX,
+    REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET,
     REVIEW_SOURCE_HIGHLIGHT_MAX,
     REVIEW_SOURCE_NOTE_MAX
   },
@@ -140538,6 +140559,15 @@ function createOnhandBrowserRuntime(host) {
           void publishState({ status: "Responding..." });
         } else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
           void publishState({ status: "Thinking..." });
+        } else if (assistantEvent?.type === "toolcall_start") {
+          const draftedBlock = assistantEvent.partial?.content?.[assistantEvent.contentIndex];
+          const draftedToolName = String(draftedBlock?.name || "");
+          if (draftedToolName === "browser_highlight_text" || draftedToolName === "browser_show_note") {
+            activeRequest.draftedMarkCount = Number(activeRequest.draftedMarkCount || 0) + 1;
+            void publishState({ status: `Preparing mark ${activeRequest.draftedMarkCount}...` });
+          } else if (draftedToolName && !isInternalToolName(draftedToolName)) {
+            void publishState({ status: getToolStatusMessage(draftedToolName) });
+          }
         }
         break;
       }
