@@ -1270,6 +1270,28 @@ function hasReadableSourceContentAfterLatestNavigation(request: any) {
 	return highlightFailureBudgetTraceWindow(request).some(traceHasReadableFallbackContent);
 }
 
+// Quality guardrails ("that marker is a heading / too long / a bare section
+// number") are corrective feedback: the model is expected to retry with a
+// better span, and the block never touched the page, so it costs nothing.
+// Only genuine page-match failures signal that anchoring is hopeless here and
+// should count toward the give-up budget. Counting corrective blocks let a
+// capable model that quotes accurate-but-long passages get budget-killed after
+// two rejections before it ever landed a valid highlight.
+const CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = new Set([
+	"weak_compact_teaching_highlight",
+	"weak_structured_highlight_text",
+]);
+
+function isCorrectiveHighlightGuardrailTrace(trace: any) {
+	const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
+	return CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS.has(String(kind));
+}
+
+function isCountableHighlightFailureTrace(trace: any) {
+	if (trace?.toolName !== "browser_highlight_text" || trace?.state !== "error") return false;
+	return !isCorrectiveHighlightGuardrailTrace(trace);
+}
+
 function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 	if (!request || request.aborted) return false;
 	const traces = highlightFailureBudgetTraceWindow(request);
@@ -1285,7 +1307,7 @@ function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 			: promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt)
 			? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT
 			: HIGHLIGHT_FAILURE_ABORT_LIMIT;
-	return traces.filter((trace: any) => trace?.toolName === "browser_highlight_text" && trace?.state === "error").length >= failureLimit;
+	return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
 
 function buildRepeatedHighlightFailureGuardResult(toolName: string, commandName: string, request: any) {
@@ -7798,7 +7820,11 @@ function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandNa
 function looksLikeWeakCompactTeachingHighlightText(value: unknown, request: any) {
 	const text = compactActionText(value);
 	if (!text) return true;
-	if (text.length > 260) return true;
+	// Two to three sentences of exact page text is a legitimate teaching anchor;
+	// only reject genuine paragraph dumps. A tighter cap rejected accurate
+	// multi-sentence quotes and (before the budget fix) cascaded into a full
+	// highlight abort.
+	if (text.length > 400) return true;
 	const normalized = normalizeEntityText(text);
 	const title = normalizeEntityText(request?.initialActiveTab?.title || "");
 	if (title && normalized === title) return true;

@@ -1318,6 +1318,31 @@ async function assertSelectionFormatting() {
 	);
 	assert.equal(
 		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about photosynthesis.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+			],
+		}),
+		false,
+		"corrective quality-guard blocks (retry with a better span) must not count toward the highlight give-up budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about photosynthesis.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+			],
+		}),
+		true,
+		"genuine page-match failures should still count toward the give-up budget even when mixed with corrective blocks",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
 			displayPrompt: "Could you show me a source that derives Bayes theorem from scratch?",
 			toolTraces: [
 				{

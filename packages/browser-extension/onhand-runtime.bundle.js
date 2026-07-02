@@ -132944,6 +132944,18 @@ function traceHasReadableFallbackContent(trace) {
 function hasReadableSourceContentAfterLatestNavigation(request) {
   return highlightFailureBudgetTraceWindow(request).some(traceHasReadableFallbackContent);
 }
+var CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = /* @__PURE__ */ new Set([
+  "weak_compact_teaching_highlight",
+  "weak_structured_highlight_text"
+]);
+function isCorrectiveHighlightGuardrailTrace(trace) {
+  const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
+  return CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS.has(String(kind));
+}
+function isCountableHighlightFailureTrace(trace) {
+  if (trace?.toolName !== "browser_highlight_text" || trace?.state !== "error") return false;
+  return !isCorrectiveHighlightGuardrailTrace(trace);
+}
 function shouldAbortAfterRepeatedHighlightFailures(request) {
   if (!request || request.aborted) return false;
   const traces = highlightFailureBudgetTraceWindow(request);
@@ -132952,7 +132964,7 @@ function shouldAbortAfterRepeatedHighlightFailures(request) {
   const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request);
   const asksForExternalOrLinkedSource = promptAsksForExternalBrowsing(prompt) || promptAsksForLinkedPageNavigation(prompt);
   const failureLimit = asksForExternalOrLinkedSource && hasReadableSourceContent ? 1 : asksForExternalOrLinkedSource ? 2 : promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt) ? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT : HIGHLIGHT_FAILURE_ABORT_LIMIT;
-  return traces.filter((trace) => trace?.toolName === "browser_highlight_text" && trace?.state === "error").length >= failureLimit;
+  return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
 function buildRepeatedHighlightFailureGuardResult(toolName, commandName, request) {
   if (commandName !== "highlight_text") return null;
@@ -137561,7 +137573,7 @@ function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, para
 function looksLikeWeakCompactTeachingHighlightText(value, request) {
   const text = compactActionText(value);
   if (!text) return true;
-  if (text.length > 260) return true;
+  if (text.length > 400) return true;
   const normalized = normalizeEntityText(text);
   const title = normalizeEntityText(request?.initialActiveTab?.title || "");
   if (title && normalized === title) return true;
