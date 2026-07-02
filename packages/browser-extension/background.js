@@ -7553,6 +7553,12 @@ const createPageToolkit = (options = {}) => {
 		const compactQuery = compactHighlightSearchText(rawQuery);
 		const useCompactQuery = compactQuery.length >= (isMathLikeHighlightQuery(rawQuery) ? 3 : 12);
 		const compactFallback = isMathLikeHighlightQuery(rawQuery) ? "compact-math-text" : "compact-text";
+		// Readable extractions keep bracketed footnote markers ("[15]", "[note 2]")
+		// while the page text map skips them, so tolerate copied text that includes
+		// the markers by also matching a marker-stripped variant of the query.
+		const citationStrippedRaw = rawQuery.replace(/\[\s*(?:\d{1,3}|[a-z]|note\s+\d{1,3}|citation needed|edit)\s*\]/gi, " ");
+		const citationStrippedQuery = citationStrippedRaw === rawQuery ? "" : normalizeHighlightSearchText(citationStrippedRaw);
+		const citationStrippedCompactQuery = citationStrippedRaw === rawQuery ? "" : compactHighlightSearchText(citationStrippedRaw);
 
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || 1) || 1));
 		const clearExisting = options.clearExisting === true;
@@ -7620,6 +7626,16 @@ const createPageToolkit = (options = {}) => {
 					query: searchQuery,
 					fallback: "normalized-text",
 				},
+				...(citationStrippedQuery && citationStrippedQuery !== searchQuery
+					? [
+							{
+								text: mappedText.searchText,
+								positions: mappedText.searchPositions,
+								query: citationStrippedQuery,
+								fallback: "citation-stripped-text",
+							},
+						]
+					: []),
 				...(useCompactQuery
 					? [
 							{
@@ -7627,6 +7643,16 @@ const createPageToolkit = (options = {}) => {
 								positions: mappedText.compactPositions,
 								query: compactQuery,
 								fallback: compactFallback,
+							},
+						]
+					: []),
+				...(useCompactQuery && citationStrippedCompactQuery && citationStrippedCompactQuery !== compactQuery
+					? [
+							{
+								text: mappedText.compactText,
+								positions: mappedText.compactPositions,
+								query: citationStrippedCompactQuery,
+								fallback: "citation-stripped-compact-text",
 							},
 						]
 					: []),
@@ -10940,13 +10966,22 @@ async function extractReadableContentInPage(options = {}) {
 			return googleDocsUnsupportedPayload(`Could not export this Google Doc as text: ${error?.message || String(error)}`, exportUrl.href);
 		}
 	};
+	// When the environment computes layout, trust it: zero-rect elements are
+	// hidden UI (closed dialogs, unselected tab panels) whose text can never be
+	// highlighted, so extracting it breaks the copy-then-highlight contract.
+	// The text fallback only applies in layout-less environments (tests).
+	const pageLayoutAvailable = (() => {
+		const rect = (document.body || document.documentElement)?.getBoundingClientRect?.();
+		return Boolean(rect && (rect.width > 0 || rect.height > 0));
+	})();
 	const isVisible = (element) => {
 		if (!(element instanceof Element)) return false;
 		const style = window.getComputedStyle(element);
 		if (style.display === "none" || style.visibility === "hidden" || (style.opacity !== "" && Number(style.opacity) === 0)) return false;
 		if (element.hasAttribute("hidden") || String(element.getAttribute("aria-hidden") || "").toLowerCase() === "true") return false;
 		const rect = element.getBoundingClientRect();
-		return (rect.width > 0 && rect.height > 0) || normalize(element.textContent || "").length > 0;
+		if (rect.width > 0 && rect.height > 0) return true;
+		return !pageLayoutAvailable && normalize(element.textContent || "").length > 0;
 	};
 	const selectorFor = (element) => {
 		if (!(element instanceof Element)) return "";
@@ -10971,10 +11006,19 @@ async function extractReadableContentInPage(options = {}) {
 		document.body,
 		document.documentElement,
 	].filter((element, index, list) => element instanceof Element && list.indexOf(element) === index);
+	const scoredRoots = rootCandidates.map((element) => ({ element, score: readableRootScore(element) }));
+	const bestOverallRoot = scoredRoots.slice().sort((left, right) => right.score - left.score)[0];
+	// The body always contains any semantic container, so raw text length alone
+	// always prefers the body and lets site chrome (banners, footers, injected
+	// sidebars) bleed into readable content. Prefer the fullest semantic
+	// container whenever it holds the majority of the readable text.
+	const bestSemanticRoot = scoredRoots
+		.filter(({ element }) => element !== document.body && element !== document.documentElement)
+		.sort((left, right) => right.score - left.score)[0];
 	const root =
-		rootCandidates
-			.map((element) => ({ element, score: readableRootScore(element) }))
-			.sort((left, right) => right.score - left.score)[0]?.element ||
+		(bestSemanticRoot && bestSemanticRoot.score >= 400 && bestSemanticRoot.score >= (bestOverallRoot?.score || 0) * 0.5
+			? bestSemanticRoot.element
+			: bestOverallRoot?.element) ||
 		document.body ||
 		document.documentElement;
 	const ignoredSelector = "script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea";
@@ -10990,7 +11034,7 @@ async function extractReadableContentInPage(options = {}) {
 		if (element.closest(ignoredSelector)) return;
 		const tag = element.tagName.toLowerCase();
 		const level = Number(tag.slice(1)) || 2;
-		const clean = normalize(element.textContent || "");
+		const clean = normalize(headingOwnText(element));
 		if (!clean || clean.length < 2) return;
 		const key = `${tag}:${clean.toLowerCase()}`;
 		if (seenHeadingOutline.has(key)) return;
@@ -11169,6 +11213,39 @@ async function extractReadableContentInPage(options = {}) {
 		}
 		return false;
 	};
+	// textContent includes structurally hidden descendants (tooltips, templates,
+	// closed dialogs) that the page never renders inside the block, so copied
+	// text containing them could never be highlighted.
+	const hiddenBlockDescendantSelector = '[hidden], [aria-hidden="true"], [role="tooltip"], tool-tip, template, dialog';
+	const withoutRemoved = (element, selector) => {
+		if (!(element instanceof Element)) return "";
+		if (!element.querySelector(selector)) return element.textContent || "";
+		const clone = element.cloneNode(true);
+		for (const node of Array.from(clone.querySelectorAll(selector))) node.remove();
+		return clone.textContent || "";
+	};
+	const visibleBlockText = (element) => withoutRemoved(element, hiddenBlockDescendantSelector);
+	// A list item's textContent concatenates any nested list into one unhighlightable
+	// glued string; the nested items are collected as their own blocks anyway.
+	const listItemOwnText = (element) => withoutRemoved(element, `ul, ol, ${hiddenBlockDescendantSelector}`);
+	// Docs sites append self-link anchors ("¶", "#", "§") to headings; they are
+	// separate link elements, so copied heading text never matches with them glued on.
+	const headingOwnText = (element) => {
+		if (!(element instanceof Element)) return "";
+		const links = Array.from(element.querySelectorAll('a[href^="#"]')).filter((link) => normalize(link.textContent || "").length <= 2);
+		if (!links.length) return element.textContent || "";
+		const clone = element.cloneNode(true);
+		for (const link of Array.from(clone.querySelectorAll('a[href^="#"]'))) {
+			if (normalize(link.textContent || "").length <= 2) link.remove();
+		}
+		return clone.textContent || "";
+	};
+	const blockTextFor = (tag, element) => {
+		if (tag === "table") return tableMarkdown(element);
+		if (tag === "li") return listItemOwnText(element);
+		if (/^h[1-6]$/.test(tag)) return headingOwnText(element);
+		return visibleBlockText(element);
+	};
 	const pushBlock = (kind, text, element) => {
 		const clean = normalize(text);
 		if (!clean || clean.length < 2) return;
@@ -11207,8 +11284,12 @@ async function extractReadableContentInPage(options = {}) {
 		}
 	}
 
-	const title = normalize(document.querySelector("h1")?.textContent || document.title);
-	if (title) pushBlock("h1", title, document.querySelector("h1") || document.documentElement);
+	// The document's first h1 is often hidden chrome (sr-only dialog headings,
+	// skip links); only a visible, non-chrome h1 can serve as the title block.
+	const titleElement =
+		Array.from(document.querySelectorAll("h1")).find((element) => isVisible(element) && !element.closest(ignoredSelector)) || null;
+	const title = normalize(titleElement ? headingOwnText(titleElement) : document.title);
+	if (title) pushBlock("h1", title, titleElement || document.documentElement);
 
 	if (queryTokens.length) {
 		const relevant = [];
@@ -11217,7 +11298,7 @@ async function extractReadableContentInPage(options = {}) {
 			if (!(element instanceof Element) || !isVisible(element)) continue;
 			if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 			const tag = element.tagName.toLowerCase();
-			const text = tag === "table" ? tableMarkdown(element) : element.textContent || "";
+			const text = blockTextFor(tag, element);
 			const score = queryScore(text);
 			if (score <= 0) continue;
 			relevant.push({ tag, text, element, score, index: index++ });
@@ -11254,7 +11335,7 @@ async function extractReadableContentInPage(options = {}) {
 		if (!(element instanceof Element) || !isVisible(element)) continue;
 		if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 		const tag = element.tagName.toLowerCase();
-		pushBlock(tag, tag === "table" ? tableMarkdown(element) : element.textContent || "", element);
+		pushBlock(tag, blockTextFor(tag, element), element);
 	}
 
 	if (blocks.length < 3) {

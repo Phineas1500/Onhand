@@ -723,6 +723,56 @@ async function assertReadableContentChoosesFullRootAndIncludesTables() {
 	assert.match(content.markdown, /32\.0%/);
 }
 
+async function assertReadableContentMatchesHighlightableSurface() {
+	// Everything readable extraction emits must be anchorable by highlightText:
+	// no hidden-dialog headings, no tooltip text, no chrome outside the semantic
+	// root, no nested-list glue, no heading anchor glyphs.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const filler = Array.from({ length: 8 }, (_, index) => `<p>Body paragraph ${index + 1} explains the topic with enough prose to make the main region clearly dominant.</p>`).join("\n");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html>
+			<head><title>Article</title></head>
+			<body>
+				<div id="site-banner"><p>Official notice: this banner text lives outside the main content region.</p></div>
+				<div class="overlay"><h1 id="dialog-heading">Search everything from this hidden dialog heading</h1></div>
+				<main>
+					<h1>Visible article title</h1>
+					<h2>Data Structures<a href="#data-structures">¶</a></h2>
+					<p>Lists support appending and iteration with stable ordering guarantees.<tool-tip role="tooltip">You must hover to see this tooltip text.</tool-tip></p>
+					<ul>
+						<li>Browse
+							<ul><li>Table of contents entry one</li><li>Archive entry two</li></ul>
+						</li>
+					</ul>
+					${filler}
+				</main>
+			</body>
+		</html>
+		`,
+		{
+			url: "https://example.test/article",
+			pretendToBeVisual: true,
+			runScripts: "outside-only",
+		},
+	);
+	installLayoutShims(dom.window);
+	setElementRect(dom.window.document.getElementById("dialog-heading"), { left: 0, top: 0, width: 0, height: 0 });
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 6000 });
+
+	assert.match(content.markdown, /# Visible article title/, "visible h1 should be the title block");
+	assert.doesNotMatch(content.markdown, /hidden dialog heading/, "zero-rect dialog headings must not become the title");
+	assert.doesNotMatch(content.markdown, /hover to see this tooltip/, "tooltip text is never rendered inside the block");
+	assert.doesNotMatch(content.markdown, /banner text lives outside/, "chrome outside the semantic root should be excluded");
+	assert.doesNotMatch(content.markdown, /Browse\s+Table of contents/, "nested lists must not glue into the parent item");
+	assert.match(content.markdown, /- Table of contents entry one/, "nested list items should appear as their own blocks");
+	assert.match(content.headingOutlineMarkdown, /Data Structures/, "section heading should be in the outline");
+	assert.doesNotMatch(content.headingOutlineMarkdown, /¶/, "heading anchor glyphs must be stripped");
+	assert.doesNotMatch(content.markdown, /Data Structures¶/, "heading blocks must not keep anchor glyphs");
+}
+
 async function assertReadableContentQuerySnippetsCoverDistantTerms() {
 	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
 	const filler = Array.from({ length: 180 }, (_, index) => `neutral filler ${index}`).join(" ");
@@ -1647,6 +1697,22 @@ async function assertSentenceSpanningFootnoteMarkerMatchesExactly() {
 		dom.window.document.querySelector("[data-onhand-highlight-kind]"),
 		"a durable highlight should exist after matching across the citation marker",
 	);
+}
+
+async function assertCitationMarkerInQueryStillMatches() {
+	// Readable extraction keeps bracketed footnote markers while the page text
+	// map skips them; copied text that includes the marker must still match.
+	const { toolkit } = await createToolkit(`
+		<main>
+			<p>Interest in the topic revived in the twentieth century.<sup class="reference"><a href="#cite_note-15">[15]</a></sup> Later editions expanded the treatment considerably.</p>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText(
+		"Interest in the topic revived in the twentieth century.[15] Later editions expanded the treatment considerably.",
+		{ scrollIntoView: false, exactOnly: true, allowApproximate: false },
+	);
+	assert.equal(highlight.fallback, "citation-stripped-text", "marker-stripped query should exact-match against the marker-free map");
+	assert.match(highlight.matchedText, /Later editions expanded/, "match should span across the citation marker");
 }
 
 async function assertExistingInlineHighlightDoesNotBlockLongerExactMatch() {
@@ -3114,6 +3180,7 @@ async function main() {
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
+	await assertReadableContentMatchesHighlightableSurface();
 	await assertReadableContentQuerySnippetsCoverDistantTerms();
 	await assertTextbookReaderSearchUsesGenericSearchUi();
 	await assertGoogleDocsBackgroundExportReadsText();
@@ -3170,6 +3237,7 @@ async function main() {
 	await assertRenderedMathPageDoesNotWaitForMathJaxEngine();
 	await assertImageRenderedMathIgnoresUnrelatedImageAlt();
 	await assertSentenceSpanningFootnoteMarkerMatchesExactly();
+	await assertCitationMarkerInQueryStillMatches();
 	await assertExistingInlineHighlightDoesNotBlockLongerExactMatch();
 	await assertMeaningfulSuperscriptTextStillMatches();
 	await assertPdfTextLayerVisibleTextUsesPdfSurface();
