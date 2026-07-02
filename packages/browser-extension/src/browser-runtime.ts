@@ -1088,6 +1088,11 @@ const COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
 const STRUCTURED_SOURCE_NOTE_MAX = 3;
 const COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
 const STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 2;
+// Document-review markup: the on-page marks ARE the deliverable, so the
+// budget is wide compared to teaching — roughly one mark per feedback point
+// on a working document — while still bounded against runaway marking.
+const REVIEW_SOURCE_HIGHLIGHT_MAX = 10;
+const REVIEW_SOURCE_NOTE_MAX = 10;
 
 function shouldTryHighlightScanFallbackBeforeOriginal(value: unknown) {
 	const text = normalizeHighlightRetryCandidate(value);
@@ -1420,11 +1425,28 @@ function compactActionText(value: unknown) {
 
 const ON_PAGE_NOTE_MAX_CHARS = 280;
 
+// Margin notes must not defer to the sidebar ("the sidebar has the details");
+// such trailing sentences are filler in the page margin and get dropped.
+const ON_PAGE_NOTE_DEFERRAL_PATTERN = /\b(?:sidebar|chat (?:answer|reply)|full (?:answer|explanation)|see (?:above|below|the answer)|answer (?:above|below))\b/i;
+
 function compactOnPageNoteText(value: unknown, maxChars = ON_PAGE_NOTE_MAX_CHARS) {
 	const text = compactActionText(value);
 	if (!text) return "";
-	const firstSentence = text.match(/^(.{12,}?[.!?])(?:\s|$)/);
-	if (firstSentence && firstSentence[1].length <= maxChars) return firstSentence[1].trim();
+	// Keep whole leading sentences while they fit the margin budget — notes
+	// carry one to two interpretive sentences (the second is often the
+	// actionable "what to change"), so prefer dropping a trailing sentence
+	// over cutting mid-thought, and stop at the first deferral sentence.
+	const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
+	if (sentences.length > 1) {
+		let kept = "";
+		for (const sentence of sentences) {
+			if (ON_PAGE_NOTE_DEFERRAL_PATTERN.test(sentence)) break;
+			const candidate = `${kept}${kept ? " " : ""}${sentence.trim()}`;
+			if (candidate.length > maxChars) break;
+			kept = candidate;
+		}
+		if (kept.length >= 12) return kept;
+	}
 	if (text.length <= maxChars) return text;
 
 	const head = text.slice(0, Math.max(0, maxChars - 3)).trimEnd();
@@ -5260,6 +5282,26 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 		mode,
 		reason: `Internal routing chose ${mode}.`,
 	};
+	if (promptAsksForDocumentReviewMarkup(prompt)) {
+		// Checked before compact teaching: long pasted feedback routinely trips
+		// the teaching/structured keyword predicates ("summary", "approach"),
+		// and the review lane must win those overlaps.
+		return {
+			...base,
+			mode: "deep",
+			reason: "Internal routing chose document review markup.",
+			reasoningEffort: "low",
+			textVerbosity: "low",
+			maxTokens: ONHAND_DEEP_OUTPUT_TOKENS,
+			promptPolicy: [
+				"Runtime policy: Document review markup. The user is applying feedback to the open working document, and the on-page marks are the deliverable.",
+				"Read the ENTIRE document with browser_extract_content before placing any marks — the captured snapshot covers only the visible top of the page.",
+				"Then work through the document start to end: for each distinct feedback point, highlight the exact passage it applies to and attach a browser_show_note (one to two sentences) saying what to change and why, or why the passage already holds up.",
+				`Cover every feedback point that maps to a passage (up to about ${REVIEW_SOURCE_HIGHLIGHT_MAX} marks); when several points hit the same passage, one highlight with a combined note is fine.`,
+				"Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point you could not anchor.",
+			].join(" "),
+		};
+	}
 	if (promptAsksForCompactPageTeaching(prompt)) {
 		return {
 			...base,
@@ -5269,7 +5311,10 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 			textVerbosity: "low",
 			maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
 			promptPolicy:
-				"Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question — roughly one source highlight per concept (soft cap about six) — and add a short interpretive note (one to two sentences) on each. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.",
+				// The mark budget in this prose is interpolated from the same
+				// constants the surplus guards enforce, so the briefing the model
+				// reads can never drift from the fence it hits.
+				`Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question — roughly one source highlight per key concept (at most ${TEACHING_SOURCE_HIGHLIGHT_MAX} for this compact pass) — and add ${TEACHING_SOURCE_NOTE_MAX === 1 ? "one short interpretive note (one to two sentences) on the most central highlight" : `up to ${TEACHING_SOURCE_NOTE_MAX} short interpretive notes (one to two sentences each)`}. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.`,
 		};
 	}
 	switch (mode) {
@@ -6415,10 +6460,7 @@ function promptAsksForPageAnchors(text: string) {
 }
 
 function promptAsksForTeachingPageSourceMarker(prompt: unknown) {
-	const text = stripVoicePromptPrefix(prompt)
-		.toLowerCase()
-		.replace(/\s+/g, " ")
-		.trim();
+	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
 	const asksForTeaching =
 		/\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
@@ -6436,6 +6478,28 @@ function normalizePageSourcePromptText(prompt: unknown) {
 		.trim();
 }
 
+// Where pasted third-party material begins in a prompt: feedback blocks are
+// introduced by markers like "from my manager:", "reviewer notes:",
+// "feedback:". Everything after the first marker is quoted material, not the
+// user's own ask.
+const EMBEDDED_FEEDBACK_BLOCK_START =
+	/(^|\n)\s*(?:from\s+(?:my|our|the|a)\s+[^\n:]{2,40}|(?:my|our|the)\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?)'?s?\s+(?:notes?|feedback|comments?)|feedback|reviewer\s+notes?|review\s+notes?|notes?\s+(?:from|back\s+from)\s+[^\n:]{2,40}|comments?\s+from\s+[^\n:]{2,40})\s*:\s*(?:\n|$)/i;
+
+// The user's OWN words: the prompt with pasted feedback blocks, markdown
+// blockquotes, and fenced blocks removed. Lane predicates classify on this
+// view so vocabulary inside quoted material ("comparison", "summary",
+// "approach" in a manager's notes) cannot hijack the behavior lane — seen in
+// real use, where the word "comparison" in pasted feedback capped a document
+// review at two highlights.
+function ownWordsPromptText(prompt: unknown) {
+	let text = stripVoicePromptPrefix(prompt);
+	const marker = text.match(EMBEDDED_FEEDBACK_BLOCK_START);
+	if (marker && typeof marker.index === "number") text = text.slice(0, marker.index);
+	text = text.replace(/```[\s\S]*?(?:```|$)/g, " ");
+	text = text.replace(/(^|\n)\s*>[^\n]*/g, " ");
+	return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function promptReferencesCurrentPageMaterial(text: string) {
 	if (!text) return false;
 	return (
@@ -6447,7 +6511,7 @@ function promptReferencesCurrentPageMaterial(text: string) {
 }
 
 function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,
@@ -6456,20 +6520,53 @@ function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 }
 
 function promptAsksForCompactPageTeaching(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || promptForbidsPageChanges(prompt)) return false;
 	if (!promptAsksForTeachingPageSourceMarker(prompt)) return false;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return false;
 	return !textHasAny(text, /\b(?:deep|detailed|thorough|exhaustive|section[-\s]?by[-\s]?section|every section|all sections|full walkthrough|complete walkthrough)\b/);
 }
 
+// Document-review markup: the user is working an owned document (plan, draft,
+// spec) against feedback and wants the assessment applied to the page as
+// marks. The signals converge instead of keying one verb — explicit markup
+// verbs qualify alone; otherwise a review-style task plus embedded
+// third-party feedback, because the natural phrasing ("I got notes back on
+// this plan, give me your thoughts") never says "annotate". Deliberately
+// excludes page/article/paper nouns so teach-me-this-page flows keep their
+// own lane.
+function promptAsksForDocumentReviewMarkup(prompt: unknown) {
+	// The ask itself is judged on the user's OWN words; only the
+	// embedded-feedback signal reads the full prompt, since pasted feedback is
+	// exactly what that signal detects.
+	const text = ownWordsPromptText(prompt);
+	if (!text || promptForbidsPageChanges(prompt)) return false;
+	const documentSubject = /\b(?:this|the|my|our)\s+(?:document|doc|plan|draft|spec|proposal|write-?up|readme|rfc|report)\b/.test(text);
+	if (!documentSubject) return false;
+	const explicitMarkup =
+		/\b(?:mark(?:\s+it)?\s+up|annotate|add\s+notes?\s+(?:to|on|at|where)|mark\s+(?:where|what|which|the\s+parts?|each|every|sections?)|highlight\s+(?:where|what|which|the\s+parts?|each|every))\b/.test(
+			text,
+		);
+	if (explicitMarkup) return true;
+	const reviewTask =
+		/\b(?:go(?:ing)?\s+through|review|critique|evaluate|assess|address|incorporate|your\s+thoughts\s+on|what\s+(?:should|do)\s+i\s+(?:change|fix|update)|which\s+parts?\s+(?:to|should))\b/.test(
+			text,
+		);
+	const fullText = normalizePageSourcePromptText(prompt);
+	const embeddedFeedback =
+		/\b(?:from\s+my\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?|professor|mentor)|feedback|review\s+notes|comments?\s+(?:from|back|on)|notes?\s+(?:back|from|on))\b/.test(
+			fullText,
+		) && fullText.length >= 400;
+	return reviewTask && embeddedFeedback;
+}
+
 function promptAsksForComparison(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?)\b/.test(text));
 }
 
 function promptAsksForSinglePageComparison(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
 	return promptAsksForComparison(prompt);
 }
@@ -6481,6 +6578,7 @@ function promptAllowsPageSourceHighlights(prompt: unknown) {
 		promptAsksForPageAnchors(text) ||
 		promptAsksForTeachingPageSourceMarker(prompt) ||
 		promptAsksForStructuredPageSourceMarker(prompt) ||
+		promptAsksForDocumentReviewMarkup(prompt) ||
 		promptAsksForExternalBrowsing(text) ||
 		promptAsksForLinkedPageNavigation(text)
 	);
@@ -6493,6 +6591,7 @@ function promptRequiresPageSourceMarker(prompt: unknown) {
 		promptAsksForPageAnchors(text) ||
 		promptAsksForTeachingPageSourceMarker(prompt) ||
 		promptAsksForStructuredPageSourceMarker(prompt) ||
+		promptAsksForDocumentReviewMarkup(prompt) ||
 		promptAsksForExternalBrowsing(text) ||
 		promptAsksForLinkedPageNavigation(text)
 	);
@@ -7755,6 +7854,9 @@ function buildVisiblePdfSelectionFirstPassGuardResult(
 
 function buildSurplusHighlightGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
+	// Pasted feedback routinely contains comparison vocabulary ("deterministic
+	// comparison against..."); the review lane has its own budget.
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForSinglePageComparison(prompt)) return null;
 	const highlightCount = completedSourceHighlightCount(request);
 	if (highlightCount < 2) return null;
@@ -7823,7 +7925,7 @@ function isSectionNumberOnlyHighlightText(value: unknown) {
 }
 
 function promptAsksForDerivationOrProofSourceMarker(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	return Boolean(
 		text &&
 			promptAsksForStructuredPageSourceMarker(prompt) &&
@@ -7845,6 +7947,9 @@ function looksLikeHeadingOnlyHighlightText(value: unknown) {
 
 function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandName: string, params: any, prompt: unknown) {
 	if (commandName !== "highlight_text") return null;
+	// Review markup legitimately marks a section heading when the feedback
+	// point applies to the whole section — the attached note carries the why.
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
 	const sectionNumberOnly = isSectionNumberOnlyHighlightText(params?.text);
 	const headingOnlyDerivation =
@@ -7959,9 +8064,68 @@ function sourceCitationProvidesExplanatoryComparisonSupport(citation: unknown, e
 	return citationWordCount >= entityWordCount + 3;
 }
 
+// One-shot: a document-review markup pass must read the whole document before
+// marking it — otherwise the model works from the visible-viewport snapshot
+// and never marks past the fold (seen in real use: a plan doc got two marks,
+// both above the fold, and no notes).
+function buildReviewExtractionFirstGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "highlight_text" && commandName !== "show_note") return null;
+	if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+	if (hasCompletedToolTrace(request, "browser_extract_content") || hasCompletedToolTrace(request, "browser_pdf_read_pages")) return null;
+	if (!request || request.reviewExtractionFirstNudged) return null;
+	request.reviewExtractionFirstNudged = true;
+	return {
+		guardrail: {
+			kind: "review_extraction_first",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"Read the full document before marking it up: call browser_extract_content first — the captured snapshot covers only the visible top of the page.",
+				"Then work through the document start to end, placing a highlight plus a short note for each feedback point.",
+			].join(" "),
+		},
+	};
+}
+
+function buildSurplusReviewHighlightGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "highlight_text") return null;
+	if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+	if (completedSourceHighlightCount(request) < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
+	return {
+		guardrail: {
+			kind: "surplus_review_highlight",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				`${completedSourceHighlightCount(request)} review marks already cover this document pass.`,
+				`Do not call ${toolName} again for this turn.`,
+				"Fold any remaining feedback points into the chat synthesis, citing the existing marks.",
+			].join(" "),
+		},
+	};
+}
+
+function buildSurplusReviewNoteGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
+	if (commandName !== "show_note") return null;
+	if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < REVIEW_SOURCE_NOTE_MAX) return null;
+	return {
+		guardrail: {
+			kind: "surplus_review_note",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				`${countToolTracesByState(request, "browser_show_note", ["complete"])} review notes already landed for this pass.`,
+				`Do not call ${toolName} again for this turn; cover anything left in the chat synthesis.`,
+			].join(" "),
+		},
+	};
+}
+
 function buildSurplusTeachingHighlightGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
 	if (!promptAsksForTeachingPageSourceMarker(prompt)) return null;
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
 	if (completedSourceHighlightCount(request) < TEACHING_SOURCE_HIGHLIGHT_MAX) return null;
 	return {
@@ -7974,7 +8138,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName: string, commandName:
 				`Do not call ${toolName} again for this turn.`,
 				hasCompletedToolTrace(request, "browser_show_note")
 					? "Answer now from the existing highlights and note. Keep the answer concise."
-					: "If one short browser_show_note would clarify the central idea, add it under 280 characters; otherwise answer now from the existing highlights.",
+					: `If one short browser_show_note would clarify the central idea, add it under ${ON_PAGE_NOTE_MAX_CHARS} characters; otherwise answer now from the existing highlights.`,
 				"Do not use Markdown tables or horizontal rules. Do not claim the highlighter failed.",
 			].join(" "),
 		},
@@ -7984,6 +8148,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName: string, commandName:
 function buildSurplusTeachingNoteGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "show_note") return null;
 	if (promptExplicitlyRequestsNote(prompt)) return null;
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForCompactPageTeaching(prompt)) return null;
 	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < TEACHING_SOURCE_NOTE_MAX) return null;
 	return {
@@ -8003,6 +8168,7 @@ function buildSurplusTeachingNoteGuardResult(toolName: string, commandName: stri
 function buildCompactTeachingNoteFailureGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "show_note") return null;
 	if (promptExplicitlyRequestsNote(prompt)) return null;
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForCompactPageTeaching(prompt)) return null;
 	if (countToolTracesByState(request, "browser_show_note", ["complete"]) > 0) return null;
 	if (countToolTracesByState(request, "browser_show_note", ["error"]) < 1) return null;
@@ -8022,6 +8188,10 @@ function buildCompactTeachingNoteFailureGuardResult(toolName: string, commandNam
 
 function buildStructuredHighlightBudgetGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
+	// Review markup keeps going after a couple of failed anchors — remaining
+	// feedback points still deserve marks; the repeated-failure guard is the
+	// backstop for genuinely broken highlighting.
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
 	const highlightCount = completedSourceHighlightCount(request);
 	const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
@@ -8046,6 +8216,7 @@ function buildStructuredHighlightBudgetGuardResult(toolName: string, commandName
 
 function buildCompactTeachingHighlightBudgetGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForCompactPageTeaching(prompt)) return null;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
 	const highlightCount = completedSourceHighlightTraceCount(request) || completedSourceHighlightCount(request);
@@ -8071,6 +8242,7 @@ function buildCompactTeachingHighlightBudgetGuardResult(toolName: string, comman
 function buildStructuredNoteBudgetGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "show_note") return null;
 	if (promptExplicitlyRequestsNote(prompt)) return null;
+	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
 	const maxNotes = promptAsksForComparison(prompt) ? 1 : STRUCTURED_SOURCE_NOTE_MAX;
 	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < maxNotes) return null;
@@ -8412,6 +8584,20 @@ export const __browserRuntimeTest = {
 	buildLearnerStatePromptSummary,
 	relaxedRestorableUrlMatchKeyForTest: relaxedRestorableUrlMatchKey,
 	restorablePageUrlsMatchRelaxedForTest: restorablePageUrlsMatchRelaxed,
+	promptAsksForDocumentReviewMarkupForTest: promptAsksForDocumentReviewMarkup,
+	buildReviewExtractionFirstGuardResultForTest: buildReviewExtractionFirstGuardResult,
+	buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
+	buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
+	buildReasoningProfileForTest: buildReasoningProfile,
+	ownWordsPromptTextForTest: ownWordsPromptText,
+	promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
+	promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
+	laneBudgetsForTest: {
+		TEACHING_SOURCE_HIGHLIGHT_MAX,
+		TEACHING_SOURCE_NOTE_MAX,
+		REVIEW_SOURCE_HIGHLIGHT_MAX,
+		REVIEW_SOURCE_NOTE_MAX,
+	},
 	buildExistingAnchorContext,
 	buildHighlightRetryCandidates,
 	shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
@@ -10748,16 +10934,19 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 					buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
 					buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) ||
+					buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) ||
 					buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 					buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 					buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
+					buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 					buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
+					buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
 				async (effectiveParams) => {
@@ -10845,7 +11034,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 							...retryTools.filter((tool) => !existingToolNames.has(tool.name)),
 						];
 						resetAssistantDraftText(activeRequest);
-						updateAssistantDraft(requestId, "", { pending: true });
+						// Keep the superseded draft visible (marked as revising) instead
+						// of blanking it — streamed text that suddenly vanishes reads as
+						// "my response got cut off" while the retry works.
+						updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
 						await publishState({ status: "Retrying with needed browser tool..." });
 						queueBlankReplyRetry(activeAgent, buildMissingToolRetryPrompt(activeRequest, missingToolName), (retryError) => {
 							void finalizeRequest(session, requestId, retryError);
@@ -10856,7 +11048,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest) && activeAgent) {
 					activeRequest.pageSourceMarkerRetry = true;
 					resetAssistantDraftText(activeRequest);
-					updateAssistantDraft(requestId, "", { pending: true });
+					updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
 					await publishState({ status: "Adding source marker..." });
 					queueBlankReplyRetry(activeAgent, buildPageSourceMarkerRetryPrompt(activeRequest, assistantText), (retryError) => {
 						void finalizeRequest(session, requestId, retryError);
@@ -10866,7 +11058,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
 					activeRequest.pdfAnchorRetry = true;
 					resetAssistantDraftText(activeRequest);
-				updateAssistantDraft(requestId, "", { pending: true });
+				updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
 				await publishState({ status: "Anchoring PDF answer..." });
 				queueBlankReplyRetry(activeAgent, buildPdfAnchorRetryPrompt(activeRequest, assistantText), (retryError) => {
 					void finalizeRequest(session, requestId, retryError);
@@ -10960,7 +11152,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					ensureAssistantDraftTextBlock(activeRequest, assistantEvent.contentIndex);
 				} else if (assistantEvent?.type === "text_delta") {
 					const draftText = appendAssistantDraftTextDelta(activeRequest, assistantEvent);
-					updateAssistantDraft(requestId, draftText, { pending: true });
+					// revising: false clears the flag once a retry's replacement
+					// answer actually starts streaming.
+					updateAssistantDraft(requestId, draftText, { pending: true, revising: false });
 					void publishState({ status: "Responding..." });
 				} else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
 					void publishState({ status: "Thinking..." });
@@ -13124,16 +13318,19 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 							buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
 							buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) ||
+							buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) ||
 							buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 							buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 							buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
+							buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
 							buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) ||
+							buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
 						async (effectiveParams) => {

@@ -2792,6 +2792,12 @@
 				color: var(--rm-subtext);
 				font-style: italic;
 			}
+			.reply-revising {
+				color: var(--rm-subtext);
+				font-style: italic;
+				font-size: 12px;
+				margin-top: 6px;
+			}
 			.reply-math-block,
 			.reply-math-inline {
 				color: var(--rm-text);
@@ -4153,6 +4159,7 @@
 			activities,
 			pageActions,
 			pending: Boolean(state?.activeRequestId === currentTurnId || assistantMessage?.pending),
+			revising: Boolean(assistantMessage?.revising),
 			error: Boolean(assistantMessage?.error),
 			createdAt: userMessage?.createdAt || assistantMessage?.createdAt || new Date().toISOString(),
 		};
@@ -5225,6 +5232,7 @@
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 								<div class="onhand-response">
 									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
+									${turn?.pending && turn?.revising && reply ? '<p class="reply-revising">Revising — anchoring the answer on the page…</p>' : ""}
 									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 								</div>

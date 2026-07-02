@@ -132788,6 +132788,8 @@ var COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
 var STRUCTURED_SOURCE_NOTE_MAX = 3;
 var COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
 var STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT = 2;
+var REVIEW_SOURCE_HIGHLIGHT_MAX = 10;
+var REVIEW_SOURCE_NOTE_MAX = 10;
 function shouldTryHighlightScanFallbackBeforeOriginal(value) {
   const text = normalizeHighlightRetryCandidate(value);
   if (!text || text.length > 100) return false;
@@ -133062,11 +133064,21 @@ function compactActionText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 var ON_PAGE_NOTE_MAX_CHARS = 280;
+var ON_PAGE_NOTE_DEFERRAL_PATTERN = /\b(?:sidebar|chat (?:answer|reply)|full (?:answer|explanation)|see (?:above|below|the answer)|answer (?:above|below))\b/i;
 function compactOnPageNoteText(value, maxChars = ON_PAGE_NOTE_MAX_CHARS) {
   const text = compactActionText(value);
   if (!text) return "";
-  const firstSentence = text.match(/^(.{12,}?[.!?])(?:\s|$)/);
-  if (firstSentence && firstSentence[1].length <= maxChars) return firstSentence[1].trim();
+  const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) || [];
+  if (sentences.length > 1) {
+    let kept = "";
+    for (const sentence of sentences) {
+      if (ON_PAGE_NOTE_DEFERRAL_PATTERN.test(sentence)) break;
+      const candidate = `${kept}${kept ? " " : ""}${sentence.trim()}`;
+      if (candidate.length > maxChars) break;
+      kept = candidate;
+    }
+    if (kept.length >= 12) return kept;
+  }
   if (text.length <= maxChars) return text;
   const head = text.slice(0, Math.max(0, maxChars - 3)).trimEnd();
   const minBoundary = Math.floor(maxChars * 0.6);
@@ -135477,6 +135489,23 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
     mode,
     reason: `Internal routing chose ${mode}.`
   };
+  if (promptAsksForDocumentReviewMarkup(prompt)) {
+    return {
+      ...base,
+      mode: "deep",
+      reason: "Internal routing chose document review markup.",
+      reasoningEffort: "low",
+      textVerbosity: "low",
+      maxTokens: ONHAND_DEEP_OUTPUT_TOKENS,
+      promptPolicy: [
+        "Runtime policy: Document review markup. The user is applying feedback to the open working document, and the on-page marks are the deliverable.",
+        "Read the ENTIRE document with browser_extract_content before placing any marks \u2014 the captured snapshot covers only the visible top of the page.",
+        "Then work through the document start to end: for each distinct feedback point, highlight the exact passage it applies to and attach a browser_show_note (one to two sentences) saying what to change and why, or why the passage already holds up.",
+        `Cover every feedback point that maps to a passage (up to about ${REVIEW_SOURCE_HIGHLIGHT_MAX} marks); when several points hit the same passage, one highlight with a combined note is fine.`,
+        "Keep the chat reply a short synthesis that cites the marks; do not restate the notes in chat, and name any feedback point you could not anchor."
+      ].join(" ")
+    };
+  }
   if (promptAsksForCompactPageTeaching(prompt)) {
     return {
       ...base,
@@ -135485,7 +135514,12 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
       reasoningEffort: "none",
       textVerbosity: "low",
       maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
-      promptPolicy: "Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question \u2014 roughly one source highlight per concept (soft cap about six) \u2014 and add a short interpretive note (one to two sentences) on each. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas."
+      promptPolicy: (
+        // The mark budget in this prose is interpolated from the same
+        // constants the surplus guards enforce, so the briefing the model
+        // reads can never drift from the fence it hits.
+        `Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question \u2014 roughly one source highlight per key concept (at most ${TEACHING_SOURCE_HIGHLIGHT_MAX} for this compact pass) \u2014 and add ${TEACHING_SOURCE_NOTE_MAX === 1 ? "one short interpretive note (one to two sentences) on the most central highlight" : `up to ${TEACHING_SOURCE_NOTE_MAX} short interpretive notes (one to two sentences each)`}. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.`
+      )
     };
   }
   switch (mode) {
@@ -136465,7 +136499,7 @@ function promptAsksForPageAnchors(text) {
   );
 }
 function promptAsksForTeachingPageSourceMarker(prompt) {
-  const text = stripVoicePromptPrefix(prompt).toLowerCase().replace(/\s+/g, " ").trim();
+  const text = ownWordsPromptText(prompt);
   if (!text) return false;
   const asksForTeaching = /\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
   const referencesPageMaterial = /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+(?:says|covers|discusses|teaches|explains)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+says\b/.test(text);
@@ -136474,12 +136508,21 @@ function promptAsksForTeachingPageSourceMarker(prompt) {
 function normalizePageSourcePromptText(prompt) {
   return stripVoicePromptPrefix(prompt).toLowerCase().replace(/\s+/g, " ").trim();
 }
+var EMBEDDED_FEEDBACK_BLOCK_START = /(^|\n)\s*(?:from\s+(?:my|our|the|a)\s+[^\n:]{2,40}|(?:my|our|the)\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?)'?s?\s+(?:notes?|feedback|comments?)|feedback|reviewer\s+notes?|review\s+notes?|notes?\s+(?:from|back\s+from)\s+[^\n:]{2,40}|comments?\s+from\s+[^\n:]{2,40})\s*:\s*(?:\n|$)/i;
+function ownWordsPromptText(prompt) {
+  let text = stripVoicePromptPrefix(prompt);
+  const marker = text.match(EMBEDDED_FEEDBACK_BLOCK_START);
+  if (marker && typeof marker.index === "number") text = text.slice(0, marker.index);
+  text = text.replace(/```[\s\S]*?(?:```|$)/g, " ");
+  text = text.replace(/(^|\n)\s*>[^\n]*/g, " ");
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
 function promptReferencesCurrentPageMaterial(text) {
   if (!text) return false;
   return /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|covers|discusses|teaches|explains|mentions|shows|derives|lists|calls|notes)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|means|shows|covers|teaches|explains)\b/.test(text);
 }
 function promptAsksForStructuredPageSourceMarker(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
@@ -136487,30 +136530,48 @@ function promptAsksForStructuredPageSourceMarker(prompt) {
   );
 }
 function promptAsksForCompactPageTeaching(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
   if (!promptAsksForTeachingPageSourceMarker(prompt)) return false;
   if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return false;
   return !textHasAny(text, /\b(?:deep|detailed|thorough|exhaustive|section[-\s]?by[-\s]?section|every section|all sections|full walkthrough|complete walkthrough)\b/);
 }
+function promptAsksForDocumentReviewMarkup(prompt) {
+  const text = ownWordsPromptText(prompt);
+  if (!text || promptForbidsPageChanges(prompt)) return false;
+  const documentSubject = /\b(?:this|the|my|our)\s+(?:document|doc|plan|draft|spec|proposal|write-?up|readme|rfc|report)\b/.test(text);
+  if (!documentSubject) return false;
+  const explicitMarkup = /\b(?:mark(?:\s+it)?\s+up|annotate|add\s+notes?\s+(?:to|on|at|where)|mark\s+(?:where|what|which|the\s+parts?|each|every|sections?)|highlight\s+(?:where|what|which|the\s+parts?|each|every))\b/.test(
+    text
+  );
+  if (explicitMarkup) return true;
+  const reviewTask = /\b(?:go(?:ing)?\s+through|review|critique|evaluate|assess|address|incorporate|your\s+thoughts\s+on|what\s+(?:should|do)\s+i\s+(?:change|fix|update)|which\s+parts?\s+(?:to|should))\b/.test(
+    text
+  );
+  const fullText = normalizePageSourcePromptText(prompt);
+  const embeddedFeedback = /\b(?:from\s+my\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?|professor|mentor)|feedback|review\s+notes|comments?\s+(?:from|back|on)|notes?\s+(?:back|from|on))\b/.test(
+    fullText
+  ) && fullText.length >= 400;
+  return reviewTask && embeddedFeedback;
+}
 function promptAsksForComparison(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?)\b/.test(text));
 }
 function promptAsksForSinglePageComparison(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
   return promptAsksForComparison(prompt);
 }
 function promptAllowsPageSourceHighlights(prompt) {
   const text = normalizePageSourcePromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
-  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
+  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
 }
 function promptRequiresPageSourceMarker(prompt) {
   const text = normalizePageSourcePromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
-  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
+  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
 }
 function promptAsksForPdfCorpusOrViewerWork(text) {
   return textHasAny(
@@ -137508,6 +137569,7 @@ function buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, pro
 }
 function buildSurplusHighlightGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForSinglePageComparison(prompt)) return null;
   const highlightCount = completedSourceHighlightCount(request);
   if (highlightCount < 2) return null;
@@ -137569,7 +137631,7 @@ function isSectionNumberOnlyHighlightText(value) {
   return /^(?:§\s*)?(?:[0-9]+|[ivxlcdm]+)(?:\.[0-9ivxlcdm]+)*\.?$/i.test(text);
 }
 function promptAsksForDerivationOrProofSourceMarker(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   return Boolean(
     text && promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
   );
@@ -137587,6 +137649,7 @@ function looksLikeHeadingOnlyHighlightText(value) {
 }
 function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, params, prompt) {
   if (commandName !== "highlight_text") return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
   const sectionNumberOnly = isSectionNumberOnlyHighlightText(params?.text);
   const headingOnlyDerivation = !sectionNumberOnly && promptAsksForDerivationOrProofSourceMarker(prompt) && looksLikeHeadingOnlyHighlightText(params?.text);
@@ -137679,9 +137742,61 @@ function sourceCitationProvidesExplanatoryComparisonSupport(citation, entity) {
   const entityWordCount = entityWords(entity).length;
   return citationWordCount >= entityWordCount + 3;
 }
+function buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, request) {
+  if (commandName !== "highlight_text" && commandName !== "show_note") return null;
+  if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+  if (hasCompletedToolTrace(request, "browser_extract_content") || hasCompletedToolTrace(request, "browser_pdf_read_pages")) return null;
+  if (!request || request.reviewExtractionFirstNudged) return null;
+  request.reviewExtractionFirstNudged = true;
+  return {
+    guardrail: {
+      kind: "review_extraction_first",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        "Read the full document before marking it up: call browser_extract_content first \u2014 the captured snapshot covers only the visible top of the page.",
+        "Then work through the document start to end, placing a highlight plus a short note for each feedback point."
+      ].join(" ")
+    }
+  };
+}
+function buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, request) {
+  if (commandName !== "highlight_text") return null;
+  if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+  if (completedSourceHighlightCount(request) < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
+  return {
+    guardrail: {
+      kind: "surplus_review_highlight",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        `${completedSourceHighlightCount(request)} review marks already cover this document pass.`,
+        `Do not call ${toolName} again for this turn.`,
+        "Fold any remaining feedback points into the chat synthesis, citing the existing marks."
+      ].join(" ")
+    }
+  };
+}
+function buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, request) {
+  if (commandName !== "show_note") return null;
+  if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
+  if (countToolTracesByState(request, "browser_show_note", ["complete"]) < REVIEW_SOURCE_NOTE_MAX) return null;
+  return {
+    guardrail: {
+      kind: "surplus_review_note",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        `${countToolTracesByState(request, "browser_show_note", ["complete"])} review notes already landed for this pass.`,
+        `Do not call ${toolName} again for this turn; cover anything left in the chat synthesis.`
+      ].join(" ")
+    }
+  };
+}
 function buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
   if (!promptAsksForTeachingPageSourceMarker(prompt)) return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
   if (completedSourceHighlightCount(request) < TEACHING_SOURCE_HIGHLIGHT_MAX) return null;
   return {
@@ -137692,7 +137807,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt,
       message: [
         `${completedSourceHighlightCount(request)} source highlights already cover the key concepts for this teaching answer.`,
         `Do not call ${toolName} again for this turn.`,
-        hasCompletedToolTrace(request, "browser_show_note") ? "Answer now from the existing highlights and note. Keep the answer concise." : "If one short browser_show_note would clarify the central idea, add it under 280 characters; otherwise answer now from the existing highlights.",
+        hasCompletedToolTrace(request, "browser_show_note") ? "Answer now from the existing highlights and note. Keep the answer concise." : `If one short browser_show_note would clarify the central idea, add it under ${ON_PAGE_NOTE_MAX_CHARS} characters; otherwise answer now from the existing highlights.`,
         "Do not use Markdown tables or horizontal rules. Do not claim the highlighter failed."
       ].join(" ")
     }
@@ -137701,6 +137816,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt,
 function buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "show_note") return null;
   if (promptExplicitlyRequestsNote(prompt)) return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForCompactPageTeaching(prompt)) return null;
   if (countToolTracesByState(request, "browser_show_note", ["complete"]) < TEACHING_SOURCE_NOTE_MAX) return null;
   return {
@@ -137719,6 +137835,7 @@ function buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, requ
 function buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "show_note") return null;
   if (promptExplicitlyRequestsNote(prompt)) return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForCompactPageTeaching(prompt)) return null;
   if (countToolTracesByState(request, "browser_show_note", ["complete"]) > 0) return null;
   if (countToolTracesByState(request, "browser_show_note", ["error"]) < 1) return null;
@@ -137737,6 +137854,7 @@ function buildCompactTeachingNoteFailureGuardResult(toolName, commandName, promp
 }
 function buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
   const highlightCount = completedSourceHighlightCount(request);
   const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
@@ -137760,6 +137878,7 @@ function buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt
 }
 function buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForCompactPageTeaching(prompt)) return null;
   if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
   const highlightCount = completedSourceHighlightTraceCount(request) || completedSourceHighlightCount(request);
@@ -137782,6 +137901,7 @@ function buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, p
 function buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "show_note") return null;
   if (promptExplicitlyRequestsNote(prompt)) return null;
+  if (promptAsksForDocumentReviewMarkup(prompt)) return null;
   if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
   const maxNotes = promptAsksForComparison(prompt) ? 1 : STRUCTURED_SOURCE_NOTE_MAX;
   if (countToolTracesByState(request, "browser_show_note", ["complete"]) < maxNotes) return null;
@@ -138083,6 +138203,20 @@ var __browserRuntimeTest = {
   buildLearnerStatePromptSummary,
   relaxedRestorableUrlMatchKeyForTest: relaxedRestorableUrlMatchKey,
   restorablePageUrlsMatchRelaxedForTest: restorablePageUrlsMatchRelaxed,
+  promptAsksForDocumentReviewMarkupForTest: promptAsksForDocumentReviewMarkup,
+  buildReviewExtractionFirstGuardResultForTest: buildReviewExtractionFirstGuardResult,
+  buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
+  buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
+  buildReasoningProfileForTest: buildReasoningProfile,
+  ownWordsPromptTextForTest: ownWordsPromptText,
+  promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
+  promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
+  laneBudgetsForTest: {
+    TEACHING_SOURCE_HIGHLIGHT_MAX,
+    TEACHING_SOURCE_NOTE_MAX,
+    REVIEW_SOURCE_HIGHLIGHT_MAX,
+    REVIEW_SOURCE_NOTE_MAX
+  },
   buildExistingAnchorContext,
   buildHighlightRetryCandidates,
   shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
@@ -140208,7 +140342,7 @@ function createOnhandBrowserRuntime(host) {
         withRequestBrowserContext,
         (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
         (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-        (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+        (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -140285,7 +140419,7 @@ function createOnhandBrowserRuntime(host) {
           ...retryTools.filter((tool) => !existingToolNames.has(tool.name))
         ];
         resetAssistantDraftText(activeRequest);
-        updateAssistantDraft(requestId, "", { pending: true });
+        updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
         await publishState({ status: "Retrying with needed browser tool..." });
         queueBlankReplyRetry(activeAgent, buildMissingToolRetryPrompt(activeRequest, missingToolName), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
@@ -140296,7 +140430,7 @@ function createOnhandBrowserRuntime(host) {
     if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest) && activeAgent) {
       activeRequest.pageSourceMarkerRetry = true;
       resetAssistantDraftText(activeRequest);
-      updateAssistantDraft(requestId, "", { pending: true });
+      updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
       await publishState({ status: "Adding source marker..." });
       queueBlankReplyRetry(activeAgent, buildPageSourceMarkerRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
@@ -140306,7 +140440,7 @@ function createOnhandBrowserRuntime(host) {
     if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
       activeRequest.pdfAnchorRetry = true;
       resetAssistantDraftText(activeRequest);
-      updateAssistantDraft(requestId, "", { pending: true });
+      updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
       await publishState({ status: "Anchoring PDF answer..." });
       queueBlankReplyRetry(activeAgent, buildPdfAnchorRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
@@ -140400,7 +140534,7 @@ function createOnhandBrowserRuntime(host) {
           ensureAssistantDraftTextBlock(activeRequest, assistantEvent.contentIndex);
         } else if (assistantEvent?.type === "text_delta") {
           const draftText = appendAssistantDraftTextDelta(activeRequest, assistantEvent);
-          updateAssistantDraft(requestId, draftText, { pending: true });
+          updateAssistantDraft(requestId, draftText, { pending: true, revising: false });
           void publishState({ status: "Responding..." });
         } else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
           void publishState({ status: "Thinking..." });
@@ -142382,7 +142516,7 @@ function createOnhandBrowserRuntime(host) {
             withRequestBrowserContext,
             (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
             (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
             async (effectiveParams) => {
               if (!effectiveParams?.scanPage) return null;
               const text = compactActionText(effectiveParams?.text);
