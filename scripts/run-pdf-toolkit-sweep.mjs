@@ -68,10 +68,16 @@ function parseArgs(argv) {
 	for (let index = 2; index < argv.length; index += 1) {
 		const value = argv[index];
 		const readValue = (flag) => (value.includes("=") ? value.slice(flag.length + 1) : argv[(index += 1)]);
+		const readNumber = (flag) => {
+			const raw = readValue(flag);
+			const parsed = Number(raw);
+			if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${flag} requires a positive number, got: ${raw}`);
+			return parsed;
+		};
 		if (value === "--pdf" || value.startsWith("--pdf=")) args.pdfIds.push(String(readValue("--pdf")).trim());
 		else if (value === "--list") args.list = true;
-		else if (value === "--max-sentences" || value.startsWith("--max-sentences=")) args.maxSentences = Number(readValue("--max-sentences"));
-		else if (value === "--budget-ms" || value.startsWith("--budget-ms=")) args.budgetMs = Number(readValue("--budget-ms"));
+		else if (value === "--max-sentences" || value.startsWith("--max-sentences=")) args.maxSentences = readNumber("--max-sentences");
+		else if (value === "--budget-ms" || value.startsWith("--budget-ms=")) args.budgetMs = readNumber("--budget-ms");
 		else if (value === "--keep-browser") args.keepBrowser = true;
 		else throw new Error(`Unknown argument: ${value}`);
 	}
@@ -174,8 +180,10 @@ async function waitForCdp(port, timeoutMs = 20000) {
 }
 
 function launchBrowser(profile, port) {
+	const browserPath = findBrowser();
+	if (!browserPath) throw new Error(`No Chromium-based browser found; checked: ${BROWSER_CANDIDATES.join(", ")}`);
 	return spawn(
-		findBrowser(),
+		browserPath,
 		[
 			`--user-data-dir=${profile}`,
 			`--load-extension=${EXT_DIR}`,

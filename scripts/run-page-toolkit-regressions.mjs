@@ -10,8 +10,17 @@ const GOOGLE_DOCS_FIXTURE_EDIT_URL = `https://docs.google.com/document/d/${GOOGL
 const GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL = `https://docs.google.com/document/d/${GOOGLE_DOCS_FIXTURE_ID}/export?format=pdf`;
 const GOOGLE_DOCS_FIXTURE_TEXT_EXPORT_PATTERN = new RegExp(`/document/d/${GOOGLE_DOCS_FIXTURE_ID}/export\\?format=txt$`);
 
+const sourceFileCache = new Map();
+
+function readSourceFile(relativePath) {
+	if (!sourceFileCache.has(relativePath)) {
+		sourceFileCache.set(relativePath, readFile(join(PROJECT_ROOT, relativePath), "utf8"));
+	}
+	return sourceFileCache.get(relativePath);
+}
+
 async function loadPageToolkitFactory() {
-	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const source = await readSourceFile("packages/browser-extension/background.js");
 	const start = source.indexOf("const createPageToolkit = ");
 	const end = source.indexOf("\n};\n\nasync function evaluateInTab", start);
 	assert.notEqual(start, -1, "createPageToolkit declaration not found");
@@ -26,7 +35,7 @@ async function loadBackgroundFunction(functionName) {
 }
 
 async function loadFunctionFromFile(relativePath, functionName) {
-	const source = await readFile(join(PROJECT_ROOT, relativePath), "utf8");
+	const source = await readSourceFile(relativePath);
 	const start = source.indexOf(`function ${functionName}`);
 	assert.notEqual(start, -1, `${functionName} declaration not found`);
 	const signatureEnd = source.indexOf(")", start);
