@@ -132949,7 +132949,15 @@ function hasReadableSourceContentAfterLatestNavigation(request) {
 }
 var CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = /* @__PURE__ */ new Set([
   "weak_compact_teaching_highlight",
-  "weak_structured_highlight_text"
+  "weak_structured_highlight_text",
+  // Review-lane guards are course corrections, not failures: an intercepted
+  // mark (read the doc first / checkpoint hold / budget backstop) must not
+  // count toward the highlight give-up budget, or a held batch would abort
+  // the very marking pass the guards are shepherding.
+  "review_extraction_first",
+  "review_mark_checkpoint",
+  "review_mark_checkpoint_batch",
+  "surplus_review_highlight"
 ]);
 function isCorrectiveHighlightGuardrailTrace(trace) {
   const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
@@ -137761,25 +137769,53 @@ function buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, re
     }
   };
 }
+function currentAssistantBatchKey(request) {
+  const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+  for (let index = traces.length - 1; index >= 0; index -= 1) {
+    if (traces[index]?.state !== "running") continue;
+    const id = String(traces[index]?.toolCallId || "");
+    const splitAt = id.lastIndexOf("|");
+    return splitAt >= 0 ? id.slice(splitAt + 1) : "";
+  }
+  return "";
+}
 function buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
   if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
   const highlightCount = completedSourceHighlightCount(request);
   if (highlightCount >= REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET && highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) {
-    if (!request || request.reviewMarkCheckpointNudged) return null;
-    request.reviewMarkCheckpointNudged = true;
-    return {
-      guardrail: {
-        kind: "review_mark_checkpoint",
-        blockedTool: toolName,
-        blockedCommand: commandName,
-        message: [
-          `${highlightCount} review marks are already placed.`,
-          "Continue only for passages that a remaining, distinct feedback point directly addresses \u2014 one mark per remaining point, no re-marking of covered ground \u2014 and stop when the feedback is covered.",
-          "Never mention mark budgets, guardrails, or tool limits in the chat answer."
-        ].join(" ")
-      }
-    };
+    if (!request) return null;
+    if (!request.reviewMarkCheckpointNudged) {
+      request.reviewMarkCheckpointNudged = true;
+      request.reviewMarkCheckpointBatchKey = currentAssistantBatchKey(request);
+      return {
+        guardrail: {
+          kind: "review_mark_checkpoint",
+          blockedTool: toolName,
+          blockedCommand: commandName,
+          message: [
+            `${highlightCount} review marks are already placed.`,
+            "Continue only for passages that a remaining, distinct feedback point directly addresses \u2014 one mark per remaining point, no re-marking of covered ground \u2014 and stop when the feedback is covered.",
+            "Never mention mark budgets, guardrails, or tool limits in the chat answer."
+          ].join(" ")
+        }
+      };
+    }
+    const batchKey = currentAssistantBatchKey(request);
+    if (batchKey && batchKey === request.reviewMarkCheckpointBatchKey) {
+      return {
+        guardrail: {
+          kind: "review_mark_checkpoint_batch",
+          blockedTool: toolName,
+          blockedCommand: commandName,
+          message: [
+            "Held with the mark checkpoint: re-issue this mark only if it addresses a remaining, distinct feedback point.",
+            "Never mention mark budgets, guardrails, or tool limits in the chat answer."
+          ].join(" ")
+        }
+      };
+    }
+    return null;
   }
   if (highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
   return {

@@ -1289,6 +1289,14 @@ function hasReadableSourceContentAfterLatestNavigation(request: any) {
 const CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = new Set([
 	"weak_compact_teaching_highlight",
 	"weak_structured_highlight_text",
+	// Review-lane guards are course corrections, not failures: an intercepted
+	// mark (read the doc first / checkpoint hold / budget backstop) must not
+	// count toward the highlight give-up budget, or a held batch would abort
+	// the very marking pass the guards are shepherding.
+	"review_extraction_first",
+	"review_mark_checkpoint",
+	"review_mark_checkpoint_batch",
+	"surplus_review_highlight",
 ]);
 
 function isCorrectiveHighlightGuardrailTrace(trace: any) {
@@ -8089,6 +8097,21 @@ function buildReviewExtractionFirstGuardResult(toolName: string, commandName: st
 	};
 }
 
+// The assistant-message id shared by every tool call the model drafted in one
+// batch (trace ids look like "call_x|fc_y"; fc_y is the message id). Read
+// from the newest running trace — recorded before guards evaluate. Empty when
+// the provider's ids carry no batch component.
+function currentAssistantBatchKey(request: any) {
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	for (let index = traces.length - 1; index >= 0; index -= 1) {
+		if (traces[index]?.state !== "running") continue;
+		const id = String(traces[index]?.toolCallId || "");
+		const splitAt = id.lastIndexOf("|");
+		return splitAt >= 0 ? id.slice(splitAt + 1) : "";
+	}
+	return "";
+}
+
 function buildSurplusReviewHighlightGuardResult(toolName: string, commandName: string, prompt: unknown, request: any) {
 	if (commandName !== "highlight_text") return null;
 	if (!promptAsksForDocumentReviewMarkup(prompt)) return null;
@@ -8096,20 +8119,42 @@ function buildSurplusReviewHighlightGuardResult(toolName: string, commandName: s
 	// Soft checkpoint, once: keep going for genuinely distinct feedback
 	// points; never present the target as a wall the user hears about.
 	if (highlightCount >= REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET && highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) {
-		if (!request || request.reviewMarkCheckpointNudged) return null;
-		request.reviewMarkCheckpointNudged = true;
-		return {
-			guardrail: {
-				kind: "review_mark_checkpoint",
-				blockedTool: toolName,
-				blockedCommand: commandName,
-				message: [
-					`${highlightCount} review marks are already placed.`,
-					"Continue only for passages that a remaining, distinct feedback point directly addresses — one mark per remaining point, no re-marking of covered ground — and stop when the feedback is covered.",
-					"Never mention mark budgets, guardrails, or tool limits in the chat answer.",
-				].join(" "),
-			},
-		};
+		if (!request) return null;
+		if (!request.reviewMarkCheckpointNudged) {
+			request.reviewMarkCheckpointNudged = true;
+			request.reviewMarkCheckpointBatchKey = currentAssistantBatchKey(request);
+			return {
+				guardrail: {
+					kind: "review_mark_checkpoint",
+					blockedTool: toolName,
+					blockedCommand: commandName,
+					message: [
+						`${highlightCount} review marks are already placed.`,
+						"Continue only for passages that a remaining, distinct feedback point directly addresses — one mark per remaining point, no re-marking of covered ground — and stop when the feedback is covered.",
+						"Never mention mark budgets, guardrails, or tool limits in the chat answer.",
+					].join(" "),
+				},
+			};
+		}
+		// Sibling calls batched in the same assistant message were drafted
+		// before the model could read the checkpoint — hold them too, so
+		// continuing past the soft target is a deliberate post-checkpoint
+		// decision, not momentum from an in-flight batch.
+		const batchKey = currentAssistantBatchKey(request);
+		if (batchKey && batchKey === request.reviewMarkCheckpointBatchKey) {
+			return {
+				guardrail: {
+					kind: "review_mark_checkpoint_batch",
+					blockedTool: toolName,
+					blockedCommand: commandName,
+					message: [
+						"Held with the mark checkpoint: re-issue this mark only if it addresses a remaining, distinct feedback point.",
+						"Never mention mark budgets, guardrails, or tool limits in the chat answer.",
+					].join(" "),
+				},
+			};
+		}
+		return null;
 	}
 	if (highlightCount < REVIEW_SOURCE_HIGHLIGHT_MAX) return null;
 	return {

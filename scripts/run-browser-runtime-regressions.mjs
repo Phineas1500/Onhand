@@ -1775,10 +1775,26 @@ async function assertDocumentReviewMarkupLane() {
 	});
 	assert.equal(surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(9)), null);
 	const checkpointRequest = marks(10);
+	checkpointRequest.toolTraces.push({ toolName: "browser_highlight_text", state: "running", toolCallId: "call_a|fc_batch_one" });
 	const checkpoint = surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, checkpointRequest);
 	assert.equal(checkpoint?.guardrail?.kind, "review_mark_checkpoint", "the soft target should nudge, not block");
 	assert.match(checkpoint.guardrail.message, /Never mention mark budgets/, "the checkpoint must forbid budget narration in the reply");
-	assert.equal(surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, checkpointRequest), null, "the checkpoint fires once and then lets the pass continue");
+	// Sibling calls batched in the same assistant message were drafted before
+	// the model could read the checkpoint — they are held with it.
+	checkpointRequest.toolTraces.push({ toolName: "browser_highlight_text", state: "running", toolCallId: "call_b|fc_batch_one" });
+	assert.equal(
+		surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, checkpointRequest)?.guardrail?.kind,
+		"review_mark_checkpoint_batch",
+		"same-batch siblings must be held with the checkpoint",
+	);
+	// A call from the model's next message means it read the checkpoint and
+	// chose to continue — that flows freely.
+	checkpointRequest.toolTraces.push({ toolName: "browser_highlight_text", state: "running", toolCallId: "call_c|fc_batch_two" });
+	assert.equal(
+		surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, checkpointRequest),
+		null,
+		"post-checkpoint marks continue without blocking",
+	);
 	const hardStop = surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(20));
 	assert.equal(hardStop?.guardrail?.kind, "surplus_review_highlight", "only the runaway backstop hard-stops");
 	assert.match(hardStop.guardrail.message, /Never mention mark budgets/, "the backstop must forbid budget narration in the reply");
@@ -1787,6 +1803,20 @@ async function assertDocumentReviewMarkupLane() {
 	});
 	assert.equal(surplusNoteGuard("browser_show_note", "show_note", realPhrasing, notes(10)), null, "note budget must not stop below the backstop");
 	assert.equal(surplusNoteGuard("browser_show_note", "show_note", realPhrasing, notes(20))?.guardrail?.kind, "surplus_review_note");
+
+	// Guard interceptions are course corrections, not failures: a held batch
+	// must not trip the highlight give-up budget and abort the marking pass.
+	const { shouldAbortAfterRepeatedHighlightFailuresForTest } = __browserRuntimeTest;
+	const heldBatch = {
+		displayPrompt: realPhrasing,
+		toolTraces: Array.from({ length: 8 }, (_, index) => ({
+			toolName: "browser_highlight_text",
+			state: "error",
+			toolCallId: `call_${index}|fc_batch_one`,
+			details: { guardrail: { kind: "review_mark_checkpoint_batch" } },
+		})),
+	};
+	assert.equal(shouldAbortAfterRepeatedHighlightFailuresForTest(heldBatch), false, "checkpoint holds must not count toward the highlight give-up budget");
 
 	// The teaching/structured caps must not strangle the review lane even when
 	// the pasted feedback trips their keyword predicates ("summary", "approach").
