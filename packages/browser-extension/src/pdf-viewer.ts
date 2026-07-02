@@ -217,20 +217,59 @@ function findViewportPage() {
 	return bestPage;
 }
 
+// pdf.js renders one absolutely positioned span per text item and emits no
+// whitespace between spans, so a naive node walk glues wrapped lines and
+// adjacent words together ("…everywhereThis paragraph…") while the text the
+// model copies from (pdf_read_pages) separates them — every cross-line quote
+// then silently degrades to the compact tier, and short ones fail outright.
+// Geometry tells the cases apart: a new line or a visible horizontal gap is a
+// word boundary; a kerning split inside one word has neither.
+function pdfTextNodeBoundaryNeedsSpace(previous: Text | null, next: Text) {
+	if (!previous) return false;
+	const previousElement = previous.parentElement;
+	const nextElement = next.parentElement;
+	if (!previousElement || !nextElement || previousElement === nextElement) return false;
+	const previousRect = previousElement.getBoundingClientRect();
+	const nextRect = nextElement.getBoundingClientRect();
+	const lineHeight = Math.max(previousRect.height, nextRect.height);
+	if (!lineHeight) {
+		// Layout-less environments cannot measure; distinct spans are distinct
+		// pdf.js text items, which read as separate words in reading order.
+		return true;
+	}
+	if (Math.abs(nextRect.top - previousRect.top) > lineHeight / 2) return true;
+	return nextRect.left - previousRect.right > lineHeight * 0.12;
+}
+
 function buildNormalizedTextMap(root: Element) {
 	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 	const positions: Array<{ node: Text; offset: number }> = [];
 	let text = "";
 	let pendingSpace: { node: Text; offset: number } | null = null;
+	let previousNode: Text | null = null;
+	// Search projection: the same text with punctuation collapsed to spaces,
+	// mirroring buildSearchText's query normalization. The exact tier compares
+	// normalizeSearchText(query) against THIS projection — comparing a
+	// punctuation-stripped query against the punctuation-preserving text made
+	// every sentence with an internal comma silently fall to the compact tier.
+	const searchPositions: Array<{ node: Text; offset: number }> = [];
+	let searchText = "";
+	let pendingSearchSpace: { node: Text; offset: number } | null = null;
 
 	while (walker.nextNode()) {
 		const node = walker.currentNode as Text;
 		const value = node.nodeValue || "";
+		if (text && !text.endsWith(" ") && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
+			pendingSpace = { node, offset: 0 };
+			if (searchText && !searchText.endsWith(" ") && !pendingSearchSpace) pendingSearchSpace = { node, offset: 0 };
+		}
+		previousNode = node;
 		for (let offset = 0; offset < value.length; offset += 1) {
 			const normalized = normalizeSearchChar(value[offset]);
 			if (!normalized) continue;
 			if (normalized === " ") {
 				if (text && !text.endsWith(" ")) pendingSpace = { node, offset };
+				if (searchText && !searchText.endsWith(" ")) pendingSearchSpace = { node, offset };
 				continue;
 			}
 			if (pendingSpace) {
@@ -245,10 +284,22 @@ function buildNormalizedTextMap(root: Element) {
 			for (const char of normalized) {
 				text += char;
 				positions.push({ node, offset });
+				const isSearchable = /[a-z0-9]/i.test(char) || /[^\x00-\x7F]/.test(char);
+				if (isSearchable) {
+					if (pendingSearchSpace) {
+						searchText += " ";
+						searchPositions.push(pendingSearchSpace);
+						pendingSearchSpace = null;
+					}
+					searchText += char;
+					searchPositions.push({ node, offset });
+				} else if (searchText && !searchText.endsWith(" ") && !pendingSearchSpace) {
+					pendingSearchSpace = { node, offset };
+				}
 			}
 		}
 	}
-	return { text, positions };
+	return { text, positions, searchText, searchPositions };
 }
 
 function normalizeSearchText(value: string) {
@@ -393,16 +444,18 @@ function findMappedTextRange(root: Element, query: string, occurrence = 1, conte
 	const compactSuffix = context?.suffix ? compactSearchText(context.suffix) : "";
 
 	// 1) Exact normalized match, disambiguated by stored context when present.
-	const exactIndices = collectMatchIndices(map.text, queryText);
-	const exactIndex = pickMatchIndex(map.text, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
+	// Compared in the map's search projection so both sides normalize
+	// punctuation identically.
+	const exactIndices = collectMatchIndices(map.searchText, queryText);
+	const exactIndex = pickMatchIndex(map.searchText, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
 	if (exactIndex !== -1) {
-		const range = rangeFromMapPositions(map.positions, exactIndex, exactIndex + queryText.length - 1);
+		const range = rangeFromMapPositions(map.searchPositions, exactIndex, exactIndex + queryText.length - 1);
 		if (range) {
 			return {
 				range,
 				matchedText: normalizeText(range.toString()) || normalizeText(query),
 				fallback: undefined,
-				context: extractNormalizedContext(map.text, exactIndex, queryText.length),
+				context: extractNormalizedContext(map.searchText, exactIndex, queryText.length),
 			};
 		}
 	}

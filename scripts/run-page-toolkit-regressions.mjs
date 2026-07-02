@@ -22,7 +22,11 @@ async function loadPageToolkitFactory() {
 }
 
 async function loadBackgroundFunction(functionName) {
-	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	return loadFunctionFromFile("packages/browser-extension/background.js", functionName);
+}
+
+async function loadFunctionFromFile(relativePath, functionName) {
+	const source = await readFile(join(PROJECT_ROOT, relativePath), "utf8");
 	const start = source.indexOf(`function ${functionName}`);
 	assert.notEqual(start, -1, `${functionName} declaration not found`);
 	const signatureEnd = source.indexOf(")", start);
@@ -2458,6 +2462,89 @@ async function assertPdfHighlightUsesTextOffsetsInsideSingleSpan() {
 	}
 }
 
+async function assertPdfWrappedLineHighlightMatchesExactly() {
+	// pdf.js emits one positioned span per text item with no whitespace between
+	// spans. Wrapped lines must read as word boundaries (the extraction the
+	// model copies from separates them), while a kerning split inside one word
+	// must keep gluing — geometry tells them apart.
+	const { dom, toolkit } = await createToolkit(`
+		<main id="viewer" class="pdfViewer">
+			<div class="page" data-page-number="1">
+				<div class="canvasWrapper"></div>
+				<div class="textLayer"><span id="line-1">The longest chain not only serves as proof of the sequence of</span><span id="line-2">events witnessed, but proof of the largest pool of CPU po</span><span id="line-2-tail">wer available.</span></div>
+			</div>
+		</main>
+	`);
+	const page = dom.window.document.querySelector(".page");
+	Object.defineProperties(page, {
+		clientWidth: { value: 600, configurable: true },
+		clientHeight: { value: 800, configurable: true },
+	});
+	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
+	setElementRect(dom.window.document.getElementById("line-1"), { left: 50, top: 100, width: 500, height: 20 });
+	setElementRect(dom.window.document.getElementById("line-2"), { left: 50, top: 126, width: 460, height: 20 });
+	// Same line as line-2, visually touching: a kerning split, not a word gap.
+	setElementRect(dom.window.document.getElementById("line-2-tail"), { left: 510.5, top: 126, width: 90, height: 20 });
+	const originalGetClientRects = dom.window.Range.prototype.getClientRects;
+	dom.window.Range.prototype.getClientRects = function getClientRects() {
+		return [fixedRect({ left: 50, top: 100, width: 500, height: 46 })];
+	};
+	try {
+		const crossLine = await toolkit.highlightText("proof of the sequence of events witnessed", {
+			scrollIntoView: false,
+			exactOnly: true,
+			allowApproximate: false,
+		});
+		assert.equal(crossLine.kind, "pdf", "cross-line span should highlight on the PDF surface");
+		assert.equal(crossLine.fallback, undefined, "wrapped-line boundary should exact-match, not degrade to compact");
+
+		const gluedWord = await toolkit.highlightText("pool of CPU power available", {
+			scrollIntoView: false,
+			exactOnly: true,
+			allowApproximate: false,
+		});
+		assert.equal(gluedWord.fallback, undefined, "kerning-split word should stay glued and exact-match");
+	} finally {
+		dom.window.Range.prototype.getClientRects = originalGetClientRects;
+	}
+}
+
+async function assertOnhandViewerMapInjectsLineBoundaries() {
+	// Same contract for the Onhand viewer's own matcher (pdf-viewer bundle).
+	const [boundarySource, mapSource, charSource] = await Promise.all([
+		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "pdfTextNodeBoundaryNeedsSpace"),
+		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "buildNormalizedTextMap"),
+		loadFunctionFromFile("packages/browser-extension/pdf-viewer.bundle.js", "normalizeSearchChar"),
+	]);
+	const dom = new JSDOM(
+		`
+		<div class="textLayer"><span id="line-1">Rejection sampling, as used here, requires a global constant</span><span id="line-2">that bounds the target den</span><span id="line-2-tail">sity everywhere.</span></div>
+		`,
+		{ url: "https://example.test/viewer", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	installLayoutShims(dom.window);
+	setElementRect(dom.window.document.getElementById("line-1"), { left: 50, top: 100, width: 400, height: 18 });
+	setElementRect(dom.window.document.getElementById("line-2"), { left: 50, top: 124, width: 220, height: 18 });
+	setElementRect(dom.window.document.getElementById("line-2-tail"), { left: 270.4, top: 124, width: 140, height: 18 });
+	const map = dom.window.eval(`(() => {
+		${charSource}
+		${boundarySource}
+		${mapSource}
+		return buildNormalizedTextMap(document.querySelector(".textLayer"));
+	})()`);
+	assert.equal(
+		map.text,
+		"rejection sampling, as used here, requires a global constant that bounds the target density everywhere.",
+		"viewer map should inject a space at the wrapped-line boundary and keep the kerning split glued",
+	);
+	assert.equal(
+		map.searchText,
+		"rejection sampling as used here requires a global constant that bounds the target density everywhere",
+		"viewer search projection should collapse punctuation like the query normalizer so exact matches are symmetric",
+	);
+	assert.equal(map.searchPositions.length, map.searchText.length, "search projection positions must stay in lockstep");
+}
+
 async function assertOnhandPdfViewerSurfaceAndAnchorRestore() {
 	const sourceUrl = "http://127.0.0.1:8765/pdf/onhand-viewer";
 	const { dom, toolkit } = await createToolkitAtUrl(
@@ -3284,6 +3371,8 @@ async function main() {
 	await assertGoogleScholarReaderFrameUsesTopTabUrlForPdfIdentity();
 	await assertPdfHighlightAndNoteUseOverlayAnchors();
 	await assertPdfHighlightUsesTextOffsetsInsideSingleSpan();
+	await assertPdfWrappedLineHighlightMatchesExactly();
+	await assertOnhandViewerMapInjectsLineBoundaries();
 	await assertOnhandPdfViewerSurfaceAndAnchorRestore();
 	await assertPdfAnchorRestoreUsesLayoutCoordinatesWhenPageIsScaled();
 	await assertPdfAnchorRestoreBoundsAndRejectsBadRects();
@@ -3302,7 +3391,14 @@ async function main() {
 	console.log("Page toolkit regressions: PASS");
 }
 
-main().catch((error) => {
-	console.error(error?.stack || error?.message || String(error));
-	process.exitCode = 1;
-});
+main()
+	.then(() => {
+		// JSDOM windows created with pretendToBeVisual keep an animation-frame
+		// clock alive, so the process can idle long after the last test (the
+		// PDF overlay fixtures trigger this). All work is done — exit.
+		process.exit(process.exitCode || 0);
+	})
+	.catch((error) => {
+		console.error(error?.stack || error?.message || String(error));
+		process.exit(1);
+	});
