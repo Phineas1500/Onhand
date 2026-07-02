@@ -20,7 +20,8 @@ const DEFAULT_JUDGE_MODEL = process.env.OPENAI_API_KEY ? "gpt-4.1-mini" : "opena
 const DEFAULT_JUDGE_API_KEY_ENV = process.env.OPENAI_API_KEY ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY";
 
 const PROCESS_NARRATION_PATTERNS = [
-	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking)\\b" },
+	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking|find|finding|capture|capturing)\\b" },
+	{ id: "found-it", pattern: "\\bfound it\\b|\\bi found the\\b" },
 	{ id: "let-me-start-with", pattern: "\\blet me start with\\b" },
 	{ id: "let-me-grab", pattern: "\\blet me grab\\b" },
 	{ id: "let-me-highlight", pattern: "\\blet me highlight\\b|\\bnow let me highlight\\b" },
@@ -100,6 +101,30 @@ const BUILTIN_CASES = [
 			maxWords: 80,
 			requiredReplyPatterns: ["Normal|standard normal|0,\\s*I"],
 			forbiddenReplyPatterns: PROCESS_NARRATION_PATTERNS.map((entry) => entry.pattern),
+		},
+	},
+	{
+		// The external-source flow: the prompt asks for a source that derives the
+		// result, so source browsing must activate, the answer must ground in the
+		// page's derivation, and at least one durable highlight must anchor it
+		// (rendered-math pages used to fail here with timeout spirals and zero
+		// markers). Highlight failures may occur once but must degrade cleanly.
+		id: "bayes-source-derivation",
+		url: "https://en.wikipedia.org/wiki/Bayes%27_theorem",
+		prompt: "Could you show me a source that does derive Bayes' theorem from scratch?",
+		expect: {
+			minHighlights: 1,
+			maxHighlights: 5,
+			maxNotes: 2,
+			maxWords: 520,
+			requiredReplyPatterns: ["deriv", "conditional|joint", "equat|divid|both equal|set equal"],
+			requiredHighlightPatterns: ["derived|conditional|probabilit|P\\s*\\("],
+			forbiddenReplyPatterns: PROCESS_NARRATION_PATTERNS.map((entry) => entry.pattern),
+			forbidMarkdownTables: true,
+			forbidInlineMarkdownHeadings: true,
+			forbidFragmentedMath: true,
+			maxHighlightErrors: 1,
+			maxTotalToolDurationMs: 45000,
 		},
 	},
 	{

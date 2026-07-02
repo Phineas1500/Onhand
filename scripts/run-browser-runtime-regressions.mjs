@@ -3207,6 +3207,27 @@ async function assertConstitutionPromptContract() {
 				"(No reply generated.)",
 				"tiny visible cleanup should not synthesize a replacement answer from hidden/source state after removing process-only text",
 			);
+			const gluedInterimNarrationReply = [
+				"The article derives the theorem by starting with the definition of joint probability, expressed two ways.",
+				"The page you're on likely has a derivation. Let me read the page more fully to find itLet me look for the derivation, which is often provided as a proofLet me check what's visible on the page to find the derivationFound it! The page has a dedicated derivation. Let me highlight the key passage.",
+			].join("\n\n");
+			assertPreservesSubstantiveTerms(
+				"glued interim narration reply",
+				gluedInterimNarrationReply,
+				oneHighlightTeachingRequest,
+				[/derives the theorem by starting with the definition of joint probability/],
+				[/Let me read/i, /Let me look/i, /Let me check/i, /Let me highlight/i, /Found it/i],
+			);
+			assertPreservesSubstantiveTerms(
+				"em-dash and content-glued narration reply",
+				[
+					"The page on the theorem is already open — let me find its derivation section.",
+					"I found the derivation section. Let me capture the full text to highlight itThe page includes a clean derivation from scratch within the statement section. \"The proof follows directly.\"",
+				].join("\n\n"),
+				oneHighlightTeachingRequest,
+				[/includes a clean derivation from scratch/, /"The proof follows directly\."/],
+				[/let me find/i, /let me capture/i, /I found the derivation/i, /highlight it/i],
+			);
 			const broadTeachingReply = [
 				"Let me read more of the page to give you a thorough, grounded overview.",
 				"This page is a lecture on Bayesian Deep Learning.",

@@ -134916,6 +134916,17 @@ function compactEntity(value) {
 }
 function stripTinyVisibleReplyArtifacts(value) {
   let text = String(value || "");
+  text = text.replace(
+    /([a-z0-9)\]%])(?=(?:Let me|I(?:'|’)ll|I will|I need to|Now (?:let me|I(?:'|’)ll))\s|Found it\b)/g,
+    "$1\n"
+  );
+  text = text.replace(/([a-z])(?=(?:The|This|Here)\s)/g, "$1\n");
+  text = text.replace(/^\s*Found it[.!]?\s*/gim, "");
+  text = text.replace(
+    /([.!?]|\s[—–-])\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly|retry)\s+)?(?:read|extract|inspect|look|highlight|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark|add|create|try)\b[^.!?\n]*[.!?]?\s*$/gim,
+    (match2, lead) => /[.!?]/.test(lead) ? lead : ""
+  );
+  text = text.replace(/^\s*i\s+found\s+(?:the|a|an|it|its)\b[^.!?\n]{0,120}(?:[.!?]+)?\s*$/gim, "");
   text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
   text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
   text = text.replace(

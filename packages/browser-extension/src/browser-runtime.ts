@@ -4575,6 +4575,25 @@ function normalizeTrailingLearningCheck(value: string, request: any) {
 
 function stripTinyVisibleReplyArtifacts(value: string) {
 	let text = String(value || "");
+	// Interim narration from successive assistant turns can stream into one
+	// draft block without a sentence boundary ("…to find itLet me look…").
+	// A lowercase character directly followed by a narration opener never
+	// occurs in real prose, so restore the boundary; the line-anchored
+	// narration rules below then apply to the repaired lines.
+	text = text.replace(
+		/([a-z0-9)\]%])(?=(?:Let me|I(?:'|’)ll|I will|I need to|Now (?:let me|I(?:'|’)ll))\s|Found it\b)/g,
+		"$1\n",
+	);
+	text = text.replace(/([a-z])(?=(?:The|This|Here)\s)/g, "$1\n");
+	text = text.replace(/^\s*Found it[.!]?\s*/gim, "");
+	// Narration that trails a finished sentence or an em-dash at the end of a
+	// line is always process talk ("… derivation. Let me highlight the key
+	// passage." / "… is already open — let me find its derivation section.").
+	text = text.replace(
+		/([.!?]|\s[—–-])\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly|retry)\s+)?(?:read|extract|inspect|look|highlight|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark|add|create|try)\b[^.!?\n]*[.!?]?\s*$/gim,
+		(match, lead) => (/[.!?]/.test(lead) ? lead : ""),
+	);
+	text = text.replace(/^\s*i\s+found\s+(?:the|a|an|it|its)\b[^.!?\n]{0,120}(?:[.!?]+)?\s*$/gim, "");
 	text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
 	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
 	text = text.replace(
