@@ -165,8 +165,18 @@ async function evaluateJson(send, contextId, expression) {
 	return typeof reply?.result?.value === "string" ? JSON.parse(reply.result.value) : reply?.result?.value;
 }
 
-async function waitForPageReady(send, expectedUrlPrefix, timeoutMs = 30000) {
+function normalizedHostname(value) {
+	try {
+		return new URL(String(value || "")).hostname.replace(/^www\./, "");
+	} catch {
+		return "";
+	}
+}
+
+async function waitForPageReady(send, expectedUrl, timeoutMs = 30000) {
+	const expectedHost = normalizedHostname(expectedUrl);
 	const startedAt = Date.now();
+	let lastUrl = "";
 	while (Date.now() - startedAt < timeoutMs) {
 		try {
 			// Default world: survives the initial about:blank -> URL navigation.
@@ -175,11 +185,21 @@ async function waitForPageReady(send, expectedUrlPrefix, timeoutMs = 30000) {
 				returnByValue: true,
 			});
 			const { state, url } = JSON.parse(reply?.result?.value || "{}");
-			if (state === "complete" && String(url || "").startsWith("http")) return;
-		} catch {}
+			lastUrl = url || lastUrl;
+			// Same-host check catches captive portals, error interstitials, and
+			// consent redirects that would otherwise sweep the wrong document.
+			if (state === "complete" && String(url || "").startsWith("http")) {
+				if (expectedHost && normalizedHostname(url) !== expectedHost) {
+					throw new Error(`Tab navigated off-host: expected ${expectedHost}, got ${url}`);
+				}
+				return;
+			}
+		} catch (error) {
+			if (String(error?.message || "").startsWith("Tab navigated off-host")) throw error;
+		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
-	throw new Error("Page did not finish loading in time");
+	throw new Error(`Page did not finish loading in time${lastUrl ? ` (last URL: ${lastUrl})` : ""}`);
 }
 
 // Strip markdown syntax the way a model quotes rendered words back.

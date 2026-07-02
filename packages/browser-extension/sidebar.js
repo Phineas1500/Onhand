@@ -3982,10 +3982,12 @@
 			const failedDetectors = Array.isArray(diagnostics?.detectors)
 				? diagnostics.detectors.filter((entry) => entry && entry.ok === false).slice(0, 2)
 				: [];
+			// Status line stays scannable: name the failed detectors only; the raw
+			// error strings remain available in pageLocationDiagnostics for logs.
 			const diagnosticsSuffix = acceptedDetector
 				? ` Detector: ${acceptedDetector.label}.`
 				: failedDetectors.length
-					? ` No page detector succeeded: ${failedDetectors.map((entry) => `${entry.label}: ${entry.error || "failed"}`).join("; ")}.`
+					? ` No page detector succeeded (${failedDetectors.map((entry) => entry.label).join(", ")}).`
 					: "";
 			renderState({
 				...(currentState || {}),
