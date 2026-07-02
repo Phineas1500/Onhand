@@ -616,7 +616,7 @@ Started:
 
 Remaining:
 - [ ] decide on final artifact storage/index format beyond the first-pass `.onhand/artifacts/browser/` layout
-- [ ] improve restore fidelity beyond best-effort text-based matching
+- [x] improve restore fidelity beyond best-effort text-based matching (HTML highlights now carry text-quote anchors — exact + prefix/suffix context + occurrence — mirroring the PDF anchor model; restore disambiguates repeated text by context scoring and recovers drifted text between its stored prefix/suffix)
 - [ ] decide whether persisted annotation records should also be emitted as richer custom messages/renderable session artifacts
 
 ### 14.3 Build minimal Onhand app shell — complete
@@ -643,7 +643,8 @@ Started:
 
 Remaining:
 - [ ] decide whether replay metadata should stay available in the hidden menu selector now that the fuller Review view exists
-- [ ] improve restore fidelity for changed pages and missing tabs
+- [x] improve restore fidelity for changed pages (context-scored anchors + drift recovery; restore results now report per-annotation restored/recovered/failed outcomes and the sidebar surfaces re-anchored counts)
+- [ ] improve restore fidelity for missing tabs beyond reopening the saved URL (e.g. redirect-tolerant URL matching, snapshot-backed fallback when the live page is gone)
 
 ### 14.5 Add visible-context tools — in progress
 Started:

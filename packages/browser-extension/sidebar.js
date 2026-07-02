@@ -4808,6 +4808,7 @@
 			const existing = merged.get(key);
 			if (existing) {
 				existing.restoredAnnotations += Number(page.restoredAnnotations || 0);
+				existing.recoveredAnnotations += Number(page.recoveredAnnotations || 0);
 				existing.restoredNotes += Number(page.restoredNotes || 0);
 				existing.failures.push(...(Array.isArray(page.failures) ? page.failures : []));
 				if (!existing.title && title) existing.title = title;
@@ -4818,6 +4819,7 @@
 					url,
 					artifactId: String(page.artifactId || ""),
 					restoredAnnotations: Number(page.restoredAnnotations || 0),
+					recoveredAnnotations: Number(page.recoveredAnnotations || 0),
 					restoredNotes: Number(page.restoredNotes || 0),
 					failures: [...(Array.isArray(page.failures) ? page.failures : [])],
 				});
@@ -4830,10 +4832,18 @@
 		if (!lastRestoreResult) return "";
 		const pages = mergeRestoredPages(lastRestoreResult.restoredPages);
 		const restoredAnnotations = pages.reduce((total, page) => total + Number(page.restoredAnnotations || 0), 0);
+		const recoveredAnnotations = pages.reduce((total, page) => total + Number(page.recoveredAnnotations || 0), 0);
 		const restoredNotes = pages.reduce((total, page) => total + Number(page.restoredNotes || 0), 0);
 		const failedCount = pages.reduce((total, page) => total + page.failures.length, 0);
+		// "Re-anchored" highlights landed via their saved surrounding context
+		// because the page text changed since capture — restored, with a caveat.
 		const summary = pages.length
-			? [pluralize(pages.length, "page"), pluralize(restoredAnnotations, "highlight"), pluralize(restoredNotes, "note"), failedCount ? pluralize(failedCount, "failure") : ""]
+			? [
+					pluralize(pages.length, "page"),
+					pluralize(restoredAnnotations, "highlight") + (recoveredAnnotations ? ` (${recoveredAnnotations} re-anchored)` : ""),
+					pluralize(restoredNotes, "note"),
+					failedCount ? pluralize(failedCount, "failure") : "",
+				]
 					.filter(Boolean)
 					.join(" / ")
 			: "No pages restored";
@@ -4868,7 +4878,7 @@
 										return `
 											<div class="onhand-restore-page">
 												<span class="onhand-restore-title">${escapeHtml(title)}</span>
-												<span class="onhand-restore-meta">${escapeHtml(pluralize(Number(page.restoredAnnotations || 0), "highlight"))} / ${escapeHtml(pluralize(Number(page.restoredNotes || 0), "note"))}</span>
+												<span class="onhand-restore-meta">${escapeHtml(pluralize(Number(page.restoredAnnotations || 0), "highlight") + (Number(page.recoveredAnnotations || 0) ? ` (${Number(page.recoveredAnnotations)} re-anchored)` : ""))} / ${escapeHtml(pluralize(Number(page.restoredNotes || 0), "note"))}</span>
 												${failureMarkup}
 											</div>
 										`;
