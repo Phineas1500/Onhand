@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Onhand Snapshot</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--onhand-bg: #3a3936;
+				--onhand-paper: #f7f3ea;
+				--onhand-text: #2f2c28;
+				--onhand-line: rgba(47, 44, 40, 0.16);
+				--onhand-blue: #2b6f89;
+			}
+
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: var(--onhand-bg);
+				color: var(--onhand-text);
+				font-family:
+					-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+
+			body {
+				display: flex;
+				flex-direction: column;
+			}
+
+			.onhand-snapshot-banner {
+				position: sticky;
+				top: 0;
+				z-index: 10;
+				display: flex;
+				flex-wrap: wrap;
+				align-items: baseline;
+				gap: 6px 14px;
+				padding: 10px 16px;
+				background: var(--onhand-paper);
+				border-bottom: 1px solid var(--onhand-line);
+				font-size: 13px;
+				line-height: 1.45;
+			}
+
+			.onhand-snapshot-badge {
+				font-weight: 700;
+				font-size: 11px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				color: var(--onhand-blue);
+				white-space: nowrap;
+			}
+
+			.onhand-snapshot-title {
+				font-weight: 600;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+				max-width: 46ch;
+			}
+
+			.onhand-snapshot-meta {
+				color: rgba(47, 44, 40, 0.72);
+			}
+
+			.onhand-snapshot-banner a {
+				color: var(--onhand-blue);
+			}
+
+			.onhand-snapshot-note {
+				flex-basis: 100%;
+				color: rgba(47, 44, 40, 0.72);
+				font-size: 12px;
+			}
+
+			.onhand-snapshot-content {
+				flex: 1;
+				min-height: 0;
+				display: flex;
+			}
+
+			.onhand-snapshot-frame {
+				flex: 1;
+				width: 100%;
+				border: 0;
+				background: #fff;
+			}
+
+			.onhand-snapshot-image-wrap {
+				flex: 1;
+				overflow: auto;
+				text-align: center;
+				padding: 16px;
+			}
+
+			.onhand-snapshot-image-wrap img {
+				max-width: 100%;
+				box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+			}
+
+			.onhand-snapshot-empty {
+				margin: auto;
+				padding: 32px;
+				max-width: 52ch;
+				background: var(--onhand-paper);
+				border-radius: 10px;
+				font-size: 14px;
+				line-height: 1.5;
+			}
+		</style>
+	</head>
+	<body>
+		<header class="onhand-snapshot-banner" id="banner" hidden>
+			<span class="onhand-snapshot-badge">Onhand saved snapshot</span>
+			<span class="onhand-snapshot-title" id="pageTitle"></span>
+			<span class="onhand-snapshot-meta" id="capturedAt"></span>
+			<a id="originalLink" target="_blank" rel="noopener noreferrer" hidden>Open original page</a>
+			<span class="onhand-snapshot-note">Static copy of the page as it was captured — your highlights and notes are shown as saved. The live page could not be restored.</span>
+		</header>
+		<main class="onhand-snapshot-content" id="content">
+			<div class="onhand-snapshot-empty" id="status">Loading saved snapshot…</div>
+		</main>
+		<script src="snapshot-viewer.js"></script>
+	</body>
+</html>
