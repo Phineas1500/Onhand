@@ -135514,7 +135514,12 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
       reasoningEffort: "none",
       textVerbosity: "low",
       maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
-      promptPolicy: "Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question \u2014 roughly one source highlight per concept (soft cap about six) \u2014 and add a short interpretive note (one to two sentences) on each. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas."
+      promptPolicy: (
+        // The mark budget in this prose is interpolated from the same
+        // constants the surplus guards enforce, so the briefing the model
+        // reads can never drift from the fence it hits.
+        `Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question \u2014 roughly one source highlight per key concept (at most ${TEACHING_SOURCE_HIGHLIGHT_MAX} for this compact pass) \u2014 and add ${TEACHING_SOURCE_NOTE_MAX === 1 ? "one short interpretive note (one to two sentences) on the most central highlight" : `up to ${TEACHING_SOURCE_NOTE_MAX} short interpretive notes (one to two sentences each)`}. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.`
+      )
     };
   }
   switch (mode) {
@@ -136494,7 +136499,7 @@ function promptAsksForPageAnchors(text) {
   );
 }
 function promptAsksForTeachingPageSourceMarker(prompt) {
-  const text = stripVoicePromptPrefix(prompt).toLowerCase().replace(/\s+/g, " ").trim();
+  const text = ownWordsPromptText(prompt);
   if (!text) return false;
   const asksForTeaching = /\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
   const referencesPageMaterial = /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+(?:says|covers|discusses|teaches|explains)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+says\b/.test(text);
@@ -136503,12 +136508,21 @@ function promptAsksForTeachingPageSourceMarker(prompt) {
 function normalizePageSourcePromptText(prompt) {
   return stripVoicePromptPrefix(prompt).toLowerCase().replace(/\s+/g, " ").trim();
 }
+var EMBEDDED_FEEDBACK_BLOCK_START = /(^|\n)\s*(?:from\s+(?:my|our|the|a)\s+[^\n:]{2,40}|(?:my|our|the)\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?)'?s?\s+(?:notes?|feedback|comments?)|feedback|reviewer\s+notes?|review\s+notes?|notes?\s+(?:from|back\s+from)\s+[^\n:]{2,40}|comments?\s+from\s+[^\n:]{2,40})\s*:\s*(?:\n|$)/i;
+function ownWordsPromptText(prompt) {
+  let text = stripVoicePromptPrefix(prompt);
+  const marker = text.match(EMBEDDED_FEEDBACK_BLOCK_START);
+  if (marker && typeof marker.index === "number") text = text.slice(0, marker.index);
+  text = text.replace(/```[\s\S]*?(?:```|$)/g, " ");
+  text = text.replace(/(^|\n)\s*>[^\n]*/g, " ");
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
 function promptReferencesCurrentPageMaterial(text) {
   if (!text) return false;
   return /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|covers|discusses|teaches|explains|mentions|shows|derives|lists|calls|notes)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|means|shows|covers|teaches|explains)\b/.test(text);
 }
 function promptAsksForStructuredPageSourceMarker(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
@@ -136516,14 +136530,14 @@ function promptAsksForStructuredPageSourceMarker(prompt) {
   );
 }
 function promptAsksForCompactPageTeaching(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
   if (!promptAsksForTeachingPageSourceMarker(prompt)) return false;
   if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return false;
   return !textHasAny(text, /\b(?:deep|detailed|thorough|exhaustive|section[-\s]?by[-\s]?section|every section|all sections|full walkthrough|complete walkthrough)\b/);
 }
 function promptAsksForDocumentReviewMarkup(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
   const documentSubject = /\b(?:this|the|my|our)\s+(?:document|doc|plan|draft|spec|proposal|write-?up|readme|rfc|report)\b/.test(text);
   if (!documentSubject) return false;
@@ -136534,17 +136548,18 @@ function promptAsksForDocumentReviewMarkup(prompt) {
   const reviewTask = /\b(?:go(?:ing)?\s+through|review|critique|evaluate|assess|address|incorporate|your\s+thoughts\s+on|what\s+(?:should|do)\s+i\s+(?:change|fix|update)|which\s+parts?\s+(?:to|should))\b/.test(
     text
   );
+  const fullText = normalizePageSourcePromptText(prompt);
   const embeddedFeedback = /\b(?:from\s+my\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?|professor|mentor)|feedback|review\s+notes|comments?\s+(?:from|back|on)|notes?\s+(?:back|from|on))\b/.test(
-    text
-  ) && text.length >= 400;
+    fullText
+  ) && fullText.length >= 400;
   return reviewTask && embeddedFeedback;
 }
 function promptAsksForComparison(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?)\b/.test(text));
 }
 function promptAsksForSinglePageComparison(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
   return promptAsksForComparison(prompt);
 }
@@ -137616,7 +137631,7 @@ function isSectionNumberOnlyHighlightText(value) {
   return /^(?:§\s*)?(?:[0-9]+|[ivxlcdm]+)(?:\.[0-9ivxlcdm]+)*\.?$/i.test(text);
 }
 function promptAsksForDerivationOrProofSourceMarker(prompt) {
-  const text = normalizePageSourcePromptText(prompt);
+  const text = ownWordsPromptText(prompt);
   return Boolean(
     text && promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
   );
@@ -137792,7 +137807,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt,
       message: [
         `${completedSourceHighlightCount(request)} source highlights already cover the key concepts for this teaching answer.`,
         `Do not call ${toolName} again for this turn.`,
-        hasCompletedToolTrace(request, "browser_show_note") ? "Answer now from the existing highlights and note. Keep the answer concise." : "If one short browser_show_note would clarify the central idea, add it under 280 characters; otherwise answer now from the existing highlights.",
+        hasCompletedToolTrace(request, "browser_show_note") ? "Answer now from the existing highlights and note. Keep the answer concise." : `If one short browser_show_note would clarify the central idea, add it under ${ON_PAGE_NOTE_MAX_CHARS} characters; otherwise answer now from the existing highlights.`,
         "Do not use Markdown tables or horizontal rules. Do not claim the highlighter failed."
       ].join(" ")
     }
@@ -138193,6 +138208,15 @@ var __browserRuntimeTest = {
   buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
   buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
   buildReasoningProfileForTest: buildReasoningProfile,
+  ownWordsPromptTextForTest: ownWordsPromptText,
+  promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
+  promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
+  laneBudgetsForTest: {
+    TEACHING_SOURCE_HIGHLIGHT_MAX,
+    TEACHING_SOURCE_NOTE_MAX,
+    REVIEW_SOURCE_HIGHLIGHT_MAX,
+    REVIEW_SOURCE_NOTE_MAX
+  },
   buildExistingAnchorContext,
   buildHighlightRetryCandidates,
   shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,

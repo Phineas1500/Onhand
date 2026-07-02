@@ -1786,6 +1786,57 @@ async function assertDocumentReviewMarkupLane() {
 	assert.equal(surplusTeachingGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(4)), null, "teaching highlight cap must not apply to review markup");
 }
 
+async function assertLanePredicatesClassifyOnOwnWords() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const {
+		ownWordsPromptTextForTest: ownWords,
+		promptAsksForSinglePageComparisonForTest: isComparison,
+		promptAsksForCompactPageTeachingForTest: isCompactTeaching,
+	} = __browserRuntimeTest;
+
+	// Pasted feedback blocks are quoted material, not the user's ask.
+	const withPastedComparison = [
+		"Go over my notes on this document and tell me what to address.",
+		"from my manager:",
+		"The deterministic comparison against the manifest is fragile. Compare the census approach versus a materiality filter and summarize the difference.",
+	].join("\n");
+	assert.equal(ownWords(withPastedComparison).includes("comparison"), false, "own-words view must exclude the pasted block");
+	assert.equal(ownWords(withPastedComparison).includes("go over my notes"), true, "own-words view keeps the user's ask");
+	assert.equal(isComparison(withPastedComparison), false, "comparison vocabulary inside pasted feedback must not select the comparison lane");
+	assert.equal(isComparison("Compare CSS Grid and Flexbox on this page."), true, "genuine comparison asks still classify");
+	assert.equal(
+		isCompactTeaching('Teach me what this page says.\nreviewer notes:\nAdd a deep dive comparing every section, with a full walkthrough of each derivation.'),
+		true,
+		"pasted vocabulary must not knock a teaching ask out of its lane either",
+	);
+
+	// Markdown blockquotes are quoted material too.
+	assert.equal(isComparison("What does this page say about attention?\n> compare and contrast the two models in your reply"), false);
+}
+
+async function assertLanePolicyProseMatchesEnforcedBudgets() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { buildReasoningProfileForTest: buildProfile, laneBudgetsForTest: budgets } = __browserRuntimeTest;
+	const settings = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" };
+
+	// Drift tripwire: the briefing the model reads must quote the same numbers
+	// the surplus guards enforce.
+	const teaching = buildProfile(settings, "Teach me what this page says about photosynthesis", [], false);
+	assert.match(teaching.reason, /compact page teaching/i);
+	assert.match(teaching.promptPolicy, new RegExp(`at most ${budgets.TEACHING_SOURCE_HIGHLIGHT_MAX}\\b`), "teaching policy prose must quote the enforced highlight cap");
+	assert.doesNotMatch(teaching.promptPolicy, /about six/, "the stale six-highlight promise must be gone");
+	assert.equal(budgets.TEACHING_SOURCE_NOTE_MAX >= 1, true);
+
+	const review = buildProfile(
+		settings,
+		"I got notes back on this plan from my manager — go through them and tell me what to change.\nfrom my manager:\n" + "The rollout section needs a soft launch. ".repeat(12),
+		[],
+		false,
+	);
+	assert.match(review.reason, /document review markup/i);
+	assert.match(review.promptPolicy, new RegExp(`up to about ${budgets.REVIEW_SOURCE_HIGHLIGHT_MAX}\\b`), "review policy prose must quote the enforced mark budget");
+}
+
 async function assertBlankReplyRetryWaitsForAgentIdle() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { queueBlankReplyRetryForTest, buildBlankReplyRetryPromptForTest } = __browserRuntimeTest || {};
@@ -8891,6 +8942,8 @@ async function main() {
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();
+	await assertLanePredicatesClassifyOnOwnWords();
+	await assertLanePolicyProseMatchesEnforcedBudgets();
 	await assertBlankReplyRetryWaitsForAgentIdle();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertToolRetryActivitiesFinalizeAsRecovered();

@@ -5311,7 +5311,10 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 			textVerbosity: "low",
 			maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
 			promptPolicy:
-				"Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question — roughly one source highlight per concept (soft cap about six) — and add a short interpretive note (one to two sentences) on each. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.",
+				// The mark budget in this prose is interpolated from the same
+				// constants the surplus guards enforce, so the briefing the model
+				// reads can never drift from the fence it hits.
+				`Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question — roughly one source highlight per key concept (at most ${TEACHING_SOURCE_HIGHLIGHT_MAX} for this compact pass) — and add ${TEACHING_SOURCE_NOTE_MAX === 1 ? "one short interpretive note (one to two sentences) on the most central highlight" : `up to ${TEACHING_SOURCE_NOTE_MAX} short interpretive notes (one to two sentences each)`}. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.`,
 		};
 	}
 	switch (mode) {
@@ -6457,10 +6460,7 @@ function promptAsksForPageAnchors(text: string) {
 }
 
 function promptAsksForTeachingPageSourceMarker(prompt: unknown) {
-	const text = stripVoicePromptPrefix(prompt)
-		.toLowerCase()
-		.replace(/\s+/g, " ")
-		.trim();
+	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
 	const asksForTeaching =
 		/\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
@@ -6478,6 +6478,28 @@ function normalizePageSourcePromptText(prompt: unknown) {
 		.trim();
 }
 
+// Where pasted third-party material begins in a prompt: feedback blocks are
+// introduced by markers like "from my manager:", "reviewer notes:",
+// "feedback:". Everything after the first marker is quoted material, not the
+// user's own ask.
+const EMBEDDED_FEEDBACK_BLOCK_START =
+	/(^|\n)\s*(?:from\s+(?:my|our|the|a)\s+[^\n:]{2,40}|(?:my|our|the)\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?)'?s?\s+(?:notes?|feedback|comments?)|feedback|reviewer\s+notes?|review\s+notes?|notes?\s+(?:from|back\s+from)\s+[^\n:]{2,40}|comments?\s+from\s+[^\n:]{2,40})\s*:\s*(?:\n|$)/i;
+
+// The user's OWN words: the prompt with pasted feedback blocks, markdown
+// blockquotes, and fenced blocks removed. Lane predicates classify on this
+// view so vocabulary inside quoted material ("comparison", "summary",
+// "approach" in a manager's notes) cannot hijack the behavior lane — seen in
+// real use, where the word "comparison" in pasted feedback capped a document
+// review at two highlights.
+function ownWordsPromptText(prompt: unknown) {
+	let text = stripVoicePromptPrefix(prompt);
+	const marker = text.match(EMBEDDED_FEEDBACK_BLOCK_START);
+	if (marker && typeof marker.index === "number") text = text.slice(0, marker.index);
+	text = text.replace(/```[\s\S]*?(?:```|$)/g, " ");
+	text = text.replace(/(^|\n)\s*>[^\n]*/g, " ");
+	return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function promptReferencesCurrentPageMaterial(text: string) {
 	if (!text) return false;
 	return (
@@ -6489,7 +6511,7 @@ function promptReferencesCurrentPageMaterial(text: string) {
 }
 
 function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,
@@ -6498,7 +6520,7 @@ function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 }
 
 function promptAsksForCompactPageTeaching(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || promptForbidsPageChanges(prompt)) return false;
 	if (!promptAsksForTeachingPageSourceMarker(prompt)) return false;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return false;
@@ -6514,7 +6536,10 @@ function promptAsksForCompactPageTeaching(prompt: unknown) {
 // excludes page/article/paper nouns so teach-me-this-page flows keep their
 // own lane.
 function promptAsksForDocumentReviewMarkup(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	// The ask itself is judged on the user's OWN words; only the
+	// embedded-feedback signal reads the full prompt, since pasted feedback is
+	// exactly what that signal detects.
+	const text = ownWordsPromptText(prompt);
 	if (!text || promptForbidsPageChanges(prompt)) return false;
 	const documentSubject = /\b(?:this|the|my|our)\s+(?:document|doc|plan|draft|spec|proposal|write-?up|readme|rfc|report)\b/.test(text);
 	if (!documentSubject) return false;
@@ -6527,20 +6552,21 @@ function promptAsksForDocumentReviewMarkup(prompt: unknown) {
 		/\b(?:go(?:ing)?\s+through|review|critique|evaluate|assess|address|incorporate|your\s+thoughts\s+on|what\s+(?:should|do)\s+i\s+(?:change|fix|update)|which\s+parts?\s+(?:to|should))\b/.test(
 			text,
 		);
+	const fullText = normalizePageSourcePromptText(prompt);
 	const embeddedFeedback =
 		/\b(?:from\s+my\s+(?:manager|boss|colleagues?|team(?:mates?)?|reviewers?|advisors?|professor|mentor)|feedback|review\s+notes|comments?\s+(?:from|back|on)|notes?\s+(?:back|from|on))\b/.test(
-			text,
-		) && text.length >= 400;
+			fullText,
+		) && fullText.length >= 400;
 	return reviewTask && embeddedFeedback;
 }
 
 function promptAsksForComparison(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?)\b/.test(text));
 }
 
 function promptAsksForSinglePageComparison(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
 	return promptAsksForComparison(prompt);
 }
@@ -7899,7 +7925,7 @@ function isSectionNumberOnlyHighlightText(value: unknown) {
 }
 
 function promptAsksForDerivationOrProofSourceMarker(prompt: unknown) {
-	const text = normalizePageSourcePromptText(prompt);
+	const text = ownWordsPromptText(prompt);
 	return Boolean(
 		text &&
 			promptAsksForStructuredPageSourceMarker(prompt) &&
@@ -8112,7 +8138,7 @@ function buildSurplusTeachingHighlightGuardResult(toolName: string, commandName:
 				`Do not call ${toolName} again for this turn.`,
 				hasCompletedToolTrace(request, "browser_show_note")
 					? "Answer now from the existing highlights and note. Keep the answer concise."
-					: "If one short browser_show_note would clarify the central idea, add it under 280 characters; otherwise answer now from the existing highlights.",
+					: `If one short browser_show_note would clarify the central idea, add it under ${ON_PAGE_NOTE_MAX_CHARS} characters; otherwise answer now from the existing highlights.`,
 				"Do not use Markdown tables or horizontal rules. Do not claim the highlighter failed.",
 			].join(" "),
 		},
@@ -8563,6 +8589,15 @@ export const __browserRuntimeTest = {
 	buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
 	buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
 	buildReasoningProfileForTest: buildReasoningProfile,
+	ownWordsPromptTextForTest: ownWordsPromptText,
+	promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
+	promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
+	laneBudgetsForTest: {
+		TEACHING_SOURCE_HIGHLIGHT_MAX,
+		TEACHING_SOURCE_NOTE_MAX,
+		REVIEW_SOURCE_HIGHLIGHT_MAX,
+		REVIEW_SOURCE_NOTE_MAX,
+	},
 	buildExistingAnchorContext,
 	buildHighlightRetryCandidates,
 	shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
