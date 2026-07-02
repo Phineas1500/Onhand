@@ -1280,6 +1280,64 @@ async function assertRestoreResultShowsReanchoredCounts() {
 	dom.window.close();
 }
 
+async function assertRestoreResultShowsSnapshotFallback() {
+	const { dom, restoreResult } = await restoreAndReadResult([
+		{
+			source: "browser-artifact",
+			title: "Gone article",
+			url: "https://dead.example.test/article",
+			restoredAnnotations: 0,
+			restoredNotes: 0,
+			failedCount: 0,
+			failures: [],
+			snapshotFallback: { reason: "navigation-failed", viewerUrl: "snapshot-viewer.html?artifact=a1", savedAnnotationCount: 3 },
+		},
+	]);
+	assert.match(restoreResult.textContent, /1 page \/ 0 highlights \/ 0 notes \/ 1 from snapshot/, "snapshot fallbacks should be counted in the summary");
+	assert.equal(restoreResult.querySelectorAll(".onhand-restore-page").length, 1, "a snapshot fallback should show the per-page detail");
+	assert.match(restoreResult.textContent, /Shown from the saved snapshot \(3 saved highlights\) — the live page could not be opened\./);
+	dom.window.close();
+}
+
+async function assertSnapshotViewerRendersSavedHtml() {
+	const viewerHtml = await readFile(new URL("../packages/browser-extension/snapshot-viewer.html", import.meta.url), "utf8");
+	const viewerScript = await readFile(new URL("../packages/browser-extension/snapshot-viewer.js", import.meta.url), "utf8");
+	const dom = new JSDOM(viewerHtml.replace('<script src="snapshot-viewer.js"></script>', ""), {
+		url: "https://onhand-extension.test/snapshot-viewer.html?artifact=artifact_snap",
+		pretendToBeVisual: true,
+		runScripts: "outside-only",
+	});
+	const messages = [];
+	dom.window.chrome = {
+		runtime: {
+			sendMessage: async (message) => {
+				messages.push(message);
+				return {
+					ok: true,
+					artifact: {
+						page: { title: "Drifted article", url: "https://example.test/drifted", capturedAt: 1750000000000 },
+						outerHTML: '<html><head><title>x</title></head><body><p><span data-onhand-highlight-kind="inline">Saved mark</span></p></body></html>',
+						screenshotDataUrl: "",
+					},
+				};
+			},
+		},
+	};
+	dom.window.eval(viewerScript);
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 20));
+	assert.equal(messages.length, 1);
+	assert.equal(messages[0].type, "sidebar:get-replay-artifact");
+	assert.equal(messages[0].artifactId, "artifact_snap");
+	const frame = dom.window.document.querySelector("iframe.onhand-snapshot-frame");
+	assert.ok(frame, "expected the saved HTML to render in an iframe");
+	assert.equal(frame.getAttribute("sandbox"), "", "the snapshot must stay fully sandboxed");
+	assert.match(frame.getAttribute("srcdoc") || "", /data-onhand-highlight-kind/, "saved highlights should be present in the snapshot markup");
+	assert.match(frame.getAttribute("srcdoc") || "", /<base href="https:\/\/example\.test\/drifted">/, "relative resources should resolve against the original page");
+	assert.match(dom.window.document.title, /Drifted article — Onhand snapshot/);
+	assert.equal(dom.window.document.getElementById("originalLink").hidden, false, "the original page link should be offered");
+	dom.window.close();
+}
+
 async function assertRestoreResultShowsDetailOnFailure() {
 	const samePageUrl = "https://www-cdn.example.test/doc.pdf";
 	const { dom, restoreResult } = await restoreAndReadResult([
@@ -4771,6 +4829,8 @@ await assertSessionPickerRequestsAndRendersAllSessions();
 await assertReviewViewRendersSavedSnapshot();
 await assertRestoreResultMergesPagesAndStaysQuietOnSuccess();
 await assertRestoreResultShowsReanchoredCounts();
+await assertRestoreResultShowsSnapshotFallback();
+await assertSnapshotViewerRendersSavedHtml();
 await assertRestoreResultShowsDetailOnFailure();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();

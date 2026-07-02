@@ -134355,7 +134355,8 @@ function summarizeRestoredArtifact(result) {
     recoveredAnnotations: Number(result?.recoveredAnnotations || 0),
     restoredNotes: Number(result?.restoredNotes || 0),
     failedCount: failures.length,
-    failures
+    failures,
+    snapshotFallback: result?.snapshotFallback || null
   };
 }
 function replayActionKey(action, text = "") {
@@ -135899,6 +135900,16 @@ function onhandPdfViewerOpenUrl(sourceUrl, previousViewerUrl = "") {
     return previousViewerUrl || source;
   }
 }
+function snapshotViewerPageUrl(artifactId) {
+  const id = String(artifactId || "").trim();
+  if (!id) return "";
+  let base = "snapshot-viewer.html";
+  try {
+    if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) base = chrome.runtime.getURL("snapshot-viewer.html");
+  } catch {
+  }
+  return `${base}?artifact=${encodeURIComponent(id)}`;
+}
 function isGoogleDocsPdfExportUrl(value) {
   try {
     const parsed = new URL(String(value || ""));
@@ -135978,10 +135989,34 @@ function restorablePageUrlsMatch(left, right) {
   const rightKey = restorablePageUrlMatchKey(right);
   return Boolean(leftKey && rightKey && leftKey === rightKey);
 }
+var RESTORE_INSIGNIFICANT_URL_PARAM = /^(utm_[a-z0-9_]+|gclid|dclid|gbraid|wbraid|fbclid|msclkid|twclid|ttclid|mc_cid|mc_eid|igshid|s_kwcid|vero_id|_hsenc|_hsmi|mkt_tok)$/i;
+function relaxedRestorableUrlMatchKey(url2) {
+  const key = restorablePageUrlMatchKey(url2);
+  if (!key) return "";
+  try {
+    const parsed = new URL(key);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return key;
+    parsed.protocol = "https:";
+    parsed.hostname = parsed.hostname.replace(/^www\./i, "");
+    const kept = [...parsed.searchParams.entries()].filter(([name]) => !RESTORE_INSIGNIFICANT_URL_PARAM.test(name));
+    parsed.search = "";
+    for (const [name, value] of kept) parsed.searchParams.append(name, value);
+    parsed.searchParams.sort();
+    if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    return parsed.href;
+  } catch {
+    return key;
+  }
+}
+function restorablePageUrlsMatchRelaxed(left, right) {
+  const leftKey = relaxedRestorableUrlMatchKey(left);
+  const rightKey = relaxedRestorableUrlMatchKey(right);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
 function tabMatchesSavedTarget(tab, url2, title) {
   if (!isRestorablePageTab(tab)) return false;
   const tabTitle = String(tab.title || "").trim().toLowerCase();
-  if (String(url2 || "").trim()) return restorablePageUrlsMatch(tab.url, url2);
+  if (String(url2 || "").trim()) return restorablePageUrlsMatch(tab.url, url2) || restorablePageUrlsMatchRelaxed(tab.url, url2);
   return Boolean(title && tabTitle === title);
 }
 function summarizeOpenTabs(state, activeTab, limit2 = 8) {
@@ -138046,6 +138081,8 @@ function buildNamedFormulaHighlightGuardResult(toolName, commandName, params, pr
 var __browserRuntimeTest = {
   applyLearningEvent,
   buildLearnerStatePromptSummary,
+  relaxedRestorableUrlMatchKeyForTest: relaxedRestorableUrlMatchKey,
+  restorablePageUrlsMatchRelaxedForTest: restorablePageUrlsMatchRelaxed,
   buildExistingAnchorContext,
   buildHighlightRetryCandidates,
   shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
@@ -140688,7 +140725,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => url2 && restorablePageUrlsMatchRelaxed(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function artifactRestoreTargetKey(artifact, artifactId = "") {
     const url2 = restorablePageUrlMatchKey(artifactEffectiveUrl(artifact));
@@ -140755,6 +140792,38 @@ function createOnhandBrowserRuntime(host) {
       host.log?.("PDF restore surface readiness wait failed", error52);
     }
   }
+  function artifactSupportsSnapshotFallback(artifact) {
+    if (!String(artifact?.outerHTML || "").trim() && !String(artifact?.screenshotDataUrl || "").trim()) return false;
+    return !artifactLooksLikePdfViewer(artifact);
+  }
+  async function openArtifactSnapshotFallback(artifact, reason, extras = {}) {
+    if (!artifactSupportsSnapshotFallback(artifact)) return null;
+    const viewerUrl = snapshotViewerPageUrl(artifact.id);
+    if (!viewerUrl) return null;
+    try {
+      const navigated = await host.runCommand("navigate", { url: viewerUrl, newTab: true, waitForLoad: true });
+      const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
+      return {
+        tab: navigated?.tab || navigated,
+        artifact,
+        artifactId: artifact.id,
+        restoredAnnotations: 0,
+        recoveredAnnotations: 0,
+        restoredNotes: 0,
+        restoredTargets: [],
+        annotationResults: extras.annotationResults || [],
+        failures: extras.failures || [],
+        snapshotFallback: {
+          reason,
+          viewerUrl,
+          savedAnnotationCount: annotations.filter((annotation) => String(annotation?.matchedText || "").trim()).length
+        }
+      };
+    } catch (error52) {
+      host.log?.("artifact snapshot fallback failed", artifact.id, error52);
+      return null;
+    }
+  }
   async function restoreArtifact(params = {}) {
     const artifact = await getBrowserArtifact(params.artifactId);
     if (!artifact) throw new Error(`Could not find Onhand artifact: ${params.artifactId || "(blank)"}`);
@@ -140767,8 +140836,16 @@ function createOnhandBrowserRuntime(host) {
       if (params.openIfNeeded === false || !url2) {
         throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
       }
-      const navigated = await host.runCommand("navigate", { url: openUrl || url2, newTab: true, waitForLoad: true });
-      tab = navigated?.tab || navigated;
+      try {
+        const navigated = await host.runCommand("navigate", { url: openUrl || url2, newTab: true, waitForLoad: true });
+        tab = navigated?.tab || navigated;
+      } catch (error52) {
+        const snapshot = await openArtifactSnapshotFallback(artifact, "navigation-failed", {
+          failures: [error52?.message || String(error52)]
+        });
+        if (snapshot) return snapshot;
+        throw error52;
+      }
     } else {
       const activated = await host.runCommand("activate_tab", { tabId: tab.id });
       tab = activated?.tab || tab;
@@ -140857,6 +140934,10 @@ function createOnhandBrowserRuntime(host) {
         failures.push(error52?.message || String(error52));
       });
     }
+    if (annotationResults.length > 0 && restoredAnnotations === 0) {
+      const snapshot = await openArtifactSnapshotFallback(artifact, "content-missing", { failures, annotationResults });
+      if (snapshot) return snapshot;
+    }
     return {
       tab,
       artifact,
@@ -140888,7 +140969,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     const eligibleTabs = tabs.filter(isRestorablePageTab);
-    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
+    return eligibleTabs.find((tab) => url2 && restorablePageUrlsMatch(tab.url, url2)) || eligibleTabs.find((tab) => url2 && restorablePageUrlsMatchRelaxed(tab.url, url2)) || eligibleTabs.find((tab) => !url2 && title && String(tab.title || "").toLowerCase() === title) || null;
   }
   function findActionTab(tabs, action) {
     const url2 = String(action.url || "").trim();
@@ -141703,6 +141784,7 @@ function createOnhandBrowserRuntime(host) {
     );
   }
   function restoredArtifactNeedsReplayFallback(result) {
+    if (result?.snapshotFallback) return false;
     const annotations = Array.isArray(result?.artifact?.page?.annotations) ? result.artifact.page.annotations : [];
     if (!annotations.length) return false;
     const expectedAnnotations = annotations.filter((annotation) => String(annotation?.matchedText || "").trim()).length;
@@ -142124,20 +142206,24 @@ function createOnhandBrowserRuntime(host) {
           });
         }
       }
-      const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayableAnnotations.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayableAnnotations);
-      const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);
-      if (needsReplayRestore) {
+      const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
+      const annotationCoveredBySnapshot = (annotation) => snapshotResults.some((result) => replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId));
+      const replayCandidates = snapshotResults.length ? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation)) : replayableAnnotations;
+      const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayCandidates.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayCandidates);
+      const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayCandidates.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);
+      if (needsReplayRestore && (!snapshotResults.length || replayCandidates.length > 0)) {
         const restoredTargets = restored.flatMap(
           (result) => (Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation)
         );
-        const uncoveredAnnotations = replayableAnnotations.filter(
+        const uncoveredAnnotations = replayCandidates.filter(
           (annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target))
         );
+        const explicitAnnotations = uncoveredAnnotations.length ? uncoveredAnnotations : snapshotResults.length ? replayCandidates : null;
         restored.push(
           ...await restoreSessionPageActions(session, {
             openIfNeeded: true,
             clearExisting: !artifactIds.length,
-            ...uncoveredAnnotations.length ? { annotations: uncoveredAnnotations } : {}
+            ...explicitAnnotations?.length ? { annotations: explicitAnnotations } : {}
           })
         );
       }

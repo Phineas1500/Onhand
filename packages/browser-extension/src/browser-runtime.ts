@@ -2889,6 +2889,7 @@ function summarizeRestoredArtifact(result: any) {
 		restoredNotes: Number(result?.restoredNotes || 0),
 		failedCount: failures.length,
 		failures,
+		snapshotFallback: result?.snapshotFallback || null,
 	};
 }
 
@@ -5739,6 +5740,20 @@ function onhandPdfViewerOpenUrl(sourceUrl: string, previousViewerUrl = "") {
 	}
 }
 
+// The extension page that renders a saved artifact snapshot (its captured
+// HTML already contains the highlights and notes as they were on the page).
+// Falls back to a relative URL outside a chrome runtime (tests), which
+// chrome.tabs.create would also resolve against the extension root.
+function snapshotViewerPageUrl(artifactId: string) {
+	const id = String(artifactId || "").trim();
+	if (!id) return "";
+	let base = "snapshot-viewer.html";
+	try {
+		if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) base = chrome.runtime.getURL("snapshot-viewer.html");
+	} catch {}
+	return `${base}?artifact=${encodeURIComponent(id)}`;
+}
+
 function isGoogleDocsPdfExportUrl(value: unknown) {
 	try {
 		const parsed = new URL(String(value || ""));
@@ -5842,10 +5857,43 @@ function restorablePageUrlsMatch(left: unknown, right: unknown) {
 	return Boolean(leftKey && rightKey && leftKey === rightKey);
 }
 
+// Query params that mark a visit rather than identify content. A saved URL
+// and a live tab that differ only by these (or by scheme, a www. prefix, a
+// trailing slash, or query-param order) are the same page for restore
+// purposes — redirects and shared links commonly add them.
+const RESTORE_INSIGNIFICANT_URL_PARAM = /^(utm_[a-z0-9_]+|gclid|dclid|gbraid|wbraid|fbclid|msclkid|twclid|ttclid|mc_cid|mc_eid|igshid|s_kwcid|vero_id|_hsenc|_hsmi|mkt_tok)$/i;
+
+function relaxedRestorableUrlMatchKey(url: unknown) {
+	const key = restorablePageUrlMatchKey(url);
+	if (!key) return "";
+	try {
+		const parsed = new URL(key);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return key;
+		parsed.protocol = "https:";
+		parsed.hostname = parsed.hostname.replace(/^www\./i, "");
+		const kept = [...parsed.searchParams.entries()].filter(([name]) => !RESTORE_INSIGNIFICANT_URL_PARAM.test(name));
+		parsed.search = "";
+		for (const [name, value] of kept) parsed.searchParams.append(name, value);
+		parsed.searchParams.sort();
+		if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+		return parsed.href;
+	} catch {
+		return key;
+	}
+}
+
+// Used only for FINDING a tab to restore onto (never for grouping or dedupe,
+// where over-matching would merge distinct pages).
+function restorablePageUrlsMatchRelaxed(left: unknown, right: unknown) {
+	const leftKey = relaxedRestorableUrlMatchKey(left);
+	const rightKey = relaxedRestorableUrlMatchKey(right);
+	return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
 function tabMatchesSavedTarget(tab: any, url: string, title: string) {
 	if (!isRestorablePageTab(tab)) return false;
 	const tabTitle = String(tab.title || "").trim().toLowerCase();
-	if (String(url || "").trim()) return restorablePageUrlsMatch(tab.url, url);
+	if (String(url || "").trim()) return restorablePageUrlsMatch(tab.url, url) || restorablePageUrlsMatchRelaxed(tab.url, url);
 	return Boolean(title && tabTitle === title);
 }
 
@@ -8362,6 +8410,8 @@ function buildNamedFormulaHighlightGuardResult(toolName: string, commandName: st
 export const __browserRuntimeTest = {
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
+	relaxedRestorableUrlMatchKeyForTest: relaxedRestorableUrlMatchKey,
+	restorablePageUrlsMatchRelaxedForTest: restorablePageUrlsMatchRelaxed,
 	buildExistingAnchorContext,
 	buildHighlightRetryCandidates,
 	shouldTryHighlightRetryCandidatesBeforeOriginalForTest: shouldTryHighlightRetryCandidatesBeforeOriginal,
@@ -11259,6 +11309,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
 			eligibleTabs.find((tab) => url && restorablePageUrlsMatch(tab.url, url)) ||
+			eligibleTabs.find((tab) => url && restorablePageUrlsMatchRelaxed(tab.url, url)) ||
 			eligibleTabs.find((tab) => !url && title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
@@ -11335,6 +11386,46 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 	}
 
+	// Whether the saved snapshot can stand in for the live page. PDF-viewer
+	// captures are excluded: their HTML is canvas-rendered (serializes blank)
+	// and PDF restore already has its own anchor machinery.
+	function artifactSupportsSnapshotFallback(artifact: BrowserArtifact) {
+		if (!String(artifact?.outerHTML || "").trim() && !String(artifact?.screenshotDataUrl || "").trim()) return false;
+		return !artifactLooksLikePdfViewer(artifact);
+	}
+
+	// Last-resort restore: the live page is unreachable or no longer carries
+	// the saved content, so show the saved snapshot (highlights baked in) in
+	// the extension's snapshot viewer instead of returning nothing.
+	async function openArtifactSnapshotFallback(artifact: BrowserArtifact, reason: string, extras: { failures?: string[]; annotationResults?: any[] } = {}) {
+		if (!artifactSupportsSnapshotFallback(artifact)) return null;
+		const viewerUrl = snapshotViewerPageUrl(artifact.id);
+		if (!viewerUrl) return null;
+		try {
+			const navigated = await host.runCommand("navigate", { url: viewerUrl, newTab: true, waitForLoad: true });
+			const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
+			return {
+				tab: navigated?.tab || navigated,
+				artifact,
+				artifactId: artifact.id,
+				restoredAnnotations: 0,
+				recoveredAnnotations: 0,
+				restoredNotes: 0,
+				restoredTargets: [],
+				annotationResults: extras.annotationResults || [],
+				failures: extras.failures || [],
+				snapshotFallback: {
+					reason,
+					viewerUrl,
+					savedAnnotationCount: annotations.filter((annotation: any) => String(annotation?.matchedText || "").trim()).length,
+				},
+			};
+		} catch (error) {
+			host.log?.("artifact snapshot fallback failed", artifact.id, error);
+			return null;
+		}
+	}
+
 	async function restoreArtifact(params: any = {}) {
 		const artifact = await getBrowserArtifact(params.artifactId);
 		if (!artifact) throw new Error(`Could not find Onhand artifact: ${params.artifactId || "(blank)"}`);
@@ -11350,8 +11441,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			if (params.openIfNeeded === false || !url) {
 				throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
 			}
-			const navigated = await host.runCommand("navigate", { url: openUrl || url, newTab: true, waitForLoad: true });
-			tab = navigated?.tab || navigated;
+			try {
+				const navigated = await host.runCommand("navigate", { url: openUrl || url, newTab: true, waitForLoad: true });
+				tab = navigated?.tab || navigated;
+			} catch (error: any) {
+				const snapshot = await openArtifactSnapshotFallback(artifact, "navigation-failed", {
+					failures: [error?.message || String(error)],
+				});
+				if (snapshot) return snapshot;
+				throw error;
+			}
 		} else {
 			const activated = await host.runCommand("activate_tab", { tabId: tab.id });
 			tab = activated?.tab || tab;
@@ -11443,6 +11542,13 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					failures.push(error?.message || String(error));
 				});
 			}
+			// The page loaded but none of the saved annotations could be placed —
+			// the content is gone (redirect target, paywall, rewritten page).
+			// Show the saved snapshot so the user still gets their marks back.
+			if (annotationResults.length > 0 && restoredAnnotations === 0) {
+				const snapshot = await openArtifactSnapshotFallback(artifact, "content-missing", { failures, annotationResults });
+				if (snapshot) return snapshot;
+			}
 		return {
 			tab,
 			artifact,
@@ -11478,6 +11584,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const eligibleTabs = tabs.filter(isRestorablePageTab);
 		return (
 			eligibleTabs.find((tab) => url && restorablePageUrlsMatch(tab.url, url)) ||
+			eligibleTabs.find((tab) => url && restorablePageUrlsMatchRelaxed(tab.url, url)) ||
 			eligibleTabs.find((tab) => !url && title && String(tab.title || "").toLowerCase() === title) ||
 			null
 		);
@@ -12353,6 +12460,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	}
 
 	function restoredArtifactNeedsReplayFallback(result: any) {
+		// A snapshot fallback means the live page was unreachable or lost the
+		// content — replaying page actions against it would only reopen a dead
+		// tab and fail again.
+		if (result?.snapshotFallback) return false;
 		const annotations = Array.isArray(result?.artifact?.page?.annotations) ? result.artifact.page.annotations : [];
 		if (!annotations.length) return false;
 		const expectedAnnotations = annotations.filter((annotation: any) => String(annotation?.matchedText || "").trim()).length;
@@ -12801,26 +12912,37 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					});
 				}
 			}
+			// Targets that fell back to the saved snapshot are already handled:
+			// their live page is unreachable or lost the content, so replaying
+			// page actions against it would only reopen a dead tab and fail again.
+			const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
+			const annotationCoveredBySnapshot = (annotation: ReplayAnnotation) =>
+				snapshotResults.some((result) => replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId));
+			const replayCandidates = snapshotResults.length
+				? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation))
+				: replayableAnnotations;
 			const artifactRestoreMissesReplayTargets =
-				artifactIds.length > 0 && replayableAnnotations.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayableAnnotations);
+				artifactIds.length > 0 && replayCandidates.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayCandidates);
 			const needsReplayRestore =
-				!artifactIds.length || artifactRestoreMissesReplayTargets || (replayableAnnotations.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
-			if (needsReplayRestore) {
+				!artifactIds.length || artifactRestoreMissesReplayTargets || (replayCandidates.length > 0 && restored.some(restoredArtifactNeedsReplayFallback));
+			if (needsReplayRestore && (!snapshotResults.length || replayCandidates.length > 0)) {
 				// Replay only the annotations the artifact restore did not
 				// already cover, so a partially successful artifact pass is
 				// not redone (PDF QA Finding 6). When coverage is complete but
-				// counts came up short, replay everything as before.
+				// counts came up short, replay everything as before (bounded to
+				// non-snapshot targets when a snapshot fallback occurred).
 				const restoredTargets = restored.flatMap((result) =>
 					(Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation),
 				);
-				const uncoveredAnnotations = replayableAnnotations.filter(
+				const uncoveredAnnotations = replayCandidates.filter(
 					(annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target)),
 				);
+				const explicitAnnotations = uncoveredAnnotations.length ? uncoveredAnnotations : snapshotResults.length ? replayCandidates : null;
 				restored.push(
 					...await restoreSessionPageActions(session, {
 						openIfNeeded: true,
 						clearExisting: !artifactIds.length,
-						...(uncoveredAnnotations.length ? { annotations: uncoveredAnnotations } : {}),
+						...(explicitAnnotations?.length ? { annotations: explicitAnnotations } : {}),
 					}),
 				);
 			}

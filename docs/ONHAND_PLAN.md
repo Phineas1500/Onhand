@@ -644,7 +644,7 @@ Started:
 Remaining:
 - [ ] decide whether replay metadata should stay available in the hidden menu selector now that the fuller Review view exists
 - [x] improve restore fidelity for changed pages (context-scored anchors + drift recovery; restore results now report per-annotation restored/recovered/failed outcomes and the sidebar surfaces re-anchored counts)
-- [ ] improve restore fidelity for missing tabs beyond reopening the saved URL (e.g. redirect-tolerant URL matching, snapshot-backed fallback when the live page is gone)
+- [x] improve restore fidelity for missing tabs beyond reopening the saved URL (relaxed tab matching tolerates scheme/www/trailing-slash/tracking-param redirect noise; when the live page is unreachable or lost all saved content, restore opens the saved snapshot — highlights baked in — in the extension's snapshot viewer and reports it honestly as "from snapshot")
 
 ### 14.5 Add visible-context tools — in progress
 Started:

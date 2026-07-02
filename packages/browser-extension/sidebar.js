@@ -4813,6 +4813,7 @@
 				existing.failures.push(...(Array.isArray(page.failures) ? page.failures : []));
 				if (!existing.title && title) existing.title = title;
 				if (!existing.url && url) existing.url = url;
+				if (!existing.snapshotFallback && page.snapshotFallback) existing.snapshotFallback = page.snapshotFallback;
 			} else {
 				merged.set(key, {
 					title,
@@ -4822,6 +4823,7 @@
 					recoveredAnnotations: Number(page.recoveredAnnotations || 0),
 					restoredNotes: Number(page.restoredNotes || 0),
 					failures: [...(Array.isArray(page.failures) ? page.failures : [])],
+					snapshotFallback: page.snapshotFallback || null,
 				});
 			}
 		}
@@ -4835,22 +4837,26 @@
 		const recoveredAnnotations = pages.reduce((total, page) => total + Number(page.recoveredAnnotations || 0), 0);
 		const restoredNotes = pages.reduce((total, page) => total + Number(page.restoredNotes || 0), 0);
 		const failedCount = pages.reduce((total, page) => total + page.failures.length, 0);
+		const snapshotCount = pages.reduce((total, page) => total + (page.snapshotFallback ? 1 : 0), 0);
 		// "Re-anchored" highlights landed via their saved surrounding context
 		// because the page text changed since capture — restored, with a caveat.
+		// "From snapshot" pages opened the saved copy because the live page was
+		// unreachable or no longer carries the saved content.
 		const summary = pages.length
 			? [
 					pluralize(pages.length, "page"),
 					pluralize(restoredAnnotations, "highlight") + (recoveredAnnotations ? ` (${recoveredAnnotations} re-anchored)` : ""),
 					pluralize(restoredNotes, "note"),
+					snapshotCount ? `${snapshotCount} from snapshot` : "",
 					failedCount ? pluralize(failedCount, "failure") : "",
 				]
 					.filter(Boolean)
 					.join(" / ")
 			: "No pages restored";
 		// Quiet on success: a clean restore needs only the summary line. Break
-		// it down per page only when something failed or nothing came back —
-		// exactly when the detail (and the error text) is worth showing.
-		const showDetails = failedCount > 0 || pages.length === 0;
+		// it down per page only when something failed, nothing came back, or a
+		// page had to fall back to its snapshot — when the detail is worth it.
+		const showDetails = failedCount > 0 || snapshotCount > 0 || pages.length === 0;
 		return `
 			<div class="onhand-restore-result">
 				<div class="onhand-restore-head">
@@ -4875,10 +4881,13 @@
 													? `<span class="onhand-restore-failure">${escapeHtml(`+ ${failures.length - 3} more failure${failures.length - 3 === 1 ? "" : "s"}`)}</span>`
 													: "")
 											: "";
+										const meta = page.snapshotFallback
+											? `Shown from the saved snapshot (${pluralize(Number(page.snapshotFallback.savedAnnotationCount || 0), "saved highlight")}) — the live page ${page.snapshotFallback.reason === "navigation-failed" ? "could not be opened" : "no longer shows this content"}.`
+											: `${pluralize(Number(page.restoredAnnotations || 0), "highlight")}${Number(page.recoveredAnnotations || 0) ? ` (${Number(page.recoveredAnnotations)} re-anchored)` : ""} / ${pluralize(Number(page.restoredNotes || 0), "note")}`;
 										return `
 											<div class="onhand-restore-page">
 												<span class="onhand-restore-title">${escapeHtml(title)}</span>
-												<span class="onhand-restore-meta">${escapeHtml(pluralize(Number(page.restoredAnnotations || 0), "highlight") + (Number(page.recoveredAnnotations || 0) ? ` (${Number(page.recoveredAnnotations)} re-anchored)` : ""))} / ${escapeHtml(pluralize(Number(page.restoredNotes || 0), "note"))}</span>
+												<span class="onhand-restore-meta">${escapeHtml(meta)}</span>
 												${failureMarkup}
 											</div>
 										`;

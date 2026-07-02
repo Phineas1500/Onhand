@@ -1635,6 +1635,7 @@ async function assertSelectionFormatting() {
 		restoredNotes: 1,
 		failedCount: 0,
 		failures: [],
+		snapshotFallback: null,
 	});
 
 	const replayed = summarizeRestoredArtifact({
@@ -5066,6 +5067,177 @@ async function assertEmptyArtifactRestoreDoesNotRunPageTools() {
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 0);
 	assert.equal(restoreCalls.some((call) => call.name === "navigate"), true);
 	assert.equal(restoreCalls.some((call) => ["clear_annotations", "highlight_text", "show_note", "run_js"].includes(call.name)), false);
+}
+
+async function assertRelaxedUrlMatchingFindsRedirectedTab() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { relaxedRestorableUrlMatchKeyForTest, restorablePageUrlsMatchRelaxedForTest } = __browserRuntimeTest;
+
+	// Visit markers, scheme, www., trailing slash, and param order are noise…
+	assert.equal(
+		relaxedRestorableUrlMatchKeyForTest("http://www.example.test/docs/?utm_source=news&b=2&a=1&fbclid=xyz"),
+		relaxedRestorableUrlMatchKeyForTest("https://example.test/docs?a=1&b=2"),
+	);
+	// …while meaningful query params and paths still distinguish pages.
+	assert.notEqual(relaxedRestorableUrlMatchKeyForTest("https://example.test/page?id=1"), relaxedRestorableUrlMatchKeyForTest("https://example.test/page?id=2"));
+	assert.notEqual(relaxedRestorableUrlMatchKeyForTest("https://example.test/docs/intro"), relaxedRestorableUrlMatchKeyForTest("https://example.test/docs"));
+	assert.equal(restorablePageUrlsMatchRelaxedForTest("", "https://example.test/"), false);
+
+	// A saved artifact URL should restore onto an open tab that only differs
+	// by redirect noise instead of opening a duplicate tab.
+	const host = createReplayHost({
+		tabs: [
+			replaySmokeTab({
+				id: 31,
+				title: "Docs page",
+				url: "https://example.test/docs?b=2&a=1",
+			}),
+		],
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_redirected"];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_redirected: {
+				id: "artifact_redirected",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "redirected page",
+				tab: { id: 900, windowId: 3, title: "Docs page", url: "http://www.example.test/docs/?utm_source=news&a=1&b=2" },
+				page: {
+					title: "Docs page",
+					url: "http://www.example.test/docs/?utm_source=news&a=1&b=2",
+					annotations: [{ annotationId: "ann-docs", kind: "inline", matchedText: "Alpha smoke content" }],
+				},
+			},
+		},
+	});
+	const restored = await runtime.restoreSession();
+	assert.equal(restored.restoredPages.length, 1);
+	assert.equal(restored.restoredPages[0].restoredAnnotations, 1, "the annotation should restore onto the redirect-drifted open tab");
+	assert.equal(host.calls.some((call) => call.name === "navigate"), false, "a relaxed URL match should not open a duplicate tab");
+	assert.equal(host.calls.some((call) => call.name === "highlight_text" && call.args.tabId === 31), true);
+}
+
+async function assertSnapshotFallbackWhenNavigationFails() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ id: 7, title: "Unrelated", url: "https://elsewhere.test/" })],
+		rejectNavigate: (url) => url.includes("dead.example.test"),
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_dead_url"];
+	// A replayable page action for the same dead page: the snapshot fallback
+	// must also suppress the page-action replay pass for that target.
+	session.pageActions = [
+		{
+			key: "highlight:dead-ann",
+			type: "annotation",
+			tabId: 900,
+			windowId: 3,
+			title: "Gone article",
+			url: "https://dead.example.test/article",
+			annotationId: "dead-ann",
+			label: "Highlighted text",
+			detail: "Saved passage",
+			citationText: "Saved passage",
+		},
+	];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_dead_url: {
+				id: "artifact_dead_url",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "gone article",
+				tab: { id: 900, windowId: 3, title: "Gone article", url: "https://dead.example.test/article" },
+				page: {
+					title: "Gone article",
+					url: "https://dead.example.test/article",
+					annotations: [{ annotationId: "dead-ann", kind: "inline", matchedText: "Saved passage" }],
+				},
+				outerHTML: '<html><body><p><span data-onhand-highlight-kind="inline">Saved passage</span></p></body></html>',
+			},
+		},
+	});
+	const restored = await runtime.restoreSession();
+	assert.equal(restored.restoredPages.length, 1, "the snapshot fallback should cover the dead target without a replay retry");
+	const page = restored.restoredPages[0];
+	assert.equal(page.snapshotFallback?.reason, "navigation-failed");
+	assert.match(String(page.snapshotFallback?.viewerUrl || ""), /snapshot-viewer\.html\?artifact=artifact_dead_url/);
+	assert.equal(page.restoredAnnotations, 0);
+	assert.equal(page.snapshotFallback?.savedAnnotationCount, 1);
+	const deadNavigates = host.calls.filter((call) => call.name === "navigate" && String(call.args.url || "").includes("dead.example.test"));
+	assert.equal(deadNavigates.length, 1, "the dead URL should be attempted once, not re-attempted by the replay pass");
+	const viewerNavigates = host.calls.filter((call) => call.name === "navigate" && String(call.args.url || "").includes("snapshot-viewer.html"));
+	assert.equal(viewerNavigates.length, 1, "the snapshot viewer should open exactly once");
+}
+
+async function assertSnapshotFallbackWhenContentGone() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ id: 12, title: "Rewritten article", url: "https://example.test/rewritten" })],
+		rejectHighlightText: () => true,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+	});
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.artifactIds = ["artifact_rewritten"];
+	await globalThis.chrome.storage.local.set({
+		...storedStoreEntries(store),
+		onhandBrowserArtifacts: {
+			artifact_rewritten: {
+				id: "artifact_rewritten",
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sessionId: session.id,
+				label: "rewritten page",
+				tab: { id: 12, windowId: 3, title: "Rewritten article", url: "https://example.test/rewritten" },
+				page: {
+					title: "Rewritten article",
+					url: "https://example.test/rewritten",
+					annotations: [{ annotationId: "ann-rw", kind: "inline", matchedText: "Sentence that no longer exists" }],
+				},
+				outerHTML: "<html><body><p>Saved copy</p></body></html>",
+			},
+		},
+	});
+	const restored = await runtime.restoreSession();
+	const page = restored.restoredPages[0];
+	assert.equal(page.snapshotFallback?.reason, "content-missing", "an open page that lost all saved content should fall back to the snapshot");
+	assert.equal(page.restoredAnnotations, 0);
+	assert.equal(page.failedCount > 0, true, "the highlight failures should stay visible alongside the snapshot fallback");
+	const viewerNavigates = host.calls.filter((call) => call.name === "navigate" && String(call.args.url || "").includes("snapshot-viewer.html"));
+	assert.equal(viewerNavigates.length, 1);
 }
 
 async function assertArtifactRestoreDoesNotReuseSameTitleWrongUrl() {
@@ -8664,6 +8836,9 @@ async function main() {
 	await assertSessionReplayDoesNotReuseSameTitleWrongUrl();
 	await assertReplayRestoreRetriesEllipsisTextAndRefreshesCitationTargets();
 	await assertEmptyArtifactRestoreDoesNotRunPageTools();
+	await assertRelaxedUrlMatchingFindsRedirectedTab();
+	await assertSnapshotFallbackWhenNavigationFails();
+	await assertSnapshotFallbackWhenContentGone();
 	await assertArtifactRestoreDoesNotReuseSameTitleWrongUrl();
 	await assertArtifactRestoreScrollsBeforeHighlightForVirtualizedPage();
 	await assertArtifactRestoreUsesSavedScrollContainerForVirtualizedPage();
