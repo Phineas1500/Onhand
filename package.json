@@ -37,6 +37,7 @@
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",
     "test:page-toolkit-sweep": "node ./scripts/run-page-toolkit-sweep.mjs",
+    "test:pdf-toolkit-sweep": "node ./scripts/run-pdf-toolkit-sweep.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",

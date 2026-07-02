@@ -25232,19 +25232,43 @@ function findViewportPage() {
   }
   return bestPage;
 }
+function pdfTextNodeBoundaryNeedsSpace(previous, next) {
+  if (!previous) return false;
+  const previousElement = previous.parentElement;
+  const nextElement = next.parentElement;
+  if (!previousElement || !nextElement || previousElement === nextElement) return false;
+  const previousRect = previousElement.getBoundingClientRect();
+  const nextRect = nextElement.getBoundingClientRect();
+  const lineHeight = Math.max(previousRect.height, nextRect.height);
+  if (!lineHeight) {
+    return true;
+  }
+  if (Math.abs(nextRect.top - previousRect.top) > lineHeight / 2) return true;
+  return nextRect.left - previousRect.right > lineHeight * 0.12;
+}
 function buildNormalizedTextMap(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const positions = [];
   let text = "";
   let pendingSpace = null;
+  let previousNode = null;
+  const searchPositions = [];
+  let searchText = "";
+  let pendingSearchSpace = null;
   while (walker.nextNode()) {
     const node = walker.currentNode;
     const value = node.nodeValue || "";
+    if (text && !text.endsWith(" ") && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
+      pendingSpace = { node, offset: 0 };
+      if (searchText && !searchText.endsWith(" ") && !pendingSearchSpace) pendingSearchSpace = { node, offset: 0 };
+    }
+    previousNode = node;
     for (let offset = 0; offset < value.length; offset += 1) {
       const normalized = normalizeSearchChar(value[offset]);
       if (!normalized) continue;
       if (normalized === " ") {
         if (text && !text.endsWith(" ")) pendingSpace = { node, offset };
+        if (searchText && !searchText.endsWith(" ")) pendingSearchSpace = { node, offset };
         continue;
       }
       if (pendingSpace) {
@@ -25255,10 +25279,22 @@ function buildNormalizedTextMap(root) {
       for (const char of normalized) {
         text += char;
         positions.push({ node, offset });
+        const isSearchable = /[a-z0-9]/i.test(char) || /[^\x00-\x7F]/.test(char);
+        if (isSearchable) {
+          if (pendingSearchSpace) {
+            searchText += " ";
+            searchPositions.push(pendingSearchSpace);
+            pendingSearchSpace = null;
+          }
+          searchText += char;
+          searchPositions.push({ node, offset });
+        } else if (searchText && !searchText.endsWith(" ") && !pendingSearchSpace) {
+          pendingSearchSpace = { node, offset };
+        }
       }
     }
   }
-  return { text, positions };
+  return { text, positions, searchText, searchPositions };
 }
 function normalizeSearchText(value) {
   return buildSearchText(value, true);
@@ -25367,16 +25403,16 @@ function findMappedTextRange(root, query, occurrence = 1, context) {
   const queryText = normalizeSearchText(query);
   const compactPrefix = context?.prefix ? compactSearchText(context.prefix) : "";
   const compactSuffix = context?.suffix ? compactSearchText(context.suffix) : "";
-  const exactIndices = collectMatchIndices(map.text, queryText);
-  const exactIndex = pickMatchIndex(map.text, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
+  const exactIndices = collectMatchIndices(map.searchText, queryText);
+  const exactIndex = pickMatchIndex(map.searchText, exactIndices, queryText.length, occurrence, compactPrefix, compactSuffix);
   if (exactIndex !== -1) {
-    const range = rangeFromMapPositions(map.positions, exactIndex, exactIndex + queryText.length - 1);
+    const range = rangeFromMapPositions(map.searchPositions, exactIndex, exactIndex + queryText.length - 1);
     if (range) {
       return {
         range,
         matchedText: normalizeText(range.toString()) || normalizeText(query),
         fallback: void 0,
-        context: extractNormalizedContext(map.text, exactIndex, queryText.length)
+        context: extractNormalizedContext(map.searchText, exactIndex, queryText.length)
       };
     }
   }

@@ -6309,7 +6309,7 @@ const createPageToolkit = (options = {}) => {
 	const findPdfTextRange = (textLayer, rawQuery, occurrence = 1) => {
 		const textNodes = collectHighlightTextNodes(textLayer, { excludePdfViewerUi: true });
 		if (!textNodes.length) return null;
-		const mappedText = buildNormalizedTextMap(textNodes);
+		const mappedText = buildNormalizedTextMap(textNodes, { pdfNodeBoundaries: true });
 		const normalizedQuery = lowerText(rawQuery);
 		const searchQuery = normalizeHighlightSearchText(rawQuery);
 		const compactQuery = compactHighlightSearchText(rawQuery);
@@ -6913,14 +6913,37 @@ const createPageToolkit = (options = {}) => {
 		return candidates;
 	};
 
-	const buildNormalizedTextMap = (textNodes) => {
+	// pdf.js text layers render one absolutely positioned span per text item
+	// with no whitespace between spans, so a naive node walk glues wrapped
+	// lines and adjacent words together while extraction (what the model
+	// copies from) separates them. Geometry tells a word boundary (new line or
+	// visible horizontal gap) apart from a kerning split inside one word.
+	const pdfTextNodeBoundaryNeedsSpace = (previousNode, nextNode) => {
+		if (!previousNode) return false;
+		const previousElement = previousNode.parentElement;
+		const nextElement = nextNode.parentElement;
+		if (!previousElement || !nextElement || previousElement === nextElement) return false;
+		const previousRect = previousElement.getBoundingClientRect();
+		const nextRect = nextElement.getBoundingClientRect();
+		const lineHeight = Math.max(previousRect.height, nextRect.height);
+		if (!lineHeight) return true;
+		if (Math.abs(nextRect.top - previousRect.top) > lineHeight / 2) return true;
+		return nextRect.left - previousRect.right > lineHeight * 0.12;
+	};
+
+	const buildNormalizedTextMap = (textNodes, options = {}) => {
 		const positions = [];
 		let text = "";
 		let pendingSpace = null;
 		let hasContent = false;
+		let previousNode = null;
 
 		for (const node of textNodes) {
 			const value = String(node.nodeValue || "");
+			if (options.pdfNodeBoundaries && hasContent && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
+				pendingSpace = { node, offset: 0, endOffset: 0 };
+			}
+			previousNode = node;
 			for (let offset = 0; offset < value.length; ) {
 				const character = String.fromCodePoint(value.codePointAt(offset));
 				const position = { node, offset, endOffset: offset + character.length };
