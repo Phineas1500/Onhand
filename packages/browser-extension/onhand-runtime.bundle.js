@@ -132944,6 +132944,18 @@ function traceHasReadableFallbackContent(trace) {
 function hasReadableSourceContentAfterLatestNavigation(request) {
   return highlightFailureBudgetTraceWindow(request).some(traceHasReadableFallbackContent);
 }
+var CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = /* @__PURE__ */ new Set([
+  "weak_compact_teaching_highlight",
+  "weak_structured_highlight_text"
+]);
+function isCorrectiveHighlightGuardrailTrace(trace) {
+  const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
+  return CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS.has(String(kind));
+}
+function isCountableHighlightFailureTrace(trace) {
+  if (trace?.toolName !== "browser_highlight_text" || trace?.state !== "error") return false;
+  return !isCorrectiveHighlightGuardrailTrace(trace);
+}
 function shouldAbortAfterRepeatedHighlightFailures(request) {
   if (!request || request.aborted) return false;
   const traces = highlightFailureBudgetTraceWindow(request);
@@ -132952,7 +132964,7 @@ function shouldAbortAfterRepeatedHighlightFailures(request) {
   const hasReadableSourceContent = hasReadableSourceContentAfterLatestNavigation(request);
   const asksForExternalOrLinkedSource = promptAsksForExternalBrowsing(prompt) || promptAsksForLinkedPageNavigation(prompt);
   const failureLimit = asksForExternalOrLinkedSource && hasReadableSourceContent ? 1 : asksForExternalOrLinkedSource ? 2 : promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt) ? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT : HIGHLIGHT_FAILURE_ABORT_LIMIT;
-  return traces.filter((trace) => trace?.toolName === "browser_highlight_text" && trace?.state === "error").length >= failureLimit;
+  return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
 function buildRepeatedHighlightFailureGuardResult(toolName, commandName, request) {
   if (commandName !== "highlight_text") return null;
@@ -134916,6 +134928,17 @@ function compactEntity(value) {
 }
 function stripTinyVisibleReplyArtifacts(value) {
   let text = String(value || "");
+  text = text.replace(
+    /([a-z0-9)\]%])(?=(?:Let me|I(?:'|’)ll|I will|I need to|Now (?:let me|I(?:'|’)ll))\s|Found it\b)/g,
+    "$1\n"
+  );
+  text = text.replace(/([a-z])(?=(?:The|This|Here)\s)/g, "$1\n");
+  text = text.replace(/^\s*Found it[.!]?\s*/gim, "");
+  text = text.replace(
+    /([.!?]|\s[—–-])\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly|retry)\s+)?(?:read|extract|inspect|look|highlight|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark|add|create|try)\b[^.!?\n]*[.!?]?\s*$/gim,
+    (match2, lead) => /[.!?]/.test(lead) ? lead : ""
+  );
+  text = text.replace(/^\s*i\s+found\s+(?:the|a|an|it|its)\b[^.!?\n]{0,120}(?:[.!?]+)?\s*$/gim, "");
   text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
   text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
   text = text.replace(
@@ -137550,7 +137573,7 @@ function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, para
 function looksLikeWeakCompactTeachingHighlightText(value, request) {
   const text = compactActionText(value);
   if (!text) return true;
-  if (text.length > 260) return true;
+  if (text.length > 400) return true;
   const normalized = normalizeEntityText(text);
   const title = normalizeEntityText(request?.initialActiveTab?.title || "");
   if (title && normalized === title) return true;
@@ -139090,12 +139113,12 @@ function markRecoveredToolRetries(activities = [], toolName) {
   return recovered;
 }
 function normalizeOptionalBrowserTargetNumber(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+  const asValidId = (number4) => Number.isInteger(number4) && number4 > 0 ? number4 : void 0;
+  if (typeof value === "number") return asValidId(value);
   if (typeof value !== "string") return void 0;
   const text = value.trim();
   if (!text || /^(?:undefined|null|none|nan)$/i.test(text)) return void 0;
-  const number4 = Number(text);
-  return Number.isFinite(number4) ? number4 : void 0;
+  return asValidId(Number(text));
 }
 function normalizeOptionalBrowserTargetNumbers(params = {}) {
   if (!params || typeof params !== "object") return {};

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import http from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,7 +21,8 @@ const DEFAULT_JUDGE_MODEL = process.env.OPENAI_API_KEY ? "gpt-4.1-mini" : "opena
 const DEFAULT_JUDGE_API_KEY_ENV = process.env.OPENAI_API_KEY ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY";
 
 const PROCESS_NARRATION_PATTERNS = [
-	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking)\\b" },
+	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking|find|finding|capture|capturing)\\b" },
+	{ id: "found-it", pattern: "\\bfound it\\b|\\bi found the\\b" },
 	{ id: "let-me-start-with", pattern: "\\blet me start with\\b" },
 	{ id: "let-me-grab", pattern: "\\blet me grab\\b" },
 	{ id: "let-me-highlight", pattern: "\\blet me highlight\\b|\\bnow let me highlight\\b" },
@@ -100,6 +102,30 @@ const BUILTIN_CASES = [
 			maxWords: 80,
 			requiredReplyPatterns: ["Normal|standard normal|0,\\s*I"],
 			forbiddenReplyPatterns: PROCESS_NARRATION_PATTERNS.map((entry) => entry.pattern),
+		},
+	},
+	{
+		// The external-source flow: the prompt asks for a source that derives the
+		// result, so source browsing must activate, the answer must ground in the
+		// page's derivation, and at least one durable highlight must anchor it
+		// (rendered-math pages used to fail here with timeout spirals and zero
+		// markers). Highlight failures may occur once but must degrade cleanly.
+		id: "bayes-source-derivation",
+		url: "https://en.wikipedia.org/wiki/Bayes%27_theorem",
+		prompt: "Could you show me a source that does derive Bayes' theorem from scratch?",
+		expect: {
+			minHighlights: 1,
+			maxHighlights: 5,
+			maxNotes: 2,
+			maxWords: 520,
+			requiredReplyPatterns: ["deriv", "conditional|joint", "equat|divid|both equal|set equal"],
+			requiredHighlightPatterns: ["derived|conditional|probabilit|P\\s*\\("],
+			forbiddenReplyPatterns: PROCESS_NARRATION_PATTERNS.map((entry) => entry.pattern),
+			forbidMarkdownTables: true,
+			forbidInlineMarkdownHeadings: true,
+			forbidFragmentedMath: true,
+			maxHighlightErrors: 1,
+			maxTotalToolDurationMs: 45000,
 		},
 	},
 	{
@@ -221,6 +247,7 @@ Options:
   --json                      Print JSON summary to stdout.
   --dry-run                   Validate and print the run plan without opening a browser.
   --list-cases                Print available built-in cases.
+  --keep-tabs                 Do not close content tabs between cases (default: close them to keep the debug browser healthy).
   --judge                     Ask a rubric judge to decide final quality.
   --judge-export-ok           Required with --judge; sends rubric docs and eval data to the judge API.
   --judge-model <model>       OpenAI-compatible judge model. Default: ${DEFAULT_JUDGE_MODEL}
@@ -247,6 +274,7 @@ function parseArgs(argv) {
 		json: false,
 		dryRun: false,
 		listCases: false,
+		keepTabs: false,
 		caseIds: [],
 		casesFile: "",
 		url: "",
@@ -282,6 +310,8 @@ function parseArgs(argv) {
 			args.dryRun = true;
 		} else if (value === "--list-cases") {
 			args.listCases = true;
+		} else if (value === "--keep-tabs") {
+			args.keepTabs = true;
 		} else if (value === "--judge") {
 			args.judge = true;
 		} else if (value === "--judge-export-ok") {
@@ -647,6 +677,50 @@ function applyJudgeResult(evaluation, judge, args) {
 	};
 }
 
+function cdpHttp(host, port, path) {
+	return new Promise((resolve, reject) => {
+		http
+			.get({ host, port, path, timeout: 5000 }, (res) => {
+				let data = "";
+				res.on("data", (chunk) => (data += chunk));
+				res.on("end", () => resolve(data));
+			})
+			.on("error", reject)
+			.on("timeout", function onTimeout() {
+				this.destroy(new Error("CDP HTTP timeout"));
+			});
+	});
+}
+
+// Each case opens its own content tab via ask-new-url and nothing closes it.
+// Left to accumulate, the debug browser degrades: backgrounded tabs report
+// zero-rect layouts, which surface as false "No visible text matched" and
+// empty-reply failures — model-independent noise that masquerades as quality
+// regressions. Close finished http(s) content tabs between cases; the
+// extension's own pages (sidebar/offscreen/service worker) are not http(s)
+// and chrome:// tabs are left alone.
+async function closeContentTabs(host, port) {
+	let targets;
+	try {
+		targets = JSON.parse(await cdpHttp(host, port, "/json/list"));
+	} catch {
+		return 0;
+	}
+	if (!Array.isArray(targets)) return 0;
+	let closed = 0;
+	for (const target of targets) {
+		if (target?.type !== "page") continue;
+		if (!/^https?:\/\//.test(String(target?.url || ""))) continue;
+		try {
+			await cdpHttp(host, port, `/json/close/${target.id}`);
+			closed += 1;
+		} catch {
+			// best-effort; a tab we cannot close is not fatal to the run
+		}
+	}
+	return closed;
+}
+
 function runCli(args, options = {}) {
 	const fullArgs = [CLI, ...args, "--host", options.host, "--port", String(options.port)];
 	return new Promise((resolve, reject) => {
@@ -1000,6 +1074,9 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 	}
 	const safeName = `${safeId(testCase.id)}__${safeId(variant.id)}`;
 	await writeFile(join(runDir, `${safeName}.json`), JSON.stringify({ case: testCase, variant, evaluation, raw }, null, 2));
+	if (!args.keepTabs) {
+		await closeContentTabs(args.host, args.port);
+	}
 	return evaluation;
 }
 

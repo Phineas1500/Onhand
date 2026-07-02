@@ -682,6 +682,16 @@ async function assertSelectionFormatting() {
 		{ tabId: 789 },
 		"non-finite browser target IDs should be omitted",
 	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: 0, windowId: -1 }),
+		{},
+		"model-fabricated placeholder ids (0, negative) should fall back to default targeting",
+	);
+	assert.deepEqual(
+		normalizeOptionalBrowserTargetNumbersForTest({ tabId: 12.5 }),
+		{},
+		"fractional ids should fall back to default targeting",
+	);
 
 	const emptyCases = [
 		undefined,
@@ -1305,6 +1315,31 @@ async function assertSelectionFormatting() {
 		}),
 		true,
 		"source discovery prompts phrased as 'show me a source' should use the external-source failure budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about photosynthesis.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+			],
+		}),
+		false,
+		"corrective quality-guard blocks (retry with a better span) must not count toward the highlight give-up budget",
+	);
+	assert.equal(
+		shouldAbortAfterRepeatedHighlightFailuresForTest({
+			displayPrompt: "Teach me what this page says about photosynthesis.",
+			toolTraces: [
+				{ toolName: "browser_highlight_text", state: "error", resultDetails: { guardrail: { kind: "weak_compact_teaching_highlight" } } },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+				{ toolName: "browser_highlight_text", state: "error", error: "No visible text matched: ..." },
+			],
+		}),
+		true,
+		"genuine page-match failures should still count toward the give-up budget even when mixed with corrective blocks",
 	);
 	assert.equal(
 		shouldAbortAfterRepeatedHighlightFailuresForTest({
@@ -3206,6 +3241,27 @@ async function assertConstitutionPromptContract() {
 				artifactOnlyTeachingReply,
 				"(No reply generated.)",
 				"tiny visible cleanup should not synthesize a replacement answer from hidden/source state after removing process-only text",
+			);
+			const gluedInterimNarrationReply = [
+				"The article derives the theorem by starting with the definition of joint probability, expressed two ways.",
+				"The page you're on likely has a derivation. Let me read the page more fully to find itLet me look for the derivation, which is often provided as a proofLet me check what's visible on the page to find the derivationFound it! The page has a dedicated derivation. Let me highlight the key passage.",
+			].join("\n\n");
+			assertPreservesSubstantiveTerms(
+				"glued interim narration reply",
+				gluedInterimNarrationReply,
+				oneHighlightTeachingRequest,
+				[/derives the theorem by starting with the definition of joint probability/],
+				[/Let me read/i, /Let me look/i, /Let me check/i, /Let me highlight/i, /Found it/i],
+			);
+			assertPreservesSubstantiveTerms(
+				"em-dash and content-glued narration reply",
+				[
+					"The page on the theorem is already open — let me find its derivation section.",
+					"I found the derivation section. Let me capture the full text to highlight itThe page includes a clean derivation from scratch within the statement section. \"The proof follows directly.\"",
+				].join("\n\n"),
+				oneHighlightTeachingRequest,
+				[/includes a clean derivation from scratch/, /"The proof follows directly\."/],
+				[/let me find/i, /let me capture/i, /I found the derivation/i, /highlight it/i],
 			);
 			const broadTeachingReply = [
 				"Let me read more of the page to give you a thorough, grounded overview.",

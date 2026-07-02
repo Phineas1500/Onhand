@@ -1270,6 +1270,28 @@ function hasReadableSourceContentAfterLatestNavigation(request: any) {
 	return highlightFailureBudgetTraceWindow(request).some(traceHasReadableFallbackContent);
 }
 
+// Quality guardrails ("that marker is a heading / too long / a bare section
+// number") are corrective feedback: the model is expected to retry with a
+// better span, and the block never touched the page, so it costs nothing.
+// Only genuine page-match failures signal that anchoring is hopeless here and
+// should count toward the give-up budget. Counting corrective blocks let a
+// capable model that quotes accurate-but-long passages get budget-killed after
+// two rejections before it ever landed a valid highlight.
+const CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = new Set([
+	"weak_compact_teaching_highlight",
+	"weak_structured_highlight_text",
+]);
+
+function isCorrectiveHighlightGuardrailTrace(trace: any) {
+	const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
+	return CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS.has(String(kind));
+}
+
+function isCountableHighlightFailureTrace(trace: any) {
+	if (trace?.toolName !== "browser_highlight_text" || trace?.state !== "error") return false;
+	return !isCorrectiveHighlightGuardrailTrace(trace);
+}
+
 function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 	if (!request || request.aborted) return false;
 	const traces = highlightFailureBudgetTraceWindow(request);
@@ -1285,7 +1307,7 @@ function shouldAbortAfterRepeatedHighlightFailures(request: any) {
 			: promptAsksForCompactPageTeaching(prompt) && !promptAsksForStructuredPageSourceMarker(prompt) && !promptAsksForComparison(prompt)
 			? COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT
 			: HIGHLIGHT_FAILURE_ABORT_LIMIT;
-	return traces.filter((trace: any) => trace?.toolName === "browser_highlight_text" && trace?.state === "error").length >= failureLimit;
+	return traces.filter(isCountableHighlightFailureTrace).length >= failureLimit;
 }
 
 function buildRepeatedHighlightFailureGuardResult(toolName: string, commandName: string, request: any) {
@@ -4575,6 +4597,25 @@ function normalizeTrailingLearningCheck(value: string, request: any) {
 
 function stripTinyVisibleReplyArtifacts(value: string) {
 	let text = String(value || "");
+	// Interim narration from successive assistant turns can stream into one
+	// draft block without a sentence boundary ("…to find itLet me look…").
+	// A lowercase character directly followed by a narration opener never
+	// occurs in real prose, so restore the boundary; the line-anchored
+	// narration rules below then apply to the repaired lines.
+	text = text.replace(
+		/([a-z0-9)\]%])(?=(?:Let me|I(?:'|’)ll|I will|I need to|Now (?:let me|I(?:'|’)ll))\s|Found it\b)/g,
+		"$1\n",
+	);
+	text = text.replace(/([a-z])(?=(?:The|This|Here)\s)/g, "$1\n");
+	text = text.replace(/^\s*Found it[.!]?\s*/gim, "");
+	// Narration that trails a finished sentence or an em-dash at the end of a
+	// line is always process talk ("… derivation. Let me highlight the key
+	// passage." / "… is already open — let me find its derivation section.").
+	text = text.replace(
+		/([.!?]|\s[—–-])\s*(?:let me|i(?:'|’)ll|i will|i need to)\s+(?:(?:first|now|next|also|just|quickly|retry)\s+)?(?:read|extract|inspect|look|highlight|ground|anchor|record|open|search|scroll|navigate|find|locate|check|capture|grab|mark|add|create|try)\b[^.!?\n]*[.!?]?\s*$/gim,
+		(match, lead) => (/[.!?]/.test(lead) ? lead : ""),
+	);
+	text = text.replace(/^\s*i\s+found\s+(?:the|a|an|it|its)\b[^.!?\n]{0,120}(?:[.!?]+)?\s*$/gim, "");
 	text = text.replace(/^\s*(?:now\s+)?for\s+this\s+learning\s+session\.?\s*/gim, "");
 	text = text.replace(/\b(?:let me|i(?:'|’)ll|i will)\s+record\s+(?:the\s+)?(?:core\s+)?concept\s*:?\s*/gi, "");
 	text = text.replace(
@@ -7779,7 +7820,11 @@ function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandNa
 function looksLikeWeakCompactTeachingHighlightText(value: unknown, request: any) {
 	const text = compactActionText(value);
 	if (!text) return true;
-	if (text.length > 260) return true;
+	// Two to three sentences of exact page text is a legitimate teaching anchor;
+	// only reject genuine paragraph dumps. A tighter cap rejected accurate
+	// multi-sentence quotes and (before the budget fix) cascaded into a full
+	// highlight abort.
+	if (text.length > 400) return true;
 	const normalized = normalizeEntityText(text);
 	const title = normalizeEntityText(request?.initialActiveTab?.title || "");
 	if (title && normalized === title) return true;
@@ -9451,12 +9496,15 @@ function markRecoveredToolRetries(activities: UiActivity[] = [], toolName: strin
 }
 
 function normalizeOptionalBrowserTargetNumber(value: unknown) {
-	if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+	// Chrome tab/window ids are positive integers; models sometimes fabricate
+	// placeholder ids like 0 or -1, which must fall back to default targeting
+	// instead of reaching chrome.tabs.get() as hard errors.
+	const asValidId = (number: number) => (Number.isInteger(number) && number > 0 ? number : undefined);
+	if (typeof value === "number") return asValidId(value);
 	if (typeof value !== "string") return undefined;
 	const text = value.trim();
 	if (!text || /^(?:undefined|null|none|nan)$/i.test(text)) return undefined;
-	const number = Number(text);
-	return Number.isFinite(number) ? number : undefined;
+	return asValidId(Number(text));
 }
 
 function normalizeOptionalBrowserTargetNumbers(params: any = {}) {
