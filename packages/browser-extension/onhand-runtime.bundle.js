@@ -142207,7 +142207,11 @@ function createOnhandBrowserRuntime(host) {
         }
       }
       const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
-      const annotationCoveredBySnapshot = (annotation) => snapshotResults.some((result) => replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId));
+      const annotationCoveredBySnapshot = (annotation) => snapshotResults.some((result) => {
+        if (replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId)) return true;
+        const annotationUrl = String(annotation.url || "").trim();
+        return Boolean(annotationUrl) && restorablePageUrlsMatchRelaxed(annotationUrl, artifactEffectiveUrl(result.artifact));
+      });
       const replayCandidates = snapshotResults.length ? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation)) : replayableAnnotations;
       const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayCandidates.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayCandidates);
       const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayCandidates.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);

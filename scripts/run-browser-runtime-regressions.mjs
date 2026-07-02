@@ -5148,7 +5148,10 @@ async function assertSnapshotFallbackWhenNavigationFails() {
 	const session = store.sessions[store.currentSessionId];
 	session.artifactIds = ["artifact_dead_url"];
 	// A replayable page action for the same dead page: the snapshot fallback
-	// must also suppress the page-action replay pass for that target.
+	// must also suppress the page-action replay pass for that target. The
+	// action deliberately records the page under redirect noise (scheme, www.,
+	// trailing slash, tracking param) relative to the artifact URL — coverage
+	// must match relaxed, or the replay pass reopens the dead URL anyway.
 	session.pageActions = [
 		{
 			key: "highlight:dead-ann",
@@ -5156,7 +5159,7 @@ async function assertSnapshotFallbackWhenNavigationFails() {
 			tabId: 900,
 			windowId: 3,
 			title: "Gone article",
-			url: "https://dead.example.test/article",
+			url: "http://www.dead.example.test/article/?utm_source=news",
 			annotationId: "dead-ann",
 			label: "Highlighted text",
 			detail: "Saved passage",

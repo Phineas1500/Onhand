@@ -12916,8 +12916,15 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			// their live page is unreachable or lost the content, so replaying
 			// page actions against it would only reopen a dead tab and fail again.
 			const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
+			// Match relaxed too: a page action can record the same page under
+			// redirect noise (scheme/www/trailing slash/tracking params) relative
+			// to the artifact URL, and it is just as covered by the snapshot.
 			const annotationCoveredBySnapshot = (annotation: ReplayAnnotation) =>
-				snapshotResults.some((result) => replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId));
+				snapshotResults.some((result) => {
+					if (replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId)) return true;
+					const annotationUrl = String(annotation.url || "").trim();
+					return Boolean(annotationUrl) && restorablePageUrlsMatchRelaxed(annotationUrl, artifactEffectiveUrl(result.artifact));
+				});
 			const replayCandidates = snapshotResults.length
 				? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation))
 				: replayableAnnotations;
