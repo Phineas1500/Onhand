@@ -1268,6 +1268,18 @@ async function assertRestoreResultMergesPagesAndStaysQuietOnSuccess() {
 	dom.window.close();
 }
 
+async function assertRestoreResultShowsReanchoredCounts() {
+	// Re-anchored highlights landed via their saved context because the page
+	// text drifted; the summary should say so without treating it as a failure.
+	const pageUrl = "https://example.test/drifted";
+	const { dom, restoreResult } = await restoreAndReadResult([
+		{ source: "browser-artifact", title: "Drifted page", url: pageUrl, restoredAnnotations: 4, recoveredAnnotations: 1, restoredNotes: 2, failedCount: 0, failures: [] },
+	]);
+	assert.match(restoreResult.textContent, /1 page \/ 4 highlights \(1 re-anchored\) \/ 2 notes/, "re-anchored highlights should be counted in the summary");
+	assert.equal(restoreResult.querySelectorAll(".onhand-restore-page").length, 0, "re-anchoring alone should stay quiet like any clean restore");
+	dom.window.close();
+}
+
 async function assertRestoreResultShowsDetailOnFailure() {
 	const samePageUrl = "https://www-cdn.example.test/doc.pdf";
 	const { dom, restoreResult } = await restoreAndReadResult([
@@ -4758,6 +4770,7 @@ await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
 await assertSessionPickerRequestsAndRendersAllSessions();
 await assertReviewViewRendersSavedSnapshot();
 await assertRestoreResultMergesPagesAndStaysQuietOnSuccess();
+await assertRestoreResultShowsReanchoredCounts();
 await assertRestoreResultShowsDetailOnFailure();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();

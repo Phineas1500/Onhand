@@ -1491,6 +1491,140 @@ async function assertHighlightTextPreservesExistingAnnotationsByDefault() {
 	assert.match(highlights[1].textContent, /aperiodic condition/);
 }
 
+async function assertInlineHighlightRecordsTextQuoteAnchor() {
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>Markov chains converge to a stationary distribution when they are irreducible and aperiodic. The detailed balance condition offers a convenient sufficient test. Convergence rates depend on the spectral gap of the transition matrix.</p>
+		</main>
+	`);
+	const result = await toolkit.highlightText("The detailed balance condition offers a convenient sufficient test.", {
+		scrollIntoView: false,
+	});
+	assert.equal(result.anchor?.surface, "html", "inline highlights should record an html text-quote anchor");
+	assert.match(result.anchor?.textQuote?.exact || "", /detailed balance condition/i, "anchor exact quote");
+	assert.match(result.anchor?.textQuote?.prefix || "", /irreducible and aperiodic/i, "anchor prefix context");
+	assert.match(result.anchor?.textQuote?.suffix || "", /convergence rates depend/i, "anchor suffix context");
+	const highlight = dom.window.document.querySelector('[data-onhand-highlight-kind="inline"]');
+	const storedAnchor = JSON.parse(highlight.getAttribute("data-onhand-anchor") || "null");
+	assert.match(storedAnchor?.textQuote?.prefix || "", /irreducible and aperiodic/i, "anchor should persist on the element");
+	assert.ok(highlight.getAttribute("data-onhand-matched-text"), "matched text should persist on the element");
+	const captured = await toolkit.captureState();
+	assert.equal(captured.annotations.length, 1);
+	assert.match(captured.annotations[0].anchor?.textQuote?.suffix || "", /convergence rates/i, "captureState should serialize the anchor");
+}
+
+async function assertAnchorContextDisambiguatesRepeatedText() {
+	const created = await createToolkit(`
+		<main>
+			<p id="first">Chapter one introduces the estimator. The proof follows directly. Nothing else in this section depends on it.</p>
+			<p id="second">Chapter two extends the argument to continuous domains. The proof follows directly. A worked example closes the chapter.</p>
+			<p id="third">Chapter three studies degenerate cases. The proof follows directly. Careful readers will spot the missing assumption.</p>
+		</main>
+	`);
+	const result = await created.toolkit.highlightText("The proof follows directly.", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		anchor: {
+			surface: "html",
+			textQuote: {
+				exact: "The proof follows directly.",
+				prefix: "extends the argument to continuous domains.",
+				suffix: "A worked example closes the chapter.",
+			},
+			occurrence: 1,
+		},
+	});
+	assert.ok(!result.approximate, "context-disambiguated exact match should not be approximate");
+	const highlight = created.dom.window.document.querySelector('[data-onhand-highlight-kind="inline"]');
+	assert.equal(highlight.closest("p")?.id, "second", "anchored restore should pick the occurrence whose stored context agrees");
+}
+
+async function assertAnchorOccurrenceBreaksContextTies() {
+	const created = await createToolkit(`
+		<main>
+			<p id="p1">Same lead-in prose for every row. Target sentence sits right here. Same tail prose for every row.</p>
+			<p id="p2">Same lead-in prose for every row. Target sentence sits right here. Same tail prose for every row.</p>
+		</main>
+	`);
+	await created.toolkit.highlightText("Target sentence sits right here.", {
+		scrollIntoView: false,
+		exactOnly: true,
+		allowApproximate: false,
+		anchor: {
+			surface: "html",
+			textQuote: {
+				exact: "Target sentence sits right here.",
+				prefix: "Same lead-in prose for every row.",
+				suffix: "Same tail prose for every row.",
+			},
+			occurrence: 2,
+		},
+	});
+	const highlight = created.dom.window.document.querySelector('[data-onhand-highlight-kind="inline"]');
+	assert.equal(highlight.closest("p")?.id, "p2", "identical contexts should fall back to the stored occurrence");
+}
+
+async function assertAnchorContextRecoversDriftedText() {
+	// Capture an anchor on the original page, then restore onto a page whose
+	// highlighted sentence was rewritten while its surroundings survived.
+	const original = await createToolkit(`
+		<main>
+			<p>The sampler explores the posterior efficiently. Detailed balance guarantees stationarity of the target distribution. Mixing times degrade when correlations are strong.</p>
+		</main>
+	`);
+	const createdAnnotation = await original.toolkit.highlightText(
+		"Detailed balance guarantees stationarity of the target distribution.",
+		{ scrollIntoView: false },
+	);
+	assert.ok(createdAnnotation.anchor?.textQuote?.prefix && createdAnnotation.anchor?.textQuote?.suffix, "created highlight should carry anchor context");
+	const drifted = await createToolkit(`
+		<main>
+			<p>The sampler explores the posterior efficiently. Reversibility now ensures the chain keeps the intended target. Mixing times degrade when correlations are strong.</p>
+		</main>
+	`);
+	const restored = await drifted.toolkit.highlightText(
+		"Detailed balance guarantees stationarity of the target distribution.",
+		{
+			scrollIntoView: false,
+			exactOnly: true,
+			allowApproximate: false,
+			anchor: createdAnnotation.anchor,
+		},
+	);
+	assert.equal(restored.fallback, "context", "drifted text should be recovered from the stored context");
+	assert.equal(restored.approximate, true, "context recovery is reported as approximate");
+	assert.match(restored.matchedText, /Reversibility now ensures the chain keeps the intended target/, "the recovered span should be the rewritten sentence");
+}
+
+async function assertAnchorRecoveryRequiresBothContextSides() {
+	// A weak anchor (no suffix) must not trigger drift recovery — exact-only
+	// restores should still fail cleanly rather than guess.
+	const created = await createToolkit(`
+		<main>
+			<p>The sampler explores the posterior efficiently. Reversibility now ensures the chain keeps the intended target. Mixing times degrade when correlations are strong.</p>
+		</main>
+	`);
+	await assert.rejects(
+		() =>
+			created.toolkit.highlightText("Detailed balance guarantees stationarity of the target distribution.", {
+				scrollIntoView: false,
+				exactOnly: true,
+				allowApproximate: false,
+				anchor: {
+					surface: "html",
+					textQuote: {
+						exact: "Detailed balance guarantees stationarity of the target distribution.",
+						prefix: "The sampler explores the posterior efficiently.",
+					},
+					occurrence: 1,
+				},
+			}),
+		/No visible text matched/,
+		"one-sided context should not authorize recovery",
+	);
+}
+
 async function assertTweetTextContainerCanBeHighlightedAcrossNodes() {
 	const target =
 		"current goal: fund better dev hardware, ideally a MacBook, so I can test more AI coding workflows and keep building OSS faster";
@@ -3353,6 +3487,11 @@ async function main() {
 	await assertExactSourceModeDoesNotApproximate();
 	await assertExactSourceModeReusesExistingHighlight();
 	await assertHighlightTextPreservesExistingAnnotationsByDefault();
+	await assertInlineHighlightRecordsTextQuoteAnchor();
+	await assertAnchorContextDisambiguatesRepeatedText();
+	await assertAnchorOccurrenceBreaksContextTies();
+	await assertAnchorContextRecoversDriftedText();
+	await assertAnchorRecoveryRequiresBothContextSides();
 	await assertTweetTextContainerCanBeHighlightedAcrossNodes();
 	await assertNestedListHighlightUsesBlockContainer();
 	await assertExactMathSourceModeMatchesRenderedMathJax();

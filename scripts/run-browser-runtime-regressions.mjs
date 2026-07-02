@@ -1631,6 +1631,7 @@ async function assertSelectionFormatting() {
 		url: "https://example.test/captured",
 		restoredCount: 2,
 		restoredAnnotations: 2,
+		recoveredAnnotations: 0,
 		restoredNotes: 1,
 		failedCount: 0,
 		failures: [],
@@ -1649,6 +1650,17 @@ async function assertSelectionFormatting() {
 	assert.equal(replayed.source, "browser-replay");
 	assert.equal(replayed.restoredCount, 1);
 
+	const recovered = summarizeRestoredArtifact({
+		tab: { id: 42, title: "Restored tab", url: "https://example.test/page" },
+		artifactId: "artifact_recovered",
+		artifact: { page: { title: "Drifted page", url: "https://example.test/drifted" } },
+		restoredAnnotations: 3,
+		recoveredAnnotations: 2,
+		restoredNotes: 0,
+		failures: [],
+	});
+	assert.equal(recovered.recoveredAnnotations, 2, "context-recovered highlight counts should reach the restore summary");
+
 	const replayAnnotations = buildReplayAnnotationsFromPageActions([
 		{
 			key: "highlight:ann-1",
@@ -1661,6 +1673,7 @@ async function assertSelectionFormatting() {
 			label: "Highlighted text",
 			detail: "Alpha smoke content",
 			citationText: "Alpha smoke content",
+			anchor: { surface: "html", textQuote: { exact: "Alpha smoke content", prefix: "Intro", suffix: "Outro" }, occurrence: 1 },
 		},
 		{
 			key: "note:ann-1",
@@ -1693,6 +1706,7 @@ async function assertSelectionFormatting() {
 			url: "https://example.test/replay",
 			annotationId: "ann-1",
 			matchedText: "Alpha smoke content",
+			anchor: { surface: "html", textQuote: { exact: "Alpha smoke content", prefix: "Intro", suffix: "Outro" }, occurrence: 1 },
 			noteText: "Important replay note",
 		},
 	]);

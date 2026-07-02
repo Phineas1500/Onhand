@@ -134310,7 +134310,8 @@ function artifactReplayAnnotations(artifact) {
       rect: annotation.rect || null,
       noteRect: note?.rect || null,
       container: annotation.container || null,
-      ...annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {}
+      ...annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {},
+      ...annotation.anchor ? { anchor: annotation.anchor } : {}
     };
   }).filter(Boolean);
 }
@@ -134351,6 +134352,7 @@ function summarizeRestoredArtifact(result) {
     url: artifact?.page?.url || artifact?.tab?.url || tab?.url || "",
     restoredCount: Number(result?.restoredAnnotations || 0),
     restoredAnnotations: Number(result?.restoredAnnotations || 0),
+    recoveredAnnotations: Number(result?.recoveredAnnotations || 0),
     restoredNotes: Number(result?.restoredNotes || 0),
     failedCount: failures.length,
     failures
@@ -134374,6 +134376,7 @@ function mergeReplayTarget(target, action) {
   if (!target.title && action.title) target.title = action.title;
   if (!target.url && action.url) target.url = action.url;
   if (!target.pdfAnchor && action.pdfAnchor) target.pdfAnchor = action.pdfAnchor;
+  if (!target.anchor && action.anchor) target.anchor = action.anchor;
 }
 function buildReplayAnnotationsFromPageActions(pageActions = []) {
   const annotations = /* @__PURE__ */ new Map();
@@ -134395,6 +134398,7 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
     if (existing) {
       mergeReplayTarget(existing, action);
       if (!existing.pdfAnchor && action.pdfAnchor) existing.pdfAnchor = action.pdfAnchor;
+      if (!existing.anchor && action.anchor) existing.anchor = action.anchor;
       continue;
     }
     const replayAnnotation = {
@@ -134408,6 +134412,7 @@ function buildReplayAnnotationsFromPageActions(pageActions = []) {
       matchedText
     };
     if (action.pdfAnchor) replayAnnotation.pdfAnchor = action.pdfAnchor;
+    if (action.anchor) replayAnnotation.anchor = action.anchor;
     annotations.set(key, replayAnnotation);
   }
   for (const [key, note] of notes) {
@@ -139011,7 +139016,8 @@ function buildPageAction(toolName, result) {
         label: "Highlighted text",
         detail: matchedText,
         citationText: matchedTextFull || matchedText,
-        ...details.annotation?.pdfAnchor ? { pdfAnchor: details.annotation.pdfAnchor } : {}
+        ...details.annotation?.pdfAnchor ? { pdfAnchor: details.annotation.pdfAnchor } : {},
+        ...details.annotation?.anchor ? { anchor: details.annotation.anchor } : {}
       };
     }
     case "browser_show_note": {
@@ -140788,14 +140794,30 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     let restoredAnnotations = 0;
+    let recoveredAnnotations = 0;
     let restoredNotes = 0;
     const restoredTargets = [];
+    const annotationResults = [];
     for (const annotation of annotations) {
       const text = String(annotation?.matchedText || "").trim();
       if (!text) continue;
       try {
-        const highlighted = await highlightTextWithReplayCandidates(tabId, text, { scrollIntoView: false, pdfAnchor: annotation?.pdfAnchor, scanPage: true });
+        const highlighted = await highlightTextWithReplayCandidates(tabId, text, {
+          scrollIntoView: false,
+          pdfAnchor: annotation?.pdfAnchor,
+          anchor: annotation?.anchor,
+          scanPage: true
+        });
         restoredAnnotations += 1;
+        const restoredFallback = String(highlighted?.annotation?.fallback || "");
+        const recovered = restoredFallback === "context";
+        if (recovered) recoveredAnnotations += 1;
+        annotationResults.push({
+          annotationId: String(annotation?.annotationId || ""),
+          matchedText: truncate2(text, 200),
+          status: recovered ? "recovered" : "restored",
+          ...restoredFallback ? { fallback: restoredFallback } : {}
+        });
         const noteText = String(annotation?.note?.text || "").trim();
         const annotationId = highlighted?.annotation?.annotationId;
         restoredTargets.push({
@@ -140820,6 +140842,12 @@ function createOnhandBrowserRuntime(host) {
       } catch (error52) {
         host.log?.("artifact restore highlight failed", artifactEffectiveUrl(artifact), String(text).slice(0, 60), error52?.message || String(error52));
         failures.push(error52?.message || String(error52));
+        annotationResults.push({
+          annotationId: String(annotation?.annotationId || ""),
+          matchedText: truncate2(text, 200),
+          status: "failed",
+          error: error52?.message || String(error52)
+        });
       }
     }
     if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number" || artifact.page?.scrollContainer)) {
@@ -140834,8 +140862,10 @@ function createOnhandBrowserRuntime(host) {
       artifact,
       artifactId: artifact.id,
       restoredAnnotations,
+      recoveredAnnotations,
       restoredNotes,
       restoredTargets,
+      annotationResults,
       failures
     };
   }
@@ -140888,6 +140918,7 @@ function createOnhandBrowserRuntime(host) {
         annotations: annotations.map((annotation) => ({
           matchedText: annotation.matchedText,
           ...annotation.pdfAnchor ? { pdfAnchor: annotation.pdfAnchor } : {},
+          ...annotation.anchor ? { anchor: annotation.anchor } : {},
           note: annotation.noteText ? { text: annotation.noteText, label: annotation.noteLabel || "Onhand" } : null
         }))
       }
@@ -141077,7 +141108,8 @@ function createOnhandBrowserRuntime(host) {
           scrollIntoView: options.scrollIntoView !== false,
           exactOnly: true,
           allowApproximate: false,
-          reuseExisting: true
+          reuseExisting: true,
+          ...options.anchor ? { anchor: options.anchor } : {}
         });
         return { result, lastError: null };
       } catch (error52) {
@@ -141581,15 +141613,18 @@ function createOnhandBrowserRuntime(host) {
         }
       }
       let restoredAnnotations = 0;
+      let recoveredAnnotations = 0;
       let restoredNotes = 0;
       for (const annotation of annotations) {
         try {
           const highlighted = await highlightTextWithReplayCandidates(tabId, annotation.matchedText, {
             scrollIntoView: false,
             pdfAnchor: annotation.pdfAnchor,
+            anchor: annotation.anchor,
             scanPage: true
           });
           restoredAnnotations += 1;
+          if (String(highlighted?.annotation?.fallback || "") === "context") recoveredAnnotations += 1;
           const annotationId = highlighted?.annotation?.annotationId;
           updateSessionReplayActionTargets(session, annotation, tab, highlighted?.annotation);
           if (annotation.noteText && annotationId) {
@@ -141612,6 +141647,7 @@ function createOnhandBrowserRuntime(host) {
         artifact: buildReplayArtifact(session, targetKey, tab, annotations),
         artifactId: "",
         restoredAnnotations,
+        recoveredAnnotations,
         restoredNotes,
         failures
       });

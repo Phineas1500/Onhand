@@ -6913,6 +6913,24 @@ const createPageToolkit = (options = {}) => {
 		return candidates;
 	};
 
+	// Containers for context-anchored recovery: the highlighted text itself has
+	// drifted, so select containers by the anchor's surrounding context instead
+	// of the query.
+	const collectAnchorContextContainers = (compactPrefix, compactSuffix) => {
+		const root = document.body || document.documentElement;
+		const candidates = [];
+		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
+			if (!(container instanceof Element)) continue;
+			if (!isVisible(container)) continue;
+			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (container.closest('[data-onhand-highlight-kind]')) continue;
+			const compactText = compactHighlightSearchText(getElementText(container));
+			if (!compactText.includes(compactPrefix) || !compactText.includes(compactSuffix)) continue;
+			candidates.push(container);
+		}
+		return candidates;
+	};
+
 	// pdf.js text layers render one absolutely positioned span per text item
 	// with no whitespace between spans, so a naive node walk glues wrapped
 	// lines and adjacent words together while extraction (what the model
@@ -6930,6 +6948,170 @@ const createPageToolkit = (options = {}) => {
 		if (Math.abs(nextRect.top - previousRect.top) > lineHeight / 2) return true;
 		return nextRect.left - previousRect.right > lineHeight * 0.12;
 	};
+
+	// HTML text-quote anchors: each inline highlight records its matched text
+	// plus ~80 chars of surrounding context so a later restore can disambiguate
+	// repeated text and recover the span when the page text has drifted.
+	// Mirrors the PDF anchor machinery in pdf-viewer.ts (same context length,
+	// same compact-space scoring, same "context" recovery fallback name) so both
+	// surfaces re-find annotations the same way.
+	const HTML_ANCHOR_CONTEXT_LENGTH = 80;
+	// A 1-2 char boundary coincidence is meaningless; require a real run of
+	// agreeing context before trusting it over the stored occurrence.
+	const HTML_ANCHOR_MIN_CONTEXT_SCORE = 6;
+	// Context-anchored recovery of drifted text needs enough context on both
+	// sides to make the recovered span trustworthy.
+	const HTML_ANCHOR_MIN_RECOVERY_CONTEXT = 6;
+
+	const collectAnchorMatchIndices = (haystack, needle) => {
+		const indices = [];
+		if (!needle) return indices;
+		let from = 0;
+		for (;;) {
+			const index = haystack.indexOf(needle, from);
+			if (index === -1) break;
+			indices.push(index);
+			from = index + Math.max(needle.length, 1);
+		}
+		return indices;
+	};
+
+	const anchorCommonSuffixLength = (a, b) => {
+		let i = a.length - 1;
+		let j = b.length - 1;
+		let count = 0;
+		while (i >= 0 && j >= 0 && a[i] === b[j]) {
+			i -= 1;
+			j -= 1;
+			count += 1;
+		}
+		return count;
+	};
+
+	const anchorCommonPrefixLength = (a, b) => {
+		let i = 0;
+		while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+		return i;
+	};
+
+	// How well the text around a candidate match position agrees with the
+	// anchor's stored prefix/suffix. Compared in compact (alphanumeric) space so
+	// punctuation and whitespace drift never sinks the score. Higher = better.
+	const scoreAnchorContextAt = (haystack, startIndex, matchLength, compactPrefix, compactSuffix) => {
+		let score = 0;
+		if (compactPrefix) {
+			const before = compactHighlightSearchText(haystack.slice(Math.max(0, startIndex - HTML_ANCHOR_CONTEXT_LENGTH), startIndex));
+			score += anchorCommonSuffixLength(before, compactPrefix);
+		}
+		if (compactSuffix) {
+			const after = compactHighlightSearchText(haystack.slice(startIndex + matchLength, startIndex + matchLength + HTML_ANCHOR_CONTEXT_LENGTH));
+			score += anchorCommonPrefixLength(after, compactSuffix);
+		}
+		return score;
+	};
+
+	const extractHighlightAnchorContext = (text, startIndex, matchLength) => {
+		const prefix = text.slice(Math.max(0, startIndex - HTML_ANCHOR_CONTEXT_LENGTH), startIndex).trim();
+		const suffix = text.slice(startIndex + matchLength, startIndex + matchLength + HTML_ANCHOR_CONTEXT_LENGTH).trim();
+		if (!prefix && !suffix) return null;
+		const context = {};
+		if (prefix) context.prefix = prefix;
+		if (suffix) context.suffix = suffix;
+		return context;
+	};
+
+	const parseHtmlHighlightAnchor = (anchor) => {
+		if (!anchor || typeof anchor !== "object") return null;
+		if (anchor.surface && anchor.surface !== "html") return null;
+		const quote = anchor.textQuote && typeof anchor.textQuote === "object" ? anchor.textQuote : anchor;
+		const exact = normalizeText(String(quote.exact || ""));
+		const prefix = normalizeText(String(quote.prefix || ""));
+		const suffix = normalizeText(String(quote.suffix || ""));
+		if (!prefix && !suffix) return null;
+		return {
+			exact,
+			prefix,
+			suffix,
+			compactPrefix: compactHighlightSearchText(prefix),
+			compactSuffix: compactHighlightSearchText(suffix),
+			occurrence: Math.max(1, Number(anchor.occurrence || 1) || 1),
+		};
+	};
+
+	const readHighlightAnchorAttribute = (element) => {
+		try {
+			const parsed = JSON.parse(element.getAttribute("data-onhand-anchor") || "null");
+			return parsed && typeof parsed === "object" ? parsed : null;
+		} catch {
+			return null;
+		}
+	};
+
+	const applyHighlightAnchorAttributes = (element, matchedText, options = {}) => {
+		if (!options.anchorContext) return;
+		const exact = normalizeText(matchedText).slice(0, 500);
+		if (!exact) return;
+		const textQuote = { exact };
+		if (options.anchorContext.prefix) textQuote.prefix = String(options.anchorContext.prefix).slice(0, 200);
+		if (options.anchorContext.suffix) textQuote.suffix = String(options.anchorContext.suffix).slice(0, 200);
+		element.setAttribute("data-onhand-matched-text", exact);
+		element.setAttribute(
+			"data-onhand-anchor",
+			JSON.stringify({
+				surface: "html",
+				textQuote,
+				occurrence: Math.max(1, Number(options.anchorOccurrence || 1) || 1),
+			}),
+		);
+	};
+
+	// The ordered exact-match projections highlightText scans. Shared between
+	// the legacy Nth-occurrence scan and the anchored (context-scored) pass so
+	// both see identical match surfaces.
+	const buildExactHighlightModes = (mappedText, queries) => [
+		{
+			text: mappedText.lowerText,
+			positions: mappedText.positions,
+			query: queries.normalizedQuery,
+			fallback: null,
+		},
+		{
+			text: mappedText.searchText,
+			positions: mappedText.searchPositions,
+			query: queries.searchQuery,
+			fallback: "normalized-text",
+		},
+		...(queries.citationStrippedQuery && queries.citationStrippedQuery !== queries.searchQuery
+			? [
+					{
+						text: mappedText.searchText,
+						positions: mappedText.searchPositions,
+						query: queries.citationStrippedQuery,
+						fallback: "citation-stripped-text",
+					},
+				]
+			: []),
+		...(queries.useCompactQuery
+			? [
+					{
+						text: mappedText.compactText,
+						positions: mappedText.compactPositions,
+						query: queries.compactQuery,
+						fallback: queries.compactFallback,
+					},
+				]
+			: []),
+		...(queries.useCompactQuery && queries.citationStrippedCompactQuery && queries.citationStrippedCompactQuery !== queries.compactQuery
+			? [
+					{
+						text: mappedText.compactText,
+						positions: mappedText.compactPositions,
+						query: queries.citationStrippedCompactQuery,
+						fallback: "citation-stripped-compact-text",
+					},
+				]
+			: []),
+	];
 
 	const buildNormalizedTextMap = (textNodes, options = {}) => {
 		const positions = [];
@@ -7214,6 +7396,7 @@ const createPageToolkit = (options = {}) => {
 			approximate: Boolean(options.approximate),
 			fallback: options.fallback || undefined,
 			reusedExisting: Boolean(options.reusedExisting),
+			anchor: readHighlightAnchorAttribute(annotationElement) || undefined,
 		};
 	};
 
@@ -7401,6 +7584,8 @@ const createPageToolkit = (options = {}) => {
 		}
 		const annotationId = nextAnnotationId();
 		const highlight = wrapRangeInHighlight(range, annotationId);
+		const matchedText = getElementText(highlight).slice(0, 500) || normalizeText(options.fallbackText || rawQuery);
+		applyHighlightAnchorAttributes(highlight, matchedText, options);
 		if (options.scrollIntoView !== false) {
 			highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
 		}
@@ -7408,12 +7593,13 @@ const createPageToolkit = (options = {}) => {
 		return {
 			annotationId,
 			kind: "inline",
-			matchedText: getElementText(highlight).slice(0, 500) || normalizeText(options.fallbackText || rawQuery),
+			matchedText,
 			container: summarizeElement(findAnnotationContainer(highlight)),
 			rect: rectToObject(highlight.getBoundingClientRect()),
 			scrollY: window.scrollY,
 			approximate: Boolean(options.approximate),
 			fallback: options.fallback || undefined,
+			anchor: readHighlightAnchorAttribute(highlight) || undefined,
 		};
 	};
 
@@ -7598,6 +7784,16 @@ const createPageToolkit = (options = {}) => {
 		const clearExisting = options.clearExisting === true;
 		const scrollIntoView = options.scrollIntoView !== false;
 		const exactOnly = Boolean(options.exactOnly || options.allowApproximate === false);
+		const htmlAnchor = parseHtmlHighlightAnchor(options.anchor);
+		const highlightQueries = {
+			normalizedQuery,
+			searchQuery,
+			compactQuery,
+			useCompactQuery,
+			compactFallback,
+			citationStrippedQuery,
+			citationStrippedCompactQuery,
+		};
 		ensureAnnotationStyles();
 			await waitForMathTypesetting(rawQuery);
 			if (options.pdfAnchor?.surface === "pdf") {
@@ -7641,57 +7837,68 @@ const createPageToolkit = (options = {}) => {
 		}
 		if (clearExisting) clearAnnotations();
 
+		// Anchored pass: with a stored text-quote anchor, score every exact
+		// occurrence against its prefix/suffix context and take the best-agreeing
+		// one — this is what lets restore survive repeated text and page edits.
+		// Falls through to the legacy Nth-occurrence scan when the context is
+		// absent or matches nowhere convincingly.
+		if (htmlAnchor && (htmlAnchor.compactPrefix || htmlAnchor.compactSuffix)) {
+			const anchoredCandidates = [];
+			for (const container of collectHighlightContainers(normalizedQuery, rawQuery)) {
+				const textNodes = collectHighlightTextNodes(container);
+				if (!textNodes.length) continue;
+				const mappedText = buildNormalizedTextMap(textNodes);
+				for (const mode of buildExactHighlightModes(mappedText, highlightQueries)) {
+					if (!mode.query || !mode.text.includes(mode.query)) continue;
+					let containerBest = null;
+					for (const foundAt of collectAnchorMatchIndices(mode.text, mode.query)) {
+						const score = scoreAnchorContextAt(mode.text, foundAt, mode.query.length, htmlAnchor.compactPrefix, htmlAnchor.compactSuffix);
+						if (score < HTML_ANCHOR_MIN_CONTEXT_SCORE) continue;
+						if (!containerBest || score > containerBest.score) containerBest = { mode, foundAt, score };
+					}
+					if (containerBest) {
+						// Nested containers surface the same DOM position twice;
+						// dedupe so occurrence tie-breaking below stays honest.
+						const start = containerBest.mode.positions[containerBest.foundAt];
+						const duplicate = anchoredCandidates.some((candidate) => {
+							const existing = candidate.mode.positions[candidate.foundAt];
+							return existing && start && existing.node === start.node && existing.offset === start.offset;
+						});
+						if (!duplicate) anchoredCandidates.push(containerBest);
+						break;
+					}
+				}
+			}
+			if (anchoredCandidates.length) {
+				const bestScore = Math.max(...anchoredCandidates.map((candidate) => candidate.score));
+				// Repeated rows can share identical surroundings; among the tied
+				// best, honor the stored occurrence so the right copy still wins.
+				const tied = anchoredCandidates.filter((candidate) => candidate.score === bestScore);
+				const chosen = tied[Math.min(htmlAnchor.occurrence, tied.length) - 1];
+				const start = chosen.mode.positions[chosen.foundAt];
+				const end = chosen.mode.positions[chosen.foundAt + chosen.mode.query.length - 1];
+				if (start && end) {
+					const range = document.createRange();
+					range.setStart(start.node, start.offset);
+					range.setEnd(end.node, getRangeEndOffset(end));
+					return await highlightRange(range, rawQuery, {
+						scrollIntoView,
+						approximate: Boolean(chosen.mode.fallback),
+						fallback: chosen.mode.fallback,
+						anchorContext: extractHighlightAnchorContext(chosen.mode.text, chosen.foundAt, chosen.mode.query.length),
+						anchorOccurrence: occurrence,
+					});
+				}
+			}
+		}
+
 		let matchIndex = 0;
 		let bestApproximateMatch = null;
 		for (const container of collectHighlightContainers(normalizedQuery, rawQuery)) {
 			const textNodes = collectHighlightTextNodes(container);
 			if (!textNodes.length) continue;
 			const mappedText = buildNormalizedTextMap(textNodes);
-			const exactModes = [
-				{
-					text: mappedText.lowerText,
-					positions: mappedText.positions,
-					query: normalizedQuery,
-					fallback: null,
-				},
-				{
-					text: mappedText.searchText,
-					positions: mappedText.searchPositions,
-					query: searchQuery,
-					fallback: "normalized-text",
-				},
-				...(citationStrippedQuery && citationStrippedQuery !== searchQuery
-					? [
-							{
-								text: mappedText.searchText,
-								positions: mappedText.searchPositions,
-								query: citationStrippedQuery,
-								fallback: "citation-stripped-text",
-							},
-						]
-					: []),
-				...(useCompactQuery
-					? [
-							{
-								text: mappedText.compactText,
-								positions: mappedText.compactPositions,
-								query: compactQuery,
-								fallback: compactFallback,
-							},
-						]
-					: []),
-				...(useCompactQuery && citationStrippedCompactQuery && citationStrippedCompactQuery !== compactQuery
-					? [
-							{
-								text: mappedText.compactText,
-								positions: mappedText.compactPositions,
-								query: citationStrippedCompactQuery,
-								fallback: "citation-stripped-compact-text",
-							},
-						]
-					: []),
-			];
-			for (const mode of exactModes) {
+			for (const mode of buildExactHighlightModes(mappedText, highlightQueries)) {
 				if (!mode.query || !mode.text.includes(mode.query)) continue;
 				let searchFrom = 0;
 				while (searchFrom <= mode.text.length) {
@@ -7719,6 +7926,8 @@ const createPageToolkit = (options = {}) => {
 							scrollIntoView,
 							approximate: Boolean(mode.fallback),
 							fallback: mode.fallback,
+							anchorContext: extractHighlightAnchorContext(mode.text, foundAt, mode.query.length),
+							anchorOccurrence: occurrence,
 						});
 					}
 					searchFrom = foundAt + Math.max(mode.query.length, 1);
@@ -7760,6 +7969,12 @@ const createPageToolkit = (options = {}) => {
 					scrollIntoView,
 					approximate: true,
 					fallbackText: bestApproximateMatch.text,
+					anchorContext: extractHighlightAnchorContext(
+						bestApproximateMatch.mappedText.text,
+						bestApproximateMatch.startIndex,
+						bestApproximateMatch.endIndex - bestApproximateMatch.startIndex,
+					),
+					anchorOccurrence: occurrence,
 				});
 			}
 		}
@@ -7771,6 +7986,52 @@ const createPageToolkit = (options = {}) => {
 				approximate: true,
 				fallback: "math-container",
 			});
+		}
+
+		// Context-anchored recovery: the saved text drifted, but the anchor's
+		// surrounding context is stable. Highlight the span sitting between the
+		// stored prefix and suffix — across every prefix occurrence, the gap
+		// closest to the original match length, when plausible. Runs even under
+		// exactOnly: it is a high-precision re-anchor, not a fuzzy match.
+		if (
+			htmlAnchor &&
+			htmlAnchor.compactPrefix.length >= HTML_ANCHOR_MIN_RECOVERY_CONTEXT &&
+			htmlAnchor.compactSuffix.length >= HTML_ANCHOR_MIN_RECOVERY_CONTEXT
+		) {
+			const referenceLength = Math.max(compactQuery.length, compactHighlightSearchText(htmlAnchor.exact).length);
+			const maxSpan = Math.max(referenceLength * 2, referenceLength + 24, 16);
+			let bestRecovery = null;
+			for (const container of collectAnchorContextContainers(htmlAnchor.compactPrefix, htmlAnchor.compactSuffix)) {
+				const textNodes = collectHighlightTextNodes(container);
+				if (!textNodes.length) continue;
+				const mappedText = buildNormalizedTextMap(textNodes);
+				for (const prefixIndex of collectAnchorMatchIndices(mappedText.compactText, htmlAnchor.compactPrefix)) {
+					const spanStart = prefixIndex + htmlAnchor.compactPrefix.length;
+					const suffixIndex = mappedText.compactText.indexOf(htmlAnchor.compactSuffix, spanStart);
+					if (suffixIndex <= spanStart || suffixIndex - spanStart > maxSpan) continue;
+					const spanLength = suffixIndex - spanStart;
+					if (!bestRecovery || Math.abs(spanLength - referenceLength) < Math.abs(bestRecovery.spanLength - referenceLength)) {
+						bestRecovery = { mappedText, spanStart, suffixIndex, spanLength };
+					}
+				}
+			}
+			if (bestRecovery) {
+				const start = bestRecovery.mappedText.compactPositions[bestRecovery.spanStart];
+				const end = bestRecovery.mappedText.compactPositions[bestRecovery.suffixIndex - 1];
+				if (start && end) {
+					const range = document.createRange();
+					range.setStart(start.node, start.offset);
+					range.setEnd(end.node, getRangeEndOffset(end));
+					return await highlightRange(range, rawQuery, {
+						scrollIntoView,
+						approximate: true,
+						fallback: "context",
+						fallbackText: htmlAnchor.exact || rawQuery,
+						anchorContext: { prefix: htmlAnchor.prefix, suffix: htmlAnchor.suffix },
+						anchorOccurrence: htmlAnchor.occurrence,
+					});
+				}
+			}
 		}
 
 		throw new Error(`No visible text matched: ${query}`);
@@ -8417,6 +8678,7 @@ const createPageToolkit = (options = {}) => {
 					container: summarizeElement(container),
 					rect: rectToObject(annotationElement.getBoundingClientRect()),
 					pdfAnchor,
+					anchor: readHighlightAnchorAttribute(annotationElement),
 					note: note
 						? {
 							noteId: note.getAttribute("data-onhand-note-id") || null,
@@ -12429,6 +12691,7 @@ async function handleCommand(name, args = {}) {
 					allowApproximate: args.allowApproximate,
 					reuseExisting: args.reuseExisting,
 					pdfAnchor: args.pdfAnchor,
+					anchor: args.anchor,
 				});
 				return {
 					tab: simplifyTab(tab),
