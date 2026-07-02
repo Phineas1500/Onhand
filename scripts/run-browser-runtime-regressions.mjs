@@ -1713,6 +1713,79 @@ async function assertSelectionFormatting() {
 	]);
 }
 
+async function assertDocumentReviewMarkupLane() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const {
+		promptAsksForDocumentReviewMarkupForTest: isReview,
+		buildReviewExtractionFirstGuardResultForTest: extractionGuard,
+		buildSurplusReviewHighlightGuardResultForTest: surplusHighlightGuard,
+		buildSurplusReviewNoteGuardResultForTest: surplusNoteGuard,
+		buildStructuredNoteBudgetGuardResultForTest: structuredNoteGuard,
+		buildSurplusTeachingHighlightGuardResultForTest: surplusTeachingGuard,
+		buildReasoningProfileForTest: buildProfile,
+	} = __browserRuntimeTest;
+
+	// The real failing phrasing: no markup verb anywhere — embedded feedback
+	// plus the document as subject must classify it.
+	const realPhrasing = [
+		"I recently started working on the knowledge graph validation, and I had written a document that went",
+		"through kind of a summary of the validation. I think it was the KG validation plan. That's the document",
+		"that we had written. And I got some notes back on this plan, and I'd like you to go through them and give",
+		"me your thoughts on the advice that I got.",
+		"from my manager: Document looks good but there are several holes as mentioned below. Please plug the",
+		"holes and circulate the updated document. You cannot descope numerical magnitude. That's a huge hole.",
+		"Negative space is mentioned but not defined operationally. The named causal spines are not fully",
+		"specified in the plan. County counts are used as a census check but the approach is fragile.",
+	].join(" ");
+	assert.equal(isReview(realPhrasing), true, "embedded feedback + document subject should classify as review markup");
+	assert.equal(isReview("Mark up this draft with what I should change."), true, "explicit markup verbs qualify alone");
+	assert.equal(isReview("Summarize this document for me."), false, "summaries are not review markup");
+	assert.equal(isReview("Review this plan."), false, "a bare review ask without feedback stays in its usual lane");
+	assert.equal(isReview("Teach me what this page says about Bayesian neural networks."), false, "teaching stays teaching");
+
+	// The review profile must lead with full-document extraction and a
+	// per-feedback-point mark budget.
+	const settings = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" };
+	const profile = buildProfile(settings, realPhrasing, [], false);
+	assert.equal(profile.mode, "deep");
+	assert.match(profile.reason, /document review markup/i);
+	assert.match(profile.promptPolicy, /Document review markup/);
+	assert.match(profile.promptPolicy, /browser_extract_content before placing any marks/);
+	assert.match(profile.promptPolicy, /browser_show_note/);
+
+	// Extraction-first guard: fires once before any full read, then never again.
+	const request = { toolTraces: [] };
+	const first = extractionGuard("browser_highlight_text", "highlight_text", realPhrasing, request);
+	assert.equal(first?.guardrail?.kind, "review_extraction_first");
+	assert.match(first.guardrail.message, /browser_extract_content first/);
+	assert.equal(extractionGuard("browser_highlight_text", "highlight_text", realPhrasing, request), null, "the nudge is one-shot");
+	const readRequest = {
+		toolTraces: [{ toolName: "browser_extract_content", state: "complete" }],
+	};
+	assert.equal(extractionGuard("browser_highlight_text", "highlight_text", realPhrasing, readRequest), null, "no nudge once the document was read");
+
+	// Budgets: ten marks and ten notes fit; the eleventh is folded into chat.
+	const marks = (count) => ({
+		toolTraces: Array.from({ length: count }, (_, index) => ({
+			toolName: "browser_highlight_text",
+			state: "complete",
+			resultSummary: `Highlighted text ${index + 1}`,
+		})),
+	});
+	assert.equal(surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(9)), null);
+	assert.equal(surplusHighlightGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(10))?.guardrail?.kind, "surplus_review_highlight");
+	const notes = (count) => ({
+		toolTraces: Array.from({ length: count }, () => ({ toolName: "browser_show_note", state: "complete" })),
+	});
+	assert.equal(surplusNoteGuard("browser_show_note", "show_note", realPhrasing, notes(9)), null);
+	assert.equal(surplusNoteGuard("browser_show_note", "show_note", realPhrasing, notes(10))?.guardrail?.kind, "surplus_review_note");
+
+	// The teaching/structured caps must not strangle the review lane even when
+	// the pasted feedback trips their keyword predicates ("summary", "approach").
+	assert.equal(structuredNoteGuard("browser_show_note", "show_note", realPhrasing, notes(3)), null, "structured note cap must not apply to review markup");
+	assert.equal(surplusTeachingGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(4)), null, "teaching highlight cap must not apply to review markup");
+}
+
 async function assertBlankReplyRetryWaitsForAgentIdle() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { queueBlankReplyRetryForTest, buildBlankReplyRetryPromptForTest } = __browserRuntimeTest || {};
@@ -3450,7 +3523,14 @@ async function assertConstitutionPromptContract() {
 	assert.equal(
 		compactOnPageNoteTextForTest("Eight heads preserve different relationships. The sidebar has the details."),
 		"Eight heads preserve different relationships.",
-		"on-page notes should keep only the first useful sentence",
+		"on-page notes should drop sentences that defer to the sidebar",
+	);
+	assert.equal(
+		compactOnPageNoteTextForTest(
+			"Valid as a regression check, but overclaims if the manifest is self-derived. Reword “free” to mean free to execute, not free to author.",
+		),
+		"Valid as a regression check, but overclaims if the manifest is self-derived. Reword “free” to mean free to execute, not free to author.",
+		"a second actionable sentence within the budget must survive — it is the what-to-change payload of a review note",
 	);
 	assert.equal(
 		shouldRequirePdfAnchorRetryForTest({
@@ -8810,6 +8890,7 @@ async function main() {
 	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
+	await assertDocumentReviewMarkupLane();
 	await assertBlankReplyRetryWaitsForAgentIdle();
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertToolRetryActivitiesFinalizeAsRecovered();
