@@ -132630,15 +132630,13 @@ function promptAsksForExternalBrowsing(text) {
   );
 }
 function promptAsksForLinkedPageNavigation(text) {
-  const hasNavigationVerb = textHasAny(text, /\b(open(?: up)?|follow|click|visit|navigate(?: to)?|go to|load|pull up|bring up|inspect|look at|check|review|read|scan)\b/);
-  const hasLinkedPageTarget = textHasAny(
-    text,
-    /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b/
-  );
-  if (hasNavigationVerb && hasLinkedPageTarget) return true;
+  const explicitNavigationVerb = /\b(open(?: up)?|follow|click|visit|navigate(?: to)?|go to|load|pull up|bring up)\b/;
+  const linkedResourceTarget = /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|linked pages?)\b/;
+  const genericLinkedDestination = /\b(?:linked|listed|referenced|cited|source|related|relevant|other)\s+(?:pages?|articles?|papers?|documents?)\b|\b(?:pages?|articles?|papers?|documents?)\s+(?:linked|listed|referenced|cited|on this page|from this page)\b/;
+  if (textHasAny(text, explicitNavigationVerb) && (textHasAny(text, linkedResourceTarget) || textHasAny(text, genericLinkedDestination))) return true;
   return textHasAny(
     text,
-    /\b(find|check|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)?\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?|articles?|papers?|documents?)\b[\s\S]{0,120}\b(open|follow|click|visit|inspect|look at|check|review|read|scan)?\b|\b(open|follow|click|visit|inspect|look at|check|review|read|scan)\b[\s\S]{0,120}\b(relevant|important|useful|related|other)\b[\s\S]{0,120}\b(notes?|lecture notes?|links?|pages?|readings?|resources?)\b/
+    /\b(find|check|inspect|look at|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?)\b|\b(other|relevant|important|useful|related)\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?)\b[\s\S]{0,120}\b(find|check|inspect|look at|review|read|scan)\b/
   );
 }
 function nowIso() {
