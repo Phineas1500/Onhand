@@ -134753,14 +134753,15 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (promptForbidsPageChanges(request.displayPrompt)) return false;
   if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
-  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) ? 2 : 1;
+  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForCrossTabComparison(request.displayPrompt) ? 2 : 1;
   return completedSourceHighlightCount(request) < requiredHighlights;
 }
 function buildPageSourceMarkerRetryPrompt(request, assistantText) {
   const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
-  const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt);
+  const crossTab = promptAsksForCrossTabComparison(request?.displayPrompt);
+  const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || crossTab;
   const completedHighlights = completedSourceHighlightCount(request);
-  const markerInstruction = structured ? completedHighlights > 0 ? "This structured page answer needs one more durable source marker before the final chat answer." : "This structured page answer needs durable page source markers before the final chat answer." : "This page-grounded answer needs a durable page source marker before the final chat answer.";
+  const markerInstruction = crossTab ? "This cross-tab comparison needs a durable source marker in each source tab before the final chat answer: pass each tab's tabId (or titleContains after browser_list_tabs) to browser_highlight_text; do not activate or switch tabs to place a marker." : structured ? completedHighlights > 0 ? "This structured page answer needs one more durable source marker before the final chat answer." : "This structured page answer needs durable page source markers before the final chat answer." : "This page-grounded answer needs a durable page source marker before the final chat answer.";
   const highlightInstruction = structured ? [
     "Before answering, call browser_highlight_text with short exact visible/readable spans for the key claims.",
     "For roadmap, list, process, derivation, or proof answers, use one source marker per required item you will name, unless one highlighted source list/table directly contains every named item. For compare/contrast answers, usually use one concise source marker per side.",
@@ -136533,7 +136534,7 @@ function promptReferencesCurrentPageMaterial(text) {
 function promptAsksForStructuredPageSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
-  if (/\b(?:roadmap|step[- ]by[- ]step|walk(?:\s+me)?\s+through)\b/.test(text)) return true;
+  if (/\broadmap\b/.test(text)) return true;
   if (!promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
@@ -136579,7 +136580,7 @@ function promptAsksForCrossTabComparison(prompt) {
   if (!text) return false;
   const crossTabComparisonVerb = textHasAny(
     text,
-    /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate|chang(?:e|ed|es))\b/
+    /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|how|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/
   );
   const explicitCrossTabComparisonTarget = textHasAny(
     text,
@@ -137633,7 +137634,9 @@ function buildSurplusHighlightGuardResult(toolName, commandName, prompt, request
   };
 }
 function normalizeOpenTabUrlForComparison(value) {
-  return String(value || "").trim().toLowerCase().replace(/#.*$/, "").replace(/\/+$/, "");
+  const text = String(value || "").trim().replace(/#.*$/, "").replace(/\/+$/, "");
+  const match2 = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
+  return match2 ? `${match2[1].toLowerCase()}${match2[2]}` : text;
 }
 function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
   if (commandName !== "navigate" || !params?.newTab) return null;
@@ -140812,6 +140815,9 @@ function createOnhandBrowserRuntime(host) {
     );
     const hasExplicitTabSelector = typeof normalizedParams?.tabId === "number" || annotationCommandAllowsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim());
     if (hasExplicitTabSelector && hasCompletedTabInventory(activeRequest)) {
+      if (typeof normalizedParams?.tabId !== "number" && typeof targetWindowId === "number" && typeof normalizedParams?.windowId !== "number") {
+        return { ...normalizedParams || {}, windowId: targetWindowId };
+      }
       return normalizedParams || {};
     }
     const readCommandRejectsTabMatch = [

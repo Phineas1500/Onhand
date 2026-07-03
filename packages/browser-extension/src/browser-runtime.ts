@@ -3351,15 +3351,19 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 	if (promptForbidsPageChanges(request.displayPrompt)) return false;
 	if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
 	if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
-	const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) ? 2 : 1;
+	const requiredHighlights =
+		promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForCrossTabComparison(request.displayPrompt) ? 2 : 1;
 	return completedSourceHighlightCount(request) < requiredHighlights;
 }
 
 function buildPageSourceMarkerRetryPrompt(request: any, assistantText: string) {
 	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
-	const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt);
+	const crossTab = promptAsksForCrossTabComparison(request?.displayPrompt);
+	const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || crossTab;
 	const completedHighlights = completedSourceHighlightCount(request);
-	const markerInstruction = structured
+	const markerInstruction = crossTab
+		? "This cross-tab comparison needs a durable source marker in each source tab before the final chat answer: pass each tab's tabId (or titleContains after browser_list_tabs) to browser_highlight_text; do not activate or switch tabs to place a marker."
+		: structured
 		? completedHighlights > 0
 			? "This structured page answer needs one more durable source marker before the final chat answer."
 			: "This structured page answer needs durable page source markers before the final chat answer."
@@ -6524,11 +6528,12 @@ function promptReferencesCurrentPageMaterial(text: string) {
 function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
-	// Strong enumerable-coverage words are page-scoped by default in a sidebar
-	// ask ("give me a roadmap of the twelve factors" names the content, not the
-	// page). Weaker structure words ("steps", "list", "methods") still need an
-	// explicit page reference so general-knowledge questions stay unaffected.
-	if (/\b(?:roadmap|step[- ]by[- ]step|walk(?:\s+me)?\s+through)\b/.test(text)) return true;
+	// "Roadmap" is page-scoped by default in a sidebar ask ("give me a roadmap
+	// of the twelve factors" names the content, not the page). Other structure
+	// words — including "walk me through" and "step-by-step", which routinely
+	// start general how-to asks — still need an explicit page reference so
+	// general-knowledge questions are not forced into page markers.
+	if (/\broadmap\b/.test(text)) return true;
 	if (!promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,
@@ -6597,7 +6602,7 @@ function promptAsksForCrossTabComparison(prompt: unknown) {
 	if (!text) return false;
 	const crossTabComparisonVerb = textHasAny(
 		text,
-		/\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate|chang(?:e|ed|es))\b/,
+		/\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|how|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/,
 	);
 	const explicitCrossTabComparisonTarget = textHasAny(
 		text,
@@ -7941,11 +7946,15 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 }
 
 function normalizeOpenTabUrlForComparison(value: unknown) {
-	return String(value || "")
+	const text = String(value || "")
 		.trim()
-		.toLowerCase()
 		.replace(/#.*$/, "")
 		.replace(/\/+$/, "");
+	// Only scheme and host are case-insensitive; paths and query values can be
+	// case-sensitive, so lowercasing them would treat distinct pages as
+	// duplicates.
+	const match = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
+	return match ? `${match[1].toLowerCase()}${match[2]}` : text;
 }
 
 // Opening a duplicate tab for a page that is already open (§6.10): once the
@@ -11502,6 +11511,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			(annotationCommandAllowsTabMatch &&
 				Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim()));
 		if (hasExplicitTabSelector && hasCompletedTabInventory(activeRequest)) {
+			// Title/url selectors resolve within the last-focused window in the
+			// background; scope them to the request window so a same-title tab in
+			// another window cannot take the annotation. Exact tabIds are global.
+			if (
+				typeof normalizedParams?.tabId !== "number" &&
+				typeof targetWindowId === "number" &&
+				typeof normalizedParams?.windowId !== "number"
+			) {
+				return { ...(normalizedParams || {}), windowId: targetWindowId };
+			}
 			return normalizedParams || {};
 		}
 		// Read commands reject title/url selectors in the background resolver by
