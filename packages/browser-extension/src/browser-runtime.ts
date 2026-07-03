@@ -3350,8 +3350,11 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 	if (!request || request.aborted || request.pageSourceMarkerRetry || request.pdfAnchorRetry) return false;
 	if (promptForbidsPageChanges(request.displayPrompt)) return false;
 	if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
-	if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
 	const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
+	// A completed PDF read hands single-source anchoring to the PDF anchor
+	// retry — but a cross-tab comparison still needs a marker in each source
+	// tab, so the distinct-tab requirement below must run for it.
+	if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
 	const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
 	// Cross-tab prompts need marks on distinct tabs, not just two marks total.
 	const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
@@ -6561,12 +6564,13 @@ function promptReferencesCurrentPageMaterial(text: string) {
 function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
-	// "Roadmap" is page-scoped by default in a sidebar ask ("give me a roadmap
-	// of the twelve factors" names the content, not the page). Other structure
-	// words — including "walk me through" and "step-by-step", which routinely
-	// start general how-to asks — still need an explicit page reference so
-	// general-knowledge questions are not forced into page markers.
-	if (/\broadmap\b/.test(text)) return true;
+	// "Roadmap of X" maps existing content and is page-scoped by default in a
+	// sidebar ask ("give me a roadmap of the twelve factors" names the content,
+	// not the page); "roadmap for/to X" plans something new ("career roadmap
+	// for becoming a data scientist") and needs a page reference like the
+	// other structure words, as do "walk me through" and "step-by-step",
+	// which routinely start general how-to asks.
+	if (/\broadmap\b(?!\s+(?:for|to)\b)/.test(text)) return true;
 	if (!promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,
@@ -6635,11 +6639,14 @@ function promptAsksForCrossTabComparison(prompt: unknown) {
 	if (!text) return false;
 	const crossTabComparisonVerb = textHasAny(
 		text,
-		/\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|how|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/,
+		// "how" is deliberately absent from the change-interrogatives: real
+		// "how ... changed" comparisons always carry did/does/has/was too,
+		// while "How do I change both tabs..." is an instruction ask.
+		/\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/,
 	);
 	const explicitCrossTabComparisonTarget = textHasAny(
 		text,
-		/\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b/,
+		/\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b/,
 	);
 	return crossTabComparisonVerb && explicitCrossTabComparisonTarget;
 }

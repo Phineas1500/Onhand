@@ -134752,8 +134752,8 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (!request || request.aborted || request.pageSourceMarkerRetry || request.pdfAnchorRetry) return false;
   if (promptForbidsPageChanges(request.displayPrompt)) return false;
   if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
-  if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
   const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
+  if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
   const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
   const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
   return completedCount < requiredHighlights;
@@ -136560,7 +136560,7 @@ function promptReferencesCurrentPageMaterial(text) {
 function promptAsksForStructuredPageSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
-  if (/\broadmap\b/.test(text)) return true;
+  if (/\broadmap\b(?!\s+(?:for|to)\b)/.test(text)) return true;
   if (!promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
@@ -136606,11 +136606,14 @@ function promptAsksForCrossTabComparison(prompt) {
   if (!text) return false;
   const crossTabComparisonVerb = textHasAny(
     text,
-    /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|how|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/
+    // "how" is deliberately absent from the change-interrogatives: real
+    // "how ... changed" comparisons always carry did/does/has/was too,
+    // while "How do I change both tabs..." is an instruction ask.
+    /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/
   );
   const explicitCrossTabComparisonTarget = textHasAny(
     text,
-    /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|sources?|pages?)\b/
+    /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b/
   );
   return crossTabComparisonVerb && explicitCrossTabComparisonTarget;
 }
