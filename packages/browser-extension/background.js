@@ -458,7 +458,9 @@ function hasTabMatchSelector(args = {}) {
 
 async function resolveReadTargetTab(args = {}) {
 	if (hasTabMatchSelector(args)) {
-		throw new Error("Reading page content by titleContains or urlContains is not allowed. Use the active tab or an explicit tabId selected by the user.");
+		throw new Error(
+			"Reading page content by titleContains or urlContains is not supported. Omit the selector to read the active tab, or call browser_list_tabs and pass that tab's exact tabId.",
+		);
 	}
 	return await resolveTargetTab(args);
 }

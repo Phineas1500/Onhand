@@ -137085,7 +137085,8 @@ function toolResultText(result, maxChars = 5e3) {
 function formatCompactTab(tab) {
   const title = String(tab?.title || "(untitled)").trim();
   const url2 = String(tab?.url || "").trim();
-  return url2 ? `${title} - ${url2}` : title;
+  const tabId = typeof tab?.id === "number" ? ` [tabId ${tab.id}]` : "";
+  return url2 ? `${title} - ${url2}${tabId}` : `${title}${tabId}`;
 }
 function formatCompactElement(element) {
   if (!element) return "element";
@@ -137222,7 +137223,10 @@ function toolResultTextForModel(toolName, result) {
     }
     case "browser_list_tabs": {
       const tabs = Array.isArray(details.tabs) ? details.tabs : [];
-      const lines = tabs.slice(0, 12).map((tabInfo) => `${tabInfo?.active ? "* " : "- "}${formatCompactTab(tabInfo)}`);
+      const shownTabs = tabs.slice(0, 40);
+      const lines = shownTabs.map((tabInfo) => `${tabInfo?.active ? "* " : "- "}${formatCompactTab(tabInfo)}`);
+      const hiddenCount = tabs.length - shownTabs.length;
+      if (hiddenCount > 0) lines.push(`(+${hiddenCount} more tabs not shown)`);
       return lines.length ? `Open tabs:
 ${lines.join("\n")}` : "No browser tabs found.";
     }
@@ -137624,6 +137628,36 @@ function buildSurplusHighlightGuardResult(toolName, commandName, prompt, request
         "Two comparison source highlights already succeeded, which is enough for this compare/contrast answer.",
         `Do not call ${toolName} again for this comparison unless the user explicitly asks for more evidence.`,
         hasCompletedToolTrace(request, "browser_show_note") ? "Answer now from the existing comparison highlights. Keep the comparison concise." : "If one highlight captures the practical difference, add one short browser_show_note under 280 characters to that highlight; otherwise answer now from the existing comparison highlights. Keep the comparison concise."
+      ].join(" ")
+    }
+  };
+}
+function normalizeOpenTabUrlForComparison(value) {
+  return String(value || "").trim().toLowerCase().replace(/#.*$/, "").replace(/\/+$/, "");
+}
+function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
+  if (commandName !== "navigate" || !params?.newTab) return null;
+  const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
+  if (!targetUrl) return null;
+  const inventoryTraces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
+    (trace) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs"
+  );
+  if (!inventoryTraces.length) return null;
+  const openUrls = /* @__PURE__ */ new Set();
+  for (const trace of inventoryTraces) {
+    const urls = Array.isArray(trace?.openTabUrls) ? trace.openTabUrls : String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
+    for (const match2 of urls) openUrls.add(normalizeOpenTabUrlForComparison(match2));
+  }
+  if (!openUrls.has(targetUrl)) return null;
+  return {
+    guardrail: {
+      kind: "duplicate_tab_navigation",
+      blockedTool: toolName,
+      blockedCommand: commandName,
+      message: [
+        "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
+        "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+        "Open a new tab only for URLs that are not already open."
       ].join(" ")
     }
   };
@@ -140196,6 +140230,10 @@ function createOnhandBrowserRuntime(host) {
     const summary = guardrail?.message ? toolResultTextForModel(toolName, result) : traceIsError ? `${toolName} failed: ${errorText}` : toolResultTextForModel(toolName, result);
     entry.resultSummary = redactTraceText(summary, TOOL_TRACE_RESULT_SUMMARY_MAX_CHARS);
     entry.resultDetails = traceResultDetails(result);
+    if (!traceIsError && toolName === "browser_list_tabs") {
+      const inventoryTabs = (result?.details || result)?.tabs;
+      entry.openTabUrls = Array.isArray(inventoryTabs) ? inventoryTabs.map((tabInfo) => normalizeOpenTabUrlForComparison(tabInfo?.url)).filter(Boolean) : (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map(normalizeOpenTabUrlForComparison);
+    }
     if (traceIsError) entry.error = redactTraceText(errorText, 1200);
   }
   function shouldAutoPersistReviewSnapshot(request) {
@@ -140410,7 +140448,7 @@ function createOnhandBrowserRuntime(host) {
         withRequestBrowserContext,
         (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
         (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-        (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+        (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -140774,6 +140812,20 @@ function createOnhandBrowserRuntime(host) {
     );
     const hasExplicitTabSelector = typeof normalizedParams?.tabId === "number" || annotationCommandAllowsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim());
     if (hasExplicitTabSelector && hasCompletedTabInventory(activeRequest)) {
+      return normalizedParams || {};
+    }
+    const readCommandRejectsTabMatch = [
+      "get_dom",
+      "extract_content",
+      "capture_state",
+      "get_visible_text",
+      "get_visible_region_image",
+      "get_selection",
+      "get_viewport_headings",
+      "get_scroll_state",
+      "capture_screenshot"
+    ].includes(commandName);
+    if (readCommandRejectsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim())) {
       return normalizedParams || {};
     }
     const targeted = {
@@ -142597,7 +142649,7 @@ function createOnhandBrowserRuntime(host) {
             withRequestBrowserContext,
             (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
             (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+            (toolName, commandName, effectiveParams) => buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
             async (effectiveParams) => {
               if (!effectiveParams?.scanPage) return null;
               const text = compactActionText(effectiveParams?.text);

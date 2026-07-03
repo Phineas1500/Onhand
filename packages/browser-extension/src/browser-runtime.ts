@@ -110,6 +110,7 @@ interface ToolTraceEntry {
 	effectiveArgs?: unknown;
 	resultSummary?: string;
 	resultDetails?: unknown;
+	openTabUrls?: string[];
 	error?: string;
 }
 
@@ -7315,7 +7316,8 @@ function toolResultText(result: any, maxChars = 5000) {
 function formatCompactTab(tab: any) {
 	const title = String(tab?.title || "(untitled)").trim();
 	const url = String(tab?.url || "").trim();
-	return url ? `${title} - ${url}` : title;
+	const tabId = typeof tab?.id === "number" ? ` [tabId ${tab.id}]` : "";
+	return url ? `${title} - ${url}${tabId}` : `${title}${tabId}`;
 }
 
 function formatCompactElement(element: any) {
@@ -7482,7 +7484,13 @@ function toolResultTextForModel(toolName: string, result: any) {
 		}
 		case "browser_list_tabs": {
 			const tabs = Array.isArray(details.tabs) ? details.tabs : [];
-			const lines = tabs.slice(0, 12).map((tabInfo: any) => `${tabInfo?.active ? "* " : "- "}${formatCompactTab(tabInfo)}`);
+			// A silent cap hides recently-opened tabs in a busy window and the
+			// model then "knows" a page is not open; show more and say when the
+			// list is still incomplete.
+			const shownTabs = tabs.slice(0, 40);
+			const lines = shownTabs.map((tabInfo: any) => `${tabInfo?.active ? "* " : "- "}${formatCompactTab(tabInfo)}`);
+			const hiddenCount = tabs.length - shownTabs.length;
+			if (hiddenCount > 0) lines.push(`(+${hiddenCount} more tabs not shown)`);
 			return lines.length ? `Open tabs:\n${lines.join("\n")}` : "No browser tabs found.";
 		}
 			case "browser_activate_tab":
@@ -7927,6 +7935,49 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 				hasCompletedToolTrace(request, "browser_show_note")
 					? "Answer now from the existing comparison highlights. Keep the comparison concise."
 					: "If one highlight captures the practical difference, add one short browser_show_note under 280 characters to that highlight; otherwise answer now from the existing comparison highlights. Keep the comparison concise.",
+			].join(" "),
+		},
+	};
+}
+
+function normalizeOpenTabUrlForComparison(value: unknown) {
+	return String(value || "")
+		.trim()
+		.toLowerCase()
+		.replace(/#.*$/, "")
+		.replace(/\/+$/, "");
+}
+
+// Opening a duplicate tab for a page that is already open (§6.10): once the
+// model has a tab inventory, a newTab navigate to one of those URLs is
+// intercepted — the existing tab should be read/annotated in place instead.
+function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: string, params: any, request: any) {
+	if (commandName !== "navigate" || !params?.newTab) return null;
+	const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
+	if (!targetUrl) return null;
+	const inventoryTraces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
+		(trace: any) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs",
+	);
+	if (!inventoryTraces.length) return null;
+	const openUrls = new Set<string>();
+	for (const trace of inventoryTraces) {
+		// Prefer the full inventory captured at trace time; the resultSummary is
+		// truncated and can cut off recently-opened tabs in a busy window.
+		const urls = Array.isArray(trace?.openTabUrls)
+			? trace.openTabUrls
+			: String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
+		for (const match of urls) openUrls.add(normalizeOpenTabUrlForComparison(match));
+	}
+	if (!openUrls.has(targetUrl)) return null;
+	return {
+		guardrail: {
+			kind: "duplicate_tab_navigation",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
+				"Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+				"Open a new tab only for URLs that are not already open.",
 			].join(" "),
 		},
 	};
@@ -10776,6 +10827,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const summary = guardrail?.message ? toolResultTextForModel(toolName, result) : traceIsError ? `${toolName} failed: ${errorText}` : toolResultTextForModel(toolName, result);
 		entry.resultSummary = redactTraceText(summary, TOOL_TRACE_RESULT_SUMMARY_MAX_CHARS);
 		entry.resultDetails = traceResultDetails(result);
+		if (!traceIsError && toolName === "browser_list_tabs") {
+			// The formatted summary caps how many tabs are shown; keep the full
+			// URL inventory from the raw result for the duplicate-tab guard.
+			const inventoryTabs = (result?.details || result)?.tabs;
+			entry.openTabUrls = Array.isArray(inventoryTabs)
+				? inventoryTabs.map((tabInfo: any) => normalizeOpenTabUrlForComparison(tabInfo?.url)).filter(Boolean)
+				: (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map(normalizeOpenTabUrlForComparison);
+		}
 		if (traceIsError) entry.error = redactTraceText(errorText, 1200);
 	}
 
@@ -11025,6 +11084,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 					buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
 					buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) ||
+					buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 					buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) ||
 					buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) ||
 					buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
@@ -11442,6 +11502,27 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			(annotationCommandAllowsTabMatch &&
 				Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim()));
 		if (hasExplicitTabSelector && hasCompletedTabInventory(activeRequest)) {
+			return normalizedParams || {};
+		}
+		// Read commands reject title/url selectors in the background resolver by
+		// design; pass the selector through so the model gets that explicit
+		// error instead of silently reading the active tab as if it were the
+		// requested one (a source-labeling hazard in cross-tab flows).
+		const readCommandRejectsTabMatch = [
+			"get_dom",
+			"extract_content",
+			"capture_state",
+			"get_visible_text",
+			"get_visible_region_image",
+			"get_selection",
+			"get_viewport_headings",
+			"get_scroll_state",
+			"capture_screenshot",
+		].includes(commandName);
+		if (
+			readCommandRejectsTabMatch &&
+			Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim())
+		) {
 			return normalizedParams || {};
 		}
 		const targeted = {
@@ -13435,6 +13516,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) ||
 							buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) ||
 							buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) ||
+							buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 							buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) ||
 							buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) ||
 							buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) ||
