@@ -6528,9 +6528,9 @@ function promptAsksForTeachingPageSourceMarker(prompt: unknown) {
 	const asksForTeaching =
 		/\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
 	const referencesPageMaterial =
-		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\b/.test(text) ||
-		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\s+says?\b/.test(text);
+		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
+		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) ||
+		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+says?\b/.test(text);
 	return asksForTeaching && referencesPageMaterial;
 }
 
@@ -6566,10 +6566,10 @@ function ownWordsPromptText(prompt: unknown) {
 function promptReferencesCurrentPageMaterial(text: string) {
 	if (!text) return false;
 	return (
-		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\b/.test(text) ||
-		/\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\b/.test(text) ||
-		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text)
+		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
+		/\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
+		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) ||
+		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text)
 	);
 }
 

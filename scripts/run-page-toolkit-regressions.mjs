@@ -1110,19 +1110,54 @@ async function assertExtractContentUsesDebuggerFrameReadableFallback() {
 		"sameOriginUrls",
 		"readableContentLooksLikeReaderSearchUi",
 		"shouldTryDebuggerFrameReadableContent",
+		"tabHasCrossOriginContentSubframe",
+		"getAllFramesForTab",
 	];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
-	const helpers = new Function(`${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`)();
+	const buildHelpers = (chromeStubSource) =>
+		new Function(
+			`const EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS = 600;\nconst chrome = ${chromeStubSource};\n${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`,
+		)();
+	const helpers = buildHelpers("{ webNavigation: null }");
 	const shortContent = { markdown: "# Short page", blockCount: 1 };
 	assert.equal(
-		helpers.shouldTryDebuggerFrameReadableContent({ url: "https://attacker.example/", title: "Reader" }, shortContent, { query: "private" }),
+		await helpers.shouldTryDebuggerFrameReadableContent({ url: "https://attacker.example/", title: "Reader" }, shortContent, { query: "private" }),
 		false,
 		"generic pages and title-only reader claims must not trigger debugger frame extraction",
 	);
 	assert.equal(
-		helpers.shouldTryDebuggerFrameReadableContent({ url: "https://bookshelf.vitalsource.com/reader/books/123" }, shortContent, { query: "private" }),
+		await helpers.shouldTryDebuggerFrameReadableContent({ url: "https://bookshelf.vitalsource.com/reader/books/123" }, shortContent, { query: "private" }),
 		true,
 		"known textbook reader URLs can still trigger debugger frame extraction",
+	);
+	// Embedded-content shells (Claude artifact pages): chrome-thin top text
+	// plus a cross-origin body subframe triggers frame extraction; a page
+	// with rich top text does not, even with the same subframe.
+	const shellHelpers = buildHelpers(
+		`{
+			webNavigation: {
+				getAllFrames: (query, callback) =>
+					callback([
+						{ frameId: 0, url: "https://claude.ai/code/artifact/abc" },
+						{ frameId: 5, url: "https://abc.frame.claudeusercontent.com/_f/1" },
+					]),
+			},
+			runtime: { lastError: null },
+		}`,
+	);
+	assert.equal(
+		await shellHelpers.shouldTryDebuggerFrameReadableContent({ id: 1, url: "https://claude.ai/code/artifact/abc" }, shortContent, {}),
+		true,
+		"a shell page with thin top text and a cross-origin body frame should trigger frame extraction",
+	);
+	assert.equal(
+		await shellHelpers.shouldTryDebuggerFrameReadableContent(
+			{ id: 1, url: "https://claude.ai/code/artifact/abc" },
+			{ markdown: `# Rich page\n${"body text ".repeat(120)}`, blockCount: 12 },
+			{},
+		),
+		false,
+		"a page with rich top text keeps the single-frame fast path even with a subframe",
 	);
 	assert.equal(helpers.isLikelyOnlineTextbookReaderUrl("https://private.example/account"), false);
 	assert.equal(helpers.isLikelyOnlineTextbookReaderUrl("https://jigsaw.vitalsource.com/books/123/part-11.xhtml"), true);

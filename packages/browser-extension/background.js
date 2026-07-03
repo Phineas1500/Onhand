@@ -2515,13 +2515,42 @@ function readableContentLooksLikeReaderSearchUi(payload) {
 	return signalCount >= 2 || (/^#\s*vitalsource bookshelf\b/.test(text) && /\bsearch\b/.test(text));
 }
 
-function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}) {
+// An embedded-content shell: the top document carries only chrome/title text
+// while the body lives in a cross-origin subframe (Claude artifact pages,
+// sandboxed previews, embedded readers).
+const EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS = 600;
+
+async function tabHasCrossOriginContentSubframe(tabId, tabUrl) {
+	const frames = await getAllFramesForTab(tabId).catch(() => []);
+	let tabHost = "";
+	try {
+		tabHost = new URL(String(tabUrl || "")).host;
+	} catch {}
+	return frames.some((frame) => {
+		if (!frame || frame.frameId === 0) return false;
+		const url = String(frame.url || "");
+		if (!/^https?:/i.test(url)) return false;
+		try {
+			return new URL(url).host !== tabHost;
+		} catch {
+			return false;
+		}
+	});
+}
+
+async function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}) {
 	const url = String(tab?.url || "");
 	if (!/^(https?|file):/i.test(url)) return false;
 	const currentText = normalizeReadableContentText(currentContent);
 	const currentLength = currentText.length;
 	const tokens = readableContentQueryTokens(options.query);
-	if (!isLikelyOnlineTextbookReaderTab(tab)) return false;
+	if (!isLikelyOnlineTextbookReaderTab(tab)) {
+		// Embedded-content shells qualify too: the shape is chrome-thin top
+		// text plus a cross-origin body frame. Anything else keeps the
+		// single-frame fast path.
+		if (currentLength >= EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS) return false;
+		return await tabHasCrossOriginContentSubframe(tab?.id, url);
+	}
 	if (readableContentLooksLikeReaderSearchUi(currentContent)) return true;
 	if (tokens.length && readableContentQueryScore(currentText, tokens) <= 0) return true;
 	if (currentLength < 5000) return true;
@@ -2534,7 +2563,11 @@ function debuggerFrameReadableContentIsBetter(candidate, currentContent, options
 	const currentText = normalizeReadableContentText(currentContent);
 	const candidateLength = candidateText.length;
 	const currentLength = currentText.length;
-	if (candidateLength < 1000) return false;
+	if (candidateLength < 1000) {
+		// A shell page whose top document is only chrome/title still gains
+		// from a modest frame body; anything else needs a substantial one.
+		if (!(currentLength < EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS && candidateLength >= currentLength + 200)) return false;
+	}
 	if (readableContentLooksLikeReaderSearchUi(currentContent) && !readableContentLooksLikeReaderSearchUi(candidate)) return true;
 	const tokens = readableContentQueryTokens(options.query);
 	const candidateQueryScore = readableContentQueryScore(candidateText, tokens);
@@ -2602,8 +2635,31 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 	);
 }
 
+// Readable extraction inside subframes via chrome.scripting (no debugger
+// attach); returns the richest non-top-frame result or null. The extractor is
+// injected directly as a function — string-eval injection would be blocked by
+// frames whose CSP bans unsafe-eval (Claude artifact frames do).
+async function getScriptingFrameReadableContent(tabId, options = {}) {
+	const results = await executeScriptInAllFrames(tabId, extractReadableContentInPage, [
+		{ maxChars: options.maxChars, query: options.query },
+	]);
+	let best = null;
+	for (const entry of Array.isArray(results) ? results : []) {
+		if (!entry || entry.frameId === 0) continue;
+		const value = entry.result;
+		if (!value || typeof value !== "object") continue;
+		const length = normalizeReadableContentText(value).length;
+		if (!best || length > best.length) best = { value, length };
+	}
+	return best?.value || null;
+}
+
 async function maybeGetDebuggerFrameReadableContent(tab, currentContent, options = {}) {
-	if (!shouldTryDebuggerFrameReadableContent(tab, currentContent, options)) return currentContent;
+	if (!(await shouldTryDebuggerFrameReadableContent(tab, currentContent, options))) return currentContent;
+	try {
+		const scriptingContent = await getScriptingFrameReadableContent(tab.id, options);
+		if (debuggerFrameReadableContentIsBetter(scriptingContent, currentContent, options)) return scriptingContent;
+	} catch {}
 	try {
 		const content = await getDebuggerFrameReadableContent(tab.id, options, currentContent, tab);
 		if (debuggerFrameReadableContentIsBetter(content, currentContent, options)) return content;
@@ -9778,14 +9834,36 @@ function pickBestPageToolkitFramePayload(payloads, methodName, args = []) {
 	return successful[0];
 }
 
+// Installs the generated page-toolkit factory file into every accessible
+// frame's isolated world. Frames whose CSP bans unsafe-eval (Claude artifact
+// frames, sandboxed embeds) reject the string-eval injection path, but
+// chrome.scripting `files` injection is not subject to page CSP.
+async function ensurePageToolkitFactoryFileInFrames(tabId) {
+	try {
+		await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["page-toolkit-content.js"] });
+	} catch (error) {
+		if (!isRestrictedScriptingError(error)) throw error;
+		const frameIds = await getInjectableFrameIds(tabId);
+		for (const frameId of frameIds.length ? frameIds : [0]) {
+			try {
+				await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: ["page-toolkit-content.js"] });
+			} catch (frameError) {
+				if (!isRestrictedScriptingError(frameError)) throw frameError;
+			}
+		}
+	}
+}
+
 async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, args = [], toolkitOptions = {}) {
 	const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
 	const frameUrlById = new Map(frameInfos.map((frame) => [frame.frameId, frame.url || ""]));
+	await ensurePageToolkitFactoryFileInFrames(tabId).catch(() => {});
 	const results = await executeScriptInAllFrames(
 		tabId,
 		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
 			try {
-				const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+				const toolkitFactory =
+					typeof globalThis.__onhandPageToolkitFactory === "function" ? globalThis.__onhandPageToolkitFactory : (0, eval)(`(${toolkitSource})`);
 				const toolkit = toolkitFactory(targetToolkitOptions);
 				return {
 					ok: true,
@@ -9984,6 +10062,36 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					};
 				}
 			}
+		}
+		if (
+			methodName === "getVisibleText" &&
+			normalizePageToolkitPayloadText(payload).length < EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS &&
+			(await tabHasCrossOriginContentSubframe(tabId, tab?.url))
+		) {
+			// Embedded-content shell: the visible text lives in a cross-origin
+			// body frame, not the chrome-thin top document. The scripting
+			// executor is eval-based and fails in frames whose CSP bans
+			// unsafe-eval, so fall through to the debugger executor.
+			try {
+				const framePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					pageToolkitTimeoutMs,
+					`Page toolkit frame visible-text timed out: ${methodName}`,
+				);
+				if (normalizePageToolkitPayloadText(framePayload).length > normalizePageToolkitPayloadText(payload).length + 200) {
+					return framePayload;
+				}
+			} catch {}
+			try {
+				const debuggerFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					pageToolkitFrameTimeoutMs,
+					`Page toolkit debugger-frame visible-text timed out: ${methodName}`,
+				);
+				if (normalizePageToolkitPayloadText(debuggerFramePayload).length > normalizePageToolkitPayloadText(payload).length + 200) {
+					return debuggerFramePayload;
+				}
+			} catch {}
 		}
 		if (methodName === "captureState" && Number(payload?.annotationCount || 0) === 0) {
 			try {

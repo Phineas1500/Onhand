@@ -12,7 +12,7 @@
     "research"
   ],
   "scripts": {
-    "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs",
+    "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs && node ./scripts/build-page-toolkit-content.mjs",
     "build:pdf-viewer": "node ./scripts/build-pdf-viewer.mjs",
     "build:extension": "npm run build:browser-runtime && npm run build:pdf-viewer",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
