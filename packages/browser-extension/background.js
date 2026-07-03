@@ -7311,6 +7311,44 @@ const createPageToolkit = (options = {}) => {
 		}
 	};
 
+	// A range that crosses block boundaries (e.g. a forum comment's header row
+	// plus its body) must not get an inline span wrap: the span's inline box
+	// fragments around the block children and its empty painted fragments show
+	// up as thin highlight slivers flanking the content.
+	const rangeIncludesBlockStructure = (range) => {
+		try {
+			return Boolean(
+				range
+					.cloneContents()
+					?.querySelector?.("div, p, table, tbody, tr, td, th, section, article, blockquote, pre, br, h1, h2, h3, h4, h5, h6"),
+			);
+		} catch {
+			return false;
+		}
+	};
+
+	const findBlockRangeHighlightElement = (range) => {
+		if (!rangeIncludesBlockStructure(range)) return null;
+		const common =
+			range.commonAncestorContainer instanceof Element
+				? range.commonAncestorContainer
+				: range.commonAncestorContainer?.parentElement;
+		let container = common;
+		while (container && container !== document.body) {
+			const display = window.getComputedStyle(container).display;
+			if (display !== "inline" && display !== "inline-block" && display !== "contents") break;
+			container = container.parentElement;
+		}
+		if (!(container instanceof Element) || container === document.body || !isVisible(container)) return null;
+		// A shared container much larger than the match means the range straddles
+		// unrelated siblings; keep the old behavior rather than washing a huge
+		// region gold.
+		const containerTextLength = getElementText(container).length;
+		const rangeTextLength = String(range.toString() || "").length;
+		if (containerTextLength > Math.max(1600, rangeTextLength * 4)) return null;
+		return container;
+	};
+
 		const findStructuredRangeHighlightElement = (range) => {
 			if (!rangeIncludesListStructure(range)) return null;
 			const sharedListItem = getSharedListItemForRange(range);
@@ -7580,6 +7618,14 @@ const createPageToolkit = (options = {}) => {
 					scrollIntoView: options.scrollIntoView,
 					approximate: options.approximate,
 				fallback: options.fallback,
+			});
+		}
+		const blockRangeElement = findBlockRangeHighlightElement(range);
+		if (blockRangeElement) {
+			return await highlightBlockElement(blockRangeElement, rawQuery, {
+				scrollIntoView: options.scrollIntoView,
+				approximate: options.approximate,
+				fallback: options.fallback || "block-range",
 			});
 		}
 		const annotationId = nextAnnotationId();
