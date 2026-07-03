@@ -135474,11 +135474,11 @@ function classifyPromptForReasoning(prompt, attachments = [], learningMode = fal
   if (hasAttachments) return "deep";
   const asksForToolSmoke = /\bbrowser_[a-z_]+\b|\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
   const asksForPageAction = /\b(highlight|annotate|note|scroll|click|open|navigate|go to|fill|type|select|press|mark|point (?:me )?to|show me where)\b/.test(text);
-  const asksForDeepWork = /\b(compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs)\b/.test(
+  const asksForDeepWork = /\b(compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs|roadmap|outline|step[- ]by[- ]step|instead of|(?:another|other|both) tabs?)\b/.test(
     text
   );
   const asksForConceptualWork = /\b(why|how does|how do|teach|quiz|lesson|step[- ]by[- ]step|walk me through|help me understand)\b/.test(text);
-  const asksForFastAnswer = /\b(one sentence|briefly|quickly|short answer|tl;?dr|no highlights?|no notes?|according to this page|what is|who is|when did|where is|which|how many|summari[sz]e)\b/.test(
+  const asksForFastAnswer = /\b(one sentence|briefly|quickly|short answer|tl;?dr|no highlights?|no notes?|according to this page|what is|who is|when did|where is|which|how many)\b/.test(
     text
   );
   if (asksForToolSmoke) return "balanced";
@@ -135555,7 +135555,7 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
         reasoningEffort: "none",
         textVerbosity: "low",
         maxTokens: ONHAND_FAST_OUTPUT_TOKENS,
-        promptPolicy: "Runtime policy: Quick grounded answer. Prefer captured context; keep page work read-only unless the user asks for annotations or source locations. Answer in one to three short readable paragraphs or compact bullets; avoid dense sidebar blocks."
+        promptPolicy: "Runtime policy: Quick grounded answer. Prefer captured context and keep extra page inspection minimal, but still anchor a page-grounded answer with one source highlight on the exact supporting text before the final answer; skip the highlight only for no-page-changes requests, quick visual questions, general-knowledge answers the page does not ground, or when the page does not support the claim. Answer in one to three short readable paragraphs or compact bullets; avoid dense sidebar blocks."
       };
   }
 }
@@ -136511,7 +136511,7 @@ function promptAsksForTeachingPageSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
   const asksForTeaching = /\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
-  const referencesPageMaterial = /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+(?:says|covers|discusses|teaches|explains)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source)\s+says\b/.test(text);
+  const referencesPageMaterial = /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation)\s+says?\b/.test(text);
   return asksForTeaching && referencesPageMaterial;
 }
 function normalizePageSourcePromptText(prompt) {
@@ -136528,14 +136528,16 @@ function ownWordsPromptText(prompt) {
 }
 function promptReferencesCurrentPageMaterial(text) {
   if (!text) return false;
-  return /\b(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|covers|discusses|teaches|explains|mentions|shows|derives|lists|calls|notes)\b/.test(text) || /\bwhat\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper)\s+(?:says|means|shows|covers|teaches|explains)\b/.test(text);
+  return /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text);
 }
 function promptAsksForStructuredPageSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
-  if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
+  if (!text) return false;
+  if (/\b(?:roadmap|step[- ]by[- ]step|walk(?:\s+me)?\s+through)\b/.test(text)) return true;
+  if (!promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
-    /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?|relate|relationship|agree|disagree)\b|\b(?:roadmap|outline|main\s+steps?|steps?|process|workflow|pipeline|sequence|progression|algorithm|methods?|approaches?|techniques?|list|table|pros\s+and\s+cons|limitations?|takeaways?)\b|\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|why\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b|\b(?:quiz\s+me|test\s+me|study\s+guide|practice\s+questions?|flashcards?|review\s+sheet)\b/
+    /\b(?:compare|comparison|contrast|versus|vs\.?|instead\s+of|differ(?:ence|ences|ent)?|relate|relationship|agree|disagree)\b|\b(?:roadmap|outline|main\s+steps?|steps?|process|workflow|pipeline|sequence|progression|algorithm|methods?|approaches?|techniques?|list|table|pros\s+and\s+cons|limitations?|takeaways?)\b|\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|why\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b|\b(?:quiz\s+me|test\s+me|study\s+guide|practice\s+questions?|flashcards?|review\s+sheet)\b/
   );
 }
 function promptAsksForCompactPageTeaching(prompt) {
@@ -136565,7 +136567,7 @@ function promptAsksForDocumentReviewMarkup(prompt) {
 }
 function promptAsksForComparison(prompt) {
   const text = ownWordsPromptText(prompt);
-  return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|differ(?:ence|ences|ent)?)\b/.test(text));
+  return Boolean(text && /\b(?:compare|comparison|contrast|versus|vs\.?|instead\s+of|differ(?:ence|ences|ent)?)\b/.test(text));
 }
 function promptAsksForSinglePageComparison(prompt) {
   const text = ownWordsPromptText(prompt);
