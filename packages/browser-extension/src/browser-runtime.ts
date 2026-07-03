@@ -7948,13 +7948,16 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 function normalizeOpenTabUrlForComparison(value: unknown) {
 	const text = String(value || "")
 		.trim()
-		.replace(/#.*$/, "")
-		.replace(/\/+$/, "");
+		.replace(/#.*$/, "");
 	// Only scheme and host are case-insensitive; paths and query values can be
 	// case-sensitive, so lowercasing them would treat distinct pages as
-	// duplicates.
+	// duplicates. Likewise only the origin's root slash is guaranteed
+	// equivalent ("https://x.com/" === "https://x.com"); deeper trailing
+	// slashes can name distinct pages, so they are preserved.
 	const match = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
-	return match ? `${match[1].toLowerCase()}${match[2]}` : text;
+	if (!match) return text;
+	const rest = match[2] === "/" ? "" : match[2];
+	return `${match[1].toLowerCase()}${rest}`;
 }
 
 // Opening a duplicate tab for a page that is already open (§6.10): once the

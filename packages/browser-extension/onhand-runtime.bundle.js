@@ -137634,9 +137634,11 @@ function buildSurplusHighlightGuardResult(toolName, commandName, prompt, request
   };
 }
 function normalizeOpenTabUrlForComparison(value) {
-  const text = String(value || "").trim().replace(/#.*$/, "").replace(/\/+$/, "");
+  const text = String(value || "").trim().replace(/#.*$/, "");
   const match2 = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
-  return match2 ? `${match2[1].toLowerCase()}${match2[2]}` : text;
+  if (!match2) return text;
+  const rest = match2[2] === "/" ? "" : match2[2];
+  return `${match2[1].toLowerCase()}${rest}`;
 }
 function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
   if (commandName !== "navigate" || !params?.newTab) return null;
