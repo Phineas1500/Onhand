@@ -134879,8 +134879,17 @@ function completedSourceHighlightTraceCount(request) {
 function distinctCompletedSourceHighlightTabCount(request) {
   const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
   const keys = /* @__PURE__ */ new Set();
-  let unknownIndex = 0;
   for (const trace of traces) {
+    const detailsTabId = trace?.resultDetails?.tab?.id;
+    if (typeof detailsTabId === "number") {
+      keys.add(`tab:${detailsTabId}`);
+      continue;
+    }
+    const summaryTabIds = String(trace?.resultSummary || "").match(/\[tabId (\d+)\]/g) || [];
+    if (summaryTabIds.length) {
+      keys.add(`tab:${summaryTabIds[summaryTabIds.length - 1].replace(/\D+/g, "")}`);
+      continue;
+    }
     const summaryUrls = String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
     if (summaryUrls.length) {
       keys.add(`url:${normalizeOpenTabUrlForComparison(summaryUrls[summaryUrls.length - 1])}`);
@@ -134896,7 +134905,7 @@ function distinctCompletedSourceHighlightTabCount(request) {
       keys.add(`match:${selector}`);
       continue;
     }
-    keys.add(`unknown:${unknownIndex++}`);
+    keys.add("unknown");
   }
   return keys.size;
 }

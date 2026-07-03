@@ -4022,15 +4022,27 @@ function completedSourceHighlightTraceCount(request: any) {
 
 // Cross-tab prompts must anchor each source tab, so a total highlight count
 // is not enough — two marks on the same page would satisfy it while the other
-// tab stays bare. Attribute each completed highlight to a tab: the trailing
-// URL in its result summary ("Highlighted ... on <title> - <url>") first,
-// then explicit selector args. Marks that cannot be attributed count as their
-// own tab so the retry gate can never loop on them.
+// tab stays bare. Attribute each completed highlight to a tab: the result's
+// own tab id first (resultDetails.tab.id / the "[tabId N]" marker the summary
+// carries via formatCompactTab — exact even for PDF-viewer and file tabs with
+// no https URL), then the summary URL, then explicit selector args. Marks
+// that cannot be attributed at all collapse onto ONE shared key — the
+// stricter reading is safe because pageSourceMarkerRetry caps the retry at a
+// single round, so the gate cannot loop.
 function distinctCompletedSourceHighlightTabCount(request: any) {
 	const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
 	const keys = new Set<string>();
-	let unknownIndex = 0;
 	for (const trace of traces) {
+		const detailsTabId = (trace?.resultDetails as any)?.tab?.id;
+		if (typeof detailsTabId === "number") {
+			keys.add(`tab:${detailsTabId}`);
+			continue;
+		}
+		const summaryTabIds = String(trace?.resultSummary || "").match(/\[tabId (\d+)\]/g) || [];
+		if (summaryTabIds.length) {
+			keys.add(`tab:${summaryTabIds[summaryTabIds.length - 1].replace(/\D+/g, "")}`);
+			continue;
+		}
 		const summaryUrls = String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
 		if (summaryUrls.length) {
 			keys.add(`url:${normalizeOpenTabUrlForComparison(summaryUrls[summaryUrls.length - 1])}`);
@@ -4046,7 +4058,7 @@ function distinctCompletedSourceHighlightTabCount(request: any) {
 			keys.add(`match:${selector}`);
 			continue;
 		}
-		keys.add(`unknown:${unknownIndex++}`);
+		keys.add("unknown");
 	}
 	return keys.size;
 }
