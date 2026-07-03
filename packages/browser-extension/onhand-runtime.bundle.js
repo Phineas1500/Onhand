@@ -134753,8 +134753,10 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (promptForbidsPageChanges(request.displayPrompt)) return false;
   if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
-  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForCrossTabComparison(request.displayPrompt) ? 2 : 1;
-  return completedSourceHighlightCount(request) < requiredHighlights;
+  const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
+  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
+  const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
+  return completedCount < requiredHighlights;
 }
 function buildPageSourceMarkerRetryPrompt(request, assistantText) {
   const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
@@ -134873,6 +134875,30 @@ function completedSourceHighlightCount(request) {
 }
 function completedSourceHighlightTraceCount(request) {
   return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
+}
+function distinctCompletedSourceHighlightTabCount(request) {
+  const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
+  const keys = /* @__PURE__ */ new Set();
+  let unknownIndex = 0;
+  for (const trace of traces) {
+    const summaryUrls = String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
+    if (summaryUrls.length) {
+      keys.add(`url:${normalizeOpenTabUrlForComparison(summaryUrls[summaryUrls.length - 1])}`);
+      continue;
+    }
+    const args = trace?.effectiveArgs || trace?.args || {};
+    if (typeof args?.tabId === "number") {
+      keys.add(`tab:${args.tabId}`);
+      continue;
+    }
+    const selector = String(args?.urlContains || args?.titleContains || "").trim().toLowerCase();
+    if (selector) {
+      keys.add(`match:${selector}`);
+      continue;
+    }
+    keys.add(`unknown:${unknownIndex++}`);
+  }
+  return keys.size;
 }
 function completedSourceHighlightTraceText(request) {
   return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).map((trace) => `${trace?.resultSummary || ""} ${JSON.stringify(trace?.details || {})}`).join("\n").toLowerCase();

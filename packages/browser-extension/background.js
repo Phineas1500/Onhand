@@ -7322,7 +7322,10 @@ const createPageToolkit = (options = {}) => {
 			return Boolean(
 				range
 					.cloneContents()
-					?.querySelector?.("div, p, table, tbody, tr, td, th, section, article, blockquote, pre, br, h1, h2, h3, h4, h5, h6"),
+					// No <br> here: a range spanning a soft line break inside one
+					// paragraph is still inline content and wraps cleanly; promoting
+					// it would wash the whole container over a two-line phrase.
+					?.querySelector?.("div, p, table, tbody, tr, td, th, section, article, blockquote, pre, h1, h2, h3, h4, h5, h6"),
 			);
 		} catch {
 			return false;

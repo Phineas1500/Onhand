@@ -3351,9 +3351,11 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 	if (promptForbidsPageChanges(request.displayPrompt)) return false;
 	if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
 	if (hasCompletedToolTrace(request, "browser_pdf_read_pages")) return false;
-	const requiredHighlights =
-		promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForCrossTabComparison(request.displayPrompt) ? 2 : 1;
-	return completedSourceHighlightCount(request) < requiredHighlights;
+	const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
+	const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
+	// Cross-tab prompts need marks on distinct tabs, not just two marks total.
+	const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
+	return completedCount < requiredHighlights;
 }
 
 function buildPageSourceMarkerRetryPrompt(request: any, assistantText: string) {
@@ -4013,6 +4015,37 @@ function completedSourceHighlightCount(request: any) {
 
 function completedSourceHighlightTraceCount(request: any) {
 	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
+}
+
+// Cross-tab prompts must anchor each source tab, so a total highlight count
+// is not enough — two marks on the same page would satisfy it while the other
+// tab stays bare. Attribute each completed highlight to a tab: the trailing
+// URL in its result summary ("Highlighted ... on <title> - <url>") first,
+// then explicit selector args. Marks that cannot be attributed count as their
+// own tab so the retry gate can never loop on them.
+function distinctCompletedSourceHighlightTabCount(request: any) {
+	const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
+	const keys = new Set<string>();
+	let unknownIndex = 0;
+	for (const trace of traces) {
+		const summaryUrls = String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
+		if (summaryUrls.length) {
+			keys.add(`url:${normalizeOpenTabUrlForComparison(summaryUrls[summaryUrls.length - 1])}`);
+			continue;
+		}
+		const args: any = trace?.effectiveArgs || trace?.args || {};
+		if (typeof args?.tabId === "number") {
+			keys.add(`tab:${args.tabId}`);
+			continue;
+		}
+		const selector = String(args?.urlContains || args?.titleContains || "").trim().toLowerCase();
+		if (selector) {
+			keys.add(`match:${selector}`);
+			continue;
+		}
+		keys.add(`unknown:${unknownIndex++}`);
+	}
+	return keys.size;
 }
 
 function completedSourceHighlightTraceText(request: any) {
