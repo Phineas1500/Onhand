@@ -13803,6 +13803,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "browser-runtime:classify-intent-eval") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.classifyPromptIntentForEval(String(message.prompt || "")),
+			});
+			return;
+		}
+
 		if (message?.type === "browser-runtime:update-settings") {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.updateSettings({
