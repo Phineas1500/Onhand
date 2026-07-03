@@ -2279,7 +2279,7 @@ async function assertConstitutionPromptContract() {
 		assert.match(contract.systemPrompt, /Never say you will highlight or add a note unless the corresponding tool call already succeeded/);
 		assert.match(contract.systemPrompt, /explicitly asks to compare or relate the current material to another open tab/);
 	assert.match(contract.systemPrompt, /Do not infer cross-tab permission from standalone comparison or agreement wording/);
-	assert.match(contract.systemPrompt, /highlight the key passage in each source/);
+	assert.match(contract.systemPrompt, /place a highlight on the key passage in each source tab/);
 	assert.match(contract.systemPrompt, /highlight or cite each substantive claim in the source that supports it/);
 	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not grounded in/);
 	assert.match(contract.systemPrompt, /links\/notes\/readings\/resources listed on the current page/);
@@ -2668,7 +2668,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /Cross-tab interleaving is offer-first/);
 	assert.match(contract.learningModeAppend, /call browser_list_tabs once only if the captured list is missing or ambiguous/);
 	assert.match(contract.learningModeAppend, /Do not switch to, read, highlight, or note a related tab unless the user explicitly asks/);
-	assert.match(contract.learningModeAppend, /highlight each page separately and say which tab supports which claim/);
+	assert.match(contract.learningModeAppend, /highlight each page separately \(pass that tab.s tabId to browser_highlight_text/);
 	assert.match(contract.learningModeAppend, /Do not record an offered related tab as a learning source/);
 	assert.match(contract.learningModeAppend, /Homework\/problem priority/);
 	assert.match(contract.learningModeAppend, /final numeric, symbolic, or code answer/);
