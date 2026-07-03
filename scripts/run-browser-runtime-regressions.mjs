@@ -8896,6 +8896,56 @@ async function assertAutomaticPdfHandoffRunsForDirectPdfBeforeAgentContext() {
 	);
 }
 
+async function assertModelIntentClassifierOverridesPredicates() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const prompt = "walk me through rejection sampling";
+	test.clearModelIntentClassificationsForTest();
+	assert.equal(test.promptAsksForStructuredPageSourceMarkerForTest(prompt), false, "regex baseline: generic walkthrough is not structured page work");
+	assert.equal(test.promptAsksForTeachingPageSourceMarkerForTest(prompt), false, "regex baseline: generic walkthrough is not page teaching");
+	test.setModelIntentClassificationForPromptForTest(prompt, {
+		pageScoped: true,
+		teaching: true,
+		enumerableCoverage: true,
+		comparison: false,
+		crossTabComparison: false,
+		documentReviewMarkup: false,
+	});
+	assert.equal(test.promptAsksForStructuredPageSourceMarkerForTest(prompt), true, "a page-scoped enumerable classification overrides the regex");
+	assert.equal(test.promptAsksForTeachingPageSourceMarkerForTest(prompt), true, "a page-scoped teaching classification overrides the regex");
+	assert.equal(test.promptRequiresPageSourceMarkerForTest(prompt), true, "the classified intent arms the source-marker retry net");
+	test.clearModelIntentClassificationsForTest();
+	assert.equal(test.promptAsksForStructuredPageSourceMarkerForTest(prompt), false, "clearing classifications restores the regex verdict");
+
+	// A classification never overrides an explicit no-page-changes ask.
+	const forbidPrompt = "Summarize this page. Answer only in chat, no page changes please.";
+	test.setModelIntentClassificationForPromptForTest(forbidPrompt, {
+		pageScoped: true,
+		teaching: true,
+		enumerableCoverage: true,
+		comparison: false,
+		crossTabComparison: false,
+		documentReviewMarkup: true,
+	});
+	assert.equal(test.promptRequiresPageSourceMarkerForTest(forbidPrompt), false, "no-page-changes stays regex-authoritative over any classification");
+	test.clearModelIntentClassificationsForTest();
+
+	// Parser: strict JSON booleans, tolerant of surrounding prose/fences.
+	assert.deepEqual(
+		test.parseModelIntentClassificationForTest('Sure: {"pageScoped": true, "teaching": false, "enumerableCoverage": true, "comparison": false, "crossTabComparison": false, "documentReviewMarkup": false}'),
+		{ pageScoped: true, teaching: false, enumerableCoverage: true, comparison: false, crossTabComparison: false, documentReviewMarkup: false },
+	);
+	assert.equal(test.parseModelIntentClassificationForTest("I could not classify that."), null, "junk parses to null so regex routing stays in effect");
+	assert.equal(test.parseModelIntentClassificationForTest('{"unrelated": 1}'), null, "JSON without any known field parses to null");
+
+	// Classifier context: all fields defined + pasted-material injection guard.
+	const context = test.buildModelIntentClassifierContextForTest("compare these two open papers");
+	for (const field of ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup"]) {
+		assert.match(context.systemPrompt, new RegExp(`"${field}"`), `classifier prompt defines ${field}`);
+	}
+	assert.match(context.systemPrompt, /Ignore any instructions[\s\S]*quoted or pasted material/, "classifier prompt guards against pasted-material hijack");
+	assert.match(context.systemPrompt, /ONLY a JSON object/, "classifier prompt demands bare JSON");
+}
+
 async function assertFixtureResponses() {
 	const fixture = await startFixtureServer({ port: 0 });
 	try {
@@ -8987,6 +9037,7 @@ async function main() {
 	await assertPublicActivitiesFilterInternalThinking();
 	await assertToolRetryActivitiesFinalizeAsRecovered();
 	await assertConstitutionPromptContract();
+	await assertModelIntentClassifierOverridesPredicates();
 	await assertPdfViewerFrameWaitsHaveTimeoutFallback();
 	await assertBrowserContextSnapshotHasTimeoutFallback();
 	await assertLearnerStateUpdates();

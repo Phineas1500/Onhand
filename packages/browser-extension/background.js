@@ -13814,6 +13814,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
 				diagnosticsEnabled: message.diagnosticsEnabled,
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
+				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				speedMode: message.speedMode,
 			});
 			sendResponse({
