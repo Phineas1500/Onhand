@@ -59,6 +59,10 @@ interface RuntimeSettings {
 	// and the enforcement gates stay deterministic either way. Intended for
 	// strong-model auth (e.g. Codex subscription), not the free tier.
 	experimentalModelLaneClassifier: boolean;
+	// Codex fast mode: service_tier "priority" on the Codex responses API —
+	// the same model on faster inference. Off by default because the plan's
+	// usage is consumed faster (2.5x on gpt-5.5). Ignored by other providers.
+	codexFastModeEnabled: boolean;
 }
 
 type SpeedMode = "auto" | "fast" | "deep";
@@ -465,6 +469,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	diagnosticsClientId: "",
 	advancedRuntimeInspectionEnabled: true,
 	experimentalModelLaneClassifier: false,
+	codexFastModeEnabled: false,
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -2336,6 +2341,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		diagnosticsEnabled: settings.diagnosticsEnabled,
 		advancedRuntimeInspectionEnabled: settings.advancedRuntimeInspectionEnabled,
 		experimentalModelLaneClassifier: settings.experimentalModelLaneClassifier,
+		codexFastModeEnabled: settings.codexFastModeEnabled,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -9204,7 +9210,7 @@ export const __browserRuntimeTest = {
 };
 
 function streamOnhandFast(model: any, context: any, options: any = {}) {
-	const { onhandReasoningProfile, onhandTelemetry, ...streamOptions } = options || {};
+	const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
 	const effectiveModel =
 		model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context)
 			? {
@@ -9229,6 +9235,9 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
 			reasoningSummary: "auto",
 			textVerbosity: reasoningProfile?.textVerbosity || "low",
+			// Codex fast mode: same model on priority inference. The plan's
+			// usage is consumed faster (2.5x on gpt-5.5), so it is opt-in.
+			...(onhandCodexFastMode ? { serviceTier: "priority" } : {}),
 		});
 	}
 	if (effectiveModel?.api === "openai-responses" && effectiveModel?.reasoning) {
@@ -9250,7 +9259,9 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 		// workers/free-tier instead.
 		return streamSimple(effectiveModel, context, {
 			...baseOptions,
-			...(effectiveModel?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}),
+			...(effectiveModel?.reasoning && (reasoningProfile?.reasoningEffort === "low" || reasoningProfile?.reasoningEffort === "medium")
+				? { reasoning: reasoningProfile.reasoningEffort }
+				: {}),
 		});
 	}
 	return streamSimple(effectiveModel, context, baseOptions);
@@ -10179,6 +10190,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
 				advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
 				experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier === true,
+				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
@@ -11703,8 +11715,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		// token refresh can itself take seconds and must not extend the budget.
 		const classify = async () => {
 			const apiKey = await resolveApiKey(model.provider);
+			const store = await loadStore();
 			const stream = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
 				apiKey,
+				onhandCodexFastMode: Boolean((store.settings as RuntimeSettings).codexFastModeEnabled),
 				onhandReasoningProfile: {
 					maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
 					reasoningEffort: "none",
@@ -13300,6 +13314,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
 				advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
 				experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store.settings.experimentalModelLaneClassifier) === true,
+				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 			};
 			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
@@ -13881,6 +13896,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								sessionId: session.id,
 							},
 							onhandReasoningProfile: reasoningProfile,
+							onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled),
 						}),
 					toolExecution: "parallel",
 				});

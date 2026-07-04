@@ -132240,7 +132240,8 @@ var DEFAULT_SETTINGS = {
   diagnosticsEnabled: false,
   diagnosticsClientId: "",
   advancedRuntimeInspectionEnabled: true,
-  experimentalModelLaneClassifier: false
+  experimentalModelLaneClassifier: false,
+  codexFastModeEnabled: false
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var smokeModelRegistration = null;
@@ -133832,6 +133833,7 @@ function buildPublicSettings(settings2) {
     diagnosticsEnabled: settings2.diagnosticsEnabled,
     advancedRuntimeInspectionEnabled: settings2.advancedRuntimeInspectionEnabled,
     experimentalModelLaneClassifier: settings2.experimentalModelLaneClassifier,
+    codexFastModeEnabled: settings2.codexFastModeEnabled,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
@@ -138711,7 +138713,7 @@ var __browserRuntimeTest = {
   summarizeRestoredArtifact
 };
 function streamOnhandFast(model, context, options = {}) {
-  const { onhandReasoningProfile, onhandTelemetry, ...streamOptions } = options || {};
+  const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
   const effectiveModel = model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context) ? {
     ...model,
     input: Array.from(/* @__PURE__ */ new Set([...Array.isArray(model.input) ? model.input : ["text"], "image"])),
@@ -138732,7 +138734,10 @@ function streamOnhandFast(model, context, options = {}) {
       ...baseOptions,
       reasoningEffort: reasoningProfile?.reasoningEffort || "none",
       reasoningSummary: "auto",
-      textVerbosity: reasoningProfile?.textVerbosity || "low"
+      textVerbosity: reasoningProfile?.textVerbosity || "low",
+      // Codex fast mode: same model on priority inference. The plan's
+      // usage is consumed faster (2.5x on gpt-5.5), so it is opt-in.
+      ...onhandCodexFastMode ? { serviceTier: "priority" } : {}
     });
   }
   if (effectiveModel?.api === "openai-responses" && effectiveModel?.reasoning) {
@@ -138745,7 +138750,7 @@ function streamOnhandFast(model, context, options = {}) {
   if (effectiveModel?.provider === OPENROUTER_API_PROVIDER) {
     return streamSimple(effectiveModel, context, {
       ...baseOptions,
-      ...effectiveModel?.reasoning && reasoningProfile?.reasoningEffort === "low" ? { reasoning: "low" } : {}
+      ...effectiveModel?.reasoning && (reasoningProfile?.reasoningEffort === "low" || reasoningProfile?.reasoningEffort === "medium") ? { reasoning: reasoningProfile.reasoningEffort } : {}
     });
   }
   return streamSimple(effectiveModel, context, baseOptions);
@@ -139617,7 +139622,8 @@ function createOnhandBrowserRuntime(host) {
         diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
         advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
-        experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier === true
+        experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier === true,
+        codexFastModeEnabled: rawSettings.codexFastModeEnabled === true
       };
       const sessions = {};
       for (const record2 of await getAllSessionRecords()) {
@@ -140960,8 +140966,10 @@ function createOnhandBrowserRuntime(host) {
     if (!model || !String(prompt || "").trim()) return null;
     const classify = async () => {
       const apiKey = await resolveApiKey2(model.provider);
+      const store2 = await loadStore();
       const stream2 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
         apiKey,
+        onhandCodexFastMode: Boolean(store2.settings.codexFastModeEnabled),
         onhandReasoningProfile: {
           maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
           reasoningEffort: "none",
@@ -142409,7 +142417,8 @@ function createOnhandBrowserRuntime(host) {
         diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store2.settings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store2.settings.diagnosticsClientId,
         advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
-        experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store2.settings.experimentalModelLaneClassifier) === true
+        experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store2.settings.experimentalModelLaneClassifier) === true,
+        codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
       sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
       const session = store2.sessions[store2.currentSessionId];
@@ -142917,7 +142926,8 @@ function createOnhandBrowserRuntime(host) {
               turnId: requestId,
               sessionId: session.id
             },
-            onhandReasoningProfile: reasoningProfile
+            onhandReasoningProfile: reasoningProfile,
+            onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled)
           }),
           toolExecution: "parallel"
         });
