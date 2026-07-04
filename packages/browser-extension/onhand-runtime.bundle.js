@@ -137779,6 +137779,14 @@ function normalizeOpenTabUrlForComparison(value) {
   const rest = match2[2] === "/" ? "" : match2[2];
   return `${match2[1].toLowerCase()}${rest}`;
 }
+function promptAsksToFocusExistingPage(prompt) {
+  const text = ownWordsPromptText(prompt);
+  if (!text) return false;
+  return textHasAny(
+    text,
+    /\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b/
+  );
+}
 function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
   if (commandName !== "navigate" || !params?.newTab) return null;
   const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
@@ -137788,7 +137796,10 @@ function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, r
   );
   if (!inventoryTraces.length) return null;
   const openTabIdsByUrl = /* @__PURE__ */ new Map();
-  for (const trace of inventoryTraces) {
+  const latestInventory = inventoryTraces.reduce(
+    (latest, trace) => traceTimeMs(trace, "endedAt") >= traceTimeMs(latest, "endedAt") ? trace : latest
+  );
+  for (const trace of [latestInventory]) {
     if (Array.isArray(trace?.openTabInventory)) {
       for (const tabInfo of trace.openTabInventory) {
         const url2 = normalizeOpenTabUrlForComparison(tabInfo?.url);
@@ -137804,14 +137815,16 @@ function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, r
   }
   if (!openTabIdsByUrl.has(targetUrl)) return null;
   const openTabId = openTabIdsByUrl.get(targetUrl);
+  const hasOpenTabId = openTabId !== null && openTabId !== void 0;
+  const recoveryInstruction = promptAsksToFocusExistingPage(request?.displayPrompt) ? hasOpenTabId ? `Switch to it with browser_activate_tab using tabId ${openTabId}.` : "Switch to it with browser_activate_tab using that tab's exact tabId or titleContains." : hasOpenTabId ? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.` : "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.";
   return {
     guardrail: {
       kind: "duplicate_tab_navigation",
       blockedTool: toolName,
       blockedCommand: commandName,
       message: [
-        openTabId !== null && openTabId !== void 0 ? `That URL is already open as tabId ${openTabId}; do not open a duplicate tab.` : "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
-        openTabId !== null && openTabId !== void 0 ? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.` : "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+        hasOpenTabId ? `That URL is already open as tabId ${openTabId}; do not open a duplicate tab.` : "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
+        recoveryInstruction,
         "Open a new tab only for URLs that are not already open."
       ].join(" ")
     }

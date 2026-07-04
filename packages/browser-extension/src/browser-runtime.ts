@@ -8185,9 +8185,23 @@ function normalizeOpenTabUrlForComparison(value: unknown) {
 	return `${match[1].toLowerCase()}${rest}`;
 }
 
+// The user wants an already-open page focused, not read: "take me to the docs
+// page", "switch to the other tab", "open the twelve-factor page". Requires an
+// explicit directional/switch verb (or "open ... tab/page") so read/summarize
+// asks that merely name a page never match.
+function promptAsksToFocusExistingPage(prompt: unknown) {
+	const text = ownWordsPromptText(prompt);
+	if (!text) return false;
+	return textHasAny(
+		text,
+		/\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b/,
+	);
+}
+
 // Opening a duplicate tab for a page that is already open (§6.10): once the
 // model has a tab inventory, a newTab navigate to one of those URLs is
-// intercepted — the existing tab should be read/annotated in place instead.
+// intercepted — the existing tab should be reused in place (read/annotated, or
+// focused via browser_activate_tab when the user asked to open it) instead.
 function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: string, params: any, request: any) {
 	if (commandName !== "navigate" || !params?.newTab) return null;
 	const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
@@ -8197,7 +8211,14 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 	);
 	if (!inventoryTraces.length) return null;
 	const openTabIdsByUrl = new Map<string, number | null>();
-	for (const trace of inventoryTraces) {
+	// Only the most recent inventory reflects the current tab set: a tab that
+	// appeared in an earlier browser_list_tabs but not the latest has since been
+	// closed or navigated away, so unioning every inventory would block a fresh
+	// newTab navigate against a tab that no longer exists (or name a stale tabId).
+	const latestInventory = inventoryTraces.reduce((latest, trace) =>
+		traceTimeMs(trace, "endedAt") >= traceTimeMs(latest, "endedAt") ? trace : latest,
+	);
+	for (const trace of [latestInventory]) {
 		// Prefer the full inventory captured at trace time; the resultSummary is
 		// truncated and can cut off recently-opened tabs in a busy window.
 		if (Array.isArray(trace?.openTabInventory)) {
@@ -8217,18 +8238,27 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 	// Name the tab id explicitly: the tab list shown to the model is capped,
 	// so the already-open tab may be one it was never shown.
 	const openTabId = openTabIdsByUrl.get(targetUrl);
+	const hasOpenTabId = openTabId !== null && openTabId !== undefined;
+	// Keep blocking the duplicate tab, but when the user asked to open/switch to
+	// the page, point at browser_activate_tab so the existing tab gets focused —
+	// reading it in place would ignore the "take me there" intent.
+	const recoveryInstruction = promptAsksToFocusExistingPage(request?.displayPrompt)
+		? hasOpenTabId
+			? `Switch to it with browser_activate_tab using tabId ${openTabId}.`
+			: "Switch to it with browser_activate_tab using that tab's exact tabId or titleContains."
+		: hasOpenTabId
+			? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.`
+			: "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.";
 	return {
 		guardrail: {
 			kind: "duplicate_tab_navigation",
 			blockedTool: toolName,
 			blockedCommand: commandName,
 			message: [
-				openTabId !== null && openTabId !== undefined
+				hasOpenTabId
 					? `That URL is already open as tabId ${openTabId}; do not open a duplicate tab.`
 					: "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
-				openTabId !== null && openTabId !== undefined
-					? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.`
-					: "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+				recoveryInstruction,
 				"Open a new tab only for URLs that are not already open.",
 			].join(" "),
 		},
