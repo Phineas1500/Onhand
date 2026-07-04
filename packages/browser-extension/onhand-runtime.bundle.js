@@ -139662,6 +139662,25 @@ function createOnhandBrowserRuntime(host) {
   const DEBUG_TURN_TRACE_MAX = 12;
   const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
   const debugTurnTraces = [];
+  async function persistDebugTurnTraces() {
+    try {
+      const store2 = chrome.storage?.session;
+      if (!store2) return;
+      const stored = await store2.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+      const prev = Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY]) ? stored[DEBUG_TURN_TRACE_STORAGE_KEY] : [];
+      const seen = /* @__PURE__ */ new Set();
+      const merged = [];
+      for (const trace of [...debugTurnTraces, ...prev]) {
+        const key = String(trace?.turnId || "");
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        merged.push(trace);
+      }
+      merged.sort((left, right) => String(right?.createdAt || "").localeCompare(String(left?.createdAt || "")));
+      await store2.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: merged.slice(0, DEBUG_TURN_TRACE_MAX) });
+    } catch {
+    }
+  }
   function captureDebugTurnTrace(session, finalError, reliability) {
     try {
       const request = activeRequest;
@@ -139701,11 +139720,7 @@ function createOnhandBrowserRuntime(host) {
         reliability
       });
       if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
-      try {
-        chrome.storage?.session?.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: debugTurnTraces }).catch(() => {
-        });
-      } catch {
-      }
+      void persistDebugTurnTraces();
     } catch {
     }
   }
@@ -142377,12 +142392,10 @@ function createOnhandBrowserRuntime(host) {
   return {
     async getDebugTraces(limit2) {
       let traces = debugTurnTraces;
-      if (!traces.length) {
-        try {
-          const stored = await chrome.storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
-          if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) traces = stored[DEBUG_TURN_TRACE_STORAGE_KEY];
-        } catch {
-        }
+      try {
+        const stored = await chrome.storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+        if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) traces = stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+      } catch {
       }
       const max = Number.isFinite(limit2) && limit2 > 0 ? Math.min(limit2, traces.length) : traces.length;
       return { ok: true, traces: traces.slice(0, max) };
