@@ -134758,7 +134758,8 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
   const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
-  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForSinglePageComparison(request.displayPrompt) || crossTab ? 2 : 1;
+  const baselineRequiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForSinglePageComparison(request.displayPrompt) || crossTab ? 2 : 1;
+  const requiredHighlights = crossTab && textHasAny(ownWordsPromptText(request.displayPrompt), /\b(?:all|every|each|three|four|five)\b/) ? Math.max(3, baselineRequiredHighlights) : baselineRequiredHighlights;
   const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
   return completedCount < requiredHighlights;
 }

@@ -9916,6 +9916,10 @@ async function ensurePageToolkitFactoryFileInFrames(tabId) {
 async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, args = [], toolkitOptions = {}) {
 	const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
 	const frameUrlById = new Map(frameInfos.map((frame) => [frame.frameId, frame.url || ""]));
+	// Dominance must be part of frame SELECTION for visible text: filtering
+	// only the picked payload afterwards would discard a dominant body frame
+	// whenever a non-dominant embed happens to have longer text.
+	const visibleTextFrameAreas = methodName === "getVisibleText" ? await getFrameViewportAreasForTab(tabId) : null;
 	await ensurePageToolkitFactoryFileInFrames(tabId).catch(() => {});
 	const results = await executeScriptInAllFrames(
 		tabId,
@@ -9951,7 +9955,11 @@ async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, arg
 				frameTitle: result.title || "",
 			};
 		})
-		.filter((payload) => payload && typeof payload === "object");
+		.filter((payload) => payload && typeof payload === "object")
+		.filter(
+			(payload) =>
+				!visibleTextFrameAreas || payload.frameId === 0 || frameAreaIsDominant(visibleTextFrameAreas, payload.frameId),
+		);
 	if (methodName === "clearAnnotations") return aggregateClearAnnotationFrameValues(payloads.filter((payload) => payload.ok));
 	const bestPayload = pickBestPageToolkitFramePayload(payloads, methodName, args);
 	if (bestPayload) {

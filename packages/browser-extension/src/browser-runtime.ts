@@ -3371,12 +3371,19 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 	// retry — but a cross-tab comparison still needs a marker in each source
 	// tab, so the distinct-tab requirement below must run for it.
 	if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
-	const requiredHighlights =
+	const baselineRequiredHighlights =
 		promptAsksForStructuredPageSourceMarker(request.displayPrompt) ||
 		promptAsksForSinglePageComparison(request.displayPrompt) ||
 		crossTab
 			? 2
 			: 1;
+	// Explicit three-plus phrasings ("compare all open docs") raise the
+	// cross-tab floor. The gate cannot know the true source count, so this
+	// remains a floor — the retry prompt still demands every source tab.
+	const requiredHighlights =
+		crossTab && textHasAny(ownWordsPromptText(request.displayPrompt), /\b(?:all|every|each|three|four|five)\b/)
+			? Math.max(3, baselineRequiredHighlights)
+			: baselineRequiredHighlights;
 	// Cross-tab prompts need marks on distinct tabs, not just two marks total.
 	const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
 	return completedCount < requiredHighlights;
