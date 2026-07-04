@@ -8332,7 +8332,14 @@ function promptAsksForDerivationOrProofSourceMarker(prompt: unknown) {
 	// shaped tagline. A genuine derivation/proof names itself explicitly.
 	if (!/\b(?:derive|derivation|proof|prove|theorem|lemma)\b/i.test(text)) {
 		if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
-		if (/\b(?:roadmap|outline|overview)\b/i.test(text)) return false;
+		// Regex fallback (classifier off): exempt a genuine roadmap/outline coverage
+		// ask, but not an explanation that merely mentions one — "explain how this
+		// algorithm works as an overview" matches the structured predicate via
+		// "explain how" and still needs the explanatory sentence, not a heading, so
+		// the guard must stay on. "overview" is dropped from the list: on its own it
+		// carries no derivation keyword, so it never reaches this predicate anyway.
+		const explanationAsk = /\b(?:explain\s+how|how\s+(?:does|do|did)|show\s+why)\b/i.test(text);
+		if (!explanationAsk && /\b(?:roadmap|outline)\b/i.test(text)) return false;
 	}
 	return Boolean(
 		promptAsksForStructuredPageSourceMarker(prompt) &&

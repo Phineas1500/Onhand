@@ -137897,7 +137897,8 @@ function promptAsksForDerivationOrProofSourceMarker(prompt) {
   if (!text) return false;
   if (!/\b(?:derive|derivation|proof|prove|theorem|lemma)\b/i.test(text)) {
     if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
-    if (/\b(?:roadmap|outline|overview)\b/i.test(text)) return false;
+    const explanationAsk = /\b(?:explain\s+how|how\s+(?:does|do|did)|show\s+why)\b/i.test(text);
+    if (!explanationAsk && /\b(?:roadmap|outline)\b/i.test(text)) return false;
   }
   return Boolean(
     promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
