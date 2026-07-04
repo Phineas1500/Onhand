@@ -571,6 +571,7 @@
 				highlightKey: null,
 				matchTokens: new Set(),
 				snippets: new Set(),
+				annotationIds: new Set(),
 				titles: [],
 			};
 			registry.groupMap.set(groupId, group);
@@ -584,6 +585,8 @@
 	function addCitationActionToRegistry(registry, action) {
 		const group = ensureCitationGroup(registry, action);
 		if (!group) return null;
+		const annotationId = String(action.annotationId || "").trim();
+		if (annotationId) group.annotationIds.add(annotationId);
 		const citationText = String(action.citationText || action.detail || "").trim();
 		for (const token of tokenizeCitationText(citationText)) {
 			group.matchTokens.add(token);
@@ -609,6 +612,7 @@
 			actionKey: group.noteKey || group.highlightKey || group.actionKey,
 			matchTokens: [...group.matchTokens],
 			snippets: [...group.snippets],
+			annotationIds: [...group.annotationIds],
 			title: group.titles[0] || "Open page evidence",
 			current: currentGroupIds.has(group.groupId),
 		}));
@@ -744,9 +748,67 @@
 		`;
 	}
 
+	// Model-emitted provenance: when the reply grounds a claim on a highlight it
+	// created, it tags the claim inline with that highlight's annotation id
+	// ([[cite:ID]]). The model holds the id from the browser_highlight_text tool
+	// result, so this is the claim->mark link captured at generation time rather
+	// than reconstructed by token overlap. Markers are stripped from the rendered
+	// text; a block with no resolvable marker falls back to findCitationsForBlock.
+	const CITATION_MARKER_PATTERN = /\[\[\s*cite\s*:\s*([^\]]+?)\s*\]\]/gi;
+	const MAX_EXPLICIT_CITATIONS = 3;
+
+	function extractCitationMarkers(text) {
+		const source = String(text || "");
+		if (!source.includes("[[")) return { text: source, ids: [] };
+		const ids = [];
+		const cleaned = source.replace(CITATION_MARKER_PATTERN, (_match, inner) => {
+			for (const rawId of String(inner).split(",")) {
+				const id = rawId.trim();
+				if (id) ids.push(id);
+			}
+			return "";
+		});
+		return { text: cleaned.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1"), ids: [...new Set(ids)] };
+	}
+
+	function resolveExplicitCitations(ids, citationGroups) {
+		if (!ids.length || !citationGroups.length) return [];
+		const byAnnotationId = new Map();
+		for (const group of citationGroups) {
+			for (const annotationId of group.annotationIds || []) {
+				if (!byAnnotationId.has(annotationId)) byAnnotationId.set(annotationId, group);
+			}
+		}
+		const matches = [];
+		const seenGroups = new Set();
+		for (const id of ids) {
+			const group = byAnnotationId.get(id);
+			if (!group || seenGroups.has(group.groupId)) continue;
+			seenGroups.add(group.groupId);
+			matches.push({
+				groupId: group.groupId,
+				sourceIndex: group.sourceIndex,
+				actionKey: group.actionKey,
+				title: group.title,
+				position: matches.length,
+				score: Number.POSITIVE_INFINITY,
+				explicit: true,
+			});
+			if (matches.length >= MAX_EXPLICIT_CITATIONS) break;
+		}
+		return matches;
+	}
+
+	function citationsForRenderedText(text, citationGroups) {
+		const { text: cleanedText, ids } = extractCitationMarkers(text);
+		const explicit = resolveExplicitCitations(ids, citationGroups);
+		const citations = explicit.length ? explicit : findCitationsForBlock(cleanedText, citationGroups);
+		return { cleanedText, citations };
+	}
+
 	function renderCitedBlock(tag, text, citationGroups, citationNumbering) {
-		const citations = findCitationsForBlock(text, citationGroups);
-		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
+		const { cleanedText, citations } = citationsForRenderedText(text, citationGroups);
+		return `<${tag}>${renderInlineRichText(cleanedText)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
 	}
 
 	function splitMarkdownTableRow(line) {
@@ -789,9 +851,16 @@
 
 	function renderMarkdownTable(headerCells, bodyRows, citationGroups, citationNumbering) {
 		const width = Math.max(2, headerCells.length);
-		const headers = normalizeMarkdownTableCells(headerCells, width);
-		const rows = bodyRows.map((row) => normalizeMarkdownTableCells(row, width));
-		const citations = findCitationsForBlock([...headers, ...rows.flat()].join(" "), citationGroups);
+		const collectedIds = [];
+		const cleanCell = (cell) => {
+			const { text: cleaned, ids } = extractCitationMarkers(cell);
+			collectedIds.push(...ids);
+			return cleaned;
+		};
+		const headers = normalizeMarkdownTableCells(headerCells, width).map(cleanCell);
+		const rows = bodyRows.map((row) => normalizeMarkdownTableCells(row, width).map(cleanCell));
+		const explicit = resolveExplicitCitations([...new Set(collectedIds)], citationGroups);
+		const citations = explicit.length ? explicit : findCitationsForBlock([...headers, ...rows.flat()].join(" "), citationGroups);
 		return `
 			<div class="reply-table-wrap">
 				<table class="reply-table">
