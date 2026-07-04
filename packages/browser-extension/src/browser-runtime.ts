@@ -10290,22 +10290,33 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	// MV3 worker heap). Merge with what is already stored, keyed by turnId, so a
 	// capture on a freshly restarted worker — whose in-memory ring is empty — does
 	// not overwrite traces persisted before the restart.
+	// Merge two trace rings newest-first, deduped by turnId, capped. Used for both
+	// the storage write (in-memory over stored) and the debug read (in-memory —
+	// which holds the freshest just-captured turn — over the durable stored ring).
+	function mergeDebugTraceRings(primary: any[], secondary: any[]) {
+		const seen = new Set<string>();
+		const merged: any[] = [];
+		for (const trace of [...primary, ...secondary]) {
+			const key = String(trace?.turnId || "");
+			if (key && seen.has(key)) continue;
+			if (key) seen.add(key);
+			merged.push(trace);
+		}
+		merged.sort((left, right) => String(right?.createdAt || "").localeCompare(String(left?.createdAt || "")));
+		return merged.slice(0, DEBUG_TURN_TRACE_MAX);
+	}
+	async function readStoredDebugTraceRing() {
+		try {
+			const stored = await (chrome as any).storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+			if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) return stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+		} catch {}
+		return [];
+	}
 	async function persistDebugTurnTraces() {
 		try {
 			const store = (chrome as any).storage?.session;
 			if (!store) return;
-			const stored = await store.get(DEBUG_TURN_TRACE_STORAGE_KEY);
-			const prev = Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY]) ? stored[DEBUG_TURN_TRACE_STORAGE_KEY] : [];
-			const seen = new Set<string>();
-			const merged: any[] = [];
-			for (const trace of [...debugTurnTraces, ...prev]) {
-				const key = String(trace?.turnId || "");
-				if (key && seen.has(key)) continue;
-				if (key) seen.add(key);
-				merged.push(trace);
-			}
-			merged.sort((left, right) => String(right?.createdAt || "").localeCompare(String(left?.createdAt || "")));
-			await store.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: merged.slice(0, DEBUG_TURN_TRACE_MAX) });
+			await store.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing()) });
 		} catch {}
 	}
 	function captureDebugTurnTrace(session: any, finalError: Error | null, reliability: Record<string, unknown>) {
@@ -13339,13 +13350,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 
 	return {
 		async getDebugTraces(limit?: number) {
-			// Session storage holds the merged ring across worker restarts; the
-			// in-memory ring is the fallback when storage is unavailable (e.g. tests).
-			let traces = debugTurnTraces;
-			try {
-				const stored = await (chrome as any).storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
-				if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) traces = stored[DEBUG_TURN_TRACE_STORAGE_KEY];
-			} catch {}
+			// Merge the in-memory ring (holds the freshest turn — persist is async
+			// and may not have flushed) with the durable storage ring (survives
+			// worker restarts), deduped and newest-first.
+			const traces = mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing());
 			const max =
 				Number.isFinite(limit as number) && (limit as number) > 0
 					? Math.min(limit as number, traces.length)
