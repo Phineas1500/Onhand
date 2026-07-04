@@ -2645,25 +2645,35 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 // frame. The extractor is injected directly as a function — string-eval
 // injection would be blocked by frames whose CSP bans unsafe-eval (Claude
 // artifact frames do).
-async function getScriptingFrameReadableContent(tabId, options = {}) {
-	const frameSizes = new Map();
+// Frame viewport areas via a cheap scripting probe. Used to require that a
+// frame chosen to replace top-document content is DOMINANT (>=30% of the top
+// frame's viewport) — an ad/widget embed on a short page is not the body.
+async function getFrameViewportAreasForTab(tabId) {
+	const areas = new Map();
 	try {
-		const sizeResults = await executeScriptInAllFrames(tabId, () => ({ width: window.innerWidth, height: window.innerHeight }), []);
-		for (const entry of Array.isArray(sizeResults) ? sizeResults : []) {
-			if (entry?.result) frameSizes.set(entry.frameId, Math.max(0, entry.result.width * entry.result.height));
+		const results = await executeScriptInAllFrames(tabId, () => ({ width: window.innerWidth, height: window.innerHeight }), []);
+		for (const entry of Array.isArray(results) ? results : []) {
+			if (entry?.result) areas.set(entry.frameId, Math.max(0, entry.result.width * entry.result.height));
 		}
 	} catch {}
-	const topArea = frameSizes.get(0) || 0;
+	return areas;
+}
+
+function frameAreaIsDominant(areas, frameId) {
+	const topArea = areas.get(0) || 0;
+	if (topArea <= 0) return true;
+	return (areas.get(frameId) || 0) >= topArea * 0.3;
+}
+
+async function getScriptingFrameReadableContent(tabId, options = {}) {
+	const frameAreas = await getFrameViewportAreasForTab(tabId);
 	const results = await executeScriptInAllFrames(tabId, extractReadableContentInPage, [
 		{ maxChars: options.maxChars, query: options.query },
 	]);
 	let best = null;
 	for (const entry of Array.isArray(results) ? results : []) {
 		if (!entry || entry.frameId === 0) continue;
-		if (topArea > 0) {
-			const frameArea = frameSizes.get(entry.frameId) || 0;
-			if (frameArea < topArea * 0.3) continue;
-		}
+		if (!frameAreaIsDominant(frameAreas, entry.frameId)) continue;
 		const value = entry.result;
 		if (!value || typeof value !== "object") continue;
 		const length = normalizeReadableContentText(value).length;
@@ -10118,16 +10128,33 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			(await tabHasCrossOriginContentSubframe(tabId, tab?.url))
 		) {
 			// Embedded-content shell: the visible text lives in a cross-origin
-			// body frame, not the chrome-thin top document. The scripting
-			// executor is eval-based and fails in frames whose CSP bans
-			// unsafe-eval, so fall through to the debugger executor.
+			// body frame, not the chrome-thin top document. Only a DOMINANT
+			// frame may replace the top text — an ad/widget embed on a short
+			// page must not become "the page". The scripting executor is
+			// eval-based and fails in frames whose CSP bans unsafe-eval, so
+			// fall through to the debugger executor.
+			const frameAreas = await getFrameViewportAreasForTab(tabId);
+			const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
+			const framePayloadIsDominant = (framePayload) => {
+				const fallbackInfo = framePayload?.pageToolkitFrameFallback || {};
+				let frameId = typeof fallbackInfo.frameId === "number" ? fallbackInfo.frameId : null;
+				if (frameId === null && fallbackInfo.frameUrl) {
+					const match = frameInfos.find((frame) => frame.url === fallbackInfo.frameUrl);
+					frameId = match ? match.frameId : null;
+				}
+				if (frameId === null) return false;
+				return frameAreaIsDominant(frameAreas, frameId);
+			};
 			try {
 				const framePayload = await withOperationTimeout(
 					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
 					pageToolkitTimeoutMs,
 					`Page toolkit frame visible-text timed out: ${methodName}`,
 				);
-				if (normalizePageToolkitPayloadText(framePayload).length > normalizePageToolkitPayloadText(payload).length + 200) {
+				if (
+					normalizePageToolkitPayloadText(framePayload).length > normalizePageToolkitPayloadText(payload).length + 200 &&
+					framePayloadIsDominant(framePayload)
+				) {
 					return framePayload;
 				}
 			} catch {}
@@ -10137,7 +10164,10 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					pageToolkitFrameTimeoutMs,
 					`Page toolkit debugger-frame visible-text timed out: ${methodName}`,
 				);
-				if (normalizePageToolkitPayloadText(debuggerFramePayload).length > normalizePageToolkitPayloadText(payload).length + 200) {
+				if (
+					normalizePageToolkitPayloadText(debuggerFramePayload).length > normalizePageToolkitPayloadText(payload).length + 200 &&
+					framePayloadIsDominant(debuggerFramePayload)
+				) {
 					return debuggerFramePayload;
 				}
 			} catch {}

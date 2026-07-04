@@ -137860,10 +137860,13 @@ function looksLikeHeadingOnlyHighlightText(value) {
   if (hasVerb) return false;
   return /^[\p{Lu}\p{N}]/u.test(text);
 }
+function promptAsksForStructuredOrComparisonPageWork(prompt) {
+  return promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForSinglePageComparison(prompt);
+}
 function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, params, prompt) {
   if (commandName !== "highlight_text") return null;
   if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-  if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+  if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
   const sectionNumberOnly = isSectionNumberOnlyHighlightText(params?.text);
   const headingOnlyDerivation = !sectionNumberOnly && promptAsksForDerivationOrProofSourceMarker(prompt) && looksLikeHeadingOnlyHighlightText(params?.text);
   if (!sectionNumberOnly && !headingOnlyDerivation) return null;
@@ -138115,7 +138118,7 @@ function buildCompactTeachingNoteFailureGuardResult(toolName, commandName, promp
 function buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, request) {
   if (commandName !== "highlight_text") return null;
   if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-  if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+  if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
   const highlightCount = completedSourceHighlightCount(request);
   const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
   if (!(highlightCount > 0 && errorCount >= STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT)) {
@@ -138162,7 +138165,7 @@ function buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, req
   if (commandName !== "show_note") return null;
   if (promptExplicitlyRequestsNote(prompt)) return null;
   if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-  if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+  if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
   const maxNotes = promptAsksForComparison(prompt) ? 1 : STRUCTURED_SOURCE_NOTE_MAX;
   if (countToolTracesByState(request, "browser_show_note", ["complete"]) < maxNotes) return null;
   return {

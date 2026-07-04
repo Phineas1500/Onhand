@@ -8270,12 +8270,20 @@ function looksLikeHeadingOnlyHighlightText(value: unknown) {
 	return /^[\p{Lu}\p{N}]/u.test(text);
 }
 
+// Guards that protect structured page work also cover page-scoped
+// comparisons: under regex routing the structured predicate matched
+// comparisons via its shared keyword list, but the model classifier
+// separates the two intents, so guard consumers must ask for both.
+function promptAsksForStructuredOrComparisonPageWork(prompt: unknown) {
+	return promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForSinglePageComparison(prompt);
+}
+
 function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandName: string, params: any, prompt: unknown) {
 	if (commandName !== "highlight_text") return null;
 	// Review markup legitimately marks a section heading when the feedback
 	// point applies to the whole section — the attached note carries the why.
 	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+	if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
 	const sectionNumberOnly = isSectionNumberOnlyHighlightText(params?.text);
 	const headingOnlyDerivation =
 		!sectionNumberOnly && promptAsksForDerivationOrProofSourceMarker(prompt) && looksLikeHeadingOnlyHighlightText(params?.text);
@@ -8575,7 +8583,7 @@ function buildStructuredHighlightBudgetGuardResult(toolName: string, commandName
 	// feedback points still deserve marks; the repeated-failure guard is the
 	// backstop for genuinely broken highlighting.
 	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+	if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
 	const highlightCount = completedSourceHighlightCount(request);
 	const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
 	if (!(highlightCount > 0 && errorCount >= STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT)) {
@@ -8626,7 +8634,7 @@ function buildStructuredNoteBudgetGuardResult(toolName: string, commandName: str
 	if (commandName !== "show_note") return null;
 	if (promptExplicitlyRequestsNote(prompt)) return null;
 	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
-	if (!promptAsksForStructuredPageSourceMarker(prompt)) return null;
+	if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
 	const maxNotes = promptAsksForComparison(prompt) ? 1 : STRUCTURED_SOURCE_NOTE_MAX;
 	if (countToolTracesByState(request, "browser_show_note", ["complete"]) < maxNotes) return null;
 	return {
