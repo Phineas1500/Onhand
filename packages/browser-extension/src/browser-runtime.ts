@@ -3149,6 +3149,18 @@ function timestampFromIso(value: string | undefined, fallback = Date.now()) {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// A turn's stored reply keeps its [[cite:...]] provenance markers so the sidebar
+// can render citation chips; strip them before the reply is fed back to the
+// model as history/context, so stale internal ids don't leak into later prompts.
+function stripCitationProvenanceMarkers(text: unknown) {
+	const value = String(text || "");
+	if (!value.includes("[[")) return value;
+	return value
+		.replace(/\[\[\s*cite\s*:\s*[^\]]+?\s*\]\]/gi, "")
+		.replace(/[ \t]{2,}/g, " ")
+		.replace(/[ \t]+(\n|$)/g, "$1");
+}
+
 function createStoredConversationMessages(turns: UiTurn[] = []): AgentMessage[] {
 	return turns
 		.filter((turn) => turn && !turn.pending && String(turn.userPrompt || turn.reply || "").trim())
@@ -3165,7 +3177,7 @@ function createStoredConversationMessages(turns: UiTurn[] = []): AgentMessage[] 
 			if (String(turn.reply || "").trim()) {
 				messages.push({
 					role: "assistant",
-					content: [{ type: "text", text: truncate(turn.reply, RECENT_CONTEXT_REPLY_MAX_CHARS) }],
+					content: [{ type: "text", text: truncate(stripCitationProvenanceMarkers(turn.reply), RECENT_CONTEXT_REPLY_MAX_CHARS) }],
 					api: "onhand-history",
 					provider: "onhand",
 					model: "conversation-history",
@@ -5006,7 +5018,7 @@ function buildRecentConversationContext(session: RuntimeSession) {
 		.map((turn) =>
 			[
 				`User: ${truncate(turn.userPrompt, RECENT_CONTEXT_PROMPT_MAX_CHARS)}`,
-				turn.reply ? `Onhand: ${truncate(turn.reply, RECENT_CONTEXT_REPLY_MAX_CHARS)}` : "",
+				turn.reply ? `Onhand: ${truncate(stripCitationProvenanceMarkers(turn.reply), RECENT_CONTEXT_REPLY_MAX_CHARS)}` : "",
 			]
 				.filter(Boolean)
 				.join("\n"),

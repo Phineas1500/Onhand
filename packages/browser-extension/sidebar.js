@@ -804,6 +804,12 @@
 		return matches;
 	}
 
+	// turn.reply keeps its [[cite:...]] markers so the renderer can resolve chips,
+	// but non-rendered consumers (clipboard copy) must not leak the internal ids.
+	function stripCitationMarkers(text) {
+		return extractCitationMarkers(text).text;
+	}
+
 	function citationsForRenderedText(text, citationGroups) {
 		const { text: cleanedText, ids } = extractCitationMarkers(text);
 		const explicit = resolveExplicitCitations(ids, citationGroups);
@@ -5550,7 +5556,7 @@
 			const text =
 				button.dataset.copyRealtimeAnswer === "true"
 					? String(realtimeAnswer?.markdown || "").trim()
-					: String(findCopyTurnById(turnId)?.reply || "").trim();
+					: stripCitationMarkers(String(findCopyTurnById(turnId)?.reply || "")).trim();
 			try {
 				await copyTextToClipboard(text);
 				setCopyButtonState(button, "copied");

@@ -134557,6 +134557,11 @@ function timestampFromIso(value, fallback = Date.now()) {
   const parsed = value ? Date.parse(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+function stripCitationProvenanceMarkers(text) {
+  const value = String(text || "");
+  if (!value.includes("[[")) return value;
+  return value.replace(/\[\[\s*cite\s*:\s*[^\]]+?\s*\]\]/gi, "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1");
+}
 function createStoredConversationMessages(turns = []) {
   return turns.filter((turn) => turn && !turn.pending && String(turn.userPrompt || turn.reply || "").trim()).flatMap((turn) => {
     const timestamp2 = timestampFromIso(turn.createdAt);
@@ -134571,7 +134576,7 @@ function createStoredConversationMessages(turns = []) {
     if (String(turn.reply || "").trim()) {
       messages.push({
         role: "assistant",
-        content: [{ type: "text", text: truncate2(turn.reply, RECENT_CONTEXT_REPLY_MAX_CHARS) }],
+        content: [{ type: "text", text: truncate2(stripCitationProvenanceMarkers(turn.reply), RECENT_CONTEXT_REPLY_MAX_CHARS) }],
         api: "onhand-history",
         provider: "onhand",
         model: "conversation-history",
@@ -135220,7 +135225,7 @@ function buildRecentConversationContext(session) {
   return recentTurns.map(
     (turn) => [
       `User: ${truncate2(turn.userPrompt, RECENT_CONTEXT_PROMPT_MAX_CHARS)}`,
-      turn.reply ? `Onhand: ${truncate2(turn.reply, RECENT_CONTEXT_REPLY_MAX_CHARS)}` : ""
+      turn.reply ? `Onhand: ${truncate2(stripCitationProvenanceMarkers(turn.reply), RECENT_CONTEXT_REPLY_MAX_CHARS)}` : ""
     ].filter(Boolean).join("\n")
   ).join("\n\n");
 }
