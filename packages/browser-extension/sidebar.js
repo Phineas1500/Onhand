@@ -491,6 +491,11 @@
 	function tokenizeCitationText(value) {
 		return normalizeCitationText(value)
 			.split(" ")
+			// Drop stopwords before suffix folding: the trailing-e fold turns
+			// stopwords like "there"/"these"/"where" into "ther"/"thes"/"wher",
+			// which the post-fold stopword check no longer recognizes, so they
+			// would survive as match tokens and dilute citation precision.
+			.filter((token) => token && !CITATION_STOP_WORDS.has(token))
 			.map(normalizeCitationToken)
 			.filter((token) => {
 				if (!token) return false;
