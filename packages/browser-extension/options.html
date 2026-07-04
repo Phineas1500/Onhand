@@ -437,6 +437,22 @@
           </label>
           <p class="help">Lets Onhand use read-only JavaScript on the active page only when normal page-reading, DOM, screenshot, console, network, or selector tools are not enough. Turn this off to prevent model-requested JavaScript inspection.</p>
         </div>
+
+        <div class="field">
+          <label class="toggle-row" for="codexFastModeEnabled">
+            <input id="codexFastModeEnabled" type="checkbox" />
+            <span>Codex fast mode (priority inference)</span>
+          </label>
+          <p class="help">Runs the same model on OpenAI's priority tier for faster responses, with no change to answer quality. Uses your Codex plan's rate limits noticeably faster (about 2.5&times; on <code>gpt-5.5</code>). Applies to Codex sign-in only; other providers ignore it.</p>
+        </div>
+
+        <div class="field">
+          <label class="toggle-row" for="experimentalModelLaneClassifier">
+            <input id="experimentalModelLaneClassifier" type="checkbox" />
+            <span>Experimental: model-based intent routing</span>
+          </label>
+          <p class="help">Uses a small model call to decide how to handle each ask (what to highlight and how thoroughly) instead of keyword rules. Understands paraphrases and other languages, but adds a moment before responses start; falls back to keyword rules on any failure. Works best with Codex sign-in.</p>
+        </div>
       </section>
 
       <section>

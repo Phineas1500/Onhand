@@ -65,6 +65,8 @@ const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp")
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
+const codexFastModeEnabledInput = document.getElementById("codexFastModeEnabled");
+const experimentalModelLaneClassifierInput = document.getElementById("experimentalModelLaneClassifier");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
@@ -350,6 +352,8 @@ async function loadForm() {
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
 	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
+	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
+	experimentalModelLaneClassifierInput.checked = runtimeSettings.experimentalModelLaneClassifier === true;
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
@@ -398,6 +402,8 @@ async function save() {
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
 		diagnosticsEnabled: isFreeTierMode() || Boolean(diagnosticsEnabledInput.checked),
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
+		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
+		experimentalModelLaneClassifier: Boolean(experimentalModelLaneClassifierInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});

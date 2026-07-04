@@ -491,6 +491,11 @@
 	function tokenizeCitationText(value) {
 		return normalizeCitationText(value)
 			.split(" ")
+			// Drop stopwords before suffix folding: the trailing-e fold turns
+			// stopwords like "there"/"these"/"where" into "ther"/"thes"/"wher",
+			// which the post-fold stopword check no longer recognizes, so they
+			// would survive as match tokens and dilute citation precision.
+			.filter((token) => token && !CITATION_STOP_WORDS.has(token))
 			.map(normalizeCitationToken)
 			.filter((token) => {
 				if (!token) return false;
@@ -501,8 +506,21 @@
 	}
 
 	function normalizeCitationToken(token) {
-		const value = String(token || "").trim();
-		if (/^[a-z]{5,}s$/.test(value) && !/(?:ss|us|is)$/.test(value)) return value.slice(0, -1);
+		let value = String(token || "").trim();
+		if (!/^[a-z]+$/.test(value)) return value;
+		// Conservative suffix folding so natural inflection drift between a
+		// mark's exact words and the reply's prose still matches
+		// ("readability"/"readable", "explained"/"explains",
+		// "validation"/"validated"). Both sides of the comparison fold through
+		// this same function, and the overlap/score thresholds still decide
+		// whether a chip is defensible — folding never adds a chip on its own.
+		if (value.length >= 8 && /bility$/.test(value)) value = value.slice(0, -5) + "le";
+		else if (/[a-z]{4}ation$/.test(value)) value = value.slice(0, -5) + "ate";
+		if (/[a-z]{2}ies$/.test(value)) value = value.slice(0, -3) + "y";
+		else if (/[a-z]{3}ing$/.test(value)) value = value.slice(0, -3);
+		else if (/[a-z]{3}ed$/.test(value)) value = value.slice(0, -2);
+		else if (/^[a-z]{4,}s$/.test(value) && !/(?:ss|us|is)$/.test(value)) value = value.slice(0, -1);
+		if (/^[a-z]{4,}e$/.test(value)) value = value.slice(0, -1);
 		return value;
 	}
 
@@ -558,6 +576,7 @@
 				highlightKey: null,
 				matchTokens: new Set(),
 				snippets: new Set(),
+				annotationIds: new Set(),
 				titles: [],
 			};
 			registry.groupMap.set(groupId, group);
@@ -571,6 +590,8 @@
 	function addCitationActionToRegistry(registry, action) {
 		const group = ensureCitationGroup(registry, action);
 		if (!group) return null;
+		const annotationId = String(action.annotationId || "").trim();
+		if (annotationId) group.annotationIds.add(annotationId);
 		const citationText = String(action.citationText || action.detail || "").trim();
 		for (const token of tokenizeCitationText(citationText)) {
 			group.matchTokens.add(token);
@@ -596,6 +617,7 @@
 			actionKey: group.noteKey || group.highlightKey || group.actionKey,
 			matchTokens: [...group.matchTokens],
 			snippets: [...group.snippets],
+			annotationIds: [...group.annotationIds],
 			title: group.titles[0] || "Open page evidence",
 			current: currentGroupIds.has(group.groupId),
 		}));
@@ -731,9 +753,73 @@
 		`;
 	}
 
+	// Model-emitted provenance: when the reply grounds a claim on a highlight it
+	// created, it tags the claim inline with that highlight's annotation id
+	// ([[cite:ID]]). The model holds the id from the browser_highlight_text tool
+	// result, so this is the claim->mark link captured at generation time rather
+	// than reconstructed by token overlap. Markers are stripped from the rendered
+	// text; a block with no resolvable marker falls back to findCitationsForBlock.
+	const CITATION_MARKER_PATTERN = /\[\[\s*cite\s*:\s*([^\]]+?)\s*\]\]/gi;
+	const MAX_EXPLICIT_CITATIONS = 3;
+
+	function extractCitationMarkers(text) {
+		const source = String(text || "");
+		if (!source.includes("[[")) return { text: source, ids: [] };
+		const ids = [];
+		const cleaned = source.replace(CITATION_MARKER_PATTERN, (_match, inner) => {
+			for (const rawId of String(inner).split(",")) {
+				const id = rawId.trim();
+				if (id) ids.push(id);
+			}
+			return "";
+		});
+		return { text: cleaned.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1"), ids: [...new Set(ids)] };
+	}
+
+	function resolveExplicitCitations(ids, citationGroups) {
+		if (!ids.length || !citationGroups.length) return [];
+		const byAnnotationId = new Map();
+		for (const group of citationGroups) {
+			for (const annotationId of group.annotationIds || []) {
+				if (!byAnnotationId.has(annotationId)) byAnnotationId.set(annotationId, group);
+			}
+		}
+		const matches = [];
+		const seenGroups = new Set();
+		for (const id of ids) {
+			const group = byAnnotationId.get(id);
+			if (!group || seenGroups.has(group.groupId)) continue;
+			seenGroups.add(group.groupId);
+			matches.push({
+				groupId: group.groupId,
+				sourceIndex: group.sourceIndex,
+				actionKey: group.actionKey,
+				title: group.title,
+				position: matches.length,
+				score: Number.POSITIVE_INFINITY,
+				explicit: true,
+			});
+			if (matches.length >= MAX_EXPLICIT_CITATIONS) break;
+		}
+		return matches;
+	}
+
+	// turn.reply keeps its [[cite:...]] markers so the renderer can resolve chips,
+	// but non-rendered consumers (clipboard copy) must not leak the internal ids.
+	function stripCitationMarkers(text) {
+		return extractCitationMarkers(text).text;
+	}
+
+	function citationsForRenderedText(text, citationGroups) {
+		const { text: cleanedText, ids } = extractCitationMarkers(text);
+		const explicit = resolveExplicitCitations(ids, citationGroups);
+		const citations = explicit.length ? explicit : findCitationsForBlock(cleanedText, citationGroups);
+		return { cleanedText, citations };
+	}
+
 	function renderCitedBlock(tag, text, citationGroups, citationNumbering) {
-		const citations = findCitationsForBlock(text, citationGroups);
-		return `<${tag}>${renderInlineRichText(text)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
+		const { cleanedText, citations } = citationsForRenderedText(text, citationGroups);
+		return `<${tag}>${renderInlineRichText(cleanedText)}${renderReplyCitations(citations, citationNumbering)}</${tag}>`;
 	}
 
 	function splitMarkdownTableRow(line) {
@@ -776,9 +862,16 @@
 
 	function renderMarkdownTable(headerCells, bodyRows, citationGroups, citationNumbering) {
 		const width = Math.max(2, headerCells.length);
-		const headers = normalizeMarkdownTableCells(headerCells, width);
-		const rows = bodyRows.map((row) => normalizeMarkdownTableCells(row, width));
-		const citations = findCitationsForBlock([...headers, ...rows.flat()].join(" "), citationGroups);
+		const collectedIds = [];
+		const cleanCell = (cell) => {
+			const { text: cleaned, ids } = extractCitationMarkers(cell);
+			collectedIds.push(...ids);
+			return cleaned;
+		};
+		const headers = normalizeMarkdownTableCells(headerCells, width).map(cleanCell);
+		const rows = bodyRows.map((row) => normalizeMarkdownTableCells(row, width).map(cleanCell));
+		const explicit = resolveExplicitCitations([...new Set(collectedIds)], citationGroups);
+		const citations = explicit.length ? explicit : findCitationsForBlock([...headers, ...rows.flat()].join(" "), citationGroups);
 		return `
 			<div class="reply-table-wrap">
 				<table class="reply-table">
@@ -5463,7 +5556,7 @@
 			const text =
 				button.dataset.copyRealtimeAnswer === "true"
 					? String(realtimeAnswer?.markdown || "").trim()
-					: String(findCopyTurnById(turnId)?.reply || "").trim();
+					: stripCitationMarkers(String(findCopyTurnById(turnId)?.reply || "")).trim();
 			try {
 				await copyTextToClipboard(text);
 				setCopyButtonState(button, "copied");
@@ -7749,7 +7842,8 @@
 	}
 
 	function canonicalRealtimeSpeechText(value) {
-		return String(value || "")
+		// Strip [[cite:...]] provenance markers so annotation ids are never spoken.
+		return stripCitationMarkers(value)
 			.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
 			.replace(/<br\s*\/?>/gi, "\n")
 			.replace(/<\/?[^>]+>/g, "")

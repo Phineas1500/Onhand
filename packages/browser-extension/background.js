@@ -458,7 +458,9 @@ function hasTabMatchSelector(args = {}) {
 
 async function resolveReadTargetTab(args = {}) {
 	if (hasTabMatchSelector(args)) {
-		throw new Error("Reading page content by titleContains or urlContains is not allowed. Use the active tab or an explicit tabId selected by the user.");
+		throw new Error(
+			"Reading page content by titleContains or urlContains is not supported. Omit the selector to read the active tab, or call browser_list_tabs and pass that tab's exact tabId.",
+		);
 	}
 	return await resolveTargetTab(args);
 }
@@ -2513,13 +2515,42 @@ function readableContentLooksLikeReaderSearchUi(payload) {
 	return signalCount >= 2 || (/^#\s*vitalsource bookshelf\b/.test(text) && /\bsearch\b/.test(text));
 }
 
-function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}) {
+// An embedded-content shell: the top document carries only chrome/title text
+// while the body lives in a cross-origin subframe (Claude artifact pages,
+// sandboxed previews, embedded readers).
+const EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS = 600;
+
+async function tabHasCrossOriginContentSubframe(tabId, tabUrl) {
+	const frames = await getAllFramesForTab(tabId).catch(() => []);
+	let tabHost = "";
+	try {
+		tabHost = new URL(String(tabUrl || "")).host;
+	} catch {}
+	return frames.some((frame) => {
+		if (!frame || frame.frameId === 0) return false;
+		const url = String(frame.url || "");
+		if (!/^https?:/i.test(url)) return false;
+		try {
+			return new URL(url).host !== tabHost;
+		} catch {
+			return false;
+		}
+	});
+}
+
+async function shouldTryDebuggerFrameReadableContent(tab, currentContent, options = {}) {
 	const url = String(tab?.url || "");
 	if (!/^(https?|file):/i.test(url)) return false;
 	const currentText = normalizeReadableContentText(currentContent);
 	const currentLength = currentText.length;
 	const tokens = readableContentQueryTokens(options.query);
-	if (!isLikelyOnlineTextbookReaderTab(tab)) return false;
+	if (!isLikelyOnlineTextbookReaderTab(tab)) {
+		// Embedded-content shells qualify too: the shape is chrome-thin top
+		// text plus a cross-origin body frame. Anything else keeps the
+		// single-frame fast path.
+		if (currentLength >= EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS) return false;
+		return await tabHasCrossOriginContentSubframe(tab?.id, url);
+	}
 	if (readableContentLooksLikeReaderSearchUi(currentContent)) return true;
 	if (tokens.length && readableContentQueryScore(currentText, tokens) <= 0) return true;
 	if (currentLength < 5000) return true;
@@ -2532,11 +2563,18 @@ function debuggerFrameReadableContentIsBetter(candidate, currentContent, options
 	const currentText = normalizeReadableContentText(currentContent);
 	const candidateLength = candidateText.length;
 	const currentLength = currentText.length;
-	if (candidateLength < 1000) return false;
-	if (readableContentLooksLikeReaderSearchUi(currentContent) && !readableContentLooksLikeReaderSearchUi(candidate)) return true;
 	const tokens = readableContentQueryTokens(options.query);
 	const candidateQueryScore = readableContentQueryScore(candidateText, tokens);
 	const currentQueryScore = readableContentQueryScore(currentText, tokens);
+	// A frame whose text has none of the query's terms while the top page has
+	// them is an unrelated embed (ad, widget), not the body frame.
+	if (tokens.length && candidateQueryScore <= 0 && currentQueryScore > 0) return false;
+	if (candidateLength < 1000) {
+		// A shell page whose top document is only chrome/title still gains
+		// from a modest frame body; anything else needs a substantial one.
+		if (!(currentLength < EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS && candidateLength >= currentLength + 200)) return false;
+	}
+	if (readableContentLooksLikeReaderSearchUi(currentContent) && !readableContentLooksLikeReaderSearchUi(candidate)) return true;
 	if (tokens.length && candidateQueryScore > currentQueryScore) return true;
 	if (currentLength < 1000) return true;
 	if (candidateLength >= currentLength + 1200 && (currentLength < 5000 || candidateLength >= currentLength * 1.5)) return true;
@@ -2600,8 +2638,56 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 	);
 }
 
+// Readable extraction inside subframes via chrome.scripting (no debugger
+// attach); returns the richest non-top-frame result from a DOMINANT frame or
+// null. The dominance gate (frame viewport at least ~30% of the top frame's)
+// keeps ad/widget iframes on short pages from being mistaken for the body
+// frame. The extractor is injected directly as a function — string-eval
+// injection would be blocked by frames whose CSP bans unsafe-eval (Claude
+// artifact frames do).
+// Frame viewport areas via a cheap scripting probe. Used to require that a
+// frame chosen to replace top-document content is DOMINANT (>=30% of the top
+// frame's viewport) — an ad/widget embed on a short page is not the body.
+async function getFrameViewportAreasForTab(tabId) {
+	const areas = new Map();
+	try {
+		const results = await executeScriptInAllFrames(tabId, () => ({ width: window.innerWidth, height: window.innerHeight }), []);
+		for (const entry of Array.isArray(results) ? results : []) {
+			if (entry?.result) areas.set(entry.frameId, Math.max(0, entry.result.width * entry.result.height));
+		}
+	} catch {}
+	return areas;
+}
+
+function frameAreaIsDominant(areas, frameId) {
+	const topArea = areas.get(0) || 0;
+	if (topArea <= 0) return true;
+	return (areas.get(frameId) || 0) >= topArea * 0.3;
+}
+
+async function getScriptingFrameReadableContent(tabId, options = {}) {
+	const frameAreas = await getFrameViewportAreasForTab(tabId);
+	const results = await executeScriptInAllFrames(tabId, extractReadableContentInPage, [
+		{ maxChars: options.maxChars, query: options.query },
+	]);
+	let best = null;
+	for (const entry of Array.isArray(results) ? results : []) {
+		if (!entry || entry.frameId === 0) continue;
+		if (!frameAreaIsDominant(frameAreas, entry.frameId)) continue;
+		const value = entry.result;
+		if (!value || typeof value !== "object") continue;
+		const length = normalizeReadableContentText(value).length;
+		if (!best || length > best.length) best = { value, length };
+	}
+	return best?.value || null;
+}
+
 async function maybeGetDebuggerFrameReadableContent(tab, currentContent, options = {}) {
-	if (!shouldTryDebuggerFrameReadableContent(tab, currentContent, options)) return currentContent;
+	if (!(await shouldTryDebuggerFrameReadableContent(tab, currentContent, options))) return currentContent;
+	try {
+		const scriptingContent = await getScriptingFrameReadableContent(tab.id, options);
+		if (debuggerFrameReadableContentIsBetter(scriptingContent, currentContent, options)) return scriptingContent;
+	} catch {}
 	try {
 		const content = await getDebuggerFrameReadableContent(tab.id, options, currentContent, tab);
 		if (debuggerFrameReadableContentIsBetter(content, currentContent, options)) return content;
@@ -4847,6 +4933,34 @@ const createPageToolkit = (options = {}) => {
 		".mw-jump-link",
 	].join(", ");
 
+	// A document masthead carries real prose (a dashboard's thesis, an
+	// article's standfirst); a site-chrome header is mostly links and short
+	// labels. Only the former may hold annotations.
+	const isContentfulDocumentHeader = (headerElement) => {
+		const text = (headerElement.innerText || "").trim();
+		if (text.length < 160) return false;
+		let linkTextLength = 0;
+		for (const link of headerElement.querySelectorAll("a")) linkTextLength += (link.innerText || "").trim().length;
+		return linkTextLength <= text.length * 0.3;
+	};
+
+	// Nearest-ancestor walk with the masthead exception: an allowed header may
+	// itself sit inside a nav/aside that still excludes it, and a nav inside
+	// an allowed header still excludes its own contents.
+	const isInsideExcludedAnnotationAncestor = (element) => {
+		let current = element instanceof Element ? element : element?.parentElement;
+		while (current && current !== document.body) {
+			const excludedAncestor = current.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR);
+			if (!excludedAncestor) return false;
+			if (excludedAncestor.tagName === "HEADER" && isContentfulDocumentHeader(excludedAncestor)) {
+				current = excludedAncestor.parentElement;
+				continue;
+			}
+			return true;
+		}
+		return false;
+	};
+
 	const EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR = [
 		".MathJax_Preview",
 		".MJX_Assistive_MathML",
@@ -6572,7 +6686,7 @@ const createPageToolkit = (options = {}) => {
 					}
 					if (options.excludePdfViewerUi === true && parent.closest(PDF_VIEWER_UI_TEXT_EXCLUDED_SELECTOR)) return NodeFilter.FILTER_REJECT;
 					if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
-					if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+					if (isInsideExcludedAnnotationAncestor(parent)) return NodeFilter.FILTER_REJECT;
 				if (parent.closest(EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
 				if (isFootnoteReferenceMarker(parent)) return NodeFilter.FILTER_REJECT;
 				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
@@ -6896,7 +7010,7 @@ const createPageToolkit = (options = {}) => {
 		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
-			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(container)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const text = lowerText(getElementText(container));
 			if (!text) continue;
@@ -6922,7 +7036,7 @@ const createPageToolkit = (options = {}) => {
 		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
-			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(container)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const compactText = compactHighlightSearchText(getElementText(container));
 			if (!compactText.includes(compactPrefix) || !compactText.includes(compactSuffix)) continue;
@@ -7311,6 +7425,47 @@ const createPageToolkit = (options = {}) => {
 		}
 	};
 
+	// A range that crosses block boundaries (e.g. a forum comment's header row
+	// plus its body) must not get an inline span wrap: the span's inline box
+	// fragments around the block children and its empty painted fragments show
+	// up as thin highlight slivers flanking the content.
+	const rangeIncludesBlockStructure = (range) => {
+		try {
+			return Boolean(
+				range
+					.cloneContents()
+					// No <br> here: a range spanning a soft line break inside one
+					// paragraph is still inline content and wraps cleanly; promoting
+					// it would wash the whole container over a two-line phrase.
+					?.querySelector?.("div, p, table, tbody, tr, td, th, section, article, blockquote, pre, h1, h2, h3, h4, h5, h6"),
+			);
+		} catch {
+			return false;
+		}
+	};
+
+	const findBlockRangeHighlightElement = (range) => {
+		if (!rangeIncludesBlockStructure(range)) return null;
+		const common =
+			range.commonAncestorContainer instanceof Element
+				? range.commonAncestorContainer
+				: range.commonAncestorContainer?.parentElement;
+		let container = common;
+		while (container && container !== document.body) {
+			const display = window.getComputedStyle(container).display;
+			if (display !== "inline" && display !== "inline-block" && display !== "contents") break;
+			container = container.parentElement;
+		}
+		if (!(container instanceof Element) || container === document.body || !isVisible(container)) return null;
+		// A shared container much larger than the match means the range straddles
+		// unrelated siblings; keep the old behavior rather than washing a huge
+		// region gold.
+		const containerTextLength = getElementText(container).length;
+		const rangeTextLength = String(range.toString() || "").length;
+		if (containerTextLength > Math.max(1600, rangeTextLength * 4)) return null;
+		return container;
+	};
+
 		const findStructuredRangeHighlightElement = (range) => {
 			if (!rangeIncludesListStructure(range)) return null;
 			const sharedListItem = getSharedListItemForRange(range);
@@ -7582,6 +7737,38 @@ const createPageToolkit = (options = {}) => {
 				fallback: options.fallback,
 			});
 		}
+		const blockRangeElement = findBlockRangeHighlightElement(range);
+		if (blockRangeElement) {
+			// A second block-crossing match in the same container must reuse the
+			// existing annotation: re-promoting would overwrite the container's
+			// annotation id and orphan any note attached to the first one.
+			const existingBlockAnnotationId =
+				blockRangeElement.getAttribute("data-onhand-highlight-kind") === "block"
+					? blockRangeElement.getAttribute("data-onhand-annotation-id")
+					: null;
+			if (existingBlockAnnotationId) {
+				if (options.scrollIntoView !== false) {
+					blockRangeElement.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+				}
+				await waitForLayout();
+				return {
+					annotationId: existingBlockAnnotationId,
+					kind: "block",
+					matchedText: getElementText(blockRangeElement).slice(0, 500) || normalizeText(rawQuery),
+					container: summarizeElement(findAnnotationContainer(blockRangeElement)),
+					rect: rectToObject(blockRangeElement.getBoundingClientRect()),
+					scrollY: window.scrollY,
+					approximate: Boolean(options.approximate),
+					reusedExisting: true,
+					fallback: options.fallback || "block-range",
+				};
+			}
+			return await highlightBlockElement(blockRangeElement, rawQuery, {
+				scrollIntoView: options.scrollIntoView,
+				approximate: options.approximate,
+				fallback: options.fallback || "block-range",
+			});
+		}
 		const annotationId = nextAnnotationId();
 		const highlight = wrapRangeInHighlight(range, annotationId);
 		const matchedText = getElementText(highlight).slice(0, 500) || normalizeText(options.fallbackText || rawQuery);
@@ -7707,7 +7894,7 @@ const createPageToolkit = (options = {}) => {
 		let best = null;
 		const consider = (target, sourceText, score) => {
 			if (!(target instanceof Element) || !isVisible(target)) return;
-			if (target.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return;
+			if (isInsideExcludedAnnotationAncestor(target)) return;
 			if (target.closest('[data-onhand-highlight-kind]')) return;
 			if (!mathSourceMatchesQuery(sourceText, rawQuery)) return;
 			const rect = target.getBoundingClientRect();
@@ -7744,7 +7931,7 @@ const createPageToolkit = (options = {}) => {
 		for (const element of root.querySelectorAll(MATH_CONTAINER_SELECTOR)) {
 			if (!(element instanceof Element)) continue;
 			if (!isVisible(element)) continue;
-			if (element.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(element)) continue;
 			if (element.closest('[data-onhand-highlight-kind]')) continue;
 			const text = getMathElementComparableText(element);
 			if (!text.trim()) continue;
@@ -9724,17 +9911,50 @@ function pickBestPageToolkitFramePayload(payloads, methodName, args = []) {
 		const nonSearchUiPayload = successful.find((payload) => !pageToolkitFramePayloadLooksLikeReaderSearchUi(payload, query));
 		if (nonSearchUiPayload) return nonSearchUiPayload;
 	}
+	if (methodName === "getVisibleText") {
+		// On embedded-content shells the top frame usually succeeds first with
+		// chrome-thin text; the body frame's longer text is the useful payload.
+		return successful
+			.slice()
+			.sort((left, right) => normalizePageToolkitPayloadText(right.value).length - normalizePageToolkitPayloadText(left.value).length)[0];
+	}
 	return successful[0];
+}
+
+// Installs the generated page-toolkit factory file into every accessible
+// frame's isolated world. Frames whose CSP bans unsafe-eval (Claude artifact
+// frames, sandboxed embeds) reject the string-eval injection path, but
+// chrome.scripting `files` injection is not subject to page CSP.
+async function ensurePageToolkitFactoryFileInFrames(tabId) {
+	try {
+		await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["page-toolkit-content.js"] });
+	} catch (error) {
+		if (!isRestrictedScriptingError(error)) throw error;
+		const frameIds = await getInjectableFrameIds(tabId);
+		for (const frameId of frameIds.length ? frameIds : [0]) {
+			try {
+				await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: ["page-toolkit-content.js"] });
+			} catch (frameError) {
+				if (!isRestrictedScriptingError(frameError)) throw frameError;
+			}
+		}
+	}
 }
 
 async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, args = [], toolkitOptions = {}) {
 	const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
 	const frameUrlById = new Map(frameInfos.map((frame) => [frame.frameId, frame.url || ""]));
+	// Dominance must be part of frame SELECTION for visible text: filtering
+	// only the picked payload afterwards would discard a dominant body frame
+	// whenever a non-dominant embed happens to have longer text.
+	const visibleTextFrameAreas = methodName === "getVisibleText" ? await getFrameViewportAreasForTab(tabId) : null;
+	await ensurePageToolkitFactoryFileInFrames(tabId).catch(() => {});
 	const results = await executeScriptInAllFrames(
 		tabId,
 		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
 			try {
-				const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+				const toolkitFactory =
+					typeof globalThis.__onhandPageToolkitFactory === "function" ? globalThis.__onhandPageToolkitFactory : (0, eval)(`(${toolkitSource})`);
 				const toolkit = toolkitFactory(targetToolkitOptions);
 				return {
 					ok: true,
@@ -9763,7 +9983,11 @@ async function executePageToolkitMethodViaScriptingFrames(tabId, methodName, arg
 				frameTitle: result.title || "",
 			};
 		})
-		.filter((payload) => payload && typeof payload === "object");
+		.filter((payload) => payload && typeof payload === "object")
+		.filter(
+			(payload) =>
+				!visibleTextFrameAreas || payload.frameId === 0 || frameAreaIsDominant(visibleTextFrameAreas, payload.frameId),
+		);
 	if (methodName === "clearAnnotations") return aggregateClearAnnotationFrameValues(payloads.filter((payload) => payload.ok));
 	const bestPayload = pickBestPageToolkitFramePayload(payloads, methodName, args);
 	if (bestPayload) {
@@ -9933,6 +10157,56 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 					};
 				}
 			}
+		}
+		if (
+			methodName === "getVisibleText" &&
+			normalizePageToolkitPayloadText(payload).length < EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS &&
+			(await tabHasCrossOriginContentSubframe(tabId, tab?.url))
+		) {
+			// Embedded-content shell: the visible text lives in a cross-origin
+			// body frame, not the chrome-thin top document. Only a DOMINANT
+			// frame may replace the top text — an ad/widget embed on a short
+			// page must not become "the page". The scripting executor is
+			// eval-based and fails in frames whose CSP bans unsafe-eval, so
+			// fall through to the debugger executor.
+			const frameAreas = await getFrameViewportAreasForTab(tabId);
+			const frameInfos = await getAllFramesForTab(tabId).catch(() => []);
+			const framePayloadIsDominant = (framePayload) => {
+				const fallbackInfo = framePayload?.pageToolkitFrameFallback || {};
+				let frameId = typeof fallbackInfo.frameId === "number" ? fallbackInfo.frameId : null;
+				if (frameId === null && fallbackInfo.frameUrl) {
+					const match = frameInfos.find((frame) => frame.url === fallbackInfo.frameUrl);
+					frameId = match ? match.frameId : null;
+				}
+				if (frameId === null) return false;
+				return frameAreaIsDominant(frameAreas, frameId);
+			};
+			try {
+				const framePayload = await withOperationTimeout(
+					executePageToolkitMethodViaScriptingFrames(tabId, methodName, args, toolkitOptions),
+					pageToolkitTimeoutMs,
+					`Page toolkit frame visible-text timed out: ${methodName}`,
+				);
+				if (
+					normalizePageToolkitPayloadText(framePayload).length > normalizePageToolkitPayloadText(payload).length + 200 &&
+					framePayloadIsDominant(framePayload)
+				) {
+					return framePayload;
+				}
+			} catch {}
+			try {
+				const debuggerFramePayload = await withOperationTimeout(
+					executePageToolkitMethodViaGenericWebFrames(tabId, methodName, args, toolkitOptions),
+					pageToolkitFrameTimeoutMs,
+					`Page toolkit debugger-frame visible-text timed out: ${methodName}`,
+				);
+				if (
+					normalizePageToolkitPayloadText(debuggerFramePayload).length > normalizePageToolkitPayloadText(payload).length + 200 &&
+					framePayloadIsDominant(debuggerFramePayload)
+				) {
+					return debuggerFramePayload;
+				}
+			} catch {}
 		}
 		if (methodName === "captureState" && Number(payload?.annotationCount || 0) === 0) {
 			try {
@@ -13644,6 +13918,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "browser-runtime:classify-intent-eval") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.classifyPromptIntentForEval(String(message.prompt || ""), {
+					provider: typeof message.provider === "string" ? message.provider : undefined,
+				}),
+			});
+			return;
+		}
+
 		if (message?.type === "browser-runtime:update-settings") {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.updateSettings({
@@ -13655,6 +13940,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
 				diagnosticsEnabled: message.diagnosticsEnabled,
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
+				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
+				codexFastModeEnabled: message.codexFastModeEnabled,
 				speedMode: message.speedMode,
 			});
 			sendResponse({
