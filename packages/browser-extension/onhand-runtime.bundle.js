@@ -142365,10 +142365,12 @@ function createOnhandBrowserRuntime(host) {
     },
     // Read-only eval surface: classify a prompt with the configured model
     // without running a turn or touching the predicate override cache.
-    // Used by scripts/run-lane-classifier-eval.mjs --browser.
-    async classifyPromptIntentForEval(prompt) {
+    // Used by scripts/run-lane-classifier-eval.mjs --browser; the provider
+    // override lets the eval score the free-tier model without switching
+    // the user's configured auth.
+    async classifyPromptIntentForEval(prompt, options = {}) {
       const store2 = await loadStore();
-      const model = await getConfiguredModel(store2.settings);
+      const model = options.provider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await getConfiguredModel(store2.settings);
       const startedAt = Date.now();
       try {
         const classification = await classifyPromptIntentWithModel(model, prompt);

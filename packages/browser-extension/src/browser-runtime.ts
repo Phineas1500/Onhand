@@ -13257,10 +13257,15 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 
 		// Read-only eval surface: classify a prompt with the configured model
 		// without running a turn or touching the predicate override cache.
-		// Used by scripts/run-lane-classifier-eval.mjs --browser.
-		async classifyPromptIntentForEval(prompt: string) {
+		// Used by scripts/run-lane-classifier-eval.mjs --browser; the provider
+		// override lets the eval score the free-tier model without switching
+		// the user's configured auth.
+		async classifyPromptIntentForEval(prompt: string, options: { provider?: string } = {}) {
 			const store = await loadStore();
-			const model = await getConfiguredModel(store.settings as RuntimeSettings);
+			const model =
+				options.provider === ONHAND_FREE_PROVIDER
+					? await buildFreeTierModel()
+					: await getConfiguredModel(store.settings as RuntimeSettings);
 			const startedAt = Date.now();
 			try {
 				const classification = await classifyPromptIntentWithModel(model, prompt);

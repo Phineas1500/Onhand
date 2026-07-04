@@ -7,6 +7,9 @@
 //   --browser  also drive the REAL classifier through a running browser's
 //              Onhand extension (its configured auth/model) via CDP:
 //              ONHAND_CDP_PORT or --port <n> (default 9346).
+//   --free     with --browser: classify with the Onhand free-tier model
+//              instead of the configured one (needs a registered free-tier
+//              device in that browser).
 //   --live     also score an OpenAI-compatible endpoint directly:
 //              OPENAI_API_KEY (required), OPENAI_BASE_URL, OPENAI_MODEL.
 //
@@ -138,7 +141,7 @@ async function classifyLive(test, prompt) {
 	return test.parseModelIntentClassificationForTest(body?.choices?.[0]?.message?.content || "");
 }
 
-async function classifyThroughBrowser(port) {
+async function classifyThroughBrowser(port, providerOverride = "") {
 	const { default: WebSocket } = await import("ws");
 	const http = await import("node:http");
 	const getJson = (path) =>
@@ -185,7 +188,7 @@ async function classifyThroughBrowser(port) {
 	let modelLabel = "";
 	for (const [prompt] of CORPUS) {
 		const response = await evalDriver(
-			`chrome.runtime.sendMessage({ type: 'browser-runtime:classify-intent-eval', prompt: ${JSON.stringify(prompt)} }).catch(e => ({ ok: false, error: String(e && e.message || e) }))`,
+			`chrome.runtime.sendMessage({ type: 'browser-runtime:classify-intent-eval', prompt: ${JSON.stringify(prompt)}, provider: ${JSON.stringify(providerOverride || undefined)} }).catch(e => ({ ok: false, error: String(e && e.message || e) }))`,
 		);
 		const payload = response?.result || {};
 		modelLabel = payload.model || modelLabel;
@@ -214,8 +217,9 @@ score("Regex baseline", regexResults);
 if (process.argv.includes("--browser")) {
 	const portFlagIndex = process.argv.indexOf("--port");
 	const port = Number(portFlagIndex > -1 ? process.argv[portFlagIndex + 1] : process.env.ONHAND_CDP_PORT || 9346);
-	const browserResults = await classifyThroughBrowser(port);
-	score("Model classifier (via browser auth)", browserResults);
+	const providerOverride = process.argv.includes("--free") ? "onhand-free" : "";
+	const browserResults = await classifyThroughBrowser(port, providerOverride);
+	score(providerOverride ? "Model classifier (free tier)" : "Model classifier (via browser auth)", browserResults);
 }
 
 if (process.argv.includes("--live")) {

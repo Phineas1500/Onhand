@@ -13807,7 +13807,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const runtime = getOnhandBrowserRuntime();
 			sendResponse({
 				ok: true,
-				result: await runtime.classifyPromptIntentForEval(String(message.prompt || "")),
+				result: await runtime.classifyPromptIntentForEval(String(message.prompt || ""), {
+					provider: typeof message.provider === "string" ? message.provider : undefined,
+				}),
 			});
 			return;
 		}
