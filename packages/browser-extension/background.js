@@ -4933,6 +4933,34 @@ const createPageToolkit = (options = {}) => {
 		".mw-jump-link",
 	].join(", ");
 
+	// A document masthead carries real prose (a dashboard's thesis, an
+	// article's standfirst); a site-chrome header is mostly links and short
+	// labels. Only the former may hold annotations.
+	const isContentfulDocumentHeader = (headerElement) => {
+		const text = (headerElement.innerText || "").trim();
+		if (text.length < 160) return false;
+		let linkTextLength = 0;
+		for (const link of headerElement.querySelectorAll("a")) linkTextLength += (link.innerText || "").trim().length;
+		return linkTextLength <= text.length * 0.3;
+	};
+
+	// Nearest-ancestor walk with the masthead exception: an allowed header may
+	// itself sit inside a nav/aside that still excludes it, and a nav inside
+	// an allowed header still excludes its own contents.
+	const isInsideExcludedAnnotationAncestor = (element) => {
+		let current = element instanceof Element ? element : element?.parentElement;
+		while (current && current !== document.body) {
+			const excludedAncestor = current.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR);
+			if (!excludedAncestor) return false;
+			if (excludedAncestor.tagName === "HEADER" && isContentfulDocumentHeader(excludedAncestor)) {
+				current = excludedAncestor.parentElement;
+				continue;
+			}
+			return true;
+		}
+		return false;
+	};
+
 	const EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR = [
 		".MathJax_Preview",
 		".MJX_Assistive_MathML",
@@ -6658,7 +6686,7 @@ const createPageToolkit = (options = {}) => {
 					}
 					if (options.excludePdfViewerUi === true && parent.closest(PDF_VIEWER_UI_TEXT_EXCLUDED_SELECTOR)) return NodeFilter.FILTER_REJECT;
 					if (parent.closest('[contenteditable="true"], [contenteditable=true]')) return NodeFilter.FILTER_REJECT;
-					if (parent.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
+					if (isInsideExcludedAnnotationAncestor(parent)) return NodeFilter.FILTER_REJECT;
 				if (parent.closest(EXCLUDED_HIGHLIGHT_TEXT_ANCESTOR_SELECTOR)) return NodeFilter.FILTER_REJECT;
 				if (isFootnoteReferenceMarker(parent)) return NodeFilter.FILTER_REJECT;
 				if (!isVisible(parent)) return NodeFilter.FILTER_REJECT;
@@ -6982,7 +7010,7 @@ const createPageToolkit = (options = {}) => {
 		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
-			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(container)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const text = lowerText(getElementText(container));
 			if (!text) continue;
@@ -7008,7 +7036,7 @@ const createPageToolkit = (options = {}) => {
 		for (const container of root.querySelectorAll(`${ANNOTATION_CONTAINER_SELECTOR}, ${MATH_CONTAINER_SELECTOR}`)) {
 			if (!(container instanceof Element)) continue;
 			if (!isVisible(container)) continue;
-			if (container.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(container)) continue;
 			if (container.closest('[data-onhand-highlight-kind]')) continue;
 			const compactText = compactHighlightSearchText(getElementText(container));
 			if (!compactText.includes(compactPrefix) || !compactText.includes(compactSuffix)) continue;
@@ -7866,7 +7894,7 @@ const createPageToolkit = (options = {}) => {
 		let best = null;
 		const consider = (target, sourceText, score) => {
 			if (!(target instanceof Element) || !isVisible(target)) return;
-			if (target.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) return;
+			if (isInsideExcludedAnnotationAncestor(target)) return;
 			if (target.closest('[data-onhand-highlight-kind]')) return;
 			if (!mathSourceMatchesQuery(sourceText, rawQuery)) return;
 			const rect = target.getBoundingClientRect();
@@ -7903,7 +7931,7 @@ const createPageToolkit = (options = {}) => {
 		for (const element of root.querySelectorAll(MATH_CONTAINER_SELECTOR)) {
 			if (!(element instanceof Element)) continue;
 			if (!isVisible(element)) continue;
-			if (element.closest(EXCLUDED_ANNOTATION_ANCESTOR_SELECTOR)) continue;
+			if (isInsideExcludedAnnotationAncestor(element)) continue;
 			if (element.closest('[data-onhand-highlight-kind]')) continue;
 			const text = getMathElementComparableText(element);
 			if (!text.trim()) continue;

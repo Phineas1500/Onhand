@@ -1301,27 +1301,24 @@ function hasReadableSourceContentAfterLatestNavigation(request: any) {
 // should count toward the give-up budget. Counting corrective blocks let a
 // capable model that quotes accurate-but-long passages get budget-killed after
 // two rejections before it ever landed a valid highlight.
-const CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS = new Set([
-	"weak_compact_teaching_highlight",
-	"weak_structured_highlight_text",
-	// Review-lane guards are course corrections, not failures: an intercepted
-	// mark (read the doc first / checkpoint hold / budget backstop) must not
-	// count toward the highlight give-up budget, or a held batch would abort
-	// the very marking pass the guards are shepherding.
-	"review_extraction_first",
-	"review_mark_checkpoint",
-	"review_mark_checkpoint_batch",
-	"surplus_review_highlight",
-]);
-
-function isCorrectiveHighlightGuardrailTrace(trace: any) {
-	const kind = trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind || "";
-	return CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS.has(String(kind));
+function isGuardrailBlockedTrace(trace: any) {
+	return Boolean(trace?.resultDetails?.guardrail?.kind || trace?.details?.guardrail?.kind);
 }
 
+// Only attempts that actually reached the page count as highlight failures.
+// Guard-intercepted attempts (weak span, budget, checkpoint hold, review
+// sequencing) are course corrections: counting them toward the give-up
+// budgets made one real matcher miss plus one guard block shut down a
+// teaching pass after a single landed mark. This replaces the old
+// CORRECTIVE_HIGHLIGHT_GUARDRAIL_KINDS allowlist, which had to be extended
+// for every new guard kind and silently poisoned the budgets when it wasn't.
 function isCountableHighlightFailureTrace(trace: any) {
 	if (trace?.toolName !== "browser_highlight_text" || trace?.state !== "error") return false;
-	return !isCorrectiveHighlightGuardrailTrace(trace);
+	return !isGuardrailBlockedTrace(trace);
+}
+
+function countCountableHighlightFailureTraces(request: any) {
+	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCountableHighlightFailureTrace).length;
 }
 
 function shouldAbortAfterRepeatedHighlightFailures(request: any) {
@@ -8592,7 +8589,7 @@ function buildStructuredHighlightBudgetGuardResult(toolName: string, commandName
 	if (promptAsksForDocumentReviewMarkup(prompt)) return null;
 	if (!promptAsksForStructuredOrComparisonPageWork(prompt)) return null;
 	const highlightCount = completedSourceHighlightCount(request);
-	const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
+	const errorCount = countCountableHighlightFailureTraces(request);
 	if (!(highlightCount > 0 && errorCount >= STRUCTURED_SOURCE_HIGHLIGHT_ERROR_LIMIT)) {
 		return null;
 	}
@@ -8618,7 +8615,7 @@ function buildCompactTeachingHighlightBudgetGuardResult(toolName: string, comman
 	if (!promptAsksForCompactPageTeaching(prompt)) return null;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return null;
 	const highlightCount = completedSourceHighlightTraceCount(request) || completedSourceHighlightCount(request);
-	const errorCount = countToolTracesByState(request, "browser_highlight_text", ["error"]);
+	const errorCount = countCountableHighlightFailureTraces(request);
 	if (!(highlightCount > 0 && errorCount >= COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT)) return null;
 	return {
 		guardrail: {
