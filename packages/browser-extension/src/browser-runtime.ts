@@ -6737,6 +6737,16 @@ function promptReferencesCurrentPageMaterial(text: string) {
 	);
 }
 
+// Words that, immediately before a trailing "roadmap", keep it *bare* — they
+// describe the roadmap's form or quantity, not a topic domain. A qualifier
+// outside this set ("career", "learning", "product") names a personal plan,
+// which is not page-scoped.
+const BARE_ROADMAP_QUALIFIERS = new Set([
+	"a", "an", "the", "this", "that", "these", "those", "my", "your", "our", "some", "any",
+	"quick", "brief", "short", "rough", "simple", "clear", "concise", "detailed", "thorough",
+	"full", "complete", "overall", "general", "basic", "visual", "structured", "high", "high-level", "level",
+]);
+
 function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
@@ -6744,13 +6754,15 @@ function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 	if (modelIntent) return modelIntent.enumerableCoverage && modelIntent.pageScoped;
 	// Only two roadmap shapes are page-scoped by default in a sidebar ask:
 	// "roadmap of the/this X" (a definite subject names existing content, as
-	// in "give me a roadmap of the twelve factors") and a bare trailing
-	// "roadmap" with no subject at all. Everything else — "roadmap for/to X",
-	// "roadmap of becoming X", "what does 'roadmap' mean" — plans or discusses
-	// rather than maps the open material and needs an explicit page reference
-	// like the other structure words.
+	// in "give me a roadmap of the twelve factors") and a *truly bare* trailing
+	// "roadmap" — "a roadmap"/"give me a roadmap" of the open material. A
+	// qualified trailing roadmap ("career roadmap") names a personal plan, so it
+	// needs an explicit page reference like the other structure words (checked
+	// below). Everything else — "roadmap for/to X", "roadmap of becoming X",
+	// "what does 'roadmap' mean" — plans or discusses rather than maps the page.
 	if (/\broadmap\s+of\s+(?:the|this|these|those)\b/.test(text)) return true;
-	if (/\broadmap\s*[.?!]*\s*$/.test(text)) return true;
+	const trailingRoadmap = text.match(/(?:^|\s)(?:([a-z][a-z'-]*)\s+)?roadmap\s*[.?!]*\s*$/);
+	if (trailingRoadmap && (!trailingRoadmap[1] || BARE_ROADMAP_QUALIFIERS.has(trailingRoadmap[1]))) return true;
 	if (!promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,

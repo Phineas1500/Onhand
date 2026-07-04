@@ -136653,13 +136653,47 @@ function promptReferencesCurrentPageMaterial(text) {
   if (modelIntent) return modelIntent.pageScoped;
   return /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text);
 }
+var BARE_ROADMAP_QUALIFIERS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "our",
+  "some",
+  "any",
+  "quick",
+  "brief",
+  "short",
+  "rough",
+  "simple",
+  "clear",
+  "concise",
+  "detailed",
+  "thorough",
+  "full",
+  "complete",
+  "overall",
+  "general",
+  "basic",
+  "visual",
+  "structured",
+  "high",
+  "high-level",
+  "level"
+]);
 function promptAsksForStructuredPageSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
   const modelIntent = getModelIntentClassificationForPrompt(prompt);
   if (modelIntent) return modelIntent.enumerableCoverage && modelIntent.pageScoped;
   if (/\broadmap\s+of\s+(?:the|this|these|those)\b/.test(text)) return true;
-  if (/\broadmap\s*[.?!]*\s*$/.test(text)) return true;
+  const trailingRoadmap = text.match(/(?:^|\s)(?:([a-z][a-z'-]*)\s+)?roadmap\s*[.?!]*\s*$/);
+  if (trailingRoadmap && (!trailingRoadmap[1] || BARE_ROADMAP_QUALIFIERS.has(trailingRoadmap[1]))) return true;
   if (!promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
