@@ -501,8 +501,21 @@
 	}
 
 	function normalizeCitationToken(token) {
-		const value = String(token || "").trim();
-		if (/^[a-z]{5,}s$/.test(value) && !/(?:ss|us|is)$/.test(value)) return value.slice(0, -1);
+		let value = String(token || "").trim();
+		if (!/^[a-z]+$/.test(value)) return value;
+		// Conservative suffix folding so natural inflection drift between a
+		// mark's exact words and the reply's prose still matches
+		// ("readability"/"readable", "explained"/"explains",
+		// "validation"/"validated"). Both sides of the comparison fold through
+		// this same function, and the overlap/score thresholds still decide
+		// whether a chip is defensible — folding never adds a chip on its own.
+		if (value.length >= 8 && /bility$/.test(value)) value = value.slice(0, -5) + "le";
+		else if (/[a-z]{4}ation$/.test(value)) value = value.slice(0, -5) + "ate";
+		if (/[a-z]{2}ies$/.test(value)) value = value.slice(0, -3) + "y";
+		else if (/[a-z]{3}ing$/.test(value)) value = value.slice(0, -3);
+		else if (/[a-z]{3}ed$/.test(value)) value = value.slice(0, -2);
+		else if (/^[a-z]{4,}s$/.test(value) && !/(?:ss|us|is)$/.test(value)) value = value.slice(0, -1);
+		if (/^[a-z]{4,}e$/.test(value)) value = value.slice(0, -1);
 		return value;
 	}
 

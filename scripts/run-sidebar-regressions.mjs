@@ -4839,8 +4839,64 @@ async function assertMenuDeleteButtonConfirmsBeforeDeletingSession() {
 	dom.window.close();
 }
 
+async function assertCitationTokenFoldingBridgesInflection() {
+	const source = await readFile(SIDEBAR_PATH, "utf8");
+	const grab = (name) => {
+		const start = source.indexOf(`function ${name}(`);
+		assert.notEqual(start, -1, `${name} declaration not found`);
+		let depth = 0;
+		for (let index = source.indexOf("{", start); index < source.length; index += 1) {
+			if (source[index] === "{") depth += 1;
+			if (source[index] === "}") {
+				depth -= 1;
+				if (!depth) return source.slice(start, index + 1);
+			}
+		}
+		throw new Error(`${name} end not found`);
+	};
+	const stopWords = source.match(/const CITATION_STOP_WORDS = new Set\(\[[\s\S]*?\]\);/);
+	assert.ok(stopWords, "CITATION_STOP_WORDS not found");
+	const names = ["normalizeCitationText", "normalizeCitationToken", "tokenizeCitationText", "buildCitationSnippets", "findCitationsForBlock"];
+	const helpers = new Function(`${stopWords[0]}\n${names.map(grab).join("\n")}\nreturn { ${names.join(", ")} };`)();
+	for (const [left, right] of [
+		["readability", "readable"],
+		["explained", "explains"],
+		["validation", "validated"],
+		["staging", "stage"],
+	]) {
+		assert.equal(
+			helpers.normalizeCitationToken(left),
+			helpers.normalizeCitationToken(right),
+			`${left} should fold to the same citation token as ${right}`,
+		);
+	}
+	// The real case this protects (Claude artifact, 2026-07-03): the reply
+	// bullet echoes a short phrase from its mark (the runtime prompt now
+	// instructs this) and token folding bridges the remaining inflection.
+	const markText = "readable direction are explained by the necessity test, not";
+	const citationGroups = [
+		{
+			groupId: "g1",
+			sourceIndex: 0,
+			actionKey: "highlight:necessity",
+			title: "Highlighted text",
+			matchTokens: helpers.tokenizeCitationText(markText),
+			snippets: helpers.buildCitationSnippets(markText),
+			current: true,
+		},
+	];
+	const cited = helpers.findCitationsForBlock(
+		"The argument is staged as a causal validation arc: months of nulls on a readability direction are explained by the necessity test, then the actual causal variable, then compact low-rank structure.",
+		citationGroups,
+	);
+	assert.equal(cited.length, 1, "an echoed phrase plus folded tokens should earn the citation chip");
+	const uncited = helpers.findCitationsForBlock("The dashboard uses a dark theme with three columns of tiles.", citationGroups);
+	assert.equal(uncited.length, 0, "unrelated prose must never be chipped");
+}
+
 await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
+await assertCitationTokenFoldingBridgesInflection();
 await assertReplyTokenPrefixCannotInjectHtml();
 await assertMarkdownTablesRenderAsTables();
 await assertLooseOrderedMarkdownListDoesNotRestartNumbering();
