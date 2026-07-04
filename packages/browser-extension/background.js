@@ -13920,7 +13920,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "debug:fetch-turn-trace") {
 			const runtime = getOnhandBrowserRuntime();
-			sendResponse(runtime.getDebugTraces(message.limit));
+			sendResponse(await runtime.getDebugTraces(message.limit));
 			return;
 		}
 

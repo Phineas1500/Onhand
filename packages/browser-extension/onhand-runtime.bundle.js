@@ -139660,6 +139660,7 @@ function createOnhandBrowserRuntime(host) {
   let activeAgent = null;
   let activeRequest = null;
   const DEBUG_TURN_TRACE_MAX = 12;
+  const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
   const debugTurnTraces = [];
   function captureDebugTurnTrace(session, finalError, reliability) {
     try {
@@ -139700,6 +139701,11 @@ function createOnhandBrowserRuntime(host) {
         reliability
       });
       if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+      try {
+        chrome.storage?.session?.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: debugTurnTraces }).catch(() => {
+        });
+      } catch {
+      }
     } catch {
     }
   }
@@ -142369,9 +142375,17 @@ function createOnhandBrowserRuntime(host) {
     restoreArtifact
   };
   return {
-    getDebugTraces(limit2) {
-      const max = Number.isFinite(limit2) && limit2 > 0 ? Math.min(limit2, debugTurnTraces.length) : debugTurnTraces.length;
-      return { ok: true, traces: debugTurnTraces.slice(0, max) };
+    async getDebugTraces(limit2) {
+      let traces = debugTurnTraces;
+      if (!traces.length) {
+        try {
+          const stored = await chrome.storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+          if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) traces = stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+        } catch {
+        }
+      }
+      const max = Number.isFinite(limit2) && limit2 > 0 ? Math.min(limit2, traces.length) : traces.length;
+      return { ok: true, traces: traces.slice(0, max) };
     },
     async getState() {
       const store2 = await loadStore();

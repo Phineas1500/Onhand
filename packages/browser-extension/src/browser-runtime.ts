@@ -10283,6 +10283,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	// instrumentation. The raw data already exists transiently on activeRequest;
 	// this only surfaces it. Ring buffer, gated on advancedRuntimeInspection.
 	const DEBUG_TURN_TRACE_MAX = 12;
+	const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
 	const debugTurnTraces: any[] = [];
 	function captureDebugTurnTrace(session: any, finalError: Error | null, reliability: Record<string, unknown>) {
 		try {
@@ -10323,6 +10324,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				reliability,
 			});
 			if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+			// Mirror to session storage so a service-worker restart between the turn
+			// and the debug fetch does not drop the trace (the in-memory ring lives
+			// only in the MV3 worker heap).
+			try {
+				(chrome as any).storage?.session?.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: debugTurnTraces }).catch(() => {});
+			} catch {}
 		} catch {}
 	}
 	let sentryInitialized = false;
@@ -13313,12 +13320,21 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	};
 
 	return {
-		getDebugTraces(limit?: number) {
+		async getDebugTraces(limit?: number) {
+			let traces = debugTurnTraces;
+			if (!traces.length) {
+				// After a service-worker restart the in-memory ring is empty; fall
+				// back to the session-storage mirror written at capture time.
+				try {
+					const stored = await (chrome as any).storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+					if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) traces = stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+				} catch {}
+			}
 			const max =
 				Number.isFinite(limit as number) && (limit as number) > 0
-					? Math.min(limit as number, debugTurnTraces.length)
-					: debugTurnTraces.length;
-			return { ok: true, traces: debugTurnTraces.slice(0, max) };
+					? Math.min(limit as number, traces.length)
+					: traces.length;
+			return { ok: true, traces: traces.slice(0, max) };
 		},
 
 		async getState() {
