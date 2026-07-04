@@ -6849,7 +6849,7 @@ function promptAsksForCrossTabComparison(prompt: unknown) {
 	);
 	const explicitCrossTabComparisonTarget = textHasAny(
 		text,
-		/\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b/,
+		/\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b/,
 	);
 	return crossTabComparisonVerb && explicitCrossTabComparisonTarget;
 }
@@ -8341,12 +8341,19 @@ function looksLikeHeadingOnlyHighlightText(value: unknown) {
 	return /^[\p{Lu}\p{N}]/u.test(text);
 }
 
-// Guards that protect structured page work also cover page-scoped
-// comparisons: under regex routing the structured predicate matched
-// comparisons via its shared keyword list, but the model classifier
-// separates the two intents, so guard consumers must ask for both.
+// Guards that protect structured page work also cover page-scoped comparisons
+// AND cross-tab comparisons: under regex routing the structured predicate
+// matched comparisons via its shared keyword list, but the model classifier
+// separates the intents, and single-page comparison explicitly excludes
+// cross-tab — so without naming cross-tab here, "compare both tabs" would skip
+// the weak-highlight / note-budget / error-budget guards and let a heading-only
+// mark in each tab satisfy the retry.
 function promptAsksForStructuredOrComparisonPageWork(prompt: unknown) {
-	return promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForSinglePageComparison(prompt);
+	return (
+		promptAsksForStructuredPageSourceMarker(prompt) ||
+		promptAsksForSinglePageComparison(prompt) ||
+		promptAsksForCrossTabComparison(prompt)
+	);
 }
 
 function buildWeakStructuredHighlightTextGuardResult(toolName: string, commandName: string, params: any, prompt: unknown) {

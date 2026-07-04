@@ -136754,7 +136754,7 @@ function promptAsksForCrossTabComparison(prompt) {
   );
   const explicitCrossTabComparisonTarget = textHasAny(
     text,
-    /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|sources?|pages?)\b/
+    /\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b/
   );
   return crossTabComparisonVerb && explicitCrossTabComparisonTarget;
 }
@@ -137910,7 +137910,7 @@ function looksLikeHeadingOnlyHighlightText(value) {
   return /^[\p{Lu}\p{N}]/u.test(text);
 }
 function promptAsksForStructuredOrComparisonPageWork(prompt) {
-  return promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForSinglePageComparison(prompt);
+  return promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForSinglePageComparison(prompt) || promptAsksForCrossTabComparison(prompt);
 }
 function buildWeakStructuredHighlightTextGuardResult(toolName, commandName, params, prompt) {
   if (commandName !== "highlight_text") return null;
