@@ -5443,7 +5443,11 @@ function parseModelIntentClassification(text: unknown): ModelIntentClassificatio
 	}
 	if (!parsed || typeof parsed !== "object") return null;
 	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup"];
-	if (!fields.some((field) => field in parsed)) return null;
+	// Require every field as an explicit boolean. A partial classification
+	// (e.g. {"pageScoped": true}) would otherwise default the missing lanes to
+	// false and strip highlight/annotation tools, instead of falling back to the
+	// regex router where those lanes are still detected.
+	if (!fields.every((field) => typeof parsed[field] === "boolean")) return null;
 	return {
 		pageScoped: parsed.pageScoped === true,
 		teaching: parsed.teaching === true,
@@ -8209,7 +8213,7 @@ function promptAsksToFocusExistingPage(prompt: unknown) {
 	if (!text) return false;
 	return textHasAny(
 		text,
-		/\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b/,
+		/\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b|\b(?:open(?: up)?|load|visit)\s+(?:https?:\/\/|www\.)/,
 	);
 }
 

@@ -7842,7 +7842,8 @@
 	}
 
 	function canonicalRealtimeSpeechText(value) {
-		return String(value || "")
+		// Strip [[cite:...]] provenance markers so annotation ids are never spoken.
+		return stripCitationMarkers(value)
 			.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
 			.replace(/<br\s*\/?>/gi, "\n")
 			.replace(/<\/?[^>]+>/g, "")

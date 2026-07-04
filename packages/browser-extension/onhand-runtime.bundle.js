@@ -135572,7 +135572,7 @@ function parseModelIntentClassification(text) {
   }
   if (!parsed || typeof parsed !== "object") return null;
   const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup"];
-  if (!fields.some((field) => field in parsed)) return null;
+  if (!fields.every((field) => typeof parsed[field] === "boolean")) return null;
   return {
     pageScoped: parsed.pageScoped === true,
     teaching: parsed.teaching === true,
@@ -137790,7 +137790,7 @@ function promptAsksToFocusExistingPage(prompt) {
   if (!text) return false;
   return textHasAny(
     text,
-    /\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b/
+    /\b(?:take me (?:back )?(?:to|there)|bring me (?:back )?to|go (?:back )?to|switch (?:back )?to|jump (?:back )?to|navigate (?:back )?to|pull up|bring up|reopen|re-open)\b|\bopen(?: up)?\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|site|window|doc|document|article|url|link)\b|\bactivate\s+(?:[a-z0-9'-]+\s+){0,3}?(?:tab|page|window)\b|\b(?:open(?: up)?|load|visit)\s+(?:https?:\/\/|www\.)/
   );
 }
 function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
