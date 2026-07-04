@@ -137896,9 +137896,11 @@ function promptAsksForDerivationOrProofSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
   if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
-    if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
     const explanationAsk = /\b(?:explain\s+how|how\s+(?:does|do|did)|show\s+why)\b/i.test(text);
-    if (!explanationAsk && /\b(?:roadmap|outline)\b/i.test(text)) return false;
+    if (!explanationAsk) {
+      if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
+      if (/\b(?:roadmap|outline)\b/i.test(text)) return false;
+    }
   }
   return Boolean(
     promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
