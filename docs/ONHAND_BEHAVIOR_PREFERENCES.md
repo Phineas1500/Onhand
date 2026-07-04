@@ -57,7 +57,7 @@ These apply everywhere unless a later section overrides them.
 | G6 | **Chat length** | **Concise** — roughly **1–3 short paragraphs** / compact labeled chunks. The chat **cites the marks** (references the highlighted point) rather than re-deriving or restating note content in full prose. Go deeper only for genuinely hard concepts, follow-ups, or signs of confusion. | `[SETTLED]` |
 | G7 | **Honest anchoring (no-anchor case)** | If a claim isn't cleanly backed by a span of page text: **anchor to the closest relevant region and let the note say it's synthesized.** If *nothing* on the page supports it, answer in chat and **say so — never force a bogus/generic highlight.** | `[SETTLED]` |
 | G8 | **Highlight color** | **Single neutral color.** No color semantics for now. | `[SETTLED]` |
-| G9 | **Citations / provenance** | An answer may cite highlights on the **current page + any source it actually used this turn**, each **labeled with its source/tab**. **Never silently reuse a stale, unrelated highlight** from an earlier topic. | `[SETTLED]` |
+| G9 | **Citations / provenance** | An answer may cite highlights on the **current page + any source it actually used this turn**, each **labeled with its source/tab** (rendered as an inline **citation chip** on the claim). A chip attaches to the **specific claim that used that source**; a synthesis or closing sentence that spans all marks (or none in particular) takes **no chip** rather than an arbitrary one. **Never silently reuse a stale, unrelated highlight** from an earlier topic. | `[SETTLED]` |
 | G10 | **Empty / vague prompt** | **Wait silently.** Do nothing until the owner types a prompt (or clearly selects text to act on). Don't auto-summarize, don't act on a bare panel-open. | `[SETTLED]` |
 | G11 | **Learning mode** | **Opt-in, off by default.** Default stance is "smart marginalia," not "fast chatbot" and not "tutor." | `[SETTLED]` |
 | G12 | **Scope: use other tabs** | **Auto-use clearly-related open tabs** without asking first. *(Intentional evolution: more autonomous than the old offer-first behavior.)* | `[SETTLED]` |
@@ -242,7 +242,7 @@ Classify the prompt against §3. Mark the page-grounding lines **N/A** for non-p
 
 **Chat** *(gating)*
 - [ ] Concise — **fails if chat exceeds ~3 short paragraphs** or restates note content in full prose (G6).
-- [ ] **Cites the marks** — references the highlighted point rather than re-deriving the whole answer in chat.
+- [ ] **Cites the marks** — references the highlighted point (via its citation chip) rather than re-deriving the whole answer in chat. Chips sit on **grounded claims only**; a whole-thread synthesis / takeaway carries **no chip** (G9).
 - [ ] No process narration (§6.1); clean formatting; LaTeX where needed.
 
 **Honesty** *(gating; scored on a different failure mode than Grounding)*
@@ -260,6 +260,7 @@ Classify the prompt against §3. Mark the page-grounding lines **N/A** for non-p
 
 **Hygiene** *(quality unless it trips §6.12)*
 - [ ] No duplicated/orphan/fragmented artifacts.
+- [ ] Mark-span tidiness — a comment highlight that drags in the username/timestamp/nav chrome is a **minor** quality item, **not** a Grounding failure, so long as the highlight contains the asserted text.
 
 > **When fixing:** if a response is *lacking*, identify which rubric line failed (and the named evidence), trace it to the responsible runtime prompt/logic (`packages/browser-extension/src/browser-runtime.ts`), change it toward this spec, and re-test on the offending page/prompt before moving on.
 
@@ -288,7 +289,10 @@ The `[INFERRED]` items were derived from the owner's stated philosophy rather th
 - **§5.3 misclassification guard** — defaulting uncertain homework to reveal-on-insist.
 - **§5.4 escape/reset** — per-turn escape; reset on new session / toggle-off.
 - **§3.13 figure-region marking**, **G16 tone/formatting**, **G17 retry**, **G18 anchor reuse**, **§4 e-textbook handling**.
+- **Notes: role-on-the-mark vs. role-in-chat** — whether disagreement/summary turns should move each mark's *role* onto a terse on-page note (truer to §1 "the marks do the talking") and shrink the chat, rather than letting the chat bullet carry the role with sparser notes. Surfaced in a 2026-07-04 calibration; **not yet decided**.
 
 ---
+
+*v2.1 — 2026-07-04: citation-chip provenance added to G9 (chips attach to specific claims; a synthesis/takeaway takes no chip); the "cites the marks" and mark-span-hygiene scoring lines in §7 clarified to match; the notes-role question logged in §9.*
 
 *v2 — 2026-06-28 (revised after a four-lens adversarial review — fidelity, completeness, rubric usability, consistency — then a re-verification pass that resolved 37/38 findings and closed 6 follow-ups). Update this file as preferences evolve; it is the single source of truth for "what should Onhand do here?"*
