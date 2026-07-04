@@ -137895,7 +137895,7 @@ function isSectionNumberOnlyHighlightText(value) {
 function promptAsksForDerivationOrProofSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
-  if (!/\b(?:derive|derivation|proof|prove|theorem|lemma)\b/i.test(text)) {
+  if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
     if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
     const explanationAsk = /\b(?:explain\s+how|how\s+(?:does|do|did)|show\s+why)\b/i.test(text);
     if (!explanationAsk && /\b(?:roadmap|outline)\b/i.test(text)) return false;

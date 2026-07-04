@@ -8330,7 +8330,7 @@ function promptAsksForDerivationOrProofSourceMarker(prompt: unknown) {
 	// through the twelve factors as a roadmap" shares the verb but is enumerable
 	// coverage, and treating it as a proof makes the guard block every heading-
 	// shaped tagline. A genuine derivation/proof names itself explicitly.
-	if (!/\b(?:derive|derivation|proof|prove|theorem|lemma)\b/i.test(text)) {
+	if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
 		if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
 		// Regex fallback (classifier off): exempt a genuine roadmap/outline coverage
 		// ask, but not an explanation that merely mentions one — "explain how this
