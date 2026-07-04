@@ -677,6 +677,9 @@
 
 		const blockTokens = new Set(tokenizeCitationText(blockText));
 		const matches = [];
+		const allScores = [];
+		let marksTouched = 0;
+		let anyPhraseAnchor = false;
 
 		for (const group of citationGroups) {
 			let overlap = 0;
@@ -706,10 +709,13 @@
 			}
 
 			const score = overlap + numericOverlap * 1.5 + phraseBonus;
+			allScores.push(score);
+			if (overlap > 0) marksTouched += 1;
 			const minimumOverlap = numericOverlap > 0 ? 1 : 2;
 			const minimumScore = numericOverlap > 0 ? 2.5 : blockTokens.size <= 18 ? 2 : 3;
 			const matchedCurrentEvidence = group.current && overlap >= minimumOverlap && score >= minimumScore;
 			if (phraseBonus >= 4 || matchedCurrentEvidence) {
+				if (phraseBonus > 0) anyPhraseAnchor = true;
 				matches.push({
 					groupId: group.groupId,
 					sourceIndex: group.sourceIndex,
@@ -719,6 +725,18 @@
 					score,
 				});
 			}
+		}
+
+		// G9 provenance: a block grounded in a specific mark quotes it (a phrase
+		// anchor) or matches it decisively. When a block instead spreads loose
+		// token overlap across three or more marks with no quoted phrase and no
+		// dominant match — a synthesis / closing sentence like "the thread is
+		// split between X, Y, and Z" — attribute it to nothing rather than an
+		// arbitrary mark. Blocks that quote a mark (anyPhraseAnchor), or that the
+		// model marked explicitly (those never reach this fallback), are kept.
+		if (matches.length && marksTouched >= 3 && !anyPhraseAnchor) {
+			const sortedScores = allScores.slice().sort((a, b) => b - a);
+			if ((sortedScores[0] || 0) <= (sortedScores[1] || 0) * 2) return [];
 		}
 
 		return matches
