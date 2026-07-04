@@ -2563,15 +2563,18 @@ function debuggerFrameReadableContentIsBetter(candidate, currentContent, options
 	const currentText = normalizeReadableContentText(currentContent);
 	const candidateLength = candidateText.length;
 	const currentLength = currentText.length;
+	const tokens = readableContentQueryTokens(options.query);
+	const candidateQueryScore = readableContentQueryScore(candidateText, tokens);
+	const currentQueryScore = readableContentQueryScore(currentText, tokens);
+	// A frame whose text has none of the query's terms while the top page has
+	// them is an unrelated embed (ad, widget), not the body frame.
+	if (tokens.length && candidateQueryScore <= 0 && currentQueryScore > 0) return false;
 	if (candidateLength < 1000) {
 		// A shell page whose top document is only chrome/title still gains
 		// from a modest frame body; anything else needs a substantial one.
 		if (!(currentLength < EMBEDDED_CONTENT_SHELL_TOP_TEXT_MAX_CHARS && candidateLength >= currentLength + 200)) return false;
 	}
 	if (readableContentLooksLikeReaderSearchUi(currentContent) && !readableContentLooksLikeReaderSearchUi(candidate)) return true;
-	const tokens = readableContentQueryTokens(options.query);
-	const candidateQueryScore = readableContentQueryScore(candidateText, tokens);
-	const currentQueryScore = readableContentQueryScore(currentText, tokens);
 	if (tokens.length && candidateQueryScore > currentQueryScore) return true;
 	if (currentLength < 1000) return true;
 	if (candidateLength >= currentLength + 1200 && (currentLength < 5000 || candidateLength >= currentLength * 1.5)) return true;
@@ -2636,16 +2639,31 @@ async function getDebuggerFrameReadableContent(tabId, options = {}, currentConte
 }
 
 // Readable extraction inside subframes via chrome.scripting (no debugger
-// attach); returns the richest non-top-frame result or null. The extractor is
-// injected directly as a function — string-eval injection would be blocked by
-// frames whose CSP bans unsafe-eval (Claude artifact frames do).
+// attach); returns the richest non-top-frame result from a DOMINANT frame or
+// null. The dominance gate (frame viewport at least ~30% of the top frame's)
+// keeps ad/widget iframes on short pages from being mistaken for the body
+// frame. The extractor is injected directly as a function — string-eval
+// injection would be blocked by frames whose CSP bans unsafe-eval (Claude
+// artifact frames do).
 async function getScriptingFrameReadableContent(tabId, options = {}) {
+	const frameSizes = new Map();
+	try {
+		const sizeResults = await executeScriptInAllFrames(tabId, () => ({ width: window.innerWidth, height: window.innerHeight }), []);
+		for (const entry of Array.isArray(sizeResults) ? sizeResults : []) {
+			if (entry?.result) frameSizes.set(entry.frameId, Math.max(0, entry.result.width * entry.result.height));
+		}
+	} catch {}
+	const topArea = frameSizes.get(0) || 0;
 	const results = await executeScriptInAllFrames(tabId, extractReadableContentInPage, [
 		{ maxChars: options.maxChars, query: options.query },
 	]);
 	let best = null;
 	for (const entry of Array.isArray(results) ? results : []) {
 		if (!entry || entry.frameId === 0) continue;
+		if (topArea > 0) {
+			const frameArea = frameSizes.get(entry.frameId) || 0;
+			if (frameArea < topArea * 0.3) continue;
+		}
 		const value = entry.result;
 		if (!value || typeof value !== "object") continue;
 		const length = normalizeReadableContentText(value).length;
@@ -7683,6 +7701,30 @@ const createPageToolkit = (options = {}) => {
 		}
 		const blockRangeElement = findBlockRangeHighlightElement(range);
 		if (blockRangeElement) {
+			// A second block-crossing match in the same container must reuse the
+			// existing annotation: re-promoting would overwrite the container's
+			// annotation id and orphan any note attached to the first one.
+			const existingBlockAnnotationId =
+				blockRangeElement.getAttribute("data-onhand-highlight-kind") === "block"
+					? blockRangeElement.getAttribute("data-onhand-annotation-id")
+					: null;
+			if (existingBlockAnnotationId) {
+				if (options.scrollIntoView !== false) {
+					blockRangeElement.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+				}
+				await waitForLayout();
+				return {
+					annotationId: existingBlockAnnotationId,
+					kind: "block",
+					matchedText: getElementText(blockRangeElement).slice(0, 500) || normalizeText(rawQuery),
+					container: summarizeElement(findAnnotationContainer(blockRangeElement)),
+					rect: rectToObject(blockRangeElement.getBoundingClientRect()),
+					scrollY: window.scrollY,
+					approximate: Boolean(options.approximate),
+					reusedExisting: true,
+					fallback: options.fallback || "block-range",
+				};
+			}
 			return await highlightBlockElement(blockRangeElement, rawQuery, {
 				scrollIntoView: options.scrollIntoView,
 				approximate: options.approximate,
@@ -9830,6 +9872,13 @@ function pickBestPageToolkitFramePayload(payloads, methodName, args = []) {
 		const query = args?.[0];
 		const nonSearchUiPayload = successful.find((payload) => !pageToolkitFramePayloadLooksLikeReaderSearchUi(payload, query));
 		if (nonSearchUiPayload) return nonSearchUiPayload;
+	}
+	if (methodName === "getVisibleText") {
+		// On embedded-content shells the top frame usually succeeds first with
+		// chrome-thin text; the body frame's longer text is the useful payload.
+		return successful
+			.slice()
+			.sort((left, right) => normalizePageToolkitPayloadText(right.value).length - normalizePageToolkitPayloadText(left.value).length)[0];
 	}
 	return successful[0];
 }

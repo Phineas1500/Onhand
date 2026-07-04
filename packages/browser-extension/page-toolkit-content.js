@@ -3674,6 +3674,30 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		}
 		const blockRangeElement = findBlockRangeHighlightElement(range);
 		if (blockRangeElement) {
+			// A second block-crossing match in the same container must reuse the
+			// existing annotation: re-promoting would overwrite the container's
+			// annotation id and orphan any note attached to the first one.
+			const existingBlockAnnotationId =
+				blockRangeElement.getAttribute("data-onhand-highlight-kind") === "block"
+					? blockRangeElement.getAttribute("data-onhand-annotation-id")
+					: null;
+			if (existingBlockAnnotationId) {
+				if (options.scrollIntoView !== false) {
+					blockRangeElement.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+				}
+				await waitForLayout();
+				return {
+					annotationId: existingBlockAnnotationId,
+					kind: "block",
+					matchedText: getElementText(blockRangeElement).slice(0, 500) || normalizeText(rawQuery),
+					container: summarizeElement(findAnnotationContainer(blockRangeElement)),
+					rect: rectToObject(blockRangeElement.getBoundingClientRect()),
+					scrollY: window.scrollY,
+					approximate: Boolean(options.approximate),
+					reusedExisting: true,
+					fallback: options.fallback || "block-range",
+				};
+			}
 			return await highlightBlockElement(blockRangeElement, rawQuery, {
 				scrollIntoView: options.scrollIntoView,
 				approximate: options.approximate,

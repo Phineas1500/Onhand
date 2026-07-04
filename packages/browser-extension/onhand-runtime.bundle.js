@@ -134758,14 +134758,14 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
   const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
-  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
+  const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForSinglePageComparison(request.displayPrompt) || crossTab ? 2 : 1;
   const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
   return completedCount < requiredHighlights;
 }
 function buildPageSourceMarkerRetryPrompt(request, assistantText) {
   const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
   const crossTab = promptAsksForCrossTabComparison(request?.displayPrompt);
-  const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || crossTab;
+  const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || promptAsksForSinglePageComparison(request?.displayPrompt) || crossTab;
   const completedHighlights = completedSourceHighlightCount(request);
   const markerInstruction = crossTab ? "This cross-tab comparison needs a durable source marker in each source tab before the final chat answer: pass each tab's tabId (or titleContains after browser_list_tabs) to browser_highlight_text; do not activate or switch tabs to place a marker." : structured ? completedHighlights > 0 ? "This structured page answer needs one more durable source marker before the final chat answer." : "This structured page answer needs durable page source markers before the final chat answer." : "This page-grounded answer needs a durable page source marker before the final chat answer.";
   const highlightInstruction = structured ? [
@@ -136662,7 +136662,8 @@ function promptAsksForStructuredPageSourceMarker(prompt) {
   if (!text) return false;
   const modelIntent = getModelIntentClassificationForPrompt(prompt);
   if (modelIntent) return modelIntent.enumerableCoverage && modelIntent.pageScoped;
-  if (/\broadmap\b(?!\s+(?:for|to)\b)/.test(text)) return true;
+  if (/\broadmap\s+of\s+(?:the|this|these|those)\b/.test(text)) return true;
+  if (/\broadmap\s*[.?!]*\s*$/.test(text)) return true;
   if (!promptReferencesCurrentPageMaterial(text)) return false;
   return textHasAny(
     text,
@@ -136706,6 +136707,7 @@ function promptAsksForComparison(prompt) {
 function promptAsksForSinglePageComparison(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
+  if (promptAsksForCrossTabComparison(prompt)) return false;
   return promptAsksForComparison(prompt);
 }
 function promptAsksForCrossTabComparison(prompt) {
@@ -136734,7 +136736,10 @@ function promptAllowsPageSourceHighlights(prompt) {
 function promptRequiresPageSourceMarker(prompt) {
   const text = normalizePageSourcePromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
-  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForCrossTabComparison(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
+  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || // Consulted directly because the model classifier separates comparison
+  // from enumerable coverage; under regex routing the structured predicate
+  // happened to cover comparisons via its shared keyword list.
+  promptAsksForSinglePageComparison(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForCrossTabComparison(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
 }
 function promptAsksForPdfCorpusOrViewerWork(text) {
   return textHasAny(
@@ -137786,20 +137791,31 @@ function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, r
     (trace) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs"
   );
   if (!inventoryTraces.length) return null;
-  const openUrls = /* @__PURE__ */ new Set();
+  const openTabIdsByUrl = /* @__PURE__ */ new Map();
   for (const trace of inventoryTraces) {
+    if (Array.isArray(trace?.openTabInventory)) {
+      for (const tabInfo of trace.openTabInventory) {
+        const url2 = normalizeOpenTabUrlForComparison(tabInfo?.url);
+        if (url2 && !openTabIdsByUrl.has(url2)) openTabIdsByUrl.set(url2, typeof tabInfo?.id === "number" ? tabInfo.id : null);
+      }
+      continue;
+    }
     const urls = Array.isArray(trace?.openTabUrls) ? trace.openTabUrls : String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
-    for (const match2 of urls) openUrls.add(normalizeOpenTabUrlForComparison(match2));
+    for (const match2 of urls) {
+      const url2 = normalizeOpenTabUrlForComparison(match2);
+      if (url2 && !openTabIdsByUrl.has(url2)) openTabIdsByUrl.set(url2, null);
+    }
   }
-  if (!openUrls.has(targetUrl)) return null;
+  if (!openTabIdsByUrl.has(targetUrl)) return null;
+  const openTabId = openTabIdsByUrl.get(targetUrl);
   return {
     guardrail: {
       kind: "duplicate_tab_navigation",
       blockedTool: toolName,
       blockedCommand: commandName,
       message: [
-        "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
-        "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+        openTabId !== null && openTabId !== void 0 ? `That URL is already open as tabId ${openTabId}; do not open a duplicate tab.` : "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
+        openTabId !== null && openTabId !== void 0 ? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.` : "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
         "Open a new tab only for URLs that are not already open."
       ].join(" ")
     }
@@ -140388,7 +140404,14 @@ function createOnhandBrowserRuntime(host) {
     entry.resultDetails = traceResultDetails(result);
     if (!traceIsError && toolName === "browser_list_tabs") {
       const inventoryTabs = (result?.details || result)?.tabs;
-      entry.openTabUrls = Array.isArray(inventoryTabs) ? inventoryTabs.map((tabInfo) => normalizeOpenTabUrlForComparison(tabInfo?.url)).filter(Boolean) : (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map(normalizeOpenTabUrlForComparison);
+      entry.openTabInventory = Array.isArray(inventoryTabs) ? inventoryTabs.map((tabInfo) => ({
+        id: typeof tabInfo?.id === "number" ? tabInfo.id : null,
+        url: normalizeOpenTabUrlForComparison(tabInfo?.url)
+      })).filter((tabInfo) => tabInfo.url) : (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map((url2) => ({
+        id: null,
+        url: normalizeOpenTabUrlForComparison(url2)
+      }));
+      entry.openTabUrls = entry.openTabInventory.map((tabInfo) => tabInfo.url);
     }
     if (traceIsError) entry.error = redactTraceText(errorText, 1200);
   }

@@ -122,6 +122,7 @@ interface ToolTraceEntry {
 	resultSummary?: string;
 	resultDetails?: unknown;
 	openTabUrls?: string[];
+	openTabInventory?: Array<{ id: number | null; url: string }>;
 	error?: string;
 }
 
@@ -3370,7 +3371,12 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 	// retry — but a cross-tab comparison still needs a marker in each source
 	// tab, so the distinct-tab requirement below must run for it.
 	if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
-	const requiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || crossTab ? 2 : 1;
+	const requiredHighlights =
+		promptAsksForStructuredPageSourceMarker(request.displayPrompt) ||
+		promptAsksForSinglePageComparison(request.displayPrompt) ||
+		crossTab
+			? 2
+			: 1;
 	// Cross-tab prompts need marks on distinct tabs, not just two marks total.
 	const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
 	return completedCount < requiredHighlights;
@@ -3379,7 +3385,11 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 function buildPageSourceMarkerRetryPrompt(request: any, assistantText: string) {
 	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
 	const crossTab = promptAsksForCrossTabComparison(request?.displayPrompt);
-	const structured = promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || crossTab;
+	// Single-page comparisons use the structured messaging too: its
+	// compare/contrast instruction ("one concise source marker per side")
+	// matches the gate's two-anchor requirement.
+	const structured =
+		promptAsksForStructuredPageSourceMarker(request?.displayPrompt) || promptAsksForSinglePageComparison(request?.displayPrompt) || crossTab;
 	const completedHighlights = completedSourceHighlightCount(request);
 	const markerInstruction = crossTab
 		? "This cross-tab comparison needs a durable source marker in each source tab before the final chat answer: pass each tab's tabId (or titleContains after browser_list_tabs) to browser_highlight_text; do not activate or switch tabs to place a marker."
@@ -6712,13 +6722,15 @@ function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 	if (!text) return false;
 	const modelIntent = getModelIntentClassificationForPrompt(prompt);
 	if (modelIntent) return modelIntent.enumerableCoverage && modelIntent.pageScoped;
-	// "Roadmap of X" maps existing content and is page-scoped by default in a
-	// sidebar ask ("give me a roadmap of the twelve factors" names the content,
-	// not the page); "roadmap for/to X" plans something new ("career roadmap
-	// for becoming a data scientist") and needs a page reference like the
-	// other structure words, as do "walk me through" and "step-by-step",
-	// which routinely start general how-to asks.
-	if (/\broadmap\b(?!\s+(?:for|to)\b)/.test(text)) return true;
+	// Only two roadmap shapes are page-scoped by default in a sidebar ask:
+	// "roadmap of the/this X" (a definite subject names existing content, as
+	// in "give me a roadmap of the twelve factors") and a bare trailing
+	// "roadmap" with no subject at all. Everything else — "roadmap for/to X",
+	// "roadmap of becoming X", "what does 'roadmap' mean" — plans or discusses
+	// rather than maps the open material and needs an explicit page reference
+	// like the other structure words.
+	if (/\broadmap\s+of\s+(?:the|this|these|those)\b/.test(text)) return true;
+	if (/\broadmap\s*[.?!]*\s*$/.test(text)) return true;
 	if (!promptReferencesCurrentPageMaterial(text)) return false;
 	return textHasAny(
 		text,
@@ -6780,6 +6792,10 @@ function promptAsksForComparison(prompt: unknown) {
 function promptAsksForSinglePageComparison(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text || !promptReferencesCurrentPageMaterial(text)) return false;
+	// A cross-tab comparison is not a single-page one: its marks land on
+	// multiple tabs and must not trip the single-page comparison caps
+	// ("these papers" counts as page material, so both predicates can match).
+	if (promptAsksForCrossTabComparison(prompt)) return false;
 	return promptAsksForComparison(prompt);
 }
 
@@ -6827,6 +6843,10 @@ function promptRequiresPageSourceMarker(prompt: unknown) {
 		promptAsksForPageAnchors(text) ||
 		promptAsksForTeachingPageSourceMarker(prompt) ||
 		promptAsksForStructuredPageSourceMarker(prompt) ||
+		// Consulted directly because the model classifier separates comparison
+		// from enumerable coverage; under regex routing the structured predicate
+		// happened to cover comparisons via its shared keyword list.
+		promptAsksForSinglePageComparison(prompt) ||
 		promptAsksForDocumentReviewMarkup(prompt) ||
 		promptAsksForCrossTabComparison(prompt) ||
 		promptAsksForExternalBrowsing(text) ||
@@ -8166,24 +8186,39 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 		(trace: any) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs",
 	);
 	if (!inventoryTraces.length) return null;
-	const openUrls = new Set<string>();
+	const openTabIdsByUrl = new Map<string, number | null>();
 	for (const trace of inventoryTraces) {
 		// Prefer the full inventory captured at trace time; the resultSummary is
 		// truncated and can cut off recently-opened tabs in a busy window.
-		const urls = Array.isArray(trace?.openTabUrls)
-			? trace.openTabUrls
-			: String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
-		for (const match of urls) openUrls.add(normalizeOpenTabUrlForComparison(match));
+		if (Array.isArray(trace?.openTabInventory)) {
+			for (const tabInfo of trace.openTabInventory) {
+				const url = normalizeOpenTabUrlForComparison(tabInfo?.url);
+				if (url && !openTabIdsByUrl.has(url)) openTabIdsByUrl.set(url, typeof tabInfo?.id === "number" ? tabInfo.id : null);
+			}
+			continue;
+		}
+		const urls = Array.isArray(trace?.openTabUrls) ? trace.openTabUrls : String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
+		for (const match of urls) {
+			const url = normalizeOpenTabUrlForComparison(match);
+			if (url && !openTabIdsByUrl.has(url)) openTabIdsByUrl.set(url, null);
+		}
 	}
-	if (!openUrls.has(targetUrl)) return null;
+	if (!openTabIdsByUrl.has(targetUrl)) return null;
+	// Name the tab id explicitly: the tab list shown to the model is capped,
+	// so the already-open tab may be one it was never shown.
+	const openTabId = openTabIdsByUrl.get(targetUrl);
 	return {
 		guardrail: {
 			kind: "duplicate_tab_navigation",
 			blockedTool: toolName,
 			blockedCommand: commandName,
 			message: [
-				"That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
-				"Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
+				openTabId !== null && openTabId !== undefined
+					? `That URL is already open as tabId ${openTabId}; do not open a duplicate tab.`
+					: "That URL is already open in a tab listed by browser_list_tabs; do not open a duplicate tab.",
+				openTabId !== null && openTabId !== undefined
+					? `Read it in place with browser_extract_content or browser_get_visible_text using tabId ${openTabId}, or annotate it with browser_highlight_text / browser_show_note using the same tabId.`
+					: "Read it in place with browser_extract_content or browser_get_visible_text using that tab's exact tabId, or annotate it with browser_highlight_text / browser_show_note using the same tabId or titleContains.",
 				"Open a new tab only for URLs that are not already open.",
 			].join(" "),
 		},
@@ -11051,11 +11086,21 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		entry.resultDetails = traceResultDetails(result);
 		if (!traceIsError && toolName === "browser_list_tabs") {
 			// The formatted summary caps how many tabs are shown; keep the full
-			// URL inventory from the raw result for the duplicate-tab guard.
+			// inventory from the raw result for the duplicate-tab guard — with
+			// tab ids, so the guard can name a tab the model was not shown.
 			const inventoryTabs = (result?.details || result)?.tabs;
-			entry.openTabUrls = Array.isArray(inventoryTabs)
-				? inventoryTabs.map((tabInfo: any) => normalizeOpenTabUrlForComparison(tabInfo?.url)).filter(Boolean)
-				: (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map(normalizeOpenTabUrlForComparison);
+			entry.openTabInventory = Array.isArray(inventoryTabs)
+				? inventoryTabs
+						.map((tabInfo: any) => ({
+							id: typeof tabInfo?.id === "number" ? tabInfo.id : null,
+							url: normalizeOpenTabUrlForComparison(tabInfo?.url),
+						}))
+						.filter((tabInfo: any) => tabInfo.url)
+				: (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map((url: string) => ({
+						id: null,
+						url: normalizeOpenTabUrlForComparison(url),
+					}));
+			entry.openTabUrls = entry.openTabInventory.map((tabInfo: any) => tabInfo.url);
 		}
 		if (traceIsError) entry.error = redactTraceText(errorText, 1200);
 	}
