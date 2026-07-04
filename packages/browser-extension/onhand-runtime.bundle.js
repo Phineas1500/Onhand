@@ -136722,7 +136722,12 @@ function promptAsksForCrossTabComparison(prompt) {
 function promptAllowsPageSourceHighlights(prompt) {
   const text = normalizePageSourcePromptText(prompt);
   if (!text || promptForbidsPageChanges(prompt)) return false;
-  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForCrossTabComparison(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
+  return promptAsksForPageAnchors(text) || promptAsksForTeachingPageSourceMarker(prompt) || promptAsksForStructuredPageSourceMarker(prompt) || // Grant highlight/note tools for single-page comparisons too. The model
+  // classifier separates comparison from enumerable coverage, so the
+  // structured predicate above no longer covers a classified comparison —
+  // yet promptRequiresPageSourceMarker() still demands markers for it, so
+  // without this the retry asks for tools the agent was never given.
+  promptAsksForSinglePageComparison(prompt) || promptAsksForDocumentReviewMarkup(prompt) || promptAsksForCrossTabComparison(prompt) || promptAsksForExternalBrowsing(text) || promptAsksForLinkedPageNavigation(text);
 }
 function promptRequiresPageSourceMarker(prompt) {
   const text = normalizePageSourcePromptText(prompt);
