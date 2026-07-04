@@ -8322,9 +8322,29 @@ function isSectionNumberOnlyHighlightText(value: unknown) {
 
 function promptAsksForDerivationOrProofSourceMarker(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
+	if (!text) return false;
+	// The only consumer is the heading-only-derivation highlight guard. A roadmap
+	// or overview enumerates items whose short, heading-shaped defining taglines
+	// (e.g. the twelve-factor "One codebase tracked in revision control...") ARE
+	// the correct highlights, so it must not be treated as a derivation: "walk me
+	// through the twelve factors as a roadmap" shares the verb but is enumerable
+	// coverage, and treating it as a proof makes the guard block every heading-
+	// shaped tagline. A genuine derivation/proof names itself explicitly.
+	if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
+		// An explanation — "explain ...", any "why ...", "how does/do/did/to ...",
+		// or "how ... works" (incl. "walk me through why/how X works") — needs the
+		// explanatory sentence, not a heading, so the guard must stay on even when
+		// the prompt is worded as a roadmap/outline or the model classifier buckets
+		// it as enumerableCoverage (that bucket explicitly includes derivations/
+		// proofs). Only a genuine enumeration with no explanation ask is exempt.
+		const explanationAsk = /\bexplain\b|\bwhy\b|\bhow\s+(?:does|do|did|to)\b|\bhow\b[^.?!]{0,40}\bworks?\b/i.test(text);
+		if (!explanationAsk) {
+			if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
+			if (/\b(?:roadmap|outline)\b/i.test(text)) return false;
+		}
+	}
 	return Boolean(
-		text &&
-			promptAsksForStructuredPageSourceMarker(prompt) &&
+		promptAsksForStructuredPageSourceMarker(prompt) &&
 			textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/),
 	);
 }

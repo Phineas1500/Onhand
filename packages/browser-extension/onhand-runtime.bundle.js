@@ -137894,8 +137894,16 @@ function isSectionNumberOnlyHighlightText(value) {
 }
 function promptAsksForDerivationOrProofSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
+  if (!text) return false;
+  if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
+    const explanationAsk = /\bexplain\b|\bwhy\b|\bhow\s+(?:does|do|did|to)\b|\bhow\b[^.?!]{0,40}\bworks?\b/i.test(text);
+    if (!explanationAsk) {
+      if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
+      if (/\b(?:roadmap|outline)\b/i.test(text)) return false;
+    }
+  }
   return Boolean(
-    text && promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
+    promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
   );
 }
 function looksLikeHeadingOnlyHighlightText(value) {
