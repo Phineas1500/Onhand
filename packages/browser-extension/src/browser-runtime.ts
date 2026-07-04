@@ -6849,7 +6849,7 @@ function promptAsksForCrossTabComparison(prompt: unknown) {
 	);
 	const explicitCrossTabComparisonTarget = textHasAny(
 		text,
-		/\b(?:other|another|both|two|2|multiple|several|all|across|open) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?) (?:i have |that are |currently )?open\b|\bthese (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b/,
+		/\b(?:other|another|both|multiple|several|all|across|open|two|three|four|five|six|seven|eight|nine|ten|\d+) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?) (?:i have |that are |currently )?open\b|\b(?:these|those) (?:(?:\d+|two|three|four|five|six|seven|eight|nine|ten) )?(?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b|\b(?:across|between) (?:tabs?|windows?|papers?|articles?|documents?|docs?|pdfs?|sources?|pages?)\b/,
 	);
 	return crossTabComparisonVerb && explicitCrossTabComparisonTarget;
 }
