@@ -137894,8 +137894,13 @@ function isSectionNumberOnlyHighlightText(value) {
 }
 function promptAsksForDerivationOrProofSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
+  if (!text) return false;
+  if (!/\b(?:derive|derivation|proof|prove|theorem|lemma)\b/i.test(text)) {
+    if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
+    if (/\b(?:roadmap|outline|overview)\b/i.test(text)) return false;
+  }
   return Boolean(
-    text && promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
+    promptAsksForStructuredPageSourceMarker(prompt) && textHasAny(text, /\b(?:derive|derivation|proof|prove|show\s+why|how\s+(?:does|do|did)|explain\s+how|walk(?:\s+me)?\s+through)\b/)
   );
 }
 function looksLikeHeadingOnlyHighlightText(value) {
