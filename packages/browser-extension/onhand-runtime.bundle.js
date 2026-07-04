@@ -137896,7 +137896,7 @@ function promptAsksForDerivationOrProofSourceMarker(prompt) {
   const text = ownWordsPromptText(prompt);
   if (!text) return false;
   if (!/\b(?:deriv(?:e|es|ed|ing|ation|ations)|proofs?|prove[nds]?|theorems?|lemmas?)\b/i.test(text)) {
-    const explanationAsk = /\b(?:explain\s+how|how\s+(?:does|do|did)|show\s+why)\b/i.test(text);
+    const explanationAsk = /\bexplain\b|\bwhy\b|\bhow\s+(?:does|do|did|to)\b|\bhow\b[^.?!]{0,40}\bworks?\b/i.test(text);
     if (!explanationAsk) {
       if (getModelIntentClassificationForPrompt(prompt)?.enumerableCoverage) return false;
       if (/\b(?:roadmap|outline)\b/i.test(text)) return false;
