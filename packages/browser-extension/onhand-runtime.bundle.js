@@ -140958,22 +140958,25 @@ function createOnhandBrowserRuntime(host) {
   }
   async function classifyPromptIntentWithModel(model, prompt) {
     if (!model || !String(prompt || "").trim()) return null;
-    const apiKey = await resolveApiKey2(model.provider);
-    const stream2 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
-      apiKey,
-      onhandReasoningProfile: {
-        maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
-        reasoningEffort: "none",
-        textVerbosity: "low"
-      }
-    });
-    const message = await Promise.race([
-      stream2.result(),
+    const classify = async () => {
+      const apiKey = await resolveApiKey2(model.provider);
+      const stream2 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
+        apiKey,
+        onhandReasoningProfile: {
+          maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
+          reasoningEffort: "none",
+          textVerbosity: "low"
+        }
+      });
+      const message = await stream2.result();
+      return parseModelIntentClassification(assistantMessageTextContent(message));
+    };
+    return await Promise.race([
+      classify(),
       new Promise(
         (_, reject) => setTimeout(() => reject(new Error("Model intent classification timed out")), MODEL_INTENT_CLASSIFIER_TIMEOUT_MS)
       )
     ]);
-    return parseModelIntentClassification(assistantMessageTextContent(message));
   }
   function withDefaultBrowserTarget(params = {}, commandName = "") {
     const normalizedParams = normalizeOptionalBrowserTargetNumbers(params);
@@ -142745,7 +142748,7 @@ function createOnhandBrowserRuntime(host) {
       let modelIntentClassification = null;
       let modelIntentClassifierError = "";
       clearModelIntentClassifications();
-      if (requestSettings.experimentalModelLaneClassifier) {
+      const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier ? (async () => {
         try {
           const classifierModel = await getConfiguredModel(requestSettings);
           modelIntentClassification = await classifyPromptIntentWithModel(classifierModel, displayPrompt);
@@ -142758,8 +142761,7 @@ function createOnhandBrowserRuntime(host) {
         } catch (error52) {
           modelIntentClassifierError = `${error52 instanceof Error ? error52.message : String(error52)}; regex routing in effect`;
         }
-      }
-      const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
+      })() : null;
       if (!session.name && session.messages.length === 0) {
         session.name = buildSessionTitleFromPrompt(displayPrompt);
       }
@@ -142839,6 +142841,12 @@ function createOnhandBrowserRuntime(host) {
             includeVisualRegionImage: true
           });
         }
+        if (modelIntentClassificationPromise) {
+          await modelIntentClassificationPromise;
+          activeRequest.modelIntentClassification = modelIntentClassification;
+          if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
+        }
+        const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
         const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
         const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl ? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.` : "";
         const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);

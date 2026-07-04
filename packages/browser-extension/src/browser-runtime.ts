@@ -11699,22 +11699,27 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	async function classifyPromptIntentWithModel(model: any, prompt: unknown): Promise<ModelIntentClassification | null> {
 		if (!model || !String(prompt || "").trim()) return null;
-		const apiKey = await resolveApiKey(model.provider);
-		const stream = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
-			apiKey,
-			onhandReasoningProfile: {
-				maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
-				reasoningEffort: "none",
-				textVerbosity: "low",
-			},
-		});
-		const message: any = await Promise.race([
-			stream.result(),
-			new Promise((_, reject) =>
+		// The timeout covers the WHOLE call, including resolveApiKey — an OAuth
+		// token refresh can itself take seconds and must not extend the budget.
+		const classify = async () => {
+			const apiKey = await resolveApiKey(model.provider);
+			const stream = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
+				apiKey,
+				onhandReasoningProfile: {
+					maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
+					reasoningEffort: "none",
+					textVerbosity: "low",
+				},
+			});
+			const message: any = await stream.result();
+			return parseModelIntentClassification(assistantMessageTextContent(message));
+		};
+		return await Promise.race([
+			classify(),
+			new Promise<null>((_, reject) =>
 				setTimeout(() => reject(new Error("Model intent classification timed out")), MODEL_INTENT_CLASSIFIER_TIMEOUT_MS),
 			),
 		]);
-		return parseModelIntentClassification(assistantMessageTextContent(message));
 	}
 
 	function withDefaultBrowserTarget(params: any = {}, commandName = "") {
@@ -13672,21 +13677,26 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			// Never let a stale classification outlive the flag or a failed
 			// classification for the same wording.
 			clearModelIntentClassifications();
-			if (requestSettings.experimentalModelLaneClassifier) {
-				try {
-					const classifierModel = await getConfiguredModel(requestSettings);
-					modelIntentClassification = await classifyPromptIntentWithModel(classifierModel, displayPrompt);
-					if (modelIntentClassification) {
-						setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
-						if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
-					} else {
-						modelIntentClassifierError = "unparseable classification; regex routing in effect";
-					}
-				} catch (error) {
-					modelIntentClassifierError = `${error instanceof Error ? error.message : String(error)}; regex routing in effect`;
-				}
-			}
-			const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
+			// Kick the classification off concurrently with PDF handoff and page
+			// capture below; its first consumers (the reasoning profile, prior-page
+			// context, and tool selection) await it after capture completes, so the
+			// classifier latency hides behind work the request does anyway.
+			const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier
+				? (async () => {
+						try {
+							const classifierModel = await getConfiguredModel(requestSettings);
+							modelIntentClassification = await classifyPromptIntentWithModel(classifierModel, displayPrompt);
+							if (modelIntentClassification) {
+								setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
+								if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
+							} else {
+								modelIntentClassifierError = "unparseable classification; regex routing in effect";
+							}
+						} catch (error) {
+							modelIntentClassifierError = `${error instanceof Error ? error.message : String(error)}; regex routing in effect`;
+						}
+					})()
+				: null;
 			if (!session.name && session.messages.length === 0) {
 				session.name = buildSessionTitleFromPrompt(displayPrompt);
 			}
@@ -13768,6 +13778,12 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						includeVisualRegionImage: true,
 					});
 				}
+				if (modelIntentClassificationPromise) {
+					await modelIntentClassificationPromise;
+					activeRequest.modelIntentClassification = modelIntentClassification;
+					if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
+				}
+				const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
 				const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
 				const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl
 					? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.`
