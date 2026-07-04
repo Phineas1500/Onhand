@@ -10275,6 +10275,56 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let uiState: any | null = null;
 	let activeAgent: Agent | null = null;
 	let activeRequest: any | null = null;
+
+	// Advanced runtime inspection: retain a compact, redacted decision trace per
+	// turn — routing classification and each tool call's args/state/guardrail — so
+	// a failing turn can be inspected after the fact (via getDebugTraces, exposed
+	// as the background debug:fetch-turn-trace message) instead of via ad-hoc live
+	// instrumentation. The raw data already exists transiently on activeRequest;
+	// this only surfaces it. Ring buffer, gated on advancedRuntimeInspection.
+	const DEBUG_TURN_TRACE_MAX = 12;
+	const debugTurnTraces: any[] = [];
+	function captureDebugTurnTrace(session: any, finalError: Error | null, reliability: Record<string, unknown>) {
+		try {
+			const request = activeRequest;
+			if (!request || request.settings?.advancedRuntimeInspectionEnabled === false) return;
+			const prompt = request.displayPrompt || request.prompt || "";
+			const traces = Array.isArray(request.toolTraces) ? request.toolTraces : [];
+			const jsonArgs = (value: unknown) => {
+				try {
+					return JSON.stringify(value ?? {});
+				} catch {
+					return "";
+				}
+			};
+			debugTurnTraces.unshift({
+				turnId: request.id || "",
+				sessionId: session?.id || "",
+				createdAt: nowIso(),
+				result: request.aborted ? "stopped" : finalError ? "error" : "ok",
+				prompt: redactDiagnosticText(prompt, 400),
+				routing: {
+					classifier: getModelIntentClassificationForPrompt(prompt),
+					predicates: {
+						structured: promptAsksForStructuredPageSourceMarker(prompt),
+						derivationOrProof: promptAsksForDerivationOrProofSourceMarker(prompt),
+						singlePageComparison: promptAsksForSinglePageComparison(prompt),
+						crossTabComparison: promptAsksForCrossTabComparison(prompt),
+						documentReviewMarkup: promptAsksForDocumentReviewMarkup(prompt),
+					},
+				},
+				toolCalls: traces.map((trace: any) => ({
+					tool: trace.toolName,
+					state: trace.state,
+					durationMs: trace.duration_ms ?? null,
+					args: redactDiagnosticText(jsonArgs(trace.args), 220),
+					result: redactDiagnosticText(trace.resultSummary, 320),
+				})),
+				reliability,
+			});
+			if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+		} catch {}
+	}
 	let sentryInitialized = false;
 	let sentryDiagnosticsAllowed = false;
 	let sentryExplicitEventAllowance = 0;
@@ -11643,6 +11693,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				...toolReliability,
 			});
 		}
+		captureDebugTurnTrace(session, finalError, toolReliability);
 		activeRequest = null;
 	}
 
@@ -13262,6 +13313,14 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	};
 
 	return {
+		getDebugTraces(limit?: number) {
+			const max =
+				Number.isFinite(limit as number) && (limit as number) > 0
+					? Math.min(limit as number, debugTurnTraces.length)
+					: debugTurnTraces.length;
+			return { ok: true, traces: debugTurnTraces.slice(0, max) };
+		},
+
 		async getState() {
 			const store = await loadStore();
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;

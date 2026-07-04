@@ -139659,6 +139659,50 @@ function createOnhandBrowserRuntime(host) {
   let uiState = null;
   let activeAgent = null;
   let activeRequest = null;
+  const DEBUG_TURN_TRACE_MAX = 12;
+  const debugTurnTraces = [];
+  function captureDebugTurnTrace(session, finalError, reliability) {
+    try {
+      const request = activeRequest;
+      if (!request || request.settings?.advancedRuntimeInspectionEnabled === false) return;
+      const prompt = request.displayPrompt || request.prompt || "";
+      const traces = Array.isArray(request.toolTraces) ? request.toolTraces : [];
+      const jsonArgs = (value) => {
+        try {
+          return JSON.stringify(value ?? {});
+        } catch {
+          return "";
+        }
+      };
+      debugTurnTraces.unshift({
+        turnId: request.id || "",
+        sessionId: session?.id || "",
+        createdAt: nowIso(),
+        result: request.aborted ? "stopped" : finalError ? "error" : "ok",
+        prompt: redactDiagnosticText(prompt, 400),
+        routing: {
+          classifier: getModelIntentClassificationForPrompt(prompt),
+          predicates: {
+            structured: promptAsksForStructuredPageSourceMarker(prompt),
+            derivationOrProof: promptAsksForDerivationOrProofSourceMarker(prompt),
+            singlePageComparison: promptAsksForSinglePageComparison(prompt),
+            crossTabComparison: promptAsksForCrossTabComparison(prompt),
+            documentReviewMarkup: promptAsksForDocumentReviewMarkup(prompt)
+          }
+        },
+        toolCalls: traces.map((trace) => ({
+          tool: trace.toolName,
+          state: trace.state,
+          durationMs: trace.duration_ms ?? null,
+          args: redactDiagnosticText(jsonArgs(trace.args), 220),
+          result: redactDiagnosticText(trace.resultSummary, 320)
+        })),
+        reliability
+      });
+      if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+    } catch {
+    }
+  }
   let sentryInitialized = false;
   let sentryDiagnosticsAllowed = false;
   let sentryExplicitEventAllowance = 0;
@@ -140859,6 +140903,7 @@ function createOnhandBrowserRuntime(host) {
         ...toolReliability
       });
     }
+    captureDebugTurnTrace(session, finalError, toolReliability);
     activeRequest = null;
   }
   function handleAgentEvent(session, requestId, event) {
@@ -142324,6 +142369,10 @@ function createOnhandBrowserRuntime(host) {
     restoreArtifact
   };
   return {
+    getDebugTraces(limit2) {
+      const max = Number.isFinite(limit2) && limit2 > 0 ? Math.min(limit2, debugTurnTraces.length) : debugTurnTraces.length;
+      return { ok: true, traces: debugTurnTraces.slice(0, max) };
+    },
     async getState() {
       const store2 = await loadStore();
       const session = store2.sessions[store2.currentSessionId];

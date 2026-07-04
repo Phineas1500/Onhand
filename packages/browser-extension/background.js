@@ -13918,6 +13918,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "debug:fetch-turn-trace") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse(runtime.getDebugTraces(message.limit));
+			return;
+		}
+
 		if (message?.type === "browser-runtime:classify-intent-eval") {
 			const runtime = getOnhandBrowserRuntime();
 			sendResponse({
