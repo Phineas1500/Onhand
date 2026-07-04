@@ -8182,10 +8182,13 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 	};
 }
 
-function normalizeOpenTabUrlForComparison(value: unknown) {
-	const text = String(value || "")
-		.trim()
-		.replace(/#.*$/, "");
+function normalizeOpenTabUrlForComparison(value: unknown, { keepFragment = false }: { keepFragment?: boolean } = {}) {
+	const trimmed = String(value || "").trim();
+	// The restore/dedup path strips the fragment (a saved artifact at /docs should
+	// match an open tab at /docs#intro); the duplicate-tab guard keeps it, so
+	// distinct sections (/docs#intro vs /docs#api) are treated as distinct tabs
+	// and the model can still navigate to a different section of an open page.
+	const text = keepFragment ? trimmed : trimmed.replace(/#.*$/, "");
 	// Only scheme and host are case-insensitive; paths and query values can be
 	// case-sensitive, so lowercasing them would treat distinct pages as
 	// duplicates. Likewise only the origin's root slash is guaranteed
@@ -8216,7 +8219,7 @@ function promptAsksToFocusExistingPage(prompt: unknown) {
 // focused via browser_activate_tab when the user asked to open it) instead.
 function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: string, params: any, request: any) {
 	if (commandName !== "navigate" || !params?.newTab) return null;
-	const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
+	const targetUrl = normalizeOpenTabUrlForComparison(params?.url, { keepFragment: true });
 	if (!targetUrl) return null;
 	const inventoryTraces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
 		(trace: any) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs",
@@ -8235,14 +8238,14 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 		// truncated and can cut off recently-opened tabs in a busy window.
 		if (Array.isArray(trace?.openTabInventory)) {
 			for (const tabInfo of trace.openTabInventory) {
-				const url = normalizeOpenTabUrlForComparison(tabInfo?.url);
+				const url = normalizeOpenTabUrlForComparison(tabInfo?.url, { keepFragment: true });
 				if (url && !openTabIdsByUrl.has(url)) openTabIdsByUrl.set(url, typeof tabInfo?.id === "number" ? tabInfo.id : null);
 			}
 			continue;
 		}
 		const urls = Array.isArray(trace?.openTabUrls) ? trace.openTabUrls : String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
 		for (const match of urls) {
-			const url = normalizeOpenTabUrlForComparison(match);
+			const url = normalizeOpenTabUrlForComparison(match, { keepFragment: true });
 			if (url && !openTabIdsByUrl.has(url)) openTabIdsByUrl.set(url, null);
 		}
 	}
@@ -11153,12 +11156,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				? inventoryTabs
 						.map((tabInfo: any) => ({
 							id: typeof tabInfo?.id === "number" ? tabInfo.id : null,
-							url: normalizeOpenTabUrlForComparison(tabInfo?.url),
+							url: normalizeOpenTabUrlForComparison(tabInfo?.url, { keepFragment: true }),
 						}))
 						.filter((tabInfo: any) => tabInfo.url)
 				: (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map((url: string) => ({
 						id: null,
-						url: normalizeOpenTabUrlForComparison(url),
+						url: normalizeOpenTabUrlForComparison(url, { keepFragment: true }),
 					}));
 			entry.openTabUrls = entry.openTabInventory.map((tabInfo: any) => tabInfo.url);
 		}

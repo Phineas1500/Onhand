@@ -137777,8 +137777,9 @@ function buildSurplusHighlightGuardResult(toolName, commandName, prompt, request
     }
   };
 }
-function normalizeOpenTabUrlForComparison(value) {
-  const text = String(value || "").trim().replace(/#.*$/, "");
+function normalizeOpenTabUrlForComparison(value, { keepFragment = false } = {}) {
+  const trimmed = String(value || "").trim();
+  const text = keepFragment ? trimmed : trimmed.replace(/#.*$/, "");
   const match2 = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
   if (!match2) return text;
   const rest = match2[2] === "/" ? "" : match2[2];
@@ -137794,7 +137795,7 @@ function promptAsksToFocusExistingPage(prompt) {
 }
 function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, request) {
   if (commandName !== "navigate" || !params?.newTab) return null;
-  const targetUrl = normalizeOpenTabUrlForComparison(params?.url);
+  const targetUrl = normalizeOpenTabUrlForComparison(params?.url, { keepFragment: true });
   if (!targetUrl) return null;
   const inventoryTraces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
     (trace) => trace?.state === "complete" && trace?.toolName === "browser_list_tabs"
@@ -137807,14 +137808,14 @@ function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, r
   for (const trace of [latestInventory]) {
     if (Array.isArray(trace?.openTabInventory)) {
       for (const tabInfo of trace.openTabInventory) {
-        const url2 = normalizeOpenTabUrlForComparison(tabInfo?.url);
+        const url2 = normalizeOpenTabUrlForComparison(tabInfo?.url, { keepFragment: true });
         if (url2 && !openTabIdsByUrl.has(url2)) openTabIdsByUrl.set(url2, typeof tabInfo?.id === "number" ? tabInfo.id : null);
       }
       continue;
     }
     const urls = Array.isArray(trace?.openTabUrls) ? trace.openTabUrls : String(trace?.resultSummary || "").match(/https?:\/\/[^\s]+/g) || [];
     for (const match2 of urls) {
-      const url2 = normalizeOpenTabUrlForComparison(match2);
+      const url2 = normalizeOpenTabUrlForComparison(match2, { keepFragment: true });
       if (url2 && !openTabIdsByUrl.has(url2)) openTabIdsByUrl.set(url2, null);
     }
   }
@@ -140423,10 +140424,10 @@ function createOnhandBrowserRuntime(host) {
       const inventoryTabs = (result?.details || result)?.tabs;
       entry.openTabInventory = Array.isArray(inventoryTabs) ? inventoryTabs.map((tabInfo) => ({
         id: typeof tabInfo?.id === "number" ? tabInfo.id : null,
-        url: normalizeOpenTabUrlForComparison(tabInfo?.url)
+        url: normalizeOpenTabUrlForComparison(tabInfo?.url, { keepFragment: true })
       })).filter((tabInfo) => tabInfo.url) : (String(summary || "").match(/https?:\/\/[^\s]+/g) || []).map((url2) => ({
         id: null,
-        url: normalizeOpenTabUrlForComparison(url2)
+        url: normalizeOpenTabUrlForComparison(url2, { keepFragment: true })
       }));
       entry.openTabUrls = entry.openTabInventory.map((tabInfo) => tabInfo.url);
     }
