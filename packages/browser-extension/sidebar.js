@@ -709,8 +709,14 @@
 			}
 
 			const score = overlap + numericOverlap * 1.5 + phraseBonus;
-			allScores.push(score);
-			if (overlap > 0) marksTouched += 1;
+			// Only groups eligible for citation this turn (current) count toward the
+			// spread/dominance heuristic below — stale highlights from earlier turns
+			// (passed in by buildTurnCitationGroups) must not push a grounded current
+			// claim into synthesis suppression.
+			if (group.current) {
+				allScores.push(score);
+				if (overlap > 0) marksTouched += 1;
+			}
 			const minimumOverlap = numericOverlap > 0 ? 1 : 2;
 			const minimumScore = numericOverlap > 0 ? 2.5 : blockTokens.size <= 18 ? 2 : 3;
 			const matchedCurrentEvidence = group.current && overlap >= minimumOverlap && score >= minimumScore;
