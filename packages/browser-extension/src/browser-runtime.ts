@@ -8453,6 +8453,12 @@ function stripTrailingPageQualifier(value: string) {
 	return String(value || "")
 		.replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "")
 		.replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "")
+		// Mirror the "here" page-reference patterns so a trailing "here" /
+		// "described here" is stripped from a comparison side before entity
+		// extraction — else "boosting here" becomes the entity and the surplus
+		// guard's per-side citation match fails.
+		.replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "")
+		.replace(/\b(?:right\s+)?here\s*[.?!]*\s*$/i, "")
 		.trim();
 }
 
