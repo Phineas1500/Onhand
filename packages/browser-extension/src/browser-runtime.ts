@@ -10295,6 +10295,92 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let uiState: any | null = null;
 	let activeAgent: Agent | null = null;
 	let activeRequest: any | null = null;
+
+	// Advanced runtime inspection: retain a compact, redacted decision trace per
+	// turn — routing classification and each tool call's args/state/guardrail — so
+	// a failing turn can be inspected after the fact (via getDebugTraces, exposed
+	// as the background debug:fetch-turn-trace message) instead of via ad-hoc live
+	// instrumentation. The raw data already exists transiently on activeRequest;
+	// this only surfaces it. Ring buffer, gated on advancedRuntimeInspection.
+	const DEBUG_TURN_TRACE_MAX = 12;
+	const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
+	const debugTurnTraces: any[] = [];
+	// Mirror the ring to session storage so a service-worker restart between a turn
+	// and a debug fetch does not drop traces (the in-memory ring lives only in the
+	// MV3 worker heap). Merge with what is already stored, keyed by turnId, so a
+	// capture on a freshly restarted worker — whose in-memory ring is empty — does
+	// not overwrite traces persisted before the restart.
+	// Merge two trace rings newest-first, deduped by turnId, capped. Used for both
+	// the storage write (in-memory over stored) and the debug read (in-memory —
+	// which holds the freshest just-captured turn — over the durable stored ring).
+	function mergeDebugTraceRings(primary: any[], secondary: any[]) {
+		const seen = new Set<string>();
+		const merged: any[] = [];
+		for (const trace of [...primary, ...secondary]) {
+			const key = String(trace?.turnId || "");
+			if (key && seen.has(key)) continue;
+			if (key) seen.add(key);
+			merged.push(trace);
+		}
+		merged.sort((left, right) => String(right?.createdAt || "").localeCompare(String(left?.createdAt || "")));
+		return merged.slice(0, DEBUG_TURN_TRACE_MAX);
+	}
+	async function readStoredDebugTraceRing() {
+		try {
+			const stored = await (chrome as any).storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+			if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) return stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+		} catch {}
+		return [];
+	}
+	async function persistDebugTurnTraces() {
+		try {
+			const store = (chrome as any).storage?.session;
+			if (!store) return;
+			await store.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing()) });
+		} catch {}
+	}
+	function captureDebugTurnTrace(session: any, finalError: Error | null, reliability: Record<string, unknown>) {
+		try {
+			const request = activeRequest;
+			if (!request || request.settings?.advancedRuntimeInspectionEnabled === false) return;
+			const prompt = request.displayPrompt || request.prompt || "";
+			const traces = Array.isArray(request.toolTraces) ? request.toolTraces : [];
+			const jsonArgs = (value: unknown) => {
+				try {
+					return JSON.stringify(value ?? {});
+				} catch {
+					return "";
+				}
+			};
+			debugTurnTraces.unshift({
+				turnId: request.id || "",
+				sessionId: session?.id || "",
+				createdAt: nowIso(),
+				result: request.aborted ? "stopped" : finalError ? "error" : "ok",
+				prompt: redactDiagnosticText(prompt, 400),
+				routing: {
+					classifier: getModelIntentClassificationForPrompt(prompt),
+					predicates: {
+						structured: promptAsksForStructuredPageSourceMarker(prompt),
+						derivationOrProof: promptAsksForDerivationOrProofSourceMarker(prompt),
+						singlePageComparison: promptAsksForSinglePageComparison(prompt),
+						crossTabComparison: promptAsksForCrossTabComparison(prompt),
+						documentReviewMarkup: promptAsksForDocumentReviewMarkup(prompt),
+					},
+				},
+				toolCalls: traces.map((trace: any) => ({
+					tool: trace.toolName,
+					state: trace.state,
+					durationMs: trace.duration_ms ?? null,
+					args: redactDiagnosticText(jsonArgs(trace.args), 220),
+					result: redactDiagnosticText(trace.resultSummary, 320),
+				})),
+				reliability,
+			});
+			if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+			void persistDebugTurnTraces();
+		} catch {}
+	}
 	let sentryInitialized = false;
 	let sentryDiagnosticsAllowed = false;
 	let sentryExplicitEventAllowance = 0;
@@ -11663,6 +11749,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				...toolReliability,
 			});
 		}
+		captureDebugTurnTrace(session, finalError, toolReliability);
 		activeRequest = null;
 	}
 
@@ -13282,6 +13369,18 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	};
 
 	return {
+		async getDebugTraces(limit?: number) {
+			// Merge the in-memory ring (holds the freshest turn — persist is async
+			// and may not have flushed) with the durable storage ring (survives
+			// worker restarts), deduped and newest-first.
+			const traces = mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing());
+			const max =
+				Number.isFinite(limit as number) && (limit as number) > 0
+					? Math.min(limit as number, traces.length)
+					: traces.length;
+			return { ok: true, traces: traces.slice(0, max) };
+		},
+
 		async getState() {
 			const store = await loadStore();
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;

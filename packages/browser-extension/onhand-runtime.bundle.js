@@ -139667,6 +139667,80 @@ function createOnhandBrowserRuntime(host) {
   let uiState = null;
   let activeAgent = null;
   let activeRequest = null;
+  const DEBUG_TURN_TRACE_MAX = 12;
+  const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
+  const debugTurnTraces = [];
+  function mergeDebugTraceRings(primary, secondary) {
+    const seen = /* @__PURE__ */ new Set();
+    const merged = [];
+    for (const trace of [...primary, ...secondary]) {
+      const key = String(trace?.turnId || "");
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      merged.push(trace);
+    }
+    merged.sort((left, right) => String(right?.createdAt || "").localeCompare(String(left?.createdAt || "")));
+    return merged.slice(0, DEBUG_TURN_TRACE_MAX);
+  }
+  async function readStoredDebugTraceRing() {
+    try {
+      const stored = await chrome.storage?.session?.get(DEBUG_TURN_TRACE_STORAGE_KEY);
+      if (Array.isArray(stored?.[DEBUG_TURN_TRACE_STORAGE_KEY])) return stored[DEBUG_TURN_TRACE_STORAGE_KEY];
+    } catch {
+    }
+    return [];
+  }
+  async function persistDebugTurnTraces() {
+    try {
+      const store2 = chrome.storage?.session;
+      if (!store2) return;
+      await store2.set({ [DEBUG_TURN_TRACE_STORAGE_KEY]: mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing()) });
+    } catch {
+    }
+  }
+  function captureDebugTurnTrace(session, finalError, reliability) {
+    try {
+      const request = activeRequest;
+      if (!request || request.settings?.advancedRuntimeInspectionEnabled === false) return;
+      const prompt = request.displayPrompt || request.prompt || "";
+      const traces = Array.isArray(request.toolTraces) ? request.toolTraces : [];
+      const jsonArgs = (value) => {
+        try {
+          return JSON.stringify(value ?? {});
+        } catch {
+          return "";
+        }
+      };
+      debugTurnTraces.unshift({
+        turnId: request.id || "",
+        sessionId: session?.id || "",
+        createdAt: nowIso(),
+        result: request.aborted ? "stopped" : finalError ? "error" : "ok",
+        prompt: redactDiagnosticText(prompt, 400),
+        routing: {
+          classifier: getModelIntentClassificationForPrompt(prompt),
+          predicates: {
+            structured: promptAsksForStructuredPageSourceMarker(prompt),
+            derivationOrProof: promptAsksForDerivationOrProofSourceMarker(prompt),
+            singlePageComparison: promptAsksForSinglePageComparison(prompt),
+            crossTabComparison: promptAsksForCrossTabComparison(prompt),
+            documentReviewMarkup: promptAsksForDocumentReviewMarkup(prompt)
+          }
+        },
+        toolCalls: traces.map((trace) => ({
+          tool: trace.toolName,
+          state: trace.state,
+          durationMs: trace.duration_ms ?? null,
+          args: redactDiagnosticText(jsonArgs(trace.args), 220),
+          result: redactDiagnosticText(trace.resultSummary, 320)
+        })),
+        reliability
+      });
+      if (debugTurnTraces.length > DEBUG_TURN_TRACE_MAX) debugTurnTraces.length = DEBUG_TURN_TRACE_MAX;
+      void persistDebugTurnTraces();
+    } catch {
+    }
+  }
   let sentryInitialized = false;
   let sentryDiagnosticsAllowed = false;
   let sentryExplicitEventAllowance = 0;
@@ -140867,6 +140941,7 @@ function createOnhandBrowserRuntime(host) {
         ...toolReliability
       });
     }
+    captureDebugTurnTrace(session, finalError, toolReliability);
     activeRequest = null;
   }
   function handleAgentEvent(session, requestId, event) {
@@ -142332,6 +142407,11 @@ function createOnhandBrowserRuntime(host) {
     restoreArtifact
   };
   return {
+    async getDebugTraces(limit2) {
+      const traces = mergeDebugTraceRings(debugTurnTraces, await readStoredDebugTraceRing());
+      const max = Number.isFinite(limit2) && limit2 > 0 ? Math.min(limit2, traces.length) : traces.length;
+      return { ok: true, traces: traces.slice(0, max) };
+    },
     async getState() {
       const store2 = await loadStore();
       const session = store2.sessions[store2.currentSessionId];
