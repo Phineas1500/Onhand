@@ -8455,11 +8455,12 @@ function stripTrailingPageQualifier(value: string) {
 	return String(value || "")
 		.replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "")
 		.replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "")
-		// Mirror the "<verb> here" page-reference pattern so "...described here"
-		// is stripped from a comparison side before entity extraction — else it
-		// becomes part of the entity and the surplus guard's per-side citation
-		// match fails.
-		.replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "")
+		// Remove a "<verb> here" page reference in place (not to end-of-string) so
+		// it drops out of a comparison side before entity extraction wherever it
+		// sits — "compare bagging described here and boosting" must keep boosting.
+		// Stripping to end (as the qualifiers above do) would delete a later side.
+		.replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/gi, "")
+		.replace(/\s{2,}/g, " ")
 		.trim();
 }
 

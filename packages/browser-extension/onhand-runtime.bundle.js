@@ -137983,7 +137983,7 @@ function buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, par
   };
 }
 function stripTrailingPageQualifier(value) {
-  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "").trim();
+  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/gi, "").replace(/\s{2,}/g, " ").trim();
 }
 function cleanComparisonEntity(value) {
   return compactEntity(
