@@ -154,6 +154,13 @@ const SELFTEST = [
 		text: "Executive summary",
 		expectGuard: { reviewExtractionFirst: true },
 	},
+	// "here" is a page reference in the sidebar, so a comparison phrased with
+	// "here" (not "on this page") still routes to grounding on the regex-router
+	// (classifier-off) path. A bare "compare X and Y" with no page reference stays
+	// unrouted so general-knowledge comparisons are not force-grounded.
+	{ prompt: "compare bagging and boosting here", expect: { singlePageComparison: true, allowsPageSource: true } },
+	{ prompt: "what's the difference between the two approaches described here", expect: { allowsPageSource: true } },
+	{ prompt: "compare bagging and boosting", expect: { singlePageComparison: false, allowsPageSource: false } },
 ];
 
 function runSelftest() {

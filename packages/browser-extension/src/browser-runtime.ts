@@ -6733,7 +6733,14 @@ function promptReferencesCurrentPageMaterial(text: string) {
 		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
 		/\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
 		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text)
+		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text) ||
+		// In the sidebar the user is always looking at a page, so "here" is a page
+		// reference: "...described here", "...covered here", or a trailing "...here"
+		// ("compare X and Y here"). Without this, natural page-scoped asks that say
+		// "here" instead of "on this page" fall through the regex router (classifier
+		// off) and get no grounding tools.
+		/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text) ||
+		/\b(?:right\s+)?here\s*[.?!]*\s*$/.test(text)
 	);
 }
 
