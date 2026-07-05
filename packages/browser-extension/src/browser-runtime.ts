@@ -6689,11 +6689,10 @@ function promptAsksForTeachingPageSourceMarker(prompt: unknown) {
 	if (modelIntent) return modelIntent.teaching && modelIntent.pageScoped;
 	const asksForTeaching =
 		/\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
-	const referencesPageMaterial =
-		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
-		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+says?\b/.test(text);
-	return asksForTeaching && referencesPageMaterial;
+	// Use the centralized page-reference check (shared with comparison/structured
+	// routing) rather than a local near-duplicate, so the "here" signal — and any
+	// future page-reference additions — stay consistent across every lane.
+	return asksForTeaching && promptReferencesCurrentPageMaterial(text);
 }
 
 function normalizePageSourcePromptText(prompt: unknown) {
@@ -6733,7 +6732,16 @@ function promptReferencesCurrentPageMaterial(text: string) {
 		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
 		/\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
 		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text)
+		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text) ||
+		// In the sidebar the user is looking at a page, so "<content-verb> here"
+		// refers to the open document: "...described here", "...covered here",
+		// "...shown here". Without this, natural page-scoped asks that say "here"
+		// instead of "on this page" fall through the regex router (classifier off)
+		// and get no grounding tools. Bare trailing "here" is deliberately NOT a
+		// page reference: it is ambiguous with a spatial locative ("near here",
+		// "from here", "how do I get there from here"), and a content verb is the
+		// reliable document signal.
+		/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text)
 	);
 }
 
@@ -8447,6 +8455,12 @@ function stripTrailingPageQualifier(value: string) {
 	return String(value || "")
 		.replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "")
 		.replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "")
+		// Remove a "<verb> here" page reference in place (not to end-of-string) so
+		// it drops out of a comparison side before entity extraction wherever it
+		// sits — "compare bagging described here and boosting" must keep boosting.
+		// Stripping to end (as the qualifiers above do) would delete a later side.
+		.replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/gi, "")
+		.replace(/\s{2,}/g, " ")
 		.trim();
 }
 

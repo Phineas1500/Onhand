@@ -136632,8 +136632,7 @@ function promptAsksForTeachingPageSourceMarker(prompt) {
   const modelIntent = getModelIntentClassificationForPrompt(prompt);
   if (modelIntent) return modelIntent.teaching && modelIntent.pageScoped;
   const asksForTeaching = /\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
-  const referencesPageMaterial = /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+says?\b/.test(text);
-  return asksForTeaching && referencesPageMaterial;
+  return asksForTeaching && promptReferencesCurrentPageMaterial(text);
 }
 function normalizePageSourcePromptText(prompt) {
   return stripVoicePromptPrefix(prompt).toLowerCase().replace(/\s+/g, " ").trim();
@@ -136651,7 +136650,15 @@ function promptReferencesCurrentPageMaterial(text) {
   if (!text) return false;
   const modelIntent = getModelIntentClassificationForPrompt(text);
   if (modelIntent) return modelIntent.pageScoped;
-  return /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text);
+  return /\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:on|in|from|according to)\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) || /\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?|mentions?|shows?|derives?|lists?|calls?|notes?)\b/.test(text) || /\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|slide|deck|paper|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|means?|shows?|covers?|teach(?:es)?|explains?)\b/.test(text) || // In the sidebar the user is looking at a page, so "<content-verb> here"
+  // refers to the open document: "...described here", "...covered here",
+  // "...shown here". Without this, natural page-scoped asks that say "here"
+  // instead of "on this page" fall through the regex router (classifier off)
+  // and get no grounding tools. Bare trailing "here" is deliberately NOT a
+  // page reference: it is ambiguous with a spatial locative ("near here",
+  // "from here", "how do I get there from here"), and a content verb is the
+  // reliable document signal.
+  /\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text);
 }
 var BARE_ROADMAP_QUALIFIERS = /* @__PURE__ */ new Set([
   "a",
@@ -137976,7 +137983,7 @@ function buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, par
   };
 }
 function stripTrailingPageQualifier(value) {
-  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").trim();
+  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/gi, "").replace(/\s{2,}/g, " ").trim();
 }
 function cleanComparisonEntity(value) {
   return compactEntity(
