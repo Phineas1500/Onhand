@@ -6689,11 +6689,10 @@ function promptAsksForTeachingPageSourceMarker(prompt: unknown) {
 	if (modelIntent) return modelIntent.teaching && modelIntent.pageScoped;
 	const asksForTeaching =
 		/\b(?:teach(?:\s+me)?|tutor|review|study|walk(?:\s+me)?\s+through|explain|summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown)\b/.test(text);
-	const referencesPageMaterial =
-		/\b(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\b/.test(text) ||
-		/\b(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+(?:says?|covers?|discuss(?:es)?|teach(?:es)?|explains?)\b/.test(text) ||
-		/\bwhat\s+(?:this|the|current|these|those)\s+(?:page|article|lecture|document|doc|reading|section|passage|material|source|comments?|thread|discussion|post|conversation|dashboard|artifact)\s+says?\b/.test(text);
-	return asksForTeaching && referencesPageMaterial;
+	// Use the centralized page-reference check (shared with comparison/structured
+	// routing) rather than a local near-duplicate, so the "here" signal — and any
+	// future page-reference additions — stay consistent across every lane.
+	return asksForTeaching && promptReferencesCurrentPageMaterial(text);
 }
 
 function normalizePageSourcePromptText(prompt: unknown) {

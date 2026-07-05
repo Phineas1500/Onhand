@@ -161,6 +161,10 @@ const SELFTEST = [
 	{ prompt: "compare bagging and boosting here", expect: { singlePageComparison: true, allowsPageSource: true } },
 	{ prompt: "what's the difference between the two approaches described here", expect: { allowsPageSource: true } },
 	{ prompt: "compare bagging and boosting", expect: { singlePageComparison: false, allowsPageSource: false } },
+	// Teaching routing uses the same centralized page-reference check, so "here"
+	// grounds teaching asks too (not just comparison).
+	{ prompt: "summarize what's described here", expect: { teaching: true, allowsPageSource: true } },
+	{ prompt: "explain gradient descent", expect: { teaching: false, allowsPageSource: false } },
 ];
 
 function runSelftest() {
