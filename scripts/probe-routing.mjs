@@ -165,6 +165,9 @@ const SELFTEST = [
 	// grounds teaching asks too (not just comparison).
 	{ prompt: "summarize what's described here", expect: { teaching: true, allowsPageSource: true } },
 	{ prompt: "explain gradient descent", expect: { teaching: false, allowsPageSource: false } },
+	// A spatial-locative "here" ("near here") points at a place, not the document,
+	// so it must not route to page-source grounding.
+	{ prompt: "list restaurants near here", expect: { structured: false, allowsPageSource: false } },
 ];
 
 function runSelftest() {

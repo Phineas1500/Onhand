@@ -136655,7 +136655,10 @@ function promptReferencesCurrentPageMaterial(text) {
   // ("compare X and Y here"). Without this, natural page-scoped asks that say
   // "here" instead of "on this page" fall through the regex router (classifier
   // off) and get no grounding tools.
-  /\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text) || /\b(?:right\s+)?here\s*[.?!]*\s*$/.test(text);
+  /\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text) || // Trailing bare "here" is a page reference ("compare X and Y here") EXCEPT
+  // after a spatial locative — "restaurants near here" / "shops around here"
+  // point at a physical place, not the open document.
+  /(?<!\b(?:near|around|round|nearby|close\s+to|right\s+around|over|out)\s)\bhere\s*[.?!]*\s*$/.test(text);
 }
 var BARE_ROADMAP_QUALIFIERS = /* @__PURE__ */ new Set([
   "a",
@@ -137980,7 +137983,7 @@ function buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, par
   };
 }
 function stripTrailingPageQualifier(value) {
-  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "").replace(/\b(?:right\s+)?here\s*[.?!]*\s*$/i, "").trim();
+  return String(value || "").replace(/\b(?:on|in|from|according to)\s+(?:this|the|current)\s+(?:page|article|lecture|document|doc|reading|section|source|slide|paper)\b[\s\S]*$/i, "").replace(/\b(?:on|in|from)\s+(?:this|the|current)\b[\s\S]*$/i, "").replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "").replace(/(?<!\b(?:near|around|round|nearby|close\s+to|right\s+around|over|out)\s)\bhere\s*[.?!]*\s*$/i, "").trim();
 }
 function cleanComparisonEntity(value) {
   return compactEntity(

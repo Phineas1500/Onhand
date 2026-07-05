@@ -6739,7 +6739,10 @@ function promptReferencesCurrentPageMaterial(text: string) {
 		// "here" instead of "on this page" fall through the regex router (classifier
 		// off) and get no grounding tools.
 		/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b/.test(text) ||
-		/\b(?:right\s+)?here\s*[.?!]*\s*$/.test(text)
+		// Trailing bare "here" is a page reference ("compare X and Y here") EXCEPT
+		// after a spatial locative — "restaurants near here" / "shops around here"
+		// point at a physical place, not the open document.
+		/(?<!\b(?:near|around|round|nearby|close\s+to|right\s+around|over|out)\s)\bhere\s*[.?!]*\s*$/.test(text)
 	);
 }
 
@@ -8458,7 +8461,7 @@ function stripTrailingPageQualifier(value: string) {
 		// extraction — else "boosting here" becomes the entity and the surplus
 		// guard's per-side citation match fails.
 		.replace(/\b(?:described|shown|discussed|mentioned|explained|covered|listed|stated|presented|outlined|written|noted|said)\s+here\b[\s\S]*$/i, "")
-		.replace(/\b(?:right\s+)?here\s*[.?!]*\s*$/i, "")
+		.replace(/(?<!\b(?:near|around|round|nearby|close\s+to|right\s+around|over|out)\s)\bhere\s*[.?!]*\s*$/i, "")
 		.trim();
 }
 
