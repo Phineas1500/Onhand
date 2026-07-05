@@ -154,20 +154,21 @@ const SELFTEST = [
 		text: "Executive summary",
 		expectGuard: { reviewExtractionFirst: true },
 	},
-	// "here" is a page reference in the sidebar, so a comparison phrased with
-	// "here" (not "on this page") still routes to grounding on the regex-router
-	// (classifier-off) path. A bare "compare X and Y" with no page reference stays
-	// unrouted so general-knowledge comparisons are not force-grounded.
-	{ prompt: "compare bagging and boosting here", expect: { singlePageComparison: true, allowsPageSource: true } },
+	// "<verb> here" ("described/covered/shown here") is a reliable document
+	// reference, so such a comparison/teaching ask routes to grounding on the
+	// regex-router (classifier-off) path.
 	{ prompt: "what's the difference between the two approaches described here", expect: { allowsPageSource: true } },
-	{ prompt: "compare bagging and boosting", expect: { singlePageComparison: false, allowsPageSource: false } },
-	// Teaching routing uses the same centralized page-reference check, so "here"
-	// grounds teaching asks too (not just comparison).
 	{ prompt: "summarize what's described here", expect: { teaching: true, allowsPageSource: true } },
-	{ prompt: "explain gradient descent", expect: { teaching: false, allowsPageSource: false } },
-	// A spatial-locative "here" ("near here") points at a place, not the document,
-	// so it must not route to page-source grounding.
+	// Bare trailing "here" with no content verb is deliberately NOT a page
+	// reference — it is ambiguous with a spatial locative — so these stay
+	// unrouted rather than force-grounding a physical/navigation ask on the page.
+	{ prompt: "compare bagging and boosting here", expect: { singlePageComparison: false, allowsPageSource: false } },
 	{ prompt: "list restaurants near here", expect: { structured: false, allowsPageSource: false } },
+	{ prompt: "how do I get to the airport from here", expect: { allowsPageSource: false } },
+	// A bare "compare X and Y" with no page reference also stays unrouted so
+	// general-knowledge comparisons are not force-grounded.
+	{ prompt: "compare bagging and boosting", expect: { singlePageComparison: false, allowsPageSource: false } },
+	{ prompt: "explain gradient descent", expect: { teaching: false, allowsPageSource: false } },
 ];
 
 function runSelftest() {
