@@ -40,6 +40,7 @@
     "test:pdf-toolkit-sweep": "node ./scripts/run-pdf-toolkit-sweep.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
+    "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
     "test:real-online-pdfs": "node ./scripts/run-real-online-pdf-regressions.mjs",
