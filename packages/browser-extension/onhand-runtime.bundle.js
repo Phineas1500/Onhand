@@ -136623,7 +136623,12 @@ function textLooksLikePdfReaderSurface(text) {
 function promptAsksForPageAnchors(text) {
   return textHasAny(
     text,
-    /\b(?:highlights?|highlighting|annotat(?:e|ion|ions|ing)|notes?|marginalia|mark(?:ing)? up|anchor(?:ed|s|ing)?|citations?|cites?|evidence|supporting passage|show me where|point me to|where exactly)\b|\bwhere does\b[\s\S]{0,100}\b(?:discuss|say|mention|cover|define|explain)\b/
+    // Anchor/find-locate intents: "highlight/annotate/cite", "show me where",
+    // and — for the regex router when the classifier is off — find/locate asks
+    // ("find where X is", "locate the section about X", "where on this page is
+    // X", "which part covers X"). Scoped to document verbs/units so a physical
+    // "where is the nearest coffee shop" does not get page-source grounding.
+    /\b(?:highlights?|highlighting|annotat(?:e|ion|ions|ing)|notes?|marginalia|mark(?:ing)? up|anchor(?:ed|s|ing)?|citations?|cites?|evidence|supporting passage|show me where|point me to|where exactly)\b|\bwhere does\b[\s\S]{0,100}\b(?:discuss|say|mention|cover|define|explain)\b|\b(?:find|locate|jump\s+to|scroll\s+to|take\s+me\s+to)\b[\s\S]{0,50}\b(?:section|part|passage|paragraph|sentence|line|spot|where)\b|\bwhere\b[\s\S]{0,90}\b(?:says?|mentions?|discuss(?:es)?|talks?\s+about|covers?|defines?|explains?|states?)\b|\bwhere\s+(?:on|in)\s+(?:this|the)\s+(?:page|document|doc|article|text|reading|section|passage)\b|\bwhich\s+(?:part|section|paragraph|passage|sentence|line)\b/
   );
 }
 function promptAsksForTeachingPageSourceMarker(prompt) {
@@ -136757,7 +136762,7 @@ function promptAsksForCrossTabComparison(prompt) {
     // "how" is deliberately absent from the change-interrogatives: real
     // "how ... changed" comparisons always carry did/does/has/was too,
     // while "How do I change both tabs..." is an instruction ask.
-    /\b(compare|comparison|contrast|versus|vs\.?|differ|difference|agree|disagree|relate)\b|\b(?:what|which|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/
+    /\b(compare|comparison|contrast|versus|vs\.?|differ(?:s|ent|ence|ences|ing)?|agree|disagree|relate)\b|\b(?:what|which|did|does|has|have|was|were)\b[^.?!\n]{0,60}\bchang(?:e|ed|es)\b/
   );
   const explicitCrossTabComparisonTarget = textHasAny(
     text,
