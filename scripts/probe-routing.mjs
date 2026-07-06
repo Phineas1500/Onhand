@@ -177,9 +177,16 @@ const SELFTEST = [
 	{ prompt: "find where this page mentions rate limiting", expect: { allowsPageSource: true } },
 	{ prompt: "where on this page is the deadline", expect: { allowsPageSource: true } },
 	{ prompt: "locate the section about pricing on this page", expect: { allowsPageSource: true } },
-	// ...but a physical/locative "where"/"find" must not force page-source grounding.
+	// Ambiguous units ("part"/"line") only route with a content verb or an
+	// explicit page reference — never bare.
+	{ prompt: "which part covers authentication", expect: { allowsPageSource: true } },
+	{ prompt: "find the part of this page about installation", expect: { allowsPageSource: true } },
+	// ...but a physical/locative "where"/"find"/"which line" must not force
+	// page-source grounding.
 	{ prompt: "where is the nearest coffee shop", expect: { allowsPageSource: false } },
 	{ prompt: "find me a good restaurant nearby", expect: { allowsPageSource: false } },
+	{ prompt: "which line should I take to the airport", expect: { allowsPageSource: false } },
+	{ prompt: "find me a good spot nearby", expect: { allowsPageSource: false } },
 ];
 
 function runSelftest() {
