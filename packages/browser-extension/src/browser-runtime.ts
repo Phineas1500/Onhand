@@ -10500,10 +10500,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			// Persist the one-time classifier-default migration so the raw-storage
 			// reader (options.js) and future loads see the adopted default. Idempotent
-			// via the marker.
+			// via the marker. Merge over the current stored value so a legacy sessions blob
+			// the session migration kept for retry (putSessionRecords failure) is not lost.
 			if (!classifierPreviouslyMigrated) {
 				try {
-					await chrome.storage.local.set({ [STORAGE_KEY]: { settings, currentSessionId } });
+					const currentStored = (await chrome.storage.local.get({ [STORAGE_KEY]: {} }))[STORAGE_KEY] || {};
+					await chrome.storage.local.set({ [STORAGE_KEY]: { ...currentStored, settings, currentSessionId } });
 				} catch (error) {
 					host.log?.("onhand classifier default migration failed", error);
 				}

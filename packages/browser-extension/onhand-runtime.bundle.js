@@ -139835,7 +139835,8 @@ function createOnhandBrowserRuntime(host) {
       }
       if (!classifierPreviouslyMigrated) {
         try {
-          await chrome.storage.local.set({ [STORAGE_KEY]: { settings: settings2, currentSessionId } });
+          const currentStored = (await chrome.storage.local.get({ [STORAGE_KEY]: {} }))[STORAGE_KEY] || {};
+          await chrome.storage.local.set({ [STORAGE_KEY]: { ...currentStored, settings: settings2, currentSessionId } });
         } catch (error52) {
           host.log?.("onhand classifier default migration failed", error52);
         }
