@@ -19,7 +19,7 @@ function installChromeStorageStub() {
 				// replay-host turn tests are deterministic and don't script a
 				// classifier model call — seed it OFF so they exercise the regex
 				// router. Tests that specifically want the classifier set it true.
-				data: { onhandBrowserRuntime: { settings: { experimentalModelLaneClassifier: false } } },
+				data: { onhandBrowserRuntime: { settings: { experimentalModelLaneClassifier: false, modelLaneClassifierDefaultMigrated: true } } },
 				async get(defaults) {
 					return { ...defaults, ...this.data };
 				},
@@ -4515,17 +4515,33 @@ async function assertModelIntentClassifierDefaultsOn() {
 	let runtime = createOnhandBrowserRuntime(createReplayHost());
 	let settings = await runtime.getSettings();
 	assert.equal(settings.experimentalModelLaneClassifier, true, "model intent classifier should default ON for a fresh install");
-	// An explicit stored false opts out and is respected.
+	// Legacy stored false with NO migration marker → adopt the new default (ON),
+	// because that false is an artifact of the old default, not a real opt-out.
 	globalThis.chrome.storage.local.data = {
 		onhandBrowserRuntime: {
 			settings: { experimentalModelLaneClassifier: false, aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" },
-			sessions: {},
 			currentSessionId: "",
 		},
 	};
 	runtime = createOnhandBrowserRuntime(createReplayHost());
 	settings = await runtime.getSettings();
-	assert.equal(settings.experimentalModelLaneClassifier, false, "an explicit stored false must opt out of the classifier");
+	assert.equal(settings.experimentalModelLaneClassifier, true, "legacy false without the migration marker must adopt the new default");
+	// The migration must PERSIST to raw storage — options.js reads raw storage, so
+	// an in-memory-only flip would leave the options checkbox (and its save) stale.
+	const persisted = globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings;
+	assert.equal(persisted.experimentalModelLaneClassifier, true, "migration must persist classifier=true to raw storage");
+	assert.equal(persisted.modelLaneClassifierDefaultMigrated, true, "migration must persist the marker to raw storage");
+
+	// A stored false WITH the marker is an authoritative opt-out and is respected.
+	globalThis.chrome.storage.local.data = {
+		onhandBrowserRuntime: {
+			settings: { experimentalModelLaneClassifier: false, modelLaneClassifierDefaultMigrated: true, aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" },
+			currentSessionId: "",
+		},
+	};
+	runtime = createOnhandBrowserRuntime(createReplayHost());
+	settings = await runtime.getSettings();
+	assert.equal(settings.experimentalModelLaneClassifier, false, "a stored false WITH the migration marker is an authoritative opt-out");
 }
 
 async function assertLearningModeToolLoopPersistsAgentEvents() {

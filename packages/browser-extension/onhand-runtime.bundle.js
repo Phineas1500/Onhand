@@ -132247,6 +132247,7 @@ var DEFAULT_SETTINGS = {
   // capture (fired concurrently; awaited after capture). Failures fall back to
   // the regex router. Users can still opt out via the setting.
   experimentalModelLaneClassifier: true,
+  modelLaneClassifierDefaultMigrated: false,
   codexFastModeEnabled: false
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -139775,6 +139776,7 @@ function createOnhandBrowserRuntime(host) {
         authMode
       );
       const rawModel = authMode === "api-key" && aiProvider === OPENAI_API_PROVIDER && rawProvider !== OPENAI_API_PROVIDER ? OPENAI_API_MODEL : String(rawSettings.aiModel || DEFAULT_SETTINGS.aiModel);
+      const classifierPreviouslyMigrated = rawSettings.modelLaneClassifierDefaultMigrated === true;
       const settings2 = {
         ...DEFAULT_SETTINGS,
         ...rawSettings,
@@ -139790,10 +139792,12 @@ function createOnhandBrowserRuntime(host) {
         diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
         advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
-        // On by default (see DEFAULT_SETTINGS); only an explicit stored false
-        // opts out. Previously `=== true` forced strict opt-in, ignoring the
-        // default; `!== false` makes the default win for unset users.
-        experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier !== false,
+        // On by default (see DEFAULT_SETTINGS). Once migrated, a stored false
+        // is an authoritative opt-out (`!== false`); before migration, a
+        // stored false is a legacy artifact of the old default, so adopt the
+        // new default. The marker is always set so the next load is settled.
+        experimentalModelLaneClassifier: classifierPreviouslyMigrated ? rawSettings.experimentalModelLaneClassifier !== false : DEFAULT_SETTINGS.experimentalModelLaneClassifier,
+        modelLaneClassifierDefaultMigrated: true,
         codexFastModeEnabled: rawSettings.codexFastModeEnabled === true
       };
       const sessions = {};
@@ -139828,6 +139832,13 @@ function createOnhandBrowserRuntime(host) {
         }
       } catch (error52) {
         host.log?.("onhand session storage migration failed", error52);
+      }
+      if (!classifierPreviouslyMigrated) {
+        try {
+          await chrome.storage.local.set({ [STORAGE_KEY]: { settings: settings2, currentSessionId } });
+        } catch (error52) {
+          host.log?.("onhand classifier default migration failed", error52);
+        }
       }
       return { settings: settings2, sessions, currentSessionId };
     })();
@@ -142604,6 +142615,9 @@ function createOnhandBrowserRuntime(host) {
         diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store2.settings.diagnosticsClientId,
         advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
         experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store2.settings.experimentalModelLaneClassifier) === true,
+        // Any settings save settles the migration: a subsequent stored false is
+        // now an authoritative opt-out, not a legacy artifact.
+        modelLaneClassifierDefaultMigrated: true,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
       sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
