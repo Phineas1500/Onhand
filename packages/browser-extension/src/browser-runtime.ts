@@ -1,6 +1,9 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai";
-import { streamOpenAICodexResponses } from "@earendil-works/pi-ai/openai-codex-responses";
+// pi-ai 0.80 restructured the main entry (getModel/getModels/registerFauxProvider/
+// streamSimple moved off root, streamOpenAI*Responses became `stream` under
+// ./api/*). The ./compat surface re-exports the legacy names, so import them
+// there to keep this call site stable across the bump.
+import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAICodexResponses, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai/compat";
 import * as Sentry from "@sentry/browser";
 import {
 	getBrowserOAuthApiKey,
