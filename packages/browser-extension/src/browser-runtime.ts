@@ -469,7 +469,13 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	diagnosticsEnabled: false,
 	diagnosticsClientId: "",
 	advancedRuntimeInspectionEnabled: true,
-	experimentalModelLaneClassifier: false,
+	// Model intent classifier is the default routing brain. It beats the regex
+	// router 98.9% vs 88.9% on the labeled corpus (run-lane-classifier-eval),
+	// fixing the whole class the regex cannot — non-English prompts, typos,
+	// idioms, comparison-vs-enumerable nuance — and its latency hides behind page
+	// capture (fired concurrently; awaited after capture). Failures fall back to
+	// the regex router. Users can still opt out via the setting.
+	experimentalModelLaneClassifier: true,
 	codexFastModeEnabled: false,
 };
 
@@ -10435,7 +10441,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
 				advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
-				experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier === true,
+				// On by default (see DEFAULT_SETTINGS); only an explicit stored false
+				// opts out. Previously `=== true` forced strict opt-in, ignoring the
+				// default; `!== false` makes the default win for unset users.
+				experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier !== false,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
