@@ -353,7 +353,10 @@ async function loadForm() {
 	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
 	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
-	experimentalModelLaneClassifierInput.checked = runtimeSettings.experimentalModelLaneClassifier === true;
+	// Default-on (see DEFAULT_SETTINGS): unset storage must render CHECKED, or a
+	// first-run Options save (e.g. adding an API key) would write an explicit
+	// false and silently opt the user out before their first turn.
+	experimentalModelLaneClassifierInput.checked = runtimeSettings.experimentalModelLaneClassifier !== false;
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
