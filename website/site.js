@@ -160,7 +160,7 @@ const ONHAND_STORE = {
 
   const page = demo.querySelector('[data-demo-page]');
   const scroller = demo.querySelector('[data-demo-scroller]');
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const citationButtons = Array.from(demo.querySelectorAll('[data-demo-cite]'));
   const reveals = Array.from(demo.querySelectorAll('[data-demo-reveal]'));
