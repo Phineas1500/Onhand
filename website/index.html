@@ -152,7 +152,7 @@ p_attn = scores.softmax(dim=-1)
 return torch.matmul(p_attn, value)</code></pre>
             <p id="demo-source-softmax" data-demo-source>
               Softmax turns the scaled scores into attention weights, so the final
-              output is a <mark class="demo-highlight" data-demo-hl="soft">weighted mixture of the value vectors</mark>.
+              output is a <mark class="demo-highlight demo-hl-followup" data-demo-hl="soft">weighted mixture of the value vectors</mark>.
             </p>
           </div>
         </article>

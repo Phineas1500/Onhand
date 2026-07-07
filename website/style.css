@@ -432,3 +432,7 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .interactive-demo.is-resetting [data-demo-reveal],
 .interactive-demo.is-resetting .demo-answer .demo-cite,
 .interactive-demo.is-resetting .demo-highlight{transition:none!important;animation:none!important}
+/* The follow-up-only highlight stays hidden until the follow-up is asked,
+   independent of is-armed (so the reduced-motion settle doesn't reveal it early). */
+.demo-highlight.demo-hl-followup{background:transparent}
+.demo-highlight.demo-hl-followup.is-shown{background:rgba(234,157,52,0.3)}
