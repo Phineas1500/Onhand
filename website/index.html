@@ -111,11 +111,12 @@
 <section class="shot" aria-label="Interactive Onhand demo">
   <div class="container">
     <div class="shot-frame interactive-demo" data-onhand-demo>
-      <div class="demo-browser-bar" aria-hidden="true">
+      <div class="demo-browser-bar">
         <span class="demo-browser-dot"></span>
         <span class="demo-browser-dot"></span>
         <span class="demo-browser-dot"></span>
         <span class="demo-address">nlp.seas.harvard.edu/annotated-transformer/</span>
+        <button type="button" class="demo-replay" data-demo-replay aria-label="Replay the demo">&#8635;&nbsp;Replay</button>
       </div>
       <div class="demo-workspace">
         <article class="demo-page" aria-label="Annotated Transformer excerpt" data-demo-page>
@@ -128,80 +129,97 @@
               to average the values.
             </p>
             <p id="demo-source-definition" data-demo-source>
-              <mark class="demo-highlight">We call our particular attention</mark>
+              <mark class="demo-highlight" data-demo-hl="def">We call our particular attention</mark>
               <span>Scaled Dot-Product Attention. Queries and keys have dimension
               <em>d<sub>k</sub></em>; values have dimension <em>d<sub>v</sub></em>.</span>
             </p>
-            <aside class="demo-note" id="demo-source-note" data-demo-source>
+            <aside class="demo-note" id="demo-source-note" data-demo-source data-demo-reveal="note">
               <div class="demo-note-label">Onhand</div>
               <p>This paragraph names the Q/K/V setup: compare queries to keys, then average values with the resulting weights.</p>
             </aside>
             <div class="demo-figure" aria-label="Scaled dot-product attention flow">
-              <span>MatMul</span>
-              <span>Scale</span>
-              <span>Mask</span>
-              <span>SoftMax</span>
-              <span>MatMul</span>
+              <span>MatMul</span><span>Scale</span><span>Mask</span><span>SoftMax</span><span>MatMul</span>
               <b>Q</b><b>K</b><b>V</b>
             </div>
-            <p id="demo-source-code" data-demo-source>
+            <p>
               In implementation, the attention scores are produced by multiplying
               the query matrix by the transposed key matrix, scaling by
               <em>sqrt(d<sub>k</sub>)</em>, and normalizing with softmax.
             </p>
-            <pre class="demo-code" aria-label="Scaled dot-product attention code"><code>scores = torch.matmul(query, key.transpose(-2, -1))
+            <pre class="demo-code" id="demo-source-code" data-demo-source aria-label="Scaled dot-product attention code"><code><mark class="demo-highlight" data-demo-hl="code">scores = torch.matmul(query, key.transpose(-2, -1))</mark>
 scores = scores / math.sqrt(query.size(-1))
 p_attn = scores.softmax(dim=-1)
 return torch.matmul(p_attn, value)</code></pre>
             <p id="demo-source-softmax" data-demo-source>
               Softmax turns the scaled scores into attention weights, so the final
-              output is a weighted mixture of the value vectors.
+              output is a <mark class="demo-highlight" data-demo-hl="soft">weighted mixture of the value vectors</mark>.
             </p>
           </div>
         </article>
         <aside class="demo-sidebar" aria-label="Onhand side panel demo">
           <div class="demo-sidebar-head">
-            <span class="mc">☞</span>
+            <span class="mc">&#9758;</span>
             <strong>Explain scaled dot-product attention...</strong>
-            <span>···</span>
+            <span>&middot;&middot;&middot;</span>
           </div>
           <div class="demo-sources">
-            <div class="demo-sources-label">On this page · 2 highlights, 1 note</div>
-            <button type="button" data-demo-cite="demo-source-definition">1&nbsp;&nbsp;We call our particular attention</button>
-            <button type="button" data-demo-cite="demo-source-code">2&nbsp;&nbsp;scores = torch.matmul(...)</button>
+            <div class="demo-sources-label" data-demo-sources-label>On this page &middot; 2 highlights, 1 note</div>
+            <button type="button" data-demo-cite="demo-source-definition" data-demo-reveal="src">1&nbsp;&nbsp;We call our particular attention</button>
+            <button type="button" data-demo-cite="demo-source-code" data-demo-reveal="src">2&nbsp;&nbsp;scores = torch.matmul(...)</button>
+            <button type="button" class="demo-source-followup" data-demo-cite="demo-source-softmax" data-demo-reveal="src2" hidden>3&nbsp;&nbsp;weighted mixture of the value vectors</button>
           </div>
-          <div class="demo-turn">
-            <div class="demo-turn-meta">10:55 PM · Onhand · Page-grounded</div>
-            <p class="demo-question">Explain scaled dot-product attention and why the scaling is needed; point me to the key code and equation.</p>
-            <p>
-              Scaled dot-product attention compares every query with every key,
-              divides the scores by <em>sqrt(d<sub>k</sub>)</em>, applies softmax,
-              then uses those weights to mix the values.
-              <button type="button" class="demo-cite" data-demo-cite="demo-source-definition" aria-label="Jump to definition source">1</button>
-            </p>
-            <div class="demo-equation">Attention(Q,K,V) = softmax(QK<sup>T</sup> / √d<sub>k</sub>)V</div>
-            <ol>
-              <li><strong>Queries</strong> ask what each token is looking for.</li>
-              <li><strong>Keys</strong> describe what each token can match.</li>
-              <li>The dot product gives the compatibility score.
-                <button type="button" class="demo-cite" data-demo-cite="demo-source-code" aria-label="Jump to code source">2</button>
-              </li>
-              <li>Scaling keeps large dimensions from making softmax too sharp.</li>
-              <li><code>softmax</code> converts scores into weights.
-                <button type="button" class="demo-cite" data-demo-cite="demo-source-softmax" aria-label="Jump to softmax source">3</button>
-              </li>
-            </ol>
+          <div class="demo-scroller" data-demo-scroller>
+            <div class="demo-turn" data-demo-turn="1">
+              <div class="demo-turn-meta">10:55 PM &middot; Onhand &middot; Page-grounded</div>
+              <p class="demo-question">Explain scaled dot-product attention and why the scaling is needed; point me to the key code and equation.</p>
+              <div class="demo-reading">Reading the page</div>
+              <div class="demo-answer" data-demo-answer>
+                <p data-demo-reveal="a">
+                  Scaled dot-product attention compares every query with every key,
+                  divides the scores by <em>sqrt(d<sub>k</sub>)</em>, applies softmax,
+                  then uses those weights to mix the values.
+                  <button type="button" class="demo-cite" data-demo-cite="demo-source-definition" aria-label="Jump to definition source">1</button>
+                </p>
+                <div class="demo-equation" data-demo-reveal="a">Attention(Q,K,V) = softmax(QK<sup>T</sup> / &radic;d<sub>k</sub>)V</div>
+                <ol>
+                  <li data-demo-reveal="a"><strong>Queries</strong> ask what each token is looking for.</li>
+                  <li data-demo-reveal="a"><strong>Keys</strong> describe what each token can match.</li>
+                  <li data-demo-reveal="a">The dot product gives the compatibility score.
+                    <button type="button" class="demo-cite" data-demo-cite="demo-source-code" aria-label="Jump to code source">2</button>
+                  </li>
+                  <li data-demo-reveal="a">Scaling keeps large dimensions from making softmax too sharp.</li>
+                  <li data-demo-reveal="a"><code>softmax</code> converts scores into weights.
+                    <button type="button" class="demo-cite" data-demo-cite="demo-source-softmax" aria-label="Jump to softmax source">3</button>
+                  </li>
+                </ol>
+              </div>
+            </div>
+            <div class="demo-turn" data-demo-turn="2" hidden>
+              <div class="demo-turn-meta">10:56 PM &middot; Onhand &middot; Page-grounded</div>
+              <p class="demo-question">What does the softmax step actually produce?</p>
+              <div class="demo-answer" data-demo-answer>
+                <p data-demo-reveal="b">
+                  Softmax turns the scaled scores into a probability distribution over
+                  positions, so the output is a weighted average of the value vectors &mdash;
+                  more weight on the values whose keys matched.
+                  <button type="button" class="demo-cite" data-demo-cite="demo-source-softmax" aria-label="Jump to softmax source">3</button>
+                </p>
+              </div>
+            </div>
           </div>
-          <div class="demo-composer" aria-hidden="true">
-            <span>Ask about this page or your selection...</span>
-            <button type="button" tabindex="-1">Ask</button>
+          <div class="demo-composer">
+            <button type="button" class="demo-suggest" data-demo-ask aria-label="Ask: What does the softmax step actually produce?">
+              <span class="demo-suggest-hint">Ask a follow-up</span>
+              <span class="demo-suggest-text">What does the softmax step actually produce?</span>
+            </button>
+            <span class="demo-ask-btn" aria-hidden="true">Ask</span>
           </div>
         </aside>
       </div>
     </div>
     <div class="shot-cap">
-      <span class="mc">☞</span>
-      <span>Try the citations: each one jumps back to the highlighted page evidence.</span>
+      <span class="mc">&#9758;</span>
+      <span>Watch Onhand work the page &mdash; then hover or click a citation to jump to its evidence.</span>
     </div>
   </div>
 </section>
