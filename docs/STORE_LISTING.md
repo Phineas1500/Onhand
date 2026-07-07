@@ -79,6 +79,12 @@ source, and adds highlights, notes, and saved local study sessions.
 Used to identify the active tab, show tab titles in the side panel, and
 switch tabs only when the user asks Onhand to use another open source.
 
+`activeTab`
+
+Used to act on the tab the user is currently viewing when they invoke
+Onhand — reading its content, annotating it, or answering about it —
+granted by the user's own gesture rather than standing access to every tab.
+
 `storage`
 
 Used to store extension settings, authentication mode, provider
@@ -117,6 +123,19 @@ restore saved annotations.
 
 Used to track page/frame navigation state for page reading, PDF viewer
 handoff, and annotation restore.
+
+`clipboardRead`
+
+Used to capture the text the user has selected on the page. Onhand reads
+back the user's selection during a copy probe, and preserves whatever was
+on the clipboard beforehand so it can be restored afterward.
+
+`clipboardWrite`
+
+Used for that same selection capture — Onhand briefly writes a probe
+marker, triggers a copy of the user's selection, then writes the user's
+original clipboard contents back. This is needed for editors such as
+Google Docs where the selected text is not exposed in the page DOM.
 
 Host permissions: `http://*/*`, `https://*/*`, `http://localhost/*`,
 `http://127.0.0.1/*`, `file:///*`
