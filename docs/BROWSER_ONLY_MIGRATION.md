@@ -25,7 +25,7 @@ Node is now only used for development scripts such as bundling, fixture serving,
 Sitegeist is the closest known reference for this direction:
 
 - It is a Chrome/Edge side-panel extension, not an Electron app.
-- It uses Pi's lower-level browser-usable packages (`@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`, and `@mariozechner/pi-web-ui`) rather than embedding `@mariozechner/pi-coding-agent` as a Node SDK.
+- It uses Pi's lower-level browser-usable packages (`@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, and `@earendil-works/pi-web-ui`) rather than embedding `@earendil-works/pi-coding-agent` as a Node SDK.
 - Its manifest includes extension-native capabilities we would need or already use: `sidePanel`, `userScripts`, `webNavigation`, `debugger`, `declarativeNetRequest`, extension-page CSP, and a sandbox page.
 - It treats browser tools as extension-native tools. Navigation, debugger access, user selection, and page interaction happen directly through Chrome APIs instead of a local WebSocket relay.
 
@@ -43,8 +43,8 @@ Onhand Browser Extension
 │   └── settings
 │
 ├── Runtime host
-│   ├── Pi Agent from @mariozechner/pi-agent-core
-│   ├── model/provider selection from @mariozechner/pi-ai
+│   ├── Pi Agent from @earendil-works/pi-agent-core
+│   ├── model/provider selection from @earendil-works/pi-ai
 │   ├── Onhand system prompt and learning-mode prompt
 │   ├── event-to-UI state reducer
 │   └── stop/steer/follow-up controls
@@ -87,12 +87,12 @@ Current placement:
 
 ## Pi Package Strategy
 
-Onhand does not browser-bundle `@mariozechner/pi-coding-agent`.
+Onhand does not browser-bundle `@earendil-works/pi-coding-agent`.
 
 That package currently pulls in Node-oriented session/resource/settings layers, filesystem tools, TUI pieces, and extension loading behavior that are unnecessary in a browser extension. Instead:
 
-- Use `@mariozechner/pi-agent-core` for the stateful agent loop, tool execution, streaming events, steering, and abort handling.
-- Use `@mariozechner/pi-ai` for provider/model calls. Browser contexts must pass API keys or refreshed direct sign-in access tokens explicitly.
+- Use `@earendil-works/pi-agent-core` for the stateful agent loop, tool execution, streaming events, steering, and abort handling.
+- Use `@earendil-works/pi-ai` for provider/model calls. Browser contexts must pass API keys or refreshed direct sign-in access tokens explicitly.
 - Recreate the small Onhand-specific subset currently supplied by `createAgentSession`, `SessionManager`, `SettingsManager`, and `DefaultResourceLoader`.
 
 This means Onhand owns browser session persistence rather than relying on Pi's Node filesystem-backed session manager.

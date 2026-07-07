@@ -117,10 +117,10 @@ Why:
 - custom tools are the core of Onhand
 - tree-structured session persistence is a strong fit
 - programmatic control over sessions, tools, prompts, and events
-- `@mariozechner/pi-agent-core` provides the stateful agent loop, tool execution, events, steering, and abort behavior without the Node/TUI shell
-- `@mariozechner/pi-ai` supports browser usage when API keys, refreshed direct sign-in tokens, or proxy auth are supplied explicitly
+- `@earendil-works/pi-agent-core` provides the stateful agent loop, tool execution, events, steering, and abort behavior without the Node/TUI shell
+- `@earendil-works/pi-ai` supports browser usage when API keys, refreshed direct sign-in tokens, or proxy auth are supplied explicitly
 
-Do not browser-bundle `@mariozechner/pi-coding-agent` as-is. Its current value in Onhand comes from Node-side session/resource/settings helpers, not from browser primitives. Onhand should recreate the needed session and settings layer on top of extension storage.
+Do not browser-bundle `@earendil-works/pi-coding-agent` as-is. Its current value in Onhand comes from Node-side session/resource/settings helpers, not from browser primitives. Onhand should recreate the needed session and settings layer on top of extension storage.
 
 ## 5.3 Session persistence
 Use **extension-owned session storage** for conversation state, branching, and agent messages.
@@ -156,8 +156,8 @@ Onhand Browser Extension
 │   └── replay viewer
 │
 ├── Agent Layer
-│   ├── Pi Agent from @mariozechner/pi-agent-core
-│   ├── provider/model calls through @mariozechner/pi-ai
+│   ├── Pi Agent from @earendil-works/pi-agent-core
+│   ├── provider/model calls through @earendil-works/pi-ai
 │   ├── Onhand system prompt / behavior rules
 │   ├── tool orchestration
 │   └── project/session routing
@@ -453,7 +453,7 @@ This checkpoint describes the browser-only runtime after the desktop/bridge remo
 Completed so far:
 - repo refactor to an Onhand-centered layout under `packages/`
 - browser extension side panel prompt surface
-- browser-hosted Pi agent runtime using `@mariozechner/pi-agent-core`
+- browser-hosted Pi agent runtime using `@earendil-works/pi-agent-core`
 - OpenAI Codex OAuth and OpenAI API-key settings in the extension options page
 - extension-local sessions, settings, and browser artifact storage
 - first-class browser annotation tools:
@@ -520,7 +520,7 @@ Goal: answer questions on current web pages with visible grounding.
 
 Tasks:
 - side panel prompt surface
-- browser-hosted Pi agent runtime using `@mariozechner/pi-agent-core`
+- browser-hosted Pi agent runtime using `@earendil-works/pi-agent-core`
 - Onhand system prompt + tool policies
 - highlight + scroll + note workflow
 - save browser snapshot + annotation records in extension storage
