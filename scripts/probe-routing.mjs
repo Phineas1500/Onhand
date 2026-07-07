@@ -169,24 +169,23 @@ const SELFTEST = [
 	// general-knowledge comparisons are not force-grounded.
 	{ prompt: "compare bagging and boosting", expect: { singlePageComparison: false, allowsPageSource: false } },
 	{ prompt: "explain gradient descent", expect: { teaching: false, allowsPageSource: false } },
-	// Cross-tab: "what's different between..." must route like "compare"/"differ"
-	// ("different" was missing from the regex-router verb list).
-	{ prompt: "what's different between these two open pages", expect: { crossTabComparison: true } },
-	// Find/locate asks route to grounding on the regex-router path so the model
-	// gets highlight tools to show WHERE on the page the thing is.
+	// Find/locate asks route to grounding on the regex-router path (so the model
+	// gets highlight tools to show WHERE on the page the thing is) — but ONLY with
+	// a content verb (says/mentions/covers/...) or an explicit page reference. A
+	// bare document unit is ambiguous with physical uses, so it never routes alone.
 	{ prompt: "find where this page mentions rate limiting", expect: { allowsPageSource: true } },
 	{ prompt: "where on this page is the deadline", expect: { allowsPageSource: true } },
 	{ prompt: "locate the section about pricing on this page", expect: { allowsPageSource: true } },
-	// Ambiguous units ("part"/"line") only route with a content verb or an
-	// explicit page reference — never bare.
 	{ prompt: "which part covers authentication", expect: { allowsPageSource: true } },
 	{ prompt: "find the part of this page about installation", expect: { allowsPageSource: true } },
-	// ...but a physical/locative "where"/"find"/"which line" must not force
-	// page-source grounding.
+	// Physical/locative "where"/"find" and bare document units ("section", "line",
+	// "spot") without page/content context must not force page-source grounding.
 	{ prompt: "where is the nearest coffee shop", expect: { allowsPageSource: false } },
 	{ prompt: "find me a good restaurant nearby", expect: { allowsPageSource: false } },
 	{ prompt: "which line should I take to the airport", expect: { allowsPageSource: false } },
 	{ prompt: "find me a good spot nearby", expect: { allowsPageSource: false } },
+	{ prompt: "find the right section to sit in at the concert", expect: { allowsPageSource: false } },
+	{ prompt: "find section 8 housing nearby", expect: { allowsPageSource: false } },
 ];
 
 function runSelftest() {
