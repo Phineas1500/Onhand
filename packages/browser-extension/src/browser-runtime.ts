@@ -59,6 +59,11 @@ interface RuntimeSettings {
 	// and the enforcement gates stay deterministic either way. Intended for
 	// strong-model auth (e.g. Codex subscription), not the free tier.
 	experimentalModelLaneClassifier: boolean;
+	// One-time marker: the classifier default flipped false->true. Absent/false
+	// means a stored experimentalModelLaneClassifier=false is a legacy artifact of
+	// the old default (adopt the new default); true means the stored value is
+	// authoritative (a real opt-out is respected).
+	modelLaneClassifierDefaultMigrated: boolean;
 	// Codex fast mode: service_tier "priority" on the Codex responses API —
 	// the same model on faster inference. Off by default because the plan's
 	// usage is consumed faster (2.5x on gpt-5.5). Ignored by other providers.
@@ -469,7 +474,14 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	diagnosticsEnabled: false,
 	diagnosticsClientId: "",
 	advancedRuntimeInspectionEnabled: true,
-	experimentalModelLaneClassifier: false,
+	// Model intent classifier is the default routing brain. It beats the regex
+	// router 98.9% vs 88.9% on the labeled corpus (run-lane-classifier-eval),
+	// fixing the whole class the regex cannot — non-English prompts, typos,
+	// idioms, comparison-vs-enumerable nuance — and its latency hides behind page
+	// capture (fired concurrently; awaited after capture). Failures fall back to
+	// the regex router. Users can still opt out via the setting.
+	experimentalModelLaneClassifier: true,
+	modelLaneClassifierDefaultMigrated: false,
 	codexFastModeEnabled: false,
 };
 
@@ -10420,6 +10432,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				authMode === "api-key" && aiProvider === OPENAI_API_PROVIDER && rawProvider !== OPENAI_API_PROVIDER
 					? OPENAI_API_MODEL
 					: String(rawSettings.aiModel || DEFAULT_SETTINGS.aiModel);
+			// A stored experimentalModelLaneClassifier=false is a legacy artifact of
+			// the old default unless this marker confirms it is authoritative.
+			const classifierPreviouslyMigrated = rawSettings.modelLaneClassifierDefaultMigrated === true;
 			const settings: RuntimeSettings = {
 				...DEFAULT_SETTINGS,
 				...rawSettings,
@@ -10435,7 +10450,14 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
 				advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
-				experimentalModelLaneClassifier: rawSettings.experimentalModelLaneClassifier === true,
+				// On by default (see DEFAULT_SETTINGS). Once migrated, a stored false
+				// is an authoritative opt-out (`!== false`); before migration, a
+				// stored false is a legacy artifact of the old default, so adopt the
+				// new default. The marker is always set so the next load is settled.
+				experimentalModelLaneClassifier: classifierPreviouslyMigrated
+					? rawSettings.experimentalModelLaneClassifier !== false
+					: DEFAULT_SETTINGS.experimentalModelLaneClassifier,
+				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
@@ -10475,6 +10497,18 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				// Keep the legacy blob intact so the next load can retry; the
 				// in-memory store already holds the merged sessions.
 				host.log?.("onhand session storage migration failed", error);
+			}
+			// Persist the one-time classifier-default migration so the raw-storage
+			// reader (options.js) and future loads see the adopted default. Idempotent
+			// via the marker. Merge over the current stored value so a legacy sessions blob
+			// the session migration kept for retry (putSessionRecords failure) is not lost.
+			if (!classifierPreviouslyMigrated) {
+				try {
+					const currentStored = (await chrome.storage.local.get({ [STORAGE_KEY]: {} }))[STORAGE_KEY] || {};
+					await chrome.storage.local.set({ [STORAGE_KEY]: { ...currentStored, settings, currentSessionId } });
+				} catch (error) {
+					host.log?.("onhand classifier default migration failed", error);
+				}
 			}
 			return { settings, sessions, currentSessionId };
 		})();
@@ -13588,6 +13622,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
 				advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
 				experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store.settings.experimentalModelLaneClassifier) === true,
+				// Any settings save settles the migration: a subsequent stored false is
+				// now an authoritative opt-out, not a legacy artifact.
+				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 			};
 			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);

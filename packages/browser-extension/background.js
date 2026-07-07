@@ -14474,6 +14474,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
 	if (!reason) return;
 	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});
+	// Run the one-time classifier-default migration eagerly on install/update, so
+	// it lands before the options page (which reads raw storage) is opened.
+	getOnhandBrowserRuntime().getSettings().catch(() => {});
 });
 
 chrome.action.onClicked.addListener((tab) => {

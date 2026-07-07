@@ -444,6 +444,10 @@ async function main() {
 		aiModel: model,
 		aiApiKey: apiKey,
 		authMode: "api-key",
+		// Deterministic smoke: the mocked turn does not script a classifier model
+		// call, so keep the (now default-on) classifier off and exercise the regex
+		// router.
+		experimentalModelLaneClassifier: false,
 	});
 	await runtime.submitPrompt({
 		prompt: args.realOpenAI
