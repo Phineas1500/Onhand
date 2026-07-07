@@ -44,6 +44,41 @@ npm run debug:sessions -- show --current --json
 npm run debug:sessions -- context --current --json
 ```
 
+## Routing And Guard Diagnostics
+
+Onhand routes each prompt to a lane (teaching, comparison, enumerable coverage, review markup, …) and runs a chain of span-quality guards before it highlights. Two tools inspect that logic — one offline, one live.
+
+### Offline routing/guard probe
+
+`scripts/probe-routing.mjs` prints the lane predicates and highlight-guard decisions for any prompt with no live turn and no model call, by reading the runtime's `__browserRuntimeTest` export surface:
+
+```sh
+node scripts/probe-routing.mjs "walk me through the twelve factors as a roadmap" \
+  --text "One codebase tracked in revision control, many deploys"
+```
+
+- `--text "<span>"` also reports the span-quality guard chain (empty → review-extraction → weak-structured → compact-teaching → named-formula → concept-location) for that candidate highlight.
+- `--classify '<intent-json>'` injects a model-intent classification (e.g. `'{"pageScoped":true,"enumerableCoverage":true}'`) to probe the classifier-on path; without it the deterministic regex-router fallback is shown.
+- `--title "<tab title>"` supplies a tab title for cross-tab/review routing.
+
+Its fixture table locks in known routing/guard behavior; run it as a test:
+
+```sh
+npm run test:routing-probe
+```
+
+### Live turn trace
+
+`debug:fetch-turn-trace` is a background message that returns the last ~12 real turns' decision trace — the routing classification plus every `browser_highlight_text`/tool call's args, resulting state, and any guardrail that fired. It is backed by `chrome.storage.session`, so traces survive a service-worker restart, and it records whenever `advancedRuntimeInspectionEnabled` is on (the default). Use it to answer "why did this turn route/highlight that way" without live instrumentation.
+
+Send it from a page attached to the extension (e.g. the offscreen or side-panel context):
+
+```js
+chrome.runtime.sendMessage({ type: "debug:fetch-turn-trace", limit: 12 }).then(console.log);
+```
+
+The offline probe is the deterministic companion to this live trace: the trace shows what happened in a real turn; the probe shows what the routing/guard logic decides for any input, in milliseconds.
+
 ## Drive Sessions From The CLI
 
 Open a page in the remote-debuggable browser:

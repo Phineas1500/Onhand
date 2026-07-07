@@ -62,7 +62,7 @@ Target tool families exposed to `gpt-realtime-2`:
 - Reasoning tools backed by `gpt-5.5`: `answer_directly`, `plan_pedagogical_move`, `evaluate_response`.
 - Sidebar/session tools: `publish_sidebar_answer`, `record_voice_turn`, `record_learning_event`.
 
-The current prototype has `delegate_to_onhand(prompt)`. That is useful for dogfood, but it should be removed from the target architecture because it blurs responsibility. The replacement is explicit: call either `answer_directly`, `plan_pedagogical_move`, or `evaluate_response`.
+An earlier prototype had `delegate_to_onhand(prompt)`. It was removed because it blurred responsibility; the replacement is explicit: call either `answer_directly`, `plan_pedagogical_move`, or `evaluate_response`.
 
 ## Mode Policy
 

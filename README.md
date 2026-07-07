@@ -19,7 +19,7 @@ The intended experience is:
 Onhand now uses the browser extension as its runtime:
 
 1. the Chromium extension hosts the side panel UI
-2. `@mariozechner/pi-agent-core` and `@mariozechner/pi-ai` are bundled into the extension
+2. `@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` are bundled into the extension
 3. sidebar messages route to an in-extension runtime controller
 4. browser tools call the existing extension command handlers directly
 5. Onhand Free, OpenAI Codex sign-in, and provider API-key auth are configured from the extension options page
