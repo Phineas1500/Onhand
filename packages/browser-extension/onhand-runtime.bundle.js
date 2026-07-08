@@ -153929,7 +153929,51 @@ function buildNamedFormulaHighlightGuardResult(toolName, commandName, params, pr
     }
   };
 }
+function extractToolErrorText(result) {
+  const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
+  const textFrom = (value) => {
+    if (value == null) return "";
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const text = textFrom(item?.text ?? item);
+        if (text) return text;
+      }
+      return "";
+    }
+    if (typeof value === "object") {
+      for (const nested of [
+        value.error,
+        value.message,
+        value.reason,
+        value.details,
+        value.cause,
+        value.content
+      ]) {
+        const text = textFrom(nested);
+        if (text) return text;
+      }
+    }
+    return "";
+  };
+  for (const value of [
+    details?.error,
+    details?.message,
+    details?.reason,
+    details?.content,
+    result?.error,
+    result?.message,
+    result?.content
+  ]) {
+    const text = textFrom(value);
+    if (text) return text;
+  }
+  if (typeof result === "string" && result.trim()) return result.trim();
+  return "Tool failed.";
+}
 var __browserRuntimeTest = {
+  extractToolErrorTextForTest: extractToolErrorText,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
   buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -155901,46 +155945,6 @@ function createOnhandBrowserRuntime(host) {
     const entry = findToolTrace(toolCallId, toolName);
     if (!entry) return;
     entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
-  }
-  function extractToolErrorText(result) {
-    const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
-    const textFrom = (value) => {
-      if (value == null) return "";
-      if (typeof value === "string") return value.trim();
-      if (typeof value === "number" || typeof value === "boolean") return String(value);
-      if (typeof value === "object") {
-        for (const nested of [
-          value.error,
-          value.message,
-          value.reason,
-          value.details,
-          value.cause
-        ]) {
-          const text = textFrom(nested);
-          if (text) return text;
-        }
-      }
-      return "";
-    };
-    for (const value of [
-      details?.error,
-      details?.message,
-      details?.reason,
-      result?.error,
-      result?.message
-    ]) {
-      const text = textFrom(value);
-      if (text) return text;
-    }
-    const content = result?.content;
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        const text = textFrom(item?.text ?? item);
-        if (text) return text;
-      }
-    }
-    if (typeof result === "string" && result.trim()) return result.trim();
-    return "Tool failed.";
   }
   function recordToolTraceEnd(toolName, toolCallId, result, isError2) {
     if (!activeRequest || !toolName || isInternalToolName(toolName)) return;

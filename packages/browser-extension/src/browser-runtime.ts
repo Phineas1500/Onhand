@@ -9097,7 +9097,56 @@ function buildNamedFormulaHighlightGuardResult(toolName: string, commandName: st
 	};
 }
 
+function extractToolErrorText(result: unknown) {
+	const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? (result as any).details : result;
+	const textFrom = (value: unknown): string => {
+		if (value == null) return "";
+		if (typeof value === "string") return value.trim();
+		if (typeof value === "number" || typeof value === "boolean") return String(value);
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const text = textFrom((item as any)?.text ?? item);
+				if (text) return text;
+			}
+			return "";
+		}
+		if (typeof value === "object") {
+			// Thrown tool errors arrive as { content: [{ type: "text", text }] }
+			// (the agent loop's createErrorToolResult) — including nested under
+			// details.error — so mine content[].text at every level rather than
+			// falling back to "Tool failed."
+			for (const nested of [
+				(value as any).error,
+				(value as any).message,
+				(value as any).reason,
+				(value as any).details,
+				(value as any).cause,
+				(value as any).content,
+			]) {
+				const text = textFrom(nested);
+				if (text) return text;
+			}
+		}
+		return "";
+	};
+	for (const value of [
+		(details as any)?.error,
+		(details as any)?.message,
+		(details as any)?.reason,
+		(details as any)?.content,
+		(result as any)?.error,
+		(result as any)?.message,
+		(result as any)?.content,
+	]) {
+		const text = textFrom(value);
+		if (text) return text;
+	}
+	if (typeof result === "string" && result.trim()) return result.trim();
+	return "Tool failed.";
+}
+
 export const __browserRuntimeTest = {
+	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -11267,49 +11316,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
 	}
 
-	function extractToolErrorText(result: unknown) {
-		const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? (result as any).details : result;
-		const textFrom = (value: unknown): string => {
-			if (value == null) return "";
-			if (typeof value === "string") return value.trim();
-			if (typeof value === "number" || typeof value === "boolean") return String(value);
-			if (typeof value === "object") {
-				for (const nested of [
-					(value as any).error,
-					(value as any).message,
-					(value as any).reason,
-					(value as any).details,
-					(value as any).cause,
-				]) {
-					const text = textFrom(nested);
-					if (text) return text;
-				}
-			}
-			return "";
-		};
-		for (const value of [
-			(details as any)?.error,
-			(details as any)?.message,
-			(details as any)?.reason,
-			(result as any)?.error,
-			(result as any)?.message,
-		]) {
-			const text = textFrom(value);
-			if (text) return text;
-		}
-		// Thrown tool errors arrive as { content: [{ type: "text", text }] } (the
-		// agent loop's createErrorToolResult) with no details/error fields — mine
-		// the content text so traces carry the real failure instead of "Tool failed."
-		const content = (result as any)?.content;
-		if (Array.isArray(content)) {
-			for (const item of content) {
-				const text = textFrom((item as any)?.text ?? item);
-				if (text) return text;
-			}
-		}
-		if (typeof result === "string" && result.trim()) return result.trim();
-		return "Tool failed.";
-	}
 
 	function recordToolTraceEnd(toolName: string, toolCallId: string, result: unknown, isError: boolean) {
 		if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
