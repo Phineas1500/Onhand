@@ -2156,7 +2156,9 @@ function parseSourceUrl() {
 	if (!raw.trim()) return "";
 	try {
 		const parsed = new URL(raw);
-		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+		// file: is allowed so the viewer can open local PDFs (requires the user's
+		// "Allow access to file URLs" grant; loadPdfDocumentFromUrl reads the bytes).
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:" && parsed.protocol !== "file:") return "";
 		return parsed.href;
 	} catch {
 		return "";
@@ -2196,6 +2198,22 @@ async function getPdfDocumentWithTimeout(options: Record<string, any>, timeoutMs
 	}
 }
 
+async function loadLocalFilePdfBytes(value: string): Promise<ArrayBuffer> {
+	// XHR is the reliable transport for file:// from an extension page once the
+	// user grants "Allow access to file URLs"; successful file reads report status 0.
+	return await new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open("GET", value, true);
+		xhr.responseType = "arraybuffer";
+		xhr.onload = () => {
+			if (xhr.response && (xhr.status === 200 || xhr.status === 0)) resolve(xhr.response as ArrayBuffer);
+			else reject(new Error(`Could not read the local PDF (status ${xhr.status}).`));
+		};
+		xhr.onerror = () => reject(new Error("Could not read the local PDF file."));
+		xhr.send();
+	});
+}
+
 async function loadPdfDocumentFromUrl(value: string) {
 	const baseOptions = {
 		url: value,
@@ -2203,6 +2221,17 @@ async function loadPdfDocumentFromUrl(value: string) {
 		cMapPacked: true,
 		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
 	};
+	if (value.startsWith("file:")) {
+		try {
+			const data = await loadLocalFilePdfBytes(value);
+			const { url: _url, ...optionsWithoutUrl } = baseOptions;
+			return await getPdfDocumentWithTimeout({ ...optionsWithoutUrl, data }, PDF_LOAD_TIMEOUT_MS);
+		} catch (error: any) {
+			throw new Error(
+				`Could not open this local PDF. If Onhand does not have file access, open chrome://extensions, find Onhand, enable "Allow access to file URLs", then retry. (${error?.message || String(error)})`,
+			);
+		}
+	}
 	if (!isGoogleDocsPdfExportUrl(value)) {
 		return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
 	}

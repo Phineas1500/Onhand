@@ -11297,6 +11297,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const text = textFrom(value);
 			if (text) return text;
 		}
+		// Thrown tool errors arrive as { content: [{ type: "text", text }] } (the
+		// agent loop's createErrorToolResult) with no details/error fields — mine
+		// the content text so traces carry the real failure instead of "Tool failed."
+		const content = (result as any)?.content;
+		if (Array.isArray(content)) {
+			for (const item of content) {
+				const text = textFrom((item as any)?.text ?? item);
+				if (text) return text;
+			}
+		}
 		if (typeof result === "string" && result.trim()) return result.trim();
 		return "Tool failed.";
 	}

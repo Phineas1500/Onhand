@@ -492,6 +492,14 @@ function localFileAccessMessage(tab, error = null) {
 	return `This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.${suffix}`;
 }
 
+async function isAllowedFileSchemeAccess() {
+	try {
+		return await new Promise((resolve) => chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(Boolean(allowed))));
+	} catch {
+		return false;
+	}
+}
+
 function isLocalFileAccessError(tab, error) {
 	return isFileUrl(tab?.url) && isRestrictedScriptingError(error);
 }
@@ -571,6 +579,15 @@ function isHttpLikeUrl(value) {
 }
 
 function isLikelyPdfResourceUrl(value) {
+	// Local file PDFs are handled by the Onhand viewer too (subject to the
+	// "Allow access to file URLs" gate checked at handoff time).
+	if (isFileUrl(value)) {
+		try {
+			return decodeURIComponent(new URL(String(value)).pathname || "").toLowerCase().endsWith(".pdf");
+		} catch {
+			return false;
+		}
+	}
 	if (!isHttpLikeUrl(value)) return false;
 	try {
 		const url = new URL(String(value));
@@ -596,7 +613,9 @@ function normalizePdfUrlCandidate(value, baseUrl = "") {
 	if (!candidate) return "";
 	try {
 		const url = baseUrl ? new URL(candidate, baseUrl) : new URL(candidate);
-		if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+		// file: is accepted so local PDFs can hand off to the Onhand viewer; the
+		// viewer-handoff path gates on "Allow access to file URLs" separately.
+		if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "file:") return "";
 		return url.toString();
 	} catch {
 		return "";
@@ -10617,6 +10636,11 @@ async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	if (isFileUrl(pdfUrl) && !(await isAllowedFileSchemeAccess())) {
+		// Actionable failure: without file access the viewer cannot read the bytes,
+		// so tell the model/user exactly what to enable instead of failing opaquely.
+		throw new Error(localFileAccessMessage(sourceTab));
+	}
 	const diagnostics = createPdfViewerHandoffDiagnostics(args, sourceTab, pdfUrl);
 	const sourceIsGoogleDocs = isGoogleDocsDocumentUrl(sourceTab.url);
 	const shouldOpenViewerInNewTab = args.newTab === true || (sourceIsGoogleDocs && args.newTab !== false);

@@ -155932,6 +155932,13 @@ function createOnhandBrowserRuntime(host) {
       const text = textFrom(value);
       if (text) return text;
     }
+    const content = result?.content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        const text = textFrom(item?.text ?? item);
+        if (text) return text;
+      }
+    }
     if (typeof result === "string" && result.trim()) return result.trim();
     return "Tool failed.";
   }
