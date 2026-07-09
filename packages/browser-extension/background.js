@@ -608,14 +608,18 @@ function isLikelyPdfResourceUrl(value) {
 	}
 }
 
-function normalizePdfUrlCandidate(value, baseUrl = "") {
+function normalizePdfUrlCandidate(value, baseUrl = "", { allowFile = false } = {}) {
 	const candidate = String(value || "").trim();
 	if (!candidate) return "";
 	try {
 		const url = baseUrl ? new URL(candidate, baseUrl) : new URL(candidate);
-		// file: is accepted so local PDFs can hand off to the Onhand viewer; the
-		// viewer-handoff path gates on "Allow access to file URLs" separately.
-		if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "file:") return "";
+		// file: is accepted only when the caller vouches for the source (the
+		// user's own file:// tab or Onhand's own viewer URL) — never for
+		// page-controlled candidates, or any web page could point Onhand's file
+		// permission at an arbitrary local path. The viewer-handoff path
+		// additionally gates on "Allow access to file URLs".
+		if (url.protocol === "file:") return allowFile ? url.toString() : "";
+		if (url.protocol !== "http:" && url.protocol !== "https:") return "";
 		return url.toString();
 	} catch {
 		return "";
@@ -628,8 +632,11 @@ function extractPdfSourceUrlFromViewerLikeUrl(value) {
 	try {
 		const url = new URL(baseUrl);
 		const acceptAnyHttpCandidate = isOnhandPdfViewerLikeUrl(baseUrl);
+		// Only Onhand's own extension viewer is trusted to carry file: sources;
+		// a web page merely *shaped* like the viewer is not.
+		const allowFile = isOwnExtensionPdfViewerUrl(baseUrl);
 		for (const key of ["url", "file", "pdf", "src"]) {
-			const candidate = normalizePdfUrlCandidate(url.searchParams.get(key), baseUrl);
+			const candidate = normalizePdfUrlCandidate(url.searchParams.get(key), baseUrl, { allowFile });
 			if (candidate && (acceptAnyHttpCandidate || isLikelyPdfResourceUrl(candidate))) return candidate;
 		}
 	} catch {}
@@ -637,7 +644,9 @@ function extractPdfSourceUrlFromViewerLikeUrl(value) {
 }
 
 function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
-	const explicitPdfUrl = normalizePdfUrlCandidate(args.pdfUrl);
+	// An explicit file: pdfUrl is honored only when the source tab is itself a
+	// local-file tab, so page/model-suggested paths cannot reach local files.
+	const explicitPdfUrl = normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: isFileUrl(tab?.url) });
 	if (explicitPdfUrl) return explicitPdfUrl;
 
 	const tabUrl = String(tab?.url || "");
@@ -648,7 +657,8 @@ function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
 	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
 	if (nestedPdfUrl) return nestedPdfUrl;
 
-	const directPdfUrl = normalizePdfUrlCandidate(tabUrl);
+	// The tab's own URL is user-opened, so file: is trusted here.
+	const directPdfUrl = normalizePdfUrlCandidate(tabUrl, "", { allowFile: true });
 	if (directPdfUrl && isLikelyPdfResourceUrl(directPdfUrl)) return directPdfUrl;
 
 	throw new Error(
@@ -759,7 +769,10 @@ function normalizePdfSelectionForViewerHandoff(selection, pdfUrl = "") {
 	const text = normalizePdfSelectionText(selection?.text || selection?.pdfAnchor?.matchedText || selection?.pdfAnchor?.textQuote?.exact || "");
 	if (!text) return null;
 	const pageNumber = normalizePdfPageNumber(selection?.pageNumber || selection?.container?.pageNumber || selection?.pdfAnchor?.pageNumber);
-	const documentUrl = normalizePdfUrlCandidate(pdfUrl) || normalizePdfUrlCandidate(selection?.url) || normalizePdfUrlCandidate(selection?.pdfAnchor?.document?.url);
+	const documentUrl =
+		normalizePdfUrlCandidate(pdfUrl, "", { allowFile: true }) ||
+		normalizePdfUrlCandidate(selection?.url, "", { allowFile: true }) ||
+		normalizePdfUrlCandidate(selection?.pdfAnchor?.document?.url, "", { allowFile: true });
 	const title = String(selection?.title || selection?.pdfAnchor?.document?.title || "").trim();
 	const textQuote = selection?.pdfAnchor?.textQuote && typeof selection.pdfAnchor.textQuote === "object" ? { ...selection.pdfAnchor.textQuote, exact: text } : { exact: text };
 	const pdfAnchor = {
@@ -827,7 +840,7 @@ function unregisterOnhandPdfViewerPort(port) {
 
 function registerOnhandPdfViewerPort(port, sourceUrl) {
 	const tabId = port?.sender?.tab?.id;
-	const normalizedSourceUrl = normalizePdfUrlCandidate(sourceUrl) || extractPdfSourceUrlFromViewerLikeUrl(port?.sender?.url);
+	const normalizedSourceUrl = normalizePdfUrlCandidate(sourceUrl, "", { allowFile: true }) || extractPdfSourceUrlFromViewerLikeUrl(port?.sender?.url);
 	if (!normalizedSourceUrl) return null;
 	const record = {
 		key: typeof tabId === "number" ? onhandPdfViewerPortKey(tabId, normalizedSourceUrl) : onhandPdfViewerSourcePortKey(normalizedSourceUrl),
@@ -964,7 +977,7 @@ function shouldInferPdfPageNumberFromTab(tab, pdfUrl) {
 	const pdfUrlWithoutHash = stripUrlHash(pdfUrl);
 	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
 	if (nestedPdfUrl && (!pdfUrlWithoutHash || stripUrlHash(nestedPdfUrl) === pdfUrlWithoutHash)) return true;
-	const directPdfUrl = normalizePdfUrlCandidate(tabUrl);
+	const directPdfUrl = normalizePdfUrlCandidate(tabUrl, "", { allowFile: true });
 	if (directPdfUrl && isLikelyPdfResourceUrl(directPdfUrl) && (!pdfUrlWithoutHash || stripUrlHash(directPdfUrl) === pdfUrlWithoutHash)) return true;
 	return false;
 }
@@ -2272,7 +2285,7 @@ async function maybeGetBrowserClipboardPdfSelection(tab, currentSelection) {
 		let pageNumber = normalizePdfPageNumber(currentSelection?.pageNumber || currentSelection?.pdfAnchor?.pageNumber);
 		if (!pageNumber) {
 			try {
-				const pageLocation = await inferInitialPdfViewerPageLocation({}, tab, normalizePdfUrlCandidate(tab.url) || tab.url);
+				const pageLocation = await inferInitialPdfViewerPageLocation({}, tab, normalizePdfUrlCandidate(tab.url, "", { allowFile: true }) || tab.url);
 				pageNumber = normalizePdfPageNumber(pageLocation?.pageNumber);
 			} catch {}
 		}
