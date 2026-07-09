@@ -6321,6 +6321,39 @@ async function assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl() {
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "pdf-viewer-restored-anchor"), true);
 }
 
+async function assertOnhandPdfViewerSourceUrlIdentity() {
+	installChromeStorageStub();
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const sourceUrl = __browserRuntimeTest.onhandPdfViewerSourceUrlForTest;
+	const openUrl = __browserRuntimeTest.onhandPdfViewerOpenUrlForTest;
+	const viewer = (pdf) => `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdf)}`;
+	// file: sources resolve (the duplicate-restore fix)
+	assert.equal(sourceUrl(viewer("file:///Users/me/Downloads/ERS-649.pdf")), "file:///Users/me/Downloads/ERS-649.pdf");
+	// literal percent signs in file names must not be double-decoded or throw
+	assert.equal(sourceUrl(viewer("file:///Users/me/100% Complete.pdf")), "file:///Users/me/100% Complete.pdf");
+	// double-encoded legacy values still resolve via the fallback decode
+	assert.equal(sourceUrl("chrome-extension://onhand-test/pdf-viewer.html?url=" + encodeURIComponent(encodeURIComponent("https://a.test/paper.pdf"))), "https://a.test/paper.pdf");
+	// http behavior unchanged
+	assert.equal(sourceUrl(viewer("https://a.test/paper.pdf")), "https://a.test/paper.pdf");
+	// web-hosted viewer copies must NOT donate trusted file: sources (grant
+	// laundering via restore), while their http sources still resolve
+	assert.equal(sourceUrl("https://evil.test/onhand-pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/secret.pdf")), "");
+	assert.equal(sourceUrl("https://reader.test/onhand-pdf-viewer.html?url=" + encodeURIComponent("https://a.test/paper.pdf")), "https://a.test/paper.pdf");
+	// live-tab eligibility: a foreign/stale extension viewer TAB is not
+	// restorable (unscriptable), while the current install's viewer and plain
+	// http/file tabs are
+	const isRestorable = __browserRuntimeTest.isRestorablePageUrlForTest;
+	assert.equal(isRestorable("chrome-extension://stale-old-id/pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/x.pdf")), false);
+	assert.equal(isRestorable(viewer("file:///Users/me/x.pdf")), true);
+	assert.equal(isRestorable("https://a.test/paper.pdf"), true);
+	assert.equal(isRestorable("file:///Users/me/x.pdf"), true);
+	// stale/foreign extension ids re-home onto the current install for file sources
+	const stale = "chrome-extension://stale-old-id/pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/Downloads/ERS-649.pdf") + "&page=6";
+	const rebuilt = openUrl(sourceUrl(stale), stale);
+	assert.ok(rebuilt.startsWith("chrome-extension://onhand-test/pdf-viewer.html?"), `stale file viewer should rebuild onto the current extension id, got ${rebuilt}`);
+	assert.ok(rebuilt.includes("page=6"), "rebuild should preserve the saved page");
+}
+
 async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -7446,12 +7479,15 @@ async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
 	const restored = await runtime.restoreSession();
 	const restoreCalls = host.calls.slice(callCountBeforeRestore);
 	const highlightTexts = restoreCalls.filter((call) => call.name === "highlight_text").map((call) => call.args.text);
-	const replayPage = restored.restoredPages.find((page) => page.source === "browser-replay");
-	const artifactPage = restored.restoredPages.find((page) => page.source === "browser-artifact");
-	assert.equal(restored.restoredPages.length, 2);
-	assert.equal(artifactPage?.failedCount, 1);
-	assert.equal(replayPage?.restoredAnnotations, 1);
-	assert.equal(replayPage?.restoredNotes, 1);
+	// The failed artifact pass and the successful replay hit the SAME tab, so
+	// they coalesce into one restored page: the failure stays visible in
+	// failedCount while the replay's marks are counted — not "2 pages" for one
+	// document.
+	assert.equal(restored.restoredPages.length, 1);
+	const mergedPage = restored.restoredPages[0];
+	assert.equal(mergedPage?.failedCount, 1);
+	assert.equal(mergedPage?.restoredAnnotations, 1);
+	assert.equal(mergedPage?.restoredNotes, 1);
 	assert.deepEqual(highlightTexts, ["q=qP", "q = qP", "q = qP"]);
 	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), true);
 	assert.equal(restoreCalls.filter((call) => call.name === "clear_annotations" && call.args.tabId === 7).length, 1);
@@ -9154,6 +9190,7 @@ async function main() {
 	await assertArtifactRestorePassesPdfAnchorToHighlight();
 	await assertPdfActionActivationHandsOffBeforeSourceFallback();
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
+	await assertOnhandPdfViewerSourceUrlIdentity();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
 	await assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport();
 	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();

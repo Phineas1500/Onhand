@@ -149778,6 +149778,35 @@ function summarizeRestoredArtifact(result) {
     snapshotFallback: result?.snapshotFallback || null
   };
 }
+function coalesceRestoredPagesByTab(pages) {
+  const byTab = /* @__PURE__ */ new Map();
+  const out = [];
+  for (const page of pages) {
+    const tabId = typeof page?.tabId === "number" ? page.tabId : null;
+    if (tabId == null) {
+      out.push(page);
+      continue;
+    }
+    const existing = byTab.get(tabId);
+    if (!existing) {
+      const copy = { ...page, failures: [...page.failures || []] };
+      byTab.set(tabId, copy);
+      out.push(copy);
+      continue;
+    }
+    existing.restoredAnnotations = Number(existing.restoredAnnotations || 0) + Number(page.restoredAnnotations || 0);
+    existing.restoredCount = existing.restoredAnnotations;
+    existing.recoveredAnnotations = Number(existing.recoveredAnnotations || 0) + Number(page.recoveredAnnotations || 0);
+    existing.restoredNotes = Number(existing.restoredNotes || 0) + Number(page.restoredNotes || 0);
+    existing.failures = [...existing.failures || [], ...page.failures || []];
+    existing.failedCount = existing.failures.length;
+    if (!existing.artifactId && page.artifactId) existing.artifactId = page.artifactId;
+    if (!existing.title && page.title) existing.title = page.title;
+    if (!existing.url && page.url) existing.url = page.url;
+    existing.snapshotFallback = existing.snapshotFallback || page.snapshotFallback || null;
+  }
+  return out;
+}
 function replayActionKey(action, text = "") {
   const annotationId = compactActionText(action.annotationId);
   if (annotationId) return `annotation:${annotationId}`;
@@ -151439,15 +151468,25 @@ function onhandPdfViewerSourceUrl(value) {
     if (!isOnhandPdfViewerUrl(parsed.href)) return "";
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
-    const decoded = decodeURIComponent(source);
-    return /^https?:\/\//i.test(decoded) ? decoded : "";
+    const extensionViewer = parsed.protocol === "chrome-extension:";
+    const resolveCandidate = (candidate) => {
+      if (/^file:/i.test(candidate)) return extensionViewer ? candidate : "";
+      return /^https?:/i.test(candidate) ? candidate : "";
+    };
+    const direct = resolveCandidate(source);
+    if (direct) return direct;
+    try {
+      return resolveCandidate(decodeURIComponent(source));
+    } catch {
+      return "";
+    }
   } catch {
     return "";
   }
 }
 function onhandPdfViewerOpenUrl(sourceUrl, previousViewerUrl = "") {
   const source = String(sourceUrl || "").trim();
-  if (!/^https?:\/\//i.test(source)) return previousViewerUrl || source;
+  if (!/^(?:https?|file):/i.test(source)) return previousViewerUrl || source;
   try {
     const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
     viewerUrl.searchParams.set("url", source);
@@ -151521,10 +151560,19 @@ function isOnhandPdfViewerAccessError(error52) {
   if (/Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message)) return true;
   return /Cannot access a chrome-extension:\/\/ URL of different extension/i.test(message);
 }
+function isCurrentExtensionPdfViewerUrl(url2) {
+  try {
+    const prefix = globalThis.chrome?.runtime?.getURL?.("pdf-viewer.html") || "";
+    return Boolean(prefix) && String(url2 || "").startsWith(prefix);
+  } catch {
+    return false;
+  }
+}
 function isRestorablePageUrl(url2) {
   try {
     const protocol = new URL(normalizeRestorablePageUrl(url2)).protocol;
-    return protocol === "http:" || protocol === "https:" || protocol === "file:" || isOnhandPdfViewerUrl(url2);
+    if (protocol === "http:" || protocol === "https:" || protocol === "file:") return true;
+    return isCurrentExtensionPdfViewerUrl(url2);
   } catch {
     return false;
   }
@@ -153973,6 +154021,9 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+  isRestorablePageUrlForTest: isRestorablePageUrl,
+  onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
@@ -158335,7 +158386,7 @@ function createOnhandBrowserRuntime(host) {
           })
         );
       }
-      const restoredPages = restored.map(summarizeRestoredArtifact);
+      const restoredPages = coalesceRestoredPagesByTab(restored.map(summarizeRestoredArtifact));
       const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
       const replayPages = restored.filter((page) => page?.source === "browser-replay");
       const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
