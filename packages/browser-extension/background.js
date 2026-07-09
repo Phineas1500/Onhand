@@ -644,10 +644,22 @@ function extractPdfSourceUrlFromViewerLikeUrl(value) {
 }
 
 function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
-	// An explicit file: pdfUrl is honored only when the source tab is itself a
-	// local-file tab, so page/model-suggested paths cannot reach local files.
-	const explicitPdfUrl = normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: isFileUrl(tab?.url) });
-	if (explicitPdfUrl) return explicitPdfUrl;
+	// An explicit file: pdfUrl is honored only when it IS the file the user
+	// already has open (the tab's own file: URL, or the file source embedded in
+	// Onhand's own viewer URL), compared hash-insensitively. Merely being on a
+	// file: tab is not enough: a prompt-injected local HTML/PDF could otherwise
+	// steer the model to open a DIFFERENT local file under Onhand's permission.
+	const explicitCandidate = normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: true });
+	if (explicitCandidate && isFileUrl(explicitCandidate)) {
+		const trustedFileUrls = new Set();
+		const currentTabUrl = String(tab?.url || "");
+		if (isFileUrl(currentTabUrl)) trustedFileUrls.add(stripUrlHash(normalizePdfUrlCandidate(currentTabUrl, "", { allowFile: true })));
+		const viewerEmbeddedSource = extractPdfSourceUrlFromViewerLikeUrl(currentTabUrl);
+		if (viewerEmbeddedSource && isFileUrl(viewerEmbeddedSource)) trustedFileUrls.add(stripUrlHash(viewerEmbeddedSource));
+		if (trustedFileUrls.has(stripUrlHash(explicitCandidate))) return explicitCandidate;
+	} else if (explicitCandidate) {
+		return explicitCandidate;
+	}
 
 	const tabUrl = String(tab?.url || "");
 	if (isGoogleDocsDocumentUrl(tabUrl)) {
@@ -13029,6 +13041,39 @@ async function handleCommand(name, args = {}) {
 					note,
 				};
 			});
+		}
+		case "reopen_onhand_pdf_viewer": {
+			// Internal session-restore command (no browser_* tool maps here, so the
+			// model cannot reach it): reopen the Onhand viewer for a previously
+			// annotated source recorded in the session. Trusting the stored URL is
+			// what lets citation clicks revive a closed local-file viewer without
+			// routing file:// through browser_navigate.
+			const requestedViewerUrl = String(args.viewerUrl || "").trim();
+			const requestedPdfUrl = String(args.pdfUrl || "").trim();
+			let viewerUrl = "";
+			if (requestedViewerUrl) {
+				if (!isOwnExtensionPdfViewerUrl(requestedViewerUrl)) {
+					throw new Error("reopen_onhand_pdf_viewer only accepts Onhand's own viewer URLs.");
+				}
+				viewerUrl = requestedViewerUrl;
+			} else if (requestedPdfUrl && (isFileUrl(requestedPdfUrl) || isLikelyPdfResourceUrl(requestedPdfUrl))) {
+				viewerUrl = buildOnhandPdfViewerUrl(requestedPdfUrl);
+			}
+			if (!viewerUrl) throw new Error("reopen_onhand_pdf_viewer requires a viewerUrl or pdfUrl.");
+			const sourcePdfUrl = extractPdfSourceUrlFromViewerLikeUrl(viewerUrl) || requestedPdfUrl;
+			if (isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
+				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
+			}
+			const created = await chrome.tabs.create({ url: viewerUrl, active: args.active !== false });
+			const timeoutMs = clampNumber(args.timeoutMs, 20000, { min: 100, max: 120000 });
+			const viewerReady = await safeWaitForInlineOnhandPdfViewerReady(created.id, timeoutMs, sourcePdfUrl);
+			return {
+				tab: simplifyTab(await chrome.tabs.get(created.id)),
+				viewerUrl,
+				pdfUrl: sourcePdfUrl,
+				viewerReady,
+				opened: true,
+			};
 		}
 		case "scroll_to_annotation": {
 			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {

@@ -156888,8 +156888,7 @@ function createOnhandBrowserRuntime(host) {
         throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
       }
       try {
-        const navigated = await host.runCommand("navigate", { url: openUrl || url2, newTab: true, waitForLoad: true });
-        tab = navigated?.tab || navigated;
+        tab = await openRestoredSourceTab(openUrl || url2);
       } catch (error52) {
         const snapshot = await openArtifactSnapshotFallback(artifact, "navigation-failed", {
           failures: [error52?.message || String(error52)]
@@ -157670,14 +157669,26 @@ function createOnhandBrowserRuntime(host) {
     if (changed) session.updatedAt = nowIso();
     return changed;
   }
+  async function openRestoredSourceTab(url2) {
+    const target = String(url2 || "").trim();
+    if (!target) return null;
+    if (isOnhandPdfViewerUrl(target) || /^file:/i.test(target)) {
+      const reopened = await host.runCommand(
+        "reopen_onhand_pdf_viewer",
+        isOnhandPdfViewerUrl(target) ? { viewerUrl: target } : { pdfUrl: target }
+      );
+      return reopened?.tab || reopened;
+    }
+    const navigated = await host.runCommand("navigate", { url: target, newTab: true, waitForLoad: true });
+    return navigated?.tab || navigated;
+  }
   async function resolveActionTab(action, params = {}) {
     const state = await host.snapshotState();
     const tabs = flattenTabs(state);
     let tab = findActionTab(tabs, action);
     const url2 = String(action.url || "").trim();
     if (!tab && url2 && params.openIfNeeded !== false) {
-      const navigated = await host.runCommand("navigate", { url: url2, newTab: true, waitForLoad: true });
-      tab = navigated?.tab || navigated;
+      tab = await openRestoredSourceTab(url2);
     }
     if (!tab) return null;
     const tabId = tab?.id;
@@ -157711,8 +157722,7 @@ function createOnhandBrowserRuntime(host) {
       const hasExplicitTarget = typeof first.tabId === "number" || Boolean(first.url || first.title);
       if (!tab && first.url && params.openIfNeeded !== false) {
         try {
-          const navigated = await host.runCommand("navigate", { url: first.url, newTab: true, waitForLoad: true });
-          tab = navigated?.tab || navigated;
+          tab = await openRestoredSourceTab(first.url);
         } catch (error52) {
           failures.push(error52?.message || String(error52));
         }
@@ -158629,7 +158639,11 @@ function createOnhandBrowserRuntime(host) {
           };
           try {
             await host.runCommand("pdf_jump_to_page", jumpArgs);
-            return action;
+            try {
+              await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+              return action;
+            } catch {
+            }
           } catch {
             try {
               await host.runCommand("open_pdf_in_onhand_viewer", {
@@ -158644,7 +158658,11 @@ function createOnhandBrowserRuntime(host) {
                 timeoutMs: 15e3
               });
               await host.runCommand("pdf_jump_to_page", jumpArgs);
-              return action;
+              try {
+                await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+                return action;
+              } catch {
+              }
             } catch {
             }
           }

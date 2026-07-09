@@ -99,6 +99,24 @@ function createReplayHost(options = {}) {
 				else tabs.push(navigatedTab);
 				return { tab: navigatedTab };
 			}
+			if (name === "reopen_onhand_pdf_viewer") {
+				const viewerUrl = String(args.viewerUrl || (args.pdfUrl ? `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(String(args.pdfUrl))}` : ""));
+				if (!viewerUrl) throw new Error("reopen_onhand_pdf_viewer requires a viewerUrl or pdfUrl.");
+				const viewerTab = {
+					id: Number(options.pdfViewerTabId || 120),
+					windowId: Number(options.pdfViewerWindowId || 3),
+					active: true,
+					title: options.pdfViewerTitle || "Onhand PDF Viewer",
+					url: viewerUrl,
+				};
+				for (const candidate of tabs) {
+					if (candidate.windowId === viewerTab.windowId) candidate.active = false;
+				}
+				const existingIndex = tabs.findIndex((candidate) => candidate.id === viewerTab.id);
+				if (existingIndex >= 0) tabs[existingIndex] = viewerTab;
+				else tabs.push(viewerTab);
+				return { tab: viewerTab, viewerUrl, opened: true };
+			}
 			if (name === "open_pdf_in_onhand_viewer") {
 				const pdfUrl = String(args.pdfUrl || tab.url || "https://example.test/replay-smoke.pdf");
 				const viewerUrl = String(options.pdfViewerUrl || `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdfUrl)}`);
@@ -6154,8 +6172,18 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 	assert.equal(fallbackHost.calls[jumpIndex].args.pageNumber, 1);
 	assert.equal("text" in fallbackHost.calls[jumpIndex].args, false, "stale Onhand PDF source jumps should use page anchors, not slow exact text matching");
 	assert.deepEqual(fallbackHost.calls[jumpIndex].args.pdfAnchor, pdfAnchor);
-	assert.equal(fallbackHost.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), false);
-	assert.equal(fallbackHost.calls.some((call) => call.name === "highlight_text"), false);
+	// The fast path must not open the viewer before trying the cheap jump; the
+	// replay stage MAY hand off to the viewer afterwards to re-create the mark.
+	const fallbackOpenIndex = fallbackHost.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
+	assert.ok(fallbackOpenIndex === -1 || fallbackOpenIndex > jumpIndex, "viewer handoff may only happen at the replay stage, after the fast jump");
+	// New contract: when the annotation is verifiably gone after the fast jump
+	// (every scroll attempt rejects), activation must fall through and re-create
+	// the mark via the anchored replay — landing on the right page with no
+	// highlight is the "citation shows nothing" bug.
+	const fallbackHighlightIndex = fallbackHost.calls.findIndex((call) => call.name === "highlight_text");
+	assert.notEqual(fallbackHighlightIndex, -1, "a stale PDF source whose annotation is gone after the jump must be re-highlighted");
+	assert.ok(fallbackHighlightIndex > jumpIndex, "the highlight replay should run after the fast page jump");
+	assert.deepEqual(fallbackHost.calls[fallbackHighlightIndex].args.pdfAnchor, pdfAnchor, "the replay should anchor by the saved pdfAnchor, not slow text scanning");
 
 	const staleNoteHost = createReplayHost({
 		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
@@ -6168,7 +6196,10 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 	assert.notEqual(noteScrollIndex, -1, "expected stale note activation to try paired highlight scroll first");
 	assert.notEqual(noteJumpIndex, -1, "stale PDF note activation should jump to the saved page when the note card is missing");
 	assert.ok(noteScrollIndex < noteJumpIndex, "stale PDF note activation should try direct scroll before page fallback");
-	assert.equal(staleNoteHost.calls[noteScrollIndex].args.annotationId, "stale-pdf-source");
+	// The previous sub-case's replay self-healed the paired highlight's saved id
+	// (stale-pdf-source -> pdf-source-restored), so the note activation now
+	// scrolls to the updated id — that persistence is part of the new contract.
+	assert.equal(staleNoteHost.calls[noteScrollIndex].args.annotationId, "pdf-source-restored");
 	assert.equal(staleNoteHost.calls[noteScrollIndex].args.target, "note");
 	assert.equal(staleNoteHost.calls[noteJumpIndex].args.pageNumber, 1);
 	assert.equal("text" in staleNoteHost.calls[noteJumpIndex].args, false, "stale Onhand PDF note jumps should use page anchors, not slow exact text matching");
@@ -6372,12 +6403,13 @@ async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	assert.equal(restored.restoredPages.length, 1);
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 1);
 	assert.equal(restored.restoredPages[0].restoredNotes, 1);
-	assert.equal(navigateCalls.length, 1);
-	// A viewer-url artifact should reopen the current Onhand PDF viewer, not
-	// navigate directly to the embedded source PDF. Direct navigation can
-	// trigger a browser download before the viewer handoff can run.
-	assert.equal(navigateCalls[0].args.url, viewerUrl);
-	assert.notEqual(navigateCalls[0].args.url, pdfUrl);
+	// A viewer-url artifact reopens through the internal session-restore viewer
+	// command (never browser_navigate): direct navigation can trigger a browser
+	// download, and file:// sources are blocked in navigate entirely.
+	assert.equal(navigateCalls.length, 0, "own-viewer artifact restore must not use browser_navigate");
+	const reopenCalls = restoreCalls.filter((call) => call.name === "reopen_onhand_pdf_viewer");
+	assert.equal(reopenCalls.length, 1);
+	assert.equal(reopenCalls[0].args.viewerUrl, viewerUrl);
 	assert.equal(waitCalls.length, 1);
 	assert.match(waitCalls[0].args.selector, /data-onhand-pdf-rendered/);
 	assert.equal(highlightCalls.length, 1);
@@ -6495,9 +6527,12 @@ async function assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport() {
 	const replayPages = restored.restoredPages.filter((page) => page.source === "browser-replay");
 	assert.equal(restored.restoredPages.length, 1, "a covered Docs PDF artifact should not trigger replay fallback");
 	assert.equal(replayPages.length, 0, "Docs PDF artifact restore should cover matching replay page actions");
-	assert.equal(navigateCalls.length, 1);
-	assert.equal(navigateCalls[0].args.url, viewerUrl);
-	assert.notEqual(navigateCalls[0].args.url, pdfUrl);
+	// Own-viewer URLs restore through the internal reopen command, never
+	// browser_navigate (which would hit the raw export/download or file: block).
+	assert.equal(navigateCalls.length, 0, "Docs viewer restore must not use browser_navigate");
+	const docsReopenCalls = restoreCalls.filter((call) => call.name === "reopen_onhand_pdf_viewer");
+	assert.equal(docsReopenCalls.length, 1);
+	assert.equal(docsReopenCalls[0].args.viewerUrl, viewerUrl);
 	assert.equal(highlightCalls.length, 1);
 	assert.deepEqual(highlightCalls[0].args.pdfAnchor, pdfAnchor);
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "google-docs-pdf-restored-anchor"), true);
