@@ -50,7 +50,7 @@ The broader product plan lives in:
 
 - Browser-only mode stores runtime settings in extension storage, including the selected auth mode, model, optional provider API keys, OpenAI Codex sign-in credentials, and the anonymous Onhand Free token.
 - Onhand Free uses a hosted Cloudflare Worker that forwards model requests to OpenRouter with daily usage caps. Anonymous diagnostics are required for Onhand Free so the hosted endpoint can monitor reliability, cost, quota pressure, crashes, and abuse.
-- OpenAI Codex sign-in uses the browser OAuth flow with selectable Codex text models. `gpt-5.5` is the default and recommended model for Onhand's page-grounded tool use.
+- OpenAI Codex sign-in uses the browser OAuth flow with selectable Codex text models. `gpt-5.5` remains the default, and GPT-5.6 Sol (`gpt-5.6-sol`), Terra (`gpt-5.6-terra`), and Luna (`gpt-5.6-luna`) are available when the signed-in Codex plan includes them.
 - Provider API-key mode calls the selected provider directly from the extension runtime. Supported providers include OpenAI, Anthropic, Google Gemini, and OpenRouter.
 - Anonymous diagnostics and explicit error reports are redacted. They do not include prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys. Sentry receives only redacted crash/exception events when diagnostics are enabled or when the user explicitly sends an anonymized error report.
 - `browser_run_js` is an optional, constrained last-resort runtime-state inspection tool for complex client-side pages. Users can disable it from the options page.

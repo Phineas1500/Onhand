@@ -147491,6 +147491,47 @@ var OPENAI_API_PROVIDER = "openai";
 var OPENAI_API_MODEL = "gpt-4.1-mini";
 var OPENAI_CODEX_PROVIDER = "openai-codex";
 var OPENAI_CODEX_MODEL = "gpt-5.5";
+var OPENAI_CODEX_ADDITIONAL_MODELS = [
+  {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-codex-responses",
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+    input: ["text", "image"],
+    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-codex-responses",
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+    input: ["text", "image"],
+    cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-codex-responses",
+    provider: OPENAI_CODEX_PROVIDER,
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+    input: ["text", "image"],
+    cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  }
+];
 var ANTHROPIC_API_PROVIDER = "anthropic";
 var ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 var GOOGLE_API_PROVIDER = "google";
@@ -147601,6 +147642,12 @@ function buildOpenRouterFallbackModel(modelId) {
     maxTokens: 32768,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   };
+}
+function buildOpenAICodexFallbackModel(modelId) {
+  const normalizedId = modelId === "gpt-5.6" ? "gpt-5.6-sol" : modelId;
+  const model = OPENAI_CODEX_ADDITIONAL_MODELS.find((candidate) => candidate.id === normalizedId);
+  if (!model) return null;
+  return modelId === "gpt-5.6" ? { ...model, id: modelId } : { ...model };
 }
 var SMOKE_PROVIDER = "onhand-smoke";
 var SMOKE_MODEL = "onhand-smoke-1";
@@ -149170,7 +149217,12 @@ function getProviderModelOptions(providerId) {
   const isOAuthProvider = isBrowserOAuthProvider(providerId);
   if (!isApiProvider && !isOAuthProvider) return [];
   try {
-    return getModels(providerId).filter((model) => model?.input?.includes?.("text")).filter((model) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id)).map((model) => ({
+    const catalogModels = getModels(providerId);
+    const models = providerId === OPENAI_CODEX_PROVIDER ? [
+      ...OPENAI_CODEX_ADDITIONAL_MODELS,
+      ...catalogModels.filter((model) => !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id))
+    ] : catalogModels;
+    return models.filter((model) => model?.input?.includes?.("text")).filter((model) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id)).map((model) => ({
       id: model.id,
       name: model.name || model.id,
       api: model.api,
@@ -154121,6 +154173,7 @@ var __browserRuntimeTest = {
   getMissingApiKeyError,
   getApiKeyForProvider,
   getProviderModelOptions,
+  buildOpenAICodexFallbackModel,
   normalizeApiKeys,
   normalizeProviderForAuthMode,
   validateProviderApiKey,
@@ -156564,7 +156617,7 @@ function createOnhandBrowserRuntime(host) {
     return prepared;
   }
   async function getConfiguredModel(settings2) {
-    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : settings2.aiProvider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel) || (settings2.aiProvider === OPENROUTER_API_PROVIDER && settings2.aiModel ? buildOpenRouterFallbackModel(settings2.aiModel) : null);
+    const model = settings2.aiProvider === SMOKE_PROVIDER ? getSmokeModel(settings2.aiModel) : settings2.aiProvider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await host.resolveModel?.(settings2.aiProvider, settings2.aiModel) || getModel(settings2.aiProvider, settings2.aiModel) || (settings2.aiProvider === OPENAI_CODEX_PROVIDER ? buildOpenAICodexFallbackModel(settings2.aiModel) : null) || (settings2.aiProvider === OPENROUTER_API_PROVIDER && settings2.aiModel ? buildOpenRouterFallbackModel(settings2.aiModel) : null);
     if (!model) {
       throw new Error(`Unknown AI model: ${settings2.aiProvider}/${settings2.aiModel}`);
     }

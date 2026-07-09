@@ -293,6 +293,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 		getApiKeyForProvider,
 		getMissingApiKeyError,
 		getProviderModelOptions,
+		buildOpenAICodexFallbackModel,
 		normalizeApiKeys,
 		normalizeProviderForAuthMode,
 		validateProviderApiKey,
@@ -302,6 +303,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(typeof getMissingApiKeyError, "function", "provider key error export is missing");
 	assert.equal(typeof validateProviderApiKey, "function", "provider key validator export is missing");
 	assert.equal(typeof getProviderModelOptions, "function", "provider model list export is missing");
+	assert.equal(typeof buildOpenAICodexFallbackModel, "function", "Codex fallback model builder export is missing");
 	assert.deepEqual(normalizeApiKeys({ openai: " sk-openai ", anthropic: "sk-ant-test", unknown: "secret" }, "legacy"), {
 		openai: "sk-openai",
 		anthropic: "sk-ant-test",
@@ -319,6 +321,11 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.ok(getProviderModelOptions("openrouter").length <= 5, "openrouter model options should stay curated");
 	assert.equal(getProviderModelOptions("onhand-free")[0].id, "deepseek/deepseek-v4-flash", "free tier should pin its model");
 	assert.deepEqual(getProviderModelOptions("onhand-free")[0].input, ["text", "image"], "free tier must preserve image payloads for server-side visual routing");
+	const codexModelIds = getProviderModelOptions("openai-codex").map((model) => model.id);
+	assert.deepEqual(codexModelIds.slice(0, 3), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "Codex should offer all GPT-5.6 tiers");
+	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6-sol")?.api, "openai-codex-responses");
+	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6")?.id, "gpt-5.6", "the GPT-5.6 alias should resolve to the Sol transport shape");
+	assert.equal(buildOpenAICodexFallbackModel("gpt-5.5"), null, "catalog-backed Codex models should not use the fallback builder");
 	{
 		// The free-tier worker rejects everything outside its allowlist, so
 		// the options page must not offer a custom-model entry for it.
@@ -2086,10 +2093,35 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /data-onhand-pdf-pending/, `${path} should support pending page shells`);
 		assert.match(source, /renderRemainingPages/, `${path} should background-render remaining pages`);
 		assert.match(source, /ensurePageRendered/, `${path} should render pages on demand`);
+		// Zoom must not mark and rerender every page. Existing canvases scale
+		// immediately, while only visible/nearby pages receive a sharper raster;
+		// trackpad pinch is the native ctrl+wheel gesture in Chromium.
+		assert.match(source, /pageNeedsSharperRender/, `${path} should track whether a page actually needs a sharper raster`);
+		assert.match(source, /renderSharpPagesNearViewport/, `${path} should rerender only pages near the viewport after zoom`);
+		assert.match(source, /data-onhand-pdf-raster-scale/, `${path} should retain each page's raster scale`);
+		assert.match(source, /committedScale/, `${path} should separate committed layout scale from transient gesture scale`);
+		assert.match(source, /applyTransientZoom/, `${path} should preview gesture zoom with one compositor transform`);
+		assert.match(source, /commitTransientZoom/, `${path} should commit page layout only after gesture zoom settles`);
+		assert.match(source, /pendingCountBeforeSharpen/, `${path} should not compete with the initial background render queue when sharpening scans`);
+		assert.match(source, /rebuildPdfAnnotationLayers/, `${path} should rebuild annotations at committed geometry even when sharpening is deferred`);
+		assert.match(source, /return Math\.min\(requested, dimensionLimit, pixelLimit\)/, `${path} should honor canvas dimension and pixel caps at every zoom level`);
+		assert.doesNotMatch(source, /Math\.max\(0\.25, Math\.min\(requested, dimensionLimit, pixelLimit\)\)/, `${path} should not override canvas safety caps with a minimum output scale`);
+		assert.match(source, /event\.ctrlKey/, `${path} should support Chromium trackpad pinch zoom`);
+		assert.match(source, /gesturechange/, `${path} should support native gesture zoom events`);
+		assert.doesNotMatch(source, /Every page needs a crisp pass/, `${path} should not schedule a full-document rerender after zoom`);
 		// textContent glues text-layer line fragments together; extraction
 		// must convert PDF.js's <br> line markers to whitespace.
 		assert.match(source, /textLayerVisibleText/, `${path} should separate text-layer lines when extracting text`);
 	}
+	const viewerHtml = await readFile(new URL("../packages/browser-extension/pdf-viewer.html", import.meta.url), "utf8");
+	assert.match(viewerHtml, /id="onhand-pdf-zoom-value"/, "PDF viewer should expose a visible zoom percentage and fit control");
+	assert.match(viewerHtml, /justify-content:\s*safe center/, "oversized PDF pages should remain horizontally scrollable");
+	assert.match(viewerHtml, /\.onhand-pdf-toolbar\s*\{[^}]*position:\s*fixed[^}]*left:\s*0[^}]*right:\s*0/s, "PDF toolbar should stay pinned to the viewport while a zoomed page scrolls horizontally");
+	assert.match(viewerHtml, /body\s*\{[^}]*padding-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "fixed PDF toolbar should reserve its height above the document");
+	assert.match(viewerHtml, /\.page\s*\{[^}]*scroll-margin-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "PDF page jumps should land below the fixed toolbar");
+	assert.match(viewerHtml, /id="onhand-pdf-title"[\s\S]*id="onhand-pdf-status"[\s\S]*class="onhand-pdf-controls"/, "variable PDF status text should appear before the stable control cluster");
+	assert.match(viewerHtml, /\.onhand-pdf-controls\s*\{[^}]*flex:\s*0\s+0\s+auto/s, "PDF controls should not move or shrink when status text changes");
+	assert.match(viewerHtml, /\.canvasWrapper\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s, "PDF canvases should fill resized page shells without per-canvas layout writes");
 	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
 	assert.match(
 		background,

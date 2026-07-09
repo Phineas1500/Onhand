@@ -254,7 +254,7 @@ function syncAuthModeFields() {
 			aiModelInput.value = getProviderDefaultModel(providerId);
 		}
 		populateModelSelect(providerId, aiModelInput.value.trim());
-		modelHelpEl.textContent = "Codex sign-in uses your selected OpenAI Codex model for text chat. Switch Authentication to Provider API key if you want text chat to use an API key.";
+		modelHelpEl.textContent = "Codex sign-in uses your selected OpenAI Codex model for text chat. GPT-5.6 availability follows your Codex plan. Switch Authentication to Provider API key if you want text chat to use an API key.";
 	} else if (isFreeTierMode()) {
 		providerFieldEl.hidden = true;
 		modelSelectEl.disabled = true;
