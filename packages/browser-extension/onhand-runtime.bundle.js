@@ -151468,15 +151468,20 @@ function onhandPdfViewerSourceUrl(value) {
     if (!isOnhandPdfViewerUrl(parsed.href)) return "";
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
-    const decoded = decodeURIComponent(source);
-    return /^https?:\/\//i.test(decoded) || /^file:/i.test(decoded) ? decoded : "";
+    if (/^(?:https?|file):/i.test(source)) return source;
+    try {
+      const decoded = decodeURIComponent(source);
+      return /^(?:https?|file):/i.test(decoded) ? decoded : "";
+    } catch {
+      return "";
+    }
   } catch {
     return "";
   }
 }
 function onhandPdfViewerOpenUrl(sourceUrl, previousViewerUrl = "") {
   const source = String(sourceUrl || "").trim();
-  if (!/^https?:\/\//i.test(source)) return previousViewerUrl || source;
+  if (!/^(?:https?|file):/i.test(source)) return previousViewerUrl || source;
   try {
     const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
     viewerUrl.searchParams.set("url", source);
@@ -154002,6 +154007,8 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+  onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningEvent,
   buildLearnerStatePromptSummary,

@@ -6321,6 +6321,27 @@ async function assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl() {
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "pdf-viewer-restored-anchor"), true);
 }
 
+async function assertOnhandPdfViewerSourceUrlIdentity() {
+	installChromeStorageStub();
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const sourceUrl = __browserRuntimeTest.onhandPdfViewerSourceUrlForTest;
+	const openUrl = __browserRuntimeTest.onhandPdfViewerOpenUrlForTest;
+	const viewer = (pdf) => `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdf)}`;
+	// file: sources resolve (the duplicate-restore fix)
+	assert.equal(sourceUrl(viewer("file:///Users/me/Downloads/ERS-649.pdf")), "file:///Users/me/Downloads/ERS-649.pdf");
+	// literal percent signs in file names must not be double-decoded or throw
+	assert.equal(sourceUrl(viewer("file:///Users/me/100% Complete.pdf")), "file:///Users/me/100% Complete.pdf");
+	// double-encoded legacy values still resolve via the fallback decode
+	assert.equal(sourceUrl("chrome-extension://onhand-test/pdf-viewer.html?url=" + encodeURIComponent(encodeURIComponent("https://a.test/paper.pdf"))), "https://a.test/paper.pdf");
+	// http behavior unchanged
+	assert.equal(sourceUrl(viewer("https://a.test/paper.pdf")), "https://a.test/paper.pdf");
+	// stale/foreign extension ids re-home onto the current install for file sources
+	const stale = "chrome-extension://stale-old-id/pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/Downloads/ERS-649.pdf") + "&page=6";
+	const rebuilt = openUrl(sourceUrl(stale), stale);
+	assert.ok(rebuilt.startsWith("chrome-extension://onhand-test/pdf-viewer.html?"), `stale file viewer should rebuild onto the current extension id, got ${rebuilt}`);
+	assert.ok(rebuilt.includes("page=6"), "rebuild should preserve the saved page");
+}
+
 async function assertOwnPdfViewerArtifactRestoreIsRestorable() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -9157,6 +9178,7 @@ async function main() {
 	await assertArtifactRestorePassesPdfAnchorToHighlight();
 	await assertPdfActionActivationHandsOffBeforeSourceFallback();
 	await assertPdfArtifactRestoreNavigatesViewerUrlNotDocumentUrl();
+	await assertOnhandPdfViewerSourceUrlIdentity();
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
 	await assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport();
 	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();

@@ -6028,11 +6028,20 @@ function onhandPdfViewerSourceUrl(value: unknown): string {
 		if (!isOnhandPdfViewerUrl(parsed.href)) return "";
 		const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
 		if (!source) return "";
-		const decoded = decodeURIComponent(source);
+		// searchParams.get() has already percent-decoded once; decoding again
+		// corrupts (or throws on) file names with literal percent signs like
+		// "100% Complete.pdf". Only fall back to a second decode for
+		// double-encoded legacy values, and never throw.
 		// file: sources count too — restore/session logic uses this to recognize
 		// that a viewer URL and its local-file source are the SAME document (else
 		// session restore opens the PDF twice, only one copy annotated).
-		return /^https?:\/\//i.test(decoded) || /^file:/i.test(decoded) ? decoded : "";
+		if (/^(?:https?|file):/i.test(source)) return source;
+		try {
+			const decoded = decodeURIComponent(source);
+			return /^(?:https?|file):/i.test(decoded) ? decoded : "";
+		} catch {
+			return "";
+		}
 	} catch {
 		return "";
 	}
@@ -6040,7 +6049,9 @@ function onhandPdfViewerSourceUrl(value: unknown): string {
 
 function onhandPdfViewerOpenUrl(sourceUrl: string, previousViewerUrl = "") {
 	const source = String(sourceUrl || "").trim();
-	if (!/^https?:\/\//i.test(source)) return previousViewerUrl || source;
+	// file: sources rebuild too, so a saved viewer URL from an older/different
+	// extension id re-homes onto the current install instead of being rejected.
+	if (!/^(?:https?|file):/i.test(source)) return previousViewerUrl || source;
 	try {
 		const viewerUrl = new URL(chrome.runtime.getURL("pdf-viewer.html"));
 		viewerUrl.searchParams.set("url", source);
@@ -9182,6 +9193,8 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
 	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
