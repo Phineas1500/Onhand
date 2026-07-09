@@ -7446,12 +7446,15 @@ async function assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails() {
 	const restored = await runtime.restoreSession();
 	const restoreCalls = host.calls.slice(callCountBeforeRestore);
 	const highlightTexts = restoreCalls.filter((call) => call.name === "highlight_text").map((call) => call.args.text);
-	const replayPage = restored.restoredPages.find((page) => page.source === "browser-replay");
-	const artifactPage = restored.restoredPages.find((page) => page.source === "browser-artifact");
-	assert.equal(restored.restoredPages.length, 2);
-	assert.equal(artifactPage?.failedCount, 1);
-	assert.equal(replayPage?.restoredAnnotations, 1);
-	assert.equal(replayPage?.restoredNotes, 1);
+	// The failed artifact pass and the successful replay hit the SAME tab, so
+	// they coalesce into one restored page: the failure stays visible in
+	// failedCount while the replay's marks are counted — not "2 pages" for one
+	// document.
+	assert.equal(restored.restoredPages.length, 1);
+	const mergedPage = restored.restoredPages[0];
+	assert.equal(mergedPage?.failedCount, 1);
+	assert.equal(mergedPage?.restoredAnnotations, 1);
+	assert.equal(mergedPage?.restoredNotes, 1);
 	assert.deepEqual(highlightTexts, ["q=qP", "q = qP", "q = qP"]);
 	assert.equal(restoreCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), true);
 	assert.equal(restoreCalls.filter((call) => call.name === "clear_annotations" && call.args.tabId === 7).length, 1);

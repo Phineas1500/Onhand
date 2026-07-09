@@ -2954,6 +2954,39 @@ function summarizeRestoredArtifact(result: any) {
 	};
 }
 
+// An artifact pass and the replay pass can both land on the SAME tab (the
+// artifact opens the page, the replay adds the marks). Report them as one
+// restored page so the user does not see "2 pages" for one document.
+function coalesceRestoredPagesByTab(pages: any[]) {
+	const byTab = new Map<number, any>();
+	const out: any[] = [];
+	for (const page of pages) {
+		const tabId = typeof page?.tabId === "number" ? page.tabId : null;
+		if (tabId == null) {
+			out.push(page);
+			continue;
+		}
+		const existing = byTab.get(tabId);
+		if (!existing) {
+			const copy = { ...page, failures: [...(page.failures || [])] };
+			byTab.set(tabId, copy);
+			out.push(copy);
+			continue;
+		}
+		existing.restoredAnnotations = Number(existing.restoredAnnotations || 0) + Number(page.restoredAnnotations || 0);
+		existing.restoredCount = existing.restoredAnnotations;
+		existing.recoveredAnnotations = Number(existing.recoveredAnnotations || 0) + Number(page.recoveredAnnotations || 0);
+		existing.restoredNotes = Number(existing.restoredNotes || 0) + Number(page.restoredNotes || 0);
+		existing.failures = [...(existing.failures || []), ...(page.failures || [])];
+		existing.failedCount = existing.failures.length;
+		if (!existing.artifactId && page.artifactId) existing.artifactId = page.artifactId;
+		if (!existing.title && page.title) existing.title = page.title;
+		if (!existing.url && page.url) existing.url = page.url;
+		existing.snapshotFallback = existing.snapshotFallback || page.snapshotFallback || null;
+	}
+	return out;
+}
+
 function replayActionKey(action: PageAction, text = "") {
 	const annotationId = compactActionText(action.annotationId);
 	if (annotationId) return `annotation:${annotationId}`;
@@ -5996,7 +6029,10 @@ function onhandPdfViewerSourceUrl(value: unknown): string {
 		const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
 		if (!source) return "";
 		const decoded = decodeURIComponent(source);
-		return /^https?:\/\//i.test(decoded) ? decoded : "";
+		// file: sources count too — restore/session logic uses this to recognize
+		// that a viewer URL and its local-file source are the SAME document (else
+		// session restore opens the PDF twice, only one copy annotated).
+		return /^https?:\/\//i.test(decoded) || /^file:/i.test(decoded) ? decoded : "";
 	} catch {
 		return "";
 	}
@@ -13993,7 +14029,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					}),
 				);
 			}
-			const restoredPages = restored.map(summarizeRestoredArtifact);
+			const restoredPages = coalesceRestoredPagesByTab(restored.map(summarizeRestoredArtifact));
 			const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
 			const replayPages = restored.filter((page) => page?.source === "browser-replay");
 			const artifactPages = restored.filter((page) => page?.source !== "browser-replay");

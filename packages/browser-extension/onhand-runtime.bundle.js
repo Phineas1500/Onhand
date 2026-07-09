@@ -149778,6 +149778,35 @@ function summarizeRestoredArtifact(result) {
     snapshotFallback: result?.snapshotFallback || null
   };
 }
+function coalesceRestoredPagesByTab(pages) {
+  const byTab = /* @__PURE__ */ new Map();
+  const out = [];
+  for (const page of pages) {
+    const tabId = typeof page?.tabId === "number" ? page.tabId : null;
+    if (tabId == null) {
+      out.push(page);
+      continue;
+    }
+    const existing = byTab.get(tabId);
+    if (!existing) {
+      const copy = { ...page, failures: [...page.failures || []] };
+      byTab.set(tabId, copy);
+      out.push(copy);
+      continue;
+    }
+    existing.restoredAnnotations = Number(existing.restoredAnnotations || 0) + Number(page.restoredAnnotations || 0);
+    existing.restoredCount = existing.restoredAnnotations;
+    existing.recoveredAnnotations = Number(existing.recoveredAnnotations || 0) + Number(page.recoveredAnnotations || 0);
+    existing.restoredNotes = Number(existing.restoredNotes || 0) + Number(page.restoredNotes || 0);
+    existing.failures = [...existing.failures || [], ...page.failures || []];
+    existing.failedCount = existing.failures.length;
+    if (!existing.artifactId && page.artifactId) existing.artifactId = page.artifactId;
+    if (!existing.title && page.title) existing.title = page.title;
+    if (!existing.url && page.url) existing.url = page.url;
+    existing.snapshotFallback = existing.snapshotFallback || page.snapshotFallback || null;
+  }
+  return out;
+}
 function replayActionKey(action, text = "") {
   const annotationId = compactActionText(action.annotationId);
   if (annotationId) return `annotation:${annotationId}`;
@@ -151440,7 +151469,7 @@ function onhandPdfViewerSourceUrl(value) {
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
     const decoded = decodeURIComponent(source);
-    return /^https?:\/\//i.test(decoded) ? decoded : "";
+    return /^https?:\/\//i.test(decoded) || /^file:/i.test(decoded) ? decoded : "";
   } catch {
     return "";
   }
@@ -158335,7 +158364,7 @@ function createOnhandBrowserRuntime(host) {
           })
         );
       }
-      const restoredPages = restored.map(summarizeRestoredArtifact);
+      const restoredPages = coalesceRestoredPagesByTab(restored.map(summarizeRestoredArtifact));
       const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
       const replayPages = restored.filter((page) => page?.source === "browser-replay");
       const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
