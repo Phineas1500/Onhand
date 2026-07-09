@@ -13251,10 +13251,26 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	async function openRestoredSourceTab(url: string) {
 		const target = String(url || "").trim();
 		if (!target) return null;
-		if (isOnhandPdfViewerUrl(target) || /^file:/i.test(target)) {
+		// Only EXTENSION viewer URLs take the internal reopen command
+		// (isOnhandPdfViewerUrl also matches web-hosted /onhand-pdf-viewer.html
+		// copies, which restore fine via plain navigation). Rebuilding through
+		// onhandPdfViewerOpenUrl re-homes stale/foreign extension ids onto the
+		// current install. Local-file PDFs also reopen internally because
+		// browser_navigate blocks file://.
+		const isExtensionViewerUrl = (() => {
+			try {
+				const parsed = new URL(target);
+				return parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname);
+			} catch {
+				return false;
+			}
+		})();
+		if (isExtensionViewerUrl || /^file:/i.test(target)) {
 			const reopened = await host.runCommand(
 				"reopen_onhand_pdf_viewer",
-				isOnhandPdfViewerUrl(target) ? { viewerUrl: target } : { pdfUrl: target },
+				isExtensionViewerUrl
+					? { viewerUrl: onhandPdfViewerOpenUrl(onhandPdfViewerSourceUrl(target), target) || target }
+					: { pdfUrl: target },
 			);
 			return (reopened as any)?.tab || reopened;
 		}
