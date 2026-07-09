@@ -151468,10 +151468,15 @@ function onhandPdfViewerSourceUrl(value) {
     if (!isOnhandPdfViewerUrl(parsed.href)) return "";
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
-    if (/^(?:https?|file):/i.test(source)) return source;
+    const extensionViewer = parsed.protocol === "chrome-extension:";
+    const resolveCandidate = (candidate) => {
+      if (/^file:/i.test(candidate)) return extensionViewer ? candidate : "";
+      return /^https?:/i.test(candidate) ? candidate : "";
+    };
+    const direct = resolveCandidate(source);
+    if (direct) return direct;
     try {
-      const decoded = decodeURIComponent(source);
-      return /^(?:https?|file):/i.test(decoded) ? decoded : "";
+      return resolveCandidate(decodeURIComponent(source));
     } catch {
       return "";
     }

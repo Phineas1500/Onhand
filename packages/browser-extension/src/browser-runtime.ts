@@ -6035,10 +6035,21 @@ function onhandPdfViewerSourceUrl(value: unknown): string {
 		// file: sources count too — restore/session logic uses this to recognize
 		// that a viewer URL and its local-file source are the SAME document (else
 		// session restore opens the PDF twice, only one copy annotated).
-		if (/^(?:https?|file):/i.test(source)) return source;
+		// file: sources are only trusted when the WRAPPING url is Onhand's own
+		// extension viewer (any install id — a web page cannot fake the
+		// chrome-extension scheme). isOnhandPdfViewerUrl also matches web-hosted
+		// /onhand-pdf-viewer.html copies, and accepting their file: params would
+		// let an untrusted page's record be upgraded on restore into a granted
+		// local-file launch.
+		const extensionViewer = parsed.protocol === "chrome-extension:";
+		const resolveCandidate = (candidate: string) => {
+			if (/^file:/i.test(candidate)) return extensionViewer ? candidate : "";
+			return /^https?:/i.test(candidate) ? candidate : "";
+		};
+		const direct = resolveCandidate(source);
+		if (direct) return direct;
 		try {
-			const decoded = decodeURIComponent(source);
-			return /^(?:https?|file):/i.test(decoded) ? decoded : "";
+			return resolveCandidate(decodeURIComponent(source));
 		} catch {
 			return "";
 		}
