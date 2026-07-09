@@ -4,9 +4,13 @@ declare const chrome: any;
 
 const DEFAULT_SCALE = 1;
 const MIN_SCALE = 0.25;
-const MAX_SCALE = 2.6;
+const MAX_SCALE = 4;
 const SCALE_STEP = 0.15;
 const RESIZE_RENDER_DELAY_MS = 160;
+const ZOOM_RENDER_DELAY_MS = 180;
+const VIEWPORT_RENDER_DELAY_MS = 100;
+const MAX_CANVAS_PIXELS = 32 * 1024 * 1024;
+const MAX_CANVAS_DIMENSION = 8192;
 const PDF_LOAD_TIMEOUT_MS = 20000;
 const GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS = 12000;
 const PDF_VIEWER_ANNOTATION_THEME = "light";
@@ -18,16 +22,29 @@ const pageInput = document.getElementById("onhand-pdf-page") as HTMLInputElement
 const pageCountElement = document.getElementById("onhand-pdf-page-count") as HTMLElement;
 const zoomInButton = document.getElementById("onhand-pdf-zoom-in") as HTMLButtonElement;
 const zoomOutButton = document.getElementById("onhand-pdf-zoom-out") as HTMLButtonElement;
+const zoomValueButton = document.getElementById("onhand-pdf-zoom-value") as HTMLButtonElement;
 
 let pdfDocument: any = null;
 let sourceUrl = "";
 let currentScale = DEFAULT_SCALE;
+let committedScale = DEFAULT_SCALE;
 let scaleMode: "fit" | "custom" = "fit";
 let renderSequence = 0;
 let runtimeBridgePort: any = null;
 let runtimeBridgeReconnectTimer: number | null = null;
 let annotationSequence = 0;
 let resizeRenderTimer: number | null = null;
+let zoomRenderTimer: number | null = null;
+let viewportRenderTimer: number | null = null;
+let gestureAnimationFrame: number | null = null;
+let zoomRevision = 0;
+let queuedGestureScale = DEFAULT_SCALE;
+let queuedGestureClientX = 0;
+let queuedGestureClientY = 0;
+let nativeGestureStartScale = DEFAULT_SCALE;
+let transientZoomAnchor: PdfZoomAnchor | null = null;
+let transientZoomOriginX = 0;
+let transientZoomOriginY = 0;
 let lastFitRenderWidth = 0;
 
 type PdfRect = {
@@ -55,6 +72,14 @@ type PdfViewSnapshot = {
 	pageNumber: number;
 	pageOffsetRatio: number;
 	annotations: PdfAnnotationSnapshot[];
+};
+
+type PdfZoomAnchor = {
+	pageNumber: number;
+	xRatio: number;
+	yRatio: number;
+	clientX: number;
+	clientY: number;
 };
 
 function inlinePdfViewerBridgeStorageKey(pdfUrl: string) {
@@ -163,6 +188,108 @@ function visibleEnough(rect: DOMRect | ClientRect) {
 function clampScale(value: number) {
 	const scale = Number.isFinite(value) && value > 0 ? value : DEFAULT_SCALE;
 	return Math.max(MIN_SCALE, Math.min(MAX_SCALE, Number(scale.toFixed(3))));
+}
+
+function updateZoomControls() {
+	const percent = Math.round(currentScale * 100);
+	zoomValueButton.textContent = `${percent}%`;
+	zoomValueButton.setAttribute("aria-label", `Zoom ${percent}%. Click to fit the page to the window.`);
+	zoomOutButton.disabled = currentScale <= MIN_SCALE + 0.001;
+	zoomInButton.disabled = currentScale >= MAX_SCALE - 0.001;
+}
+
+function defaultZoomClientPoint() {
+	const toolbar = document.querySelector<HTMLElement>(".onhand-pdf-toolbar");
+	const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
+	return {
+		clientX: window.innerWidth / 2,
+		clientY: toolbarBottom + Math.max(1, window.innerHeight - toolbarBottom) / 2,
+	};
+}
+
+function captureZoomAnchor(clientX?: number, clientY?: number): PdfZoomAnchor | null {
+	const fallbackPoint = defaultZoomClientPoint();
+	const x = Number.isFinite(clientX) ? Number(clientX) : fallbackPoint.clientX;
+	const y = Number.isFinite(clientY) ? Number(clientY) : fallbackPoint.clientY;
+	const hit = document.elementFromPoint(x, y);
+	const page = (hit instanceof Element ? hit.closest<HTMLElement>(".page[data-page-number]") : null) || findViewportPage();
+	const pageNumber = getPageNumber(page);
+	if (!page || !pageNumber) return null;
+	const rect = page.getBoundingClientRect();
+	return {
+		pageNumber,
+		xRatio: Math.max(0, Math.min(1, (x - rect.left) / Math.max(1, rect.width))),
+		yRatio: Math.max(0, Math.min(1, (y - rect.top) / Math.max(1, rect.height))),
+		clientX: x,
+		clientY: y,
+	};
+}
+
+function restoreZoomAnchor(anchor: PdfZoomAnchor | null) {
+	if (!anchor) return;
+	const page = getPdfPageByNumber(anchor.pageNumber);
+	if (!page) return;
+	const rect = page.getBoundingClientRect();
+	const targetDocumentX = window.scrollX + rect.left + rect.width * anchor.xRatio;
+	const targetDocumentY = window.scrollY + rect.top + rect.height * anchor.yRatio;
+	window.scrollTo({
+		left: Math.max(0, targetDocumentX - anchor.clientX),
+		top: Math.max(0, targetDocumentY - anchor.clientY),
+		behavior: "auto",
+	});
+}
+
+function hasTransientZoom() {
+	return Math.abs(currentScale - committedScale) >= 0.001 || Boolean(transientZoomAnchor) || Boolean(viewer.style.transform && viewer.style.transform !== "none");
+}
+
+// Keep pinch/trackpad interaction on the compositor. Updating the width and
+// height of every page shell makes Chromium lay out the entire document for
+// every gesture frame, which is especially expensive when each page contains
+// a full-page scan. The real page geometry is committed once the gesture rests.
+function applyTransientZoom(nextScale: number, anchor: PdfZoomAnchor | null) {
+	const startsNewGesture = !hasTransientZoom();
+	currentScale = clampScale(nextScale);
+	if (startsNewGesture) {
+		transientZoomAnchor = anchor;
+		const fallbackPoint = defaultZoomClientPoint();
+		const clientX = anchor?.clientX ?? fallbackPoint.clientX;
+		const clientY = anchor?.clientY ?? fallbackPoint.clientY;
+		const viewerRect = viewer.getBoundingClientRect();
+		transientZoomOriginX = clientX - viewerRect.left;
+		transientZoomOriginY = clientY - viewerRect.top;
+	}
+	const ratio = currentScale / Math.max(0.001, committedScale);
+	viewer.style.transformOrigin = `${transientZoomOriginX}px ${transientZoomOriginY}px`;
+	viewer.style.transform = Math.abs(ratio - 1) < 0.001 ? "none" : `scale(${ratio})`;
+}
+
+function commitTransientZoom() {
+	if (!hasTransientZoom()) return;
+	const ratio = currentScale / Math.max(0.001, committedScale);
+	const anchor = transientZoomAnchor;
+	if (Math.abs(ratio - 1) >= 0.001) {
+		for (const pageElement of getPdfPages()) {
+			const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
+			const height = Number.parseFloat(pageElement.style.height || "0") * ratio;
+			if (width > 0) pageElement.style.width = `${width}px`;
+			if (height > 0) pageElement.style.height = `${height}px`;
+			scaleAnnotationLayerForZoom(pageElement, currentScale);
+		}
+		committedScale = currentScale;
+		viewer.style.setProperty("--scale-factor", String(committedScale));
+	}
+	viewer.style.transform = "none";
+	viewer.style.transformOrigin = "0 0";
+	transientZoomAnchor = null;
+	restoreZoomAnchor(anchor);
+}
+
+function canvasOutputScale(viewport: { width: number; height: number }) {
+	const requested = Math.max(1, Number(window.devicePixelRatio) || 1);
+	const dimensionLimit = MAX_CANVAS_DIMENSION / Math.max(1, viewport.width, viewport.height);
+	const pixelLimit = Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height));
+	return Math.max(0.25, Math.min(requested, dimensionLimit, pixelLimit));
 }
 
 function parsePixelValue(value: string) {
@@ -530,14 +657,27 @@ function ensureAnnotationLayer(page: HTMLElement) {
 	if (layer) return layer;
 	layer = document.createElement("div");
 	layer.className = "onhand-pdf-annotation-layer";
+	layer.setAttribute("data-onhand-pdf-coordinate-scale", String(currentScale));
 	Object.assign(layer.style, {
 		position: "absolute",
-		inset: "0",
+		left: "0",
+		top: "0",
+		width: `${page.clientWidth}px`,
+		height: `${page.clientHeight}px`,
+		transformOrigin: "0 0",
 		zIndex: "12",
 		pointerEvents: "none",
 	});
 	page.append(layer);
 	return layer;
+}
+
+function scaleAnnotationLayerForZoom(page: HTMLElement, nextScale: number) {
+	const layer = page.querySelector<HTMLElement>(".onhand-pdf-annotation-layer");
+	if (!layer) return;
+	const coordinateScale = Number(layer.getAttribute("data-onhand-pdf-coordinate-scale") || currentScale) || currentScale;
+	const ratio = nextScale / Math.max(0.001, coordinateScale);
+	layer.style.transform = Math.abs(ratio - 1) < 0.001 ? "none" : `scale(${ratio})`;
 }
 
 let textMeasureCanvas: HTMLCanvasElement | null = null;
@@ -1927,7 +2067,8 @@ async function pdfCapturePageImage(options: Record<string, any> = {}) {
 	if (!Number.isFinite(pageNumber) || pageNumber < 1) throw new Error("PDF page image capture requires a valid pageNumber.");
 	const page = getPdfPageByNumber(pageNumber);
 	if (!page) throw new Error(`PDF page not found: ${pageNumber}`);
-	await ensurePageRendered(pageNumber);
+	commitTransientZoom();
+	await ensurePageRendered(pageNumber, renderSequence, { sharpen: true });
 	const canvas = page.querySelector<HTMLCanvasElement>("canvas");
 	if (!canvas) throw new Error(`PDF page ${pageNumber} has no rendered canvas.`);
 	const format = String(options.format || "png").toLowerCase() === "jpeg" ? "jpeg" : "png";
@@ -2361,7 +2502,8 @@ function scrollToPage(pageNumber: number) {
 async function renderPageContent(pageElement: HTMLElement, pageNumber: number, sequence: number) {
 	const page = await pdfDocument.getPage(pageNumber);
 	if (sequence !== renderSequence) return;
-	const viewport = page.getViewport({ scale: currentScale });
+	const renderScale = committedScale;
+	const viewport = page.getViewport({ scale: renderScale });
 	pageElement.style.width = `${viewport.width}px`;
 	pageElement.style.height = `${viewport.height}px`;
 
@@ -2370,44 +2512,54 @@ async function renderPageContent(pageElement: HTMLElement, pageNumber: number, s
 	const canvas = document.createElement("canvas");
 	const context = canvas.getContext("2d", { alpha: false });
 	if (!context) throw new Error("Could not create canvas context for PDF page.");
-	const outputScale = window.devicePixelRatio || 1;
-	canvas.width = Math.floor(viewport.width * outputScale);
-	canvas.height = Math.floor(viewport.height * outputScale);
+	const outputScale = canvasOutputScale(viewport);
+	canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+	canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
 	canvas.style.width = `${viewport.width}px`;
 	canvas.style.height = `${viewport.height}px`;
 	canvasWrapper.append(canvas);
 
-	const textLayer = document.createElement("div");
-	textLayer.className = "textLayer";
-	textLayer.setAttribute("data-onhand-pdf-text-layer", "true");
-	textLayer.style.setProperty("--scale-factor", String(currentScale));
-
-	// PDF.js needs live DOM nodes to render into, so swap the fresh
-	// canvas/text layer in before rendering. Only this page blanks for the
-	// moment its render takes; the rest of the document stays intact.
-	pageElement.querySelector(".canvasWrapper")?.remove();
-	pageElement.querySelector(".textLayer")?.remove();
-	pageElement.prepend(canvasWrapper, textLayer);
+	let textLayer = pageElement.querySelector<HTMLElement>(".textLayer");
+	const needsTextLayer = textLayer?.getAttribute("data-onhand-pdf-text-ready") !== "true";
+	if (needsTextLayer) {
+		textLayer?.remove();
+		textLayer = document.createElement("div");
+		textLayer.className = "textLayer";
+		textLayer.setAttribute("data-onhand-pdf-text-layer", "true");
+		// TextLayer needs a live container while it builds. The old canvas can
+		// stay visible, so a crisp zoom pass never blanks an already-rendered page.
+		pageElement.append(textLayer);
+	}
 
 	await page.render({
 		canvasContext: context,
 		viewport,
 		transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
 	}).promise;
+	if (sequence !== renderSequence) return;
+	const oldCanvasWrapper = pageElement.querySelector<HTMLElement>(".canvasWrapper");
+	if (oldCanvasWrapper) oldCanvasWrapper.replaceWith(canvasWrapper);
+	else pageElement.prepend(canvasWrapper);
+	pageElement.setAttribute("data-onhand-pdf-raster-scale", String(renderScale));
+	pageElement.setAttribute("data-onhand-pdf-output-scale", String(outputScale));
 
-	const textContentSource =
-		typeof page.streamTextContent === "function"
-			? page.streamTextContent({ includeMarkedContent: true })
-			: await page.getTextContent({ includeMarkedContent: true });
-	const layer = new TextLayer({
-		textContentSource,
-		container: textLayer,
-		viewport,
-	});
-	await layer.render();
-	textLayer.querySelectorAll("span").forEach((span, index) => {
-		span.setAttribute("data-onhand-pdf-text-span", String(index));
-	});
+	if (needsTextLayer) {
+		const textContentSource =
+			typeof page.streamTextContent === "function"
+				? page.streamTextContent({ includeMarkedContent: true })
+				: await page.getTextContent({ includeMarkedContent: true });
+		const layer = new TextLayer({
+			textContentSource,
+			container: textLayer,
+			viewport,
+		});
+		await layer.render();
+		if (sequence !== renderSequence) return;
+		textLayer.setAttribute("data-onhand-pdf-text-ready", "true");
+		textLayer.querySelectorAll("span").forEach((span, index) => {
+			span.setAttribute("data-onhand-pdf-text-span", String(index));
+		});
+	}
 }
 
 // --- Progressive rendering ---
@@ -2424,6 +2576,12 @@ const pageTextContentCache = new Map<number, string>();
 
 function isPendingPage(pageElement: Element | null) {
 	return pageElement?.getAttribute("data-onhand-pdf-pending") === "true";
+}
+
+function pageNeedsSharperRender(pageElement: Element | null) {
+	if (!pageElement?.querySelector("canvas")) return true;
+	const rasterScale = Number(pageElement.getAttribute("data-onhand-pdf-raster-scale") || 0) || 0;
+	return rasterScale + 0.01 < currentScale;
 }
 
 function compactPendingSearchText(value: string) {
@@ -2453,28 +2611,36 @@ async function getPageTextContent(pageNumber: number) {
 async function createPageShells(sequence: number) {
 	const firstPage = await pdfDocument.getPage(1);
 	if (sequence !== renderSequence) return;
-	const baseViewport = firstPage.getViewport({ scale: currentScale });
+	const baseViewport = firstPage.getViewport({ scale: committedScale });
 	for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
 		const pageElement = document.createElement("section");
 		pageElement.className = "page";
 		pageElement.setAttribute("data-page-number", String(pageNumber));
 		pageElement.setAttribute("data-onhand-pdf-page", "true");
 		pageElement.setAttribute("data-onhand-pdf-pending", "true");
+		pageElement.setAttribute("data-onhand-pdf-raster-scale", "0");
 		pageElement.style.width = `${baseViewport.width}px`;
 		pageElement.style.height = `${baseViewport.height}px`;
 		viewer.append(pageElement);
 	}
 }
 
-function ensurePageRendered(pageNumber: number, sequence = renderSequence): Promise<void> {
+function ensurePageRendered(pageNumber: number, sequence = renderSequence, options: { sharpen?: boolean } = {}): Promise<void> {
 	const pageElement = getPdfPageByNumber(pageNumber);
-	if (!pageElement || !isPendingPage(pageElement)) return Promise.resolve();
+	const needsInitialRender = Boolean(pageElement && (isPendingPage(pageElement) || !pageElement.querySelector("canvas") || !pageElement.querySelector('[data-onhand-pdf-text-ready="true"]')));
+	const needsSharperRender = Boolean(pageElement && options.sharpen && pageNeedsSharperRender(pageElement));
+	if (!pageElement || (!needsInitialRender && !needsSharperRender)) return Promise.resolve();
 	const existing = pageRenderPromises.get(pageNumber);
 	if (existing) return existing;
-	const promise = (async () => {
+	let promise: Promise<void>;
+	promise = (async () => {
 		await renderPageContent(pageElement, pageNumber, sequence);
-		if (sequence === renderSequence) pageElement.removeAttribute("data-onhand-pdf-pending");
-	})().finally(() => pageRenderPromises.delete(pageNumber));
+		if (sequence === renderSequence && pageElement.querySelector("canvas") && pageElement.querySelector('[data-onhand-pdf-text-ready="true"]')) {
+			pageElement.removeAttribute("data-onhand-pdf-pending");
+		}
+	})().finally(() => {
+		if (pageRenderPromises.get(pageNumber) === promise) pageRenderPromises.delete(pageNumber);
+	});
 	pageRenderPromises.set(pageNumber, promise);
 	return promise;
 }
@@ -2513,6 +2679,11 @@ async function renderRemainingPages(sequence: number) {
 	if (sequence === renderSequence && !countPendingPages()) {
 		document.body.setAttribute("data-onhand-pdf-rendered", "true");
 		setStatus("Ready");
+		// If the reader zoomed while the initial background queue was still
+		// filling, sharpen the visible page only after that queue drains. Large
+		// scanned pages can otherwise make PDF.js serialize the foreground
+		// repaint behind a slow offscreen image decode.
+		scheduleViewportRender();
 	}
 }
 
@@ -2532,6 +2703,7 @@ async function findPendingPageWithText(query: string) {
 
 async function renderDocument(options: { preserveView?: boolean } = {}) {
 	if (!pdfDocument) return;
+	commitTransientZoom();
 	const snapshot = options.preserveView ? capturePdfViewSnapshot() : null;
 	const sequence = ++renderSequence;
 	document.body.removeAttribute("data-onhand-pdf-rendered");
@@ -2566,55 +2738,85 @@ function pagesOrderedFromViewport() {
 	);
 }
 
-// Zoom without blanking the document: stretch the existing pages via CSS
-// for instant feedback, keep the reading position anchored, then re-render
-// each page crisply in place starting from the pages on screen.
-async function rescaleDocument(nextScale: number) {
+function pagesNearViewport() {
+	const ordered = pagesOrderedFromViewport();
+	const toolbar = document.querySelector<HTMLElement>(".onhand-pdf-toolbar");
+	const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
+	const visible = ordered.filter((pageElement) => {
+		const rect = pageElement.getBoundingClientRect();
+		return rect.width > 0 && rect.height > 0 && rect.bottom > toolbarBottom && rect.top < window.innerHeight;
+	});
+	return (visible.length ? visible : ordered).slice(0, 2);
+}
+
+async function renderSharpPagesNearViewport(sequence = renderSequence, expectedZoomRevision = zoomRevision) {
+	for (const pageElement of pagesNearViewport()) {
+		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
+		const pageNumber = getPageNumber(pageElement);
+		if (!pageNumber) continue;
+		await ensurePageRendered(pageNumber, sequence, { sharpen: true });
+		// A page that was already rendering when zoom began is allowed to
+		// finish at its old scale. Upgrade it once more at the latest scale
+		// instead of cancelling it and starting an overlapping PDF.js render.
+		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
+		if (pageNeedsSharperRender(pageElement)) {
+			await ensurePageRendered(pageNumber, sequence, { sharpen: true });
+		}
+	}
+}
+
+function settleZoomRender(sequence: number, expectedZoomRevision: number) {
+	if (zoomRenderTimer !== null) window.clearTimeout(zoomRenderTimer);
+	zoomRenderTimer = window.setTimeout(async () => {
+		zoomRenderTimer = null;
+		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
+		commitTransientZoom();
+		const pendingCountBeforeSharpen = countPendingPages();
+		if (pendingCountBeforeSharpen) {
+			setStatus(`Rendered ${Number(pdfDocument?.numPages || 0) - pendingCountBeforeSharpen}/${pdfDocument?.numPages || 0}`);
+			return;
+		}
+		const annotations = capturePdfAnnotationSnapshots();
+		if (pagesNearViewport().some((page) => pageNeedsSharperRender(page))) {
+			setStatus(`Sharpening visible pages at ${Math.round(currentScale * 100)}%...`);
+		}
+		await renderSharpPagesNearViewport(sequence, expectedZoomRevision);
+		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
+		if (annotations.length) {
+			for (const layer of Array.from(document.querySelectorAll(".onhand-pdf-annotation-layer"))) layer.remove();
+			await restorePdfAnnotationSnapshots(annotations, sequence);
+		}
+		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
+		const pendingCount = countPendingPages();
+		setStatus(pendingCount ? `Rendered ${Number(pdfDocument?.numPages || 0) - pendingCount}/${pdfDocument?.numPages || 0}` : "Ready");
+	}, ZOOM_RENDER_DELAY_MS);
+}
+
+function scheduleViewportRender() {
+	if (!pdfDocument) return;
+	if (viewportRenderTimer !== null) window.clearTimeout(viewportRenderTimer);
+	const sequence = renderSequence;
+	viewportRenderTimer = window.setTimeout(async () => {
+		viewportRenderTimer = null;
+		const expectedZoomRevision = zoomRevision;
+		if (sequence !== renderSequence || hasTransientZoom()) return;
+		await renderSharpPagesNearViewport(sequence, expectedZoomRevision);
+	}, VIEWPORT_RENDER_DELAY_MS);
+}
+
+// Zoom without blanking or rebuilding the document. Gesture frames only apply
+// one compositor transform; page geometry is committed once after interaction
+// settles, and offscreen canvases keep their existing raster until needed.
+function rescaleDocument(nextScale: number, anchor = captureZoomAnchor()) {
 	if (!pdfDocument) return;
 	const normalized = clampScale(nextScale);
 	if (Math.abs(normalized - currentScale) < 0.001) return;
-	const pages = getPdfPages();
-	if (pages.length !== Number(pdfDocument.numPages || 0)) {
-		// A render is still in flight (or pages are missing); fall back to
-		// the full pass so no page shells get lost.
-		currentScale = normalized;
-		await renderDocument({ preserveView: true });
-		return;
-	}
-	const snapshot = capturePdfViewSnapshot();
-	const ratio = normalized / currentScale;
-	currentScale = normalized;
-	const sequence = ++renderSequence;
-	pageRenderPromises.clear();
-	for (const pageElement of pages) {
-		const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
-		const height = Number.parseFloat(pageElement.style.height || "0") * ratio;
-		if (width > 0) pageElement.style.width = `${width}px`;
-		if (height > 0) pageElement.style.height = `${height}px`;
-		const canvas = pageElement.querySelector<HTMLCanvasElement>("canvas");
-		if (canvas) {
-			const canvasWidth = Number.parseFloat(canvas.style.width || "0") * ratio;
-			const canvasHeight = Number.parseFloat(canvas.style.height || "0") * ratio;
-			if (canvasWidth > 0) canvas.style.width = `${canvasWidth}px`;
-			if (canvasHeight > 0) canvas.style.height = `${canvasHeight}px`;
-		}
-		pageElement.querySelector<HTMLElement>(".textLayer")?.style.setProperty("--scale-factor", String(normalized));
-		// Highlight and note overlays are positioned in old-scale pixels;
-		// drop them now and re-anchor from the snapshot afterwards.
-		pageElement.querySelector(".onhand-pdf-annotation-layer")?.remove();
-		// Every page needs a crisp pass at the new scale; the stretched
-		// canvas stays visible until its turn comes.
-		pageElement.setAttribute("data-onhand-pdf-pending", "true");
-	}
-	const anchorPage = getPdfPageByNumber(snapshot.pageNumber);
-	if (anchorPage) {
-		const rect = anchorPage.getBoundingClientRect();
-		const pageTop = window.scrollY + rect.top;
-		window.scrollTo({ top: Math.max(0, pageTop + rect.height * snapshot.pageOffsetRatio), left: 0, behavior: "auto" });
-	}
-	setStatus(`Rendering at ${Math.round(normalized * 100)}%...`);
-	void renderRemainingPages(sequence);
-	await restorePdfViewSnapshot(snapshot, sequence);
+	const sequence = renderSequence;
+	const expectedZoomRevision = ++zoomRevision;
+	applyTransientZoom(normalized, transientZoomAnchor || anchor);
+	updateZoomControls();
+	setStatus(`Zoom ${Math.round(normalized * 100)}%`);
+	settleZoomRender(sequence, expectedZoomRevision);
 }
 
 async function loadPdf() {
@@ -2637,6 +2839,9 @@ async function loadPdf() {
 	const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;
 	setCurrentPageNumber(initialPageNumber);
 	currentScale = await computeFitScale(initialPageNumber);
+	committedScale = currentScale;
+	viewer.style.setProperty("--scale-factor", String(committedScale));
+	updateZoomControls();
 	lastFitRenderWidth = viewer.clientWidth;
 	await renderDocument();
 	scrollToPage(initialPageNumber);
@@ -2651,6 +2856,90 @@ zoomOutButton.addEventListener("click", () => {
 	scaleMode = "custom";
 	void rescaleDocument(currentScale - SCALE_STEP);
 });
+
+async function fitPageToWindow() {
+	if (!pdfDocument) return;
+	commitTransientZoom();
+	scaleMode = "fit";
+	const nextScale = await computeFitScale(Number(pageInput.value || 1) || 1);
+	lastFitRenderWidth = viewer.clientWidth;
+	rescaleDocument(nextScale);
+	updateZoomControls();
+}
+
+zoomValueButton.addEventListener("click", () => {
+	void fitPageToWindow();
+});
+
+function queueGestureZoom(nextScale: number, clientX: number, clientY: number) {
+	queuedGestureScale = clampScale(nextScale);
+	queuedGestureClientX = clientX;
+	queuedGestureClientY = clientY;
+	if (gestureAnimationFrame !== null) return;
+	gestureAnimationFrame = requestAnimationFrame(() => {
+		gestureAnimationFrame = null;
+		const anchor = transientZoomAnchor || captureZoomAnchor(queuedGestureClientX, queuedGestureClientY);
+		rescaleDocument(queuedGestureScale, anchor);
+	});
+}
+
+window.addEventListener(
+	"wheel",
+	(event) => {
+		// Chromium represents a trackpad pinch as a ctrl+wheel gesture. Keep
+		// ordinary two-finger scrolling untouched.
+		if (!event.ctrlKey || !pdfDocument) return;
+		event.preventDefault();
+		scaleMode = "custom";
+		const deltaPixels = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? window.innerHeight : 1);
+		const factor = Math.exp(-Math.max(-60, Math.min(60, deltaPixels)) * 0.01);
+		const baseScale = gestureAnimationFrame !== null ? queuedGestureScale : currentScale;
+		queueGestureZoom(baseScale * factor, event.clientX, event.clientY);
+	},
+	{ passive: false },
+);
+
+// WebKit-style gesture events are also supported so the same interaction
+// remains native-feeling in Chromium-derived and Safari-derived shells.
+window.addEventListener(
+	"gesturestart" as any,
+	((event: any) => {
+		if (!pdfDocument) return;
+		event.preventDefault?.();
+		scaleMode = "custom";
+		nativeGestureStartScale = currentScale;
+	}) as EventListener,
+	{ passive: false } as AddEventListenerOptions,
+);
+window.addEventListener(
+	"gesturechange" as any,
+	((event: any) => {
+		if (!pdfDocument) return;
+		event.preventDefault?.();
+		queueGestureZoom(nativeGestureStartScale * (Number(event.scale) || 1), Number(event.clientX) || window.innerWidth / 2, Number(event.clientY) || window.innerHeight / 2);
+	}) as EventListener,
+	{ passive: false } as AddEventListenerOptions,
+);
+
+window.addEventListener(
+	"keydown",
+	(event) => {
+		if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+		if (event.key === "+" || event.key === "=") {
+			event.preventDefault();
+			scaleMode = "custom";
+			rescaleDocument(currentScale + SCALE_STEP);
+		} else if (event.key === "-") {
+			event.preventDefault();
+			scaleMode = "custom";
+			rescaleDocument(currentScale - SCALE_STEP);
+		} else if (event.key === "0") {
+			event.preventDefault();
+			void fitPageToWindow();
+		}
+	},
+	{ capture: true },
+);
 
 let pendingFitRender = false;
 
@@ -2680,7 +2969,7 @@ function scheduleResizeRender() {
 		const nextScale = await computeFitScale(Number(pageInput.value || 1) || 1);
 		lastFitRenderWidth = viewer.clientWidth;
 		if (Math.abs(nextScale - currentScale) < 0.01) return;
-		await rescaleDocument(nextScale);
+		rescaleDocument(nextScale);
 	}, RESIZE_RENDER_DELAY_MS);
 }
 
@@ -2701,7 +2990,14 @@ pageInput.addEventListener("keydown", (event) => {
 	if (Number.isFinite(pageNumber) && pageNumber > 0) scrollToPage(pageNumber);
 });
 
-window.addEventListener("scroll", updatePageFromScroll, { passive: true });
+window.addEventListener(
+	"scroll",
+	() => {
+		updatePageFromScroll();
+		scheduleViewportRender();
+	},
+	{ passive: true },
+);
 window.addEventListener("resize", scheduleResizeRender, { passive: true });
 
 loadPdf().catch((error) => {

@@ -12,6 +12,7 @@
 				--onhand-text: #2f2c28;
 				--onhand-line: rgba(47, 44, 40, 0.16);
 				--onhand-blue: #2b6f89;
+				--onhand-pdf-toolbar-height: 48px;
 			}
 
 			html,
@@ -24,14 +25,22 @@
 					-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 			}
 
+			body {
+				box-sizing: border-box;
+				padding-top: var(--onhand-pdf-toolbar-height);
+			}
+
 			.onhand-pdf-toolbar {
-				position: sticky;
+				position: fixed;
 				top: 0;
+				left: 0;
+				right: 0;
 				z-index: 20;
+				box-sizing: border-box;
 				display: flex;
 				align-items: center;
 				gap: 12px;
-				min-height: 48px;
+				min-height: var(--onhand-pdf-toolbar-height);
 				padding: 0 16px;
 				background: #2f2e2b;
 				color: #f6efe3;
@@ -54,7 +63,15 @@
 				white-space: nowrap;
 			}
 
+			#onhand-pdf-status {
+				min-width: 0;
+				overflow: hidden;
+				text-align: right;
+				text-overflow: ellipsis;
+			}
+
 			.onhand-pdf-controls {
+				flex: 0 0 auto;
 				display: flex;
 				align-items: center;
 				gap: 6px;
@@ -76,6 +93,23 @@
 				cursor: pointer;
 			}
 
+			.onhand-pdf-controls button:disabled {
+				opacity: 0.45;
+				cursor: default;
+			}
+
+			.onhand-pdf-controls .onhand-pdf-zoom-value {
+				min-width: 58px;
+				font-variant-numeric: tabular-nums;
+			}
+
+			.onhand-pdf-control-separator {
+				width: 1px;
+				height: 20px;
+				margin: 0 2px;
+				background: rgba(255, 255, 255, 0.2);
+			}
+
 			.onhand-pdf-controls input {
 				width: 58px;
 				padding: 0 6px;
@@ -83,9 +117,10 @@
 			}
 
 			.pdfViewer {
+				--scale-factor: 1;
 				display: grid;
 				gap: 16px;
-				justify-content: center;
+				justify-content: safe center;
 				padding: 16px 24px 32px;
 			}
 
@@ -96,13 +131,19 @@
 				box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 			}
 
-			.canvasWrapper,
-			.canvasWrapper canvas {
+			.canvasWrapper {
+				position: absolute;
+				inset: 0;
 				display: block;
 			}
 
+			.canvasWrapper canvas {
+				display: block;
+				width: 100% !important;
+				height: 100% !important;
+			}
+
 			.textLayer {
-				--scale-factor: 1;
 				position: absolute;
 				inset: 0;
 				z-index: 2;
@@ -184,13 +225,15 @@
 	<body data-onhand-pdf-viewer="true">
 		<header class="onhand-pdf-toolbar">
 			<div class="onhand-pdf-title" id="onhand-pdf-title">Onhand PDF Viewer</div>
+			<div class="onhand-pdf-status" id="onhand-pdf-status">Loading...</div>
 			<div class="onhand-pdf-controls" aria-label="PDF controls">
-				<button id="onhand-pdf-zoom-out" type="button" title="Zoom out">-</button>
+				<button id="onhand-pdf-zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+				<button id="onhand-pdf-zoom-value" class="onhand-pdf-zoom-value" type="button" title="Fit page to window" aria-label="Zoom 100%. Click to fit the page to the window.">100%</button>
+				<button id="onhand-pdf-zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+				<span class="onhand-pdf-control-separator" aria-hidden="true"></span>
 				<input id="onhand-pdf-page" type="number" min="1" value="1" aria-label="Page number" />
 				<span id="onhand-pdf-page-count" class="onhand-pdf-status">/ -</span>
-				<button id="onhand-pdf-zoom-in" type="button" title="Zoom in">+</button>
 			</div>
-			<div class="onhand-pdf-status" id="onhand-pdf-status">Loading...</div>
 		</header>
 		<main id="viewer" class="pdfViewer" data-onhand-pdf-viewer-root></main>
 		<script type="module" src="pdf-viewer.bundle.js"></script>

@@ -322,6 +322,50 @@ const OPENAI_API_PROVIDER = "openai";
 const OPENAI_API_MODEL = "gpt-4.1-mini";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const OPENAI_CODEX_MODEL = "gpt-5.5";
+// Keep newly released Codex models available even when the bundled pi-ai
+// catalog has not published them yet. These shapes match the Codex Responses
+// transport used by the catalog-backed models above/below them.
+const OPENAI_CODEX_ADDITIONAL_MODELS = [
+	{
+		id: "gpt-5.6-sol",
+		name: "GPT-5.6 Sol",
+		api: "openai-codex-responses",
+		provider: OPENAI_CODEX_PROVIDER,
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+		input: ["text", "image"],
+		cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+		contextWindow: 1050000,
+		maxTokens: 128000,
+	},
+	{
+		id: "gpt-5.6-terra",
+		name: "GPT-5.6 Terra",
+		api: "openai-codex-responses",
+		provider: OPENAI_CODEX_PROVIDER,
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+		input: ["text", "image"],
+		cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+		contextWindow: 1050000,
+		maxTokens: 128000,
+	},
+	{
+		id: "gpt-5.6-luna",
+		name: "GPT-5.6 Luna",
+		api: "openai-codex-responses",
+		provider: OPENAI_CODEX_PROVIDER,
+		baseUrl: "https://chatgpt.com/backend-api",
+		reasoning: true,
+		thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+		input: ["text", "image"],
+		cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+		contextWindow: 1050000,
+		maxTokens: 128000,
+	},
+] as const;
 const ANTHROPIC_API_PROVIDER = "anthropic";
 const ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 const GOOGLE_API_PROVIDER = "google";
@@ -441,6 +485,13 @@ function buildOpenRouterFallbackModel(modelId: string) {
 		maxTokens: 32768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
+}
+
+function buildOpenAICodexFallbackModel(modelId: string) {
+	const normalizedId = modelId === "gpt-5.6" ? "gpt-5.6-sol" : modelId;
+	const model = OPENAI_CODEX_ADDITIONAL_MODELS.find((candidate) => candidate.id === normalizedId);
+	if (!model) return null;
+	return modelId === "gpt-5.6" ? { ...model, id: modelId } : { ...model };
 }
 const SMOKE_PROVIDER = "onhand-smoke";
 const SMOKE_MODEL = "onhand-smoke-1";
@@ -2285,7 +2336,15 @@ function getProviderModelOptions(providerId: string) {
 	const isOAuthProvider = isBrowserOAuthProvider(providerId);
 	if (!isApiProvider && !isOAuthProvider) return [];
 	try {
-		return getModels(providerId as any)
+		const catalogModels = getModels(providerId as any);
+		const models =
+			providerId === OPENAI_CODEX_PROVIDER
+				? [
+						...OPENAI_CODEX_ADDITIONAL_MODELS,
+						...catalogModels.filter((model: any) => !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id)),
+					]
+				: catalogModels;
+		return models
 			.filter((model: any) => model?.input?.includes?.("text"))
 			// OpenRouter lists hundreds of models; offer the validated cheap
 			// defaults and let the custom-model field cover the rest.
@@ -9317,6 +9376,7 @@ export const __browserRuntimeTest = {
 	getMissingApiKeyError,
 	getApiKeyForProvider,
 	getProviderModelOptions,
+	buildOpenAICodexFallbackModel,
 	normalizeApiKeys,
 	normalizeProviderForAuthMode,
 	validateProviderApiKey,
@@ -12043,6 +12103,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					? await buildFreeTierModel()
 					: (await host.resolveModel?.(settings.aiProvider, settings.aiModel)) ||
 						getModel(settings.aiProvider as any, settings.aiModel as any) ||
+						(settings.aiProvider === OPENAI_CODEX_PROVIDER ? buildOpenAICodexFallbackModel(settings.aiModel) : null) ||
 						(settings.aiProvider === OPENROUTER_API_PROVIDER && settings.aiModel ? buildOpenRouterFallbackModel(settings.aiModel) : null);
 		if (!model) {
 			throw new Error(`Unknown AI model: ${settings.aiProvider}/${settings.aiModel}`);
