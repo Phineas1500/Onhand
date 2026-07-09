@@ -492,6 +492,59 @@ function localFileAccessMessage(tab, error = null) {
 	return `This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.${suffix}`;
 }
 
+async function isAllowedFileSchemeAccess() {
+	try {
+		return await new Promise((resolve) => chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(Boolean(allowed))));
+	} catch {
+		return false;
+	}
+}
+
+// pdf-viewer.html is web-accessible, so any site can open it with a
+// url=file:/// parameter. The viewer therefore refuses to read local bytes
+// unless the launch was granted by this background (handoff or session
+// restore). Grants are one-shot per file URL with a short TTL, then
+// remembered per tab (chrome.storage.session) so in-tab reloads keep working.
+const ONHAND_PDF_VIEWER_FILE_GRANT_TTL_MS = 2 * 60 * 1000;
+const ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY = "onhand:pdf-viewer-file-auth";
+const pendingOnhandPdfViewerFileGrants = new Map();
+
+function grantOnhandPdfViewerFileSource(fileUrl) {
+	const key = stripUrlHash(String(fileUrl || ""));
+	if (!key || !isFileUrl(key)) return;
+	pendingOnhandPdfViewerFileGrants.set(key, Date.now() + ONHAND_PDF_VIEWER_FILE_GRANT_TTL_MS);
+	if (pendingOnhandPdfViewerFileGrants.size > 32) {
+		const now = Date.now();
+		for (const [grantKey, expiresAt] of pendingOnhandPdfViewerFileGrants) {
+			if (expiresAt < now) pendingOnhandPdfViewerFileGrants.delete(grantKey);
+		}
+	}
+}
+
+async function authorizeOnhandPdfViewerFileSource(sender, fileUrl) {
+	const senderUrl = String(sender?.url || "");
+	if (!isOwnExtensionPdfViewerUrl(senderUrl)) return false;
+	const key = stripUrlHash(String(fileUrl || ""));
+	if (!key || !isFileUrl(key)) return false;
+	const tabId = sender?.tab?.id;
+	const tabKey = typeof tabId === "number" ? tabId + ":" + key : "";
+	let remembered = {};
+	try {
+		remembered = (await chrome.storage.session.get(ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY))?.[ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY] || {};
+	} catch {}
+	if (tabKey && remembered[tabKey]) return true;
+	const expiresAt = pendingOnhandPdfViewerFileGrants.get(key);
+	if (!expiresAt || expiresAt < Date.now()) return false;
+	pendingOnhandPdfViewerFileGrants.delete(key);
+	if (tabKey) {
+		remembered[tabKey] = Date.now();
+		try {
+			await chrome.storage.session.set({ [ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY]: remembered });
+		} catch {}
+	}
+	return true;
+}
+
 function isLocalFileAccessError(tab, error) {
 	return isFileUrl(tab?.url) && isRestrictedScriptingError(error);
 }
@@ -571,6 +624,15 @@ function isHttpLikeUrl(value) {
 }
 
 function isLikelyPdfResourceUrl(value) {
+	// Local file PDFs are handled by the Onhand viewer too (subject to the
+	// "Allow access to file URLs" gate checked at handoff time).
+	if (isFileUrl(value)) {
+		try {
+			return decodeURIComponent(new URL(String(value)).pathname || "").toLowerCase().endsWith(".pdf");
+		} catch {
+			return false;
+		}
+	}
 	if (!isHttpLikeUrl(value)) return false;
 	try {
 		const url = new URL(String(value));
@@ -591,11 +653,17 @@ function isLikelyPdfResourceUrl(value) {
 	}
 }
 
-function normalizePdfUrlCandidate(value, baseUrl = "") {
+function normalizePdfUrlCandidate(value, baseUrl = "", { allowFile = false } = {}) {
 	const candidate = String(value || "").trim();
 	if (!candidate) return "";
 	try {
 		const url = baseUrl ? new URL(candidate, baseUrl) : new URL(candidate);
+		// file: is accepted only when the caller vouches for the source (the
+		// user's own file:// tab or Onhand's own viewer URL) — never for
+		// page-controlled candidates, or any web page could point Onhand's file
+		// permission at an arbitrary local path. The viewer-handoff path
+		// additionally gates on "Allow access to file URLs".
+		if (url.protocol === "file:") return allowFile ? url.toString() : "";
 		if (url.protocol !== "http:" && url.protocol !== "https:") return "";
 		return url.toString();
 	} catch {
@@ -609,8 +677,11 @@ function extractPdfSourceUrlFromViewerLikeUrl(value) {
 	try {
 		const url = new URL(baseUrl);
 		const acceptAnyHttpCandidate = isOnhandPdfViewerLikeUrl(baseUrl);
+		// Only Onhand's own extension viewer is trusted to carry file: sources;
+		// a web page merely *shaped* like the viewer is not.
+		const allowFile = isOwnExtensionPdfViewerUrl(baseUrl);
 		for (const key of ["url", "file", "pdf", "src"]) {
-			const candidate = normalizePdfUrlCandidate(url.searchParams.get(key), baseUrl);
+			const candidate = normalizePdfUrlCandidate(url.searchParams.get(key), baseUrl, { allowFile });
 			if (candidate && (acceptAnyHttpCandidate || isLikelyPdfResourceUrl(candidate))) return candidate;
 		}
 	} catch {}
@@ -618,8 +689,22 @@ function extractPdfSourceUrlFromViewerLikeUrl(value) {
 }
 
 function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
-	const explicitPdfUrl = normalizePdfUrlCandidate(args.pdfUrl);
-	if (explicitPdfUrl) return explicitPdfUrl;
+	// An explicit file: pdfUrl is honored only when it IS the file the user
+	// already has open (the tab's own file: URL, or the file source embedded in
+	// Onhand's own viewer URL), compared hash-insensitively. Merely being on a
+	// file: tab is not enough: a prompt-injected local HTML/PDF could otherwise
+	// steer the model to open a DIFFERENT local file under Onhand's permission.
+	const explicitCandidate = normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: true });
+	if (explicitCandidate && isFileUrl(explicitCandidate)) {
+		const trustedFileUrls = new Set();
+		const currentTabUrl = String(tab?.url || "");
+		if (isFileUrl(currentTabUrl)) trustedFileUrls.add(stripUrlHash(normalizePdfUrlCandidate(currentTabUrl, "", { allowFile: true })));
+		const viewerEmbeddedSource = extractPdfSourceUrlFromViewerLikeUrl(currentTabUrl);
+		if (viewerEmbeddedSource && isFileUrl(viewerEmbeddedSource)) trustedFileUrls.add(stripUrlHash(viewerEmbeddedSource));
+		if (trustedFileUrls.has(stripUrlHash(explicitCandidate))) return explicitCandidate;
+	} else if (explicitCandidate) {
+		return explicitCandidate;
+	}
 
 	const tabUrl = String(tab?.url || "");
 	if (isGoogleDocsDocumentUrl(tabUrl)) {
@@ -629,7 +714,8 @@ function resolvePdfSourceUrlForViewer(args = {}, tab = null) {
 	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
 	if (nestedPdfUrl) return nestedPdfUrl;
 
-	const directPdfUrl = normalizePdfUrlCandidate(tabUrl);
+	// The tab's own URL is user-opened, so file: is trusted here.
+	const directPdfUrl = normalizePdfUrlCandidate(tabUrl, "", { allowFile: true });
 	if (directPdfUrl && isLikelyPdfResourceUrl(directPdfUrl)) return directPdfUrl;
 
 	throw new Error(
@@ -740,7 +826,10 @@ function normalizePdfSelectionForViewerHandoff(selection, pdfUrl = "") {
 	const text = normalizePdfSelectionText(selection?.text || selection?.pdfAnchor?.matchedText || selection?.pdfAnchor?.textQuote?.exact || "");
 	if (!text) return null;
 	const pageNumber = normalizePdfPageNumber(selection?.pageNumber || selection?.container?.pageNumber || selection?.pdfAnchor?.pageNumber);
-	const documentUrl = normalizePdfUrlCandidate(pdfUrl) || normalizePdfUrlCandidate(selection?.url) || normalizePdfUrlCandidate(selection?.pdfAnchor?.document?.url);
+	const documentUrl =
+		normalizePdfUrlCandidate(pdfUrl, "", { allowFile: true }) ||
+		normalizePdfUrlCandidate(selection?.url, "", { allowFile: true }) ||
+		normalizePdfUrlCandidate(selection?.pdfAnchor?.document?.url, "", { allowFile: true });
 	const title = String(selection?.title || selection?.pdfAnchor?.document?.title || "").trim();
 	const textQuote = selection?.pdfAnchor?.textQuote && typeof selection.pdfAnchor.textQuote === "object" ? { ...selection.pdfAnchor.textQuote, exact: text } : { exact: text };
 	const pdfAnchor = {
@@ -808,7 +897,7 @@ function unregisterOnhandPdfViewerPort(port) {
 
 function registerOnhandPdfViewerPort(port, sourceUrl) {
 	const tabId = port?.sender?.tab?.id;
-	const normalizedSourceUrl = normalizePdfUrlCandidate(sourceUrl) || extractPdfSourceUrlFromViewerLikeUrl(port?.sender?.url);
+	const normalizedSourceUrl = normalizePdfUrlCandidate(sourceUrl, "", { allowFile: true }) || extractPdfSourceUrlFromViewerLikeUrl(port?.sender?.url);
 	if (!normalizedSourceUrl) return null;
 	const record = {
 		key: typeof tabId === "number" ? onhandPdfViewerPortKey(tabId, normalizedSourceUrl) : onhandPdfViewerSourcePortKey(normalizedSourceUrl),
@@ -945,7 +1034,7 @@ function shouldInferPdfPageNumberFromTab(tab, pdfUrl) {
 	const pdfUrlWithoutHash = stripUrlHash(pdfUrl);
 	const nestedPdfUrl = extractPdfSourceUrlFromViewerLikeUrl(tabUrl);
 	if (nestedPdfUrl && (!pdfUrlWithoutHash || stripUrlHash(nestedPdfUrl) === pdfUrlWithoutHash)) return true;
-	const directPdfUrl = normalizePdfUrlCandidate(tabUrl);
+	const directPdfUrl = normalizePdfUrlCandidate(tabUrl, "", { allowFile: true });
 	if (directPdfUrl && isLikelyPdfResourceUrl(directPdfUrl) && (!pdfUrlWithoutHash || stripUrlHash(directPdfUrl) === pdfUrlWithoutHash)) return true;
 	return false;
 }
@@ -2253,7 +2342,7 @@ async function maybeGetBrowserClipboardPdfSelection(tab, currentSelection) {
 		let pageNumber = normalizePdfPageNumber(currentSelection?.pageNumber || currentSelection?.pdfAnchor?.pageNumber);
 		if (!pageNumber) {
 			try {
-				const pageLocation = await inferInitialPdfViewerPageLocation({}, tab, normalizePdfUrlCandidate(tab.url) || tab.url);
+				const pageLocation = await inferInitialPdfViewerPageLocation({}, tab, normalizePdfUrlCandidate(tab.url, "", { allowFile: true }) || tab.url);
 				pageNumber = normalizePdfPageNumber(pageLocation?.pageNumber);
 			} catch {}
 		}
@@ -10617,6 +10706,12 @@ async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	if (isFileUrl(pdfUrl) && !(await isAllowedFileSchemeAccess())) {
+		// Actionable failure: without file access the viewer cannot read the bytes,
+		// so tell the model/user exactly what to enable instead of failing opaquely.
+		throw new Error(localFileAccessMessage(sourceTab));
+	}
+	if (isFileUrl(pdfUrl)) grantOnhandPdfViewerFileSource(pdfUrl);
 	const diagnostics = createPdfViewerHandoffDiagnostics(args, sourceTab, pdfUrl);
 	const sourceIsGoogleDocs = isGoogleDocsDocumentUrl(sourceTab.url);
 	const shouldOpenViewerInNewTab = args.newTab === true || (sourceIsGoogleDocs && args.newTab !== false);
@@ -12993,6 +13088,40 @@ async function handleCommand(name, args = {}) {
 				};
 			});
 		}
+		case "reopen_onhand_pdf_viewer": {
+			// Internal session-restore command (no browser_* tool maps here, so the
+			// model cannot reach it): reopen the Onhand viewer for a previously
+			// annotated source recorded in the session. Trusting the stored URL is
+			// what lets citation clicks revive a closed local-file viewer without
+			// routing file:// through browser_navigate.
+			const requestedViewerUrl = String(args.viewerUrl || "").trim();
+			const requestedPdfUrl = String(args.pdfUrl || "").trim();
+			let viewerUrl = "";
+			if (requestedViewerUrl) {
+				if (!isOwnExtensionPdfViewerUrl(requestedViewerUrl)) {
+					throw new Error("reopen_onhand_pdf_viewer only accepts Onhand's own viewer URLs.");
+				}
+				viewerUrl = requestedViewerUrl;
+			} else if (requestedPdfUrl && (isFileUrl(requestedPdfUrl) || isLikelyPdfResourceUrl(requestedPdfUrl))) {
+				viewerUrl = buildOnhandPdfViewerUrl(requestedPdfUrl);
+			}
+			if (!viewerUrl) throw new Error("reopen_onhand_pdf_viewer requires a viewerUrl or pdfUrl.");
+			const sourcePdfUrl = extractPdfSourceUrlFromViewerLikeUrl(viewerUrl) || requestedPdfUrl;
+			if (isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
+				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
+			}
+			if (isFileUrl(sourcePdfUrl)) grantOnhandPdfViewerFileSource(sourcePdfUrl);
+			const created = await chrome.tabs.create({ url: viewerUrl, active: args.active !== false });
+			const timeoutMs = clampNumber(args.timeoutMs, 20000, { min: 100, max: 120000 });
+			const viewerReady = await safeWaitForInlineOnhandPdfViewerReady(created.id, timeoutMs, sourcePdfUrl);
+			return {
+				tab: simplifyTab(await chrome.tabs.get(created.id)),
+				viewerUrl,
+				pdfUrl: sourcePdfUrl,
+				viewerReady,
+				opened: true,
+			};
+		}
 		case "scroll_to_annotation": {
 			if (typeof args.annotationId !== "string" || !args.annotationId.trim()) {
 				throw new Error("scroll_to_annotation requires a non-empty 'annotationId'");
@@ -13915,6 +14044,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY,
 			]);
 			sendResponse(await freeTierBypassState("disable"));
+			return;
+		}
+
+		if (message?.type === "pdf-viewer:authorize-file-source") {
+			sendResponse({ ok: await authorizeOnhandPdfViewerFileSource(_sender, message.url) });
 			return;
 		}
 

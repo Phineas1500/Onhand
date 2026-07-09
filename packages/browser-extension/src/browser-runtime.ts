@@ -9097,7 +9097,56 @@ function buildNamedFormulaHighlightGuardResult(toolName: string, commandName: st
 	};
 }
 
+function extractToolErrorText(result: unknown) {
+	const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? (result as any).details : result;
+	const textFrom = (value: unknown): string => {
+		if (value == null) return "";
+		if (typeof value === "string") return value.trim();
+		if (typeof value === "number" || typeof value === "boolean") return String(value);
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const text = textFrom((item as any)?.text ?? item);
+				if (text) return text;
+			}
+			return "";
+		}
+		if (typeof value === "object") {
+			// Thrown tool errors arrive as { content: [{ type: "text", text }] }
+			// (the agent loop's createErrorToolResult) — including nested under
+			// details.error — so mine content[].text at every level rather than
+			// falling back to "Tool failed."
+			for (const nested of [
+				(value as any).error,
+				(value as any).message,
+				(value as any).reason,
+				(value as any).details,
+				(value as any).cause,
+				(value as any).content,
+			]) {
+				const text = textFrom(nested);
+				if (text) return text;
+			}
+		}
+		return "";
+	};
+	for (const value of [
+		(details as any)?.error,
+		(details as any)?.message,
+		(details as any)?.reason,
+		(details as any)?.content,
+		(result as any)?.error,
+		(result as any)?.message,
+		(result as any)?.content,
+	]) {
+		const text = textFrom(value);
+		if (text) return text;
+	}
+	if (typeof result === "string" && result.trim()) return result.trim();
+	return "Tool failed.";
+}
+
 export const __browserRuntimeTest = {
+	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -11267,39 +11316,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
 	}
 
-	function extractToolErrorText(result: unknown) {
-		const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? (result as any).details : result;
-		const textFrom = (value: unknown): string => {
-			if (value == null) return "";
-			if (typeof value === "string") return value.trim();
-			if (typeof value === "number" || typeof value === "boolean") return String(value);
-			if (typeof value === "object") {
-				for (const nested of [
-					(value as any).error,
-					(value as any).message,
-					(value as any).reason,
-					(value as any).details,
-					(value as any).cause,
-				]) {
-					const text = textFrom(nested);
-					if (text) return text;
-				}
-			}
-			return "";
-		};
-		for (const value of [
-			(details as any)?.error,
-			(details as any)?.message,
-			(details as any)?.reason,
-			(result as any)?.error,
-			(result as any)?.message,
-		]) {
-			const text = textFrom(value);
-			if (text) return text;
-		}
-		if (typeof result === "string" && result.trim()) return result.trim();
-		return "Tool failed.";
-	}
 
 	function recordToolTraceEnd(toolName: string, toolCallId: string, result: unknown, isError: boolean) {
 		if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
@@ -12389,8 +12405,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
 			}
 			try {
-				const navigated = await host.runCommand("navigate", { url: openUrl || url, newTab: true, waitForLoad: true });
-				tab = navigated?.tab || navigated;
+				tab = await openRestoredSourceTab(openUrl || url);
 			} catch (error: any) {
 				const snapshot = await openArtifactSnapshotFallback(artifact, "navigation-failed", {
 					failures: [error?.message || String(error)],
@@ -13229,14 +13244,47 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		return changed;
 	}
 
+	// Restore a recorded source tab. Onhand-viewer and local-file PDF sources
+	// cannot be restored with browser_navigate (file:// is blocked there), so they
+	// reopen through the internal session-restore viewer command, which trusts
+	// URLs recorded in the session.
+	async function openRestoredSourceTab(url: string) {
+		const target = String(url || "").trim();
+		if (!target) return null;
+		// Only EXTENSION viewer URLs take the internal reopen command
+		// (isOnhandPdfViewerUrl also matches web-hosted /onhand-pdf-viewer.html
+		// copies, which restore fine via plain navigation). Rebuilding through
+		// onhandPdfViewerOpenUrl re-homes stale/foreign extension ids onto the
+		// current install. Local-file PDFs also reopen internally because
+		// browser_navigate blocks file://.
+		const isExtensionViewerUrl = (() => {
+			try {
+				const parsed = new URL(target);
+				return parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname);
+			} catch {
+				return false;
+			}
+		})();
+		if (isExtensionViewerUrl || /^file:/i.test(target)) {
+			const reopened = await host.runCommand(
+				"reopen_onhand_pdf_viewer",
+				isExtensionViewerUrl
+					? { viewerUrl: onhandPdfViewerOpenUrl(onhandPdfViewerSourceUrl(target), target) || target }
+					: { pdfUrl: target },
+			);
+			return (reopened as any)?.tab || reopened;
+		}
+		const navigated = await host.runCommand("navigate", { url: target, newTab: true, waitForLoad: true });
+		return (navigated as any)?.tab || navigated;
+	}
+
 	async function resolveActionTab(action: PageAction, params: any = {}) {
 		const state = await host.snapshotState();
 		const tabs = flattenTabs(state);
 		let tab = findActionTab(tabs, action);
 		const url = String(action.url || "").trim();
 		if (!tab && url && params.openIfNeeded !== false) {
-			const navigated = await host.runCommand("navigate", { url, newTab: true, waitForLoad: true });
-			tab = navigated?.tab || navigated;
+			tab = await openRestoredSourceTab(url);
 		}
 		if (!tab) return null;
 		const tabId = tab?.id;
@@ -13275,8 +13323,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			const hasExplicitTarget = typeof first.tabId === "number" || Boolean(first.url || first.title);
 			if (!tab && first.url && params.openIfNeeded !== false) {
 				try {
-					const navigated = await host.runCommand("navigate", { url: first.url, newTab: true, waitForLoad: true });
-					tab = navigated?.tab || navigated;
+					tab = await openRestoredSourceTab(first.url);
 				} catch (error: any) {
 					failures.push(error?.message || String(error));
 				}
@@ -14314,7 +14361,14 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					};
 					try {
 						await host.runCommand("pdf_jump_to_page", jumpArgs);
-						return action;
+						// The page is right, but the mark may be gone (stale id, or the viewer
+						// reloaded and wiped its annotations). Return only if the annotation
+						// actually scrolls; otherwise fall through to the restore/replay below,
+						// which re-creates the highlight before scrolling.
+						try {
+							await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+							return action;
+						} catch {}
 					} catch {
 						try {
 							await host.runCommand("open_pdf_in_onhand_viewer", {
@@ -14329,7 +14383,14 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								timeoutMs: 15000,
 							});
 							await host.runCommand("pdf_jump_to_page", jumpArgs);
-							return action;
+							// The page is right, but the mark may be gone (stale id, or the viewer
+							// reloaded and wiped its annotations). Return only if the annotation
+							// actually scrolls; otherwise fall through to the restore/replay below,
+							// which re-creates the highlight before scrolling.
+							try {
+								await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+								return action;
+							} catch {}
 						} catch {
 							// If the viewer cannot jump by anchor yet, continue into the
 							// slower restore/replay path below.

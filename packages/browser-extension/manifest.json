@@ -1,56 +1,86 @@
 {
-  "manifest_version": 3,
-  "name": "Onhand",
-  "version": "0.4.0",
-  "description": "Runs the Onhand contextual tutor directly inside the browser extension.",
-  "minimum_chrome_version": "116",
-  "icons": {
-    "16": "icons/onhand-16.png",
-    "32": "icons/onhand-32.png",
-    "48": "icons/onhand-48.png",
-    "128": "icons/onhand-128.png"
-  },
-  "permissions": ["tabs", "activeTab", "storage", "unlimitedStorage", "debugger", "sidePanel", "offscreen", "scripting", "webNavigation", "clipboardRead", "clipboardWrite"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "http://*/*", "https://*/*", "file:///*"],
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
-  "sidebar_action": {
-    "default_icon": {
-      "16": "icons/onhand-16.png",
-      "32": "icons/onhand-32.png",
-      "48": "icons/onhand-48.png",
-      "128": "icons/onhand-128.png"
-    },
-    "default_title": "Onhand",
-    "default_panel": "sidepanel.html"
-  },
-  "options_page": "options.html",
-  "action": {
-    "default_title": "Onhand",
-    "default_icon": {
-      "16": "icons/onhand-16.png",
-      "32": "icons/onhand-32.png",
-      "48": "icons/onhand-48.png",
-      "128": "icons/onhand-128.png"
-    }
-  },
-  "commands": {
-    "_execute_action": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+Space",
-        "mac": "Command+Shift+Space"
-      }
-    }
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["pdf-viewer.html", "pdf-viewer.bundle.js", "vendor/*", "vendor/cmaps/*", "vendor/standard_fonts/*", "fonts/*"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+	"manifest_version": 3,
+	"content_security_policy": {
+		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+	},
+	"name": "Onhand",
+	"version": "0.4.0",
+	"description": "Runs the Onhand contextual tutor directly inside the browser extension.",
+	"minimum_chrome_version": "116",
+	"icons": {
+		"16": "icons/onhand-16.png",
+		"32": "icons/onhand-32.png",
+		"48": "icons/onhand-48.png",
+		"128": "icons/onhand-128.png"
+	},
+	"permissions": [
+		"tabs",
+		"activeTab",
+		"storage",
+		"unlimitedStorage",
+		"debugger",
+		"sidePanel",
+		"offscreen",
+		"scripting",
+		"webNavigation",
+		"clipboardRead",
+		"clipboardWrite"
+	],
+	"host_permissions": [
+		"http://127.0.0.1/*",
+		"http://localhost/*",
+		"http://*/*",
+		"https://*/*",
+		"file:///*"
+	],
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"side_panel": {
+		"default_path": "sidepanel.html"
+	},
+	"sidebar_action": {
+		"default_icon": {
+			"16": "icons/onhand-16.png",
+			"32": "icons/onhand-32.png",
+			"48": "icons/onhand-48.png",
+			"128": "icons/onhand-128.png"
+		},
+		"default_title": "Onhand",
+		"default_panel": "sidepanel.html"
+	},
+	"options_page": "options.html",
+	"action": {
+		"default_title": "Onhand",
+		"default_icon": {
+			"16": "icons/onhand-16.png",
+			"32": "icons/onhand-32.png",
+			"48": "icons/onhand-48.png",
+			"128": "icons/onhand-128.png"
+		}
+	},
+	"commands": {
+		"_execute_action": {
+			"suggested_key": {
+				"default": "Ctrl+Shift+Space",
+				"mac": "Command+Shift+Space"
+			}
+		}
+	},
+	"web_accessible_resources": [
+		{
+			"resources": [
+				"pdf-viewer.html",
+				"pdf-viewer.bundle.js",
+				"vendor/*",
+				"vendor/cmaps/*",
+				"vendor/standard_fonts/*",
+				"fonts/*"
+			],
+			"matches": [
+				"<all_urls>"
+			]
+		}
+	]
 }

@@ -153929,7 +153929,51 @@ function buildNamedFormulaHighlightGuardResult(toolName, commandName, params, pr
     }
   };
 }
+function extractToolErrorText(result) {
+  const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
+  const textFrom = (value) => {
+    if (value == null) return "";
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const text = textFrom(item?.text ?? item);
+        if (text) return text;
+      }
+      return "";
+    }
+    if (typeof value === "object") {
+      for (const nested of [
+        value.error,
+        value.message,
+        value.reason,
+        value.details,
+        value.cause,
+        value.content
+      ]) {
+        const text = textFrom(nested);
+        if (text) return text;
+      }
+    }
+    return "";
+  };
+  for (const value of [
+    details?.error,
+    details?.message,
+    details?.reason,
+    details?.content,
+    result?.error,
+    result?.message,
+    result?.content
+  ]) {
+    const text = textFrom(value);
+    if (text) return text;
+  }
+  if (typeof result === "string" && result.trim()) return result.trim();
+  return "Tool failed.";
+}
 var __browserRuntimeTest = {
+  extractToolErrorTextForTest: extractToolErrorText,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
   buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -155902,39 +155946,6 @@ function createOnhandBrowserRuntime(host) {
     if (!entry) return;
     entry.effectiveArgs = serializeTraceValue(effectiveArgs, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
   }
-  function extractToolErrorText(result) {
-    const details = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "details") ? result.details : result;
-    const textFrom = (value) => {
-      if (value == null) return "";
-      if (typeof value === "string") return value.trim();
-      if (typeof value === "number" || typeof value === "boolean") return String(value);
-      if (typeof value === "object") {
-        for (const nested of [
-          value.error,
-          value.message,
-          value.reason,
-          value.details,
-          value.cause
-        ]) {
-          const text = textFrom(nested);
-          if (text) return text;
-        }
-      }
-      return "";
-    };
-    for (const value of [
-      details?.error,
-      details?.message,
-      details?.reason,
-      result?.error,
-      result?.message
-    ]) {
-      const text = textFrom(value);
-      if (text) return text;
-    }
-    if (typeof result === "string" && result.trim()) return result.trim();
-    return "Tool failed.";
-  }
   function recordToolTraceEnd(toolName, toolCallId, result, isError2) {
     if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
     if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
@@ -156877,8 +156888,7 @@ function createOnhandBrowserRuntime(host) {
         throw new Error(`No matching tab is open for artifact ${artifact.id}.`);
       }
       try {
-        const navigated = await host.runCommand("navigate", { url: openUrl || url2, newTab: true, waitForLoad: true });
-        tab = navigated?.tab || navigated;
+        tab = await openRestoredSourceTab(openUrl || url2);
       } catch (error52) {
         const snapshot = await openArtifactSnapshotFallback(artifact, "navigation-failed", {
           failures: [error52?.message || String(error52)]
@@ -157659,14 +157669,34 @@ function createOnhandBrowserRuntime(host) {
     if (changed) session.updatedAt = nowIso();
     return changed;
   }
+  async function openRestoredSourceTab(url2) {
+    const target = String(url2 || "").trim();
+    if (!target) return null;
+    const isExtensionViewerUrl = (() => {
+      try {
+        const parsed = new URL(target);
+        return parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname);
+      } catch {
+        return false;
+      }
+    })();
+    if (isExtensionViewerUrl || /^file:/i.test(target)) {
+      const reopened = await host.runCommand(
+        "reopen_onhand_pdf_viewer",
+        isExtensionViewerUrl ? { viewerUrl: onhandPdfViewerOpenUrl(onhandPdfViewerSourceUrl(target), target) || target } : { pdfUrl: target }
+      );
+      return reopened?.tab || reopened;
+    }
+    const navigated = await host.runCommand("navigate", { url: target, newTab: true, waitForLoad: true });
+    return navigated?.tab || navigated;
+  }
   async function resolveActionTab(action, params = {}) {
     const state = await host.snapshotState();
     const tabs = flattenTabs(state);
     let tab = findActionTab(tabs, action);
     const url2 = String(action.url || "").trim();
     if (!tab && url2 && params.openIfNeeded !== false) {
-      const navigated = await host.runCommand("navigate", { url: url2, newTab: true, waitForLoad: true });
-      tab = navigated?.tab || navigated;
+      tab = await openRestoredSourceTab(url2);
     }
     if (!tab) return null;
     const tabId = tab?.id;
@@ -157700,8 +157730,7 @@ function createOnhandBrowserRuntime(host) {
       const hasExplicitTarget = typeof first.tabId === "number" || Boolean(first.url || first.title);
       if (!tab && first.url && params.openIfNeeded !== false) {
         try {
-          const navigated = await host.runCommand("navigate", { url: first.url, newTab: true, waitForLoad: true });
-          tab = navigated?.tab || navigated;
+          tab = await openRestoredSourceTab(first.url);
         } catch (error52) {
           failures.push(error52?.message || String(error52));
         }
@@ -158618,7 +158647,11 @@ function createOnhandBrowserRuntime(host) {
           };
           try {
             await host.runCommand("pdf_jump_to_page", jumpArgs);
-            return action;
+            try {
+              await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+              return action;
+            } catch {
+            }
           } catch {
             try {
               await host.runCommand("open_pdf_in_onhand_viewer", {
@@ -158633,7 +158666,11 @@ function createOnhandBrowserRuntime(host) {
                 timeoutMs: 15e3
               });
               await host.runCommand("pdf_jump_to_page", jumpArgs);
-              return action;
+              try {
+                await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+                return action;
+              } catch {
+              }
             } catch {
             }
           }

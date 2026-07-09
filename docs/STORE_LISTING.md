@@ -179,6 +179,11 @@ the store build. The extension package includes its runtime, page tools,
 PDF viewer, and vendor assets. Remote AI APIs and the Onhand Free Worker
 are data/model endpoints, not remotely hosted extension code.
 
+WebAssembly note: the extension CSP includes `'wasm-unsafe-eval'` so the
+bundled PDF.js viewer can compile its packaged image decoders (JBIG2/JPX,
+used by scanned PDFs). No WebAssembly is fetched or executed from outside
+the extension package.
+
 Review note: Chrome's remote-hosted-code guidance treats JavaScript or
 WASM executed from outside the extension package as sensitive, including
 some `chrome.debugger` execution patterns. Because `browser_run_js` remains
