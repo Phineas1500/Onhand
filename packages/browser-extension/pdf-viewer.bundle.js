@@ -26982,6 +26982,17 @@ async function loadPdfDocumentFromUrl(value) {
     standardFontDataUrl: extensionUrl("vendor/standard_fonts/")
   };
   if (value.startsWith("file:")) {
+    let authorized = false;
+    try {
+      const auth = await chrome.runtime.sendMessage({ type: "pdf-viewer:authorize-file-source", url: value });
+      authorized = Boolean(auth?.ok);
+    } catch {
+    }
+    if (!authorized) {
+      throw new Error(
+        "For security, Onhand only opens local PDFs it handed off itself. Open the file in a browser tab and ask Onhand from there, or reopen it from your Onhand session."
+      );
+    }
     try {
       const data = await loadLocalFilePdfBytes(value);
       const { url: _url, ...optionsWithoutUrl } = baseOptions;

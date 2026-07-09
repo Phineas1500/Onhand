@@ -2222,6 +2222,21 @@ async function loadPdfDocumentFromUrl(value: string) {
 		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
 	};
 	if (value.startsWith("file:")) {
+		// pdf-viewer.html is web-accessible, so any site can open it with a
+		// url=file:/// parameter. Only read local bytes when this launch was
+		// granted by the background (handoff or session restore) — otherwise a
+		// hostile page could render an arbitrary local file under Onhand's
+		// file permission.
+		let authorized = false;
+		try {
+			const auth = await chrome.runtime.sendMessage({ type: "pdf-viewer:authorize-file-source", url: value });
+			authorized = Boolean((auth as any)?.ok);
+		} catch {}
+		if (!authorized) {
+			throw new Error(
+				"For security, Onhand only opens local PDFs it handed off itself. Open the file in a browser tab and ask Onhand from there, or reopen it from your Onhand session.",
+			);
+		}
 		try {
 			const data = await loadLocalFilePdfBytes(value);
 			const { url: _url, ...optionsWithoutUrl } = baseOptions;

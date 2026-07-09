@@ -500,6 +500,51 @@ async function isAllowedFileSchemeAccess() {
 	}
 }
 
+// pdf-viewer.html is web-accessible, so any site can open it with a
+// url=file:/// parameter. The viewer therefore refuses to read local bytes
+// unless the launch was granted by this background (handoff or session
+// restore). Grants are one-shot per file URL with a short TTL, then
+// remembered per tab (chrome.storage.session) so in-tab reloads keep working.
+const ONHAND_PDF_VIEWER_FILE_GRANT_TTL_MS = 2 * 60 * 1000;
+const ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY = "onhand:pdf-viewer-file-auth";
+const pendingOnhandPdfViewerFileGrants = new Map();
+
+function grantOnhandPdfViewerFileSource(fileUrl) {
+	const key = stripUrlHash(String(fileUrl || ""));
+	if (!key || !isFileUrl(key)) return;
+	pendingOnhandPdfViewerFileGrants.set(key, Date.now() + ONHAND_PDF_VIEWER_FILE_GRANT_TTL_MS);
+	if (pendingOnhandPdfViewerFileGrants.size > 32) {
+		const now = Date.now();
+		for (const [grantKey, expiresAt] of pendingOnhandPdfViewerFileGrants) {
+			if (expiresAt < now) pendingOnhandPdfViewerFileGrants.delete(grantKey);
+		}
+	}
+}
+
+async function authorizeOnhandPdfViewerFileSource(sender, fileUrl) {
+	const senderUrl = String(sender?.url || "");
+	if (!isOwnExtensionPdfViewerUrl(senderUrl)) return false;
+	const key = stripUrlHash(String(fileUrl || ""));
+	if (!key || !isFileUrl(key)) return false;
+	const tabId = sender?.tab?.id;
+	const tabKey = typeof tabId === "number" ? tabId + ":" + key : "";
+	let remembered = {};
+	try {
+		remembered = (await chrome.storage.session.get(ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY))?.[ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY] || {};
+	} catch {}
+	if (tabKey && remembered[tabKey]) return true;
+	const expiresAt = pendingOnhandPdfViewerFileGrants.get(key);
+	if (!expiresAt || expiresAt < Date.now()) return false;
+	pendingOnhandPdfViewerFileGrants.delete(key);
+	if (tabKey) {
+		remembered[tabKey] = Date.now();
+		try {
+			await chrome.storage.session.set({ [ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY]: remembered });
+		} catch {}
+	}
+	return true;
+}
+
 function isLocalFileAccessError(tab, error) {
 	return isFileUrl(tab?.url) && isRestrictedScriptingError(error);
 }
@@ -10666,6 +10711,7 @@ async function openPdfInOnhandViewer(args = {}) {
 		// so tell the model/user exactly what to enable instead of failing opaquely.
 		throw new Error(localFileAccessMessage(sourceTab));
 	}
+	if (isFileUrl(pdfUrl)) grantOnhandPdfViewerFileSource(pdfUrl);
 	const diagnostics = createPdfViewerHandoffDiagnostics(args, sourceTab, pdfUrl);
 	const sourceIsGoogleDocs = isGoogleDocsDocumentUrl(sourceTab.url);
 	const shouldOpenViewerInNewTab = args.newTab === true || (sourceIsGoogleDocs && args.newTab !== false);
@@ -13064,6 +13110,7 @@ async function handleCommand(name, args = {}) {
 			if (isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
 				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
 			}
+			if (isFileUrl(sourcePdfUrl)) grantOnhandPdfViewerFileSource(sourcePdfUrl);
 			const created = await chrome.tabs.create({ url: viewerUrl, active: args.active !== false });
 			const timeoutMs = clampNumber(args.timeoutMs, 20000, { min: 100, max: 120000 });
 			const viewerReady = await safeWaitForInlineOnhandPdfViewerReady(created.id, timeoutMs, sourcePdfUrl);
@@ -13997,6 +14044,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY,
 			]);
 			sendResponse(await freeTierBypassState("disable"));
+			return;
+		}
+
+		if (message?.type === "pdf-viewer:authorize-file-source") {
+			sendResponse({ ok: await authorizeOnhandPdfViewerFileSource(_sender, message.url) });
 			return;
 		}
 
