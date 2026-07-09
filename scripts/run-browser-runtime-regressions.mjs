@@ -2115,6 +2115,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	assert.match(viewerHtml, /justify-content:\s*safe center/, "oversized PDF pages should remain horizontally scrollable");
 	assert.match(viewerHtml, /\.onhand-pdf-toolbar\s*\{[^}]*position:\s*fixed[^}]*left:\s*0[^}]*right:\s*0/s, "PDF toolbar should stay pinned to the viewport while a zoomed page scrolls horizontally");
 	assert.match(viewerHtml, /body\s*\{[^}]*padding-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "fixed PDF toolbar should reserve its height above the document");
+	assert.match(viewerHtml, /\.page\s*\{[^}]*scroll-margin-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "PDF page jumps should land below the fixed toolbar");
 	assert.match(viewerHtml, /id="onhand-pdf-title"[\s\S]*id="onhand-pdf-status"[\s\S]*class="onhand-pdf-controls"/, "variable PDF status text should appear before the stable control cluster");
 	assert.match(viewerHtml, /\.onhand-pdf-controls\s*\{[^}]*flex:\s*0\s+0\s+auto/s, "PDF controls should not move or shrink when status text changes");
 	assert.match(viewerHtml, /\.canvasWrapper\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s, "PDF canvases should fill resized page shells without per-canvas layout writes");
