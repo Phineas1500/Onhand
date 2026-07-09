@@ -2103,6 +2103,9 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /applyTransientZoom/, `${path} should preview gesture zoom with one compositor transform`);
 		assert.match(source, /commitTransientZoom/, `${path} should commit page layout only after gesture zoom settles`);
 		assert.match(source, /pendingCountBeforeSharpen/, `${path} should not compete with the initial background render queue when sharpening scans`);
+		assert.match(source, /rebuildPdfAnnotationLayers/, `${path} should rebuild annotations at committed geometry even when sharpening is deferred`);
+		assert.match(source, /return Math\.min\(requested, dimensionLimit, pixelLimit\)/, `${path} should honor canvas dimension and pixel caps at every zoom level`);
+		assert.doesNotMatch(source, /Math\.max\(0\.25, Math\.min\(requested, dimensionLimit, pixelLimit\)\)/, `${path} should not override canvas safety caps with a minimum output scale`);
 		assert.match(source, /event\.ctrlKey/, `${path} should support Chromium trackpad pinch zoom`);
 		assert.match(source, /gesturechange/, `${path} should support native gesture zoom events`);
 		assert.doesNotMatch(source, /Every page needs a crisp pass/, `${path} should not schedule a full-document rerender after zoom`);

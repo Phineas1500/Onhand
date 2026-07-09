@@ -289,7 +289,7 @@ function canvasOutputScale(viewport: { width: number; height: number }) {
 	const requested = Math.max(1, Number(window.devicePixelRatio) || 1);
 	const dimensionLimit = MAX_CANVAS_DIMENSION / Math.max(1, viewport.width, viewport.height);
 	const pixelLimit = Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height));
-	return Math.max(0.25, Math.min(requested, dimensionLimit, pixelLimit));
+	return Math.min(requested, dimensionLimit, pixelLimit);
 }
 
 function parsePixelValue(value: string) {
@@ -1479,6 +1479,12 @@ async function restorePdfAnnotationSnapshots(annotations: PdfAnnotationSnapshot[
 			}
 		} catch {}
 	}
+}
+
+async function rebuildPdfAnnotationLayers(annotations: PdfAnnotationSnapshot[], sequence: number) {
+	if (!annotations.length) return;
+	for (const layer of Array.from(document.querySelectorAll(".onhand-pdf-annotation-layer"))) layer.remove();
+	await restorePdfAnnotationSnapshots(annotations, sequence);
 }
 
 async function restorePdfViewSnapshot(snapshot: PdfViewSnapshot | null, sequence: number) {
@@ -2771,21 +2777,20 @@ function settleZoomRender(sequence: number, expectedZoomRevision: number) {
 		zoomRenderTimer = null;
 		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
 		commitTransientZoom();
+		const annotations = capturePdfAnnotationSnapshots();
 		const pendingCountBeforeSharpen = countPendingPages();
 		if (pendingCountBeforeSharpen) {
+			await rebuildPdfAnnotationLayers(annotations, sequence);
+			if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
 			setStatus(`Rendered ${Number(pdfDocument?.numPages || 0) - pendingCountBeforeSharpen}/${pdfDocument?.numPages || 0}`);
 			return;
 		}
-		const annotations = capturePdfAnnotationSnapshots();
 		if (pagesNearViewport().some((page) => pageNeedsSharperRender(page))) {
 			setStatus(`Sharpening visible pages at ${Math.round(currentScale * 100)}%...`);
 		}
 		await renderSharpPagesNearViewport(sequence, expectedZoomRevision);
 		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
-		if (annotations.length) {
-			for (const layer of Array.from(document.querySelectorAll(".onhand-pdf-annotation-layer"))) layer.remove();
-			await restorePdfAnnotationSnapshots(annotations, sequence);
-		}
+		await rebuildPdfAnnotationLayers(annotations, sequence);
 		if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
 		const pendingCount = countPendingPages();
 		setStatus(pendingCount ? `Rendered ${Number(pdfDocument?.numPages || 0) - pendingCount}/${pdfDocument?.numPages || 0}` : "Ready");
