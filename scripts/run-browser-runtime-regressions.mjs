@@ -6339,6 +6339,14 @@ async function assertOnhandPdfViewerSourceUrlIdentity() {
 	// laundering via restore), while their http sources still resolve
 	assert.equal(sourceUrl("https://evil.test/onhand-pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/secret.pdf")), "");
 	assert.equal(sourceUrl("https://reader.test/onhand-pdf-viewer.html?url=" + encodeURIComponent("https://a.test/paper.pdf")), "https://a.test/paper.pdf");
+	// live-tab eligibility: a foreign/stale extension viewer TAB is not
+	// restorable (unscriptable), while the current install's viewer and plain
+	// http/file tabs are
+	const isRestorable = __browserRuntimeTest.isRestorablePageUrlForTest;
+	assert.equal(isRestorable("chrome-extension://stale-old-id/pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/x.pdf")), false);
+	assert.equal(isRestorable(viewer("file:///Users/me/x.pdf")), true);
+	assert.equal(isRestorable("https://a.test/paper.pdf"), true);
+	assert.equal(isRestorable("file:///Users/me/x.pdf"), true);
 	// stale/foreign extension ids re-home onto the current install for file sources
 	const stale = "chrome-extension://stale-old-id/pdf-viewer.html?url=" + encodeURIComponent("file:///Users/me/Downloads/ERS-649.pdf") + "&page=6";
 	const rebuilt = openUrl(sourceUrl(stale), stale);

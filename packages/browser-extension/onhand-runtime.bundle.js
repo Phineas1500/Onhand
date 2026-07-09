@@ -151560,10 +151560,19 @@ function isOnhandPdfViewerAccessError(error52) {
   if (/Cannot access contents of url/i.test(message) && /chrome-extension:\/\/[^"'\s]+\/pdf-viewer\.html/i.test(message)) return true;
   return /Cannot access a chrome-extension:\/\/ URL of different extension/i.test(message);
 }
+function isCurrentExtensionPdfViewerUrl(url2) {
+  try {
+    const prefix = globalThis.chrome?.runtime?.getURL?.("pdf-viewer.html") || "";
+    return Boolean(prefix) && String(url2 || "").startsWith(prefix);
+  } catch {
+    return false;
+  }
+}
 function isRestorablePageUrl(url2) {
   try {
     const protocol = new URL(normalizeRestorablePageUrl(url2)).protocol;
-    return protocol === "http:" || protocol === "https:" || protocol === "file:" || isOnhandPdfViewerUrl(url2);
+    if (protocol === "http:" || protocol === "https:" || protocol === "file:") return true;
+    return isCurrentExtensionPdfViewerUrl(url2);
   } catch {
     return false;
   }
@@ -154013,6 +154022,7 @@ function extractToolErrorText(result) {
 }
 var __browserRuntimeTest = {
   onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+  isRestorablePageUrlForTest: isRestorablePageUrl,
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningEvent,

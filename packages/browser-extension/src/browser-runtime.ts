@@ -6159,10 +6159,23 @@ function isOnhandPdfViewerAccessError(error: unknown) {
 	return /Cannot access a chrome-extension:\/\/ URL of different extension/i.test(message);
 }
 
+function isCurrentExtensionPdfViewerUrl(url: unknown) {
+	try {
+		const prefix = (globalThis as any).chrome?.runtime?.getURL?.("pdf-viewer.html") || "";
+		return Boolean(prefix) && String(url || "").startsWith(prefix);
+	} catch {
+		return false;
+	}
+}
+
 function isRestorablePageUrl(url: unknown) {
 	try {
 		const protocol = new URL(normalizeRestorablePageUrl(url)).protocol;
-		return protocol === "http:" || protocol === "https:" || protocol === "file:" || isOnhandPdfViewerUrl(url);
+		if (protocol === "http:" || protocol === "https:" || protocol === "file:") return true;
+		// A chrome-extension viewer tab is only usable when it belongs to THIS
+		// install; a stale/foreign id tab cannot be scripted or reused, so
+		// matching it as "the same document" would break restore while it is open.
+		return isCurrentExtensionPdfViewerUrl(url);
 	} catch {
 		return false;
 	}
@@ -9205,6 +9218,7 @@ function extractToolErrorText(result: unknown) {
 
 export const __browserRuntimeTest = {
 	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
+	isRestorablePageUrlForTest: isRestorablePageUrl,
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
 	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningEvent,
