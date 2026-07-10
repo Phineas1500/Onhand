@@ -25118,8 +25118,8 @@ var queuedGestureClientX = 0;
 var queuedGestureClientY = 0;
 var nativeGestureStartScale = DEFAULT_SCALE;
 var transientZoomAnchor = null;
-var transientZoomOriginX = 0;
-var transientZoomOriginY = 0;
+var transientZoomGeometry = null;
+var transientZoomCentersHorizontally = false;
 var lastFitRenderWidth = 0;
 function inlinePdfViewerBridgeStorageKey(pdfUrl) {
   return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
@@ -25252,26 +25252,58 @@ function restoreZoomAnchor(anchor) {
 function hasTransientZoom() {
   return Math.abs(currentScale - committedScale) >= 1e-3 || Boolean(transientZoomAnchor) || Boolean(viewer.style.transform && viewer.style.transform !== "none");
 }
+function captureTransientZoomGeometry(anchor) {
+  const page = (anchor ? getPdfPageByNumber(anchor.pageNumber) : null) || findViewportPage();
+  if (!page) return null;
+  const viewerRect = viewer.getBoundingClientRect();
+  const pageRect = page.getBoundingClientRect();
+  const padding = viewerPadding();
+  return {
+    viewerClientLeft: viewerRect.left,
+    viewerClientTop: viewerRect.top,
+    pageLeft: pageRect.left - viewerRect.left,
+    pageTop: pageRect.top - viewerRect.top,
+    pageWidth: pageRect.width,
+    pageHeight: pageRect.height,
+    availableWidth: Math.max(1, window.innerWidth - padding.left - padding.right)
+  };
+}
+function centeredTransientZoomAnchor(anchor) {
+  if (!anchor || !transientZoomCentersHorizontally) return anchor;
+  return {
+    ...anchor,
+    xRatio: 0.5,
+    clientX: window.innerWidth / 2
+  };
+}
 function applyTransientZoom(nextScale, anchor) {
   const startsNewGesture = !hasTransientZoom();
   currentScale = clampScale(nextScale);
   if (startsNewGesture) {
     transientZoomAnchor = anchor;
-    const fallbackPoint = defaultZoomClientPoint();
-    const clientX = anchor?.clientX ?? fallbackPoint.clientX;
-    const clientY = anchor?.clientY ?? fallbackPoint.clientY;
-    const viewerRect = viewer.getBoundingClientRect();
-    transientZoomOriginX = clientX - viewerRect.left;
-    transientZoomOriginY = clientY - viewerRect.top;
+    transientZoomGeometry = captureTransientZoomGeometry(anchor);
   }
   const ratio = currentScale / Math.max(1e-3, committedScale);
-  viewer.style.transformOrigin = `${transientZoomOriginX}px ${transientZoomOriginY}px`;
-  viewer.style.transform = Math.abs(ratio - 1) < 1e-3 ? "none" : `scale(${ratio})`;
+  const geometry = transientZoomGeometry;
+  if (!geometry || !transientZoomAnchor || Math.abs(ratio - 1) < 1e-3) {
+    viewer.style.transformOrigin = "0 0";
+    viewer.style.transform = "none";
+    return;
+  }
+  transientZoomCentersHorizontally = geometry.pageWidth * ratio <= geometry.availableWidth + 0.5;
+  const horizontalRatio = transientZoomCentersHorizontally ? 0.5 : transientZoomAnchor.xRatio;
+  const targetClientX = transientZoomCentersHorizontally ? window.innerWidth / 2 : transientZoomAnchor.clientX;
+  const localAnchorX = geometry.pageLeft + geometry.pageWidth * horizontalRatio;
+  const localAnchorY = geometry.pageTop + geometry.pageHeight * transientZoomAnchor.yRatio;
+  const translateX = targetClientX - geometry.viewerClientLeft - localAnchorX * ratio;
+  const translateY = transientZoomAnchor.clientY - geometry.viewerClientTop - localAnchorY * ratio;
+  viewer.style.transformOrigin = "0 0";
+  viewer.style.transform = `translate3d(${translateX}px, ${translateY}px, 0) scale(${ratio})`;
 }
 function commitTransientZoom() {
   if (!hasTransientZoom()) return;
   const ratio = currentScale / Math.max(1e-3, committedScale);
-  const anchor = transientZoomAnchor;
+  const anchor = centeredTransientZoomAnchor(transientZoomAnchor);
   if (Math.abs(ratio - 1) >= 1e-3) {
     for (const pageElement of getPdfPages()) {
       const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
@@ -25286,6 +25318,8 @@ function commitTransientZoom() {
   viewer.style.transform = "none";
   viewer.style.transformOrigin = "0 0";
   transientZoomAnchor = null;
+  transientZoomGeometry = null;
+  transientZoomCentersHorizontally = false;
   restoreZoomAnchor(anchor);
 }
 function canvasOutputScale(viewport) {
