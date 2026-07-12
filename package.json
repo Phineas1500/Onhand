@@ -44,6 +44,7 @@
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
     "test:real-online-pdfs": "node ./scripts/run-real-online-pdf-regressions.mjs",
+    "test:real-pdf-zoom": "node ./scripts/run-real-pdf-zoom-regressions.mjs",
     "test:live-acceptance": "node ./scripts/run-onhand-live-acceptance.mjs",
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs",
     "eval:page-prompts": "node ./scripts/run-page-prompt-eval.mjs",
@@ -66,6 +67,7 @@
   },
   "devDependencies": {
     "@sentry/cli": "^3.5.0",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "ws": "^8.21.0"
   }
 }

@@ -2102,6 +2102,8 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /committedScale/, `${path} should separate committed layout scale from transient gesture scale`);
 		assert.match(source, /applyTransientZoom/, `${path} should preview gesture zoom with one compositor transform`);
 		assert.match(source, /commitTransientZoom/, `${path} should commit page layout only after gesture zoom settles`);
+		assert.match(source, /transientZoomCentersHorizontally/, `${path} should center transient zoom while the current page fits the viewport`);
+		assert.match(source, /`translate3d\([^`]+\) scale\(\$\{ratio\}\)`/, `${path} should keep compositor-preview translation in viewport pixels`);
 		assert.match(source, /pendingCountBeforeSharpen/, `${path} should not compete with the initial background render queue when sharpening scans`);
 		assert.match(source, /rebuildPdfAnnotationLayers/, `${path} should rebuild annotations at committed geometry even when sharpening is deferred`);
 		assert.match(source, /return Math\.min\(requested, dimensionLimit, pixelLimit\)/, `${path} should honor canvas dimension and pixel caps at every zoom level`);
@@ -2116,6 +2118,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	const viewerHtml = await readFile(new URL("../packages/browser-extension/pdf-viewer.html", import.meta.url), "utf8");
 	assert.match(viewerHtml, /id="onhand-pdf-zoom-value"/, "PDF viewer should expose a visible zoom percentage and fit control");
 	assert.match(viewerHtml, /justify-content:\s*safe center/, "oversized PDF pages should remain horizontally scrollable");
+	assert.match(viewerHtml, /justify-items:\s*safe center/, "each PDF page should stay centered when page sizes differ");
 	assert.match(viewerHtml, /\.onhand-pdf-toolbar\s*\{[^}]*position:\s*fixed[^}]*left:\s*0[^}]*right:\s*0/s, "PDF toolbar should stay pinned to the viewport while a zoomed page scrolls horizontally");
 	assert.match(viewerHtml, /body\s*\{[^}]*padding-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "fixed PDF toolbar should reserve its height above the document");
 	assert.match(viewerHtml, /\.page\s*\{[^}]*scroll-margin-top:\s*var\(--onhand-pdf-toolbar-height\)/s, "PDF page jumps should land below the fixed toolbar");
