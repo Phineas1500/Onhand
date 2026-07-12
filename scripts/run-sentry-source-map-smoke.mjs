@@ -5,23 +5,27 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(rootDir, "packages/browser-extension/manifest.json");
+const shippedBundlePath = path.join(rootDir, "packages/browser-extension/onhand-runtime.bundle.js");
 const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 const EXTENSION_STACK_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/onhand-runtime.bundle.js";
 const MAPPED_SOURCE = "packages/browser-extension/src/browser-runtime.ts";
+const MAPPED_SOURCE_BUNDLE_MARKER = `// ${MAPPED_SOURCE}`;
 
 function parseArgs(argv) {
 	const options = {
-		line: 138083,
-		column: 20,
+		line: null,
+		column: null,
 		timeoutMs: 90_000,
 		pollMs: 5_000,
+		printFrame: false,
 		org: process.env.SENTRY_ORG || "ramaway",
 		project: process.env.SENTRY_PROJECT || "onhand-browser-extension",
 		apiUrl: process.env.SENTRY_API_URL || process.env.SENTRY_URL || "https://sentry.io",
 		release: process.env.SENTRY_RELEASE || "",
 	};
 	for (const arg of argv) {
-		if (arg.startsWith("--line=")) options.line = Number(arg.slice("--line=".length));
+		if (arg === "--print-frame") options.printFrame = true;
+		else if (arg.startsWith("--line=")) options.line = Number(arg.slice("--line=".length));
 		else if (arg.startsWith("--column=")) options.column = Number(arg.slice("--column=".length));
 		else if (arg.startsWith("--timeout-ms=")) options.timeoutMs = Number(arg.slice("--timeout-ms=".length));
 		else if (arg.startsWith("--poll-ms=")) options.pollMs = Number(arg.slice("--poll-ms=".length));
@@ -31,11 +35,34 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--release=")) options.release = arg.slice("--release=".length);
 		else throw new Error(`Unknown argument: ${arg}`);
 	}
-	if (!Number.isFinite(options.line) || options.line <= 0) throw new Error("--line must be a positive number");
-	if (!Number.isFinite(options.column) || options.column < 0) throw new Error("--column must be a non-negative number");
+	if (options.line !== null && (!Number.isFinite(options.line) || options.line <= 0)) throw new Error("--line must be a positive number");
+	if (options.column !== null && (!Number.isFinite(options.column) || options.column < 0)) throw new Error("--column must be a non-negative number");
+	if (options.line === null && options.column !== null) throw new Error("--column requires --line");
 	if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("--timeout-ms must be a positive number");
 	if (!Number.isFinite(options.pollMs) || options.pollMs <= 0) throw new Error("--poll-ms must be a positive number");
 	return options;
+}
+
+async function resolveSmokeFramePosition(options) {
+	if (options.line !== null) {
+		return { line: options.line, column: options.column ?? 1, derived: false };
+	}
+
+	const bundleLines = (await readFile(shippedBundlePath, "utf8")).split(/\r?\n/);
+	const markerIndex = bundleLines.findIndex((line) => line.trim() === MAPPED_SOURCE_BUNDLE_MARKER);
+	if (markerIndex < 0) {
+		throw new Error(`Shipped runtime bundle does not include ${MAPPED_SOURCE_BUNDLE_MARKER}`);
+	}
+	const statementIndex = bundleLines.findIndex((line, index) => index > markerIndex && line.trim() && !line.trimStart().startsWith("//"));
+	if (statementIndex < 0) {
+		throw new Error(`Shipped runtime bundle does not include executable code after ${MAPPED_SOURCE_BUNDLE_MARKER}`);
+	}
+	const firstCodeColumn = bundleLines[statementIndex].search(/\S/);
+	return {
+		line: statementIndex + 1,
+		column: firstCodeColumn >= 0 ? firstCodeColumn + 1 : 1,
+		derived: true,
+	};
 }
 
 async function readManifestVersion() {
@@ -121,6 +148,13 @@ async function pollForMappedEvent(options, eventId) {
 
 const options = parseArgs(process.argv.slice(2));
 if (!options.release) options.release = `onhand-extension@${await readManifestVersion()}`;
+const framePosition = await resolveSmokeFramePosition(options);
+if (options.printFrame) {
+	console.log(`Generated frame: app:///onhand-runtime.bundle.js:${framePosition.line}:${framePosition.column}`);
+	console.log(`Expected source: ${MAPPED_SOURCE}`);
+	console.log(`Frame location: ${framePosition.derived ? "derived from shipped bundle" : "explicit override"}`);
+	process.exit(0);
+}
 if (!process.env.SENTRY_SMOKE_AUTH_TOKEN && !process.env.SENTRY_AUTH_TOKEN) throw new Error("Missing SENTRY_SMOKE_AUTH_TOKEN or SENTRY_AUTH_TOKEN");
 if (!options.org) throw new Error("Missing SENTRY_ORG");
 if (!options.project) throw new Error("Missing SENTRY_PROJECT");
@@ -160,13 +194,13 @@ Sentry.init({
 	},
 });
 
-const eventId = Sentry.captureException(sourceMapSmokeError(smokeId, options.line, options.column));
+const eventId = Sentry.captureException(sourceMapSmokeError(smokeId, framePosition.line, framePosition.column));
 await Sentry.flush(5_000);
 
 console.log(`Sent Sentry source-map smoke: ${smokeId}`);
 console.log(`Event ID: ${eventId}`);
 console.log(`Release: ${options.release}`);
-console.log(`Generated frame: app:///onhand-runtime.bundle.js:${options.line}:${options.column}`);
+console.log(`Generated frame: app:///onhand-runtime.bundle.js:${framePosition.line}:${framePosition.column}`);
 
 const result = await pollForMappedEvent(options, eventId);
 if (!result.frame) {
