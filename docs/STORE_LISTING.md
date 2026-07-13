@@ -46,9 +46,10 @@ OpenAI API key).
 Study sessions are saved locally in your browser, so you can close a
 paper and pick the conversation back up later.
 
-Privacy note: Onhand reads the active page only to answer your request,
-annotate the page, and save your local session. In API-key and Codex
-sign-in modes, request content goes to your selected provider. In Onhand
+Privacy note: Onhand starts with the active page. In Learning mode it may
+rank metadata from eligible open tabs and read clearly related tabs to answer
+your request; unrelated tabs are not read merely because they are open.
+In API-key and Codex sign-in modes, relevant request and page content goes to your selected provider. In Onhand
 Free mode, request content goes through Onhand's hosted Cloudflare
 Worker to OpenRouter; anonymous diagnostics are required for reliability,
 quota, cost, and abuse monitoring. Diagnostics and explicit error
@@ -68,16 +69,19 @@ review fields. Keep this consistent with `website/privacy.html`.
 
 ### Single purpose
 
-Onhand is a contextual learning and research assistant that reads the
-active webpage or PDF at the user's request, answers questions from that
-source, and adds highlights, notes, and saved local study sessions.
+Onhand is a contextual learning and research assistant that starts with the
+active webpage or PDF, may use clearly related user-opened sources when needed,
+answers from those sources, and adds highlights, notes, and saved local study sessions.
 
 ### Permission justifications
 
 `tabs`
 
-Used to identify the active tab, show tab titles in the side panel, and
-switch tabs only when the user asks Onhand to use another open source.
+Used to identify the active tab, build a local metadata index of eligible open
+tabs, target clearly related sources for user-requested assistance, and switch
+or open a source tab when the user asks to see it or navigation is needed.
+Learning mode may read and annotate a clearly related background tab without
+changing focus; unrelated tabs are not read merely because they are open.
 
 `activeTab`
 
@@ -115,9 +119,9 @@ runtime and media/session flows.
 
 `scripting`
 
-Used to inject bundled Onhand page tools into the active tab so Onhand
-can read visible text, highlight passages, add notes, capture state, and
-restore saved annotations.
+Used to inject bundled Onhand page tools into the active tab or a specifically
+targeted, clearly related open tab so Onhand can read visible text, highlight
+passages, add notes, capture state, and restore saved annotations.
 
 `webNavigation`
 
@@ -140,10 +144,11 @@ Google Docs where the selected text is not exposed in the page DOM.
 Host permissions: `http://*/*`, `https://*/*`, `http://localhost/*`,
 `http://127.0.0.1/*`, `file:///*`
 
-Used so Onhand can work on the webpage or PDF the user opens, including
-local development pages and user-opened local files when Chrome grants
-file URL access. Onhand reads page content only for user-facing page
-assistance, annotation, debugging, or saved-session restore.
+Used so Onhand can work on webpages or PDFs the user opens, including clearly
+related sources selected during Learning mode, local development pages, and
+user-opened local files when Chrome grants file URL access. Onhand reads page
+content only for user-facing page assistance, annotation, debugging, or
+saved-session restore.
 
 ### Remote code declaration
 

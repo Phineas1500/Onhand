@@ -17,7 +17,7 @@ Implementation progress:
 - Slice B is partially implemented: Learning Mode prompts now include compact learner-state context, detect likely repeated concepts in the latest prompt, and the agent has an internal `onhand_record_learning_event` tool for concept/check updates.
 - Slice C is implemented in the sidebar: Learning Mode sessions with state now show a compact "This session" panel with covered concepts, open checks, and best-effort source jumps with visible success/failure feedback.
 - Slice D is implemented in the Chrome acceptance matrix: Answer Mode control, Learning Mode concept prompt, open-check resolution, and repeated-concept refresher cases are available through `npm run acceptance:chrome -- --suite=learning`.
-- Slice E is implemented as prompt-contract behavior: Learning Mode scans captured open tabs, offers related-tab connections before switching context, and has a manual Chrome acceptance case.
+- Slice E is implemented as prompt-contract and runtime-enforced behavior: Learning Mode ranks the full open-tab workspace, automatically inspects clearly related sources, and has regression plus manual Chrome acceptance coverage.
 - Cross-session spaced review (pedagogy phase 4) is implemented: assessments are concept-linked, `computeDueReviews` schedules per-concept reviews across sessions with a Leitner-style ladder, and the sidebar shows a review nudge with Review now / snooze actions. Learning Mode turns that end in an unrecorded check question also get a fallback open check.
 
 ## Product thesis
@@ -101,11 +101,25 @@ Learning Mode should use Onhand's awareness of already-open tabs without stealin
 
 Expected behavior:
 
-- Treat the current tab as the primary teaching source unless the user explicitly asks for cross-tab comparison.
-- Scan the captured open-tab list, and call `browser_list_tabs` only when the captured list is missing or ambiguous.
-- If another open tab appears related, name it briefly and offer to connect it.
-- Do not switch to, read, highlight, or note the related tab until the user accepts or directly asks for cross-tab work.
-- Once the user accepts, anchor each tab separately and say which tab supports which claim.
+- Treat metadata from every eligible tab across open browser windows as a workspace index; tab position is not a relevance signal, while the current window is a ranking signal.
+- Rank likely sources from the complete census, and call `browser_list_tabs` whenever the compact ranked summary is insufficient.
+- Automatically inspect clearly related tabs by `tabId`. When an index page links a PDF collection, extract its linked PDFs without opening every document, use lexical matching only to assemble a broad recall pool, then have a model semantically select evidence for each slot before opening the strongest sources for exact reading and annotation.
+- Read and annotate background tabs without switching focus. Do not inspect unrelated tabs merely because they are open.
+- Anchor each source separately and say which tab supports which claim.
+
+For homework/problem requests where the active page supplies only the question, cross-tab evidence is an invariant rather than an optional enhancement:
+
+- Capture the prompt, selection, active-page context, attachments, and open-tab workspace before planning. Meaningful selected text is the authoritative referent for deictic sidebar requests such as “could you help me solve this?”
+- Use a compact model-led research plan to resolve the target problem, derive concept-specific search queries, split multi-part questions into evidence slots, rank plausible sources, and set a broad cost-safety ceiling. Users do not need to name the homework, mention another tab, or use a magic phrase.
+- Complete the research phase before exposing answer prose. Show tool progress such as “Checking relevant notes…” rather than a provisional answer followed by “Revising.”
+- Judge completion by model-assessed evidence-slot coverage. For a linked PDF collection, run one corpus pass across the collection instead of walking its DOM, schedule, chapter, or lecture-number order. Candidate ordering, filenames, lecture numbers, and lexical scores are never final relevance decisions. Reading one distinct source is not success by itself.
+- A second tab or viewer showing the same canonical PDF is not distinct evidence.
+- Reuse source/viewer tabs by canonical URL. When Onhand opened a raw PDF tab only for background research, replace that temporary tab with the Onhand viewer rather than leaving two identically titled tabs.
+- If an open course/index page links to the relevant lecture or notes, use its links as a source inventory. Search linked PDFs as a corpus when possible, then follow the strongest result in a background tab and inspect the destination itself; the index alone is not explanatory evidence.
+- If no inspected source supports the proposed guidance, withdraw unsupported claims and say that the open materials did not verify them.
+- When a supporting source is found, place the explanatory highlight and, when interpretive, one short note on that source page rather than spending the entire annotation budget on the problem statement.
+
+Deterministic runtime checks remain responsible for mechanics and safety: permissions, focus preservation, canonical-source deduplication, tool success, bounded retries/cost, and honest annotation reporting. Semantic decisions—what the selection refers to, which notes are relevant, and whether evidence is sufficient—belong to the model-led plan and assessment.
 
 ### Direct-answer escape hatch
 
@@ -113,10 +127,12 @@ Learning Mode must not trap the user in Socratic interaction.
 
 Collapse to a direct answer when:
 
-- The user explicitly asks for the answer.
+- The user explicitly asks for the answer to a non-homework conceptual question.
 - The user asks for a study artifact such as a summary, formula sheet, or flashcards.
 - The user says they are stuck, annoyed, or short on time.
 - The agent has already asked one prompt and the user does not engage with it.
+
+For homework-style problems, Learning Mode does not reveal the completed numeric, symbolic, or code answer. Switching to Answer Mode is the explicit escape hatch.
 
 ## Teaching moves
 
@@ -129,7 +145,7 @@ Learning Mode should use a small set of repeatable moves.
 | Retrieval check | The agent has just explained a substantive idea | Ask the user to restate the claim or mechanism in their own words |
 | Hint-before-correction | The user gives a partial or wrong answer | Point to the passage that resolves the issue before giving the correction |
 | Misconception repair | The question implies a common wrong model | Name the misconception briefly and contrast it with the page evidence |
-| Interleaving offer | Another open tab has related material | Offer to connect the two sources before pulling in the second tab |
+| Automatic interleaving | Another open tab is clearly related | Inspect it in the background and connect the useful evidence; ask first only when relevance is ambiguous |
 | Direct-answer escape | User asks for speed or shows frustration | Answer directly while staying anchored |
 
 ## Learner state
@@ -203,7 +219,7 @@ The agent should then follow this order:
 2. If the user is asking about an already introduced concept, use lightweight refresher behavior: reuse or jump to the existing source anchor when possible, add at most one replacement highlight if the anchor is missing, avoid adding a new note unless the user asks for a deeper pass, and avoid re-running the full teaching flow. If the concept already has an open check, point to that check instead of opening another one.
 3. If the user is asking about a new reviewable concept, anchor it to a passage and add it to `conceptsIntroduced`; otherwise reuse the existing concept and append/update its source.
 4. If the answer is substantive, add one prediction or retrieval check unless that would feel forced.
-5. If related open tabs exist, offer an interleaving connection rather than automatically changing context.
+5. If clearly related open tabs exist, inspect them without stealing focus and connect the useful source automatically.
 
 ## State update contract
 
@@ -278,7 +294,7 @@ Use a stable page with an obvious definition or mechanism.
 6. Ask about the same concept again.
 7. Expected: Onhand gives a lightweight refresher, points back to the original source instead of re-explaining from scratch, does not create a new batch of highlights or notes, and does not accumulate multiple open checks for the same repeated concept.
 8. Open a related tab and ask a follow-up.
-9. Expected: Onhand offers to connect the related tab before using it.
+9. Expected: Onhand automatically inspects the clearly related tab without switching focus, anchors the useful passage there, and names which source supports the connection.
 
 ### Regression coverage
 

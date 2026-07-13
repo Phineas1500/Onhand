@@ -2769,8 +2769,8 @@ async function assertRealtimeSessionUsesRuntimeAgentMode() {
 	const visibleTextTool = sessionUpdate?.session?.tools?.find((tool) => tool?.name === "browser_get_visible_text");
 	assert.equal(
 		Object.prototype.hasOwnProperty.call(visibleTextTool?.parameters?.properties || {}, "tabId"),
-		false,
-		"expected Realtime page tools not to expose cross-tab targeting arguments",
+		true,
+		"expected Realtime page tools to accept an exact tabId for Learning workspace retrieval",
 	);
 	assert.deepEqual(
 		sessionUpdate?.session?.tool_choice,
@@ -3348,6 +3348,7 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	const runtimeMessages = [];
 	const events = [];
 	const state = createState();
+	state.preferences.learningMode = true;
 	state.page = null;
 	state.tab = {
 		id: 42,
@@ -3383,6 +3384,45 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	assert.equal(followupToolNames.has("browser_list_tabs"), true, "expected other-notes follow-up to recover the open index tab");
 	assert.equal(followupToolNames.has("browser_activate_tab"), true, "expected other-notes follow-up to activate the open index tab");
 	assert.equal(followupToolNames.has("browser_find_elements"), true, "expected other-notes follow-up to discover note links");
+
+	const otherPageVoiceOptions = hooks.getRealtimeInitialGroundedResponseOptions(
+		"Could you help me solve this problem by looking at the notes for this class on the other page?",
+	);
+	const otherPageVoiceToolNames = new Set((otherPageVoiceOptions.tools || []).map((tool) => tool?.name));
+	assert.equal(otherPageVoiceToolNames.has("browser_list_tabs"), true, "expected notes-on-another-page voice asks to get the full tab inventory");
+	assert.equal(otherPageVoiceToolNames.has("browser_activate_tab"), true, "expected notes-on-another-page voice asks to recover the course tab");
+	assert.equal(otherPageVoiceToolNames.has("browser_find_elements"), true, "expected notes-on-another-page voice asks to inspect note links");
+
+	const ordinaryLearningOptions = hooks.getRealtimeInitialGroundedResponseOptions("How should I reason through this problem?");
+	const ordinaryLearningToolNames = new Set((ordinaryLearningOptions.tools || []).map((tool) => tool?.name));
+	assert.equal(ordinaryLearningToolNames.has("browser_list_tabs"), true, "Learning Mode voice asks should always expose the complete tab inventory");
+	assert.equal(ordinaryLearningToolNames.has("browser_activate_tab"), true, "Learning Mode voice asks should be able to show a relevant source");
+	assert.equal(ordinaryLearningToolNames.has("browser_click_text"), true, "Learning Mode voice asks should be able to follow a relevant course link");
+	assert.match(String(ordinaryLearningOptions.instructions || ""), /Learning Mode workspace retrieval is automatic/);
+	assert.match(String(ordinaryLearningOptions.instructions || ""), /Do not inspect unrelated tabs/);
+	const ordinaryLearningToolsByName = new Map((ordinaryLearningOptions.tools || []).map((tool) => [tool?.name, tool]));
+	for (const toolName of ["browser_get_visible_text", "browser_extract_content", "browser_find_elements", "browser_pdf_search", "browser_highlight_text"]) {
+		assert.ok(
+			ordinaryLearningToolsByName.get(toolName)?.parameters?.properties?.tabId,
+			`Realtime Learning tool ${toolName} should accept an exact background tabId`,
+		);
+	}
+	const realtimeNavigateProperties = ordinaryLearningToolsByName.get("browser_navigate")?.parameters?.properties || {};
+	assert.ok(realtimeNavigateProperties.newTab, "Realtime navigation should expose newTab for background research");
+	assert.ok(realtimeNavigateProperties.active, "Realtime navigation should expose active=false for no-focus-stealing research");
+	const realtimePdfOpenProperties = ordinaryLearningToolsByName.get("browser_open_pdf_in_onhand_viewer")?.parameters?.properties || {};
+	assert.ok(realtimePdfOpenProperties.tabId, "Realtime PDF handoff should accept a source tabId");
+	assert.ok(realtimePdfOpenProperties.newTab, "Realtime PDF handoff should expose newTab");
+	assert.ok(realtimePdfOpenProperties.active, "Realtime PDF handoff should expose active=false");
+	const realtimeTabInventory = hooks.formatRealtimeBrowserToolResult("browser_list_tabs", {
+		windows: [
+			{ id: 1, tabs: [{ id: 11, active: true, title: "Homework", url: "https://course.test/hw.pdf" }] },
+			{ id: 2, tabs: [{ id: 22, active: false, title: "Course notes", url: "https://course.test/notes" }] },
+		],
+	});
+	assert.match(realtimeTabInventory, /Homework/);
+	assert.match(realtimeTabInventory, /Course notes/);
+	assert.doesNotMatch(realtimeTabInventory, /No open tabs returned/);
 
 	await hooks.sendRealtimeTextPrompt("Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.");
 	await waitForSidebarTick(dom);

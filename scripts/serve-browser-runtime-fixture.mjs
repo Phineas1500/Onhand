@@ -331,6 +331,36 @@ ${xrefOffset}
 
 export const samplePdf = buildSimplePdfFixture();
 
+function buildManyPagePdfFixture(pageCount = 3000) {
+	const objects = [
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"",
+	];
+	const pageRefs = [];
+	for (let index = 0; index < pageCount; index += 1) {
+		const pageObjectNumber = objects.length + 1;
+		const contentObjectNumber = pageObjectNumber + 1;
+		pageRefs.push(`${pageObjectNumber} 0 R`);
+		objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents ${contentObjectNumber} 0 R >>`);
+		const stream = "";
+		objects.push(`<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream`);
+	}
+	objects[1] = `<< /Type /Pages /Kids [${pageRefs.join(" ")}] /Count ${pageCount} >>`;
+	let pdf = "%PDF-1.4\n";
+	const offsets = [0];
+	for (const [index, body] of objects.entries()) {
+		offsets.push(Buffer.byteLength(pdf, "utf8"));
+		pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+	}
+	const xrefOffset = Buffer.byteLength(pdf, "utf8");
+	pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f\n`;
+	for (const offset of offsets.slice(1)) pdf += `${String(offset).padStart(10, "0")} 00000 n\n`;
+	pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+	return Buffer.from(pdf, "utf8");
+}
+
+const manyPagePdf = buildManyPagePdfFixture();
+
 function extensionAssetContentType(pathname) {
 	if (pathname.endsWith(".html")) return "text/html; charset=utf-8";
 	if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) return "text/javascript; charset=utf-8";
@@ -398,6 +428,28 @@ export function createFixtureServer({ host = "127.0.0.1", port = DEFAULT_PORT } 
 			}
 			if (url.pathname === "/fixtures/onhand-viewer.pdf" || url.pathname === "/pdf/onhand-viewer") {
 				send(req, res, 200, { "Content-Type": "application/pdf", "Content-Length": String(samplePdf.length) }, samplePdf);
+				return;
+			}
+			if (url.pathname === "/fixtures/many-pages.pdf") {
+				send(req, res, 200, { "Content-Type": "application/pdf", "Content-Length": String(manyPagePdf.length) }, manyPagePdf);
+				return;
+			}
+			if (url.pathname === "/fixtures/stalled.pdf") {
+				res.writeHead(200, { "Content-Type": "application/pdf", "Cache-Control": "no-store" });
+				res.write("%PDF-1.7\n");
+				const timeoutId = setTimeout(() => res.end(), 5000);
+				req.once("close", () => {
+					clearTimeout(timeoutId);
+					res.destroy();
+				});
+				return;
+			}
+			if (url.pathname === "/fixtures/oversized-stream.pdf") {
+				res.writeHead(200, { "Content-Type": "application/pdf", "Cache-Control": "no-store" });
+				res.write("%PDF-1.7\n");
+				res.write(Buffer.alloc(768, 0x20));
+				res.write(Buffer.alloc(768, 0x20));
+				res.end();
 				return;
 			}
 			const extensionAsset = await readExtensionViewerAsset(url.pathname);

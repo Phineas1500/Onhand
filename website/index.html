@@ -401,15 +401,17 @@ return torch.matmul(p_attn, value)</code></pre>
 <section id="tools">
   <div class="container">
     <div class="section-eyebrow"><span class="mc">☞</span><span>The runtime</span></div>
-    <h2 class="section-title">Twenty-nine small tools that act on the page.</h2>
+    <h2 class="section-title">36 small, auditable tools that act across your pages.</h2>
     <p class="section-lede">
-      Each tool is a single, auditable operation against the active tab. Onhand
-      composes them; you read the script in the side panel after every turn.
+      Each tool is a single, auditable operation against a specific browser tab.
+      Onhand starts with the active page and can target clearly related open sources;
+      you read the script in the side panel after every turn.
     </p>
 
+    <!-- browser-tool-manifest:start -->
     <div class="tools-wrap">
       <div class="tool-col">
-        <h5>☞ Read the page</h5>
+        <h5>☞ Read &amp; search</h5>
         <ul>
           <li><span class="verb">browser_</span>extract_content</li>
           <li><span class="verb">browser_</span>get_visible_text</li>
@@ -418,6 +420,20 @@ return torch.matmul(p_attn, value)</code></pre>
           <li><span class="verb">browser_</span>get_scroll_state</li>
           <li><span class="verb">browser_</span>get_visible_region_image</li>
           <li><span class="verb">browser_</span>get_dom</li>
+          <li><span class="verb">browser_</span>textbook_search</li>
+        </ul>
+      </div>
+
+      <div class="tool-col">
+        <h5>⌕ PDF research</h5>
+        <ul>
+          <li><span class="verb">browser_</span>search_linked_pdf_corpus</li>
+          <li><span class="verb">browser_</span>pdf_search</li>
+          <li><span class="verb">browser_</span>pdf_read_pages</li>
+          <li><span class="verb">browser_</span>pdf_jump_to_page</li>
+          <li><span class="verb">browser_</span>pdf_capture_page_image</li>
+          <li><span class="verb">browser_</span>pdf_find_citation</li>
+          <li><span class="verb">browser_</span>open_pdf_in_onhand_viewer</li>
         </ul>
       </div>
 
@@ -431,7 +447,6 @@ return torch.matmul(p_attn, value)</code></pre>
           <li><span class="verb">browser_</span>list_tabs</li>
           <li><span class="verb">browser_</span>activate_tab</li>
           <li><span class="verb">browser_</span>navigate</li>
-          <li><span class="verb">browser_</span>open_pdf_in_onhand_viewer</li>
         </ul>
       </div>
 
@@ -461,6 +476,7 @@ return torch.matmul(p_attn, value)</code></pre>
         </ul>
       </div>
     </div>
+    <!-- browser-tool-manifest:end -->
   </div>
 </section>
 

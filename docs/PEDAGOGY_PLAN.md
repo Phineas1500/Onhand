@@ -127,9 +127,11 @@ Goal: exploit Onhand's structural advantage — it can see *all* open tabs, unli
 
 **5.1 Cross-tab concept linking**
 
-Update the Learning Mode prompt (and optionally `buildLauncherPrompt`) to instruct: "Before answering, scan open tabs via `browser_list_tabs` for conceptually adjacent material. If a related passage exists on another tab, offer to connect the two — *this other tab you have open discusses the same mechanism from a different angle, want me to pull that in?*"
+Update the Learning Mode prompt (and optionally `buildLauncherPrompt`) to treat metadata from every open tab as a workspace index, rank conceptually adjacent material, and automatically inspect the strongest clearly related candidates in small batches.
 
-The key word is *offer*, not auto-pull — respect attention. Auto-pulling is the kind of thing that turns helpful context into noise.
+Respect attention by reading and annotating background tabs via `tabId` instead of switching focus. Do not inspect unrelated tabs merely because they are open.
+
+For problem-only homework pages, run a model-led research preflight after capturing the user's selection and open workspace. Resolve deictic wording against the selection, derive concept-specific searches, follow relevant links from course/index pages, and assess evidence quality after each source. Buffer answer prose until that research finishes; do not stream a draft and visibly revise it afterward. Reading one distinct source is not sufficient when it does not explain the selected problem. Deterministic code should preserve permissions, focus, bounded execution, canonical-source deduplication, and verified tool outcomes rather than deciding semantic relevance.
 
 **5.2 Tab-aware retrieval checks**
 

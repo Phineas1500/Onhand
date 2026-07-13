@@ -1,5 +1,6 @@
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
+import { searchPdfCorpus } from "./pdf-corpus-search.bundle.js";
 
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
@@ -10664,8 +10665,17 @@ async function navigateBrowser(args = {}) {
 		}
 		const existingTab = await findExistingNavigationTab(args.url, windowId);
 		if (existingTab?.id) {
-			if (args.active !== false) return await focusTab(existingTab.id);
-			return waitForLoad && existingTab.status !== "complete" ? await waitForTabComplete(existingTab.id, timeoutMs) : existingTab;
+			const tab =
+				args.active !== false
+					? await focusTab(existingTab.id)
+					: waitForLoad && existingTab.status !== "complete"
+						? await waitForTabComplete(existingTab.id, timeoutMs)
+						: existingTab;
+			return {
+				tab,
+				createdNewTab: false,
+				reusedExistingTab: true,
+			};
 		}
 		const createdTab = await chrome.tabs.create({
 			url: args.url,
@@ -10673,7 +10683,11 @@ async function navigateBrowser(args = {}) {
 			windowId,
 		});
 		const finalTab = waitForLoad ? await waitForTabComplete(createdTab.id, timeoutMs) : await chrome.tabs.get(createdTab.id);
-		return finalTab;
+		return {
+			tab: finalTab,
+			createdNewTab: true,
+			reusedExistingTab: false,
+		};
 	}
 
 	const targetTab = await resolveTargetTab(args);
@@ -10682,7 +10696,11 @@ async function navigateBrowser(args = {}) {
 		active: args.active === true ? true : undefined,
 	});
 	const finalTab = waitForLoad ? await waitForTabComplete(updatedTab.id, timeoutMs) : await chrome.tabs.get(updatedTab.id);
-	return finalTab;
+	return {
+		tab: finalTab,
+		createdNewTab: false,
+		reusedExistingTab: false,
+	};
 }
 
 async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
@@ -12919,6 +12937,43 @@ async function handleCommand(name, args = {}) {
 		case "get_state": {
 			return await snapshotState(args);
 		}
+		case "search_linked_pdf_corpus": {
+			const commandStartedAt = Date.now();
+			const overallTimeoutMs = Number(args.overallTimeoutMs) > 0
+				? Math.max(100, Math.min(120000, Number(args.overallTimeoutMs)))
+				: 30000;
+			const remainingOverallMs = () => Math.max(0, overallTimeoutMs - (Date.now() - commandStartedAt));
+			const tab = await resolveReadTargetTab(args);
+			const linkScrape = withTabCommand(tab.id, async () => {
+				return await evaluateInTab(
+					tab.id,
+					`(() => Array.from(document.querySelectorAll("a[href]"), (anchor) => ({
+						title: String(anchor.textContent || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "").replace(/\\s+/g, " ").trim(),
+						url: anchor.href || ""
+					})).filter((link) => /^https?:\\/\\//i.test(link.url) && /\\.pdf(?:[?#]|$)/i.test(link.url)).slice(0, 100))()`,
+				);
+			});
+			const links = await withOperationTimeout(linkScrape, Math.max(100, remainingOverallMs()), "PDF corpus search deadline exceeded");
+			// Only DOM access belongs under the serialized 15-second tab-command
+			// budget. Corpus fetch, parse, and ranking can legitimately take longer
+			// and do not hold page or debugger state after the link scrape finishes.
+			const corpus = await searchPdfCorpus({
+				sources: Array.isArray(links) ? links : [],
+				evidenceSlots: Array.isArray(args.evidenceSlots) ? args.evidenceSlots : [],
+				maxSources: args.maxSources,
+				maxMatchesPerSlot: args.maxMatchesPerSlot,
+				concurrency: args.concurrency,
+				overallTimeoutMs: Math.max(100, remainingOverallMs()),
+			});
+			if (!corpus.readableSourceCount && corpus.failures?.length) {
+				console.warn("Onhand linked-PDF corpus search could not read any sources", corpus.failures.slice(0, 4));
+			}
+			return {
+				tab: simplifyTab(tab),
+				linkedPdfCount: Array.isArray(links) ? links.length : 0,
+				corpus,
+			};
+		}
 		case "activate_tab": {
 			const tab = await resolveTargetTab(args);
 			const focusedTab = await focusTab(tab.id);
@@ -12927,9 +12982,13 @@ async function handleCommand(name, args = {}) {
 			};
 		}
 			case "navigate": {
-				const navigatedTab = await navigateBrowser(args);
+				const navigation = await navigateBrowser(args);
 				return {
-					tab: simplifyTab(navigatedTab),
+					tab: simplifyTab(navigation.tab),
+					navigation: {
+						createdNewTab: navigation.createdNewTab,
+						reusedExistingTab: navigation.reusedExistingTab,
+					},
 				};
 			}
 			case "open_pdf_in_onhand_viewer": {
@@ -13883,7 +13942,11 @@ async function annotateRealtimePage(message) {
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
+	browser_list_tabs: "list_tabs",
+	browser_activate_tab: "activate_tab",
 	browser_navigate: "navigate",
+	browser_find_elements: "find_elements",
+	browser_click: "click",
 	browser_click_text: "click_text",
 	browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 	browser_pdf_search: "pdf_search",
@@ -13904,13 +13967,41 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_clear_annotations: "clear_annotations",
 });
 
+const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set([
+	"activate_tab",
+	"navigate",
+	"find_elements",
+	"click",
+	"click_text",
+	"open_pdf_in_onhand_viewer",
+	"pdf_search",
+	"pdf_read_pages",
+	"pdf_jump_to_page",
+	"pdf_capture_page_image",
+	"pdf_find_citation",
+	"get_visible_text",
+	"get_visible_region_image",
+	"extract_content",
+	"textbook_search",
+	"get_selection",
+	"get_viewport_headings",
+	"get_scroll_state",
+	"highlight_text",
+	"show_note",
+	"scroll_to_annotation",
+	"clear_annotations",
+]);
+
 function sanitizeRealtimeBrowserToolArgsForCommand(command, args = {}) {
 	const sanitized = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
-	delete sanitized.tabId;
-	delete sanitized.titleContains;
-	delete sanitized.urlContains;
+	if (!REALTIME_BROWSER_SELECTOR_COMMANDS.has(command)) {
+		delete sanitized.tabId;
+		delete sanitized.titleContains;
+		delete sanitized.urlContains;
+	}
 	if (command === "navigate" || command === "open_pdf_in_onhand_viewer") {
-		sanitized.newTab = false;
+		if (!Object.prototype.hasOwnProperty.call(sanitized, "newTab")) sanitized.newTab = false;
+		if (sanitized.newTab === true && !Object.prototype.hasOwnProperty.call(sanitized, "active")) sanitized.active = false;
 	}
 	return sanitized;
 }
