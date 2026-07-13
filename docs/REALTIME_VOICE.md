@@ -1,6 +1,6 @@
 # Realtime Voice Tutor
 
-Onhand has an experimental Realtime voice tutor branch that layers `gpt-realtime-2` speech-to-speech interaction over the existing browser-extension tutor.
+Onhand has an experimental Realtime voice tutor branch that layers `gpt-realtime-2.1` speech-to-speech interaction over the existing browser-extension tutor.
 
 The integration follows the OpenAI Realtime WebRTC unified-interface setup:
 
@@ -23,7 +23,7 @@ Build the extension:
 npm run build:extension
 ```
 
-Voice requires an OpenAI platform API key in the Onhand options page. Open the extension options page, paste a platform key with Realtime API access in the OpenAI platform API key field, save, reload the extension, and click `Voice`. You can keep Authentication set to OpenAI Codex sign-in for text chat; `gpt-realtime-2` uses the platform API key.
+Voice requires an OpenAI platform API key in the Onhand options page. Open the extension options page, paste a platform key with Realtime API access in the OpenAI platform API key field, save, reload the extension, and click `Voice`. You can keep Authentication set to OpenAI Codex sign-in for text chat; `gpt-realtime-2.1` uses the platform API key.
 
 The local session server is still available as a fallback/dev path:
 
@@ -35,7 +35,7 @@ Optional environment variables:
 
 ```sh
 REALTIME_SESSION_PORT=8787
-REALTIME_MODEL=gpt-realtime-2
+REALTIME_MODEL=gpt-realtime-2.1
 REALTIME_VOICE=marin
 OPENAI_SAFETY_IDENTIFIER=onhand-local-dev
 ```
@@ -74,7 +74,7 @@ Useful status messages while testing:
 
 When Voice is connected:
 
-- microphone input streams to `gpt-realtime-2`
+- microphone input streams to `gpt-realtime-2.1`
 - model audio output plays in the side panel
 - substantive page questions from voice or typed sidebar prompts are routed through Onhand's normal gpt-5.5-backed answer flow, then Realtime narrates a concise version of the completed answer
 - when Learning Mode is enabled, new conceptual page questions route through `plan_pedagogical_move` first: Onhand highlights an anchor, records an open learning check, asks a Socratic prompt aloud, and mirrors it in the sidebar

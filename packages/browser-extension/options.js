@@ -206,7 +206,7 @@ function syncCapabilityStatus() {
 	if (isCodexSignInMode()) {
 		const modelId = selectedModel();
 		capabilityStatusEl.textContent = isRealtimeVoiceEnabled()
-			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice uses an OpenAI platform API key for gpt-realtime-2.`
+			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice uses an OpenAI platform API key for gpt-realtime-2.1.`
 			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice is disabled.`;
 		capabilityStatusEl.className = "ok";
 		return;
@@ -230,8 +230,8 @@ function syncCapabilityStatus() {
 	].filter(Boolean);
 	const realtimeText = isRealtimeVoiceEnabled()
 		? isOpenAiApiKeyMode()
-			? " The same OpenAI API key is also used for gpt-realtime-2."
-			: " Realtime Voice uses a separate OpenAI platform API key for gpt-realtime-2."
+			? " The same OpenAI API key is also used for gpt-realtime-2.1."
+			: " Realtime Voice uses a separate OpenAI platform API key for gpt-realtime-2.1."
 		: " Realtime Voice is disabled.";
 	capabilityStatusEl.textContent = unsupported.length
 		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.${realtimeText}`
@@ -317,18 +317,18 @@ function syncRealtimeVoiceFields() {
 	realtimeOpenAiKeyFieldEl.hidden = !showSeparateOpenAiKey;
 	realtimeOpenAiApiKeyInput.value = pendingApiKeys.openai || "";
 	const savedOpenAiKey = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === "openai")?.hasApiKey;
-	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for gpt-realtime-2; text chat keeps using the selected authentication mode above.`;
+	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for gpt-realtime-2.1; text chat keeps using the selected authentication mode above.`;
 	if (!enabled) {
-		realtimeVoiceHelpEl.textContent = "Realtime Voice is disabled. Enable it to use gpt-realtime-2 with an OpenAI platform API key.";
+		realtimeVoiceHelpEl.textContent = "Realtime Voice is disabled. Enable it to use gpt-realtime-2.1 with an OpenAI platform API key.";
 		return;
 	}
 	if (usingOpenAiApiKeyForText) {
-		realtimeVoiceHelpEl.textContent = "Realtime Voice will use the same OpenAI platform API key selected for Provider API key mode to start gpt-realtime-2.";
+		realtimeVoiceHelpEl.textContent = "Realtime Voice will use the same OpenAI platform API key selected for Provider API key mode to start gpt-realtime-2.1.";
 		return;
 	}
 	realtimeVoiceHelpEl.textContent = isCodexSignInMode()
-		? "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2. Text chat still uses OpenAI Codex sign-in."
-		: "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2. Text chat still uses your selected provider API key.";
+		? "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2.1. Text chat still uses OpenAI Codex sign-in."
+		: "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2.1. Text chat still uses your selected provider API key.";
 }
 
 function collectApiKeys() {
