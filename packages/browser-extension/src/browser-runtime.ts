@@ -1053,9 +1053,23 @@ const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
 	"open_pdf_in_onhand_viewer",
 ]);
 
+const CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS = new Set([
+	...PREINVENTORY_PLANNED_TAB_ID_COMMANDS,
+	"pdf_search",
+	"pdf_read_pages",
+	"pdf_find_citation",
+	"pdf_jump_to_page",
+	"pdf_capture_page_image",
+	"highlight_text",
+	"show_note",
+	"scroll_to_annotation",
+	"clear_annotations",
+]);
+
 function shouldPreserveTrustedWorkspaceTabId(commandName: string, tabId: unknown, request: any) {
 	if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
 	if (commandName === "open_pdf_in_onhand_viewer" && sourceTabWasOpenedByRequest(request, tabId)) return true;
+	if (CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS.has(commandName) && workspaceTabWasOpenedByRequest(request, tabId)) return true;
 	if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
 	return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : [])
 		.some((candidateTabId: unknown) => Number(candidateTabId) === tabId);
@@ -9147,6 +9161,16 @@ function sourceTabWasOpenedByRequest(request: any, tabId: unknown) {
 	);
 }
 
+function workspaceTabWasOpenedByRequest(request: any, tabId: unknown) {
+	const targetTabId = Number(tabId || 0);
+	return targetTabId > 0 && (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+		(trace: any) =>
+			trace?.state === "complete" &&
+			["browser_navigate", "browser_open_pdf_in_onhand_viewer"].includes(String(trace?.toolName || "")) &&
+			traceTargetTabId(trace) === targetTabId,
+	);
+}
+
 function buildEmptyHighlightTextGuardResult(toolName: string, commandName: string, params: any) {
 	if (commandName !== "highlight_text") return null;
 	if (String(params?.text || "").trim()) return null;
@@ -10001,6 +10025,7 @@ export const __browserRuntimeTest = {
 	buildLearningResearchContinuationPromptForTest: buildLearningResearchContinuationPrompt,
 	buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
 	sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
+	workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
 	setModelIntentClassificationForPromptForTest: setModelIntentClassificationForPrompt,
 	clearModelIntentClassificationsForTest: clearModelIntentClassifications,
 	promptAsksForStructuredPageSourceMarkerForTest: promptAsksForStructuredPageSourceMarker,

@@ -2166,6 +2166,24 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		corpusTabCommandEnd >= 0 && corpusSearchStart > corpusTabCommandEnd,
 		"linked-PDF fetch, parse, and ranking must run after the tab-command timeout scope ends",
 	);
+	for (const [toolName, commandName] of [
+		["browser_list_tabs", "list_tabs"],
+		["browser_activate_tab", "activate_tab"],
+		["browser_find_elements", "find_elements"],
+		["browser_click", "click"],
+	]) {
+		assert.match(
+			background,
+			new RegExp(`${toolName}: ["']${commandName}["']`),
+			`the Realtime background dispatcher should register advertised tool ${toolName}`,
+		);
+	}
+	assert.match(background, /const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set\([\s\S]*"activate_tab"[\s\S]*"find_elements"/);
+	assert.match(
+		background,
+		/if \(!REALTIME_BROWSER_SELECTOR_COMMANDS\.has\(command\)\) \{[\s\S]*delete sanitized\.tabId/,
+		"Realtime workspace tools should preserve explicit selectors for supported cross-tab commands",
+	);
 	assert.match(
 		background,
 		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]{0,220}attachDebuggerWithRetry/,
@@ -2936,6 +2954,32 @@ async function assertConstitutionPromptContract() {
 			),
 			true,
 			"a source PDF tab opened by the current request should survive before browser_list_tabs completes",
+		);
+		for (const commandName of ["pdf_search", "pdf_read_pages", "highlight_text"]) {
+			assert.equal(
+				shouldPreserveTrustedWorkspaceTabIdForTest(
+					commandName,
+					53,
+					{
+						...learningProblemRequest,
+						toolTraces: [{ state: "complete", toolName: "browser_open_pdf_in_onhand_viewer", resultDetails: { tab: { id: 53, url: "chrome-extension://onhand/pdf-viewer.html" } } }],
+					},
+				),
+				true,
+				`a background viewer returned by the current request should remain targetable by ${commandName}`,
+			);
+		}
+		assert.equal(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
+				"navigate",
+				53,
+				{
+					...learningProblemRequest,
+					toolTraces: [{ state: "complete", toolName: "browser_open_pdf_in_onhand_viewer", resultDetails: { tab: { id: 53 } } }],
+				},
+			),
+			false,
+			"a current-turn viewer should not authorize navigation against that tab",
 		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,

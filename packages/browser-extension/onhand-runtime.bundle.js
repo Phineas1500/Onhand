@@ -148142,9 +148142,22 @@ var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   "capture_screenshot",
   "open_pdf_in_onhand_viewer"
 ]);
+var CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
+  ...PREINVENTORY_PLANNED_TAB_ID_COMMANDS,
+  "pdf_search",
+  "pdf_read_pages",
+  "pdf_find_citation",
+  "pdf_jump_to_page",
+  "pdf_capture_page_image",
+  "highlight_text",
+  "show_note",
+  "scroll_to_annotation",
+  "clear_annotations"
+]);
 function shouldPreserveTrustedWorkspaceTabId(commandName, tabId, request) {
   if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
   if (commandName === "open_pdf_in_onhand_viewer" && sourceTabWasOpenedByRequest(request, tabId)) return true;
+  if (CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS.has(commandName) && workspaceTabWasOpenedByRequest(request, tabId)) return true;
   if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
   return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : []).some((candidateTabId) => Number(candidateTabId) === tabId);
 }
@@ -153949,6 +153962,12 @@ function sourceTabWasOpenedByRequest(request, tabId) {
     (trace2) => trace2?.state === "complete" && trace2?.toolName === "browser_navigate" && traceTargetTabId(trace2) === targetTabId
   );
 }
+function workspaceTabWasOpenedByRequest(request, tabId) {
+  const targetTabId = Number(tabId || 0);
+  return targetTabId > 0 && (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
+    (trace2) => trace2?.state === "complete" && ["browser_navigate", "browser_open_pdf_in_onhand_viewer"].includes(String(trace2?.toolName || "")) && traceTargetTabId(trace2) === targetTabId
+  );
+}
 function buildEmptyHighlightTextGuardResult(toolName, commandName, params) {
   if (commandName !== "highlight_text") return null;
   if (String(params?.text || "").trim()) return null;
@@ -154665,6 +154684,7 @@ var __browserRuntimeTest = {
   buildLearningResearchContinuationPromptForTest: buildLearningResearchContinuationPrompt,
   buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
   sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
+  workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
   setModelIntentClassificationForPromptForTest: setModelIntentClassificationForPrompt,
   clearModelIntentClassificationsForTest: clearModelIntentClassifications,
   promptAsksForStructuredPageSourceMarkerForTest: promptAsksForStructuredPageSourceMarker,

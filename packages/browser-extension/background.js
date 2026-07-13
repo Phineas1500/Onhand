@@ -13914,7 +13914,11 @@ async function annotateRealtimePage(message) {
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
+	browser_list_tabs: "list_tabs",
+	browser_activate_tab: "activate_tab",
 	browser_navigate: "navigate",
+	browser_find_elements: "find_elements",
+	browser_click: "click",
 	browser_click_text: "click_text",
 	browser_open_pdf_in_onhand_viewer: "open_pdf_in_onhand_viewer",
 	browser_pdf_search: "pdf_search",
@@ -13935,11 +13939,37 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 	browser_clear_annotations: "clear_annotations",
 });
 
+const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set([
+	"activate_tab",
+	"find_elements",
+	"click",
+	"click_text",
+	"open_pdf_in_onhand_viewer",
+	"pdf_search",
+	"pdf_read_pages",
+	"pdf_jump_to_page",
+	"pdf_capture_page_image",
+	"pdf_find_citation",
+	"get_visible_text",
+	"get_visible_region_image",
+	"extract_content",
+	"textbook_search",
+	"get_selection",
+	"get_viewport_headings",
+	"get_scroll_state",
+	"highlight_text",
+	"show_note",
+	"scroll_to_annotation",
+	"clear_annotations",
+]);
+
 function sanitizeRealtimeBrowserToolArgsForCommand(command, args = {}) {
 	const sanitized = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
-	delete sanitized.tabId;
-	delete sanitized.titleContains;
-	delete sanitized.urlContains;
+	if (!REALTIME_BROWSER_SELECTOR_COMMANDS.has(command)) {
+		delete sanitized.tabId;
+		delete sanitized.titleContains;
+		delete sanitized.urlContains;
+	}
 	if (command === "navigate" || command === "open_pdf_in_onhand_viewer") {
 		sanitized.newTab = false;
 	}
