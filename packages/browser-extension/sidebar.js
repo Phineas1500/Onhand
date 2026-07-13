@@ -7357,7 +7357,10 @@
 				: options?.includeExternalBrowsingTools
 					? REALTIME_EXTERNAL_BROWSING_TOOL_NAMES
 					: REALTIME_DEFAULT_TOOL_NAMES;
-		const currentTabOnly = (properties = {}) => properties;
+		const currentTabOnly = (properties = {}) => ({
+			tabId: { type: "number", description: "Exact target tab ID returned by browser_list_tabs. Omit for the current tab." },
+			...properties,
+		});
 		const tools = [
 				makeTool("browser_list_tabs", "List open browser tabs and the active tab.", { onlyActive: { type: "boolean" } }),
 				makeTool(
@@ -7372,9 +7375,11 @@
 				),
 			makeTool(
 				"browser_navigate",
-				"Navigate the current tab when the user explicitly asks to browse or open an external source.",
+				"Navigate the target tab, or open a source in a new background tab for workspace research.",
 				currentTabOnly({
-					url: { type: "string", description: "URL to navigate to in the current tab." },
+					url: { type: "string", description: "URL to navigate to or open." },
+					newTab: { type: "boolean", description: "Set true to open a separate source tab." },
+					active: { type: "boolean", description: "Set false with newTab=true to avoid stealing focus." },
 					waitForLoad: { type: "boolean" },
 					timeoutMs: { type: "number" },
 				}),
@@ -7386,6 +7391,7 @@
 				currentTabOnly({
 					pdfUrl: { type: "string", description: "Direct http(s) PDF URL. Omit this to infer it from the target tab URL." },
 					newTab: { type: "boolean" },
+					active: { type: "boolean", description: "Set false when opening a background viewer for research." },
 					waitForLoad: { type: "boolean" },
 					timeoutMs: { type: "number" },
 				}),

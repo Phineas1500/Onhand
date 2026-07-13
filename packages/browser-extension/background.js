@@ -13971,6 +13971,7 @@ const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 
 const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set([
 	"activate_tab",
+	"navigate",
 	"find_elements",
 	"click",
 	"click_text",
@@ -14001,7 +14002,8 @@ function sanitizeRealtimeBrowserToolArgsForCommand(command, args = {}) {
 		delete sanitized.urlContains;
 	}
 	if (command === "navigate" || command === "open_pdf_in_onhand_viewer") {
-		sanitized.newTab = false;
+		if (!Object.prototype.hasOwnProperty.call(sanitized, "newTab")) sanitized.newTab = false;
+		if (sanitized.newTab === true && !Object.prototype.hasOwnProperty.call(sanitized, "active")) sanitized.active = false;
 	}
 	return sanitized;
 }

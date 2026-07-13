@@ -2769,8 +2769,8 @@ async function assertRealtimeSessionUsesRuntimeAgentMode() {
 	const visibleTextTool = sessionUpdate?.session?.tools?.find((tool) => tool?.name === "browser_get_visible_text");
 	assert.equal(
 		Object.prototype.hasOwnProperty.call(visibleTextTool?.parameters?.properties || {}, "tabId"),
-		false,
-		"expected Realtime page tools not to expose cross-tab targeting arguments",
+		true,
+		"expected Realtime page tools to accept an exact tabId for Learning workspace retrieval",
 	);
 	assert.deepEqual(
 		sessionUpdate?.session?.tool_choice,
@@ -3400,6 +3400,20 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	assert.equal(ordinaryLearningToolNames.has("browser_click_text"), true, "Learning Mode voice asks should be able to follow a relevant course link");
 	assert.match(String(ordinaryLearningOptions.instructions || ""), /Learning Mode workspace retrieval is automatic/);
 	assert.match(String(ordinaryLearningOptions.instructions || ""), /Do not inspect unrelated tabs/);
+	const ordinaryLearningToolsByName = new Map((ordinaryLearningOptions.tools || []).map((tool) => [tool?.name, tool]));
+	for (const toolName of ["browser_get_visible_text", "browser_extract_content", "browser_find_elements", "browser_pdf_search", "browser_highlight_text"]) {
+		assert.ok(
+			ordinaryLearningToolsByName.get(toolName)?.parameters?.properties?.tabId,
+			`Realtime Learning tool ${toolName} should accept an exact background tabId`,
+		);
+	}
+	const realtimeNavigateProperties = ordinaryLearningToolsByName.get("browser_navigate")?.parameters?.properties || {};
+	assert.ok(realtimeNavigateProperties.newTab, "Realtime navigation should expose newTab for background research");
+	assert.ok(realtimeNavigateProperties.active, "Realtime navigation should expose active=false for no-focus-stealing research");
+	const realtimePdfOpenProperties = ordinaryLearningToolsByName.get("browser_open_pdf_in_onhand_viewer")?.parameters?.properties || {};
+	assert.ok(realtimePdfOpenProperties.tabId, "Realtime PDF handoff should accept a source tabId");
+	assert.ok(realtimePdfOpenProperties.newTab, "Realtime PDF handoff should expose newTab");
+	assert.ok(realtimePdfOpenProperties.active, "Realtime PDF handoff should expose active=false");
 	const realtimeTabInventory = hooks.formatRealtimeBrowserToolResult("browser_list_tabs", {
 		windows: [
 			{ id: 1, tabs: [{ id: 11, active: true, title: "Homework", url: "https://course.test/hw.pdf" }] },

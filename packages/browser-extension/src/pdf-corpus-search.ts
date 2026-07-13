@@ -160,7 +160,13 @@ async function readResponseBytes(response: Response, controller: AbortController
 	return data;
 }
 
-async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, maxPdfBytes: number, corpusSignal?: AbortSignal) {
+async function readPdfPages(
+	source: PdfCorpusSource,
+	fetchTimeoutMs: number,
+	maxPdfBytes: number,
+	corpusController?: AbortController,
+	corpusDeadlineAt = 0,
+) {
 	// Corpus candidates are normally public course/paper PDFs. Cross-origin
 	// credentialed fetches from an extension worker are rejected by many servers
 	// that otherwise serve the PDF, so keep the batch path credential-free. An
@@ -168,9 +174,26 @@ async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, max
 	const controller = new AbortController();
 	let timeoutTriggered = false;
 	let corpusDeadlineTriggered = false;
+	let loadingTask: any = null;
+	let destroyLoadingTaskPromise: Promise<void> | null = null;
+	const destroyLoadingTask = () => {
+		if (!loadingTask) return Promise.resolve();
+		if (!destroyLoadingTaskPromise) {
+			destroyLoadingTaskPromise = Promise.resolve(loadingTask.destroy()).then(() => undefined).catch(() => undefined);
+		}
+		return destroyLoadingTaskPromise;
+	};
 	const abortForCorpusDeadline = () => {
 		corpusDeadlineTriggered = true;
 		controller.abort(corpusSignal?.reason || new Error("PDF corpus search deadline exceeded"));
+		void destroyLoadingTask();
+	};
+	const corpusSignal = corpusController?.signal;
+	const enforceCorpusDeadline = () => {
+		if (corpusDeadlineAt > 0 && Date.now() >= corpusDeadlineAt && !corpusSignal?.aborted) {
+			corpusController?.abort(new Error("PDF corpus search deadline exceeded"));
+		}
+		if (corpusSignal?.aborted) throw new Error("PDF corpus search deadline exceeded");
 	};
 	if (corpusSignal?.aborted) abortForCorpusDeadline();
 	else corpusSignal?.addEventListener("abort", abortForCorpusDeadline, { once: true });
@@ -181,37 +204,42 @@ async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, max
 		},
 		fetchTimeoutMs,
 	);
-	let data: Uint8Array;
 	try {
 		const response = await fetch(source.url, { credentials: "omit", signal: controller.signal });
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		data = await readResponseBytes(response, controller, maxPdfBytes);
+		const data = await readResponseBytes(response, controller, maxPdfBytes);
+		clearTimeout(timeoutId);
+		enforceCorpusDeadline();
+		// The corpus path extracts text only. Supplying browser font/CMap URLs makes
+		// PDF.js's display-layer fetch helper read `document.baseURI`, which does not
+		// exist in an MV3 service worker. Embedded text extraction works without
+		// those display resources and keeps the batch reader DOM-free.
+		loadingTask = getDocument({ data });
+		const document = await loadingTask.promise;
+		enforceCorpusDeadline();
+		const pages: PdfCorpusPage[] = [];
+		for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+			enforceCorpusDeadline();
+			const page = await document.getPage(pageNumber);
+			try {
+				enforceCorpusDeadline();
+				const content = await page.getTextContent();
+				enforceCorpusDeadline();
+				const text = (content.items as any[]).map((item) => String(item?.str || "")).filter(Boolean).join(" ");
+				pages.push({ pageNumber, text: compactText(text, 24000) });
+			} finally {
+				page.cleanup();
+			}
+		}
+		return pages;
 	} catch (error) {
 		if (timeoutTriggered) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
-		if (corpusDeadlineTriggered) throw new Error("PDF corpus search deadline exceeded");
+		if (corpusDeadlineTriggered || corpusSignal?.aborted) throw new Error("PDF corpus search deadline exceeded");
 		throw error;
 	} finally {
 		clearTimeout(timeoutId);
 		corpusSignal?.removeEventListener("abort", abortForCorpusDeadline);
-	}
-	// The corpus path extracts text only. Supplying browser font/CMap URLs makes
-	// PDF.js's display-layer fetch helper read `document.baseURI`, which does not
-	// exist in an MV3 service worker. Embedded text extraction works without
-	// those display resources and keeps the batch reader DOM-free.
-	const loadingTask = getDocument({ data });
-	const document = await loadingTask.promise;
-	try {
-		const pages: PdfCorpusPage[] = [];
-		for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-			const page = await document.getPage(pageNumber);
-			const content = await page.getTextContent();
-			const text = (content.items as any[]).map((item) => String(item?.str || "")).filter(Boolean).join(" ");
-			pages.push({ pageNumber, text: compactText(text, 24000) });
-			page.cleanup();
-		}
-		return pages;
-	} finally {
-		await loadingTask.destroy();
+		await destroyLoadingTask();
 	}
 }
 
@@ -246,6 +274,7 @@ export async function searchPdfCorpus(options: {
 		? Math.max(100, Math.min(120000, Number(options.overallTimeoutMs)))
 		: 0;
 	const corpusController = new AbortController();
+	const corpusDeadlineAt = overallTimeoutMs ? Date.now() + overallTimeoutMs : 0;
 	let deadlineExceeded = false;
 	const deadlineId = overallTimeoutMs
 		? setTimeout(() => {
@@ -260,7 +289,7 @@ export async function searchPdfCorpus(options: {
 			const source = sources[cursor++];
 			searchedSourceCount += 1;
 			try {
-				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController.signal) });
+				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController, corpusDeadlineAt) });
 			} catch (error: any) {
 				failures.push({ ...source, error: compactText(error?.message || error, 300) });
 			}
@@ -271,6 +300,7 @@ export async function searchPdfCorpus(options: {
 	} finally {
 		if (deadlineId) clearTimeout(deadlineId);
 	}
+	deadlineExceeded = deadlineExceeded || (overallTimeoutMs > 0 && corpusController.signal.aborted);
 	return {
 		searchedSourceCount,
 		readableSourceCount: readable.length,

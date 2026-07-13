@@ -2179,11 +2179,17 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 			`the Realtime background dispatcher should register advertised tool ${toolName}`,
 		);
 	}
-	assert.match(background, /const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set\([\s\S]*"activate_tab"[\s\S]*"find_elements"/);
+	assert.match(background, /const REALTIME_BROWSER_SELECTOR_COMMANDS = new Set\([\s\S]*"activate_tab"[\s\S]*"navigate"[\s\S]*"find_elements"/);
 	assert.match(
 		background,
 		/if \(!REALTIME_BROWSER_SELECTOR_COMMANDS\.has\(command\)\) \{[\s\S]*delete sanitized\.tabId/,
 		"Realtime workspace tools should preserve explicit selectors for supported cross-tab commands",
+	);
+	assert.doesNotMatch(background, /sanitized\.newTab = false;\s*\}/, "Realtime navigation should not overwrite an explicit newTab=true request");
+	assert.match(
+		background,
+		/hasOwnProperty\.call\(sanitized, "newTab"\)\) sanitized\.newTab = false;[\s\S]*sanitized\.newTab === true[\s\S]*sanitized\.active = false/,
+		"Realtime navigation should keep current-tab defaults while permitting explicit background tabs without focus stealing",
 	);
 	assert.match(
 		background,
@@ -9780,6 +9786,19 @@ async function assertFixtureResponses() {
 		assert.equal(deadlineCorpus.deadlineExceeded, true);
 		assert.ok(deadlineCorpus.searchedSourceCount <= 3, "the corpus deadline should prevent workers from starting later sources");
 		assert.ok(Date.now() - deadlineStartedAt < 2000, "the corpus-wide deadline should abort active fetches promptly");
+
+		const parsingDeadlineStartedAt = Date.now();
+		const parsingDeadlineCorpus = await searchPdfCorpus({
+			sources: [{ title: "Many-page PDF", url: new URL("/fixtures/many-pages.pdf", fixture.url).href }],
+			evidenceSlots: [],
+			fetchTimeoutMs: 1000,
+			overallTimeoutMs: 100,
+			concurrency: 1,
+		});
+		assert.equal(parsingDeadlineCorpus.deadlineExceeded, true);
+		assert.equal(parsingDeadlineCorpus.readableSourceCount, 0);
+		assert.match(parsingDeadlineCorpus.failures[0]?.error || "", /corpus search deadline exceeded/);
+		assert.ok(Date.now() - parsingDeadlineStartedAt < 2000, "the corpus deadline should destroy slow PDF parsing promptly");
 
 		const oversizedCorpus = await searchPdfCorpus({
 			sources: [{ title: "Oversized streamed PDF", url: new URL("/fixtures/oversized-stream.pdf", fixture.url).href }],
