@@ -1039,8 +1039,22 @@ function applyLearningBackgroundFocusDefault(params: any, commandName: string, r
 	return params;
 }
 
-function shouldPreservePlannedCorpusTabId(commandName: string, tabId: unknown, request: any) {
-	if (commandName !== "search_linked_pdf_corpus" || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
+	"search_linked_pdf_corpus",
+	"get_dom",
+	"extract_content",
+	"capture_state",
+	"get_visible_text",
+	"get_visible_region_image",
+	"get_selection",
+	"get_viewport_headings",
+	"get_scroll_state",
+	"capture_screenshot",
+	"open_pdf_in_onhand_viewer",
+]);
+
+function shouldPreservePlannedWorkspaceTabId(commandName: string, tabId: unknown, request: any) {
+	if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName) || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
 	return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : [])
 		.some((candidateTabId: unknown) => Number(candidateTabId) === tabId);
 }
@@ -9964,7 +9978,7 @@ export const __browserRuntimeTest = {
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
 	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
-	shouldPreservePlannedCorpusTabIdForTest: shouldPreservePlannedCorpusTabId,
+	shouldPreservePlannedWorkspaceTabIdForTest: shouldPreservePlannedWorkspaceTabId,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -13040,8 +13054,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			typeof normalizedParams?.tabId === "number" ||
 			(annotationCommandAllowsTabMatch &&
 				Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim()));
-		const preservesPlannedCorpusTabId = shouldPreservePlannedCorpusTabId(commandName, normalizedParams?.tabId, activeRequest);
-		if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedCorpusTabId)) {
+		const preservesPlannedWorkspaceTabId = shouldPreservePlannedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
+		if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedWorkspaceTabId)) {
 			// Title/url selectors resolve within the last-focused window in the
 			// background; scope them to the request window so a same-title tab in
 			// another window cannot take the annotation. Exact tabIds are global.

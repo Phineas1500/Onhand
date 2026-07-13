@@ -148129,8 +148129,21 @@ function applyLearningBackgroundFocusDefault(params, commandName, request) {
   if (commandName === "open_pdf_in_onhand_viewer") return { ...params || {}, active: false };
   return params;
 }
-function shouldPreservePlannedCorpusTabId(commandName, tabId, request) {
-  if (commandName !== "search_linked_pdf_corpus" || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
+  "search_linked_pdf_corpus",
+  "get_dom",
+  "extract_content",
+  "capture_state",
+  "get_visible_text",
+  "get_visible_region_image",
+  "get_selection",
+  "get_viewport_headings",
+  "get_scroll_state",
+  "capture_screenshot",
+  "open_pdf_in_onhand_viewer"
+]);
+function shouldPreservePlannedWorkspaceTabId(commandName, tabId, request) {
+  if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName) || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
   return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : []).some((candidateTabId) => Number(candidateTabId) === tabId);
 }
 function nowIso() {
@@ -154632,7 +154645,7 @@ var __browserRuntimeTest = {
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
-  shouldPreservePlannedCorpusTabIdForTest: shouldPreservePlannedCorpusTabId,
+  shouldPreservePlannedWorkspaceTabIdForTest: shouldPreservePlannedWorkspaceTabId,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
   buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -157403,8 +157416,8 @@ function createOnhandBrowserRuntime(host) {
       commandName
     );
     const hasExplicitTabSelector = typeof normalizedParams?.tabId === "number" || annotationCommandAllowsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim());
-    const preservesPlannedCorpusTabId = shouldPreservePlannedCorpusTabId(commandName, normalizedParams?.tabId, activeRequest);
-    if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedCorpusTabId)) {
+    const preservesPlannedWorkspaceTabId = shouldPreservePlannedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
+    if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedWorkspaceTabId)) {
       if (typeof normalizedParams?.tabId !== "number" && typeof targetWindowId === "number" && typeof normalizedParams?.windowId !== "number") {
         return { ...normalizedParams || {}, windowId: targetWindowId };
       }

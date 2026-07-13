@@ -2242,7 +2242,7 @@ async function assertConstitutionPromptContract() {
 			buildLearningWorkspaceEvidenceRetryPromptForTest,
 			hasCompletedNonActiveWorkspaceReadForTest,
 			applyLearningBackgroundFocusDefaultForTest,
-			shouldPreservePlannedCorpusTabIdForTest,
+			shouldPreservePlannedWorkspaceTabIdForTest,
 			setModelIntentClassificationForPromptForTest,
 			clearModelIntentClassificationsForTest,
 		} = __browserRuntimeTest || {};
@@ -2263,7 +2263,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(typeof buildLearningWorkspaceEvidenceRetryPromptForTest, "function", "Learning workspace retry prompt export is missing");
 		assert.equal(typeof hasCompletedNonActiveWorkspaceReadForTest, "function", "Learning workspace read detector export is missing");
 		assert.equal(typeof applyLearningBackgroundFocusDefaultForTest, "function", "Learning background-focus default export is missing");
-		assert.equal(typeof shouldPreservePlannedCorpusTabIdForTest, "function", "planned corpus tab target guard export is missing");
+		assert.equal(typeof shouldPreservePlannedWorkspaceTabIdForTest, "function", "planned workspace tab target guard export is missing");
 			assert.equal(typeof promptAsksForTeachingPageSourceMarkerForTest, "function", "browser runtime teaching source marker classifier export is missing");
 			assert.equal(typeof promptAsksForStructuredPageSourceMarkerForTest, "function", "browser runtime structured source marker classifier export is missing");
 			assert.equal(typeof promptAllowsPageSourceHighlightsForTest, "function", "browser runtime source marker availability classifier export is missing");
@@ -2895,17 +2895,19 @@ async function assertConstitutionPromptContract() {
 			"model-classified deictic help on a homework page should require workspace evidence without magic wording",
 		);
 		clearModelIntentClassificationsForTest();
+		for (const commandName of ["search_linked_pdf_corpus", "get_visible_text", "extract_content", "open_pdf_in_onhand_viewer"]) {
+			assert.equal(
+				shouldPreservePlannedWorkspaceTabIdForTest(
+					commandName,
+					51,
+					{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
+				),
+				true,
+				`a planner-grounded ${commandName} tab should survive before browser_list_tabs completes`,
+			);
+		}
 		assert.equal(
-			shouldPreservePlannedCorpusTabIdForTest(
-				"search_linked_pdf_corpus",
-				51,
-				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
-			),
-			true,
-			"a planner-grounded corpus tab should survive before browser_list_tabs completes",
-		);
-		assert.equal(
-			shouldPreservePlannedCorpusTabIdForTest(
+			shouldPreservePlannedWorkspaceTabIdForTest(
 				"search_linked_pdf_corpus",
 				52,
 				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
@@ -2914,13 +2916,13 @@ async function assertConstitutionPromptContract() {
 			"an unplanned pre-inventory tab id should retain the normal target safety fallback",
 		);
 		assert.equal(
-			shouldPreservePlannedCorpusTabIdForTest(
-				"extract_content",
+			shouldPreservePlannedWorkspaceTabIdForTest(
+				"navigate",
 				51,
 				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
 			),
 			false,
-			"the planner exception should apply only to linked-PDF corpus search",
+			"the planner exception should not authorize focus-changing navigation",
 		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,
