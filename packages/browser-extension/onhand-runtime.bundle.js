@@ -148112,10 +148112,16 @@ function promptAsksForLinkedPageNavigation(text) {
   );
 }
 function promptExplicitlyRequestsSourceFocus(prompt) {
-  return textHasAny(
-    ownWordsPromptText(prompt),
+  const text = ownWordsPromptText(prompt);
+  if (textHasAny(
+    text,
     /\b(?:take me to|switch (?:me )?to|bring me to|show me (?:the|that) (?:page|tab|source|lecture|notes?)|open (?:the|that) (?:page|tab|source|lecture|notes?) (?:for me|and show me))\b/
-  );
+  )) {
+    return true;
+  }
+  const directNavigationVerb = /\b(?:open(?: up)?|visit|navigate(?: to)?|go to|load|pull up|bring up)\b/;
+  const directDestination = /(?:https?:\/\/|www\.)\S*|\b(?:this|that|the|a|an)\s+(?:link|url|site|website|page|tab)\b|\bgo to\s+(?:https?:\/\/\S+|www\.\S+|[\p{L}\p{N}][\p{L}\p{N}._-]*)/u;
+  return textHasAny(text, directNavigationVerb) && textHasAny(text, directDestination);
 }
 function applyLearningBackgroundFocusDefault(params, commandName, request) {
   if (!request?.learningMode || promptExplicitlyRequestsSourceFocus(request?.displayPrompt)) return params;
@@ -151301,24 +151307,34 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
   );
   const visibleTabIds = Array.from(tabById.keys()).filter((tabId) => tabId > 0);
   const candidateTabIds = Array.from(/* @__PURE__ */ new Set([...plan.candidateTabIds, ...visibleTabIds])).slice(0, 40);
-  const attempts = await Promise.allSettled(candidateTabIds.map(async (tabId) => {
-    const result = await host.runCommand("search_linked_pdf_corpus", {
-      tabId,
-      evidenceSlots: plan.evidenceSlots,
-      maxSources: plan.maxSources,
-      maxMatchesPerSlot: 8,
-      concurrency: 3
-    });
-    return {
-      tabId,
-      tabTitle: String(result?.tab?.title || tabById.get(tabId)?.title || ""),
-      linkedPdfCount: Number(result?.linkedPdfCount || 0),
-      corpus: result?.corpus || {}
-    };
-  }));
-  const corpusResults = attempts.filter((attempt) => attempt.status === "fulfilled").map((attempt) => attempt.value).filter((result) => result.linkedPdfCount >= 2);
-  for (const attempt of attempts) {
-    if (attempt.status === "rejected") host.log?.("Learning linked-PDF corpus preflight candidate failed", attempt.reason);
+  const corpusResults = [];
+  let remainingSources = Math.max(1, Math.min(50, Number(plan.maxSources) || 30));
+  for (const tabId of candidateTabIds) {
+    if (remainingSources <= 0) break;
+    const reservedSources = remainingSources;
+    remainingSources = 0;
+    try {
+      const result = await host.runCommand("search_linked_pdf_corpus", {
+        tabId,
+        evidenceSlots: plan.evidenceSlots,
+        maxSources: reservedSources,
+        maxMatchesPerSlot: 8,
+        concurrency: 3
+      });
+      const corpus = result?.corpus || {};
+      const searchedSourceCount = Math.max(0, Math.min(reservedSources, Number(corpus.searchedSourceCount) || 0));
+      remainingSources = reservedSources - searchedSourceCount;
+      const corpusResult = {
+        tabId,
+        tabTitle: String(result?.tab?.title || tabById.get(tabId)?.title || ""),
+        linkedPdfCount: Number(result?.linkedPdfCount || 0),
+        corpus
+      };
+      if (corpusResult.linkedPdfCount >= 2) corpusResults.push(corpusResult);
+    } catch (error52) {
+      host.log?.("Learning linked-PDF corpus preflight candidate failed", error52);
+      break;
+    }
   }
   return corpusResults.length ? { ...plan, corpusResults } : plan;
 }

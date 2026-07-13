@@ -2993,6 +2993,17 @@ async function assertConstitutionPromptContract() {
 			{ url: busyWindowTabs[50].url, newTab: true, active: true },
 			"an explicit request to be taken to the source should preserve focus-changing intent",
 		);
+		for (const displayPrompt of ["Open https://example.test/notes.", "Open this link.", "Go to Google."]) {
+			assert.deepEqual(
+				applyLearningBackgroundFocusDefaultForTest(
+					{ url: "https://example.test/destination", newTab: true, active: true },
+					"navigate",
+					{ ...learningProblemRequest, displayPrompt },
+				),
+				{ url: "https://example.test/destination", newTab: true, active: true },
+				`explicit Learning Mode navigation should preserve focus for: ${displayPrompt}`,
+			);
+		}
 	const firstPrinciplesSourceToolNames = getToolNamesForTest("could you find a source that derives it from first principles?", false);
 	const firstPrinciplesCachedSourceToolNames = getToolNamesForTest(
 		"could you find a source that derives it from first principles?",
@@ -9440,7 +9451,33 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		[7, 8, 1],
 		"preflight should inspect model-selected candidates and every other model-visible tab for a linked PDF inventory",
 	);
+	assert.deepEqual(
+		corpusPreflightCalls.map((call) => call.args.maxSources),
+		[50, 23, 23],
+		"the linked-PDF source budget should shrink globally across candidate tabs",
+	);
 	assert.deepEqual(hydratedPlan.corpusResults.map((result) => result.tabId), [7], "only a genuine linked collection should become corpus evidence");
+	const cappedCorpusPreflightCalls = [];
+	await test.hydrateLearningResearchPlanWithCorpusForTest(
+		{ ...plan, candidateTabIds: [7, 8], maxSources: 50 },
+		plannerContext,
+		{
+			async runCommand(command, args) {
+				cappedCorpusPreflightCalls.push({ command, args });
+				const searchedSourceCount = args.tabId === 7 ? 30 : args.maxSources;
+				return {
+					tab: { id: args.tabId, title: `Corpus ${args.tabId}` },
+					linkedPdfCount: 100,
+					corpus: { searchedSourceCount, readableSourceCount: searchedSourceCount, retrievalCandidates: [] },
+				};
+			},
+		},
+	);
+	assert.deepEqual(
+		cappedCorpusPreflightCalls.map((call) => [call.args.tabId, call.args.maxSources]),
+		[[7, 50], [8, 20]],
+		"preflight should stop after consuming one shared 50-PDF budget instead of applying 50 PDFs per tab",
+	);
 
 	const assessmentRequest = {
 		learningResearchPlan: plan,
