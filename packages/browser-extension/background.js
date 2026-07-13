@@ -10665,8 +10665,17 @@ async function navigateBrowser(args = {}) {
 		}
 		const existingTab = await findExistingNavigationTab(args.url, windowId);
 		if (existingTab?.id) {
-			if (args.active !== false) return await focusTab(existingTab.id);
-			return waitForLoad && existingTab.status !== "complete" ? await waitForTabComplete(existingTab.id, timeoutMs) : existingTab;
+			const tab =
+				args.active !== false
+					? await focusTab(existingTab.id)
+					: waitForLoad && existingTab.status !== "complete"
+						? await waitForTabComplete(existingTab.id, timeoutMs)
+						: existingTab;
+			return {
+				tab,
+				createdNewTab: false,
+				reusedExistingTab: true,
+			};
 		}
 		const createdTab = await chrome.tabs.create({
 			url: args.url,
@@ -10674,7 +10683,11 @@ async function navigateBrowser(args = {}) {
 			windowId,
 		});
 		const finalTab = waitForLoad ? await waitForTabComplete(createdTab.id, timeoutMs) : await chrome.tabs.get(createdTab.id);
-		return finalTab;
+		return {
+			tab: finalTab,
+			createdNewTab: true,
+			reusedExistingTab: false,
+		};
 	}
 
 	const targetTab = await resolveTargetTab(args);
@@ -10683,7 +10696,11 @@ async function navigateBrowser(args = {}) {
 		active: args.active === true ? true : undefined,
 	});
 	const finalTab = waitForLoad ? await waitForTabComplete(updatedTab.id, timeoutMs) : await chrome.tabs.get(updatedTab.id);
-	return finalTab;
+	return {
+		tab: finalTab,
+		createdNewTab: false,
+		reusedExistingTab: false,
+	};
 }
 
 async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
@@ -12958,9 +12975,13 @@ async function handleCommand(name, args = {}) {
 			};
 		}
 			case "navigate": {
-				const navigatedTab = await navigateBrowser(args);
+				const navigation = await navigateBrowser(args);
 				return {
-					tab: simplifyTab(navigatedTab),
+					tab: simplifyTab(navigation.tab),
+					navigation: {
+						createdNewTab: navigation.createdNewTab,
+						reusedExistingTab: navigation.reusedExistingTab,
+					},
 				};
 			}
 			case "open_pdf_in_onhand_viewer": {

@@ -148140,7 +148140,11 @@ var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   "get_viewport_headings",
   "get_scroll_state",
   "capture_screenshot",
-  "open_pdf_in_onhand_viewer"
+  "open_pdf_in_onhand_viewer",
+  "highlight_text",
+  "show_note",
+  "scroll_to_annotation",
+  "clear_annotations"
 ]);
 var CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   ...PREINVENTORY_PLANNED_TAB_ID_COMMANDS,
@@ -153959,7 +153963,7 @@ function buildDuplicateTabNavigationGuardResult(toolName, commandName, params, r
 function sourceTabWasOpenedByRequest(request, tabId) {
   const targetTabId = Number(tabId || 0);
   return targetTabId > 0 && (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
-    (trace2) => trace2?.state === "complete" && trace2?.toolName === "browser_navigate" && traceTargetTabId(trace2) === targetTabId
+    (trace2) => trace2?.state === "complete" && trace2?.toolName === "browser_navigate" && trace2?.resultDetails?.navigation?.createdNewTab === true && traceTargetTabId(trace2) === targetTabId
   );
 }
 function workspaceTabWasOpenedByRequest(request, tabId) {

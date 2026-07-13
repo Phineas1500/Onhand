@@ -2186,6 +2186,21 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	);
 	assert.match(
 		background,
+		/if \(existingTab\?\.id\) \{[\s\S]{0,700}createdNewTab: false,[\s\S]{0,120}reusedExistingTab: true/,
+		"reused navigation targets should be identified as pre-existing tabs",
+	);
+	assert.match(
+		background,
+		/const createdTab = await chrome\.tabs\.create\([\s\S]{0,500}createdNewTab: true,[\s\S]{0,120}reusedExistingTab: false/,
+		"new navigation targets should be identified as request-created tabs",
+	);
+	assert.match(
+		background,
+		/navigation: \{[\s\S]{0,180}createdNewTab: navigation\.createdNewTab,[\s\S]{0,120}reusedExistingTab: navigation\.reusedExistingTab/,
+		"navigation provenance should be returned to the runtime trace",
+	);
+	assert.match(
+		background,
 		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]{0,220}attachDebuggerWithRetry/,
 		"debugger command queues should time out the wait behind a prior debugger task",
 	);
@@ -2913,7 +2928,16 @@ async function assertConstitutionPromptContract() {
 			"model-classified deictic help on a homework page should require workspace evidence without magic wording",
 		);
 		clearModelIntentClassificationsForTest();
-		for (const commandName of ["search_linked_pdf_corpus", "get_visible_text", "extract_content", "open_pdf_in_onhand_viewer"]) {
+		for (const commandName of [
+			"search_linked_pdf_corpus",
+			"get_visible_text",
+			"extract_content",
+			"open_pdf_in_onhand_viewer",
+			"highlight_text",
+			"show_note",
+			"scroll_to_annotation",
+			"clear_annotations",
+		]) {
 			assert.equal(
 				shouldPreserveTrustedWorkspaceTabIdForTest(
 					commandName,
@@ -9652,11 +9676,38 @@ async function assertModelIntentClassifierOverridesPredicates() {
 
 	const handoffRequest = {
 		toolTraces: [
-			{ state: "complete", toolName: "browser_navigate", resultDetails: { tab: { id: 44, url: "https://course.test/lecture2.pdf" } } },
+			{
+				state: "complete",
+				toolName: "browser_navigate",
+				resultDetails: {
+					tab: { id: 44, url: "https://course.test/lecture2.pdf" },
+					navigation: { createdNewTab: true, reusedExistingTab: false },
+				},
+			},
 			{ state: "complete", toolName: "browser_open_pdf_in_onhand_viewer", effectiveArgs: { tabId: 44 } },
 		],
 	};
 	assert.equal(test.sourceTabWasOpenedByRequestForTest(handoffRequest, 44), true);
+	const reusedSourceRequest = {
+		toolTraces: [{
+			state: "complete",
+			toolName: "browser_navigate",
+			resultDetails: {
+				tab: { id: 44, url: "https://course.test/lecture2.pdf" },
+				navigation: { createdNewTab: false, reusedExistingTab: true },
+			},
+		}],
+	};
+	assert.equal(
+		test.sourceTabWasOpenedByRequestForTest(reusedSourceRequest, 44),
+		false,
+		"a reused user tab must not be classified as request-created for destructive viewer replacement",
+	);
+	assert.equal(
+		test.workspaceTabWasOpenedByRequestForTest(reusedSourceRequest, 44),
+		true,
+		"a reused navigation result should remain targetable for safe current-turn reads and annotations",
+	);
 	assert.match(
 		test.buildDuplicateTabNavigationGuardResultForTest("browser_open_pdf_in_onhand_viewer", "open_pdf_in_onhand_viewer", { tabId: 44 }, handoffRequest).guardrail.message,
 		/already handed to the Onhand viewer/,

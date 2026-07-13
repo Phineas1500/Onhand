@@ -1051,6 +1051,10 @@ const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
 	"get_scroll_state",
 	"capture_screenshot",
 	"open_pdf_in_onhand_viewer",
+	"highlight_text",
+	"show_note",
+	"scroll_to_annotation",
+	"clear_annotations",
 ]);
 
 const CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS = new Set([
@@ -9157,7 +9161,11 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 function sourceTabWasOpenedByRequest(request: any, tabId: unknown) {
 	const targetTabId = Number(tabId || 0);
 	return targetTabId > 0 && (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some(
-		(trace: any) => trace?.state === "complete" && trace?.toolName === "browser_navigate" && traceTargetTabId(trace) === targetTabId,
+		(trace: any) =>
+			trace?.state === "complete" &&
+			trace?.toolName === "browser_navigate" &&
+			trace?.resultDetails?.navigation?.createdNewTab === true &&
+			traceTargetTabId(trace) === targetTabId,
 	);
 }
 
