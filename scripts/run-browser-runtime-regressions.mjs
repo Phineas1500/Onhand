@@ -2148,6 +2148,22 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		/Refreshing inline Onhand PDF viewer to match source reader page/,
 		"page mismatches should not reload the inline Onhand PDF viewer and wipe existing annotations",
 	);
+	const browserRuntimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	const corpusAuditStart = browserRuntimeSource.indexOf("async function runLearningCorpusPreflightCommand");
+	const corpusAuditEnd = browserRuntimeSource.indexOf("async function planLearningResearch", corpusAuditStart);
+	const corpusAuditPath = browserRuntimeSource.slice(corpusAuditStart, corpusAuditEnd);
+	assert.ok(corpusAuditStart >= 0 && corpusAuditEnd > corpusAuditStart, "Learning corpus preflight should have a dedicated audited command path");
+	assert.match(corpusAuditPath, /appendActivity/, "hidden corpus research should be visible in the activity trail");
+	assert.match(corpusAuditPath, /recordToolTraceStart/, "hidden corpus research should record trace input");
+	assert.match(corpusAuditPath, /recordToolTraceEnd/, "hidden corpus research should record trace output");
+	assert.match(corpusAuditPath, /appendUniquePageAction[\s\S]*buildPageAction/, "hidden corpus research should publish a readable page action");
+	const learningPlanStart = browserRuntimeSource.indexOf("async function planLearningResearch");
+	const learningPlanEnd = browserRuntimeSource.indexOf("async function assessLearningResearchEvidence", learningPlanStart);
+	assert.match(
+		browserRuntimeSource.slice(learningPlanStart, learningPlanEnd),
+		/hydrateLearningResearchPlanWithCorpus\([\s\S]*runLearningCorpusPreflightCommand/,
+		"Learning plan hydration should use the audited corpus command runner",
+	);
 	assert.match(
 		background,
 		/Reusing inline Onhand PDF viewer without reload; requested page differs/,
@@ -3135,6 +3151,21 @@ async function assertConstitutionPromptContract() {
 				),
 				{ url: "https://example.test/destination", newTab: true, active: true },
 				`explicit Learning Mode navigation should preserve focus for: ${displayPrompt}`,
+			);
+		}
+		for (const displayPrompt of [
+			"Open this link in a background tab.",
+			"Open https://example.test/notes but keep me here.",
+			"Visit the notes without switching tabs.",
+		]) {
+			assert.deepEqual(
+				applyLearningBackgroundFocusDefaultForTest(
+					{ url: "https://example.test/destination", newTab: true, active: true },
+					"navigate",
+					{ ...learningProblemRequest, displayPrompt },
+				),
+				{ url: "https://example.test/destination", newTab: true, active: false },
+				`explicit background navigation should preserve the current page for: ${displayPrompt}`,
 			);
 		}
 	const firstPrinciplesSourceToolNames = getToolNamesForTest("could you find a source that derives it from first principles?", false);
@@ -9594,6 +9625,26 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		"hidden corpus preflight calls should share one bounded overall latency budget",
 	);
 	assert.deepEqual(hydratedPlan.corpusResults.map((result) => result.tabId), [7], "only a genuine linked collection should become corpus evidence");
+	const tracedCorpusCalls = [];
+	await test.hydrateLearningResearchPlanWithCorpusForTest(
+		{ ...plan, candidateTabIds: [7] },
+		plannerContext,
+		{
+			async runCommand() {
+				throw new Error("the untraced host command should not run when a traced corpus runner is supplied");
+			},
+		},
+		async (args) => {
+			tracedCorpusCalls.push(args);
+			return {
+				tab: { id: args.tabId, title: "Audited course index" },
+				linkedPdfCount: 2,
+				corpus: { searchedSourceCount: 1, readableSourceCount: 1, retrievalCandidates: [] },
+			};
+		},
+	);
+	assert.equal(tracedCorpusCalls.length, 1, "hidden Learning corpus search should support the traced runtime command path");
+	assert.equal(tracedCorpusCalls[0].tabId, 7);
 	const cappedCorpusPreflightCalls = [];
 	await test.hydrateLearningResearchPlanWithCorpusForTest(
 		{ ...plan, candidateTabIds: [7, 8], maxSources: 50 },

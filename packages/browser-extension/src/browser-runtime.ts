@@ -1016,7 +1016,16 @@ function promptAsksForLinkedPageNavigation(text: string) {
 	);
 }
 
+function promptExplicitlyRequestsBackgroundNavigation(prompt: unknown) {
+	const text = ownWordsPromptText(prompt);
+	return textHasAny(
+		text,
+		/\b(?:in (?:a|the) background(?: tab)?|background tab|keep (?:me|this|the current (?:page|tab)) here|stay (?:on|in) (?:this|the current) (?:page|tab)|without (?:switching|leaving|changing) (?:tabs?|pages?)|do not (?:switch|leave|change) (?:tabs?|pages?)|don't (?:switch|leave|change) (?:tabs?|pages?))\b/,
+	);
+}
+
 function promptExplicitlyRequestsSourceFocus(prompt: unknown) {
+	if (promptExplicitlyRequestsBackgroundNavigation(prompt)) return false;
 	const text = ownWordsPromptText(prompt);
 	if (
 		textHasAny(
@@ -5913,7 +5922,14 @@ function buildLearningResearchDirective(plan: LearningResearchPlan | null) {
 	].filter(Boolean).join("\n");
 }
 
-async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan | null, browserContextDetails: any, host: RuntimeHost) {
+type LearningCorpusCommandRunner = (params: Record<string, unknown>) => Promise<any>;
+
+async function hydrateLearningResearchPlanWithCorpus(
+	plan: LearningResearchPlan | null,
+	browserContextDetails: any,
+	host: RuntimeHost,
+	runCorpusCommand?: LearningCorpusCommandRunner,
+) {
 	if (!plan?.requiresWorkspaceResearch || !plan.evidenceSlots.length) return plan;
 	const tabById = new Map(
 		(Array.isArray(browserContextDetails?.openTabSummary?.shownTabs) ? browserContextDetails.openTabSummary.shownTabs : [])
@@ -5936,14 +5952,17 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 		// same budget out to another tab after doing unknown partial work.
 		remainingSources = 0;
 		try {
-			const result: any = await host.runCommand("search_linked_pdf_corpus", {
+			const params = {
 				tabId,
 				evidenceSlots: plan.evidenceSlots,
 				maxSources: reservedSources,
 				maxMatchesPerSlot: 8,
 				concurrency: 3,
 				overallTimeoutMs: remainingDeadlineMs,
-			});
+			};
+			const result: any = await (runCorpusCommand
+				? runCorpusCommand(params)
+				: host.runCommand("search_linked_pdf_corpus", params));
 			const corpus = result?.corpus || {};
 			const searchedSourceCount = Math.max(0, Math.min(reservedSources, Number(corpus.searchedSourceCount) || 0));
 			remainingSources = reservedSources - searchedSourceCount;
@@ -12072,6 +12091,51 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return extractAssistantText(agent.state.messages);
 	}
 
+	async function runLearningCorpusPreflightCommand(params: Record<string, unknown>) {
+		if (!activeRequest) return await host.runCommand("search_linked_pdf_corpus", params);
+		const toolName = "browser_search_linked_pdf_corpus";
+		const tabId = Number(params?.tabId || 0);
+		const activityId = `tool:preflight:${toolName}:${tabId || crypto.randomUUID()}`;
+		appendActivity({
+			id: activityId,
+			kind: "tool",
+			label: getToolStatusMessage(toolName),
+			toolName,
+			state: "running",
+		});
+		recordToolTraceStart(toolName, activityId, params);
+		await publishState({ status: getToolStatusMessage(toolName) });
+		try {
+			const result = await host.runCommand("search_linked_pdf_corpus", params);
+			recordToolTraceEnd(toolName, activityId, { details: result }, false);
+			appendActivity({
+				id: activityId,
+				kind: "tool",
+				label: getToolStatusMessage(toolName),
+				toolName,
+				state: "complete",
+			});
+			appendUniquePageAction(activeRequest.pageActions, buildPageAction(toolName, result));
+			await publishState({
+				pageActions: [...activeRequest.pageActions],
+				status: "Evaluating the supporting material...",
+			});
+			return result;
+		} catch (error) {
+			const message = (error as any)?.message || String(error);
+			recordToolTraceEnd(toolName, activityId, { details: { error: message } }, true);
+			appendActivity({
+				id: activityId,
+				kind: "tool",
+				label: getToolStatusMessage(toolName),
+				toolName,
+				state: "error",
+			});
+			await publishState({ status: "Trying another relevant source..." });
+			throw error;
+		}
+	}
+
 	async function planLearningResearch(prompt: string, browserContextDetails: any, settings: RuntimeSettings) {
 		try {
 			const raw = await runInternalTutorJsonPrompt(
@@ -12081,7 +12145,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				15000,
 			);
 			const plan = parseLearningResearchPlan(raw, browserContextDetails);
-			const hydratedPlan = await hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails, host);
+			const hydratedPlan = await hydrateLearningResearchPlanWithCorpus(
+				plan,
+				browserContextDetails,
+				host,
+				runLearningCorpusPreflightCommand,
+			);
 			if (!hydratedPlan?.corpusResults?.length) return hydratedPlan;
 			try {
 				const rerankedRaw = await runInternalTutorJsonPrompt(
