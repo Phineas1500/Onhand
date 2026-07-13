@@ -118,7 +118,7 @@ For each intent: what the **chat** does, what the **page** gets, and the **suffi
 
 ### 3.9 Homework / "give me the final answer"
 - **Answer mode (default):** give the answer, anchored.
-- **Learning mode:** **withhold the final answer and scaffold; reveal on a *second* explicit ask.** See §5.3 for the misclassification guard.
+- **Learning mode:** **withhold the completed final answer and scaffold.** Repeated asks may make the hint more explicit, but the learner switches to Answer Mode to receive the final numeric, symbolic, or code answer. See §5.3 for the misclassification guard.
 
 ### 3.10 Request a study resource (flashcards / summary sheet / formula sheet)
 - Treat as a **direct-mode** request even inside Learning mode (drops the Socratic stance for that turn — see §5.4). Produce the resource. Keep claims anchored where the resource maps to page content. `[INFERRED]` (elaboration beyond the owner's stated homework decision).
@@ -142,7 +142,7 @@ For each intent: what the **chat** does, what the **page** gets, and the **suffi
 - **Reuse existing anchors** (G18): scroll to the prior highlight rather than re-marking. Add new highlights only for genuinely new points.
 
 ### 3.16 Vague / empty prompt
-- **Wait silently** (G10). If text is clearly selected, it's reasonable to treat that selection as the target of the *next typed* instruction — but do **not** act before the owner types something.
+- **Wait silently** (G10). Do **not** act before the owner types something. Once they do, meaningful selected text is the authoritative referent for deictic wording such as “this,” “here,” or “help me solve this”; do not ask them to repeat a question already present in the selection.
 
 ---
 
@@ -180,11 +180,13 @@ Learning mode is opt-in (G11). When on, Principle 3 ("teach, don't tell") harden
 - **Never** quiz on a trivial lookup. (The top stated pedagogy risk is feeling patronizing.)
 
 ### 5.3 Homework final-answer gate `[SETTLED]` (with `[INFERRED]` guard)
-- On homework-like content, a direct request for the final answer → **withhold and scaffold first; reveal on a *second* explicit ask.**
-- **Misclassification guard `[INFERRED]`:** the "looks like homework" detector misfires on the owner's own materials. When **uncertain** whether something is graded homework, **default to reveal-on-insist** — i.e. still scaffold once, then honor a repeat request — rather than locking the answer away. (Answer outright on the first ask only when the owner has signaled it's their own material.)
+- On homework-like content, a direct request for the final answer → **withhold the completed answer and scaffold while Learning Mode remains on.** Repeated asks may make the hint more explicit, but Answer Mode is the explicit route to the final numeric, symbolic, or code answer.
+- **Misclassification guard `[INFERRED]`:** when it is uncertain whether something is graded homework, say why the prompt was treated as homework and make the Answer Mode escape hatch clear rather than silently locking the answer away. If the owner has clearly identified the material as their own non-graded example, answer directly.
+- For selected problems that need workspace evidence, resolve the selection and research plan with a context-aware model before showing answer prose. Use a model evidence assessment to continue past an insufficient first lecture or note. Deterministic checks enforce permissions, bounded execution, focus preservation, canonical source/viewer deduplication, and verified tool outcomes; they do not decide semantic relevance or sufficiency.
+- In linked-PDF corpus search, lexical or morphological matching is recall-only. A separate model pass selects direct explanatory evidence for each slot and may explicitly return no coverage; the main agent receives clearly labeled unranked candidates if that pass fails.
 
 ### 5.4 Escape & reset semantics `[INFERRED]`
-- **Drop the Socratic stance for that turn** when the owner explicitly asks for the answer, asks for a study resource (§3.10), or hits unproductive frustration. This is a **per-turn** escape — **Learning mode stays ON** for subsequent turns unless the owner toggles it off.
+- **Drop the Socratic stance for that turn** for non-homework conceptual questions when the owner explicitly asks for the answer, asks for a study resource (§3.10), or hits unproductive frustration. This is a **per-turn** escape — **Learning mode stays ON** for subsequent turns unless the owner toggles it off. Homework final-answer requests follow §5.3.
 - **State reset:** per-session learning state (open checks, concepts) resets on a **new session** or when the owner **toggles Learning mode off** — not on a single direct-answer escape.
 - Read the **actual mode at submit time** (§6.13) — never let a stale toggle decide.
 

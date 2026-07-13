@@ -1,0 +1,70 @@
+{
+  "categories": [
+    {
+      "title": "Read & search",
+      "icon": "☞",
+      "tools": [
+        "browser_extract_content",
+        "browser_get_visible_text",
+        "browser_get_selection",
+        "browser_get_viewport_headings",
+        "browser_get_scroll_state",
+        "browser_get_visible_region_image",
+        "browser_get_dom",
+        "browser_textbook_search"
+      ]
+    },
+    {
+      "title": "PDF research",
+      "icon": "⌕",
+      "tools": [
+        "browser_search_linked_pdf_corpus",
+        "browser_pdf_search",
+        "browser_pdf_read_pages",
+        "browser_pdf_jump_to_page",
+        "browser_pdf_capture_page_image",
+        "browser_pdf_find_citation",
+        "browser_open_pdf_in_onhand_viewer"
+      ]
+    },
+    {
+      "title": "Annotate & navigate",
+      "icon": "✎",
+      "tools": [
+        "browser_highlight_text",
+        "browser_show_note",
+        "browser_scroll_to_annotation",
+        "browser_clear_annotations",
+        "browser_list_tabs",
+        "browser_activate_tab",
+        "browser_navigate"
+      ]
+    },
+    {
+      "title": "Act & interact",
+      "icon": "◔",
+      "tools": [
+        "browser_click",
+        "browser_type",
+        "browser_click_text",
+        "browser_type_by_label",
+        "browser_find_elements",
+        "browser_wait_for_selector",
+        "browser_pick_elements"
+      ]
+    },
+    {
+      "title": "Debug & capture",
+      "icon": "⎘",
+      "tools": [
+        "browser_capture_screenshot",
+        "browser_capture_state",
+        "browser_list_artifacts",
+        "browser_restore_state",
+        "browser_collect_console",
+        "browser_collect_network",
+        "browser_run_js"
+      ]
+    }
+  ]
+}

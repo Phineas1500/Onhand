@@ -12,7 +12,7 @@
     "research"
   ],
   "scripts": {
-    "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs && node ./scripts/build-page-toolkit-content.mjs",
+    "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs && node ./scripts/build-page-toolkit-content.mjs && node ./scripts/build-pdf-corpus-search.mjs",
     "build:pdf-viewer": "node ./scripts/build-pdf-viewer.mjs",
     "build:extension": "npm run build:browser-runtime && npm run build:pdf-viewer",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
@@ -24,6 +24,8 @@
     "website:sync-release": "node ./scripts/sync-github-release-version.mjs",
     "website:check-release": "node ./scripts/sync-github-release-version.mjs --check",
     "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
+    "website:sync-tools": "node ./scripts/sync-browser-tools.mjs",
+    "website:check-tools": "node ./scripts/sync-browser-tools.mjs --check",
     "sentry:alerts": "node ./scripts/setup-sentry-alerts.mjs",
     "sentry:issues": "node ./scripts/run-sentry-issue-health.mjs",
     "sentry:runtime-smoke": "node ./scripts/run-sentry-runtime-smoke.mjs",

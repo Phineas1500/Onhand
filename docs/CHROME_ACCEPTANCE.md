@@ -169,7 +169,11 @@ This suite checks:
 - Learning Mode asks a page-anchored prediction or retrieval question before a full explanation
 - an open check can be resolved by a user response in the next turn
 - repeated concepts get a lightweight refresher and source pointer instead of a full restart, a new note, or a batch of fresh highlights
-- Learning Mode notices related open tabs and offers to connect them before switching context
+- Learning Mode inventories the full tab workspace and uses a model-selected index page to search linked PDF collections against explicit evidence slots before opening individual sources
+- ambiguous problem-help wording such as “could you help me solve this?” is recognized semantically on a homework page; naming the problem or mentioning another tab is not required
+- a problem-only homework page cannot finalize instructional claims until a genuinely distinct plausible source has been inspected; the same PDF in another viewer does not count
+- a course/index page with many PDF links is searched as a corpus rather than traversed in DOM/date/lecture-number order; deterministic retrieval supplies a broad recall pool, a model semantically selects evidence-slot coverage, and only the strongest destinations are opened and annotated
+- when no inspected source supports the proposed guidance, the answer withdraws unsupported claims instead of fabricating grounding
 - the sidebar learner-state panel does not duplicate the same concept
 - the sidebar does not accumulate multiple open checks for the same repeated concept
 
@@ -212,7 +216,10 @@ Chrome acceptance <run id>: PASS
 - learning-concept-prompt: PASS
 - learning-open-check-resolution: PASS
 - learning-repeated-concept: PASS
-- learning-cross-tab-offer: PASS
+- learning-cross-tab-retrieval: PASS
+- learning-homework-distinct-source: PASS
+- learning-linked-source-annotation: PASS
+- learning-no-support-fallback: PASS
 ```
 
 If a case fails, include the exact prompt, the observed answer, and whether the failure was a tool error, page content drift, OAuth/runtime issue, or visual side-panel issue.
