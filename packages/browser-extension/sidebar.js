@@ -8155,15 +8155,25 @@
 		return compactRealtimeTutorText(tab?.title || tab?.url || "current tab", 90);
 	}
 
+	function realtimeToolTabs(result) {
+		if (Array.isArray(result?.tabs)) return result.tabs;
+		if (Array.isArray(result?.state?.tabs)) return result.state.tabs;
+		const windows = Array.isArray(result?.windows)
+			? result.windows
+			: Array.isArray(result?.state?.windows)
+				? result.state.windows
+				: [];
+		return windows.flatMap((windowInfo) => (Array.isArray(windowInfo?.tabs) ? windowInfo.tabs : []));
+	}
+
 		function formatRealtimeBrowserToolResult(name, result) {
 			const tab = realtimeToolTab(result);
 			const tabLabel = realtimeToolTabLabel(tab);
 			switch (name) {
 			case "browser_list_tabs": {
-				const tabs = Array.isArray(result?.tabs) ? result.tabs : Array.isArray(result?.state?.tabs) ? result.state.tabs : [];
+				const tabs = realtimeToolTabs(result);
 				return tabs.length
 					? `Open tabs:\n${tabs
-							.slice(0, 12)
 							.map((item) => `${item?.active ? "* " : "- "}${compactRealtimeTutorText(item?.title || item?.url || `tab ${item?.id || ""}`, 120)}`)
 							.join("\n")}`
 					: "No open tabs returned.";
@@ -10658,6 +10668,7 @@
 	if (globalThis.__onhandSidebarExposeTestHooks) {
 		globalThis.__onhandSidebarTestHooks = {
 			buildSpacedReviewPrompt,
+			formatRealtimeBrowserToolResult,
 			setRealtimeDataChannel(channel) {
 				realtimeDataChannel = channel;
 			},

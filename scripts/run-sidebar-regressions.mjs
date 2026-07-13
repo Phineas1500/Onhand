@@ -3400,6 +3400,15 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	assert.equal(ordinaryLearningToolNames.has("browser_click_text"), true, "Learning Mode voice asks should be able to follow a relevant course link");
 	assert.match(String(ordinaryLearningOptions.instructions || ""), /Learning Mode workspace retrieval is automatic/);
 	assert.match(String(ordinaryLearningOptions.instructions || ""), /Do not inspect unrelated tabs/);
+	const realtimeTabInventory = hooks.formatRealtimeBrowserToolResult("browser_list_tabs", {
+		windows: [
+			{ id: 1, tabs: [{ id: 11, active: true, title: "Homework", url: "https://course.test/hw.pdf" }] },
+			{ id: 2, tabs: [{ id: 22, active: false, title: "Course notes", url: "https://course.test/notes" }] },
+		],
+	});
+	assert.match(realtimeTabInventory, /Homework/);
+	assert.match(realtimeTabInventory, /Course notes/);
+	assert.doesNotMatch(realtimeTabInventory, /No open tabs returned/);
 
 	await hooks.sendRealtimeTextPrompt("Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.");
 	await waitForSidebarTick(dom);

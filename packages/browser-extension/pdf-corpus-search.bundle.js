@@ -84741,6 +84741,7 @@ var __webpack_exports__WorkerMessageHandler = __webpack_exports__2.WorkerMessage
 
 // packages/browser-extension/src/pdf-corpus-search.ts
 globalThis.pdfjsWorker ||= { WorkerMessageHandler: __webpack_exports__WorkerMessageHandler };
+var DEFAULT_PDF_FETCH_TIMEOUT_MS = 15e3;
 var STOP_WORDS = /* @__PURE__ */ new Set([
   "a",
   "an",
@@ -84841,12 +84842,25 @@ function rankPdfCorpusTextPages(sources, evidenceSlots, maxMatchesPerSlot = 3) {
     };
   });
 }
-async function readPdfPages(source) {
-  const response = await fetch(source.url, { credentials: "omit" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
-  const data = new Uint8Array(await response.arrayBuffer());
+async function readPdfPages(source, fetchTimeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`)),
+    fetchTimeoutMs
+  );
+  let data;
+  try {
+    const response = await fetch(source.url, { credentials: "omit", signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
+    data = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (data.byteLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
   const loadingTask = __webpack_exports__getDocument({ data });
   const document2 = await loadingTask.promise;
@@ -84880,12 +84894,13 @@ async function searchPdfCorpus(options) {
   }).slice(0, maximum);
   const readable = [];
   const failures = [];
+  const fetchTimeoutMs = Math.max(100, Math.min(6e4, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
   let cursor = 0;
   const worker = async () => {
     while (cursor < sources.length) {
       const source = sources[cursor++];
       try {
-        readable.push({ ...source, pages: await readPdfPages(source) });
+        readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs) });
       } catch (error) {
         failures.push({ ...source, error: compactText(error?.message || error, 300) });
       }

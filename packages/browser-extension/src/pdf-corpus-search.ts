@@ -22,6 +22,8 @@ interface PdfCorpusPage {
 	text: string;
 }
 
+const DEFAULT_PDF_FETCH_TIMEOUT_MS = 15000;
+
 const STOP_WORDS = new Set([
 	"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to", "using", "what", "when", "with",
 ]);
@@ -111,16 +113,29 @@ export function rankPdfCorpusTextPages(
 	});
 }
 
-async function readPdfPages(source: PdfCorpusSource) {
+async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number) {
 	// Corpus candidates are normally public course/paper PDFs. Cross-origin
 	// credentialed fetches from an extension worker are rejected by many servers
 	// that otherwise serve the PDF, so keep the batch path credential-free. An
 	// authenticated PDF can still fall back to the normal tab/viewer workflow.
-	const response = await fetch(source.url, { credentials: "omit" });
-	if (!response.ok) throw new Error(`HTTP ${response.status}`);
-	const contentLength = Number(response.headers.get("content-length") || 0);
-	if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
-	const data = new Uint8Array(await response.arrayBuffer());
+	const controller = new AbortController();
+	const timeoutId = setTimeout(
+		() => controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`)),
+		fetchTimeoutMs,
+	);
+	let data: Uint8Array;
+	try {
+		const response = await fetch(source.url, { credentials: "omit", signal: controller.signal });
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const contentLength = Number(response.headers.get("content-length") || 0);
+		if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
+		data = new Uint8Array(await response.arrayBuffer());
+	} catch (error) {
+		if (controller.signal.aborted) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+		throw error;
+	} finally {
+		clearTimeout(timeoutId);
+	}
 	if (data.byteLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
 	// The corpus path extracts text only. Supplying browser font/CMap URLs makes
 	// PDF.js's display-layer fetch helper read `document.baseURI`, which does not
@@ -149,6 +164,7 @@ export async function searchPdfCorpus(options: {
 	maxSources?: number;
 	maxMatchesPerSlot?: number;
 	concurrency?: number;
+	fetchTimeoutMs?: number;
 }) {
 	GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
 	const maximum = Math.max(1, Math.min(50, Number(options.maxSources) || 30));
@@ -165,12 +181,13 @@ export async function searchPdfCorpus(options: {
 	}).slice(0, maximum);
 	const readable: Array<PdfCorpusSource & { pages: PdfCorpusPage[] }> = [];
 	const failures: Array<{ title: string; url: string; error: string }> = [];
+	const fetchTimeoutMs = Math.max(100, Math.min(60000, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
 	let cursor = 0;
 	const worker = async () => {
 		while (cursor < sources.length) {
 			const source = sources[cursor++];
 			try {
-				readable.push({ ...source, pages: await readPdfPages(source) });
+				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs) });
 			} catch (error: any) {
 				failures.push({ ...source, error: compactText(error?.message || error, 300) });
 			}

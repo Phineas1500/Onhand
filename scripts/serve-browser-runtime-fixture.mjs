@@ -400,6 +400,16 @@ export function createFixtureServer({ host = "127.0.0.1", port = DEFAULT_PORT } 
 				send(req, res, 200, { "Content-Type": "application/pdf", "Content-Length": String(samplePdf.length) }, samplePdf);
 				return;
 			}
+			if (url.pathname === "/fixtures/stalled.pdf") {
+				res.writeHead(200, { "Content-Type": "application/pdf", "Cache-Control": "no-store" });
+				res.write("%PDF-1.7\n");
+				const timeoutId = setTimeout(() => res.end(), 5000);
+				req.once("close", () => {
+					clearTimeout(timeoutId);
+					res.destroy();
+				});
+				return;
+			}
 			const extensionAsset = await readExtensionViewerAsset(url.pathname);
 			if (extensionAsset) {
 				send(req, res, 200, { "Content-Type": extensionAsset.contentType }, extensionAsset.body);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
-import { rankPdfCorpusTextPages } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
+import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
 
 const GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL = "https://docs.google.com/document/d/onhand-fixture-doc-id/export?format=pdf";
 
@@ -9732,6 +9732,17 @@ async function assertModelIntentClassifierOverridesPredicates() {
 async function assertFixtureResponses() {
 	const fixture = await startFixtureServer({ port: 0 });
 	try {
+		const stalledStartedAt = Date.now();
+		const stalledCorpus = await searchPdfCorpus({
+			sources: [{ title: "Stalled PDF", url: new URL("/fixtures/stalled.pdf", fixture.url).href }],
+			evidenceSlots: [],
+			fetchTimeoutMs: 100,
+			concurrency: 1,
+		});
+		assert.equal(stalledCorpus.readableSourceCount, 0);
+		assert.match(stalledCorpus.failures[0]?.error || "", /PDF fetch timed out after 100ms/);
+		assert.ok(Date.now() - stalledStartedAt < 2000, "a stalled corpus PDF should be aborted promptly");
+
 		const pageResponse = await fetch(fixture.url, { headers: { "Cache-Control": "no-store" } });
 		assert.equal(pageResponse.status, 200);
 		const pageHtml = await pageResponse.text();
