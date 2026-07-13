@@ -12938,8 +12938,13 @@ async function handleCommand(name, args = {}) {
 			return await snapshotState(args);
 		}
 		case "search_linked_pdf_corpus": {
+			const commandStartedAt = Date.now();
+			const overallTimeoutMs = Number(args.overallTimeoutMs) > 0
+				? Math.max(100, Math.min(120000, Number(args.overallTimeoutMs)))
+				: 0;
+			const remainingOverallMs = () => Math.max(0, overallTimeoutMs - (Date.now() - commandStartedAt));
 			const tab = await resolveReadTargetTab(args);
-			const links = await withTabCommand(tab.id, async () => {
+			const linkScrape = withTabCommand(tab.id, async () => {
 				return await evaluateInTab(
 					tab.id,
 					`(() => Array.from(document.querySelectorAll("a[href]"), (anchor) => ({
@@ -12948,6 +12953,9 @@ async function handleCommand(name, args = {}) {
 					})).filter((link) => /^https?:\\/\\//i.test(link.url) && /\\.pdf(?:[?#]|$)/i.test(link.url)).slice(0, 100))()`,
 				);
 			});
+			const links = overallTimeoutMs
+				? await withOperationTimeout(linkScrape, Math.max(100, remainingOverallMs()), "PDF corpus search deadline exceeded")
+				: await linkScrape;
 			// Only DOM access belongs under the serialized 15-second tab-command
 			// budget. Corpus fetch, parse, and ranking can legitimately take longer
 			// and do not hold page or debugger state after the link scrape finishes.
@@ -12957,6 +12965,7 @@ async function handleCommand(name, args = {}) {
 				maxSources: args.maxSources,
 				maxMatchesPerSlot: args.maxMatchesPerSlot,
 				concurrency: args.concurrency,
+				overallTimeoutMs: overallTimeoutMs ? Math.max(100, remainingOverallMs()) : undefined,
 			});
 			if (!corpus.readableSourceCount && corpus.failures?.length) {
 				console.warn("Onhand linked-PDF corpus search could not read any sources", corpus.failures.slice(0, 4));

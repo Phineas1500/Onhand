@@ -148131,6 +148131,7 @@ function applyLearningBackgroundFocusDefault(params, commandName, request) {
 }
 var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   "search_linked_pdf_corpus",
+  "find_elements",
   "get_dom",
   "extract_content",
   "capture_state",
@@ -151167,6 +151168,7 @@ function buildLearnerStatePromptSummary(rawState, latestPrompt = "") {
   );
   return lines.join("\n");
 }
+var LEARNING_CORPUS_PREFLIGHT_DEADLINE_MS = 12e3;
 var LEARNING_RESEARCH_FORCE_TOOL_NAMES = [
   "browser_list_tabs",
   "browser_get_visible_text",
@@ -151344,8 +151346,10 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
   const candidateTabIds = Array.from(new Set(plan.candidateTabIds)).slice(0, 8);
   const corpusResults = [];
   let remainingSources = Math.max(1, Math.min(50, Number(plan.maxSources) || 30));
+  const preflightDeadlineAt = Date.now() + LEARNING_CORPUS_PREFLIGHT_DEADLINE_MS;
   for (const tabId of candidateTabIds) {
-    if (remainingSources <= 0) break;
+    const remainingDeadlineMs = preflightDeadlineAt - Date.now();
+    if (remainingSources <= 0 || remainingDeadlineMs < 100) break;
     const reservedSources = remainingSources;
     remainingSources = 0;
     try {
@@ -151354,7 +151358,8 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
         evidenceSlots: plan.evidenceSlots,
         maxSources: reservedSources,
         maxMatchesPerSlot: 8,
-        concurrency: 3
+        concurrency: 3,
+        overallTimeoutMs: remainingDeadlineMs
       });
       const corpus = result?.corpus || {};
       const searchedSourceCount = Math.max(0, Math.min(reservedSources, Number(corpus.searchedSourceCount) || 0));
@@ -151366,8 +151371,10 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
         corpus
       };
       if (corpusResult.linkedPdfCount >= 2) corpusResults.push(corpusResult);
+      if (corpus.deadlineExceeded === true) break;
     } catch (error52) {
       host.log?.("Learning linked-PDF corpus preflight candidate failed", error52);
+      if (Date.now() >= preflightDeadlineAt) break;
       remainingSources = reservedSources;
       continue;
     }

@@ -2161,7 +2161,8 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	const corpusCommandCase = background.match(/case "search_linked_pdf_corpus": \{[\s\S]*?(?=\n\t\tcase "activate_tab")/)?.[0] || "";
 	const corpusTabCommandEnd = corpusCommandCase.indexOf("// Only DOM access belongs");
 	const corpusSearchStart = corpusCommandCase.indexOf("const corpus = await searchPdfCorpus");
-	assert.match(corpusCommandCase, /const links = await withTabCommand\(tab\.id,[\s\S]*evaluateInTab/);
+	assert.match(corpusCommandCase, /const linkScrape = withTabCommand\(tab\.id,[\s\S]*evaluateInTab/);
+	assert.match(corpusCommandCase, /overallTimeoutMs:[\s\S]*remainingOverallMs/);
 	assert.ok(
 		corpusTabCommandEnd >= 0 && corpusSearchStart > corpusTabCommandEnd,
 		"linked-PDF fetch, parse, and ranking must run after the tab-command timeout scope ends",
@@ -2930,6 +2931,7 @@ async function assertConstitutionPromptContract() {
 		clearModelIntentClassificationsForTest();
 		for (const commandName of [
 			"search_linked_pdf_corpus",
+			"find_elements",
 			"get_visible_text",
 			"extract_content",
 			"open_pdf_in_onhand_viewer",
@@ -9576,6 +9578,10 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		[50],
 		"the linked-PDF source budget should shrink globally across candidate tabs",
 	);
+	assert.ok(
+		corpusPreflightCalls.every((call) => call.args.overallTimeoutMs > 0 && call.args.overallTimeoutMs <= 12000),
+		"hidden corpus preflight calls should share one bounded overall latency budget",
+	);
 	assert.deepEqual(hydratedPlan.corpusResults.map((result) => result.tabId), [7], "only a genuine linked collection should become corpus evidence");
 	const cappedCorpusPreflightCalls = [];
 	await test.hydrateLearningResearchPlanWithCorpusForTest(
@@ -9622,6 +9628,26 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		"a non-scriptable candidate should not prevent later course-index tabs from using the remaining corpus budget",
 	);
 	assert.deepEqual(recoveredCorpusPlan.corpusResults.map((result) => result.tabId), [8]);
+	const deadlineCorpusCalls = [];
+	await test.hydrateLearningResearchPlanWithCorpusForTest(
+		{ ...plan, candidateTabIds: [7, 8], maxSources: 50 },
+		plannerContext,
+		{
+			async runCommand(command, args) {
+				deadlineCorpusCalls.push({ command, args });
+				return {
+					tab: { id: args.tabId, title: "Slow course index" },
+					linkedPdfCount: 50,
+					corpus: { searchedSourceCount: 3, readableSourceCount: 0, retrievalCandidates: [], deadlineExceeded: true },
+				};
+			},
+		},
+	);
+	assert.deepEqual(
+		deadlineCorpusCalls.map((call) => call.args.tabId),
+		[7],
+		"once the shared corpus deadline is exhausted, hidden preflight should return control instead of probing more tabs",
+	);
 
 	const assessmentRequest = {
 		learningResearchPlan: plan,
@@ -9742,6 +9768,18 @@ async function assertFixtureResponses() {
 		assert.equal(stalledCorpus.readableSourceCount, 0);
 		assert.match(stalledCorpus.failures[0]?.error || "", /PDF fetch timed out after 100ms/);
 		assert.ok(Date.now() - stalledStartedAt < 2000, "a stalled corpus PDF should be aborted promptly");
+
+		const deadlineStartedAt = Date.now();
+		const deadlineCorpus = await searchPdfCorpus({
+			sources: [1, 2, 3, 4, 5].map((id) => ({ title: `Slow PDF ${id}`, url: new URL(`/fixtures/stalled.pdf?source=${id}`, fixture.url).href })),
+			evidenceSlots: [],
+			fetchTimeoutMs: 1000,
+			overallTimeoutMs: 100,
+			concurrency: 3,
+		});
+		assert.equal(deadlineCorpus.deadlineExceeded, true);
+		assert.ok(deadlineCorpus.searchedSourceCount <= 3, "the corpus deadline should prevent workers from starting later sources");
+		assert.ok(Date.now() - deadlineStartedAt < 2000, "the corpus-wide deadline should abort active fetches promptly");
 
 		const oversizedCorpus = await searchPdfCorpus({
 			sources: [{ title: "Oversized streamed PDF", url: new URL("/fixtures/oversized-stream.pdf", fixture.url).href }],

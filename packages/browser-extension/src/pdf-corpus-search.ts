@@ -160,13 +160,20 @@ async function readResponseBytes(response: Response, controller: AbortController
 	return data;
 }
 
-async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, maxPdfBytes: number) {
+async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, maxPdfBytes: number, corpusSignal?: AbortSignal) {
 	// Corpus candidates are normally public course/paper PDFs. Cross-origin
 	// credentialed fetches from an extension worker are rejected by many servers
 	// that otherwise serve the PDF, so keep the batch path credential-free. An
 	// authenticated PDF can still fall back to the normal tab/viewer workflow.
 	const controller = new AbortController();
 	let timeoutTriggered = false;
+	let corpusDeadlineTriggered = false;
+	const abortForCorpusDeadline = () => {
+		corpusDeadlineTriggered = true;
+		controller.abort(corpusSignal?.reason || new Error("PDF corpus search deadline exceeded"));
+	};
+	if (corpusSignal?.aborted) abortForCorpusDeadline();
+	else corpusSignal?.addEventListener("abort", abortForCorpusDeadline, { once: true });
 	const timeoutId = setTimeout(
 		() => {
 			timeoutTriggered = true;
@@ -181,9 +188,11 @@ async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, max
 		data = await readResponseBytes(response, controller, maxPdfBytes);
 	} catch (error) {
 		if (timeoutTriggered) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+		if (corpusDeadlineTriggered) throw new Error("PDF corpus search deadline exceeded");
 		throw error;
 	} finally {
 		clearTimeout(timeoutId);
+		corpusSignal?.removeEventListener("abort", abortForCorpusDeadline);
 	}
 	// The corpus path extracts text only. Supplying browser font/CMap URLs makes
 	// PDF.js's display-layer fetch helper read `document.baseURI`, which does not
@@ -214,6 +223,7 @@ export async function searchPdfCorpus(options: {
 	concurrency?: number;
 	fetchTimeoutMs?: number;
 	maxPdfBytes?: number;
+	overallTimeoutMs?: number;
 }) {
 	GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
 	const maximum = Math.max(1, Math.min(50, Number(options.maxSources) || 30));
@@ -232,21 +242,39 @@ export async function searchPdfCorpus(options: {
 	const failures: Array<{ title: string; url: string; error: string }> = [];
 	const fetchTimeoutMs = Math.max(100, Math.min(60000, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
 	const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
+	const overallTimeoutMs = Number(options.overallTimeoutMs) > 0
+		? Math.max(100, Math.min(120000, Number(options.overallTimeoutMs)))
+		: 0;
+	const corpusController = new AbortController();
+	let deadlineExceeded = false;
+	const deadlineId = overallTimeoutMs
+		? setTimeout(() => {
+			deadlineExceeded = true;
+			corpusController.abort(new Error("PDF corpus search deadline exceeded"));
+		}, overallTimeoutMs)
+		: null;
 	let cursor = 0;
+	let searchedSourceCount = 0;
 	const worker = async () => {
-		while (cursor < sources.length) {
+		while (cursor < sources.length && !corpusController.signal.aborted) {
 			const source = sources[cursor++];
+			searchedSourceCount += 1;
 			try {
-				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes) });
+				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController.signal) });
 			} catch (error: any) {
 				failures.push({ ...source, error: compactText(error?.message || error, 300) });
 			}
 		}
 	};
-	await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
+	try {
+		await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
+	} finally {
+		if (deadlineId) clearTimeout(deadlineId);
+	}
 	return {
-		searchedSourceCount: sources.length,
+		searchedSourceCount,
 		readableSourceCount: readable.length,
+		deadlineExceeded,
 		// These are recall candidates only. The browser runtime gives this broad
 		// pool to a model that decides semantic relevance and evidence coverage.
 		retrievalCandidates: rankPdfCorpusTextPages(readable, options.evidenceSlots || [], options.maxMatchesPerSlot),

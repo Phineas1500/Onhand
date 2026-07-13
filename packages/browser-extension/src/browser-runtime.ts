@@ -1041,6 +1041,7 @@ function applyLearningBackgroundFocusDefault(params: any, commandName: string, r
 
 const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
 	"search_linked_pdf_corpus",
+	"find_elements",
 	"get_dom",
 	"extract_content",
 	"capture_state",
@@ -5713,6 +5714,8 @@ interface LearningEvidenceAssessment {
 	nextCandidateTabIds: number[];
 }
 
+const LEARNING_CORPUS_PREFLIGHT_DEADLINE_MS = 12000;
+
 const LEARNING_RESEARCH_FORCE_TOOL_NAMES = [
 	"browser_list_tabs",
 	"browser_get_visible_text",
@@ -5923,8 +5926,10 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 	const candidateTabIds = Array.from(new Set(plan.candidateTabIds)).slice(0, 8);
 	const corpusResults: any[] = [];
 	let remainingSources = Math.max(1, Math.min(50, Number(plan.maxSources) || 30));
+	const preflightDeadlineAt = Date.now() + LEARNING_CORPUS_PREFLIGHT_DEADLINE_MS;
 	for (const tabId of candidateTabIds) {
-		if (remainingSources <= 0) break;
+		const remainingDeadlineMs = preflightDeadlineAt - Date.now();
+		if (remainingSources <= 0 || remainingDeadlineMs < 100) break;
 		const reservedSources = remainingSources;
 		// Reserve the entire remaining budget before starting the request. Calls are
 		// deliberately sequential, so even a rejected corpus search cannot fan the
@@ -5937,6 +5942,7 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 				maxSources: reservedSources,
 				maxMatchesPerSlot: 8,
 				concurrency: 3,
+				overallTimeoutMs: remainingDeadlineMs,
 			});
 			const corpus = result?.corpus || {};
 			const searchedSourceCount = Math.max(0, Math.min(reservedSources, Number(corpus.searchedSourceCount) || 0));
@@ -5948,8 +5954,10 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 				corpus,
 			};
 			if (corpusResult.linkedPdfCount >= 2) corpusResults.push(corpusResult);
+			if (corpus.deadlineExceeded === true) break;
 		} catch (error) {
 			host.log?.("Learning linked-PDF corpus preflight candidate failed", error);
+			if (Date.now() >= preflightDeadlineAt) break;
 			// A native PDF or another non-scriptable tab can fail before any linked
 			// sources are discovered. Restore the reservation and keep probing later
 			// model-visible tabs so one bad surface cannot hide a course index.

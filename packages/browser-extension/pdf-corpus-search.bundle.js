@@ -84887,9 +84887,16 @@ async function readResponseBytes(response, controller, maxPdfBytes) {
   }
   return data;
 }
-async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes) {
+async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusSignal) {
   const controller = new AbortController();
   let timeoutTriggered = false;
+  let corpusDeadlineTriggered = false;
+  const abortForCorpusDeadline = () => {
+    corpusDeadlineTriggered = true;
+    controller.abort(corpusSignal?.reason || new Error("PDF corpus search deadline exceeded"));
+  };
+  if (corpusSignal?.aborted) abortForCorpusDeadline();
+  else corpusSignal?.addEventListener("abort", abortForCorpusDeadline, { once: true });
   const timeoutId = setTimeout(
     () => {
       timeoutTriggered = true;
@@ -84904,9 +84911,11 @@ async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes) {
     data = await readResponseBytes(response, controller, maxPdfBytes);
   } catch (error) {
     if (timeoutTriggered) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+    if (corpusDeadlineTriggered) throw new Error("PDF corpus search deadline exceeded");
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    corpusSignal?.removeEventListener("abort", abortForCorpusDeadline);
   }
   const loadingTask = __webpack_exports__getDocument({ data });
   const document2 = await loadingTask.promise;
@@ -84942,21 +84951,35 @@ async function searchPdfCorpus(options) {
   const failures = [];
   const fetchTimeoutMs = Math.max(100, Math.min(6e4, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
   const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
+  const overallTimeoutMs = Number(options.overallTimeoutMs) > 0 ? Math.max(100, Math.min(12e4, Number(options.overallTimeoutMs))) : 0;
+  const corpusController = new AbortController();
+  let deadlineExceeded = false;
+  const deadlineId = overallTimeoutMs ? setTimeout(() => {
+    deadlineExceeded = true;
+    corpusController.abort(new Error("PDF corpus search deadline exceeded"));
+  }, overallTimeoutMs) : null;
   let cursor = 0;
+  let searchedSourceCount = 0;
   const worker = async () => {
-    while (cursor < sources.length) {
+    while (cursor < sources.length && !corpusController.signal.aborted) {
       const source = sources[cursor++];
+      searchedSourceCount += 1;
       try {
-        readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes) });
+        readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController.signal) });
       } catch (error) {
         failures.push({ ...source, error: compactText(error?.message || error, 300) });
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
+  try {
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
+  } finally {
+    if (deadlineId) clearTimeout(deadlineId);
+  }
   return {
-    searchedSourceCount: sources.length,
+    searchedSourceCount,
     readableSourceCount: readable.length,
+    deadlineExceeded,
     // These are recall candidates only. The browser runtime gives this broad
     // pool to a model that decides semantic relevance and evidence coverage.
     retrievalCandidates: rankPdfCorpusTextPages(readable, options.evidenceSlots || [], options.maxMatchesPerSlot),
