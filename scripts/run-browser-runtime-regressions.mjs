@@ -9552,7 +9552,7 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.match(rerankedDirective, /Lecture 13, p\. 45/);
 	const corpusPreflightCalls = [];
 	const hydratedPlan = await test.hydrateLearningResearchPlanWithCorpusForTest(
-		{ ...plan, candidateTabIds: [7, 8] },
+		{ ...plan, candidateTabIds: [7] },
 		plannerContext,
 		{
 			async runCommand(command, args) {
@@ -9568,12 +9568,12 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	);
 	assert.deepEqual(
 		corpusPreflightCalls.map((call) => call.args.tabId),
-		[7, 8, 1],
-		"preflight should inspect model-selected candidates and every other model-visible tab for a linked PDF inventory",
+		[7],
+		"preflight should inspect only semantically selected candidate tabs, not unrelated tabs merely because they are open",
 	);
 	assert.deepEqual(
 		corpusPreflightCalls.map((call) => call.args.maxSources),
-		[50, 23, 23],
+		[50],
 		"the linked-PDF source budget should shrink globally across candidate tabs",
 	);
 	assert.deepEqual(hydratedPlan.corpusResults.map((result) => result.tabId), [7], "only a genuine linked collection should become corpus evidence");
@@ -9618,7 +9618,7 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	);
 	assert.deepEqual(
 		recoveringCorpusPreflightCalls.map((call) => [call.args.tabId, call.args.maxSources]),
-		[[7, 50], [8, 50], [1, 38]],
+		[[7, 50], [8, 50]],
 		"a non-scriptable candidate should not prevent later course-index tabs from using the remaining corpus budget",
 	);
 	assert.deepEqual(recoveredCorpusPlan.corpusResults.map((result) => result.tabId), [8]);
@@ -9742,6 +9742,16 @@ async function assertFixtureResponses() {
 		assert.equal(stalledCorpus.readableSourceCount, 0);
 		assert.match(stalledCorpus.failures[0]?.error || "", /PDF fetch timed out after 100ms/);
 		assert.ok(Date.now() - stalledStartedAt < 2000, "a stalled corpus PDF should be aborted promptly");
+
+		const oversizedCorpus = await searchPdfCorpus({
+			sources: [{ title: "Oversized streamed PDF", url: new URL("/fixtures/oversized-stream.pdf", fixture.url).href }],
+			evidenceSlots: [],
+			fetchTimeoutMs: 1000,
+			maxPdfBytes: 1024,
+			concurrency: 1,
+		});
+		assert.equal(oversizedCorpus.readableSourceCount, 0);
+		assert.match(oversizedCorpus.failures[0]?.error || "", /corpus-search size limit/);
 
 		const pageResponse = await fetch(fixture.url, { headers: { "Cache-Control": "no-store" } });
 		assert.equal(pageResponse.status, 200);

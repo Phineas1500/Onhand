@@ -151341,8 +151341,7 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
   const tabById = new Map(
     (Array.isArray(browserContextDetails?.openTabSummary?.shownTabs) ? browserContextDetails.openTabSummary.shownTabs : []).map((tab) => [Number(tab?.id || 0), tab])
   );
-  const visibleTabIds = Array.from(tabById.keys()).filter((tabId) => tabId > 0);
-  const candidateTabIds = Array.from(/* @__PURE__ */ new Set([...plan.candidateTabIds, ...visibleTabIds])).slice(0, 40);
+  const candidateTabIds = Array.from(new Set(plan.candidateTabIds)).slice(0, 8);
   const corpusResults = [];
   let remainingSources = Math.max(1, Math.min(50, Number(plan.maxSources) || 30));
   for (const tabId of candidateTabIds) {

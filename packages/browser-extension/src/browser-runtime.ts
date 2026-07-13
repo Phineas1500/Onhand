@@ -5916,12 +5916,11 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 		(Array.isArray(browserContextDetails?.openTabSummary?.shownTabs) ? browserContextDetails.openTabSummary.shownTabs : [])
 			.map((tab: any) => [Number(tab?.id || 0), tab]),
 	);
-	// The model ranks likely source tabs, but it can miss a master/index page whose
-	// title is generic. Probe every model-visible open tab for PDF collections;
-	// non-index tabs return immediately with zero links. Semantic retrieval still
-	// comes from the model-authored evidence slots, not title or keyword regexes.
-	const visibleTabIds = Array.from(tabById.keys()).filter((tabId) => tabId > 0);
-	const candidateTabIds = Array.from(new Set([...plan.candidateTabIds, ...visibleTabIds])).slice(0, 40);
+	// Only probe tabs the semantic planner selected as plausible sources. The
+	// planner sees the complete ranked workspace inventory and is explicitly
+	// instructed to include a likely index/master page, so appending every open
+	// tab here would bypass that relevance decision and expose unrelated content.
+	const candidateTabIds = Array.from(new Set(plan.candidateTabIds)).slice(0, 8);
 	const corpusResults: any[] = [];
 	let remainingSources = Math.max(1, Math.min(50, Number(plan.maxSources) || 30));
 	for (const tabId of candidateTabIds) {

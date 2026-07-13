@@ -410,6 +410,14 @@ export function createFixtureServer({ host = "127.0.0.1", port = DEFAULT_PORT } 
 				});
 				return;
 			}
+			if (url.pathname === "/fixtures/oversized-stream.pdf") {
+				res.writeHead(200, { "Content-Type": "application/pdf", "Cache-Control": "no-store" });
+				res.write("%PDF-1.7\n");
+				res.write(Buffer.alloc(768, 0x20));
+				res.write(Buffer.alloc(768, 0x20));
+				res.end();
+				return;
+			}
 			const extensionAsset = await readExtensionViewerAsset(url.pathname);
 			if (extensionAsset) {
 				send(req, res, 200, { "Content-Type": extensionAsset.contentType }, extensionAsset.body);

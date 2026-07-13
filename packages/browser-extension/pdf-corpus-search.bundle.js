@@ -84742,6 +84742,7 @@ var __webpack_exports__WorkerMessageHandler = __webpack_exports__2.WorkerMessage
 // packages/browser-extension/src/pdf-corpus-search.ts
 globalThis.pdfjsWorker ||= { WorkerMessageHandler: __webpack_exports__WorkerMessageHandler };
 var DEFAULT_PDF_FETCH_TIMEOUT_MS = 15e3;
+var DEFAULT_MAX_PDF_BYTES = 40 * 1024 * 1024;
 var STOP_WORDS = /* @__PURE__ */ new Set([
   "a",
   "an",
@@ -84842,26 +84843,71 @@ function rankPdfCorpusTextPages(sources, evidenceSlots, maxMatchesPerSlot = 3) {
     };
   });
 }
-async function readPdfPages(source, fetchTimeoutMs) {
+function pdfSizeLimitError() {
+  return new Error("PDF exceeds the corpus-search size limit");
+}
+async function readResponseBytes(response, controller, maxPdfBytes) {
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > maxPdfBytes) {
+    const error = pdfSizeLimitError();
+    controller.abort(error);
+    throw error;
+  }
+  if (!response.body) {
+    const data2 = new Uint8Array(await response.arrayBuffer());
+    if (data2.byteLength > maxPdfBytes) throw pdfSizeLimitError();
+    return data2;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      byteLength += chunk.byteLength;
+      if (byteLength > maxPdfBytes) {
+        const error = pdfSizeLimitError();
+        await reader.cancel(error).catch(() => {
+        });
+        controller.abort(error);
+        throw error;
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const data = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return data;
+}
+async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes) {
   const controller = new AbortController();
+  let timeoutTriggered = false;
   const timeoutId = setTimeout(
-    () => controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`)),
+    () => {
+      timeoutTriggered = true;
+      controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`));
+    },
     fetchTimeoutMs
   );
   let data;
   try {
     const response = await fetch(source.url, { credentials: "omit", signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const contentLength = Number(response.headers.get("content-length") || 0);
-    if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
-    data = new Uint8Array(await response.arrayBuffer());
+    data = await readResponseBytes(response, controller, maxPdfBytes);
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+    if (timeoutTriggered) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
     throw error;
   } finally {
     clearTimeout(timeoutId);
   }
-  if (data.byteLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
   const loadingTask = __webpack_exports__getDocument({ data });
   const document2 = await loadingTask.promise;
   try {
@@ -84895,12 +84941,13 @@ async function searchPdfCorpus(options) {
   const readable = [];
   const failures = [];
   const fetchTimeoutMs = Math.max(100, Math.min(6e4, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
+  const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
   let cursor = 0;
   const worker = async () => {
     while (cursor < sources.length) {
       const source = sources[cursor++];
       try {
-        readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs) });
+        readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes) });
       } catch (error) {
         failures.push({ ...source, error: compactText(error?.message || error, 300) });
       }

@@ -23,6 +23,7 @@ interface PdfCorpusPage {
 }
 
 const DEFAULT_PDF_FETCH_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_PDF_BYTES = 40 * 1024 * 1024;
 
 const STOP_WORDS = new Set([
 	"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to", "using", "what", "when", "with",
@@ -113,30 +114,77 @@ export function rankPdfCorpusTextPages(
 	});
 }
 
-async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number) {
+function pdfSizeLimitError() {
+	return new Error("PDF exceeds the corpus-search size limit");
+}
+
+async function readResponseBytes(response: Response, controller: AbortController, maxPdfBytes: number) {
+	const contentLength = Number(response.headers.get("content-length") || 0);
+	if (contentLength > maxPdfBytes) {
+		const error = pdfSizeLimitError();
+		controller.abort(error);
+		throw error;
+	}
+	if (!response.body) {
+		const data = new Uint8Array(await response.arrayBuffer());
+		if (data.byteLength > maxPdfBytes) throw pdfSizeLimitError();
+		return data;
+	}
+
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let byteLength = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+			byteLength += chunk.byteLength;
+			if (byteLength > maxPdfBytes) {
+				const error = pdfSizeLimitError();
+				await reader.cancel(error).catch(() => {});
+				controller.abort(error);
+				throw error;
+			}
+			chunks.push(chunk);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const data = new Uint8Array(byteLength);
+	let offset = 0;
+	for (const chunk of chunks) {
+		data.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return data;
+}
+
+async function readPdfPages(source: PdfCorpusSource, fetchTimeoutMs: number, maxPdfBytes: number) {
 	// Corpus candidates are normally public course/paper PDFs. Cross-origin
 	// credentialed fetches from an extension worker are rejected by many servers
 	// that otherwise serve the PDF, so keep the batch path credential-free. An
 	// authenticated PDF can still fall back to the normal tab/viewer workflow.
 	const controller = new AbortController();
+	let timeoutTriggered = false;
 	const timeoutId = setTimeout(
-		() => controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`)),
+		() => {
+			timeoutTriggered = true;
+			controller.abort(new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`));
+		},
 		fetchTimeoutMs,
 	);
 	let data: Uint8Array;
 	try {
 		const response = await fetch(source.url, { credentials: "omit", signal: controller.signal });
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		const contentLength = Number(response.headers.get("content-length") || 0);
-		if (contentLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
-		data = new Uint8Array(await response.arrayBuffer());
+		data = await readResponseBytes(response, controller, maxPdfBytes);
 	} catch (error) {
-		if (controller.signal.aborted) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
+		if (timeoutTriggered) throw new Error(`PDF fetch timed out after ${fetchTimeoutMs}ms`);
 		throw error;
 	} finally {
 		clearTimeout(timeoutId);
 	}
-	if (data.byteLength > 40 * 1024 * 1024) throw new Error("PDF exceeds the 40 MB corpus-search limit");
 	// The corpus path extracts text only. Supplying browser font/CMap URLs makes
 	// PDF.js's display-layer fetch helper read `document.baseURI`, which does not
 	// exist in an MV3 service worker. Embedded text extraction works without
@@ -165,6 +213,7 @@ export async function searchPdfCorpus(options: {
 	maxMatchesPerSlot?: number;
 	concurrency?: number;
 	fetchTimeoutMs?: number;
+	maxPdfBytes?: number;
 }) {
 	GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
 	const maximum = Math.max(1, Math.min(50, Number(options.maxSources) || 30));
@@ -182,12 +231,13 @@ export async function searchPdfCorpus(options: {
 	const readable: Array<PdfCorpusSource & { pages: PdfCorpusPage[] }> = [];
 	const failures: Array<{ title: string; url: string; error: string }> = [];
 	const fetchTimeoutMs = Math.max(100, Math.min(60000, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
+	const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
 	let cursor = 0;
 	const worker = async () => {
 		while (cursor < sources.length) {
 			const source = sources[cursor++];
 			try {
-				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs) });
+				readable.push({ ...source, pages: await readPdfPages(source, fetchTimeoutMs, maxPdfBytes) });
 			} catch (error: any) {
 				failures.push({ ...source, error: compactText(error?.message || error, 300) });
 			}
