@@ -131,7 +131,7 @@ For terminal-first session inspection, CLI-driven browser questions, and automat
 
 ## Experimental Realtime Voice Tutor
 
-This branch includes an experimental `gpt-realtime-2` WebRTC voice tutor for the side panel. Start the local session endpoint with:
+This branch includes an experimental `gpt-realtime-2.1` WebRTC voice tutor for the side panel. Start the local session endpoint with:
 
 ```sh
 OPENAI_API_KEY=... npm run serve:realtime

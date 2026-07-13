@@ -115,6 +115,14 @@ async function main() {
 	if (!hasFileHostPermission) failures.push("Manifest is missing local file host permission.");
 
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
+	const realtimeSessionSource = await readFile(join(PROJECT_ROOT, "scripts/serve-realtime-session.mjs"), "utf8");
+	const realtimeModel = "gpt-realtime-2.1";
+	const hasCurrentRealtimeModel =
+		backgroundSource.includes(`const OPENAI_REALTIME_MODEL = "${realtimeModel}";`) &&
+		realtimeSessionSource.includes(`const MODEL = process.env.REALTIME_MODEL || "${realtimeModel}";`);
+	printCheck("Realtime voice model", hasCurrentRealtimeModel, realtimeModel);
+	if (!hasCurrentRealtimeModel) failures.push(`Realtime voice defaults must use ${realtimeModel}.`);
+
 	const operaSidebarHelpSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/opera-sidebar-help.html"), "utf8");
 	const hasOperaToolbarHint =
 		backgroundSource.includes('const OPERA_TOOLBAR_POPUP_PATH = "opera-sidebar-help.html";') &&

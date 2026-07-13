@@ -2,14 +2,14 @@
 
 ## Status
 
-Planning document for integrating `gpt-realtime-2` into Onhand as a page-anchored tutoring layer. The current branch has a Realtime WebRTC prototype in the browser extension; this document describes the target architecture before the prototype becomes product behavior.
+Planning document for integrating `gpt-realtime-2.1` into Onhand as a page-anchored tutoring layer. The current branch has a Realtime WebRTC prototype in the browser extension; this document describes the target architecture before the prototype becomes product behavior.
 
 Relevant references:
 
 - OpenAI Realtime WebRTC guide: https://developers.openai.com/api/docs/guides/realtime-webrtc
 - OpenAI Realtime conversations guide: https://developers.openai.com/api/docs/guides/realtime-conversations
 - OpenAI Realtime server-side controls guide: https://developers.openai.com/api/docs/guides/realtime-server-controls
-- `gpt-realtime-2` model page: https://developers.openai.com/api/docs/models/gpt-realtime-2
+- `gpt-realtime-2.1` model page: https://developers.openai.com/api/docs/models/gpt-realtime-2.1
 - OpenAI release post: https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/
 
 ## Thesis
@@ -46,16 +46,16 @@ Hard constraints:
 
 ## Target Architecture
 
-There should not be two independent minds: "Realtime" and "Onhand." `gpt-realtime-2` is the voice controller. `gpt-5.5` is the Onhand reasoning backend.
+There should not be two independent minds: "Realtime" and "Onhand." `gpt-realtime-2.1` is the voice controller. `gpt-5.5` is the Onhand reasoning backend.
 
 Actors:
 
 - Browser sidebar: owns the WebRTC peer connection, microphone, model audio output, visible status, and sidebar transcript mirror.
 - Browser extension background/runtime: owns page context, page tools, session state, saved auth, and server-side API calls.
-- `gpt-realtime-2`: handles live speech, turn-taking, short preambles, interruptions, and tool narration.
+- `gpt-realtime-2.1`: handles live speech, turn-taking, short preambles, interruptions, and tool narration.
 - `gpt-5.5`: plans and evaluates pedagogical moves from page context and learner state.
 
-Target tool families exposed to `gpt-realtime-2`:
+Target tool families exposed to `gpt-realtime-2.1`:
 
 - Context tools: `get_current_learning_context`, `get_visible_region_image`.
 - Page tools: `highlight_passage`, `add_margin_note`, `clear_voice_turn_highlights`, `navigate_to_passage`.
@@ -69,7 +69,7 @@ An earlier prototype had `delegate_to_onhand(prompt)`. It was removed because it
 Answer Mode:
 
 - Use voice as an input/output layer over direct anchored answers.
-- `gpt-realtime-2` may handle tiny conversational moves itself, such as "can you repeat that?" or "scroll back to the highlight?"
+- `gpt-realtime-2.1` may handle tiny conversational moves itself, such as "can you repeat that?" or "scroll back to the highlight?"
 - For material claims, call `answer_directly` so the `gpt-5.5` backend chooses anchors and sidebar copy.
 - Do not use Socratic withholding unless the user explicitly asks to be quizzed.
 
@@ -89,28 +89,28 @@ This avoids leaving model selection to vibes. Learning Mode means planner-first.
 1. User clicks `Voice` or uses the hotkey.
 2. Sidebar establishes a Realtime WebRTC session.
 3. User asks aloud.
-4. `gpt-realtime-2` says a short preamble only if a tool call will take noticeable time.
-5. `gpt-realtime-2` calls `get_current_learning_context`.
-6. `gpt-realtime-2` calls `answer_directly`.
+4. `gpt-realtime-2.1` says a short preamble only if a tool call will take noticeable time.
+5. `gpt-realtime-2.1` calls `get_current_learning_context`.
+6. `gpt-realtime-2.1` calls `answer_directly`.
 7. `gpt-5.5` returns anchors, a concise voice script, and sidebar markdown.
 8. Browser applies highlights and notes.
-9. `gpt-realtime-2` speaks the voice script.
+9. `gpt-realtime-2.1` speaks the voice script.
 10. Sidebar mirrors the answer.
 
 ### 2. Socratic Learning Loop
 
 1. User asks aloud: "What does this paragraph mean?"
-2. `gpt-realtime-2` calls `get_current_learning_context`.
-3. `gpt-realtime-2` calls `plan_pedagogical_move`.
-4. `gpt-realtime-2` uses a preamble while waiting: "Let me look at that line."
+2. `gpt-realtime-2.1` calls `get_current_learning_context`.
+3. `gpt-realtime-2.1` calls `plan_pedagogical_move`.
+4. `gpt-realtime-2.1` uses a preamble while waiting: "Let me look at that line."
 5. `gpt-5.5` returns one structured teaching move.
 6. Browser highlights the anchor and adds any short note.
-7. `gpt-realtime-2` speaks the Socratic prompt.
+7. `gpt-realtime-2.1` speaks the Socratic prompt.
 8. User answers aloud.
-9. `gpt-realtime-2` calls `evaluate_response` with the transcript and previous move.
+9. `gpt-realtime-2.1` calls `evaluate_response` with the transcript and previous move.
 10. `gpt-5.5` returns correct points, missed points, a nudge, and the next move.
 11. Browser updates notes and learner state.
-12. `gpt-realtime-2` gives brief feedback and either nudges, goes deeper, or moves on.
+12. `gpt-realtime-2.1` gives brief feedback and either nudges, goes deeper, or moves on.
 
 ### 3. Interruption and Cancellation
 
@@ -122,7 +122,7 @@ Policy:
 - If the user interrupts before the tool result returns, mark the request stale.
 - Ignore stale tool results even if the network call completes.
 - If the backend supports abort signals, cancel the in-flight `gpt-5.5` request.
-- `gpt-realtime-2` should acknowledge the new user turn and not resume the stale plan.
+- `gpt-realtime-2.1` should acknowledge the new user turn and not resume the stale plan.
 
 ### 4. PDF and Visual Content
 
@@ -403,7 +403,7 @@ Implemented in this branch:
 
 ## Open Questions
 
-- Should Answer Mode use `gpt-5.5` for every material voice question, or can `gpt-realtime-2` answer with page anchors for very simple cases?
+- Should Answer Mode use `gpt-5.5` for every material voice question, or can `gpt-realtime-2.1` answer with page anchors for very simple cases?
 - What exact word/character limits should schemas enforce for `voice_script` and `sidebar_markdown`?
 - Should push-to-talk be the default for the first public voice release?
 - Does PDF support gate public release, or is "Open in Onhand viewer" enough for v1?

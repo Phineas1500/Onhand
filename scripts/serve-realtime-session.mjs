@@ -3,7 +3,7 @@ import http from "node:http";
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const PORT = Number(process.env.REALTIME_SESSION_PORT || 8787);
 const HOST = process.env.REALTIME_SESSION_HOST || "127.0.0.1";
-const MODEL = process.env.REALTIME_MODEL || "gpt-realtime-2";
+const MODEL = process.env.REALTIME_MODEL || "gpt-realtime-2.1";
 const VOICE = process.env.REALTIME_VOICE || "marin";
 
 const sessionConfig = JSON.stringify({

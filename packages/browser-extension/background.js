@@ -20,7 +20,7 @@ const OPERA_TOOLBAR_HINT_BADGE_TEXT = "Side";
 const OPERA_TOOLBAR_HINT_DURATION_MS = 4000;
 const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
-const OPENAI_REALTIME_MODEL = "gpt-realtime-2";
+const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 const OPENAI_REALTIME_VOICE = "marin";
 const REALTIME_API_KEY_SETUP_MESSAGE =
 	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
