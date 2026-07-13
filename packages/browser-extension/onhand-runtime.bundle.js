@@ -148129,6 +148129,10 @@ function applyLearningBackgroundFocusDefault(params, commandName, request) {
   if (commandName === "open_pdf_in_onhand_viewer") return { ...params || {}, active: false };
   return params;
 }
+function shouldPreservePlannedCorpusTabId(commandName, tabId, request) {
+  if (commandName !== "search_linked_pdf_corpus" || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+  return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : []).some((candidateTabId) => Number(candidateTabId) === tabId);
+}
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
 }
@@ -154628,6 +154632,7 @@ var __browserRuntimeTest = {
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
+  shouldPreservePlannedCorpusTabIdForTest: shouldPreservePlannedCorpusTabId,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
   buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -157398,7 +157403,8 @@ function createOnhandBrowserRuntime(host) {
       commandName
     );
     const hasExplicitTabSelector = typeof normalizedParams?.tabId === "number" || annotationCommandAllowsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim());
-    if (hasExplicitTabSelector && hasCompletedTabInventory(activeRequest)) {
+    const preservesPlannedCorpusTabId = shouldPreservePlannedCorpusTabId(commandName, normalizedParams?.tabId, activeRequest);
+    if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedCorpusTabId)) {
       if (typeof normalizedParams?.tabId !== "number" && typeof targetWindowId === "number" && typeof normalizedParams?.windowId !== "number") {
         return { ...normalizedParams || {}, windowId: targetWindowId };
       }

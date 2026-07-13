@@ -2158,6 +2158,14 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(\(\) => Promise\.resolve\(\)\.then\(fn\)\),\s*TAB_COMMAND_TIMEOUT_MS,/,
 		"tab command queues should time out the wait behind a prior page command, not only the command body",
 	);
+	const corpusCommandCase = background.match(/case "search_linked_pdf_corpus": \{[\s\S]*?(?=\n\t\tcase "activate_tab")/)?.[0] || "";
+	const corpusTabCommandEnd = corpusCommandCase.indexOf("// Only DOM access belongs");
+	const corpusSearchStart = corpusCommandCase.indexOf("const corpus = await searchPdfCorpus");
+	assert.match(corpusCommandCase, /const links = await withTabCommand\(tab\.id,[\s\S]*evaluateInTab/);
+	assert.ok(
+		corpusTabCommandEnd >= 0 && corpusSearchStart > corpusTabCommandEnd,
+		"linked-PDF fetch, parse, and ranking must run after the tab-command timeout scope ends",
+	);
 	assert.match(
 		background,
 		/const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(async \(\) => \{[\s\S]{0,220}attachDebuggerWithRetry/,
@@ -2234,6 +2242,7 @@ async function assertConstitutionPromptContract() {
 			buildLearningWorkspaceEvidenceRetryPromptForTest,
 			hasCompletedNonActiveWorkspaceReadForTest,
 			applyLearningBackgroundFocusDefaultForTest,
+			shouldPreservePlannedCorpusTabIdForTest,
 			setModelIntentClassificationForPromptForTest,
 			clearModelIntentClassificationsForTest,
 		} = __browserRuntimeTest || {};
@@ -2254,6 +2263,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(typeof buildLearningWorkspaceEvidenceRetryPromptForTest, "function", "Learning workspace retry prompt export is missing");
 		assert.equal(typeof hasCompletedNonActiveWorkspaceReadForTest, "function", "Learning workspace read detector export is missing");
 		assert.equal(typeof applyLearningBackgroundFocusDefaultForTest, "function", "Learning background-focus default export is missing");
+		assert.equal(typeof shouldPreservePlannedCorpusTabIdForTest, "function", "planned corpus tab target guard export is missing");
 			assert.equal(typeof promptAsksForTeachingPageSourceMarkerForTest, "function", "browser runtime teaching source marker classifier export is missing");
 			assert.equal(typeof promptAsksForStructuredPageSourceMarkerForTest, "function", "browser runtime structured source marker classifier export is missing");
 			assert.equal(typeof promptAllowsPageSourceHighlightsForTest, "function", "browser runtime source marker availability classifier export is missing");
@@ -2885,6 +2895,33 @@ async function assertConstitutionPromptContract() {
 			"model-classified deictic help on a homework page should require workspace evidence without magic wording",
 		);
 		clearModelIntentClassificationsForTest();
+		assert.equal(
+			shouldPreservePlannedCorpusTabIdForTest(
+				"search_linked_pdf_corpus",
+				51,
+				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
+			),
+			true,
+			"a planner-grounded corpus tab should survive before browser_list_tabs completes",
+		);
+		assert.equal(
+			shouldPreservePlannedCorpusTabIdForTest(
+				"search_linked_pdf_corpus",
+				52,
+				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
+			),
+			false,
+			"an unplanned pre-inventory tab id should retain the normal target safety fallback",
+		);
+		assert.equal(
+			shouldPreservePlannedCorpusTabIdForTest(
+				"extract_content",
+				51,
+				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
+			),
+			false,
+			"the planner exception should apply only to linked-PDF corpus search",
+		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,
 			toolTraces: [{ state: "complete", toolName: "browser_pdf_read_pages", resultDetails: { tab: { id: 1, url: busyWindowTabs[0].url } } }],

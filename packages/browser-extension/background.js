@@ -12922,30 +12922,33 @@ async function handleCommand(name, args = {}) {
 		}
 		case "search_linked_pdf_corpus": {
 			const tab = await resolveReadTargetTab(args);
-			return await withTabCommand(tab.id, async () => {
-				const links = await evaluateInTab(
+			const links = await withTabCommand(tab.id, async () => {
+				return await evaluateInTab(
 					tab.id,
 					`(() => Array.from(document.querySelectorAll("a[href]"), (anchor) => ({
 						title: String(anchor.textContent || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "").replace(/\\s+/g, " ").trim(),
 						url: anchor.href || ""
 					})).filter((link) => /^https?:\\/\\//i.test(link.url) && /\\.pdf(?:[?#]|$)/i.test(link.url)).slice(0, 100))()`,
 				);
-				const corpus = await searchPdfCorpus({
-					sources: Array.isArray(links) ? links : [],
-					evidenceSlots: Array.isArray(args.evidenceSlots) ? args.evidenceSlots : [],
-					maxSources: args.maxSources,
-					maxMatchesPerSlot: args.maxMatchesPerSlot,
-					concurrency: args.concurrency,
-				});
-				if (!corpus.readableSourceCount && corpus.failures?.length) {
-					console.warn("Onhand linked-PDF corpus search could not read any sources", corpus.failures.slice(0, 4));
-				}
-				return {
-					tab: simplifyTab(tab),
-					linkedPdfCount: Array.isArray(links) ? links.length : 0,
-					corpus,
-				};
 			});
+			// Only DOM access belongs under the serialized 15-second tab-command
+			// budget. Corpus fetch, parse, and ranking can legitimately take longer
+			// and do not hold page or debugger state after the link scrape finishes.
+			const corpus = await searchPdfCorpus({
+				sources: Array.isArray(links) ? links : [],
+				evidenceSlots: Array.isArray(args.evidenceSlots) ? args.evidenceSlots : [],
+				maxSources: args.maxSources,
+				maxMatchesPerSlot: args.maxMatchesPerSlot,
+				concurrency: args.concurrency,
+			});
+			if (!corpus.readableSourceCount && corpus.failures?.length) {
+				console.warn("Onhand linked-PDF corpus search could not read any sources", corpus.failures.slice(0, 4));
+			}
+			return {
+				tab: simplifyTab(tab),
+				linkedPdfCount: Array.isArray(links) ? links.length : 0,
+				corpus,
+			};
 		}
 		case "activate_tab": {
 			const tab = await resolveTargetTab(args);
