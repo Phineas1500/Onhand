@@ -2242,7 +2242,7 @@ async function assertConstitutionPromptContract() {
 			buildLearningWorkspaceEvidenceRetryPromptForTest,
 			hasCompletedNonActiveWorkspaceReadForTest,
 			applyLearningBackgroundFocusDefaultForTest,
-			shouldPreservePlannedWorkspaceTabIdForTest,
+			shouldPreserveTrustedWorkspaceTabIdForTest,
 			setModelIntentClassificationForPromptForTest,
 			clearModelIntentClassificationsForTest,
 		} = __browserRuntimeTest || {};
@@ -2263,7 +2263,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(typeof buildLearningWorkspaceEvidenceRetryPromptForTest, "function", "Learning workspace retry prompt export is missing");
 		assert.equal(typeof hasCompletedNonActiveWorkspaceReadForTest, "function", "Learning workspace read detector export is missing");
 		assert.equal(typeof applyLearningBackgroundFocusDefaultForTest, "function", "Learning background-focus default export is missing");
-		assert.equal(typeof shouldPreservePlannedWorkspaceTabIdForTest, "function", "planned workspace tab target guard export is missing");
+		assert.equal(typeof shouldPreserveTrustedWorkspaceTabIdForTest, "function", "trusted workspace tab target guard export is missing");
 			assert.equal(typeof promptAsksForTeachingPageSourceMarkerForTest, "function", "browser runtime teaching source marker classifier export is missing");
 			assert.equal(typeof promptAsksForStructuredPageSourceMarkerForTest, "function", "browser runtime structured source marker classifier export is missing");
 			assert.equal(typeof promptAllowsPageSourceHighlightsForTest, "function", "browser runtime source marker availability classifier export is missing");
@@ -2897,7 +2897,7 @@ async function assertConstitutionPromptContract() {
 		clearModelIntentClassificationsForTest();
 		for (const commandName of ["search_linked_pdf_corpus", "get_visible_text", "extract_content", "open_pdf_in_onhand_viewer"]) {
 			assert.equal(
-				shouldPreservePlannedWorkspaceTabIdForTest(
+				shouldPreserveTrustedWorkspaceTabIdForTest(
 					commandName,
 					51,
 					{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
@@ -2907,7 +2907,7 @@ async function assertConstitutionPromptContract() {
 			);
 		}
 		assert.equal(
-			shouldPreservePlannedWorkspaceTabIdForTest(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
 				"search_linked_pdf_corpus",
 				52,
 				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
@@ -2916,13 +2916,26 @@ async function assertConstitutionPromptContract() {
 			"an unplanned pre-inventory tab id should retain the normal target safety fallback",
 		);
 		assert.equal(
-			shouldPreservePlannedWorkspaceTabIdForTest(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
 				"navigate",
 				51,
 				{ ...learningProblemRequest, learningResearchPlan: { candidateTabIds: [51] } },
 			),
 			false,
 			"the planner exception should not authorize focus-changing navigation",
+		);
+		assert.equal(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
+				"open_pdf_in_onhand_viewer",
+				52,
+				{
+					...learningProblemRequest,
+					learningResearchPlan: { candidateTabIds: [51] },
+					toolTraces: [{ state: "complete", toolName: "browser_navigate", resultDetails: { tab: { id: 52, url: "https://course.test/new-source.pdf" } } }],
+				},
+			),
+			true,
+			"a source PDF tab opened by the current request should survive before browser_list_tabs completes",
 		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,
@@ -9517,6 +9530,30 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		[[7, 50], [8, 20]],
 		"preflight should stop after consuming one shared 50-PDF budget instead of applying 50 PDFs per tab",
 	);
+	const recoveringCorpusPreflightCalls = [];
+	const recoveredCorpusPlan = await test.hydrateLearningResearchPlanWithCorpusForTest(
+		{ ...plan, candidateTabIds: [7, 8], maxSources: 50 },
+		plannerContext,
+		{
+			async runCommand(command, args) {
+				recoveringCorpusPreflightCalls.push({ command, args });
+				if (args.tabId === 7) throw new Error("Cannot script native PDF tab");
+				if (args.tabId === 8) return {
+					tab: { id: 8, title: "Course index" },
+					linkedPdfCount: 12,
+					corpus: { searchedSourceCount: 12, readableSourceCount: 12, retrievalCandidates: [] },
+				};
+				return { tab: { id: args.tabId, title: "Unrelated" }, linkedPdfCount: 0, corpus: { searchedSourceCount: 0, readableSourceCount: 0, retrievalCandidates: [] } };
+			},
+			log() {},
+		},
+	);
+	assert.deepEqual(
+		recoveringCorpusPreflightCalls.map((call) => [call.args.tabId, call.args.maxSources]),
+		[[7, 50], [8, 50], [1, 38]],
+		"a non-scriptable candidate should not prevent later course-index tabs from using the remaining corpus budget",
+	);
+	assert.deepEqual(recoveredCorpusPlan.corpusResults.map((result) => result.tabId), [8]);
 
 	const assessmentRequest = {
 		learningResearchPlan: plan,

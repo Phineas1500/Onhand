@@ -1053,8 +1053,10 @@ const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
 	"open_pdf_in_onhand_viewer",
 ]);
 
-function shouldPreservePlannedWorkspaceTabId(commandName: string, tabId: unknown, request: any) {
-	if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName) || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+function shouldPreserveTrustedWorkspaceTabId(commandName: string, tabId: unknown, request: any) {
+	if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+	if (commandName === "open_pdf_in_onhand_viewer" && sourceTabWasOpenedByRequest(request, tabId)) return true;
+	if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
 	return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : [])
 		.some((candidateTabId: unknown) => Number(candidateTabId) === tabId);
 }
@@ -5931,7 +5933,11 @@ async function hydrateLearningResearchPlanWithCorpus(plan: LearningResearchPlan 
 			if (corpusResult.linkedPdfCount >= 2) corpusResults.push(corpusResult);
 		} catch (error) {
 			host.log?.("Learning linked-PDF corpus preflight candidate failed", error);
-			break;
+			// A native PDF or another non-scriptable tab can fail before any linked
+			// sources are discovered. Restore the reservation and keep probing later
+			// model-visible tabs so one bad surface cannot hide a course index.
+			remainingSources = reservedSources;
+			continue;
 		}
 	}
 	return corpusResults.length ? { ...plan, corpusResults } : plan;
@@ -9978,7 +9984,7 @@ export const __browserRuntimeTest = {
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
 	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
-	shouldPreservePlannedWorkspaceTabIdForTest: shouldPreservePlannedWorkspaceTabId,
+	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -13054,8 +13060,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			typeof normalizedParams?.tabId === "number" ||
 			(annotationCommandAllowsTabMatch &&
 				Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim()));
-		const preservesPlannedWorkspaceTabId = shouldPreservePlannedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
-		if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedWorkspaceTabId)) {
+		const preservesTrustedWorkspaceTabId = shouldPreserveTrustedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
+		if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesTrustedWorkspaceTabId)) {
 			// Title/url selectors resolve within the last-focused window in the
 			// background; scope them to the request window so a same-title tab in
 			// another window cannot take the annotation. Exact tabIds are global.

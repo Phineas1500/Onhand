@@ -148142,8 +148142,10 @@ var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   "capture_screenshot",
   "open_pdf_in_onhand_viewer"
 ]);
-function shouldPreservePlannedWorkspaceTabId(commandName, tabId, request) {
-  if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName) || typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+function shouldPreserveTrustedWorkspaceTabId(commandName, tabId, request) {
+  if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+  if (commandName === "open_pdf_in_onhand_viewer" && sourceTabWasOpenedByRequest(request, tabId)) return true;
+  if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
   return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : []).some((candidateTabId) => Number(candidateTabId) === tabId);
 }
 function nowIso() {
@@ -151350,7 +151352,8 @@ async function hydrateLearningResearchPlanWithCorpus(plan, browserContextDetails
       if (corpusResult.linkedPdfCount >= 2) corpusResults.push(corpusResult);
     } catch (error52) {
       host.log?.("Learning linked-PDF corpus preflight candidate failed", error52);
-      break;
+      remainingSources = reservedSources;
+      continue;
     }
   }
   return corpusResults.length ? { ...plan, corpusResults } : plan;
@@ -154645,7 +154648,7 @@ var __browserRuntimeTest = {
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
   extractToolErrorTextForTest: extractToolErrorText,
   applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
-  shouldPreservePlannedWorkspaceTabIdForTest: shouldPreservePlannedWorkspaceTabId,
+  shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
   buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -157416,8 +157419,8 @@ function createOnhandBrowserRuntime(host) {
       commandName
     );
     const hasExplicitTabSelector = typeof normalizedParams?.tabId === "number" || annotationCommandAllowsTabMatch && Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim());
-    const preservesPlannedWorkspaceTabId = shouldPreservePlannedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
-    if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesPlannedWorkspaceTabId)) {
+    const preservesTrustedWorkspaceTabId = shouldPreserveTrustedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
+    if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesTrustedWorkspaceTabId)) {
       if (typeof normalizedParams?.tabId !== "number" && typeof targetWindowId === "number" && typeof normalizedParams?.windowId !== "number") {
         return { ...normalizedParams || {}, windowId: targetWindowId };
       }
