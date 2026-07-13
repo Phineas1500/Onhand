@@ -54,6 +54,8 @@ const CORPUS = [
 	["How has the API changed between these two open docs?", { comparison: true, crossTabComparison: true, pageScoped: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
 	["Go through my manager's feedback on this draft and mark what needs to change.", { documentReviewMarkup: true, pageScoped: true, teaching: null, enumerableCoverage: null, comparison: false, crossTabComparison: false }],
 	["what is the time complexity here?", { pageScoped: true, teaching: false, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
+	["could you help me solve this?", { pageScoped: true, problemSolvingHelp: true }],
+	["Help me troubleshoot why this page will not load.", { pageScoped: true, problemSolvingHelp: false }],
 	["compare this article with the other tab I have open", { pageScoped: true, comparison: true, crossTabComparison: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
 	["give me a step-by-step of the branching workflow in this chapter", { pageScoped: true, enumerableCoverage: true, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
 	["Summarize this page. Answer only in chat, no page changes please.", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
@@ -82,7 +84,7 @@ const CORPUS = [
 	["make this page dark mode", { pageScoped: false, teaching: false, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
 ];
 
-const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup"];
+const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 
 function regexVerdicts(test, prompt) {
 	// The predicates consult the model-intent cache first; keep it empty here
@@ -95,6 +97,7 @@ function regexVerdicts(test, prompt) {
 		comparison: null,
 		crossTabComparison: test.promptAsksForCrossTabComparisonForTest(prompt),
 		documentReviewMarkup: test.promptAsksForDocumentReviewMarkupForTest(prompt),
+		problemSolvingHelp: null,
 	};
 }
 

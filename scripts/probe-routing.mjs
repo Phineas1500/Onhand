@@ -34,7 +34,7 @@ installChromeStub();
 
 const { __browserRuntimeTest: T } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 
-const INTENT_FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup"];
+const INTENT_FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 
 // Routing predicates that decide which lane a prompt takes.
 function routingFor(prompt) {

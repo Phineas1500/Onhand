@@ -6433,6 +6433,12 @@
 		const linkedResourceTarget = /\b(linked?|links?|notes?|lecture notes?|readings?|resources?|source pages?|linked pages?)\b/;
 		const genericLinkedDestination = /\b(?:linked|listed|referenced|cited|source|related|relevant|other)\s+(?:pages?|articles?|papers?|documents?)\b|\b(?:pages?|articles?|papers?|documents?)\s+(?:linked|listed|referenced|cited|on this page|from this page)\b/;
 		if (explicitNavigationVerb.test(text) && (linkedResourceTarget.test(text) || genericLinkedDestination.test(text))) return true;
+		if (
+			/\b(?:look(?:ing)? at|go(?:ing)? through|search(?:ing)?|scan(?:ning)?|read(?:ing)?)\b[\s\S]{0,160}\b(?:notes?|lecture notes?|readings?|resources?|links?)\b/.test(text) &&
+			/\b(?:other|another)\s+(?:page|tab|window|document|doc)\b|\b(?:page|tab|window|document|doc)\s+(?:in|on)\s+(?:another|the other)\b/.test(text)
+		) {
+			return true;
+		}
 		return /\b(find|check|inspect|look at|review|read|scan)\b[\s\S]{0,120}\b(other|relevant|important|useful|related)\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?)\b|\b(other|relevant|important|useful|related)\s*(notes?|lecture notes?|links?|readings?|resources?|source pages?|linked pages?)\b[\s\S]{0,120}\b(find|check|inspect|look at|review|read|scan)\b/.test(
 			text,
 		);
@@ -7640,6 +7646,7 @@
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
 				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
 				"When the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, treat that as permission to navigate within those linked pages. If the current tab is already a destination note, use browser_list_tabs to find the already-open course/index/master page before asking the student for it, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages, inspect them, then anchor useful passages on the destination pages before publishing.",
+				"In Learning Mode, cross-tab retrieval is automatic: treat metadata for every open tab as a workspace index, use browser_list_tabs for the complete inventory, read the strongest clearly-related candidates by tabId in small batches, and expand only when the evidence is insufficient. Do not require the student to say 'other tab', do not inspect unrelated tabs, and do not switch focus merely to read or annotate a background source.",
 				"If a web search results page is only an intermediate step, do not highlight the search-results page as the source. Open the relevant result/source page first, then anchor there.",
 				"Never say 'you should see highlights' or imply an annotation exists unless browser_highlight_text or browser_show_note has succeeded in this turn.",
 				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation, and do not add extra highlights just to increase source count.",
@@ -7699,11 +7706,14 @@
 		const text = normalizeRealtimeTranscriptText(prompt);
 		const externalBrowsingRequest = realtimePromptAsksForExternalBrowsing(text);
 		const linkedPageNavigationRequest = realtimePromptAsksForLinkedPageNavigation(text);
-			const navigationRequest = externalBrowsingRequest || linkedPageNavigationRequest;
+			const learningWorkspaceRetrieval = Boolean(
+				(learningModeToggle instanceof HTMLInputElement && learningModeToggle.checked) || currentState?.preferences?.learningMode,
+			);
+			const navigationRequest = externalBrowsingRequest || linkedPageNavigationRequest || learningWorkspaceRetrieval;
 			return {
 				tools: realtimeToolDefinitions({
 					includeExternalBrowsingTools: externalBrowsingRequest,
-					includeLinkedPageNavigationTools: linkedPageNavigationRequest,
+					includeLinkedPageNavigationTools: linkedPageNavigationRequest || learningWorkspaceRetrieval,
 				}),
 				tool_choice: navigationRequest ? "auto" : REALTIME_FORCED_INITIAL_TOOL_CHOICE,
 			instructions: [
@@ -7713,6 +7723,8 @@
 					? "The student is asking you to browse or navigate to external sources. Do not start by anchoring the current page unless it is needed to form the search query. First call browser_navigate to open the relevant source/search page in the current tab. Do not speak a preamble or final answer before the navigation/tool work."
 					: linkedPageNavigationRequest
 						? "The student is asking you to open, check, or inspect linked notes/resources from the current page or a page used earlier in the session. Do not stay on a destination note if you need the notes index. First use browser_list_tabs to find an already-open course/index/master page when the current tab does not list the needed links, then browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked page. Inspect and anchor exact text on the destination page before the final answer."
+						: learningWorkspaceRetrieval
+							? "Learning Mode workspace retrieval is automatic. Check browser_list_tabs and the current page before deciding where the best evidence lives. Read the strongest clearly-related tab candidates by tabId without stealing focus; expand only if the first candidates are insufficient. Do not inspect unrelated tabs and do not ask for magic wording such as 'other tab'."
 					: "Start by calling browser_get_visible_text for the current page. Do not speak a preamble or final answer before that tool call.",
 			]
 				.filter(Boolean)
@@ -8016,7 +8028,10 @@
 			const toolName = String(name || "").trim();
 			if (REALTIME_DEFAULT_TOOL_NAMES.has(toolName)) return true;
 			const prompt = realtimeActiveVoiceTurn?.prompt;
-			if (REALTIME_LINKED_PAGE_NAVIGATION_TOOL_NAMES.has(toolName) && realtimePromptAsksForLinkedPageNavigation(prompt)) return true;
+			const learningWorkspaceRetrieval = Boolean(
+				(learningModeToggle instanceof HTMLInputElement && learningModeToggle.checked) || currentState?.preferences?.learningMode,
+			);
+			if (REALTIME_LINKED_PAGE_NAVIGATION_TOOL_NAMES.has(toolName) && (realtimePromptAsksForLinkedPageNavigation(prompt) || learningWorkspaceRetrieval)) return true;
 			return REALTIME_EXTERNAL_BROWSING_TOOL_NAMES.has(toolName) && realtimePromptAsksForExternalBrowsing(prompt);
 		}
 

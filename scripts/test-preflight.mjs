@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { inspectBrowserToolManifest, syncBrowserToolWebsite } from "./sync-browser-tools.mjs";
 
 const PROJECT_ROOT = process.cwd();
 
@@ -22,6 +23,8 @@ const REQUIRED_FILES = [
 	"scripts/run-browser-runtime-smoke.mjs",
 	"scripts/generate-realtime-voice-fixture.mjs",
 	"scripts/show-chrome-acceptance.mjs",
+	"scripts/sync-browser-tools.mjs",
+	"shared/browser-tools.json",
 ];
 
 const REMOVED_PATHS = [
@@ -40,6 +43,8 @@ const REQUIRED_SCRIPTS = [
 	"serve:fixture",
 	"test:fixtures",
 	"test:preflight",
+	"website:sync-tools",
+	"website:check-tools",
 	"test:sidebar-regressions",
 	"test:browser-runtime-regressions",
 	"smoke:browser-runtime",
@@ -143,6 +148,16 @@ async function main() {
 		missingConstitutionPhrases.length ? `missing ${missingConstitutionPhrases.join(", ")}` : "core principles present",
 	);
 	if (missingConstitutionPhrases.length) failures.push("Onhand constitution is missing core principles.");
+
+	try {
+		const toolInspection = await inspectBrowserToolManifest(PROJECT_ROOT);
+		await syncBrowserToolWebsite({ root: PROJECT_ROOT, check: true });
+		printCheck("Shared browser tool manifest", toolInspection.ok, `${toolInspection.names.length} public tools; runtime and website synchronized`);
+		if (!toolInspection.ok) failures.push("Shared browser tool manifest does not match the runtime registry.");
+	} catch (error) {
+		printCheck("Shared browser tool manifest", false, error?.message || String(error));
+		failures.push("Shared browser tool manifest or generated website list is stale.");
+	}
 
 	console.log("");
 	console.log("Manual reminders:");

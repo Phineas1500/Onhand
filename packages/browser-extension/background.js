@@ -1,5 +1,6 @@
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
+import { searchPdfCorpus } from "./pdf-corpus-search.bundle.js";
 
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
@@ -12918,6 +12919,33 @@ async function handleCommand(name, args = {}) {
 		case "list_tabs":
 		case "get_state": {
 			return await snapshotState(args);
+		}
+		case "search_linked_pdf_corpus": {
+			const tab = await resolveReadTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const links = await evaluateInTab(
+					tab.id,
+					`(() => Array.from(document.querySelectorAll("a[href]"), (anchor) => ({
+						title: String(anchor.textContent || anchor.getAttribute("aria-label") || anchor.getAttribute("title") || "").replace(/\\s+/g, " ").trim(),
+						url: anchor.href || ""
+					})).filter((link) => /^https?:\\/\\//i.test(link.url) && /\\.pdf(?:[?#]|$)/i.test(link.url)).slice(0, 100))()`,
+				);
+				const corpus = await searchPdfCorpus({
+					sources: Array.isArray(links) ? links : [],
+					evidenceSlots: Array.isArray(args.evidenceSlots) ? args.evidenceSlots : [],
+					maxSources: args.maxSources,
+					maxMatchesPerSlot: args.maxMatchesPerSlot,
+					concurrency: args.concurrency,
+				});
+				if (!corpus.readableSourceCount && corpus.failures?.length) {
+					console.warn("Onhand linked-PDF corpus search could not read any sources", corpus.failures.slice(0, 4));
+				}
+				return {
+					tab: simplifyTab(tab),
+					linkedPdfCount: Array.isArray(links) ? links.length : 0,
+					corpus,
+				};
+			});
 		}
 		case "activate_tab": {
 			const tab = await resolveTargetTab(args);

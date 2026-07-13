@@ -3348,6 +3348,7 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	const runtimeMessages = [];
 	const events = [];
 	const state = createState();
+	state.preferences.learningMode = true;
 	state.page = null;
 	state.tab = {
 		id: 42,
@@ -3383,6 +3384,22 @@ async function assertRealtimeLinkedNoteRequestsCanOpenLinksFirst() {
 	assert.equal(followupToolNames.has("browser_list_tabs"), true, "expected other-notes follow-up to recover the open index tab");
 	assert.equal(followupToolNames.has("browser_activate_tab"), true, "expected other-notes follow-up to activate the open index tab");
 	assert.equal(followupToolNames.has("browser_find_elements"), true, "expected other-notes follow-up to discover note links");
+
+	const otherPageVoiceOptions = hooks.getRealtimeInitialGroundedResponseOptions(
+		"Could you help me solve this problem by looking at the notes for this class on the other page?",
+	);
+	const otherPageVoiceToolNames = new Set((otherPageVoiceOptions.tools || []).map((tool) => tool?.name));
+	assert.equal(otherPageVoiceToolNames.has("browser_list_tabs"), true, "expected notes-on-another-page voice asks to get the full tab inventory");
+	assert.equal(otherPageVoiceToolNames.has("browser_activate_tab"), true, "expected notes-on-another-page voice asks to recover the course tab");
+	assert.equal(otherPageVoiceToolNames.has("browser_find_elements"), true, "expected notes-on-another-page voice asks to inspect note links");
+
+	const ordinaryLearningOptions = hooks.getRealtimeInitialGroundedResponseOptions("How should I reason through this problem?");
+	const ordinaryLearningToolNames = new Set((ordinaryLearningOptions.tools || []).map((tool) => tool?.name));
+	assert.equal(ordinaryLearningToolNames.has("browser_list_tabs"), true, "Learning Mode voice asks should always expose the complete tab inventory");
+	assert.equal(ordinaryLearningToolNames.has("browser_activate_tab"), true, "Learning Mode voice asks should be able to show a relevant source");
+	assert.equal(ordinaryLearningToolNames.has("browser_click_text"), true, "Learning Mode voice asks should be able to follow a relevant course link");
+	assert.match(String(ordinaryLearningOptions.instructions || ""), /Learning Mode workspace retrieval is automatic/);
+	assert.match(String(ordinaryLearningOptions.instructions || ""), /Do not inspect unrelated tabs/);
 
 	await hooks.sendRealtimeTextPrompt("Could you check the other notes that might be useful to help solve this problem? You mentioned a couple other topics.");
 	await waitForSidebarTick(dom);
