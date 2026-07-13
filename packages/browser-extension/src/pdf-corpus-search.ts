@@ -24,6 +24,7 @@ interface PdfCorpusPage {
 
 const DEFAULT_PDF_FETCH_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_PDF_BYTES = 40 * 1024 * 1024;
+const DEFAULT_CORPUS_SEARCH_TIMEOUT_MS = 30000;
 
 const STOP_WORDS = new Set([
 	"a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to", "using", "what", "when", "with",
@@ -272,16 +273,14 @@ export async function searchPdfCorpus(options: {
 	const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
 	const overallTimeoutMs = Number(options.overallTimeoutMs) > 0
 		? Math.max(100, Math.min(120000, Number(options.overallTimeoutMs)))
-		: 0;
+		: DEFAULT_CORPUS_SEARCH_TIMEOUT_MS;
 	const corpusController = new AbortController();
-	const corpusDeadlineAt = overallTimeoutMs ? Date.now() + overallTimeoutMs : 0;
+	const corpusDeadlineAt = Date.now() + overallTimeoutMs;
 	let deadlineExceeded = false;
-	const deadlineId = overallTimeoutMs
-		? setTimeout(() => {
+	const deadlineId = setTimeout(() => {
 			deadlineExceeded = true;
 			corpusController.abort(new Error("PDF corpus search deadline exceeded"));
-		}, overallTimeoutMs)
-		: null;
+		}, overallTimeoutMs);
 	let cursor = 0;
 	let searchedSourceCount = 0;
 	const worker = async () => {
@@ -298,9 +297,9 @@ export async function searchPdfCorpus(options: {
 	try {
 		await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
 	} finally {
-		if (deadlineId) clearTimeout(deadlineId);
+		clearTimeout(deadlineId);
 	}
-	deadlineExceeded = deadlineExceeded || (overallTimeoutMs > 0 && corpusController.signal.aborted);
+	deadlineExceeded = deadlineExceeded || corpusController.signal.aborted;
 	return {
 		searchedSourceCount,
 		readableSourceCount: readable.length,

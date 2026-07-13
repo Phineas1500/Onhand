@@ -2163,6 +2163,11 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	const corpusSearchStart = corpusCommandCase.indexOf("const corpus = await searchPdfCorpus");
 	assert.match(corpusCommandCase, /const linkScrape = withTabCommand\(tab\.id,[\s\S]*evaluateInTab/);
 	assert.match(corpusCommandCase, /overallTimeoutMs:[\s\S]*remainingOverallMs/);
+	assert.match(
+		corpusCommandCase,
+		/Number\(args\.overallTimeoutMs\) > 0[\s\S]*: 30000;/,
+		"direct agent corpus searches should receive a bounded overall deadline even when the caller omits one",
+	);
 	assert.ok(
 		corpusTabCommandEnd >= 0 && corpusSearchStart > corpusTabCommandEnd,
 		"linked-PDF fetch, parse, and ranking must run after the tab-command timeout scope ends",

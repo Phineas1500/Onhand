@@ -84743,6 +84743,7 @@ var __webpack_exports__WorkerMessageHandler = __webpack_exports__2.WorkerMessage
 globalThis.pdfjsWorker ||= { WorkerMessageHandler: __webpack_exports__WorkerMessageHandler };
 var DEFAULT_PDF_FETCH_TIMEOUT_MS = 15e3;
 var DEFAULT_MAX_PDF_BYTES = 40 * 1024 * 1024;
+var DEFAULT_CORPUS_SEARCH_TIMEOUT_MS = 3e4;
 var STOP_WORDS = /* @__PURE__ */ new Set([
   "a",
   "an",
@@ -84973,14 +84974,14 @@ async function searchPdfCorpus(options) {
   const failures = [];
   const fetchTimeoutMs = Math.max(100, Math.min(6e4, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
   const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
-  const overallTimeoutMs = Number(options.overallTimeoutMs) > 0 ? Math.max(100, Math.min(12e4, Number(options.overallTimeoutMs))) : 0;
+  const overallTimeoutMs = Number(options.overallTimeoutMs) > 0 ? Math.max(100, Math.min(12e4, Number(options.overallTimeoutMs))) : DEFAULT_CORPUS_SEARCH_TIMEOUT_MS;
   const corpusController = new AbortController();
-  const corpusDeadlineAt = overallTimeoutMs ? Date.now() + overallTimeoutMs : 0;
+  const corpusDeadlineAt = Date.now() + overallTimeoutMs;
   let deadlineExceeded = false;
-  const deadlineId = overallTimeoutMs ? setTimeout(() => {
+  const deadlineId = setTimeout(() => {
     deadlineExceeded = true;
     corpusController.abort(new Error("PDF corpus search deadline exceeded"));
-  }, overallTimeoutMs) : null;
+  }, overallTimeoutMs);
   let cursor = 0;
   let searchedSourceCount = 0;
   const worker = async () => {
@@ -84997,9 +84998,9 @@ async function searchPdfCorpus(options) {
   try {
     await Promise.all(Array.from({ length: Math.max(1, Math.min(4, Number(options.concurrency) || 2)) }, worker));
   } finally {
-    if (deadlineId) clearTimeout(deadlineId);
+    clearTimeout(deadlineId);
   }
-  deadlineExceeded = deadlineExceeded || overallTimeoutMs > 0 && corpusController.signal.aborted;
+  deadlineExceeded = deadlineExceeded || corpusController.signal.aborted;
   return {
     searchedSourceCount,
     readableSourceCount: readable.length,
