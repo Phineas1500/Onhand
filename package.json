@@ -54,8 +54,8 @@
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.3",
-    "@earendil-works/pi-ai": "^0.80.3",
+    "@earendil-works/pi-agent-core": "^0.80.7",
+    "@earendil-works/pi-ai": "^0.80.7",
     "@mozilla/readability": "^0.6.0",
     "@sentry/browser": "^10.57.0",
     "@vercel/speed-insights": "^2.0.0",

@@ -584,10 +584,10 @@ function ReadableStreamFrom(iterable) {
     }
   });
 }
-function ReadableStreamToAsyncIterable(stream10) {
-  if (stream10[Symbol.asyncIterator])
-    return stream10;
-  const reader = stream10.getReader();
+function ReadableStreamToAsyncIterable(stream11) {
+  if (stream11[Symbol.asyncIterator])
+    return stream11;
+  const reader = stream11.getReader();
   return {
     async next() {
       try {
@@ -611,14 +611,14 @@ function ReadableStreamToAsyncIterable(stream10) {
     }
   };
 }
-async function CancelReadableStream(stream10) {
-  if (stream10 === null || typeof stream10 !== "object")
+async function CancelReadableStream(stream11) {
+  if (stream11 === null || typeof stream11 !== "object")
     return;
-  if (stream10[Symbol.asyncIterator]) {
-    await stream10[Symbol.asyncIterator]().return?.();
+  if (stream11[Symbol.asyncIterator]) {
+    await stream11[Symbol.asyncIterator]().return?.();
     return;
   }
-  const reader = stream10.getReader();
+  const reader = stream11.getReader();
   const cancelPromise = reader.cancel();
   reader.releaseLock();
   await cancelPromise;
@@ -3143,9 +3143,9 @@ var init_BetaMessageStream = __esm({
        * Note that messages sent to the model do not appear in `.on('message')`
        * in this context.
        */
-      static fromReadableStream(stream10) {
+      static fromReadableStream(stream11) {
         const runner = new _BetaMessageStream(null);
-        runner._run(() => runner._fromReadableStream(stream10));
+        runner._run(() => runner._fromReadableStream(stream11));
         return runner;
       }
       static createMessage(messages, params, options, { logger } = {}) {
@@ -3183,12 +3183,12 @@ var init_BetaMessageStream = __esm({
         }
         try {
           __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_beginRequest).call(this);
-          const { response, data: stream10 } = await messages.create({ ...params, stream: true }, { ...options, signal: this.controller.signal }).withResponse();
+          const { response, data: stream11 } = await messages.create({ ...params, stream: true }, { ...options, signal: this.controller.signal }).withResponse();
           this._connected(response);
-          for await (const event of stream10) {
+          for await (const event of stream11) {
             __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_addStreamEvent).call(this, event);
           }
-          if (stream10.controller.signal?.aborted) {
+          if (stream11.controller.signal?.aborted) {
             throw new APIUserAbortError();
           }
           __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_endRequest).call(this);
@@ -3350,11 +3350,11 @@ var init_BetaMessageStream = __esm({
         try {
           __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_beginRequest).call(this);
           this._connected(null);
-          const stream10 = Stream.fromReadableStream(readableStream, this.controller);
-          for await (const event of stream10) {
+          const stream11 = Stream.fromReadableStream(readableStream, this.controller);
+          for await (const event of stream11) {
             __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_addStreamEvent).call(this, event);
           }
-          if (stream10.controller.signal?.aborted) {
+          if (stream11.controller.signal?.aborted) {
             throw new APIUserAbortError();
           }
           __classPrivateFieldGet(this, _BetaMessageStream_instances, "m", _BetaMessageStream_endRequest).call(this);
@@ -3627,8 +3627,8 @@ var init_BetaMessageStream = __esm({
         };
       }
       toReadableStream() {
-        const stream10 = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream10.toReadableStream();
+        const stream11 = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream11.toReadableStream();
       }
     };
   }
@@ -3853,7 +3853,7 @@ var init_BetaToolRunner = __esm({
         __classPrivateFieldSet(this, _BetaToolRunner_toolResponse, void 0, "f");
         try {
           while (true) {
-            let stream10;
+            let stream11;
             try {
               if (__classPrivateFieldGet(this, _BetaToolRunner_state, "f").params.max_iterations && __classPrivateFieldGet(this, _BetaToolRunner_iterationCount, "f") >= __classPrivateFieldGet(this, _BetaToolRunner_state, "f").params.max_iterations) {
                 break;
@@ -3864,11 +3864,11 @@ var init_BetaToolRunner = __esm({
               __classPrivateFieldSet(this, _BetaToolRunner_message, void 0, "f");
               const { max_iterations, compactionControl, ...params } = __classPrivateFieldGet(this, _BetaToolRunner_state, "f").params;
               if (params.stream) {
-                stream10 = this.client.beta.messages.stream({ ...params }, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"));
-                __classPrivateFieldSet(this, _BetaToolRunner_message, stream10.finalMessage(), "f");
+                stream11 = this.client.beta.messages.stream({ ...params }, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"));
+                __classPrivateFieldSet(this, _BetaToolRunner_message, stream11.finalMessage(), "f");
                 __classPrivateFieldGet(this, _BetaToolRunner_message, "f").catch(() => {
                 });
-                yield stream10;
+                yield stream11;
               } else {
                 __classPrivateFieldSet(this, _BetaToolRunner_message, this.client.beta.messages.create({ ...params, stream: false }, __classPrivateFieldGet(this, _BetaToolRunner_options, "f")), "f");
                 yield __classPrivateFieldGet(this, _BetaToolRunner_message, "f");
@@ -3887,8 +3887,8 @@ var init_BetaToolRunner = __esm({
                 }
               }
             } finally {
-              if (stream10) {
-                stream10.abort();
+              if (stream11) {
+                stream11.abort();
               }
             }
           }
@@ -5570,9 +5570,9 @@ var init_MessageStream = __esm({
        * Note that messages sent to the model do not appear in `.on('message')`
        * in this context.
        */
-      static fromReadableStream(stream10) {
+      static fromReadableStream(stream11) {
         const runner = new _MessageStream(null);
-        runner._run(() => runner._fromReadableStream(stream10));
+        runner._run(() => runner._fromReadableStream(stream11));
         return runner;
       }
       static createMessage(messages, params, options, { logger } = {}) {
@@ -5610,12 +5610,12 @@ var init_MessageStream = __esm({
         }
         try {
           __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_beginRequest).call(this);
-          const { response, data: stream10 } = await messages.create({ ...params, stream: true }, { ...options, signal: this.controller.signal }).withResponse();
+          const { response, data: stream11 } = await messages.create({ ...params, stream: true }, { ...options, signal: this.controller.signal }).withResponse();
           this._connected(response);
-          for await (const event of stream10) {
+          for await (const event of stream11) {
             __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_addStreamEvent).call(this, event);
           }
-          if (stream10.controller.signal?.aborted) {
+          if (stream11.controller.signal?.aborted) {
             throw new APIUserAbortError();
           }
           __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_endRequest).call(this);
@@ -5777,11 +5777,11 @@ var init_MessageStream = __esm({
         try {
           __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_beginRequest).call(this);
           this._connected(null);
-          const stream10 = Stream.fromReadableStream(readableStream, this.controller);
-          for await (const event of stream10) {
+          const stream11 = Stream.fromReadableStream(readableStream, this.controller);
+          for await (const event of stream11) {
             __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_addStreamEvent).call(this, event);
           }
-          if (stream10.controller.signal?.aborted) {
+          if (stream11.controller.signal?.aborted) {
             throw new APIUserAbortError();
           }
           __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_endRequest).call(this);
@@ -6029,8 +6029,8 @@ var init_MessageStream = __esm({
         };
       }
       toReadableStream() {
-        const stream10 = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream10.toReadableStream();
+        const stream11 = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream11.toReadableStream();
       }
     };
   }
@@ -7111,12 +7111,21 @@ function createProvider(input) {
   };
 }
 function calculateCost(model, usage) {
+  const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+  let rates = model.cost;
+  let matchedThreshold = -1;
+  for (const tier of model.cost.tiers ?? []) {
+    if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
+      rates = tier;
+      matchedThreshold = tier.inputTokensAbove;
+    }
+  }
   const longWrite = usage.cacheWrite1h ?? 0;
   const shortWrite = usage.cacheWrite - longWrite;
-  usage.cost.input = model.cost.input / 1e6 * usage.input;
-  usage.cost.output = model.cost.output / 1e6 * usage.output;
-  usage.cost.cacheRead = model.cost.cacheRead / 1e6 * usage.cacheRead;
-  usage.cost.cacheWrite = (model.cost.cacheWrite * shortWrite + model.cost.input * 2 * longWrite) / 1e6;
+  usage.cost.input = rates.input / 1e6 * usage.input;
+  usage.cost.output = rates.output / 1e6 * usage.output;
+  usage.cost.cacheRead = rates.cacheRead / 1e6 * usage.cacheRead;
+  usage.cost.cacheWrite = (rates.cacheWrite * shortWrite + rates.input * 2 * longWrite) / 1e6;
   usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
   return usage.cost;
 }
@@ -7127,7 +7136,7 @@ function getSupportedThinkingLevels(model) {
     const mapped = model.thinkingLevelMap?.[level];
     if (mapped === null)
       return false;
-    if (level === "xhigh")
+    if (level === "xhigh" || level === "max")
       return mapped !== void 0;
     return true;
   });
@@ -7269,7 +7278,47 @@ var init_models3 = __esm({
         return this.streamSimple(model, context2, options).result();
       }
     };
-    EXTENDED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+    EXTENDED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  }
+});
+
+// node_modules/@earendil-works/pi-ai/dist/utils/deferred-tools.js
+function splitDeferredTools(context2, enabled, normalizeName = identityToolName) {
+  const uniqueTools = /* @__PURE__ */ new Map();
+  for (const tool of context2.tools ?? [])
+    uniqueTools.set(normalizeName(tool.name), tool);
+  if (!enabled)
+    return { immediate: [...uniqueTools.values()], deferred: /* @__PURE__ */ new Map() };
+  const deferredNames = /* @__PURE__ */ new Set();
+  const usedNames = /* @__PURE__ */ new Set();
+  for (const message of context2.messages) {
+    if (message.role === "assistant") {
+      for (const block of message.content) {
+        if (block.type === "toolCall")
+          usedNames.add(normalizeName(block.name));
+      }
+    } else if (message.role === "toolResult") {
+      for (const name of message.addedToolNames ?? []) {
+        const normalizedName = normalizeName(name);
+        if (!usedNames.has(normalizedName))
+          deferredNames.add(normalizedName);
+      }
+    }
+  }
+  const immediate = [];
+  const deferred = /* @__PURE__ */ new Map();
+  for (const [name, tool] of uniqueTools) {
+    if (deferredNames.has(name))
+      deferred.set(name, tool);
+    else
+      immediate.push(tool);
+  }
+  return { immediate, deferred };
+}
+var identityToolName;
+var init_deferred_tools = __esm({
+  "node_modules/@earendil-works/pi-ai/dist/utils/deferred-tools.js"() {
+    identityToolName = (name) => name;
   }
 });
 
@@ -7749,17 +7798,20 @@ function estimateMessageTokens(message) {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 function getLastAssistantUsageInfo(messages) {
-  for (let i = messages.length - 1; i >= 0; i--) {
+  let latestPrefixTimestamp = Number.NEGATIVE_INFINITY;
+  let usageInfo;
+  for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    if (message.role !== "assistant")
-      continue;
-    const assistant = message;
-    if (assistant.stopReason === "aborted" || assistant.stopReason === "error")
-      continue;
-    if (calculateContextTokens(assistant.usage) > 0)
-      return { usage: assistant.usage, index: i };
+    if (message.role === "assistant") {
+      const assistant = message;
+      const usageAppliesToPrefix = assistant.timestamp >= latestPrefixTimestamp;
+      if (usageAppliesToPrefix && assistant.stopReason !== "aborted" && assistant.stopReason !== "error" && calculateContextTokens(assistant.usage) > 0) {
+        usageInfo = { usage: assistant.usage, index: i };
+      }
+    }
+    latestPrefixTimestamp = Math.max(latestPrefixTimestamp, message.timestamp);
   }
-  return void 0;
+  return usageInfo;
 }
 function estimateMessages(messages) {
   const usageInfo = getLastAssistantUsageInfo(messages);
@@ -7776,6 +7828,11 @@ function estimateMessages(messages) {
     tokens += estimateMessageTokens(message);
   return { tokens, usageTokens: 0, trailingTokens: tokens, lastUsageIndex: null };
 }
+function estimateToolsTokens(tools) {
+  if (!tools || tools.length === 0)
+    return 0;
+  return estimateTextTokens(safeJsonStringify(tools));
+}
 function isMessageArray(value) {
   return Array.isArray(value);
 }
@@ -7783,12 +7840,17 @@ function estimateContextTokens(context2) {
   if (isMessageArray(context2))
     return estimateMessages(context2);
   const estimate = estimateMessages(context2.messages);
-  if (estimate.lastUsageIndex !== null)
-    return estimate;
-  let prefixTokens = context2.systemPrompt ? estimateTextTokens(context2.systemPrompt) : 0;
-  if (context2.tools && context2.tools.length > 0) {
-    prefixTokens += estimateTextTokens(safeJsonStringify(context2.tools));
+  if (estimate.lastUsageIndex !== null) {
+    const addedNames = new Set(context2.messages.slice(estimate.lastUsageIndex + 1).filter((message) => message.role === "toolResult").flatMap((message) => message.addedToolNames ?? []));
+    const addedToolTokens = estimateToolsTokens(context2.tools?.filter((tool) => addedNames.has(tool.name)));
+    return {
+      tokens: estimate.tokens + addedToolTokens,
+      usageTokens: estimate.usageTokens,
+      trailingTokens: estimate.trailingTokens + addedToolTokens,
+      lastUsageIndex: estimate.lastUsageIndex
+    };
   }
+  const prefixTokens = (context2.systemPrompt ? estimateTextTokens(context2.systemPrompt) : 0) + estimateToolsTokens(context2.tools);
   return {
     tokens: estimate.tokens + prefixTokens,
     usageTokens: estimate.usageTokens,
@@ -7832,7 +7894,7 @@ function buildBaseOptions(model, context2, options, apiKey) {
   };
 }
 function clampReasoning(effort) {
-  return effort === "xhigh" ? "high" : effort;
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
 }
 function adjustMaxTokensForThinking(baseMaxTokens, modelMaxTokens, reasoningLevel, customBudgets) {
   const defaultBudgets = {
@@ -7899,7 +7961,8 @@ function downgradeUnsupportedImages(messages, model) {
 }
 function transformMessages(messages, model, normalizeToolCallId2) {
   const toolCallIdMap = /* @__PURE__ */ new Map();
-  const imageAwareMessages = downgradeUnsupportedImages(messages, model);
+  const normalizedMessages = messages.map((msg) => msg.content == null ? { ...msg, content: [] } : msg);
+  const imageAwareMessages = downgradeUnsupportedImages(normalizedMessages, model);
   const transformed = imageAwareMessages.map((msg) => {
     if (msg.role === "user") {
       return msg;
@@ -8082,8 +8145,19 @@ function getAnthropicCompat(model) {
     sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? false,
     supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? true,
     supportsTemperature: model.compat?.supportsTemperature ?? true,
-    allowEmptySignature: model.compat?.allowEmptySignature ?? false
+    allowEmptySignature: model.compat?.allowEmptySignature ?? false,
+    supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model)
   };
+}
+function defaultSupportsToolReferences(model) {
+  if (model.provider !== "anthropic" || model.id.includes("haiku"))
+    return false;
+  const version2 = model.id.match(/^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)/);
+  if (!version2)
+    return false;
+  const major2 = Number(version2[1]);
+  const minor = version2[2] && version2[2].length < 8 ? Number(version2[2]) : 0;
+  return major2 > 4 || major2 === 4 && minor >= 5;
 }
 function mergeHeaders(...headerSources) {
   const merged = {};
@@ -8327,9 +8401,19 @@ function createClient(model, apiKey, interleavedThinking, useFineGrainedToolStre
 function buildParams(model, context2, isOAuthToken2, options) {
   const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
   const compat = getAnthropicCompat(model);
+  const transformedMessages = transformMessages(context2.messages, model, normalizeToolCallId);
+  const normalizeToolName = isOAuthToken2 ? toClaudeCodeName : (name) => name;
+  const toolPlacement = splitDeferredTools({ ...context2, messages: transformedMessages }, compat.supportsToolReferences, normalizeToolName);
+  let immediateTools = toolPlacement.immediate;
+  let deferredTools = [...toolPlacement.deferred.values()];
+  if (immediateTools.length === 0 && deferredTools.length > 0) {
+    immediateTools = deferredTools;
+    deferredTools = [];
+  }
+  const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
   const params = {
     model: model.id,
-    messages: convertMessages(context2.messages, model, isOAuthToken2, cacheControl, compat.allowEmptySignature),
+    messages: convertMessages(transformedMessages, isOAuthToken2, cacheControl, compat.allowEmptySignature, deferredToolNames, normalizeToolName),
     max_tokens: options?.maxTokens ?? model.maxTokens,
     stream: true
   };
@@ -8360,8 +8444,11 @@ function buildParams(model, context2, isOAuthToken2, options) {
   if (options?.temperature !== void 0 && !options?.thinkingEnabled && compat.supportsTemperature) {
     params.temperature = options.temperature;
   }
-  if (context2.tools && context2.tools.length > 0) {
-    params.tools = convertTools(context2.tools, isOAuthToken2, compat.supportsEagerToolInputStreaming, compat.supportsCacheControlOnTools ? cacheControl : void 0);
+  if (immediateTools.length > 0 || deferredTools.length > 0) {
+    params.tools = [
+      ...convertTools(immediateTools, isOAuthToken2, compat.supportsEagerToolInputStreaming, compat.supportsCacheControlOnTools ? cacheControl : void 0),
+      ...convertTools(deferredTools, isOAuthToken2, compat.supportsEagerToolInputStreaming, void 0, true)
+    ];
   }
   if (model.reasoning) {
     if (options?.thinkingEnabled) {
@@ -8400,9 +8487,32 @@ function buildParams(model, context2, isOAuthToken2, options) {
 function normalizeToolCallId(id) {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
-function convertMessages(messages, model, isOAuthToken2, cacheControl, allowEmptySignature = false) {
+function convertToolResult(msg, isOAuthToken2, deferredToolNames, loadedToolNames, normalizeToolName) {
+  const references = [];
+  for (const name of msg.addedToolNames ?? []) {
+    const normalizedName = normalizeToolName(name);
+    if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName))
+      continue;
+    loadedToolNames.add(normalizedName);
+    references.push({
+      type: "tool_reference",
+      tool_name: isOAuthToken2 ? toClaudeCodeName(name) : name
+    });
+  }
+  const convertedContent = convertContentBlocks(msg.content);
+  return {
+    toolResult: {
+      type: "tool_result",
+      tool_use_id: msg.toolCallId,
+      content: references.length > 0 ? references : convertedContent,
+      is_error: msg.isError
+    },
+    siblingContent: references.length === 0 ? [] : typeof convertedContent === "string" ? [{ type: "text", text: convertedContent }] : convertedContent
+  };
+}
+function convertMessages(transformedMessages, isOAuthToken2, cacheControl, allowEmptySignature = false, deferredToolNames = /* @__PURE__ */ new Set(), normalizeToolName = (name) => name) {
   const params = [];
-  const transformedMessages = transformMessages(messages, model, normalizeToolCallId);
+  const loadedToolNames = /* @__PURE__ */ new Set();
   for (let i = 0; i < transformedMessages.length; i++) {
     const msg = transformedMessages[i];
     if (msg.role === "user") {
@@ -8462,9 +8572,11 @@ function convertMessages(messages, model, isOAuthToken2, cacheControl, allowEmpt
             });
             continue;
           }
-          if (block.thinking.trim().length === 0)
+          const thinkingSignature = block.thinkingSignature;
+          const hasThinkingSignature = !!thinkingSignature && thinkingSignature.trim().length > 0;
+          if (block.thinking.trim().length === 0 && !hasThinkingSignature)
             continue;
-          if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+          if (!hasThinkingSignature) {
             blocks.push(allowEmptySignature ? {
               type: "thinking",
               thinking: sanitizeSurrogates(block.thinking),
@@ -8477,7 +8589,7 @@ function convertMessages(messages, model, isOAuthToken2, cacheControl, allowEmpt
             blocks.push({
               type: "thinking",
               thinking: sanitizeSurrogates(block.thinking),
-              signature: block.thinkingSignature
+              signature: thinkingSignature
             });
           }
         } else if (block.type === "toolCall") {
@@ -8497,27 +8609,18 @@ function convertMessages(messages, model, isOAuthToken2, cacheControl, allowEmpt
       });
     } else if (msg.role === "toolResult") {
       const toolResults = [];
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: msg.toolCallId,
-        content: convertContentBlocks(msg.content),
-        is_error: msg.isError
-      });
-      let j = i + 1;
+      const siblingContent = [];
+      let j = i;
       while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
-        const nextMsg = transformedMessages[j];
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: nextMsg.toolCallId,
-          content: convertContentBlocks(nextMsg.content),
-          is_error: nextMsg.isError
-        });
+        const converted = convertToolResult(transformedMessages[j], isOAuthToken2, deferredToolNames, loadedToolNames, normalizeToolName);
+        toolResults.push(converted.toolResult);
+        siblingContent.push(...converted.siblingContent);
         j++;
       }
       i = j - 1;
       params.push({
         role: "user",
-        content: toolResults
+        content: [...toolResults, ...siblingContent]
       });
     }
   }
@@ -8545,7 +8648,7 @@ function convertMessages(messages, model, isOAuthToken2, cacheControl, allowEmpt
 function shouldUseFineGrainedToolStreamingBeta(model, context2) {
   return !!context2.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
 }
-function convertTools(tools, isOAuthToken2, supportsEagerToolInputStreaming, cacheControl) {
+function convertTools(tools, isOAuthToken2, supportsEagerToolInputStreaming, cacheControl, deferLoading = false) {
   if (!tools)
     return [];
   return tools.map((tool, index) => {
@@ -8559,6 +8662,7 @@ function convertTools(tools, isOAuthToken2, supportsEagerToolInputStreaming, cac
         properties: schema4.properties ?? {},
         required: schema4.required ?? []
       },
+      ...deferLoading ? { defer_loading: true } : {},
       ...cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}
     };
   });
@@ -8592,6 +8696,7 @@ var init_anthropic_messages = __esm({
   "node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js"() {
     init_sdk();
     init_models3();
+    init_deferred_tools();
     init_event_stream();
     init_headers2();
     init_json_parse();
@@ -8642,7 +8747,7 @@ var init_anthropic_messages = __esm({
       "content_block_stop"
     ]);
     stream = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -8696,7 +8801,7 @@ var init_anthropic_messages = __esm({
           };
           const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
           await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-          stream10.push({ type: "start", partial: output });
+          stream11.push({ type: "start", partial: output });
           const blocks = output.content;
           for await (const event of iterateAnthropicEvents(response, options?.signal)) {
             if (event.type === "message_start") {
@@ -8716,7 +8821,7 @@ var init_anthropic_messages = __esm({
                   index: event.index
                 };
                 output.content.push(block);
-                stream10.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
+                stream11.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
               } else if (event.content_block.type === "thinking") {
                 const block = {
                   type: "thinking",
@@ -8725,7 +8830,7 @@ var init_anthropic_messages = __esm({
                   index: event.index
                 };
                 output.content.push(block);
-                stream10.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+                stream11.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
               } else if (event.content_block.type === "redacted_thinking") {
                 const block = {
                   type: "thinking",
@@ -8735,7 +8840,7 @@ var init_anthropic_messages = __esm({
                   index: event.index
                 };
                 output.content.push(block);
-                stream10.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+                stream11.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
               } else if (event.content_block.type === "tool_use") {
                 const block = {
                   type: "toolCall",
@@ -8746,7 +8851,7 @@ var init_anthropic_messages = __esm({
                   index: event.index
                 };
                 output.content.push(block);
-                stream10.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+                stream11.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
               }
             } else if (event.type === "content_block_delta") {
               if (event.delta.type === "text_delta") {
@@ -8754,7 +8859,7 @@ var init_anthropic_messages = __esm({
                 const block = blocks[index];
                 if (block && block.type === "text") {
                   block.text += event.delta.text;
-                  stream10.push({
+                  stream11.push({
                     type: "text_delta",
                     contentIndex: index,
                     delta: event.delta.text,
@@ -8766,7 +8871,7 @@ var init_anthropic_messages = __esm({
                 const block = blocks[index];
                 if (block && block.type === "thinking") {
                   block.thinking += event.delta.thinking;
-                  stream10.push({
+                  stream11.push({
                     type: "thinking_delta",
                     contentIndex: index,
                     delta: event.delta.thinking,
@@ -8779,7 +8884,7 @@ var init_anthropic_messages = __esm({
                 if (block && block.type === "toolCall") {
                   block.partialJson += event.delta.partial_json;
                   block.arguments = parseStreamingJson(block.partialJson);
-                  stream10.push({
+                  stream11.push({
                     type: "toolcall_delta",
                     contentIndex: index,
                     delta: event.delta.partial_json,
@@ -8800,14 +8905,14 @@ var init_anthropic_messages = __esm({
               if (block) {
                 delete block.index;
                 if (block.type === "text") {
-                  stream10.push({
+                  stream11.push({
                     type: "text_end",
                     contentIndex: index,
                     content: block.text,
                     partial: output
                   });
                 } else if (block.type === "thinking") {
-                  stream10.push({
+                  stream11.push({
                     type: "thinking_end",
                     contentIndex: index,
                     content: block.thinking,
@@ -8816,7 +8921,7 @@ var init_anthropic_messages = __esm({
                 } else if (block.type === "toolCall") {
                   block.arguments = parseStreamingJson(block.partialJson);
                   delete block.partialJson;
-                  stream10.push({
+                  stream11.push({
                     type: "toolcall_end",
                     contentIndex: index,
                     toolCall: block,
@@ -8832,21 +8937,23 @@ var init_anthropic_messages = __esm({
                   output.errorMessage = stopReasonResult.errorMessage;
                 }
               }
-              if (event.usage.input_tokens != null) {
-                output.usage.input = event.usage.input_tokens;
-              }
-              if (event.usage.output_tokens != null) {
-                output.usage.output = event.usage.output_tokens;
-              }
-              if (event.usage.cache_read_input_tokens != null) {
-                output.usage.cacheRead = event.usage.cache_read_input_tokens;
-              }
-              if (event.usage.cache_creation_input_tokens != null) {
-                output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
-              }
-              const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
-              if (thinkingTokens != null) {
-                output.usage.reasoning = thinkingTokens;
+              if (event.usage) {
+                if (event.usage.input_tokens != null) {
+                  output.usage.input = event.usage.input_tokens;
+                }
+                if (event.usage.output_tokens != null) {
+                  output.usage.output = event.usage.output_tokens;
+                }
+                if (event.usage.cache_read_input_tokens != null) {
+                  output.usage.cacheRead = event.usage.cache_read_input_tokens;
+                }
+                if (event.usage.cache_creation_input_tokens != null) {
+                  output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+                }
+                const thinkingTokens = event.usage.output_tokens_details?.thinking_tokens;
+                if (thinkingTokens != null) {
+                  output.usage.reasoning = thinkingTokens;
+                }
               }
               output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
               calculateCost(model, output.usage);
@@ -8858,8 +8965,8 @@ var init_anthropic_messages = __esm({
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error(output.errorMessage || "An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.index;
@@ -8867,11 +8974,11 @@ var init_anthropic_messages = __esm({
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = error52 instanceof Error ? error52.message : JSON.stringify(error52);
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple = (model, context2, options) => {
       assertRequestAuth(model.provider, options?.apiKey, options?.headers);
@@ -9325,10 +9432,10 @@ function ReadableStreamFrom2(iterable) {
     }
   });
 }
-function ReadableStreamToAsyncIterable2(stream10) {
-  if (stream10[Symbol.asyncIterator])
-    return stream10;
-  const reader = stream10.getReader();
+function ReadableStreamToAsyncIterable2(stream11) {
+  if (stream11[Symbol.asyncIterator])
+    return stream11;
+  const reader = stream11.getReader();
   return {
     async next() {
       try {
@@ -9352,14 +9459,14 @@ function ReadableStreamToAsyncIterable2(stream10) {
     }
   };
 }
-async function CancelReadableStream2(stream10) {
-  if (stream10 === null || typeof stream10 !== "object")
+async function CancelReadableStream2(stream11) {
+  if (stream11 === null || typeof stream11 !== "object")
     return;
-  if (stream10[Symbol.asyncIterator]) {
-    await stream10[Symbol.asyncIterator]().return?.();
+  if (stream11[Symbol.asyncIterator]) {
+    await stream11[Symbol.asyncIterator]().return?.();
     return;
   }
-  const reader = stream10.getReader();
+  const reader = stream11.getReader();
   const cancelPromise = reader.cancel();
   reader.releaseLock();
   await cancelPromise;
@@ -11222,7 +11329,7 @@ var init_AbstractChatCompletionRunner = __esm({
       }
       async _runTools(client, params, options) {
         const role = "tool";
-        const { tool_choice = "auto", stream: stream10, ...restParams } = params;
+        const { tool_choice = "auto", stream: stream11, ...restParams } = params;
         const singleFunctionToCall = typeof tool_choice !== "string" && tool_choice.type === "function" && tool_choice?.function?.name;
         const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS } = options || {};
         const inputTools = params.tools.map((tool) => {
@@ -11739,9 +11846,9 @@ var init_ChatCompletionStream = __esm({
        * Note that messages sent to the model do not appear in `.on('message')`
        * in this context.
        */
-      static fromReadableStream(stream10) {
+      static fromReadableStream(stream11) {
         const runner = new _ChatCompletionStream(null);
-        runner._run(() => runner._fromReadableStream(stream10));
+        runner._run(() => runner._fromReadableStream(stream11));
         return runner;
       }
       static createChatCompletion(client, params, options) {
@@ -11758,12 +11865,12 @@ var init_ChatCompletionStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         __classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
-        const stream10 = await client.chat.completions.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
+        const stream11 = await client.chat.completions.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
         this._connected();
-        for await (const chunk of stream10) {
+        for await (const chunk of stream11) {
           __classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addChatCompletion(__classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
@@ -11777,16 +11884,16 @@ var init_ChatCompletionStream = __esm({
         }
         __classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
         this._connected();
-        const stream10 = Stream2.fromReadableStream(readableStream, this.controller);
+        const stream11 = Stream2.fromReadableStream(readableStream, this.controller);
         let chatId;
-        for await (const chunk of stream10) {
+        for await (const chunk of stream11) {
           if (chatId && chatId !== chunk.id) {
             this._addChatCompletion(__classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
           }
           __classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
           chatId = chunk.id;
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addChatCompletion(__classPrivateFieldGet2(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
@@ -12088,8 +12195,8 @@ var init_ChatCompletionStream = __esm({
         };
       }
       toReadableStream() {
-        const stream10 = new Stream2(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream10.toReadableStream();
+        const stream11 = new Stream2(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream11.toReadableStream();
       }
     };
   }
@@ -12101,9 +12208,9 @@ var init_ChatCompletionStreamingRunner = __esm({
   "node_modules/openai/lib/ChatCompletionStreamingRunner.mjs"() {
     init_ChatCompletionStream();
     ChatCompletionStreamingRunner = class _ChatCompletionStreamingRunner extends ChatCompletionStream {
-      static fromReadableStream(stream10) {
+      static fromReadableStream(stream11) {
         const runner = new _ChatCompletionStreamingRunner(null);
-        runner._run(() => runner._fromReadableStream(stream10));
+        runner._run(() => runner._fromReadableStream(stream11));
         return runner;
       }
       static runTools(client, params, options) {
@@ -13020,9 +13127,9 @@ var init_AssistantStream = __esm({
           }
         };
       }
-      static fromReadableStream(stream10) {
+      static fromReadableStream(stream11) {
         const runner = new _a2();
-        runner._run(() => runner._fromReadableStream(stream10));
+        runner._run(() => runner._fromReadableStream(stream11));
         return runner;
       }
       async _fromReadableStream(readableStream, options) {
@@ -13033,18 +13140,18 @@ var init_AssistantStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         this._connected();
-        const stream10 = Stream2.fromReadableStream(readableStream, this.controller);
-        for await (const event of stream10) {
+        const stream11 = Stream2.fromReadableStream(readableStream, this.controller);
+        for await (const event of stream11) {
           __classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addRun(__classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
       }
       toReadableStream() {
-        const stream10 = new Stream2(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream10.toReadableStream();
+        const stream11 = new Stream2(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream11.toReadableStream();
       }
       static createToolAssistantStream(runId, runs, params, options) {
         const runner = new _a2();
@@ -13062,15 +13169,15 @@ var init_AssistantStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         const body = { ...params, stream: true };
-        const stream10 = await run.submitToolOutputs(runId, body, {
+        const stream11 = await run.submitToolOutputs(runId, body, {
           ...options,
           signal: this.controller.signal
         });
         this._connected();
-        for await (const event of stream10) {
+        for await (const event of stream11) {
           __classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addRun(__classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
@@ -13125,12 +13232,12 @@ var init_AssistantStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         const body = { ...params, stream: true };
-        const stream10 = await thread.createAndRun(body, { ...options, signal: this.controller.signal });
+        const stream11 = await thread.createAndRun(body, { ...options, signal: this.controller.signal });
         this._connected();
-        for await (const event of stream10) {
+        for await (const event of stream11) {
           __classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addRun(__classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
@@ -13143,12 +13250,12 @@ var init_AssistantStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         const body = { ...params, stream: true };
-        const stream10 = await run.create(threadId, body, { ...options, signal: this.controller.signal });
+        const stream11 = await run.create(threadId, body, { ...options, signal: this.controller.signal });
         this._connected();
-        for await (const event of stream10) {
+        for await (const event of stream11) {
           __classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return this._addRun(__classPrivateFieldGet2(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
@@ -15033,19 +15140,19 @@ var init_ResponseStream = __esm({
           signal.addEventListener("abort", () => this.controller.abort());
         }
         __classPrivateFieldGet2(this, _ResponseStream_instances, "m", _ResponseStream_beginRequest).call(this);
-        let stream10;
+        let stream11;
         let starting_after = null;
         if ("response_id" in params) {
-          stream10 = await client.responses.retrieve(params.response_id, { stream: true }, { ...options, signal: this.controller.signal, stream: true });
+          stream11 = await client.responses.retrieve(params.response_id, { stream: true }, { ...options, signal: this.controller.signal, stream: true });
           starting_after = params.starting_after ?? null;
         } else {
-          stream10 = await client.responses.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
+          stream11 = await client.responses.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
         }
         this._connected();
-        for await (const event of stream10) {
+        for await (const event of stream11) {
           __classPrivateFieldGet2(this, _ResponseStream_instances, "m", _ResponseStream_addEvent).call(this, event, starting_after);
         }
-        if (stream10.controller.signal?.aborted) {
+        if (stream11.controller.signal?.aborted) {
           throw new APIUserAbortError2();
         }
         return __classPrivateFieldGet2(this, _ResponseStream_instances, "m", _ResponseStream_endRequest).call(this);
@@ -17000,6 +17107,7 @@ function parseTextSignature(signature) {
 }
 function convertResponsesMessages(model, context2, allowedToolCallProviders, options) {
   const messages = [];
+  const loadedToolNames = /* @__PURE__ */ new Set();
   const normalizeIdPart = (part) => {
     const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
     const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
@@ -17136,13 +17244,39 @@ function convertResponsesMessages(model, context2, allowedToolCallProviders, opt
         }
         output = contentParts;
       } else {
-        output = sanitizeSurrogates(hasText ? textResult : "(see attached image)");
+        output = sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)");
       }
       messages.push({
         type: "function_call_output",
         call_id: callId,
         output
       });
+      const deferredTools = [];
+      for (const name of msg.addedToolNames ?? []) {
+        const tool = options?.deferredTools?.get(name);
+        if (!tool || loadedToolNames.has(name))
+          continue;
+        loadedToolNames.add(name);
+        deferredTools.push(tool);
+      }
+      if (deferredTools.length > 0) {
+        const names = deferredTools.map((tool) => tool.name);
+        const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
+        messages.push({
+          type: "tool_search_call",
+          call_id: searchCallId,
+          execution: "client",
+          status: "completed",
+          arguments: { query: names.join(" "), limit: names.length }
+        });
+        messages.push({
+          type: "tool_search_output",
+          call_id: searchCallId,
+          execution: "client",
+          status: "completed",
+          tools: convertResponsesTools(deferredTools, { deferLoading: true })
+        });
+      }
     }
     msgIndex++;
   }
@@ -17156,12 +17290,14 @@ function convertResponsesTools(tools, options) {
     description: tool.description,
     parameters: tool.parameters,
     // TypeBox already generates JSON Schema
-    strict
+    strict,
+    ...options?.deferLoading ? { defer_loading: true } : {}
   }));
 }
-async function processResponsesStream(openaiStream, output, stream10, model, options) {
+async function processResponsesStream(openaiStream, output, stream11, model, options) {
   let sawTerminalResponseEvent = false;
   const outputSlots = /* @__PURE__ */ new Map();
+  const reasoningBlocksById = /* @__PURE__ */ new Map();
   const getSlot = (outputIndex, type) => {
     const slot = outputSlots.get(outputIndex);
     return slot?.type === type ? slot : void 0;
@@ -17176,7 +17312,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
         contentIndex: output.content.length - 1
       };
       outputSlots.set(outputIndex, slot);
-      stream10.push({ type: "thinking_start", contentIndex: slot.contentIndex, partial: output });
+      stream11.push({ type: "thinking_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
     }
     if (item.type === "message") {
@@ -17184,7 +17320,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       output.content.push(block);
       const slot = { type: "text", block, contentIndex: output.content.length - 1 };
       outputSlots.set(outputIndex, slot);
-      stream10.push({ type: "text_start", contentIndex: slot.contentIndex, partial: output });
+      stream11.push({ type: "text_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
     }
     if (item.type === "function_call") {
@@ -17202,7 +17338,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
         contentIndex: output.content.length - 1
       };
       outputSlots.set(outputIndex, slot);
-      stream10.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
+      stream11.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
       return slot;
     }
     return void 0;
@@ -17210,19 +17346,38 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
   const getOrCreateSlot = (outputIndex, item) => {
     return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
   };
+  const backfillReasoningSignatures = (responseOutput) => {
+    for (const item of responseOutput) {
+      if (item.type !== "reasoning" || !item.encrypted_content)
+        continue;
+      const block = reasoningBlocksById.get(item.id);
+      if (!block?.thinkingSignature)
+        continue;
+      const storedItem = JSON.parse(block.thinkingSignature);
+      if (storedItem.encrypted_content)
+        continue;
+      block.thinkingSignature = JSON.stringify({
+        ...storedItem,
+        encrypted_content: item.encrypted_content
+      });
+    }
+  };
   const finalizeResponse2 = (response) => {
     sawTerminalResponseEvent = true;
+    backfillReasoningSignatures(response.output ?? []);
     if (response?.id) {
       output.responseId = response.id;
     }
     if (response?.usage) {
-      const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
+      const inputDetails = response.usage.input_tokens_details;
+      const cachedTokens = inputDetails?.cached_tokens || 0;
+      const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
       output.usage = {
-        // OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
-        input: (response.usage.input_tokens || 0) - cachedTokens,
+        // OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
+        input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
         output: response.usage.output_tokens || 0,
         cacheRead: cachedTokens,
-        cacheWrite: 0,
+        cacheWrite: cacheWriteTokens,
         reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
         totalTokens: response.usage.total_tokens || 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
@@ -17248,7 +17403,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (!slot)
         continue;
       slot.block.thinking += event.delta;
-      stream10.push({
+      stream11.push({
         type: "thinking_delta",
         contentIndex: slot.contentIndex,
         delta: event.delta,
@@ -17259,7 +17414,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (!slot)
         continue;
       slot.block.thinking += "\n\n";
-      stream10.push({
+      stream11.push({
         type: "thinking_delta",
         contentIndex: slot.contentIndex,
         delta: "\n\n",
@@ -17270,7 +17425,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (!slot)
         continue;
       slot.block.thinking += event.delta;
-      stream10.push({
+      stream11.push({
         type: "thinking_delta",
         contentIndex: slot.contentIndex,
         delta: event.delta,
@@ -17281,7 +17436,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (!slot)
         continue;
       slot.block.text += event.delta;
-      stream10.push({
+      stream11.push({
         type: "text_delta",
         contentIndex: slot.contentIndex,
         delta: event.delta,
@@ -17292,7 +17447,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (!slot)
         continue;
       slot.block.text += event.delta;
-      stream10.push({
+      stream11.push({
         type: "text_delta",
         contentIndex: slot.contentIndex,
         delta: event.delta,
@@ -17304,7 +17459,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
         continue;
       slot.block.partialJson += event.delta;
       slot.block.arguments = parseStreamingJson(slot.block.partialJson);
-      stream10.push({
+      stream11.push({
         type: "toolcall_delta",
         contentIndex: slot.contentIndex,
         delta: event.delta,
@@ -17320,7 +17475,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       if (event.arguments.startsWith(previousPartialJson)) {
         const delta = event.arguments.slice(previousPartialJson.length);
         if (delta.length > 0) {
-          stream10.push({
+          stream11.push({
             type: "toolcall_delta",
             contentIndex: slot.contentIndex,
             delta,
@@ -17336,7 +17491,8 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
         const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
         slot.block.thinking = summaryText || contentText || slot.block.thinking;
         slot.block.thinkingSignature = JSON.stringify(item);
-        stream10.push({
+        reasoningBlocksById.set(item.id, slot.block);
+        stream11.push({
           type: "thinking_end",
           contentIndex: slot.contentIndex,
           content: slot.block.thinking,
@@ -17346,7 +17502,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       } else if (item.type === "message" && slot?.type === "text") {
         slot.block.text = item.content?.map((c) => c.type === "output_text" ? c.text : c.refusal).join("") || "";
         slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? void 0);
-        stream10.push({
+        stream11.push({
           type: "text_end",
           contentIndex: slot.contentIndex,
           content: slot.block.text,
@@ -17356,7 +17512,7 @@ async function processResponsesStream(openaiStream, output, stream10, model, opt
       } else if (item.type === "function_call" && slot?.type === "toolCall") {
         slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
         delete slot.block.partialJson;
-        stream10.push({
+        stream11.push({
           type: "toolcall_end",
           contentIndex: slot.contentIndex,
           toolCall: slot.block,
@@ -17504,7 +17660,7 @@ function buildParams2(model, context2, options, deploymentName) {
     store: false
   };
   if (options?.maxTokens) {
-    params.max_output_tokens = options?.maxTokens;
+    params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
   }
   if (options?.temperature !== void 0) {
     params.temperature = options?.temperature;
@@ -17528,7 +17684,7 @@ function buildParams2(model, context2, options, deploymentName) {
   }
   return params;
 }
-var DEFAULT_AZURE_API_VERSION, AZURE_TOOL_CALL_PROVIDERS, stream2, streamSimple2;
+var DEFAULT_AZURE_API_VERSION, AZURE_TOOL_CALL_PROVIDERS, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS, stream2, streamSimple2;
 var init_azure_openai_responses = __esm({
   "node_modules/@earendil-works/pi-ai/dist/api/azure-openai-responses.js"() {
     init_openai();
@@ -17542,8 +17698,9 @@ var init_azure_openai_responses = __esm({
     init_simple_options();
     DEFAULT_AZURE_API_VERSION = "v1";
     AZURE_TOOL_CALL_PROVIDERS = /* @__PURE__ */ new Set(["openai", "openai-codex", "opencode", "azure-openai-responses"]);
+    OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
     stream2 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const deploymentName = resolveDeploymentName(model, options);
         const output = {
@@ -17581,16 +17738,16 @@ var init_azure_openai_responses = __esm({
           };
           const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
           await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-          stream10.push({ type: "start", partial: output });
-          await processResponsesStream(openaiStream, output, stream10, model);
+          stream11.push({ type: "start", partial: output });
+          await processResponsesStream(openaiStream, output, stream11, model);
           if (options?.signal?.aborted) {
             throw new Error("Request was aborted");
           }
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error("An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.index;
@@ -17598,11 +17755,11 @@ var init_azure_openai_responses = __esm({
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatAzureOpenAIError(error52);
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple2 = (model, context2, options) => {
       const apiKey = options?.apiKey;
@@ -27316,10 +27473,10 @@ function ReadableStreamFrom3(iterable) {
     }
   });
 }
-function ReadableStreamToAsyncIterable3(stream10) {
-  if (stream10[Symbol.asyncIterator])
-    return stream10;
-  const reader = stream10.getReader();
+function ReadableStreamToAsyncIterable3(stream11) {
+  if (stream11[Symbol.asyncIterator])
+    return stream11;
+  const reader = stream11.getReader();
   return {
     async next() {
       try {
@@ -27343,15 +27500,15 @@ function ReadableStreamToAsyncIterable3(stream10) {
     }
   };
 }
-async function CancelReadableStream3(stream10) {
+async function CancelReadableStream3(stream11) {
   var _a7, _b;
-  if (stream10 === null || typeof stream10 !== "object")
+  if (stream11 === null || typeof stream11 !== "object")
     return;
-  if (stream10[Symbol.asyncIterator]) {
-    await ((_b = (_a7 = stream10[Symbol.asyncIterator]()).return) === null || _b === void 0 ? void 0 : _b.call(_a7));
+  if (stream11[Symbol.asyncIterator]) {
+    await ((_b = (_a7 = stream11[Symbol.asyncIterator]()).return) === null || _b === void 0 ? void 0 : _b.call(_a7));
     return;
   }
-  const reader = stream10.getReader();
+  const reader = stream11.getReader();
   const cancelPromise = reader.cancel();
   reader.releaseLock();
   await cancelPromise;
@@ -35928,7 +36085,7 @@ var init_google_generative_ai = __esm({
     init_simple_options();
     toolCallCounter = 0;
     stream3 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -35959,7 +36116,7 @@ var init_google_generative_ai = __esm({
             params = nextParams;
           }
           const googleStream = await client.models.generateContentStream(params);
-          stream10.push({ type: "start", partial: output });
+          stream11.push({ type: "start", partial: output });
           let currentBlock = null;
           const blocks = output.content;
           const blockIndex = () => blocks.length - 1;
@@ -35973,14 +36130,14 @@ var init_google_generative_ai = __esm({
                   if (!currentBlock || isThinking && currentBlock.type !== "thinking" || !isThinking && currentBlock.type !== "text") {
                     if (currentBlock) {
                       if (currentBlock.type === "text") {
-                        stream10.push({
+                        stream11.push({
                           type: "text_end",
                           contentIndex: blocks.length - 1,
                           content: currentBlock.text,
                           partial: output
                         });
                       } else {
-                        stream10.push({
+                        stream11.push({
                           type: "thinking_end",
                           contentIndex: blockIndex(),
                           content: currentBlock.thinking,
@@ -35991,17 +36148,17 @@ var init_google_generative_ai = __esm({
                     if (isThinking) {
                       currentBlock = { type: "thinking", thinking: "", thinkingSignature: void 0 };
                       output.content.push(currentBlock);
-                      stream10.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+                      stream11.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
                     } else {
                       currentBlock = { type: "text", text: "" };
                       output.content.push(currentBlock);
-                      stream10.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+                      stream11.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
                     }
                   }
                   if (currentBlock.type === "thinking") {
                     currentBlock.thinking += part.text;
                     currentBlock.thinkingSignature = retainThoughtSignature(currentBlock.thinkingSignature, part.thoughtSignature);
-                    stream10.push({
+                    stream11.push({
                       type: "thinking_delta",
                       contentIndex: blockIndex(),
                       delta: part.text,
@@ -36010,7 +36167,7 @@ var init_google_generative_ai = __esm({
                   } else {
                     currentBlock.text += part.text;
                     currentBlock.textSignature = retainThoughtSignature(currentBlock.textSignature, part.thoughtSignature);
-                    stream10.push({
+                    stream11.push({
                       type: "text_delta",
                       contentIndex: blockIndex(),
                       delta: part.text,
@@ -36021,14 +36178,14 @@ var init_google_generative_ai = __esm({
                 if (part.functionCall) {
                   if (currentBlock) {
                     if (currentBlock.type === "text") {
-                      stream10.push({
+                      stream11.push({
                         type: "text_end",
                         contentIndex: blockIndex(),
                         content: currentBlock.text,
                         partial: output
                       });
                     } else {
-                      stream10.push({
+                      stream11.push({
                         type: "thinking_end",
                         contentIndex: blockIndex(),
                         content: currentBlock.thinking,
@@ -36048,14 +36205,14 @@ var init_google_generative_ai = __esm({
                     ...part.thoughtSignature && { thoughtSignature: part.thoughtSignature }
                   };
                   output.content.push(toolCall);
-                  stream10.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-                  stream10.push({
+                  stream11.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+                  stream11.push({
                     type: "toolcall_delta",
                     contentIndex: blockIndex(),
                     delta: JSON.stringify(toolCall.arguments),
                     partial: output
                   });
-                  stream10.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+                  stream11.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
                 }
               }
             }
@@ -36086,14 +36243,14 @@ var init_google_generative_ai = __esm({
           }
           if (currentBlock) {
             if (currentBlock.type === "text") {
-              stream10.push({
+              stream11.push({
                 type: "text_end",
                 contentIndex: blockIndex(),
                 content: currentBlock.text,
                 partial: output
               });
             } else {
-              stream10.push({
+              stream11.push({
                 type: "thinking_end",
                 contentIndex: blockIndex(),
                 content: currentBlock.thinking,
@@ -36107,8 +36264,8 @@ var init_google_generative_ai = __esm({
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error("An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             if ("index" in block) {
@@ -36117,11 +36274,11 @@ var init_google_generative_ai = __esm({
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatProviderError(normalizeProviderError(error52));
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple3 = (model, context2, options) => {
       const apiKey = options?.apiKey;
@@ -36372,7 +36529,7 @@ var init_google_vertex = __esm({
     };
     toolCallCounter2 = 0;
     stream4 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -36400,7 +36557,7 @@ var init_google_vertex = __esm({
             params = nextParams;
           }
           const googleStream = await client.models.generateContentStream(params);
-          stream10.push({ type: "start", partial: output });
+          stream11.push({ type: "start", partial: output });
           let currentBlock = null;
           const blocks = output.content;
           const blockIndex = () => blocks.length - 1;
@@ -36414,14 +36571,14 @@ var init_google_vertex = __esm({
                   if (!currentBlock || isThinking && currentBlock.type !== "thinking" || !isThinking && currentBlock.type !== "text") {
                     if (currentBlock) {
                       if (currentBlock.type === "text") {
-                        stream10.push({
+                        stream11.push({
                           type: "text_end",
                           contentIndex: blocks.length - 1,
                           content: currentBlock.text,
                           partial: output
                         });
                       } else {
-                        stream10.push({
+                        stream11.push({
                           type: "thinking_end",
                           contentIndex: blockIndex(),
                           content: currentBlock.thinking,
@@ -36432,17 +36589,17 @@ var init_google_vertex = __esm({
                     if (isThinking) {
                       currentBlock = { type: "thinking", thinking: "", thinkingSignature: void 0 };
                       output.content.push(currentBlock);
-                      stream10.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+                      stream11.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
                     } else {
                       currentBlock = { type: "text", text: "" };
                       output.content.push(currentBlock);
-                      stream10.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+                      stream11.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
                     }
                   }
                   if (currentBlock.type === "thinking") {
                     currentBlock.thinking += part.text;
                     currentBlock.thinkingSignature = retainThoughtSignature(currentBlock.thinkingSignature, part.thoughtSignature);
-                    stream10.push({
+                    stream11.push({
                       type: "thinking_delta",
                       contentIndex: blockIndex(),
                       delta: part.text,
@@ -36451,7 +36608,7 @@ var init_google_vertex = __esm({
                   } else {
                     currentBlock.text += part.text;
                     currentBlock.textSignature = retainThoughtSignature(currentBlock.textSignature, part.thoughtSignature);
-                    stream10.push({
+                    stream11.push({
                       type: "text_delta",
                       contentIndex: blockIndex(),
                       delta: part.text,
@@ -36462,14 +36619,14 @@ var init_google_vertex = __esm({
                 if (part.functionCall) {
                   if (currentBlock) {
                     if (currentBlock.type === "text") {
-                      stream10.push({
+                      stream11.push({
                         type: "text_end",
                         contentIndex: blockIndex(),
                         content: currentBlock.text,
                         partial: output
                       });
                     } else {
-                      stream10.push({
+                      stream11.push({
                         type: "thinking_end",
                         contentIndex: blockIndex(),
                         content: currentBlock.thinking,
@@ -36489,14 +36646,14 @@ var init_google_vertex = __esm({
                     ...part.thoughtSignature && { thoughtSignature: part.thoughtSignature }
                   };
                   output.content.push(toolCall);
-                  stream10.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-                  stream10.push({
+                  stream11.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+                  stream11.push({
                     type: "toolcall_delta",
                     contentIndex: blockIndex(),
                     delta: JSON.stringify(toolCall.arguments),
                     partial: output
                   });
-                  stream10.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+                  stream11.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
                 }
               }
             }
@@ -36527,14 +36684,14 @@ var init_google_vertex = __esm({
           }
           if (currentBlock) {
             if (currentBlock.type === "text") {
-              stream10.push({
+              stream11.push({
                 type: "text_end",
                 contentIndex: blockIndex(),
                 content: currentBlock.text,
                 partial: output
               });
             } else {
-              stream10.push({
+              stream11.push({
                 type: "thinking_end",
                 contentIndex: blockIndex(),
                 content: currentBlock.thinking,
@@ -36548,8 +36705,8 @@ var init_google_vertex = __esm({
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error("An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             if ("index" in block) {
@@ -36558,11 +36715,11 @@ var init_google_vertex = __esm({
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatProviderError(normalizeProviderError(error52));
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple4 = (model, context2, options) => {
       const base = buildBaseOptions(model, context2, options, void 0);
@@ -38073,7 +38230,7 @@ var init_esm = __esm({
 });
 
 // node_modules/@opentelemetry/semantic-conventions/build/esm/stable_attributes.js
-var ATTR_ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_ABORTED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_HANDLED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_SKIPPED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_UNHANDLED, ATTR_ASPNETCORE_DIAGNOSTICS_HANDLER_TYPE, ATTR_ASPNETCORE_RATE_LIMITING_POLICY, ATTR_ASPNETCORE_RATE_LIMITING_RESULT, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_ACQUIRED, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_ENDPOINT_LIMITER, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_GLOBAL_LIMITER, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_REQUEST_CANCELED, ATTR_ASPNETCORE_REQUEST_IS_UNHANDLED, ATTR_ASPNETCORE_ROUTING_IS_FALLBACK, ATTR_ASPNETCORE_ROUTING_MATCH_STATUS, ASPNETCORE_ROUTING_MATCH_STATUS_VALUE_FAILURE, ASPNETCORE_ROUTING_MATCH_STATUS_VALUE_SUCCESS, ATTR_ASPNETCORE_USER_IS_AUTHENTICATED, ATTR_CLIENT_ADDRESS, ATTR_CLIENT_PORT, ATTR_CODE_COLUMN_NUMBER, ATTR_CODE_FILE_PATH, ATTR_CODE_FUNCTION_NAME, ATTR_CODE_LINE_NUMBER, ATTR_CODE_STACKTRACE, ATTR_CONTAINER_ID, ATTR_CONTAINER_IMAGE_NAME, ATTR_CONTAINER_IMAGE_REPO_DIGESTS, ATTR_CONTAINER_IMAGE_TAGS, ATTR_DB_COLLECTION_NAME, ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_BATCH_SIZE, ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_SUMMARY, ATTR_DB_QUERY_TEXT, ATTR_DB_RESPONSE_STATUS_CODE, ATTR_DB_STORED_PROCEDURE_NAME, ATTR_DB_SYSTEM_NAME, DB_SYSTEM_NAME_VALUE_MARIADB, DB_SYSTEM_NAME_VALUE_MICROSOFT_SQL_SERVER, DB_SYSTEM_NAME_VALUE_MYSQL, DB_SYSTEM_NAME_VALUE_POSTGRESQL, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_DEVELOPMENT, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_PRODUCTION, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_STAGING, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_TEST, ATTR_DOTNET_GC_HEAP_GENERATION, DOTNET_GC_HEAP_GENERATION_VALUE_GEN0, DOTNET_GC_HEAP_GENERATION_VALUE_GEN1, DOTNET_GC_HEAP_GENERATION_VALUE_GEN2, DOTNET_GC_HEAP_GENERATION_VALUE_LOH, DOTNET_GC_HEAP_GENERATION_VALUE_POH, ATTR_ERROR_TYPE, ERROR_TYPE_VALUE_OTHER, ATTR_EXCEPTION_ESCAPED, ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE, ATTR_EXCEPTION_TYPE, ATTR_HTTP_REQUEST_HEADER, ATTR_HTTP_REQUEST_METHOD, HTTP_REQUEST_METHOD_VALUE_OTHER, HTTP_REQUEST_METHOD_VALUE_CONNECT, HTTP_REQUEST_METHOD_VALUE_DELETE, HTTP_REQUEST_METHOD_VALUE_GET, HTTP_REQUEST_METHOD_VALUE_HEAD, HTTP_REQUEST_METHOD_VALUE_OPTIONS, HTTP_REQUEST_METHOD_VALUE_PATCH, HTTP_REQUEST_METHOD_VALUE_POST, HTTP_REQUEST_METHOD_VALUE_PUT, HTTP_REQUEST_METHOD_VALUE_TRACE, ATTR_HTTP_REQUEST_METHOD_ORIGINAL, ATTR_HTTP_REQUEST_RESEND_COUNT, ATTR_HTTP_RESPONSE_HEADER, ATTR_HTTP_RESPONSE_STATUS_CODE, ATTR_HTTP_ROUTE, ATTR_JVM_GC_ACTION, ATTR_JVM_GC_NAME, ATTR_JVM_MEMORY_POOL_NAME, ATTR_JVM_MEMORY_TYPE, JVM_MEMORY_TYPE_VALUE_HEAP, JVM_MEMORY_TYPE_VALUE_NON_HEAP, ATTR_JVM_THREAD_DAEMON, ATTR_JVM_THREAD_STATE, JVM_THREAD_STATE_VALUE_BLOCKED, JVM_THREAD_STATE_VALUE_NEW, JVM_THREAD_STATE_VALUE_RUNNABLE, JVM_THREAD_STATE_VALUE_TERMINATED, JVM_THREAD_STATE_VALUE_TIMED_WAITING, JVM_THREAD_STATE_VALUE_WAITING, ATTR_K8S_CLUSTER_NAME, ATTR_K8S_CLUSTER_UID, ATTR_K8S_CONTAINER_NAME, ATTR_K8S_CONTAINER_RESTART_COUNT, ATTR_K8S_CRONJOB_ANNOTATION, ATTR_K8S_CRONJOB_LABEL, ATTR_K8S_CRONJOB_NAME, ATTR_K8S_CRONJOB_UID, ATTR_K8S_DAEMONSET_ANNOTATION, ATTR_K8S_DAEMONSET_LABEL, ATTR_K8S_DAEMONSET_NAME, ATTR_K8S_DAEMONSET_UID, ATTR_K8S_DEPLOYMENT_ANNOTATION, ATTR_K8S_DEPLOYMENT_LABEL, ATTR_K8S_DEPLOYMENT_NAME, ATTR_K8S_DEPLOYMENT_UID, ATTR_K8S_JOB_ANNOTATION, ATTR_K8S_JOB_LABEL, ATTR_K8S_JOB_NAME, ATTR_K8S_JOB_UID, ATTR_K8S_NAMESPACE_ANNOTATION, ATTR_K8S_NAMESPACE_LABEL, ATTR_K8S_NAMESPACE_NAME, ATTR_K8S_NODE_ANNOTATION, ATTR_K8S_NODE_LABEL, ATTR_K8S_NODE_NAME, ATTR_K8S_NODE_UID, ATTR_K8S_POD_ANNOTATION, ATTR_K8S_POD_HOSTNAME, ATTR_K8S_POD_IP, ATTR_K8S_POD_LABEL, ATTR_K8S_POD_NAME, ATTR_K8S_POD_START_TIME, ATTR_K8S_POD_UID, ATTR_K8S_REPLICASET_ANNOTATION, ATTR_K8S_REPLICASET_LABEL, ATTR_K8S_REPLICASET_NAME, ATTR_K8S_REPLICASET_UID, ATTR_K8S_STATEFULSET_ANNOTATION, ATTR_K8S_STATEFULSET_LABEL, ATTR_K8S_STATEFULSET_NAME, ATTR_K8S_STATEFULSET_UID, ATTR_NETWORK_LOCAL_ADDRESS, ATTR_NETWORK_LOCAL_PORT, ATTR_NETWORK_PEER_ADDRESS, ATTR_NETWORK_PEER_PORT, ATTR_NETWORK_PROTOCOL_NAME, ATTR_NETWORK_PROTOCOL_VERSION, ATTR_NETWORK_TRANSPORT, NETWORK_TRANSPORT_VALUE_PIPE, NETWORK_TRANSPORT_VALUE_QUIC, NETWORK_TRANSPORT_VALUE_TCP, NETWORK_TRANSPORT_VALUE_UDP, NETWORK_TRANSPORT_VALUE_UNIX, ATTR_NETWORK_TYPE, NETWORK_TYPE_VALUE_IPV4, NETWORK_TYPE_VALUE_IPV6, ATTR_OTEL_EVENT_NAME, ATTR_OTEL_SCOPE_NAME, ATTR_OTEL_SCOPE_VERSION, ATTR_OTEL_STATUS_CODE, OTEL_STATUS_CODE_VALUE_ERROR, OTEL_STATUS_CODE_VALUE_OK, ATTR_OTEL_STATUS_DESCRIPTION, ATTR_SERVER_ADDRESS, ATTR_SERVER_PORT, ATTR_SERVICE_INSTANCE_ID, ATTR_SERVICE_NAME, ATTR_SERVICE_NAMESPACE, ATTR_SERVICE_VERSION, ATTR_SIGNALR_CONNECTION_STATUS, SIGNALR_CONNECTION_STATUS_VALUE_APP_SHUTDOWN, SIGNALR_CONNECTION_STATUS_VALUE_NORMAL_CLOSURE, SIGNALR_CONNECTION_STATUS_VALUE_TIMEOUT, ATTR_SIGNALR_TRANSPORT, SIGNALR_TRANSPORT_VALUE_LONG_POLLING, SIGNALR_TRANSPORT_VALUE_SERVER_SENT_EVENTS, SIGNALR_TRANSPORT_VALUE_WEB_SOCKETS, ATTR_TELEMETRY_DISTRO_NAME, ATTR_TELEMETRY_DISTRO_VERSION, ATTR_TELEMETRY_SDK_LANGUAGE, TELEMETRY_SDK_LANGUAGE_VALUE_CPP, TELEMETRY_SDK_LANGUAGE_VALUE_DOTNET, TELEMETRY_SDK_LANGUAGE_VALUE_ERLANG, TELEMETRY_SDK_LANGUAGE_VALUE_GO, TELEMETRY_SDK_LANGUAGE_VALUE_JAVA, TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS, TELEMETRY_SDK_LANGUAGE_VALUE_PHP, TELEMETRY_SDK_LANGUAGE_VALUE_PYTHON, TELEMETRY_SDK_LANGUAGE_VALUE_RUBY, TELEMETRY_SDK_LANGUAGE_VALUE_RUST, TELEMETRY_SDK_LANGUAGE_VALUE_SWIFT, TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS, ATTR_TELEMETRY_SDK_NAME, ATTR_TELEMETRY_SDK_VERSION, ATTR_URL_FRAGMENT, ATTR_URL_FULL, ATTR_URL_PATH, ATTR_URL_QUERY, ATTR_URL_SCHEME, ATTR_USER_AGENT_ORIGINAL;
+var ATTR_ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_ABORTED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_HANDLED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_SKIPPED, ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT_VALUE_UNHANDLED, ATTR_ASPNETCORE_DIAGNOSTICS_HANDLER_TYPE, ATTR_ASPNETCORE_RATE_LIMITING_POLICY, ATTR_ASPNETCORE_RATE_LIMITING_RESULT, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_ACQUIRED, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_ENDPOINT_LIMITER, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_GLOBAL_LIMITER, ASPNETCORE_RATE_LIMITING_RESULT_VALUE_REQUEST_CANCELED, ATTR_ASPNETCORE_REQUEST_IS_UNHANDLED, ATTR_ASPNETCORE_ROUTING_IS_FALLBACK, ATTR_ASPNETCORE_ROUTING_MATCH_STATUS, ASPNETCORE_ROUTING_MATCH_STATUS_VALUE_FAILURE, ASPNETCORE_ROUTING_MATCH_STATUS_VALUE_SUCCESS, ATTR_ASPNETCORE_USER_IS_AUTHENTICATED, ATTR_CLIENT_ADDRESS, ATTR_CLIENT_PORT, ATTR_CODE_COLUMN_NUMBER, ATTR_CODE_FILE_PATH, ATTR_CODE_FUNCTION_NAME, ATTR_CODE_LINE_NUMBER, ATTR_CODE_STACKTRACE, ATTR_CONTAINER_ID, ATTR_CONTAINER_IMAGE_NAME, ATTR_CONTAINER_IMAGE_REPO_DIGESTS, ATTR_CONTAINER_IMAGE_TAGS, ATTR_DB_COLLECTION_NAME, ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_BATCH_SIZE, ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_SUMMARY, ATTR_DB_QUERY_TEXT, ATTR_DB_RESPONSE_STATUS_CODE, ATTR_DB_STORED_PROCEDURE_NAME, ATTR_DB_SYSTEM_NAME, DB_SYSTEM_NAME_VALUE_MARIADB, DB_SYSTEM_NAME_VALUE_MICROSOFT_SQL_SERVER, DB_SYSTEM_NAME_VALUE_MYSQL, DB_SYSTEM_NAME_VALUE_POSTGRESQL, ATTR_DEPLOYMENT_ENVIRONMENT_NAME, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_DEVELOPMENT, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_PRODUCTION, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_STAGING, DEPLOYMENT_ENVIRONMENT_NAME_VALUE_TEST, ATTR_DOTNET_GC_HEAP_GENERATION, DOTNET_GC_HEAP_GENERATION_VALUE_GEN0, DOTNET_GC_HEAP_GENERATION_VALUE_GEN1, DOTNET_GC_HEAP_GENERATION_VALUE_GEN2, DOTNET_GC_HEAP_GENERATION_VALUE_LOH, DOTNET_GC_HEAP_GENERATION_VALUE_POH, ATTR_ERROR_TYPE, ERROR_TYPE_VALUE_OTHER, ATTR_EXCEPTION_ESCAPED, ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE, ATTR_EXCEPTION_TYPE, ATTR_HTTP_REQUEST_HEADER, ATTR_HTTP_REQUEST_METHOD, HTTP_REQUEST_METHOD_VALUE_OTHER, HTTP_REQUEST_METHOD_VALUE_CONNECT, HTTP_REQUEST_METHOD_VALUE_DELETE, HTTP_REQUEST_METHOD_VALUE_GET, HTTP_REQUEST_METHOD_VALUE_HEAD, HTTP_REQUEST_METHOD_VALUE_OPTIONS, HTTP_REQUEST_METHOD_VALUE_PATCH, HTTP_REQUEST_METHOD_VALUE_POST, HTTP_REQUEST_METHOD_VALUE_PUT, HTTP_REQUEST_METHOD_VALUE_TRACE, ATTR_HTTP_REQUEST_METHOD_ORIGINAL, ATTR_HTTP_REQUEST_RESEND_COUNT, ATTR_HTTP_RESPONSE_HEADER, ATTR_HTTP_RESPONSE_STATUS_CODE, ATTR_HTTP_ROUTE, ATTR_JVM_GC_ACTION, ATTR_JVM_GC_NAME, ATTR_JVM_MEMORY_POOL_NAME, ATTR_JVM_MEMORY_TYPE, JVM_MEMORY_TYPE_VALUE_HEAP, JVM_MEMORY_TYPE_VALUE_NON_HEAP, ATTR_JVM_THREAD_DAEMON, ATTR_JVM_THREAD_STATE, JVM_THREAD_STATE_VALUE_BLOCKED, JVM_THREAD_STATE_VALUE_NEW, JVM_THREAD_STATE_VALUE_RUNNABLE, JVM_THREAD_STATE_VALUE_TERMINATED, JVM_THREAD_STATE_VALUE_TIMED_WAITING, JVM_THREAD_STATE_VALUE_WAITING, ATTR_K8S_CLUSTER_NAME, ATTR_K8S_CLUSTER_UID, ATTR_K8S_CONTAINER_NAME, ATTR_K8S_CONTAINER_RESTART_COUNT, ATTR_K8S_CRONJOB_ANNOTATION, ATTR_K8S_CRONJOB_LABEL, ATTR_K8S_CRONJOB_NAME, ATTR_K8S_CRONJOB_UID, ATTR_K8S_DAEMONSET_ANNOTATION, ATTR_K8S_DAEMONSET_LABEL, ATTR_K8S_DAEMONSET_NAME, ATTR_K8S_DAEMONSET_UID, ATTR_K8S_DEPLOYMENT_ANNOTATION, ATTR_K8S_DEPLOYMENT_LABEL, ATTR_K8S_DEPLOYMENT_NAME, ATTR_K8S_DEPLOYMENT_UID, ATTR_K8S_JOB_ANNOTATION, ATTR_K8S_JOB_LABEL, ATTR_K8S_JOB_NAME, ATTR_K8S_JOB_UID, ATTR_K8S_NAMESPACE_ANNOTATION, ATTR_K8S_NAMESPACE_LABEL, ATTR_K8S_NAMESPACE_NAME, ATTR_K8S_NODE_ANNOTATION, ATTR_K8S_NODE_LABEL, ATTR_K8S_NODE_NAME, ATTR_K8S_NODE_UID, ATTR_K8S_POD_ANNOTATION, ATTR_K8S_POD_HOSTNAME, ATTR_K8S_POD_IP, ATTR_K8S_POD_LABEL, ATTR_K8S_POD_NAME, ATTR_K8S_POD_START_TIME, ATTR_K8S_POD_UID, ATTR_K8S_REPLICASET_ANNOTATION, ATTR_K8S_REPLICASET_LABEL, ATTR_K8S_REPLICASET_NAME, ATTR_K8S_REPLICASET_UID, ATTR_K8S_STATEFULSET_ANNOTATION, ATTR_K8S_STATEFULSET_LABEL, ATTR_K8S_STATEFULSET_NAME, ATTR_K8S_STATEFULSET_UID, ATTR_NETWORK_LOCAL_ADDRESS, ATTR_NETWORK_LOCAL_PORT, ATTR_NETWORK_PEER_ADDRESS, ATTR_NETWORK_PEER_PORT, ATTR_NETWORK_PROTOCOL_NAME, ATTR_NETWORK_PROTOCOL_VERSION, ATTR_NETWORK_TRANSPORT, NETWORK_TRANSPORT_VALUE_PIPE, NETWORK_TRANSPORT_VALUE_QUIC, NETWORK_TRANSPORT_VALUE_TCP, NETWORK_TRANSPORT_VALUE_UDP, NETWORK_TRANSPORT_VALUE_UNIX, ATTR_NETWORK_TYPE, NETWORK_TYPE_VALUE_IPV4, NETWORK_TYPE_VALUE_IPV6, ATTR_OTEL_EVENT_NAME, ATTR_OTEL_SCOPE_NAME, ATTR_OTEL_SCOPE_VERSION, ATTR_OTEL_STATUS_CODE, OTEL_STATUS_CODE_VALUE_ERROR, OTEL_STATUS_CODE_VALUE_OK, ATTR_OTEL_STATUS_DESCRIPTION, ATTR_SERVER_ADDRESS, ATTR_SERVER_PORT, ATTR_SERVICE_INSTANCE_ID, ATTR_SERVICE_NAME, ATTR_SERVICE_NAMESPACE, ATTR_SERVICE_VERSION, ATTR_SIGNALR_CONNECTION_STATUS, SIGNALR_CONNECTION_STATUS_VALUE_APP_SHUTDOWN, SIGNALR_CONNECTION_STATUS_VALUE_NORMAL_CLOSURE, SIGNALR_CONNECTION_STATUS_VALUE_TIMEOUT, ATTR_SIGNALR_TRANSPORT, SIGNALR_TRANSPORT_VALUE_LONG_POLLING, SIGNALR_TRANSPORT_VALUE_SERVER_SENT_EVENTS, SIGNALR_TRANSPORT_VALUE_WEB_SOCKETS, ATTR_TELEMETRY_DISTRO_NAME, ATTR_TELEMETRY_DISTRO_VERSION, ATTR_TELEMETRY_SDK_LANGUAGE, TELEMETRY_SDK_LANGUAGE_VALUE_CPP, TELEMETRY_SDK_LANGUAGE_VALUE_DOTNET, TELEMETRY_SDK_LANGUAGE_VALUE_ERLANG, TELEMETRY_SDK_LANGUAGE_VALUE_GO, TELEMETRY_SDK_LANGUAGE_VALUE_JAVA, TELEMETRY_SDK_LANGUAGE_VALUE_KOTLIN, TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS, TELEMETRY_SDK_LANGUAGE_VALUE_PHP, TELEMETRY_SDK_LANGUAGE_VALUE_PYTHON, TELEMETRY_SDK_LANGUAGE_VALUE_RUBY, TELEMETRY_SDK_LANGUAGE_VALUE_RUST, TELEMETRY_SDK_LANGUAGE_VALUE_SWIFT, TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS, ATTR_TELEMETRY_SDK_NAME, ATTR_TELEMETRY_SDK_VERSION, ATTR_URL_FRAGMENT, ATTR_URL_FULL, ATTR_URL_PATH, ATTR_URL_QUERY, ATTR_URL_SCHEME, ATTR_USER_AGENT_ORIGINAL;
 var init_stable_attributes = __esm({
   "node_modules/@opentelemetry/semantic-conventions/build/esm/stable_attributes.js"() {
     ATTR_ASPNETCORE_DIAGNOSTICS_EXCEPTION_RESULT = "aspnetcore.diagnostics.exception.result";
@@ -38252,6 +38409,7 @@ var init_stable_attributes = __esm({
     TELEMETRY_SDK_LANGUAGE_VALUE_ERLANG = "erlang";
     TELEMETRY_SDK_LANGUAGE_VALUE_GO = "go";
     TELEMETRY_SDK_LANGUAGE_VALUE_JAVA = "java";
+    TELEMETRY_SDK_LANGUAGE_VALUE_KOTLIN = "kotlin";
     TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS = "nodejs";
     TELEMETRY_SDK_LANGUAGE_VALUE_PHP = "php";
     TELEMETRY_SDK_LANGUAGE_VALUE_PYTHON = "python";
@@ -38337,7 +38495,7 @@ var init_stable_events = __esm({
 });
 
 // node_modules/@opentelemetry/semantic-conventions/build/esm/experimental_attributes.js
-var ATTR_ANDROID_APP_STATE, ANDROID_APP_STATE_VALUE_BACKGROUND, ANDROID_APP_STATE_VALUE_CREATED, ANDROID_APP_STATE_VALUE_FOREGROUND, ATTR_ANDROID_OS_API_LEVEL, ATTR_ANDROID_STATE, ANDROID_STATE_VALUE_BACKGROUND, ANDROID_STATE_VALUE_CREATED, ANDROID_STATE_VALUE_FOREGROUND, ATTR_APP_BUILD_ID, ATTR_APP_CRASH_ID, ATTR_APP_INSTALLATION_ID, ATTR_APP_JANK_FRAME_COUNT, ATTR_APP_JANK_PERIOD, ATTR_APP_JANK_THRESHOLD, ATTR_APP_SCREEN_COORDINATE_X, ATTR_APP_SCREEN_COORDINATE_Y, ATTR_APP_SCREEN_ID, ATTR_APP_SCREEN_NAME, ATTR_APP_WIDGET_ID, ATTR_APP_WIDGET_NAME, ATTR_ARTIFACT_ATTESTATION_FILENAME, ATTR_ARTIFACT_ATTESTATION_HASH, ATTR_ARTIFACT_ATTESTATION_ID, ATTR_ARTIFACT_FILENAME, ATTR_ARTIFACT_HASH, ATTR_ARTIFACT_PURL, ATTR_ARTIFACT_VERSION, ATTR_ASPNETCORE_AUTHENTICATION_RESULT, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_FAILURE, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_NONE, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_AUTHENTICATION_SCHEME, ATTR_ASPNETCORE_AUTHORIZATION_POLICY, ATTR_ASPNETCORE_AUTHORIZATION_RESULT, ASPNETCORE_AUTHORIZATION_RESULT_VALUE_FAILURE, ASPNETCORE_AUTHORIZATION_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_ERROR_CODE, ATTR_ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_PASSWORD_MISSING, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_SUCCESS, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_SUCCESS_REHASH_NEEDED, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_USER_MISSING, ATTR_ASPNETCORE_IDENTITY_RESULT, ASPNETCORE_IDENTITY_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_SIGN_IN_RESULT, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_LOCKED_OUT, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_NOT_ALLOWED, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_REQUIRES_TWO_FACTOR, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_SIGN_IN_TYPE, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_EXTERNAL, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_PASSKEY, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_PASSWORD, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR_AUTHENTICATOR, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR_RECOVERY_CODE, ATTR_ASPNETCORE_IDENTITY_TOKEN_PURPOSE, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_OTHER, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_CHANGE_EMAIL, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_CHANGE_PHONE_NUMBER, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_EMAIL_CONFIRMATION, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_RESET_PASSWORD, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_TWO_FACTOR, ATTR_ASPNETCORE_IDENTITY_TOKEN_VERIFIED, ASPNETCORE_IDENTITY_TOKEN_VERIFIED_VALUE_FAILURE, ASPNETCORE_IDENTITY_TOKEN_VERIFIED_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_USER_UPDATE_TYPE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_OTHER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ACCESS_FAILED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_CLAIMS, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_LOGIN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_TO_ROLES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_PHONE_NUMBER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CONFIRM_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_GENERATE_NEW_TWO_FACTOR_RECOVERY_CODES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_PASSWORD_REHASH, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REDEEM_TWO_FACTOR_RECOVERY_CODE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_AUTHENTICATION_TOKEN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_CLAIMS, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_FROM_ROLES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_LOGIN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_PASSKEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REPLACE_CLAIM, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_ACCESS_FAILED_COUNT, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_AUTHENTICATOR_KEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SECURITY_STAMP, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_AUTHENTICATION_TOKEN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_LOCKOUT_ENABLED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_LOCKOUT_END_DATE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_PASSKEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_PHONE_NUMBER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_TWO_FACTOR_ENABLED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_UPDATE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_USER_NAME, ATTR_ASPNETCORE_IDENTITY_USER_TYPE, ATTR_ASPNETCORE_MEMORY_POOL_OWNER, ATTR_ASPNETCORE_SIGN_IN_IS_PERSISTENT, ATTR_AWS_BEDROCK_GUARDRAIL_ID, ATTR_AWS_BEDROCK_KNOWLEDGE_BASE_ID, ATTR_AWS_DYNAMODB_ATTRIBUTE_DEFINITIONS, ATTR_AWS_DYNAMODB_ATTRIBUTES_TO_GET, ATTR_AWS_DYNAMODB_CONSISTENT_READ, ATTR_AWS_DYNAMODB_CONSUMED_CAPACITY, ATTR_AWS_DYNAMODB_COUNT, ATTR_AWS_DYNAMODB_EXCLUSIVE_START_TABLE, ATTR_AWS_DYNAMODB_GLOBAL_SECONDARY_INDEX_UPDATES, ATTR_AWS_DYNAMODB_GLOBAL_SECONDARY_INDEXES, ATTR_AWS_DYNAMODB_INDEX_NAME, ATTR_AWS_DYNAMODB_ITEM_COLLECTION_METRICS, ATTR_AWS_DYNAMODB_LIMIT, ATTR_AWS_DYNAMODB_LOCAL_SECONDARY_INDEXES, ATTR_AWS_DYNAMODB_PROJECTION, ATTR_AWS_DYNAMODB_PROVISIONED_READ_CAPACITY, ATTR_AWS_DYNAMODB_PROVISIONED_WRITE_CAPACITY, ATTR_AWS_DYNAMODB_SCAN_FORWARD, ATTR_AWS_DYNAMODB_SCANNED_COUNT, ATTR_AWS_DYNAMODB_SEGMENT, ATTR_AWS_DYNAMODB_SELECT, ATTR_AWS_DYNAMODB_TABLE_COUNT, ATTR_AWS_DYNAMODB_TABLE_NAMES, ATTR_AWS_DYNAMODB_TOTAL_SEGMENTS, ATTR_AWS_ECS_CLUSTER_ARN, ATTR_AWS_ECS_CONTAINER_ARN, ATTR_AWS_ECS_LAUNCHTYPE, AWS_ECS_LAUNCHTYPE_VALUE_EC2, AWS_ECS_LAUNCHTYPE_VALUE_FARGATE, ATTR_AWS_ECS_TASK_ARN, ATTR_AWS_ECS_TASK_FAMILY, ATTR_AWS_ECS_TASK_ID, ATTR_AWS_ECS_TASK_REVISION, ATTR_AWS_EKS_CLUSTER_ARN, ATTR_AWS_EXTENDED_REQUEST_ID, ATTR_AWS_KINESIS_STREAM_NAME, ATTR_AWS_LAMBDA_INVOKED_ARN, ATTR_AWS_LAMBDA_RESOURCE_MAPPING_ID, ATTR_AWS_LOG_GROUP_ARNS, ATTR_AWS_LOG_GROUP_NAMES, ATTR_AWS_LOG_STREAM_ARNS, ATTR_AWS_LOG_STREAM_NAMES, ATTR_AWS_REQUEST_ID, ATTR_AWS_S3_BUCKET, ATTR_AWS_S3_COPY_SOURCE, ATTR_AWS_S3_DELETE, ATTR_AWS_S3_KEY, ATTR_AWS_S3_PART_NUMBER, ATTR_AWS_S3_UPLOAD_ID, ATTR_AWS_SECRETSMANAGER_SECRET_ARN, ATTR_AWS_SNS_TOPIC_ARN, ATTR_AWS_SQS_QUEUE_URL, ATTR_AWS_STEP_FUNCTIONS_ACTIVITY_ARN, ATTR_AWS_STEP_FUNCTIONS_STATE_MACHINE_ARN, ATTR_AZ_NAMESPACE, ATTR_AZ_SERVICE_REQUEST_ID, ATTR_AZURE_CLIENT_ID, ATTR_AZURE_COSMOSDB_CONNECTION_MODE, AZURE_COSMOSDB_CONNECTION_MODE_VALUE_DIRECT, AZURE_COSMOSDB_CONNECTION_MODE_VALUE_GATEWAY, ATTR_AZURE_COSMOSDB_CONSISTENCY_LEVEL, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_BOUNDED_STALENESS, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_CONSISTENT_PREFIX, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_EVENTUAL, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_SESSION, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_STRONG, ATTR_AZURE_COSMOSDB_OPERATION_CONTACTED_REGIONS, ATTR_AZURE_COSMOSDB_OPERATION_REQUEST_CHARGE, ATTR_AZURE_COSMOSDB_REQUEST_BODY_SIZE, ATTR_AZURE_COSMOSDB_RESPONSE_SUB_STATUS_CODE, ATTR_AZURE_RESOURCE_PROVIDER_NAMESPACE, ATTR_AZURE_SERVICE_REQUEST_ID, ATTR_BROWSER_BRANDS, ATTR_BROWSER_DOCUMENT_URL_FULL, ATTR_BROWSER_LANGUAGE, ATTR_BROWSER_MOBILE, ATTR_BROWSER_PLATFORM, ATTR_CASSANDRA_CONSISTENCY_LEVEL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ALL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ANY, CASSANDRA_CONSISTENCY_LEVEL_VALUE_EACH_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_ONE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_SERIAL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ONE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_SERIAL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_THREE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_TWO, ATTR_CASSANDRA_COORDINATOR_DC, ATTR_CASSANDRA_COORDINATOR_ID, ATTR_CASSANDRA_PAGE_SIZE, ATTR_CASSANDRA_QUERY_IDEMPOTENT, ATTR_CASSANDRA_SPECULATIVE_EXECUTION_COUNT, ATTR_CICD_PIPELINE_ACTION_NAME, CICD_PIPELINE_ACTION_NAME_VALUE_BUILD, CICD_PIPELINE_ACTION_NAME_VALUE_RUN, CICD_PIPELINE_ACTION_NAME_VALUE_SYNC, ATTR_CICD_PIPELINE_NAME, ATTR_CICD_PIPELINE_RESULT, CICD_PIPELINE_RESULT_VALUE_CANCELLATION, CICD_PIPELINE_RESULT_VALUE_ERROR, CICD_PIPELINE_RESULT_VALUE_FAILURE, CICD_PIPELINE_RESULT_VALUE_SKIP, CICD_PIPELINE_RESULT_VALUE_SUCCESS, CICD_PIPELINE_RESULT_VALUE_TIMEOUT, ATTR_CICD_PIPELINE_RUN_ID, ATTR_CICD_PIPELINE_RUN_STATE, CICD_PIPELINE_RUN_STATE_VALUE_EXECUTING, CICD_PIPELINE_RUN_STATE_VALUE_FINALIZING, CICD_PIPELINE_RUN_STATE_VALUE_PENDING, ATTR_CICD_PIPELINE_RUN_URL_FULL, ATTR_CICD_PIPELINE_TASK_NAME, ATTR_CICD_PIPELINE_TASK_RUN_ID, ATTR_CICD_PIPELINE_TASK_RUN_RESULT, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_CANCELLATION, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_ERROR, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_FAILURE, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_SKIP, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_SUCCESS, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_TIMEOUT, ATTR_CICD_PIPELINE_TASK_RUN_URL_FULL, ATTR_CICD_PIPELINE_TASK_TYPE, CICD_PIPELINE_TASK_TYPE_VALUE_BUILD, CICD_PIPELINE_TASK_TYPE_VALUE_DEPLOY, CICD_PIPELINE_TASK_TYPE_VALUE_TEST, ATTR_CICD_SYSTEM_COMPONENT, ATTR_CICD_WORKER_ID, ATTR_CICD_WORKER_NAME, ATTR_CICD_WORKER_STATE, CICD_WORKER_STATE_VALUE_AVAILABLE, CICD_WORKER_STATE_VALUE_BUSY, CICD_WORKER_STATE_VALUE_OFFLINE, ATTR_CICD_WORKER_URL_FULL, ATTR_CLOUD_ACCOUNT_ID, ATTR_CLOUD_AVAILABILITY_ZONE, ATTR_CLOUD_PLATFORM, CLOUD_PLATFORM_VALUE_AKAMAI_CLOUD_COMPUTE, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_ECS, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_FC, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_OPENSHIFT, CLOUD_PLATFORM_VALUE_AWS_APP_RUNNER, CLOUD_PLATFORM_VALUE_AWS_EC2, CLOUD_PLATFORM_VALUE_AWS_ECS, CLOUD_PLATFORM_VALUE_AWS_EKS, CLOUD_PLATFORM_VALUE_AWS_ELASTIC_BEANSTALK, CLOUD_PLATFORM_VALUE_AWS_LAMBDA, CLOUD_PLATFORM_VALUE_AWS_OPENSHIFT, CLOUD_PLATFORM_VALUE_AZURE_AKS, CLOUD_PLATFORM_VALUE_AZURE_APP_SERVICE, CLOUD_PLATFORM_VALUE_AZURE_CONTAINER_APPS, CLOUD_PLATFORM_VALUE_AZURE_CONTAINER_INSTANCES, CLOUD_PLATFORM_VALUE_AZURE_FUNCTIONS, CLOUD_PLATFORM_VALUE_AZURE_OPENSHIFT, CLOUD_PLATFORM_VALUE_AZURE_VM, CLOUD_PLATFORM_VALUE_GCP_AGENT_ENGINE, CLOUD_PLATFORM_VALUE_GCP_APP_ENGINE, CLOUD_PLATFORM_VALUE_GCP_BARE_METAL_SOLUTION, CLOUD_PLATFORM_VALUE_GCP_CLOUD_FUNCTIONS, CLOUD_PLATFORM_VALUE_GCP_CLOUD_RUN, CLOUD_PLATFORM_VALUE_GCP_COMPUTE_ENGINE, CLOUD_PLATFORM_VALUE_GCP_KUBERNETES_ENGINE, CLOUD_PLATFORM_VALUE_GCP_OPENSHIFT, CLOUD_PLATFORM_VALUE_HETZNER_CLOUD_SERVER, CLOUD_PLATFORM_VALUE_IBM_CLOUD_OPENSHIFT, CLOUD_PLATFORM_VALUE_ORACLE_CLOUD_COMPUTE, CLOUD_PLATFORM_VALUE_ORACLE_CLOUD_OKE, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_CVM, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_EKS, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_SCF, CLOUD_PLATFORM_VALUE_VULTR_CLOUD_COMPUTE, ATTR_CLOUD_PROVIDER, CLOUD_PROVIDER_VALUE_AKAMAI_CLOUD, CLOUD_PROVIDER_VALUE_ALIBABA_CLOUD, CLOUD_PROVIDER_VALUE_AWS, CLOUD_PROVIDER_VALUE_AZURE, CLOUD_PROVIDER_VALUE_GCP, CLOUD_PROVIDER_VALUE_HEROKU, CLOUD_PROVIDER_VALUE_HETZNER, CLOUD_PROVIDER_VALUE_IBM_CLOUD, CLOUD_PROVIDER_VALUE_ORACLE_CLOUD, CLOUD_PROVIDER_VALUE_TENCENT_CLOUD, CLOUD_PROVIDER_VALUE_VULTR, ATTR_CLOUD_REGION, ATTR_CLOUD_RESOURCE_ID, ATTR_CLOUDEVENTS_EVENT_ID, ATTR_CLOUDEVENTS_EVENT_SOURCE, ATTR_CLOUDEVENTS_EVENT_SPEC_VERSION, ATTR_CLOUDEVENTS_EVENT_SUBJECT, ATTR_CLOUDEVENTS_EVENT_TYPE, ATTR_CLOUDFOUNDRY_APP_ID, ATTR_CLOUDFOUNDRY_APP_INSTANCE_ID, ATTR_CLOUDFOUNDRY_APP_NAME, ATTR_CLOUDFOUNDRY_ORG_ID, ATTR_CLOUDFOUNDRY_ORG_NAME, ATTR_CLOUDFOUNDRY_PROCESS_ID, ATTR_CLOUDFOUNDRY_PROCESS_TYPE, ATTR_CLOUDFOUNDRY_SPACE_ID, ATTR_CLOUDFOUNDRY_SPACE_NAME, ATTR_CLOUDFOUNDRY_SYSTEM_ID, ATTR_CLOUDFOUNDRY_SYSTEM_INSTANCE_ID, ATTR_CODE_COLUMN, ATTR_CODE_FILEPATH, ATTR_CODE_FUNCTION, ATTR_CODE_LINENO, ATTR_CODE_NAMESPACE, ATTR_CONTAINER_COMMAND, ATTR_CONTAINER_COMMAND_ARGS, ATTR_CONTAINER_COMMAND_LINE, ATTR_CONTAINER_CPU_STATE, CONTAINER_CPU_STATE_VALUE_KERNEL, CONTAINER_CPU_STATE_VALUE_SYSTEM, CONTAINER_CPU_STATE_VALUE_USER, ATTR_CONTAINER_CSI_PLUGIN_NAME, ATTR_CONTAINER_CSI_VOLUME_ID, ATTR_CONTAINER_IMAGE_ID, ATTR_CONTAINER_LABEL, ATTR_CONTAINER_LABELS, ATTR_CONTAINER_NAME, ATTR_CONTAINER_RUNTIME, ATTR_CONTAINER_RUNTIME_DESCRIPTION, ATTR_CONTAINER_RUNTIME_NAME, ATTR_CONTAINER_RUNTIME_VERSION, ATTR_CPU_LOGICAL_NUMBER, ATTR_CPU_MODE, CPU_MODE_VALUE_IDLE, CPU_MODE_VALUE_INTERRUPT, CPU_MODE_VALUE_IOWAIT, CPU_MODE_VALUE_KERNEL, CPU_MODE_VALUE_NICE, CPU_MODE_VALUE_STEAL, CPU_MODE_VALUE_SYSTEM, CPU_MODE_VALUE_USER, ATTR_CPYTHON_GC_GENERATION, CPYTHON_GC_GENERATION_VALUE_GENERATION_0, CPYTHON_GC_GENERATION_VALUE_GENERATION_1, CPYTHON_GC_GENERATION_VALUE_GENERATION_2, ATTR_DB_CASSANDRA_CONSISTENCY_LEVEL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ALL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ANY, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_EACH_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_ONE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_SERIAL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ONE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_SERIAL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_THREE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_TWO, ATTR_DB_CASSANDRA_COORDINATOR_DC, ATTR_DB_CASSANDRA_COORDINATOR_ID, ATTR_DB_CASSANDRA_IDEMPOTENCE, ATTR_DB_CASSANDRA_PAGE_SIZE, ATTR_DB_CASSANDRA_SPECULATIVE_EXECUTION_COUNT, ATTR_DB_CASSANDRA_TABLE, ATTR_DB_CLIENT_CONNECTION_POOL_NAME, ATTR_DB_CLIENT_CONNECTION_STATE, DB_CLIENT_CONNECTION_STATE_VALUE_IDLE, DB_CLIENT_CONNECTION_STATE_VALUE_USED, ATTR_DB_CLIENT_CONNECTIONS_POOL_NAME, ATTR_DB_CLIENT_CONNECTIONS_STATE, DB_CLIENT_CONNECTIONS_STATE_VALUE_IDLE, DB_CLIENT_CONNECTIONS_STATE_VALUE_USED, ATTR_DB_CONNECTION_STRING, ATTR_DB_COSMOSDB_CLIENT_ID, ATTR_DB_COSMOSDB_CONNECTION_MODE, DB_COSMOSDB_CONNECTION_MODE_VALUE_DIRECT, DB_COSMOSDB_CONNECTION_MODE_VALUE_GATEWAY, ATTR_DB_COSMOSDB_CONSISTENCY_LEVEL, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_BOUNDED_STALENESS, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_CONSISTENT_PREFIX, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_EVENTUAL, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_SESSION, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_STRONG, ATTR_DB_COSMOSDB_CONTAINER, ATTR_DB_COSMOSDB_OPERATION_TYPE, DB_COSMOSDB_OPERATION_TYPE_VALUE_BATCH, DB_COSMOSDB_OPERATION_TYPE_VALUE_CREATE, DB_COSMOSDB_OPERATION_TYPE_VALUE_DELETE, DB_COSMOSDB_OPERATION_TYPE_VALUE_EXECUTE, DB_COSMOSDB_OPERATION_TYPE_VALUE_EXECUTE_JAVASCRIPT, DB_COSMOSDB_OPERATION_TYPE_VALUE_HEAD, DB_COSMOSDB_OPERATION_TYPE_VALUE_HEAD_FEED, DB_COSMOSDB_OPERATION_TYPE_VALUE_INVALID, DB_COSMOSDB_OPERATION_TYPE_VALUE_PATCH, DB_COSMOSDB_OPERATION_TYPE_VALUE_QUERY, DB_COSMOSDB_OPERATION_TYPE_VALUE_QUERY_PLAN, DB_COSMOSDB_OPERATION_TYPE_VALUE_READ, DB_COSMOSDB_OPERATION_TYPE_VALUE_READ_FEED, DB_COSMOSDB_OPERATION_TYPE_VALUE_REPLACE, DB_COSMOSDB_OPERATION_TYPE_VALUE_UPSERT, ATTR_DB_COSMOSDB_REGIONS_CONTACTED, ATTR_DB_COSMOSDB_REQUEST_CHARGE, ATTR_DB_COSMOSDB_REQUEST_CONTENT_LENGTH, ATTR_DB_COSMOSDB_STATUS_CODE, ATTR_DB_COSMOSDB_SUB_STATUS_CODE, ATTR_DB_ELASTICSEARCH_CLUSTER_NAME, ATTR_DB_ELASTICSEARCH_NODE_NAME, ATTR_DB_ELASTICSEARCH_PATH_PARTS, ATTR_DB_INSTANCE_ID, ATTR_DB_JDBC_DRIVER_CLASSNAME, ATTR_DB_MONGODB_COLLECTION, ATTR_DB_MSSQL_INSTANCE_NAME, ATTR_DB_NAME, ATTR_DB_OPERATION, ATTR_DB_OPERATION_PARAMETER, ATTR_DB_QUERY_PARAMETER, ATTR_DB_REDIS_DATABASE_INDEX, ATTR_DB_RESPONSE_RETURNED_ROWS, ATTR_DB_SQL_TABLE, ATTR_DB_STATEMENT, ATTR_DB_SYSTEM, DB_SYSTEM_VALUE_ADABAS, DB_SYSTEM_VALUE_CACHE, DB_SYSTEM_VALUE_CASSANDRA, DB_SYSTEM_VALUE_CLICKHOUSE, DB_SYSTEM_VALUE_CLOUDSCAPE, DB_SYSTEM_VALUE_COCKROACHDB, DB_SYSTEM_VALUE_COLDFUSION, DB_SYSTEM_VALUE_COSMOSDB, DB_SYSTEM_VALUE_COUCHBASE, DB_SYSTEM_VALUE_COUCHDB, DB_SYSTEM_VALUE_DB2, DB_SYSTEM_VALUE_DERBY, DB_SYSTEM_VALUE_DYNAMODB, DB_SYSTEM_VALUE_EDB, DB_SYSTEM_VALUE_ELASTICSEARCH, DB_SYSTEM_VALUE_FILEMAKER, DB_SYSTEM_VALUE_FIREBIRD, DB_SYSTEM_VALUE_FIRSTSQL, DB_SYSTEM_VALUE_GEODE, DB_SYSTEM_VALUE_H2, DB_SYSTEM_VALUE_HANADB, DB_SYSTEM_VALUE_HBASE, DB_SYSTEM_VALUE_HIVE, DB_SYSTEM_VALUE_HSQLDB, DB_SYSTEM_VALUE_INFLUXDB, DB_SYSTEM_VALUE_INFORMIX, DB_SYSTEM_VALUE_INGRES, DB_SYSTEM_VALUE_INSTANTDB, DB_SYSTEM_VALUE_INTERBASE, DB_SYSTEM_VALUE_INTERSYSTEMS_CACHE, DB_SYSTEM_VALUE_MARIADB, DB_SYSTEM_VALUE_MAXDB, DB_SYSTEM_VALUE_MEMCACHED, DB_SYSTEM_VALUE_MONGODB, DB_SYSTEM_VALUE_MSSQL, DB_SYSTEM_VALUE_MSSQLCOMPACT, DB_SYSTEM_VALUE_MYSQL, DB_SYSTEM_VALUE_NEO4J, DB_SYSTEM_VALUE_NETEZZA, DB_SYSTEM_VALUE_OPENSEARCH, DB_SYSTEM_VALUE_ORACLE, DB_SYSTEM_VALUE_OTHER_SQL, DB_SYSTEM_VALUE_PERVASIVE, DB_SYSTEM_VALUE_POINTBASE, DB_SYSTEM_VALUE_POSTGRESQL, DB_SYSTEM_VALUE_PROGRESS, DB_SYSTEM_VALUE_REDIS, DB_SYSTEM_VALUE_REDSHIFT, DB_SYSTEM_VALUE_SPANNER, DB_SYSTEM_VALUE_SQLITE, DB_SYSTEM_VALUE_SYBASE, DB_SYSTEM_VALUE_TERADATA, DB_SYSTEM_VALUE_TRINO, DB_SYSTEM_VALUE_VERTICA, DB_SYSTEM_NAME_VALUE_ACTIAN_INGRES, DB_SYSTEM_NAME_VALUE_AWS_DYNAMODB, DB_SYSTEM_NAME_VALUE_AWS_REDSHIFT, DB_SYSTEM_NAME_VALUE_AZURE_COSMOSDB, DB_SYSTEM_NAME_VALUE_CASSANDRA, DB_SYSTEM_NAME_VALUE_CLICKHOUSE, DB_SYSTEM_NAME_VALUE_COCKROACHDB, DB_SYSTEM_NAME_VALUE_COUCHBASE, DB_SYSTEM_NAME_VALUE_COUCHDB, DB_SYSTEM_NAME_VALUE_DERBY, DB_SYSTEM_NAME_VALUE_ELASTICSEARCH, DB_SYSTEM_NAME_VALUE_FIREBIRDSQL, DB_SYSTEM_NAME_VALUE_GCP_SPANNER, DB_SYSTEM_NAME_VALUE_GEODE, DB_SYSTEM_NAME_VALUE_H2DATABASE, DB_SYSTEM_NAME_VALUE_HBASE, DB_SYSTEM_NAME_VALUE_HIVE, DB_SYSTEM_NAME_VALUE_HSQLDB, DB_SYSTEM_NAME_VALUE_IBM_DB2, DB_SYSTEM_NAME_VALUE_IBM_INFORMIX, DB_SYSTEM_NAME_VALUE_IBM_NETEZZA, DB_SYSTEM_NAME_VALUE_INFLUXDB, DB_SYSTEM_NAME_VALUE_INSTANTDB, DB_SYSTEM_NAME_VALUE_INTERSYSTEMS_CACHE, DB_SYSTEM_NAME_VALUE_MEMCACHED, DB_SYSTEM_NAME_VALUE_MONGODB, DB_SYSTEM_NAME_VALUE_NEO4J, DB_SYSTEM_NAME_VALUE_OPENSEARCH, DB_SYSTEM_NAME_VALUE_ORACLE_DB, DB_SYSTEM_NAME_VALUE_OTHER_SQL, DB_SYSTEM_NAME_VALUE_REDIS, DB_SYSTEM_NAME_VALUE_SAP_HANA, DB_SYSTEM_NAME_VALUE_SAP_MAXDB, DB_SYSTEM_NAME_VALUE_SOFTWAREAG_ADABAS, DB_SYSTEM_NAME_VALUE_SQLITE, DB_SYSTEM_NAME_VALUE_TERADATA, DB_SYSTEM_NAME_VALUE_TRINO, ATTR_DB_USER, ATTR_DEPLOYMENT_ENVIRONMENT, ATTR_DEPLOYMENT_ID, ATTR_DEPLOYMENT_NAME, ATTR_DEPLOYMENT_STATUS, DEPLOYMENT_STATUS_VALUE_FAILED, DEPLOYMENT_STATUS_VALUE_SUCCEEDED, ATTR_DESTINATION_ADDRESS, ATTR_DESTINATION_PORT, ATTR_DEVICE_ID, ATTR_DEVICE_MANUFACTURER, ATTR_DEVICE_MODEL_IDENTIFIER, ATTR_DEVICE_MODEL_NAME, ATTR_DISK_IO_DIRECTION, DISK_IO_DIRECTION_VALUE_READ, DISK_IO_DIRECTION_VALUE_WRITE, ATTR_DNS_ANSWERS, ATTR_DNS_QUESTION_NAME, ATTR_ELASTICSEARCH_NODE_NAME, ATTR_ENDUSER_ID, ATTR_ENDUSER_PSEUDO_ID, ATTR_ENDUSER_ROLE, ATTR_ENDUSER_SCOPE, ATTR_ERROR_MESSAGE, ATTR_EVENT_NAME, ATTR_FAAS_COLDSTART, ATTR_FAAS_CRON, ATTR_FAAS_DOCUMENT_COLLECTION, ATTR_FAAS_DOCUMENT_NAME, ATTR_FAAS_DOCUMENT_OPERATION, FAAS_DOCUMENT_OPERATION_VALUE_DELETE, FAAS_DOCUMENT_OPERATION_VALUE_EDIT, FAAS_DOCUMENT_OPERATION_VALUE_INSERT, ATTR_FAAS_DOCUMENT_TIME, ATTR_FAAS_INSTANCE, ATTR_FAAS_INVOCATION_ID, ATTR_FAAS_INVOKED_NAME, ATTR_FAAS_INVOKED_PROVIDER, FAAS_INVOKED_PROVIDER_VALUE_ALIBABA_CLOUD, FAAS_INVOKED_PROVIDER_VALUE_AWS, FAAS_INVOKED_PROVIDER_VALUE_AZURE, FAAS_INVOKED_PROVIDER_VALUE_GCP, FAAS_INVOKED_PROVIDER_VALUE_TENCENT_CLOUD, ATTR_FAAS_INVOKED_REGION, ATTR_FAAS_MAX_MEMORY, ATTR_FAAS_NAME, ATTR_FAAS_TIME, ATTR_FAAS_TRIGGER, FAAS_TRIGGER_VALUE_DATASOURCE, FAAS_TRIGGER_VALUE_HTTP, FAAS_TRIGGER_VALUE_OTHER, FAAS_TRIGGER_VALUE_PUBSUB, FAAS_TRIGGER_VALUE_TIMER, ATTR_FAAS_VERSION, ATTR_FEATURE_FLAG_CONTEXT_ID, ATTR_FEATURE_FLAG_ERROR_MESSAGE, ATTR_FEATURE_FLAG_EVALUATION_ERROR_MESSAGE, ATTR_FEATURE_FLAG_EVALUATION_REASON, FEATURE_FLAG_EVALUATION_REASON_VALUE_CACHED, FEATURE_FLAG_EVALUATION_REASON_VALUE_DEFAULT, FEATURE_FLAG_EVALUATION_REASON_VALUE_DISABLED, FEATURE_FLAG_EVALUATION_REASON_VALUE_ERROR, FEATURE_FLAG_EVALUATION_REASON_VALUE_SPLIT, FEATURE_FLAG_EVALUATION_REASON_VALUE_STALE, FEATURE_FLAG_EVALUATION_REASON_VALUE_STATIC, FEATURE_FLAG_EVALUATION_REASON_VALUE_TARGETING_MATCH, FEATURE_FLAG_EVALUATION_REASON_VALUE_UNKNOWN, ATTR_FEATURE_FLAG_KEY, ATTR_FEATURE_FLAG_PROVIDER_NAME, ATTR_FEATURE_FLAG_RESULT_REASON, FEATURE_FLAG_RESULT_REASON_VALUE_CACHED, FEATURE_FLAG_RESULT_REASON_VALUE_DEFAULT, FEATURE_FLAG_RESULT_REASON_VALUE_DISABLED, FEATURE_FLAG_RESULT_REASON_VALUE_ERROR, FEATURE_FLAG_RESULT_REASON_VALUE_SPLIT, FEATURE_FLAG_RESULT_REASON_VALUE_STALE, FEATURE_FLAG_RESULT_REASON_VALUE_STATIC, FEATURE_FLAG_RESULT_REASON_VALUE_TARGETING_MATCH, FEATURE_FLAG_RESULT_REASON_VALUE_UNKNOWN, ATTR_FEATURE_FLAG_RESULT_VALUE, ATTR_FEATURE_FLAG_RESULT_VARIANT, ATTR_FEATURE_FLAG_SET_ID, ATTR_FEATURE_FLAG_VARIANT, ATTR_FEATURE_FLAG_VERSION, ATTR_FILE_ACCESSED, ATTR_FILE_ATTRIBUTES, ATTR_FILE_CHANGED, ATTR_FILE_CREATED, ATTR_FILE_DIRECTORY, ATTR_FILE_EXTENSION, ATTR_FILE_FORK_NAME, ATTR_FILE_GROUP_ID, ATTR_FILE_GROUP_NAME, ATTR_FILE_INODE, ATTR_FILE_LOCK_MECHANISM, ATTR_FILE_LOCK_MODE, ATTR_FILE_LOCK_TYPE, FILE_LOCK_TYPE_VALUE_READ, FILE_LOCK_TYPE_VALUE_WRITE, ATTR_FILE_MODE, ATTR_FILE_MODIFIED, ATTR_FILE_NAME, ATTR_FILE_OWNER_ID, ATTR_FILE_OWNER_NAME, ATTR_FILE_PATH, ATTR_FILE_SIZE, ATTR_FILE_SYMBOLIC_LINK_TARGET_PATH, ATTR_GCP_APPHUB_APPLICATION_CONTAINER, ATTR_GCP_APPHUB_APPLICATION_ID, ATTR_GCP_APPHUB_APPLICATION_LOCATION, ATTR_GCP_APPHUB_SERVICE_CRITICALITY_TYPE, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_SERVICE_ID, ATTR_GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_WORKLOAD_ID, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_CONTAINER, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_ID, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_LOCATION, ATTR_GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_DESTINATION_SERVICE_ID, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_ID, ATTR_GCP_CLIENT_SERVICE, ATTR_GCP_CLOUD_RUN_JOB_EXECUTION, ATTR_GCP_CLOUD_RUN_JOB_TASK_INDEX, ATTR_GCP_GCE_INSTANCE_HOSTNAME, ATTR_GCP_GCE_INSTANCE_LABELS, ATTR_GCP_GCE_INSTANCE_NAME, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_NAME, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_REGION, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_ZONE, ATTR_GEN_AI_AGENT_DESCRIPTION, ATTR_GEN_AI_AGENT_ID, ATTR_GEN_AI_AGENT_NAME, ATTR_GEN_AI_AGENT_VERSION, ATTR_GEN_AI_COMPLETION, ATTR_GEN_AI_CONVERSATION_ID, ATTR_GEN_AI_DATA_SOURCE_ID, ATTR_GEN_AI_EMBEDDINGS_DIMENSION_COUNT, ATTR_GEN_AI_EVALUATION_EXPLANATION, ATTR_GEN_AI_EVALUATION_NAME, ATTR_GEN_AI_EVALUATION_SCORE_LABEL, ATTR_GEN_AI_EVALUATION_SCORE_VALUE, ATTR_GEN_AI_INPUT_MESSAGES, ATTR_GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_JSON_OBJECT, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_JSON_SCHEMA, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_TEXT, ATTR_GEN_AI_OPENAI_REQUEST_SEED, ATTR_GEN_AI_OPENAI_REQUEST_SERVICE_TIER, GEN_AI_OPENAI_REQUEST_SERVICE_TIER_VALUE_AUTO, GEN_AI_OPENAI_REQUEST_SERVICE_TIER_VALUE_DEFAULT, ATTR_GEN_AI_OPENAI_RESPONSE_SERVICE_TIER, ATTR_GEN_AI_OPENAI_RESPONSE_SYSTEM_FINGERPRINT, ATTR_GEN_AI_OPERATION_NAME, GEN_AI_OPERATION_NAME_VALUE_CHAT, GEN_AI_OPERATION_NAME_VALUE_CREATE_AGENT, GEN_AI_OPERATION_NAME_VALUE_EMBEDDINGS, GEN_AI_OPERATION_NAME_VALUE_EXECUTE_TOOL, GEN_AI_OPERATION_NAME_VALUE_GENERATE_CONTENT, GEN_AI_OPERATION_NAME_VALUE_INVOKE_AGENT, GEN_AI_OPERATION_NAME_VALUE_INVOKE_WORKFLOW, GEN_AI_OPERATION_NAME_VALUE_RETRIEVAL, GEN_AI_OPERATION_NAME_VALUE_TEXT_COMPLETION, ATTR_GEN_AI_OUTPUT_MESSAGES, ATTR_GEN_AI_OUTPUT_TYPE, GEN_AI_OUTPUT_TYPE_VALUE_IMAGE, GEN_AI_OUTPUT_TYPE_VALUE_JSON, GEN_AI_OUTPUT_TYPE_VALUE_SPEECH, GEN_AI_OUTPUT_TYPE_VALUE_TEXT, ATTR_GEN_AI_PROMPT, ATTR_GEN_AI_PROMPT_NAME, ATTR_GEN_AI_PROVIDER_NAME, GEN_AI_PROVIDER_NAME_VALUE_ANTHROPIC, GEN_AI_PROVIDER_NAME_VALUE_AWS_BEDROCK, GEN_AI_PROVIDER_NAME_VALUE_AZURE_AI_INFERENCE, GEN_AI_PROVIDER_NAME_VALUE_AZURE_AI_OPENAI, GEN_AI_PROVIDER_NAME_VALUE_COHERE, GEN_AI_PROVIDER_NAME_VALUE_DEEPSEEK, GEN_AI_PROVIDER_NAME_VALUE_GCP_GEMINI, GEN_AI_PROVIDER_NAME_VALUE_GCP_GEN_AI, GEN_AI_PROVIDER_NAME_VALUE_GCP_VERTEX_AI, GEN_AI_PROVIDER_NAME_VALUE_GROQ, GEN_AI_PROVIDER_NAME_VALUE_IBM_WATSONX_AI, GEN_AI_PROVIDER_NAME_VALUE_MISTRAL_AI, GEN_AI_PROVIDER_NAME_VALUE_OPENAI, GEN_AI_PROVIDER_NAME_VALUE_PERPLEXITY, GEN_AI_PROVIDER_NAME_VALUE_X_AI, ATTR_GEN_AI_REQUEST_CHOICE_COUNT, ATTR_GEN_AI_REQUEST_ENCODING_FORMATS, ATTR_GEN_AI_REQUEST_FREQUENCY_PENALTY, ATTR_GEN_AI_REQUEST_MAX_TOKENS, ATTR_GEN_AI_REQUEST_MODEL, ATTR_GEN_AI_REQUEST_PRESENCE_PENALTY, ATTR_GEN_AI_REQUEST_SEED, ATTR_GEN_AI_REQUEST_STOP_SEQUENCES, ATTR_GEN_AI_REQUEST_STREAM, ATTR_GEN_AI_REQUEST_TEMPERATURE, ATTR_GEN_AI_REQUEST_TOP_K, ATTR_GEN_AI_REQUEST_TOP_P, ATTR_GEN_AI_RESPONSE_FINISH_REASONS, ATTR_GEN_AI_RESPONSE_ID, ATTR_GEN_AI_RESPONSE_MODEL, ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK, ATTR_GEN_AI_RETRIEVAL_DOCUMENTS, ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT, ATTR_GEN_AI_SYSTEM, GEN_AI_SYSTEM_VALUE_ANTHROPIC, GEN_AI_SYSTEM_VALUE_AWS_BEDROCK, GEN_AI_SYSTEM_VALUE_AZ_AI_INFERENCE, GEN_AI_SYSTEM_VALUE_AZ_AI_OPENAI, GEN_AI_SYSTEM_VALUE_AZURE_AI_INFERENCE, GEN_AI_SYSTEM_VALUE_AZURE_AI_OPENAI, GEN_AI_SYSTEM_VALUE_COHERE, GEN_AI_SYSTEM_VALUE_DEEPSEEK, GEN_AI_SYSTEM_VALUE_GCP_GEMINI, GEN_AI_SYSTEM_VALUE_GCP_GEN_AI, GEN_AI_SYSTEM_VALUE_GCP_VERTEX_AI, GEN_AI_SYSTEM_VALUE_GEMINI, GEN_AI_SYSTEM_VALUE_GROQ, GEN_AI_SYSTEM_VALUE_IBM_WATSONX_AI, GEN_AI_SYSTEM_VALUE_MISTRAL_AI, GEN_AI_SYSTEM_VALUE_OPENAI, GEN_AI_SYSTEM_VALUE_PERPLEXITY, GEN_AI_SYSTEM_VALUE_VERTEX_AI, GEN_AI_SYSTEM_VALUE_XAI, ATTR_GEN_AI_SYSTEM_INSTRUCTIONS, ATTR_GEN_AI_TOKEN_TYPE, GEN_AI_TOKEN_TYPE_VALUE_INPUT, GEN_AI_TOKEN_TYPE_VALUE_COMPLETION, GEN_AI_TOKEN_TYPE_VALUE_OUTPUT, ATTR_GEN_AI_TOOL_CALL_ARGUMENTS, ATTR_GEN_AI_TOOL_CALL_ID, ATTR_GEN_AI_TOOL_CALL_RESULT, ATTR_GEN_AI_TOOL_DEFINITIONS, ATTR_GEN_AI_TOOL_DESCRIPTION, ATTR_GEN_AI_TOOL_NAME, ATTR_GEN_AI_TOOL_TYPE, ATTR_GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS, ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, ATTR_GEN_AI_USAGE_COMPLETION_TOKENS, ATTR_GEN_AI_USAGE_INPUT_TOKENS, ATTR_GEN_AI_USAGE_OUTPUT_TOKENS, ATTR_GEN_AI_USAGE_PROMPT_TOKENS, ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, ATTR_GEN_AI_WORKFLOW_NAME, ATTR_GEO_CONTINENT_CODE, GEO_CONTINENT_CODE_VALUE_AF, GEO_CONTINENT_CODE_VALUE_AN, GEO_CONTINENT_CODE_VALUE_AS, GEO_CONTINENT_CODE_VALUE_EU, GEO_CONTINENT_CODE_VALUE_NA, GEO_CONTINENT_CODE_VALUE_OC, GEO_CONTINENT_CODE_VALUE_SA, ATTR_GEO_COUNTRY_ISO_CODE, ATTR_GEO_LOCALITY_NAME, ATTR_GEO_LOCATION_LAT, ATTR_GEO_LOCATION_LON, ATTR_GEO_POSTAL_CODE, ATTR_GEO_REGION_ISO_CODE, ATTR_GO_CPU_DETAILED_STATE, ATTR_GO_CPU_STATE, GO_CPU_STATE_VALUE_GC, GO_CPU_STATE_VALUE_IDLE, GO_CPU_STATE_VALUE_SCAVENGE, GO_CPU_STATE_VALUE_USER, ATTR_GO_MEMORY_DETAILED_TYPE, ATTR_GO_MEMORY_TYPE, GO_MEMORY_TYPE_VALUE_OTHER, GO_MEMORY_TYPE_VALUE_STACK, ATTR_GRAPHQL_DOCUMENT, ATTR_GRAPHQL_OPERATION_NAME, ATTR_GRAPHQL_OPERATION_TYPE, GRAPHQL_OPERATION_TYPE_VALUE_MUTATION, GRAPHQL_OPERATION_TYPE_VALUE_QUERY, GRAPHQL_OPERATION_TYPE_VALUE_SUBSCRIPTION, ATTR_HEROKU_APP_ID, ATTR_HEROKU_RELEASE_COMMIT, ATTR_HEROKU_RELEASE_CREATION_TIMESTAMP, ATTR_HOST_ARCH, HOST_ARCH_VALUE_AMD64, HOST_ARCH_VALUE_ARM32, HOST_ARCH_VALUE_ARM64, HOST_ARCH_VALUE_IA64, HOST_ARCH_VALUE_PPC32, HOST_ARCH_VALUE_PPC64, HOST_ARCH_VALUE_S390X, HOST_ARCH_VALUE_X86, ATTR_HOST_CPU_CACHE_L2_SIZE, ATTR_HOST_CPU_FAMILY, ATTR_HOST_CPU_MODEL_ID, ATTR_HOST_CPU_MODEL_NAME, ATTR_HOST_CPU_STEPPING, ATTR_HOST_CPU_VENDOR_ID, ATTR_HOST_ID, ATTR_HOST_IMAGE_ID, ATTR_HOST_IMAGE_NAME, ATTR_HOST_IMAGE_VERSION, ATTR_HOST_IP, ATTR_HOST_MAC, ATTR_HOST_NAME, ATTR_HOST_TYPE, ATTR_HTTP_CLIENT_IP, ATTR_HTTP_CONNECTION_STATE, HTTP_CONNECTION_STATE_VALUE_ACTIVE, HTTP_CONNECTION_STATE_VALUE_IDLE, ATTR_HTTP_FLAVOR, HTTP_FLAVOR_VALUE_HTTP_1_0, HTTP_FLAVOR_VALUE_HTTP_1_1, HTTP_FLAVOR_VALUE_HTTP_2_0, HTTP_FLAVOR_VALUE_HTTP_3_0, HTTP_FLAVOR_VALUE_QUIC, HTTP_FLAVOR_VALUE_SPDY, ATTR_HTTP_HOST, ATTR_HTTP_METHOD, ATTR_HTTP_REQUEST_BODY_SIZE, HTTP_REQUEST_METHOD_VALUE_QUERY, ATTR_HTTP_REQUEST_SIZE, ATTR_HTTP_REQUEST_CONTENT_LENGTH, ATTR_HTTP_REQUEST_CONTENT_LENGTH_UNCOMPRESSED, ATTR_HTTP_RESPONSE_BODY_SIZE, ATTR_HTTP_RESPONSE_SIZE, ATTR_HTTP_RESPONSE_CONTENT_LENGTH, ATTR_HTTP_RESPONSE_CONTENT_LENGTH_UNCOMPRESSED, ATTR_HTTP_SCHEME, ATTR_HTTP_SERVER_NAME, ATTR_HTTP_STATUS_CODE, ATTR_HTTP_TARGET, ATTR_HTTP_URL, ATTR_HTTP_USER_AGENT, ATTR_HW_BATTERY_CAPACITY, ATTR_HW_BATTERY_CHEMISTRY, ATTR_HW_BATTERY_STATE, HW_BATTERY_STATE_VALUE_CHARGING, HW_BATTERY_STATE_VALUE_DISCHARGING, ATTR_HW_BIOS_VERSION, ATTR_HW_DRIVER_VERSION, ATTR_HW_ENCLOSURE_TYPE, ATTR_HW_FIRMWARE_VERSION, ATTR_HW_GPU_TASK, HW_GPU_TASK_VALUE_DECODER, HW_GPU_TASK_VALUE_ENCODER, HW_GPU_TASK_VALUE_GENERAL, ATTR_HW_ID, ATTR_HW_LIMIT_TYPE, HW_LIMIT_TYPE_VALUE_CRITICAL, HW_LIMIT_TYPE_VALUE_DEGRADED, HW_LIMIT_TYPE_VALUE_HIGH_CRITICAL, HW_LIMIT_TYPE_VALUE_HIGH_DEGRADED, HW_LIMIT_TYPE_VALUE_LOW_CRITICAL, HW_LIMIT_TYPE_VALUE_LOW_DEGRADED, HW_LIMIT_TYPE_VALUE_MAX, HW_LIMIT_TYPE_VALUE_THROTTLED, HW_LIMIT_TYPE_VALUE_TURBO, ATTR_HW_LOGICAL_DISK_RAID_LEVEL, ATTR_HW_LOGICAL_DISK_STATE, HW_LOGICAL_DISK_STATE_VALUE_FREE, HW_LOGICAL_DISK_STATE_VALUE_USED, ATTR_HW_MEMORY_TYPE, ATTR_HW_MODEL, ATTR_HW_NAME, ATTR_HW_NETWORK_LOGICAL_ADDRESSES, ATTR_HW_NETWORK_PHYSICAL_ADDRESS, ATTR_HW_PARENT, ATTR_HW_PHYSICAL_DISK_SMART_ATTRIBUTE, ATTR_HW_PHYSICAL_DISK_STATE, HW_PHYSICAL_DISK_STATE_VALUE_REMAINING, ATTR_HW_PHYSICAL_DISK_TYPE, ATTR_HW_SENSOR_LOCATION, ATTR_HW_SERIAL_NUMBER, ATTR_HW_STATE, HW_STATE_VALUE_DEGRADED, HW_STATE_VALUE_FAILED, HW_STATE_VALUE_NEEDS_CLEANING, HW_STATE_VALUE_OK, HW_STATE_VALUE_PREDICTED_FAILURE, ATTR_HW_TAPE_DRIVE_OPERATION_TYPE, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_CLEAN, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_MOUNT, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_UNMOUNT, ATTR_HW_TYPE, HW_TYPE_VALUE_BATTERY, HW_TYPE_VALUE_CPU, HW_TYPE_VALUE_DISK_CONTROLLER, HW_TYPE_VALUE_ENCLOSURE, HW_TYPE_VALUE_FAN, HW_TYPE_VALUE_GPU, HW_TYPE_VALUE_LOGICAL_DISK, HW_TYPE_VALUE_MEMORY, HW_TYPE_VALUE_NETWORK, HW_TYPE_VALUE_PHYSICAL_DISK, HW_TYPE_VALUE_POWER_SUPPLY, HW_TYPE_VALUE_TAPE_DRIVE, HW_TYPE_VALUE_TEMPERATURE, HW_TYPE_VALUE_VOLTAGE, ATTR_HW_VENDOR, ATTR_IOS_APP_STATE, IOS_APP_STATE_VALUE_ACTIVE, IOS_APP_STATE_VALUE_BACKGROUND, IOS_APP_STATE_VALUE_FOREGROUND, IOS_APP_STATE_VALUE_INACTIVE, IOS_APP_STATE_VALUE_TERMINATE, ATTR_IOS_STATE, IOS_STATE_VALUE_ACTIVE, IOS_STATE_VALUE_BACKGROUND, IOS_STATE_VALUE_FOREGROUND, IOS_STATE_VALUE_INACTIVE, IOS_STATE_VALUE_TERMINATE, ATTR_JSONRPC_PROTOCOL_VERSION, ATTR_JSONRPC_REQUEST_ID, ATTR_JVM_BUFFER_POOL_NAME, ATTR_JVM_GC_CAUSE, ATTR_K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE, K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE_VALUE_LOGS, K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE_VALUE_ROOTFS, ATTR_K8S_CONTAINER_STATUS_LAST_TERMINATED_REASON, ATTR_K8S_CONTAINER_STATUS_REASON, K8S_CONTAINER_STATUS_REASON_VALUE_COMPLETED, K8S_CONTAINER_STATUS_REASON_VALUE_CONTAINER_CANNOT_RUN, K8S_CONTAINER_STATUS_REASON_VALUE_CONTAINER_CREATING, K8S_CONTAINER_STATUS_REASON_VALUE_CRASH_LOOP_BACK_OFF, K8S_CONTAINER_STATUS_REASON_VALUE_CREATE_CONTAINER_CONFIG_ERROR, K8S_CONTAINER_STATUS_REASON_VALUE_ERR_IMAGE_PULL, K8S_CONTAINER_STATUS_REASON_VALUE_ERROR, K8S_CONTAINER_STATUS_REASON_VALUE_IMAGE_PULL_BACK_OFF, K8S_CONTAINER_STATUS_REASON_VALUE_OOM_KILLED, ATTR_K8S_CONTAINER_STATUS_STATE, K8S_CONTAINER_STATUS_STATE_VALUE_RUNNING, K8S_CONTAINER_STATUS_STATE_VALUE_TERMINATED, K8S_CONTAINER_STATUS_STATE_VALUE_WAITING, ATTR_K8S_HPA_METRIC_TYPE, ATTR_K8S_HPA_NAME, ATTR_K8S_HPA_SCALETARGETREF_API_VERSION, ATTR_K8S_HPA_SCALETARGETREF_KIND, ATTR_K8S_HPA_SCALETARGETREF_NAME, ATTR_K8S_HPA_UID, ATTR_K8S_HUGEPAGE_SIZE, ATTR_K8S_NAMESPACE_PHASE, K8S_NAMESPACE_PHASE_VALUE_ACTIVE, K8S_NAMESPACE_PHASE_VALUE_TERMINATING, ATTR_K8S_NODE_CONDITION_STATUS, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_FALSE, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_TRUE, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_UNKNOWN, ATTR_K8S_NODE_CONDITION_TYPE, K8S_NODE_CONDITION_TYPE_VALUE_DISK_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_MEMORY_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_NETWORK_UNAVAILABLE, K8S_NODE_CONDITION_TYPE_VALUE_PID_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_READY, ATTR_K8S_NODE_SYSTEM_CONTAINER_NAME, ATTR_K8S_PERSISTENTVOLUME_ANNOTATION, ATTR_K8S_PERSISTENTVOLUME_LABEL, ATTR_K8S_PERSISTENTVOLUME_NAME, ATTR_K8S_PERSISTENTVOLUME_RECLAIM_POLICY, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_DELETE, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_RECYCLE, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_RETAIN, ATTR_K8S_PERSISTENTVOLUME_STATUS_PHASE, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_AVAILABLE, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_BOUND, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_FAILED, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_PENDING, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_RELEASED, ATTR_K8S_PERSISTENTVOLUME_UID, ATTR_K8S_PERSISTENTVOLUMECLAIM_ANNOTATION, ATTR_K8S_PERSISTENTVOLUMECLAIM_LABEL, ATTR_K8S_PERSISTENTVOLUMECLAIM_NAME, ATTR_K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_BOUND, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_LOST, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_PENDING, ATTR_K8S_PERSISTENTVOLUMECLAIM_UID, ATTR_K8S_POD_LABELS, ATTR_K8S_POD_STATUS_PHASE, K8S_POD_STATUS_PHASE_VALUE_FAILED, K8S_POD_STATUS_PHASE_VALUE_PENDING, K8S_POD_STATUS_PHASE_VALUE_RUNNING, K8S_POD_STATUS_PHASE_VALUE_SUCCEEDED, K8S_POD_STATUS_PHASE_VALUE_UNKNOWN, ATTR_K8S_POD_STATUS_REASON, K8S_POD_STATUS_REASON_VALUE_EVICTED, K8S_POD_STATUS_REASON_VALUE_NODE_AFFINITY, K8S_POD_STATUS_REASON_VALUE_NODE_LOST, K8S_POD_STATUS_REASON_VALUE_SHUTDOWN, K8S_POD_STATUS_REASON_VALUE_UNEXPECTED_ADMISSION_ERROR, ATTR_K8S_REPLICATIONCONTROLLER_NAME, ATTR_K8S_REPLICATIONCONTROLLER_UID, ATTR_K8S_RESOURCEQUOTA_NAME, ATTR_K8S_RESOURCEQUOTA_RESOURCE_NAME, ATTR_K8S_RESOURCEQUOTA_UID, ATTR_K8S_SERVICE_ANNOTATION, ATTR_K8S_SERVICE_ENDPOINT_ADDRESS_TYPE, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_FQDN, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_IPV4, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_IPV6, ATTR_K8S_SERVICE_ENDPOINT_CONDITION, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_READY, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_SERVING, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_TERMINATING, ATTR_K8S_SERVICE_ENDPOINT_ZONE, ATTR_K8S_SERVICE_LABEL, ATTR_K8S_SERVICE_NAME, ATTR_K8S_SERVICE_PUBLISH_NOT_READY_ADDRESSES, ATTR_K8S_SERVICE_SELECTOR, ATTR_K8S_SERVICE_TRAFFIC_DISTRIBUTION, ATTR_K8S_SERVICE_TYPE, K8S_SERVICE_TYPE_VALUE_CLUSTER_IP, K8S_SERVICE_TYPE_VALUE_EXTERNAL_NAME, K8S_SERVICE_TYPE_VALUE_LOAD_BALANCER, K8S_SERVICE_TYPE_VALUE_NODE_PORT, ATTR_K8S_SERVICE_UID, ATTR_K8S_STORAGECLASS_NAME, ATTR_K8S_VOLUME_NAME, ATTR_K8S_VOLUME_TYPE, K8S_VOLUME_TYPE_VALUE_CONFIG_MAP, K8S_VOLUME_TYPE_VALUE_DOWNWARD_API, K8S_VOLUME_TYPE_VALUE_EMPTY_DIR, K8S_VOLUME_TYPE_VALUE_LOCAL, K8S_VOLUME_TYPE_VALUE_PERSISTENT_VOLUME_CLAIM, K8S_VOLUME_TYPE_VALUE_SECRET, ATTR_LINUX_MEMORY_SLAB_STATE, LINUX_MEMORY_SLAB_STATE_VALUE_RECLAIMABLE, LINUX_MEMORY_SLAB_STATE_VALUE_UNRECLAIMABLE, ATTR_LOG_FILE_NAME, ATTR_LOG_FILE_NAME_RESOLVED, ATTR_LOG_FILE_PATH, ATTR_LOG_FILE_PATH_RESOLVED, ATTR_LOG_IOSTREAM, LOG_IOSTREAM_VALUE_STDERR, LOG_IOSTREAM_VALUE_STDOUT, ATTR_LOG_RECORD_ORIGINAL, ATTR_LOG_RECORD_UID, ATTR_MAINFRAME_LPAR_NAME, ATTR_MCP_METHOD_NAME, MCP_METHOD_NAME_VALUE_COMPLETION_COMPLETE, MCP_METHOD_NAME_VALUE_ELICITATION_CREATE, MCP_METHOD_NAME_VALUE_INITIALIZE, MCP_METHOD_NAME_VALUE_LOGGING_SET_LEVEL, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_CANCELLED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_INITIALIZED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_MESSAGE, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_PROGRESS, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_PROMPTS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_RESOURCES_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_RESOURCES_UPDATED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_ROOTS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_TOOLS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_PING, MCP_METHOD_NAME_VALUE_PROMPTS_GET, MCP_METHOD_NAME_VALUE_PROMPTS_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_READ, MCP_METHOD_NAME_VALUE_RESOURCES_SUBSCRIBE, MCP_METHOD_NAME_VALUE_RESOURCES_TEMPLATES_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_UNSUBSCRIBE, MCP_METHOD_NAME_VALUE_ROOTS_LIST, MCP_METHOD_NAME_VALUE_SAMPLING_CREATE_MESSAGE, MCP_METHOD_NAME_VALUE_TOOLS_CALL, MCP_METHOD_NAME_VALUE_TOOLS_LIST, ATTR_MCP_PROTOCOL_VERSION, ATTR_MCP_RESOURCE_URI, ATTR_MCP_SESSION_ID, ATTR_MESSAGE_COMPRESSED_SIZE, ATTR_MESSAGE_ID, ATTR_MESSAGE_TYPE, MESSAGE_TYPE_VALUE_RECEIVED, MESSAGE_TYPE_VALUE_SENT, ATTR_MESSAGE_UNCOMPRESSED_SIZE, ATTR_MESSAGING_BATCH_MESSAGE_COUNT, ATTR_MESSAGING_CLIENT_ID, ATTR_MESSAGING_CONSUMER_GROUP_NAME, ATTR_MESSAGING_DESTINATION_ANONYMOUS, ATTR_MESSAGING_DESTINATION_NAME, ATTR_MESSAGING_DESTINATION_PARTITION_ID, ATTR_MESSAGING_DESTINATION_SUBSCRIPTION_NAME, ATTR_MESSAGING_DESTINATION_TEMPLATE, ATTR_MESSAGING_DESTINATION_TEMPORARY, ATTR_MESSAGING_DESTINATION_PUBLISH_ANONYMOUS, ATTR_MESSAGING_DESTINATION_PUBLISH_NAME, ATTR_MESSAGING_EVENTHUBS_CONSUMER_GROUP, ATTR_MESSAGING_EVENTHUBS_MESSAGE_ENQUEUED_TIME, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ACK_DEADLINE, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ACK_ID, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_DELIVERY_ATTEMPT, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ORDERING_KEY, ATTR_MESSAGING_KAFKA_CONSUMER_GROUP, ATTR_MESSAGING_KAFKA_DESTINATION_PARTITION, ATTR_MESSAGING_KAFKA_MESSAGE_KEY, ATTR_MESSAGING_KAFKA_MESSAGE_OFFSET, ATTR_MESSAGING_KAFKA_MESSAGE_TOMBSTONE, ATTR_MESSAGING_KAFKA_OFFSET, ATTR_MESSAGING_MESSAGE_BODY_SIZE, ATTR_MESSAGING_MESSAGE_CONVERSATION_ID, ATTR_MESSAGING_MESSAGE_ENVELOPE_SIZE, ATTR_MESSAGING_MESSAGE_ID, ATTR_MESSAGING_OPERATION, ATTR_MESSAGING_OPERATION_NAME, ATTR_MESSAGING_OPERATION_TYPE, MESSAGING_OPERATION_TYPE_VALUE_CREATE, MESSAGING_OPERATION_TYPE_VALUE_DELIVER, MESSAGING_OPERATION_TYPE_VALUE_PROCESS, MESSAGING_OPERATION_TYPE_VALUE_PUBLISH, MESSAGING_OPERATION_TYPE_VALUE_RECEIVE, MESSAGING_OPERATION_TYPE_VALUE_SEND, MESSAGING_OPERATION_TYPE_VALUE_SETTLE, ATTR_MESSAGING_RABBITMQ_DESTINATION_ROUTING_KEY, ATTR_MESSAGING_RABBITMQ_MESSAGE_DELIVERY_TAG, ATTR_MESSAGING_ROCKETMQ_CLIENT_GROUP, ATTR_MESSAGING_ROCKETMQ_CONSUMPTION_MODEL, MESSAGING_ROCKETMQ_CONSUMPTION_MODEL_VALUE_BROADCASTING, MESSAGING_ROCKETMQ_CONSUMPTION_MODEL_VALUE_CLUSTERING, ATTR_MESSAGING_ROCKETMQ_MESSAGE_DELAY_TIME_LEVEL, ATTR_MESSAGING_ROCKETMQ_MESSAGE_DELIVERY_TIMESTAMP, ATTR_MESSAGING_ROCKETMQ_MESSAGE_GROUP, ATTR_MESSAGING_ROCKETMQ_MESSAGE_KEYS, ATTR_MESSAGING_ROCKETMQ_MESSAGE_TAG, ATTR_MESSAGING_ROCKETMQ_MESSAGE_TYPE, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_DELAY, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_FIFO, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_NORMAL, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_TRANSACTION, ATTR_MESSAGING_ROCKETMQ_NAMESPACE, ATTR_MESSAGING_SERVICEBUS_DESTINATION_SUBSCRIPTION_NAME, ATTR_MESSAGING_SERVICEBUS_DISPOSITION_STATUS, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_ABANDON, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_COMPLETE, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_DEAD_LETTER, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_DEFER, ATTR_MESSAGING_SERVICEBUS_MESSAGE_DELIVERY_COUNT, ATTR_MESSAGING_SERVICEBUS_MESSAGE_ENQUEUED_TIME, ATTR_MESSAGING_SYSTEM, MESSAGING_SYSTEM_VALUE_ACTIVEMQ, MESSAGING_SYSTEM_VALUE_AWS_SNS, MESSAGING_SYSTEM_VALUE_AWS_SQS, MESSAGING_SYSTEM_VALUE_EVENTGRID, MESSAGING_SYSTEM_VALUE_EVENTHUBS, MESSAGING_SYSTEM_VALUE_GCP_PUBSUB, MESSAGING_SYSTEM_VALUE_JMS, MESSAGING_SYSTEM_VALUE_KAFKA, MESSAGING_SYSTEM_VALUE_PULSAR, MESSAGING_SYSTEM_VALUE_RABBITMQ, MESSAGING_SYSTEM_VALUE_ROCKETMQ, MESSAGING_SYSTEM_VALUE_SERVICEBUS, ATTR_NET_HOST_IP, ATTR_NET_HOST_NAME, ATTR_NET_HOST_PORT, ATTR_NET_PEER_IP, ATTR_NET_PEER_NAME, ATTR_NET_PEER_PORT, ATTR_NET_PROTOCOL_NAME, ATTR_NET_PROTOCOL_VERSION, ATTR_NET_SOCK_FAMILY, NET_SOCK_FAMILY_VALUE_INET, NET_SOCK_FAMILY_VALUE_INET6, NET_SOCK_FAMILY_VALUE_UNIX, ATTR_NET_SOCK_HOST_ADDR, ATTR_NET_SOCK_HOST_PORT, ATTR_NET_SOCK_PEER_ADDR, ATTR_NET_SOCK_PEER_NAME, ATTR_NET_SOCK_PEER_PORT, ATTR_NET_TRANSPORT, NET_TRANSPORT_VALUE_INPROC, NET_TRANSPORT_VALUE_IP_TCP, NET_TRANSPORT_VALUE_IP_UDP, NET_TRANSPORT_VALUE_OTHER, NET_TRANSPORT_VALUE_PIPE, ATTR_NETWORK_CARRIER_ICC, ATTR_NETWORK_CARRIER_MCC, ATTR_NETWORK_CARRIER_MNC, ATTR_NETWORK_CARRIER_NAME, ATTR_NETWORK_CONNECTION_STATE, NETWORK_CONNECTION_STATE_VALUE_CLOSE_WAIT, NETWORK_CONNECTION_STATE_VALUE_CLOSED, NETWORK_CONNECTION_STATE_VALUE_CLOSING, NETWORK_CONNECTION_STATE_VALUE_ESTABLISHED, NETWORK_CONNECTION_STATE_VALUE_FIN_WAIT_1, NETWORK_CONNECTION_STATE_VALUE_FIN_WAIT_2, NETWORK_CONNECTION_STATE_VALUE_LAST_ACK, NETWORK_CONNECTION_STATE_VALUE_LISTEN, NETWORK_CONNECTION_STATE_VALUE_SYN_RECEIVED, NETWORK_CONNECTION_STATE_VALUE_SYN_SENT, NETWORK_CONNECTION_STATE_VALUE_TIME_WAIT, ATTR_NETWORK_CONNECTION_SUBTYPE, NETWORK_CONNECTION_SUBTYPE_VALUE_CDMA, NETWORK_CONNECTION_SUBTYPE_VALUE_CDMA2000_1XRTT, NETWORK_CONNECTION_SUBTYPE_VALUE_EDGE, NETWORK_CONNECTION_SUBTYPE_VALUE_EHRPD, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_0, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_A, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_B, NETWORK_CONNECTION_SUBTYPE_VALUE_GPRS, NETWORK_CONNECTION_SUBTYPE_VALUE_GSM, NETWORK_CONNECTION_SUBTYPE_VALUE_HSDPA, NETWORK_CONNECTION_SUBTYPE_VALUE_HSPA, NETWORK_CONNECTION_SUBTYPE_VALUE_HSPAP, NETWORK_CONNECTION_SUBTYPE_VALUE_HSUPA, NETWORK_CONNECTION_SUBTYPE_VALUE_IDEN, NETWORK_CONNECTION_SUBTYPE_VALUE_IWLAN, NETWORK_CONNECTION_SUBTYPE_VALUE_LTE, NETWORK_CONNECTION_SUBTYPE_VALUE_LTE_CA, NETWORK_CONNECTION_SUBTYPE_VALUE_NR, NETWORK_CONNECTION_SUBTYPE_VALUE_NRNSA, NETWORK_CONNECTION_SUBTYPE_VALUE_TD_SCDMA, NETWORK_CONNECTION_SUBTYPE_VALUE_UMTS, ATTR_NETWORK_CONNECTION_TYPE, NETWORK_CONNECTION_TYPE_VALUE_CELL, NETWORK_CONNECTION_TYPE_VALUE_UNAVAILABLE, NETWORK_CONNECTION_TYPE_VALUE_UNKNOWN, NETWORK_CONNECTION_TYPE_VALUE_WIFI, NETWORK_CONNECTION_TYPE_VALUE_WIRED, ATTR_NETWORK_INTERFACE_NAME, ATTR_NETWORK_IO_DIRECTION, NETWORK_IO_DIRECTION_VALUE_RECEIVE, NETWORK_IO_DIRECTION_VALUE_TRANSMIT, ATTR_NFS_OPERATION_NAME, ATTR_NFS_SERVER_REPCACHE_STATUS, ATTR_NODEJS_EVENTLOOP_STATE, NODEJS_EVENTLOOP_STATE_VALUE_ACTIVE, NODEJS_EVENTLOOP_STATE_VALUE_IDLE, ATTR_OCI_MANIFEST_DIGEST, ATTR_ONC_RPC_PROCEDURE_NAME, ATTR_ONC_RPC_PROCEDURE_NUMBER, ATTR_ONC_RPC_PROGRAM_NAME, ATTR_ONC_RPC_VERSION, ATTR_OPENAI_API_TYPE, OPENAI_API_TYPE_VALUE_CHAT_COMPLETIONS, OPENAI_API_TYPE_VALUE_RESPONSES, ATTR_OPENAI_REQUEST_SERVICE_TIER, OPENAI_REQUEST_SERVICE_TIER_VALUE_AUTO, OPENAI_REQUEST_SERVICE_TIER_VALUE_DEFAULT, ATTR_OPENAI_RESPONSE_SERVICE_TIER, ATTR_OPENAI_RESPONSE_SYSTEM_FINGERPRINT, ATTR_OPENSHIFT_CLUSTERQUOTA_NAME, ATTR_OPENSHIFT_CLUSTERQUOTA_UID, ATTR_OPENTRACING_REF_TYPE, OPENTRACING_REF_TYPE_VALUE_CHILD_OF, OPENTRACING_REF_TYPE_VALUE_FOLLOWS_FROM, ATTR_ORACLE_DB_DOMAIN, ATTR_ORACLE_DB_INSTANCE_NAME, ATTR_ORACLE_DB_NAME, ATTR_ORACLE_DB_PDB, ATTR_ORACLE_DB_SERVICE, ATTR_ORACLE_CLOUD_REALM, ATTR_OS_BUILD_ID, ATTR_OS_DESCRIPTION, ATTR_OS_NAME, ATTR_OS_TYPE, OS_TYPE_VALUE_AIX, OS_TYPE_VALUE_DARWIN, OS_TYPE_VALUE_DRAGONFLYBSD, OS_TYPE_VALUE_FREEBSD, OS_TYPE_VALUE_HPUX, OS_TYPE_VALUE_LINUX, OS_TYPE_VALUE_NETBSD, OS_TYPE_VALUE_OPENBSD, OS_TYPE_VALUE_SOLARIS, OS_TYPE_VALUE_WINDOWS, OS_TYPE_VALUE_Z_OS, OS_TYPE_VALUE_ZOS, ATTR_OS_VERSION, ATTR_OTEL_COMPONENT_NAME, ATTR_OTEL_COMPONENT_TYPE, OTEL_COMPONENT_TYPE_VALUE_BATCHING_LOG_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_BATCHING_SPAN_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_PERIODIC_METRIC_READER, OTEL_COMPONENT_TYPE_VALUE_PROMETHEUS_HTTP_TEXT_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_SIMPLE_LOG_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_SIMPLE_SPAN_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_ZIPKIN_HTTP_SPAN_EXPORTER, ATTR_OTEL_LIBRARY_NAME, ATTR_OTEL_LIBRARY_VERSION, ATTR_OTEL_SCOPE_SCHEMA_URL, ATTR_OTEL_SPAN_PARENT_ORIGIN, OTEL_SPAN_PARENT_ORIGIN_VALUE_LOCAL, OTEL_SPAN_PARENT_ORIGIN_VALUE_NONE, OTEL_SPAN_PARENT_ORIGIN_VALUE_REMOTE, ATTR_OTEL_SPAN_SAMPLING_RESULT, OTEL_SPAN_SAMPLING_RESULT_VALUE_DROP, OTEL_SPAN_SAMPLING_RESULT_VALUE_RECORD_AND_SAMPLE, OTEL_SPAN_SAMPLING_RESULT_VALUE_RECORD_ONLY, ATTR_PEER_SERVICE, ATTR_POOL_NAME, ATTR_PPROF_LOCATION_IS_FOLDED, ATTR_PPROF_MAPPING_HAS_FILENAMES, ATTR_PPROF_MAPPING_HAS_FUNCTIONS, ATTR_PPROF_MAPPING_HAS_INLINE_FRAMES, ATTR_PPROF_MAPPING_HAS_LINE_NUMBERS, ATTR_PPROF_PROFILE_COMMENT, ATTR_PPROF_PROFILE_DOC_URL, ATTR_PPROF_PROFILE_DROP_FRAMES, ATTR_PPROF_PROFILE_KEEP_FRAMES, ATTR_PPROF_SCOPE_DEFAULT_SAMPLE_TYPE, ATTR_PPROF_SCOPE_SAMPLE_TYPE_ORDER, ATTR_PROCESS_ARGS_COUNT, ATTR_PROCESS_COMMAND, ATTR_PROCESS_COMMAND_ARGS, ATTR_PROCESS_COMMAND_LINE, ATTR_PROCESS_CONTEXT_SWITCH_TYPE, PROCESS_CONTEXT_SWITCH_TYPE_VALUE_INVOLUNTARY, PROCESS_CONTEXT_SWITCH_TYPE_VALUE_VOLUNTARY, ATTR_PROCESS_CPU_STATE, PROCESS_CPU_STATE_VALUE_SYSTEM, PROCESS_CPU_STATE_VALUE_USER, PROCESS_CPU_STATE_VALUE_WAIT, ATTR_PROCESS_CREATION_TIME, ATTR_PROCESS_ENVIRONMENT_VARIABLE, ATTR_PROCESS_EXECUTABLE_BUILD_ID_GNU, ATTR_PROCESS_EXECUTABLE_BUILD_ID_GO, ATTR_PROCESS_EXECUTABLE_BUILD_ID_HTLHASH, ATTR_PROCESS_EXECUTABLE_BUILD_ID_PROFILING, ATTR_PROCESS_EXECUTABLE_NAME, ATTR_PROCESS_EXECUTABLE_PATH, ATTR_PROCESS_EXIT_CODE, ATTR_PROCESS_EXIT_TIME, ATTR_PROCESS_GROUP_LEADER_PID, ATTR_PROCESS_INTERACTIVE, ATTR_PROCESS_LINUX_CGROUP, ATTR_PROCESS_OWNER, ATTR_PROCESS_PAGING_FAULT_TYPE, PROCESS_PAGING_FAULT_TYPE_VALUE_MAJOR, PROCESS_PAGING_FAULT_TYPE_VALUE_MINOR, ATTR_PROCESS_PARENT_PID, ATTR_PROCESS_PID, ATTR_PROCESS_REAL_USER_ID, ATTR_PROCESS_REAL_USER_NAME, ATTR_PROCESS_RUNTIME_DESCRIPTION, ATTR_PROCESS_RUNTIME_NAME, ATTR_PROCESS_RUNTIME_VERSION, ATTR_PROCESS_SAVED_USER_ID, ATTR_PROCESS_SAVED_USER_NAME, ATTR_PROCESS_SESSION_LEADER_PID, ATTR_PROCESS_STATE, PROCESS_STATE_VALUE_DEFUNCT, PROCESS_STATE_VALUE_RUNNING, PROCESS_STATE_VALUE_SLEEPING, PROCESS_STATE_VALUE_STOPPED, ATTR_PROCESS_TITLE, ATTR_PROCESS_USER_ID, ATTR_PROCESS_USER_NAME, ATTR_PROCESS_VPID, ATTR_PROCESS_WORKING_DIRECTORY, ATTR_PROFILE_FRAME_TYPE, PROFILE_FRAME_TYPE_VALUE_BEAM, PROFILE_FRAME_TYPE_VALUE_CPYTHON, PROFILE_FRAME_TYPE_VALUE_DOTNET, PROFILE_FRAME_TYPE_VALUE_GO, PROFILE_FRAME_TYPE_VALUE_JVM, PROFILE_FRAME_TYPE_VALUE_KERNEL, PROFILE_FRAME_TYPE_VALUE_LUAJIT, PROFILE_FRAME_TYPE_VALUE_NATIVE, PROFILE_FRAME_TYPE_VALUE_PERL, PROFILE_FRAME_TYPE_VALUE_PHP, PROFILE_FRAME_TYPE_VALUE_RUBY, PROFILE_FRAME_TYPE_VALUE_RUST, PROFILE_FRAME_TYPE_VALUE_V8JS, ATTR_RPC_CONNECT_RPC_ERROR_CODE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_ABORTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_ALREADY_EXISTS, RPC_CONNECT_RPC_ERROR_CODE_VALUE_CANCELLED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_DATA_LOSS, RPC_CONNECT_RPC_ERROR_CODE_VALUE_DEADLINE_EXCEEDED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_FAILED_PRECONDITION, RPC_CONNECT_RPC_ERROR_CODE_VALUE_INTERNAL, RPC_CONNECT_RPC_ERROR_CODE_VALUE_INVALID_ARGUMENT, RPC_CONNECT_RPC_ERROR_CODE_VALUE_NOT_FOUND, RPC_CONNECT_RPC_ERROR_CODE_VALUE_OUT_OF_RANGE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_PERMISSION_DENIED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_RESOURCE_EXHAUSTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNAUTHENTICATED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNAVAILABLE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNIMPLEMENTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNKNOWN, ATTR_RPC_CONNECT_RPC_REQUEST_METADATA, ATTR_RPC_CONNECT_RPC_RESPONSE_METADATA, ATTR_RPC_GRPC_REQUEST_METADATA, ATTR_RPC_GRPC_RESPONSE_METADATA, ATTR_RPC_GRPC_STATUS_CODE, RPC_GRPC_STATUS_CODE_VALUE_OK, RPC_GRPC_STATUS_CODE_VALUE_CANCELLED, RPC_GRPC_STATUS_CODE_VALUE_UNKNOWN, RPC_GRPC_STATUS_CODE_VALUE_INVALID_ARGUMENT, RPC_GRPC_STATUS_CODE_VALUE_DEADLINE_EXCEEDED, RPC_GRPC_STATUS_CODE_VALUE_NOT_FOUND, RPC_GRPC_STATUS_CODE_VALUE_ALREADY_EXISTS, RPC_GRPC_STATUS_CODE_VALUE_PERMISSION_DENIED, RPC_GRPC_STATUS_CODE_VALUE_RESOURCE_EXHAUSTED, RPC_GRPC_STATUS_CODE_VALUE_FAILED_PRECONDITION, RPC_GRPC_STATUS_CODE_VALUE_ABORTED, RPC_GRPC_STATUS_CODE_VALUE_OUT_OF_RANGE, RPC_GRPC_STATUS_CODE_VALUE_UNIMPLEMENTED, RPC_GRPC_STATUS_CODE_VALUE_INTERNAL, RPC_GRPC_STATUS_CODE_VALUE_UNAVAILABLE, RPC_GRPC_STATUS_CODE_VALUE_DATA_LOSS, RPC_GRPC_STATUS_CODE_VALUE_UNAUTHENTICATED, ATTR_RPC_JSONRPC_ERROR_CODE, ATTR_RPC_JSONRPC_ERROR_MESSAGE, ATTR_RPC_JSONRPC_REQUEST_ID, ATTR_RPC_JSONRPC_VERSION, ATTR_RPC_MESSAGE_COMPRESSED_SIZE, ATTR_RPC_MESSAGE_ID, ATTR_RPC_MESSAGE_TYPE, RPC_MESSAGE_TYPE_VALUE_RECEIVED, RPC_MESSAGE_TYPE_VALUE_SENT, ATTR_RPC_MESSAGE_UNCOMPRESSED_SIZE, ATTR_RPC_METHOD, ATTR_RPC_METHOD_ORIGINAL, ATTR_RPC_REQUEST_METADATA, ATTR_RPC_RESPONSE_METADATA, ATTR_RPC_RESPONSE_STATUS_CODE, ATTR_RPC_SERVICE, ATTR_RPC_SYSTEM, RPC_SYSTEM_VALUE_APACHE_DUBBO, RPC_SYSTEM_VALUE_CONNECT_RPC, RPC_SYSTEM_VALUE_DOTNET_WCF, RPC_SYSTEM_VALUE_GRPC, RPC_SYSTEM_VALUE_JAVA_RMI, RPC_SYSTEM_VALUE_JSONRPC, RPC_SYSTEM_VALUE_ONC_RPC, ATTR_RPC_SYSTEM_NAME, RPC_SYSTEM_NAME_VALUE_CONNECTRPC, RPC_SYSTEM_NAME_VALUE_DUBBO, RPC_SYSTEM_NAME_VALUE_GRPC, RPC_SYSTEM_NAME_VALUE_JSONRPC, ATTR_SECURITY_RULE_CATEGORY, ATTR_SECURITY_RULE_DESCRIPTION, ATTR_SECURITY_RULE_LICENSE, ATTR_SECURITY_RULE_NAME, ATTR_SECURITY_RULE_REFERENCE, ATTR_SECURITY_RULE_RULESET_NAME, ATTR_SECURITY_RULE_UUID, ATTR_SECURITY_RULE_VERSION, ATTR_SERVICE_CRITICALITY, SERVICE_CRITICALITY_VALUE_CRITICAL, SERVICE_CRITICALITY_VALUE_HIGH, SERVICE_CRITICALITY_VALUE_LOW, SERVICE_CRITICALITY_VALUE_MEDIUM, ATTR_SERVICE_PEER_NAME, ATTR_SERVICE_PEER_NAMESPACE, ATTR_SESSION_ID, ATTR_SESSION_PREVIOUS_ID, ATTR_SOURCE_ADDRESS, ATTR_SOURCE_PORT, ATTR_STATE, STATE_VALUE_IDLE, STATE_VALUE_USED, ATTR_SYSTEM_CPU_LOGICAL_NUMBER, ATTR_SYSTEM_CPU_STATE, SYSTEM_CPU_STATE_VALUE_IDLE, SYSTEM_CPU_STATE_VALUE_INTERRUPT, SYSTEM_CPU_STATE_VALUE_IOWAIT, SYSTEM_CPU_STATE_VALUE_NICE, SYSTEM_CPU_STATE_VALUE_STEAL, SYSTEM_CPU_STATE_VALUE_SYSTEM, SYSTEM_CPU_STATE_VALUE_USER, ATTR_SYSTEM_DEVICE, ATTR_SYSTEM_FILESYSTEM_MODE, ATTR_SYSTEM_FILESYSTEM_MOUNTPOINT, ATTR_SYSTEM_FILESYSTEM_STATE, SYSTEM_FILESYSTEM_STATE_VALUE_FREE, SYSTEM_FILESYSTEM_STATE_VALUE_RESERVED, SYSTEM_FILESYSTEM_STATE_VALUE_USED, ATTR_SYSTEM_FILESYSTEM_TYPE, SYSTEM_FILESYSTEM_TYPE_VALUE_EXFAT, SYSTEM_FILESYSTEM_TYPE_VALUE_EXT4, SYSTEM_FILESYSTEM_TYPE_VALUE_FAT32, SYSTEM_FILESYSTEM_TYPE_VALUE_HFSPLUS, SYSTEM_FILESYSTEM_TYPE_VALUE_NTFS, SYSTEM_FILESYSTEM_TYPE_VALUE_REFS, ATTR_SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE, SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE_VALUE_FREE, SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE_VALUE_USED, ATTR_SYSTEM_MEMORY_LINUX_SLAB_STATE, SYSTEM_MEMORY_LINUX_SLAB_STATE_VALUE_RECLAIMABLE, SYSTEM_MEMORY_LINUX_SLAB_STATE_VALUE_UNRECLAIMABLE, ATTR_SYSTEM_MEMORY_STATE, SYSTEM_MEMORY_STATE_VALUE_BUFFERS, SYSTEM_MEMORY_STATE_VALUE_CACHED, SYSTEM_MEMORY_STATE_VALUE_FREE, SYSTEM_MEMORY_STATE_VALUE_SHARED, SYSTEM_MEMORY_STATE_VALUE_USED, ATTR_SYSTEM_NETWORK_STATE, SYSTEM_NETWORK_STATE_VALUE_CLOSE, SYSTEM_NETWORK_STATE_VALUE_CLOSE_WAIT, SYSTEM_NETWORK_STATE_VALUE_CLOSING, SYSTEM_NETWORK_STATE_VALUE_DELETE, SYSTEM_NETWORK_STATE_VALUE_ESTABLISHED, SYSTEM_NETWORK_STATE_VALUE_FIN_WAIT_1, SYSTEM_NETWORK_STATE_VALUE_FIN_WAIT_2, SYSTEM_NETWORK_STATE_VALUE_LAST_ACK, SYSTEM_NETWORK_STATE_VALUE_LISTEN, SYSTEM_NETWORK_STATE_VALUE_SYN_RECV, SYSTEM_NETWORK_STATE_VALUE_SYN_SENT, SYSTEM_NETWORK_STATE_VALUE_TIME_WAIT, ATTR_SYSTEM_PAGING_DIRECTION, SYSTEM_PAGING_DIRECTION_VALUE_IN, SYSTEM_PAGING_DIRECTION_VALUE_OUT, ATTR_SYSTEM_PAGING_FAULT_TYPE, SYSTEM_PAGING_FAULT_TYPE_VALUE_MAJOR, SYSTEM_PAGING_FAULT_TYPE_VALUE_MINOR, ATTR_SYSTEM_PAGING_STATE, SYSTEM_PAGING_STATE_VALUE_FREE, SYSTEM_PAGING_STATE_VALUE_USED, ATTR_SYSTEM_PAGING_TYPE, SYSTEM_PAGING_TYPE_VALUE_MAJOR, SYSTEM_PAGING_TYPE_VALUE_MINOR, ATTR_SYSTEM_PROCESS_STATUS, SYSTEM_PROCESS_STATUS_VALUE_DEFUNCT, SYSTEM_PROCESS_STATUS_VALUE_RUNNING, SYSTEM_PROCESS_STATUS_VALUE_SLEEPING, SYSTEM_PROCESS_STATUS_VALUE_STOPPED, ATTR_SYSTEM_PROCESSES_STATUS, SYSTEM_PROCESSES_STATUS_VALUE_DEFUNCT, SYSTEM_PROCESSES_STATUS_VALUE_RUNNING, SYSTEM_PROCESSES_STATUS_VALUE_SLEEPING, SYSTEM_PROCESSES_STATUS_VALUE_STOPPED, ATTR_TEST_CASE_NAME, ATTR_TEST_CASE_RESULT_STATUS, TEST_CASE_RESULT_STATUS_VALUE_FAIL, TEST_CASE_RESULT_STATUS_VALUE_PASS, ATTR_TEST_SUITE_NAME, ATTR_TEST_SUITE_RUN_STATUS, TEST_SUITE_RUN_STATUS_VALUE_ABORTED, TEST_SUITE_RUN_STATUS_VALUE_FAILURE, TEST_SUITE_RUN_STATUS_VALUE_IN_PROGRESS, TEST_SUITE_RUN_STATUS_VALUE_SKIPPED, TEST_SUITE_RUN_STATUS_VALUE_SUCCESS, TEST_SUITE_RUN_STATUS_VALUE_TIMED_OUT, ATTR_THREAD_ID, ATTR_THREAD_NAME, ATTR_TLS_CIPHER, ATTR_TLS_CLIENT_CERTIFICATE, ATTR_TLS_CLIENT_CERTIFICATE_CHAIN, ATTR_TLS_CLIENT_HASH_MD5, ATTR_TLS_CLIENT_HASH_SHA1, ATTR_TLS_CLIENT_HASH_SHA256, ATTR_TLS_CLIENT_ISSUER, ATTR_TLS_CLIENT_JA3, ATTR_TLS_CLIENT_NOT_AFTER, ATTR_TLS_CLIENT_NOT_BEFORE, ATTR_TLS_CLIENT_SERVER_NAME, ATTR_TLS_CLIENT_SUBJECT, ATTR_TLS_CLIENT_SUPPORTED_CIPHERS, ATTR_TLS_CURVE, ATTR_TLS_ESTABLISHED, ATTR_TLS_NEXT_PROTOCOL, ATTR_TLS_PROTOCOL_NAME, TLS_PROTOCOL_NAME_VALUE_SSL, TLS_PROTOCOL_NAME_VALUE_TLS, ATTR_TLS_PROTOCOL_VERSION, ATTR_TLS_RESUMED, ATTR_TLS_SERVER_CERTIFICATE, ATTR_TLS_SERVER_CERTIFICATE_CHAIN, ATTR_TLS_SERVER_HASH_MD5, ATTR_TLS_SERVER_HASH_SHA1, ATTR_TLS_SERVER_HASH_SHA256, ATTR_TLS_SERVER_ISSUER, ATTR_TLS_SERVER_JA3S, ATTR_TLS_SERVER_NOT_AFTER, ATTR_TLS_SERVER_NOT_BEFORE, ATTR_TLS_SERVER_SUBJECT, ATTR_URL_DOMAIN, ATTR_URL_EXTENSION, ATTR_URL_ORIGINAL, ATTR_URL_PORT, ATTR_URL_REGISTERED_DOMAIN, ATTR_URL_SUBDOMAIN, ATTR_URL_TEMPLATE, ATTR_URL_TOP_LEVEL_DOMAIN, ATTR_USER_EMAIL, ATTR_USER_FULL_NAME, ATTR_USER_HASH, ATTR_USER_ID, ATTR_USER_NAME, ATTR_USER_ROLES, ATTR_USER_AGENT_NAME, ATTR_USER_AGENT_OS_NAME, ATTR_USER_AGENT_OS_VERSION, ATTR_USER_AGENT_SYNTHETIC_TYPE, USER_AGENT_SYNTHETIC_TYPE_VALUE_BOT, USER_AGENT_SYNTHETIC_TYPE_VALUE_TEST, ATTR_USER_AGENT_VERSION, ATTR_V8JS_GC_TYPE, V8JS_GC_TYPE_VALUE_INCREMENTAL, V8JS_GC_TYPE_VALUE_MAJOR, V8JS_GC_TYPE_VALUE_MINOR, V8JS_GC_TYPE_VALUE_WEAKCB, ATTR_V8JS_HEAP_SPACE_NAME, V8JS_HEAP_SPACE_NAME_VALUE_CODE_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_LARGE_OBJECT_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_MAP_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_NEW_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_OLD_SPACE, ATTR_V8JS_RESOURCE_TYPE, V8JS_RESOURCE_TYPE_VALUE_IMMEDIATE, V8JS_RESOURCE_TYPE_VALUE_TCPSERVERWRAP, V8JS_RESOURCE_TYPE_VALUE_TCPWRAP, V8JS_RESOURCE_TYPE_VALUE_TIMEOUT, V8JS_RESOURCE_TYPE_VALUE_TTYWRAP, ATTR_VCS_CHANGE_ID, ATTR_VCS_CHANGE_STATE, VCS_CHANGE_STATE_VALUE_CLOSED, VCS_CHANGE_STATE_VALUE_MERGED, VCS_CHANGE_STATE_VALUE_OPEN, VCS_CHANGE_STATE_VALUE_WIP, ATTR_VCS_CHANGE_TITLE, ATTR_VCS_LINE_CHANGE_TYPE, VCS_LINE_CHANGE_TYPE_VALUE_ADDED, VCS_LINE_CHANGE_TYPE_VALUE_REMOVED, ATTR_VCS_OWNER_NAME, ATTR_VCS_PROVIDER_NAME, VCS_PROVIDER_NAME_VALUE_BITBUCKET, VCS_PROVIDER_NAME_VALUE_GITEA, VCS_PROVIDER_NAME_VALUE_GITHUB, VCS_PROVIDER_NAME_VALUE_GITLAB, VCS_PROVIDER_NAME_VALUE_GITTEA, ATTR_VCS_REF_BASE_NAME, ATTR_VCS_REF_BASE_REVISION, ATTR_VCS_REF_BASE_TYPE, VCS_REF_BASE_TYPE_VALUE_BRANCH, VCS_REF_BASE_TYPE_VALUE_TAG, ATTR_VCS_REF_HEAD_NAME, ATTR_VCS_REF_HEAD_REVISION, ATTR_VCS_REF_HEAD_TYPE, VCS_REF_HEAD_TYPE_VALUE_BRANCH, VCS_REF_HEAD_TYPE_VALUE_TAG, ATTR_VCS_REF_TYPE, VCS_REF_TYPE_VALUE_BRANCH, VCS_REF_TYPE_VALUE_TAG, ATTR_VCS_REPOSITORY_CHANGE_ID, ATTR_VCS_REPOSITORY_CHANGE_TITLE, ATTR_VCS_REPOSITORY_NAME, ATTR_VCS_REPOSITORY_REF_NAME, ATTR_VCS_REPOSITORY_REF_REVISION, ATTR_VCS_REPOSITORY_REF_TYPE, VCS_REPOSITORY_REF_TYPE_VALUE_BRANCH, VCS_REPOSITORY_REF_TYPE_VALUE_TAG, ATTR_VCS_REPOSITORY_URL_FULL, ATTR_VCS_REVISION_DELTA_DIRECTION, VCS_REVISION_DELTA_DIRECTION_VALUE_AHEAD, VCS_REVISION_DELTA_DIRECTION_VALUE_BEHIND, ATTR_WEBENGINE_DESCRIPTION, ATTR_WEBENGINE_NAME, ATTR_WEBENGINE_VERSION, ATTR_ZOS_SMF_ID, ATTR_ZOS_SYSPLEX_NAME;
+var ATTR_ANDROID_APP_STATE, ANDROID_APP_STATE_VALUE_BACKGROUND, ANDROID_APP_STATE_VALUE_CREATED, ANDROID_APP_STATE_VALUE_FOREGROUND, ATTR_ANDROID_OS_API_LEVEL, ATTR_ANDROID_STATE, ANDROID_STATE_VALUE_BACKGROUND, ANDROID_STATE_VALUE_CREATED, ANDROID_STATE_VALUE_FOREGROUND, ATTR_APP_BUILD_ID, ATTR_APP_CRASH_ID, ATTR_APP_INSTALLATION_ID, ATTR_APP_JANK_FRAME_COUNT, ATTR_APP_JANK_PERIOD, ATTR_APP_JANK_THRESHOLD, ATTR_APP_SCREEN_COORDINATE_X, ATTR_APP_SCREEN_COORDINATE_Y, ATTR_APP_SCREEN_ID, ATTR_APP_SCREEN_NAME, ATTR_APP_WIDGET_ID, ATTR_APP_WIDGET_NAME, ATTR_ARTIFACT_ATTESTATION_FILENAME, ATTR_ARTIFACT_ATTESTATION_HASH, ATTR_ARTIFACT_ATTESTATION_ID, ATTR_ARTIFACT_FILENAME, ATTR_ARTIFACT_HASH, ATTR_ARTIFACT_PURL, ATTR_ARTIFACT_VERSION, ATTR_ASPNETCORE_AUTHENTICATION_RESULT, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_FAILURE, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_NONE, ASPNETCORE_AUTHENTICATION_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_AUTHENTICATION_SCHEME, ATTR_ASPNETCORE_AUTHORIZATION_POLICY, ATTR_ASPNETCORE_AUTHORIZATION_RESULT, ASPNETCORE_AUTHORIZATION_RESULT_VALUE_FAILURE, ASPNETCORE_AUTHORIZATION_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_ERROR_CODE, ATTR_ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_PASSWORD_MISSING, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_SUCCESS, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_SUCCESS_REHASH_NEEDED, ASPNETCORE_IDENTITY_PASSWORD_CHECK_RESULT_VALUE_USER_MISSING, ATTR_ASPNETCORE_IDENTITY_RESULT, ASPNETCORE_IDENTITY_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_SIGN_IN_RESULT, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_FAILURE, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_LOCKED_OUT, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_NOT_ALLOWED, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_REQUIRES_TWO_FACTOR, ASPNETCORE_IDENTITY_SIGN_IN_RESULT_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_SIGN_IN_TYPE, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_EXTERNAL, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_PASSKEY, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_PASSWORD, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR_AUTHENTICATOR, ASPNETCORE_IDENTITY_SIGN_IN_TYPE_VALUE_TWO_FACTOR_RECOVERY_CODE, ATTR_ASPNETCORE_IDENTITY_TOKEN_PURPOSE, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_OTHER, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_CHANGE_EMAIL, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_CHANGE_PHONE_NUMBER, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_EMAIL_CONFIRMATION, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_RESET_PASSWORD, ASPNETCORE_IDENTITY_TOKEN_PURPOSE_VALUE_TWO_FACTOR, ATTR_ASPNETCORE_IDENTITY_TOKEN_VERIFIED, ASPNETCORE_IDENTITY_TOKEN_VERIFIED_VALUE_FAILURE, ASPNETCORE_IDENTITY_TOKEN_VERIFIED_VALUE_SUCCESS, ATTR_ASPNETCORE_IDENTITY_USER_UPDATE_TYPE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_OTHER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ACCESS_FAILED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_CLAIMS, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_LOGIN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_ADD_TO_ROLES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CHANGE_PHONE_NUMBER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_CONFIRM_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_GENERATE_NEW_TWO_FACTOR_RECOVERY_CODES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_PASSWORD_REHASH, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REDEEM_TWO_FACTOR_RECOVERY_CODE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_AUTHENTICATION_TOKEN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_CLAIMS, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_FROM_ROLES, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_LOGIN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_PASSKEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REMOVE_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_REPLACE_CLAIM, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_ACCESS_FAILED_COUNT, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_AUTHENTICATOR_KEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_RESET_PASSWORD, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SECURITY_STAMP, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_AUTHENTICATION_TOKEN, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_EMAIL, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_LOCKOUT_ENABLED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_LOCKOUT_END_DATE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_PASSKEY, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_PHONE_NUMBER, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_SET_TWO_FACTOR_ENABLED, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_UPDATE, ASPNETCORE_IDENTITY_USER_UPDATE_TYPE_VALUE_USER_NAME, ATTR_ASPNETCORE_IDENTITY_USER_TYPE, ATTR_ASPNETCORE_MEMORY_POOL_OWNER, ATTR_ASPNETCORE_SIGN_IN_IS_PERSISTENT, ATTR_AWS_BEDROCK_GUARDRAIL_ID, ATTR_AWS_BEDROCK_KNOWLEDGE_BASE_ID, ATTR_AWS_DYNAMODB_ATTRIBUTE_DEFINITIONS, ATTR_AWS_DYNAMODB_ATTRIBUTES_TO_GET, ATTR_AWS_DYNAMODB_CONSISTENT_READ, ATTR_AWS_DYNAMODB_CONSUMED_CAPACITY, ATTR_AWS_DYNAMODB_COUNT, ATTR_AWS_DYNAMODB_EXCLUSIVE_START_TABLE, ATTR_AWS_DYNAMODB_GLOBAL_SECONDARY_INDEX_UPDATES, ATTR_AWS_DYNAMODB_GLOBAL_SECONDARY_INDEXES, ATTR_AWS_DYNAMODB_INDEX_NAME, ATTR_AWS_DYNAMODB_ITEM_COLLECTION_METRICS, ATTR_AWS_DYNAMODB_LIMIT, ATTR_AWS_DYNAMODB_LOCAL_SECONDARY_INDEXES, ATTR_AWS_DYNAMODB_PROJECTION, ATTR_AWS_DYNAMODB_PROVISIONED_READ_CAPACITY, ATTR_AWS_DYNAMODB_PROVISIONED_WRITE_CAPACITY, ATTR_AWS_DYNAMODB_SCAN_FORWARD, ATTR_AWS_DYNAMODB_SCANNED_COUNT, ATTR_AWS_DYNAMODB_SEGMENT, ATTR_AWS_DYNAMODB_SELECT, ATTR_AWS_DYNAMODB_TABLE_COUNT, ATTR_AWS_DYNAMODB_TABLE_NAMES, ATTR_AWS_DYNAMODB_TOTAL_SEGMENTS, ATTR_AWS_ECS_CLUSTER_ARN, ATTR_AWS_ECS_CONTAINER_ARN, ATTR_AWS_ECS_LAUNCHTYPE, AWS_ECS_LAUNCHTYPE_VALUE_EC2, AWS_ECS_LAUNCHTYPE_VALUE_FARGATE, ATTR_AWS_ECS_TASK_ARN, ATTR_AWS_ECS_TASK_FAMILY, ATTR_AWS_ECS_TASK_ID, ATTR_AWS_ECS_TASK_REVISION, ATTR_AWS_EKS_CLUSTER_ARN, ATTR_AWS_EXTENDED_REQUEST_ID, ATTR_AWS_KINESIS_STREAM_NAME, ATTR_AWS_LAMBDA_INVOKED_ARN, ATTR_AWS_LAMBDA_RESOURCE_MAPPING_ID, ATTR_AWS_LOG_GROUP_ARNS, ATTR_AWS_LOG_GROUP_NAMES, ATTR_AWS_LOG_STREAM_ARNS, ATTR_AWS_LOG_STREAM_NAMES, ATTR_AWS_REQUEST_ID, ATTR_AWS_S3_BUCKET, ATTR_AWS_S3_COPY_SOURCE, ATTR_AWS_S3_DELETE, ATTR_AWS_S3_KEY, ATTR_AWS_S3_PART_NUMBER, ATTR_AWS_S3_UPLOAD_ID, ATTR_AWS_SECRETSMANAGER_SECRET_ARN, ATTR_AWS_SNS_TOPIC_ARN, ATTR_AWS_SQS_QUEUE_URL, ATTR_AWS_STEP_FUNCTIONS_ACTIVITY_ARN, ATTR_AWS_STEP_FUNCTIONS_STATE_MACHINE_ARN, ATTR_AZ_NAMESPACE, ATTR_AZ_SERVICE_REQUEST_ID, ATTR_AZURE_CLIENT_ID, ATTR_AZURE_COSMOSDB_CONNECTION_MODE, AZURE_COSMOSDB_CONNECTION_MODE_VALUE_DIRECT, AZURE_COSMOSDB_CONNECTION_MODE_VALUE_GATEWAY, ATTR_AZURE_COSMOSDB_CONSISTENCY_LEVEL, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_BOUNDED_STALENESS, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_CONSISTENT_PREFIX, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_EVENTUAL, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_SESSION, AZURE_COSMOSDB_CONSISTENCY_LEVEL_VALUE_STRONG, ATTR_AZURE_COSMOSDB_OPERATION_CONTACTED_REGIONS, ATTR_AZURE_COSMOSDB_OPERATION_REQUEST_CHARGE, ATTR_AZURE_COSMOSDB_REQUEST_BODY_SIZE, ATTR_AZURE_COSMOSDB_RESPONSE_SUB_STATUS_CODE, ATTR_AZURE_RESOURCE_GROUP_NAME, ATTR_AZURE_RESOURCE_PROVIDER_NAMESPACE, ATTR_AZURE_SERVICE_REQUEST_ID, ATTR_BROWSER_BRANDS, ATTR_BROWSER_DOCUMENT_URL_FULL, ATTR_BROWSER_LANGUAGE, ATTR_BROWSER_MOBILE, ATTR_BROWSER_PLATFORM, ATTR_CASSANDRA_CONSISTENCY_LEVEL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ALL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ANY, CASSANDRA_CONSISTENCY_LEVEL_VALUE_EACH_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_ONE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_SERIAL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_ONE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_QUORUM, CASSANDRA_CONSISTENCY_LEVEL_VALUE_SERIAL, CASSANDRA_CONSISTENCY_LEVEL_VALUE_THREE, CASSANDRA_CONSISTENCY_LEVEL_VALUE_TWO, ATTR_CASSANDRA_COORDINATOR_DC, ATTR_CASSANDRA_COORDINATOR_ID, ATTR_CASSANDRA_PAGE_SIZE, ATTR_CASSANDRA_QUERY_IDEMPOTENT, ATTR_CASSANDRA_SPECULATIVE_EXECUTION_COUNT, ATTR_CICD_PIPELINE_ACTION_NAME, CICD_PIPELINE_ACTION_NAME_VALUE_BUILD, CICD_PIPELINE_ACTION_NAME_VALUE_RUN, CICD_PIPELINE_ACTION_NAME_VALUE_SYNC, ATTR_CICD_PIPELINE_NAME, ATTR_CICD_PIPELINE_RESULT, CICD_PIPELINE_RESULT_VALUE_CANCELLATION, CICD_PIPELINE_RESULT_VALUE_ERROR, CICD_PIPELINE_RESULT_VALUE_FAILURE, CICD_PIPELINE_RESULT_VALUE_SKIP, CICD_PIPELINE_RESULT_VALUE_SUCCESS, CICD_PIPELINE_RESULT_VALUE_TIMEOUT, ATTR_CICD_PIPELINE_RUN_ID, ATTR_CICD_PIPELINE_RUN_STATE, CICD_PIPELINE_RUN_STATE_VALUE_EXECUTING, CICD_PIPELINE_RUN_STATE_VALUE_FINALIZING, CICD_PIPELINE_RUN_STATE_VALUE_PENDING, ATTR_CICD_PIPELINE_RUN_URL_FULL, ATTR_CICD_PIPELINE_TASK_NAME, ATTR_CICD_PIPELINE_TASK_RUN_ID, ATTR_CICD_PIPELINE_TASK_RUN_RESULT, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_CANCELLATION, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_ERROR, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_FAILURE, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_SKIP, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_SUCCESS, CICD_PIPELINE_TASK_RUN_RESULT_VALUE_TIMEOUT, ATTR_CICD_PIPELINE_TASK_RUN_URL_FULL, ATTR_CICD_PIPELINE_TASK_TYPE, CICD_PIPELINE_TASK_TYPE_VALUE_BUILD, CICD_PIPELINE_TASK_TYPE_VALUE_DEPLOY, CICD_PIPELINE_TASK_TYPE_VALUE_TEST, ATTR_CICD_SYSTEM_COMPONENT, ATTR_CICD_WORKER_ID, ATTR_CICD_WORKER_NAME, ATTR_CICD_WORKER_STATE, CICD_WORKER_STATE_VALUE_AVAILABLE, CICD_WORKER_STATE_VALUE_BUSY, CICD_WORKER_STATE_VALUE_OFFLINE, ATTR_CICD_WORKER_URL_FULL, ATTR_CLOUD_ACCOUNT_ID, ATTR_CLOUD_AVAILABILITY_ZONE, ATTR_CLOUD_PLATFORM, CLOUD_PLATFORM_VALUE_AKAMAI_CLOUD_COMPUTE, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_ECS, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_FC, CLOUD_PLATFORM_VALUE_ALIBABA_CLOUD_OPENSHIFT, CLOUD_PLATFORM_VALUE_AWS_APP_RUNNER, CLOUD_PLATFORM_VALUE_AWS_EC2, CLOUD_PLATFORM_VALUE_AWS_ECS, CLOUD_PLATFORM_VALUE_AWS_EKS, CLOUD_PLATFORM_VALUE_AWS_ELASTIC_BEANSTALK, CLOUD_PLATFORM_VALUE_AWS_LAMBDA, CLOUD_PLATFORM_VALUE_AWS_OPENSHIFT, CLOUD_PLATFORM_VALUE_AZURE_AKS, CLOUD_PLATFORM_VALUE_AZURE_APP_SERVICE, CLOUD_PLATFORM_VALUE_AZURE_CONTAINER_APPS, CLOUD_PLATFORM_VALUE_AZURE_CONTAINER_INSTANCES, CLOUD_PLATFORM_VALUE_AZURE_FUNCTIONS, CLOUD_PLATFORM_VALUE_AZURE_OPENSHIFT, CLOUD_PLATFORM_VALUE_AZURE_VM, CLOUD_PLATFORM_VALUE_GCP_AGENT_ENGINE, CLOUD_PLATFORM_VALUE_GCP_APP_ENGINE, CLOUD_PLATFORM_VALUE_GCP_BARE_METAL_SOLUTION, CLOUD_PLATFORM_VALUE_GCP_CLOUD_FUNCTIONS, CLOUD_PLATFORM_VALUE_GCP_CLOUD_RUN, CLOUD_PLATFORM_VALUE_GCP_COMPUTE_ENGINE, CLOUD_PLATFORM_VALUE_GCP_KUBERNETES_ENGINE, CLOUD_PLATFORM_VALUE_GCP_OPENSHIFT, CLOUD_PLATFORM_VALUE_HETZNER_CLOUD_SERVER, CLOUD_PLATFORM_VALUE_IBM_CLOUD_OPENSHIFT, CLOUD_PLATFORM_VALUE_ORACLE_CLOUD_COMPUTE, CLOUD_PLATFORM_VALUE_ORACLE_CLOUD_OKE, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_CVM, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_EKS, CLOUD_PLATFORM_VALUE_TENCENT_CLOUD_SCF, CLOUD_PLATFORM_VALUE_VULTR_CLOUD_COMPUTE, ATTR_CLOUD_PROVIDER, CLOUD_PROVIDER_VALUE_AKAMAI_CLOUD, CLOUD_PROVIDER_VALUE_ALIBABA_CLOUD, CLOUD_PROVIDER_VALUE_AWS, CLOUD_PROVIDER_VALUE_AZURE, CLOUD_PROVIDER_VALUE_GCP, CLOUD_PROVIDER_VALUE_HEROKU, CLOUD_PROVIDER_VALUE_HETZNER, CLOUD_PROVIDER_VALUE_IBM_CLOUD, CLOUD_PROVIDER_VALUE_ORACLE_CLOUD, CLOUD_PROVIDER_VALUE_TENCENT_CLOUD, CLOUD_PROVIDER_VALUE_VULTR, ATTR_CLOUD_REGION, ATTR_CLOUD_RESOURCE_ID, ATTR_CLOUDEVENTS_EVENT_ID, ATTR_CLOUDEVENTS_EVENT_SOURCE, ATTR_CLOUDEVENTS_EVENT_SPEC_VERSION, ATTR_CLOUDEVENTS_EVENT_SUBJECT, ATTR_CLOUDEVENTS_EVENT_TYPE, ATTR_CLOUDFOUNDRY_APP_ID, ATTR_CLOUDFOUNDRY_APP_INSTANCE_ID, ATTR_CLOUDFOUNDRY_APP_NAME, ATTR_CLOUDFOUNDRY_ORG_ID, ATTR_CLOUDFOUNDRY_ORG_NAME, ATTR_CLOUDFOUNDRY_PROCESS_ID, ATTR_CLOUDFOUNDRY_PROCESS_TYPE, ATTR_CLOUDFOUNDRY_SPACE_ID, ATTR_CLOUDFOUNDRY_SPACE_NAME, ATTR_CLOUDFOUNDRY_SYSTEM_ID, ATTR_CLOUDFOUNDRY_SYSTEM_INSTANCE_ID, ATTR_CODE_COLUMN, ATTR_CODE_FILEPATH, ATTR_CODE_FUNCTION, ATTR_CODE_LINENO, ATTR_CODE_NAMESPACE, ATTR_CONTAINER_COMMAND, ATTR_CONTAINER_COMMAND_ARGS, ATTR_CONTAINER_COMMAND_LINE, ATTR_CONTAINER_CPU_STATE, CONTAINER_CPU_STATE_VALUE_KERNEL, CONTAINER_CPU_STATE_VALUE_SYSTEM, CONTAINER_CPU_STATE_VALUE_USER, ATTR_CONTAINER_CSI_PLUGIN_NAME, ATTR_CONTAINER_CSI_VOLUME_ID, ATTR_CONTAINER_IMAGE_ID, ATTR_CONTAINER_LABEL, ATTR_CONTAINER_LABELS, ATTR_CONTAINER_NAME, ATTR_CONTAINER_RUNTIME, ATTR_CONTAINER_RUNTIME_DESCRIPTION, ATTR_CONTAINER_RUNTIME_NAME, ATTR_CONTAINER_RUNTIME_VERSION, ATTR_CPU_LOGICAL_NUMBER, ATTR_CPU_MODE, CPU_MODE_VALUE_IDLE, CPU_MODE_VALUE_INTERRUPT, CPU_MODE_VALUE_IOWAIT, CPU_MODE_VALUE_KERNEL, CPU_MODE_VALUE_NICE, CPU_MODE_VALUE_STEAL, CPU_MODE_VALUE_SYSTEM, CPU_MODE_VALUE_USER, ATTR_CPYTHON_GC_GENERATION, CPYTHON_GC_GENERATION_VALUE_GENERATION_0, CPYTHON_GC_GENERATION_VALUE_GENERATION_1, CPYTHON_GC_GENERATION_VALUE_GENERATION_2, ATTR_DB_CASSANDRA_CONSISTENCY_LEVEL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ALL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ANY, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_EACH_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_ONE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_LOCAL_SERIAL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_ONE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_QUORUM, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_SERIAL, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_THREE, DB_CASSANDRA_CONSISTENCY_LEVEL_VALUE_TWO, ATTR_DB_CASSANDRA_COORDINATOR_DC, ATTR_DB_CASSANDRA_COORDINATOR_ID, ATTR_DB_CASSANDRA_IDEMPOTENCE, ATTR_DB_CASSANDRA_PAGE_SIZE, ATTR_DB_CASSANDRA_SPECULATIVE_EXECUTION_COUNT, ATTR_DB_CASSANDRA_TABLE, ATTR_DB_CLIENT_CONNECTION_POOL_NAME, ATTR_DB_CLIENT_CONNECTION_STATE, DB_CLIENT_CONNECTION_STATE_VALUE_IDLE, DB_CLIENT_CONNECTION_STATE_VALUE_USED, ATTR_DB_CLIENT_CONNECTIONS_POOL_NAME, ATTR_DB_CLIENT_CONNECTIONS_STATE, DB_CLIENT_CONNECTIONS_STATE_VALUE_IDLE, DB_CLIENT_CONNECTIONS_STATE_VALUE_USED, ATTR_DB_CONNECTION_STRING, ATTR_DB_COSMOSDB_CLIENT_ID, ATTR_DB_COSMOSDB_CONNECTION_MODE, DB_COSMOSDB_CONNECTION_MODE_VALUE_DIRECT, DB_COSMOSDB_CONNECTION_MODE_VALUE_GATEWAY, ATTR_DB_COSMOSDB_CONSISTENCY_LEVEL, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_BOUNDED_STALENESS, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_CONSISTENT_PREFIX, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_EVENTUAL, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_SESSION, DB_COSMOSDB_CONSISTENCY_LEVEL_VALUE_STRONG, ATTR_DB_COSMOSDB_CONTAINER, ATTR_DB_COSMOSDB_OPERATION_TYPE, DB_COSMOSDB_OPERATION_TYPE_VALUE_BATCH, DB_COSMOSDB_OPERATION_TYPE_VALUE_CREATE, DB_COSMOSDB_OPERATION_TYPE_VALUE_DELETE, DB_COSMOSDB_OPERATION_TYPE_VALUE_EXECUTE, DB_COSMOSDB_OPERATION_TYPE_VALUE_EXECUTE_JAVASCRIPT, DB_COSMOSDB_OPERATION_TYPE_VALUE_HEAD, DB_COSMOSDB_OPERATION_TYPE_VALUE_HEAD_FEED, DB_COSMOSDB_OPERATION_TYPE_VALUE_INVALID, DB_COSMOSDB_OPERATION_TYPE_VALUE_PATCH, DB_COSMOSDB_OPERATION_TYPE_VALUE_QUERY, DB_COSMOSDB_OPERATION_TYPE_VALUE_QUERY_PLAN, DB_COSMOSDB_OPERATION_TYPE_VALUE_READ, DB_COSMOSDB_OPERATION_TYPE_VALUE_READ_FEED, DB_COSMOSDB_OPERATION_TYPE_VALUE_REPLACE, DB_COSMOSDB_OPERATION_TYPE_VALUE_UPSERT, ATTR_DB_COSMOSDB_REGIONS_CONTACTED, ATTR_DB_COSMOSDB_REQUEST_CHARGE, ATTR_DB_COSMOSDB_REQUEST_CONTENT_LENGTH, ATTR_DB_COSMOSDB_STATUS_CODE, ATTR_DB_COSMOSDB_SUB_STATUS_CODE, ATTR_DB_ELASTICSEARCH_CLUSTER_NAME, ATTR_DB_ELASTICSEARCH_NODE_NAME, ATTR_DB_ELASTICSEARCH_PATH_PARTS, ATTR_DB_INSTANCE_ID, ATTR_DB_JDBC_DRIVER_CLASSNAME, ATTR_DB_MONGODB_COLLECTION, ATTR_DB_MSSQL_INSTANCE_NAME, ATTR_DB_NAME, ATTR_DB_OPERATION, ATTR_DB_OPERATION_PARAMETER, ATTR_DB_QUERY_PARAMETER, ATTR_DB_REDIS_DATABASE_INDEX, ATTR_DB_RESPONSE_RETURNED_ROWS, ATTR_DB_SQL_TABLE, ATTR_DB_STATEMENT, ATTR_DB_SYSTEM, DB_SYSTEM_VALUE_ADABAS, DB_SYSTEM_VALUE_CACHE, DB_SYSTEM_VALUE_CASSANDRA, DB_SYSTEM_VALUE_CLICKHOUSE, DB_SYSTEM_VALUE_CLOUDSCAPE, DB_SYSTEM_VALUE_COCKROACHDB, DB_SYSTEM_VALUE_COLDFUSION, DB_SYSTEM_VALUE_COSMOSDB, DB_SYSTEM_VALUE_COUCHBASE, DB_SYSTEM_VALUE_COUCHDB, DB_SYSTEM_VALUE_DB2, DB_SYSTEM_VALUE_DERBY, DB_SYSTEM_VALUE_DYNAMODB, DB_SYSTEM_VALUE_EDB, DB_SYSTEM_VALUE_ELASTICSEARCH, DB_SYSTEM_VALUE_FILEMAKER, DB_SYSTEM_VALUE_FIREBIRD, DB_SYSTEM_VALUE_FIRSTSQL, DB_SYSTEM_VALUE_GEODE, DB_SYSTEM_VALUE_H2, DB_SYSTEM_VALUE_HANADB, DB_SYSTEM_VALUE_HBASE, DB_SYSTEM_VALUE_HIVE, DB_SYSTEM_VALUE_HSQLDB, DB_SYSTEM_VALUE_INFLUXDB, DB_SYSTEM_VALUE_INFORMIX, DB_SYSTEM_VALUE_INGRES, DB_SYSTEM_VALUE_INSTANTDB, DB_SYSTEM_VALUE_INTERBASE, DB_SYSTEM_VALUE_INTERSYSTEMS_CACHE, DB_SYSTEM_VALUE_MARIADB, DB_SYSTEM_VALUE_MAXDB, DB_SYSTEM_VALUE_MEMCACHED, DB_SYSTEM_VALUE_MONGODB, DB_SYSTEM_VALUE_MSSQL, DB_SYSTEM_VALUE_MSSQLCOMPACT, DB_SYSTEM_VALUE_MYSQL, DB_SYSTEM_VALUE_NEO4J, DB_SYSTEM_VALUE_NETEZZA, DB_SYSTEM_VALUE_OPENSEARCH, DB_SYSTEM_VALUE_ORACLE, DB_SYSTEM_VALUE_OTHER_SQL, DB_SYSTEM_VALUE_PERVASIVE, DB_SYSTEM_VALUE_POINTBASE, DB_SYSTEM_VALUE_POSTGRESQL, DB_SYSTEM_VALUE_PROGRESS, DB_SYSTEM_VALUE_REDIS, DB_SYSTEM_VALUE_REDSHIFT, DB_SYSTEM_VALUE_SPANNER, DB_SYSTEM_VALUE_SQLITE, DB_SYSTEM_VALUE_SYBASE, DB_SYSTEM_VALUE_TERADATA, DB_SYSTEM_VALUE_TRINO, DB_SYSTEM_VALUE_VERTICA, DB_SYSTEM_NAME_VALUE_ACTIAN_INGRES, DB_SYSTEM_NAME_VALUE_AWS_DYNAMODB, DB_SYSTEM_NAME_VALUE_AWS_REDSHIFT, DB_SYSTEM_NAME_VALUE_AZURE_COSMOSDB, DB_SYSTEM_NAME_VALUE_CASSANDRA, DB_SYSTEM_NAME_VALUE_CLICKHOUSE, DB_SYSTEM_NAME_VALUE_COCKROACHDB, DB_SYSTEM_NAME_VALUE_COUCHBASE, DB_SYSTEM_NAME_VALUE_COUCHDB, DB_SYSTEM_NAME_VALUE_DERBY, DB_SYSTEM_NAME_VALUE_ELASTICSEARCH, DB_SYSTEM_NAME_VALUE_FIREBIRDSQL, DB_SYSTEM_NAME_VALUE_GCP_SPANNER, DB_SYSTEM_NAME_VALUE_GEODE, DB_SYSTEM_NAME_VALUE_H2DATABASE, DB_SYSTEM_NAME_VALUE_HBASE, DB_SYSTEM_NAME_VALUE_HIVE, DB_SYSTEM_NAME_VALUE_HSQLDB, DB_SYSTEM_NAME_VALUE_IBM_DB2, DB_SYSTEM_NAME_VALUE_IBM_INFORMIX, DB_SYSTEM_NAME_VALUE_IBM_NETEZZA, DB_SYSTEM_NAME_VALUE_INFLUXDB, DB_SYSTEM_NAME_VALUE_INSTANTDB, DB_SYSTEM_NAME_VALUE_INTERSYSTEMS_CACHE, DB_SYSTEM_NAME_VALUE_MEMCACHED, DB_SYSTEM_NAME_VALUE_MONGODB, DB_SYSTEM_NAME_VALUE_NEO4J, DB_SYSTEM_NAME_VALUE_OPENSEARCH, DB_SYSTEM_NAME_VALUE_ORACLE_DB, DB_SYSTEM_NAME_VALUE_OTHER_SQL, DB_SYSTEM_NAME_VALUE_REDIS, DB_SYSTEM_NAME_VALUE_SAP_HANA, DB_SYSTEM_NAME_VALUE_SAP_MAXDB, DB_SYSTEM_NAME_VALUE_SOFTWAREAG_ADABAS, DB_SYSTEM_NAME_VALUE_SQLITE, DB_SYSTEM_NAME_VALUE_TERADATA, DB_SYSTEM_NAME_VALUE_TRINO, ATTR_DB_USER, ATTR_DEPLOYMENT_ENVIRONMENT, ATTR_DEPLOYMENT_ID, ATTR_DEPLOYMENT_NAME, ATTR_DEPLOYMENT_STATUS, DEPLOYMENT_STATUS_VALUE_FAILED, DEPLOYMENT_STATUS_VALUE_SUCCEEDED, ATTR_DESTINATION_ADDRESS, ATTR_DESTINATION_PORT, ATTR_DEVICE_ID, ATTR_DEVICE_MANUFACTURER, ATTR_DEVICE_MODEL_IDENTIFIER, ATTR_DEVICE_MODEL_NAME, ATTR_DISK_IO_DIRECTION, DISK_IO_DIRECTION_VALUE_READ, DISK_IO_DIRECTION_VALUE_WRITE, ATTR_DNS_ANSWERS, ATTR_DNS_QUESTION_NAME, ATTR_ELASTICSEARCH_NODE_NAME, ATTR_ENDUSER_ID, ATTR_ENDUSER_PSEUDO_ID, ATTR_ENDUSER_ROLE, ATTR_ENDUSER_SCOPE, ATTR_ERROR_MESSAGE, ATTR_EVENT_NAME, ATTR_FAAS_COLDSTART, ATTR_FAAS_CRON, ATTR_FAAS_DOCUMENT_COLLECTION, ATTR_FAAS_DOCUMENT_NAME, ATTR_FAAS_DOCUMENT_OPERATION, FAAS_DOCUMENT_OPERATION_VALUE_DELETE, FAAS_DOCUMENT_OPERATION_VALUE_EDIT, FAAS_DOCUMENT_OPERATION_VALUE_INSERT, ATTR_FAAS_DOCUMENT_TIME, ATTR_FAAS_INSTANCE, ATTR_FAAS_INVOCATION_ID, ATTR_FAAS_INVOKED_NAME, ATTR_FAAS_INVOKED_PROVIDER, FAAS_INVOKED_PROVIDER_VALUE_ALIBABA_CLOUD, FAAS_INVOKED_PROVIDER_VALUE_AWS, FAAS_INVOKED_PROVIDER_VALUE_AZURE, FAAS_INVOKED_PROVIDER_VALUE_GCP, FAAS_INVOKED_PROVIDER_VALUE_TENCENT_CLOUD, ATTR_FAAS_INVOKED_REGION, ATTR_FAAS_MAX_MEMORY, ATTR_FAAS_NAME, ATTR_FAAS_TIME, ATTR_FAAS_TRIGGER, FAAS_TRIGGER_VALUE_DATASOURCE, FAAS_TRIGGER_VALUE_HTTP, FAAS_TRIGGER_VALUE_OTHER, FAAS_TRIGGER_VALUE_PUBSUB, FAAS_TRIGGER_VALUE_TIMER, ATTR_FAAS_VERSION, ATTR_FEATURE_FLAG_CONTEXT_ID, ATTR_FEATURE_FLAG_ERROR_MESSAGE, ATTR_FEATURE_FLAG_EVALUATION_ERROR_MESSAGE, ATTR_FEATURE_FLAG_EVALUATION_REASON, FEATURE_FLAG_EVALUATION_REASON_VALUE_CACHED, FEATURE_FLAG_EVALUATION_REASON_VALUE_DEFAULT, FEATURE_FLAG_EVALUATION_REASON_VALUE_DISABLED, FEATURE_FLAG_EVALUATION_REASON_VALUE_ERROR, FEATURE_FLAG_EVALUATION_REASON_VALUE_SPLIT, FEATURE_FLAG_EVALUATION_REASON_VALUE_STALE, FEATURE_FLAG_EVALUATION_REASON_VALUE_STATIC, FEATURE_FLAG_EVALUATION_REASON_VALUE_TARGETING_MATCH, FEATURE_FLAG_EVALUATION_REASON_VALUE_UNKNOWN, ATTR_FEATURE_FLAG_KEY, ATTR_FEATURE_FLAG_PROVIDER_NAME, ATTR_FEATURE_FLAG_RESULT_REASON, FEATURE_FLAG_RESULT_REASON_VALUE_CACHED, FEATURE_FLAG_RESULT_REASON_VALUE_DEFAULT, FEATURE_FLAG_RESULT_REASON_VALUE_DISABLED, FEATURE_FLAG_RESULT_REASON_VALUE_ERROR, FEATURE_FLAG_RESULT_REASON_VALUE_SPLIT, FEATURE_FLAG_RESULT_REASON_VALUE_STALE, FEATURE_FLAG_RESULT_REASON_VALUE_STATIC, FEATURE_FLAG_RESULT_REASON_VALUE_TARGETING_MATCH, FEATURE_FLAG_RESULT_REASON_VALUE_UNKNOWN, ATTR_FEATURE_FLAG_RESULT_VALUE, ATTR_FEATURE_FLAG_RESULT_VARIANT, ATTR_FEATURE_FLAG_SET_ID, ATTR_FEATURE_FLAG_VARIANT, ATTR_FEATURE_FLAG_VERSION, ATTR_FILE_ACCESSED, ATTR_FILE_ATTRIBUTES, ATTR_FILE_CHANGED, ATTR_FILE_CREATED, ATTR_FILE_DIRECTORY, ATTR_FILE_EXTENSION, ATTR_FILE_FORK_NAME, ATTR_FILE_GROUP_ID, ATTR_FILE_GROUP_NAME, ATTR_FILE_INODE, ATTR_FILE_LOCK_MECHANISM, ATTR_FILE_LOCK_MODE, ATTR_FILE_LOCK_TYPE, FILE_LOCK_TYPE_VALUE_READ, FILE_LOCK_TYPE_VALUE_WRITE, ATTR_FILE_MODE, ATTR_FILE_MODIFIED, ATTR_FILE_NAME, ATTR_FILE_OWNER_ID, ATTR_FILE_OWNER_NAME, ATTR_FILE_PATH, ATTR_FILE_SIZE, ATTR_FILE_SYMBOLIC_LINK_TARGET_PATH, ATTR_GCP_APPHUB_APPLICATION_CONTAINER, ATTR_GCP_APPHUB_APPLICATION_ID, ATTR_GCP_APPHUB_APPLICATION_LOCATION, ATTR_GCP_APPHUB_SERVICE_CRITICALITY_TYPE, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_SERVICE_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_SERVICE_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_SERVICE_ID, ATTR_GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_WORKLOAD_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_WORKLOAD_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_WORKLOAD_ID, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_CONTAINER, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_ID, ATTR_GCP_APPHUB_DESTINATION_APPLICATION_LOCATION, ATTR_GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_DESTINATION_SERVICE_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_DESTINATION_SERVICE_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_DESTINATION_SERVICE_ID, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_HIGH, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_LOW, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_MEDIUM, GCP_APPHUB_DESTINATION_WORKLOAD_CRITICALITY_TYPE_VALUE_MISSION_CRITICAL, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_DEVELOPMENT, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_PRODUCTION, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_STAGING, GCP_APPHUB_DESTINATION_WORKLOAD_ENVIRONMENT_TYPE_VALUE_TEST, ATTR_GCP_APPHUB_DESTINATION_WORKLOAD_ID, ATTR_GCP_CLIENT_SERVICE, ATTR_GCP_CLOUD_RUN_JOB_EXECUTION, ATTR_GCP_CLOUD_RUN_JOB_TASK_INDEX, ATTR_GCP_GCE_INSTANCE_HOSTNAME, ATTR_GCP_GCE_INSTANCE_LABELS, ATTR_GCP_GCE_INSTANCE_NAME, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_NAME, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_REGION, ATTR_GCP_GCE_INSTANCE_GROUP_MANAGER_ZONE, ATTR_GEN_AI_AGENT_DESCRIPTION, ATTR_GEN_AI_AGENT_ID, ATTR_GEN_AI_AGENT_NAME, ATTR_GEN_AI_AGENT_VERSION, ATTR_GEN_AI_COMPLETION, ATTR_GEN_AI_CONVERSATION_ID, ATTR_GEN_AI_DATA_SOURCE_ID, ATTR_GEN_AI_EMBEDDINGS_DIMENSION_COUNT, ATTR_GEN_AI_EVALUATION_EXPLANATION, ATTR_GEN_AI_EVALUATION_NAME, ATTR_GEN_AI_EVALUATION_SCORE_LABEL, ATTR_GEN_AI_EVALUATION_SCORE_VALUE, ATTR_GEN_AI_INPUT_MESSAGES, ATTR_GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_JSON_OBJECT, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_JSON_SCHEMA, GEN_AI_OPENAI_REQUEST_RESPONSE_FORMAT_VALUE_TEXT, ATTR_GEN_AI_OPENAI_REQUEST_SEED, ATTR_GEN_AI_OPENAI_REQUEST_SERVICE_TIER, GEN_AI_OPENAI_REQUEST_SERVICE_TIER_VALUE_AUTO, GEN_AI_OPENAI_REQUEST_SERVICE_TIER_VALUE_DEFAULT, ATTR_GEN_AI_OPENAI_RESPONSE_SERVICE_TIER, ATTR_GEN_AI_OPENAI_RESPONSE_SYSTEM_FINGERPRINT, ATTR_GEN_AI_OPERATION_NAME, GEN_AI_OPERATION_NAME_VALUE_CHAT, GEN_AI_OPERATION_NAME_VALUE_CREATE_AGENT, GEN_AI_OPERATION_NAME_VALUE_EMBEDDINGS, GEN_AI_OPERATION_NAME_VALUE_EXECUTE_TOOL, GEN_AI_OPERATION_NAME_VALUE_GENERATE_CONTENT, GEN_AI_OPERATION_NAME_VALUE_INVOKE_AGENT, GEN_AI_OPERATION_NAME_VALUE_INVOKE_WORKFLOW, GEN_AI_OPERATION_NAME_VALUE_RETRIEVAL, GEN_AI_OPERATION_NAME_VALUE_TEXT_COMPLETION, ATTR_GEN_AI_OUTPUT_MESSAGES, ATTR_GEN_AI_OUTPUT_TYPE, GEN_AI_OUTPUT_TYPE_VALUE_IMAGE, GEN_AI_OUTPUT_TYPE_VALUE_JSON, GEN_AI_OUTPUT_TYPE_VALUE_SPEECH, GEN_AI_OUTPUT_TYPE_VALUE_TEXT, ATTR_GEN_AI_PROMPT, ATTR_GEN_AI_PROMPT_NAME, ATTR_GEN_AI_PROVIDER_NAME, GEN_AI_PROVIDER_NAME_VALUE_ANTHROPIC, GEN_AI_PROVIDER_NAME_VALUE_AWS_BEDROCK, GEN_AI_PROVIDER_NAME_VALUE_AZURE_AI_INFERENCE, GEN_AI_PROVIDER_NAME_VALUE_AZURE_AI_OPENAI, GEN_AI_PROVIDER_NAME_VALUE_COHERE, GEN_AI_PROVIDER_NAME_VALUE_DEEPSEEK, GEN_AI_PROVIDER_NAME_VALUE_GCP_GEMINI, GEN_AI_PROVIDER_NAME_VALUE_GCP_GEN_AI, GEN_AI_PROVIDER_NAME_VALUE_GCP_VERTEX_AI, GEN_AI_PROVIDER_NAME_VALUE_GROQ, GEN_AI_PROVIDER_NAME_VALUE_IBM_WATSONX_AI, GEN_AI_PROVIDER_NAME_VALUE_MISTRAL_AI, GEN_AI_PROVIDER_NAME_VALUE_OPENAI, GEN_AI_PROVIDER_NAME_VALUE_PERPLEXITY, GEN_AI_PROVIDER_NAME_VALUE_X_AI, ATTR_GEN_AI_REQUEST_CHOICE_COUNT, ATTR_GEN_AI_REQUEST_ENCODING_FORMATS, ATTR_GEN_AI_REQUEST_FREQUENCY_PENALTY, ATTR_GEN_AI_REQUEST_MAX_TOKENS, ATTR_GEN_AI_REQUEST_MODEL, ATTR_GEN_AI_REQUEST_PRESENCE_PENALTY, ATTR_GEN_AI_REQUEST_SEED, ATTR_GEN_AI_REQUEST_STOP_SEQUENCES, ATTR_GEN_AI_REQUEST_STREAM, ATTR_GEN_AI_REQUEST_TEMPERATURE, ATTR_GEN_AI_REQUEST_TOP_K, ATTR_GEN_AI_REQUEST_TOP_P, ATTR_GEN_AI_RESPONSE_FINISH_REASONS, ATTR_GEN_AI_RESPONSE_ID, ATTR_GEN_AI_RESPONSE_MODEL, ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK, ATTR_GEN_AI_RETRIEVAL_DOCUMENTS, ATTR_GEN_AI_RETRIEVAL_QUERY_TEXT, ATTR_GEN_AI_SYSTEM, GEN_AI_SYSTEM_VALUE_ANTHROPIC, GEN_AI_SYSTEM_VALUE_AWS_BEDROCK, GEN_AI_SYSTEM_VALUE_AZ_AI_INFERENCE, GEN_AI_SYSTEM_VALUE_AZ_AI_OPENAI, GEN_AI_SYSTEM_VALUE_AZURE_AI_INFERENCE, GEN_AI_SYSTEM_VALUE_AZURE_AI_OPENAI, GEN_AI_SYSTEM_VALUE_COHERE, GEN_AI_SYSTEM_VALUE_DEEPSEEK, GEN_AI_SYSTEM_VALUE_GCP_GEMINI, GEN_AI_SYSTEM_VALUE_GCP_GEN_AI, GEN_AI_SYSTEM_VALUE_GCP_VERTEX_AI, GEN_AI_SYSTEM_VALUE_GEMINI, GEN_AI_SYSTEM_VALUE_GROQ, GEN_AI_SYSTEM_VALUE_IBM_WATSONX_AI, GEN_AI_SYSTEM_VALUE_MISTRAL_AI, GEN_AI_SYSTEM_VALUE_OPENAI, GEN_AI_SYSTEM_VALUE_PERPLEXITY, GEN_AI_SYSTEM_VALUE_VERTEX_AI, GEN_AI_SYSTEM_VALUE_XAI, ATTR_GEN_AI_SYSTEM_INSTRUCTIONS, ATTR_GEN_AI_TOKEN_TYPE, GEN_AI_TOKEN_TYPE_VALUE_INPUT, GEN_AI_TOKEN_TYPE_VALUE_COMPLETION, GEN_AI_TOKEN_TYPE_VALUE_OUTPUT, ATTR_GEN_AI_TOOL_CALL_ARGUMENTS, ATTR_GEN_AI_TOOL_CALL_ID, ATTR_GEN_AI_TOOL_CALL_RESULT, ATTR_GEN_AI_TOOL_DEFINITIONS, ATTR_GEN_AI_TOOL_DESCRIPTION, ATTR_GEN_AI_TOOL_NAME, ATTR_GEN_AI_TOOL_TYPE, ATTR_GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS, ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, ATTR_GEN_AI_USAGE_COMPLETION_TOKENS, ATTR_GEN_AI_USAGE_INPUT_TOKENS, ATTR_GEN_AI_USAGE_OUTPUT_TOKENS, ATTR_GEN_AI_USAGE_PROMPT_TOKENS, ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, ATTR_GEN_AI_WORKFLOW_NAME, ATTR_GEO_CONTINENT_CODE, GEO_CONTINENT_CODE_VALUE_AF, GEO_CONTINENT_CODE_VALUE_AN, GEO_CONTINENT_CODE_VALUE_AS, GEO_CONTINENT_CODE_VALUE_EU, GEO_CONTINENT_CODE_VALUE_NA, GEO_CONTINENT_CODE_VALUE_OC, GEO_CONTINENT_CODE_VALUE_SA, ATTR_GEO_COUNTRY_ISO_CODE, ATTR_GEO_LOCALITY_NAME, ATTR_GEO_LOCATION_LAT, ATTR_GEO_LOCATION_LON, ATTR_GEO_POSTAL_CODE, ATTR_GEO_REGION_ISO_CODE, ATTR_GO_CPU_DETAILED_STATE, ATTR_GO_CPU_STATE, GO_CPU_STATE_VALUE_GC, GO_CPU_STATE_VALUE_IDLE, GO_CPU_STATE_VALUE_SCAVENGE, GO_CPU_STATE_VALUE_USER, ATTR_GO_MEMORY_DETAILED_TYPE, ATTR_GO_MEMORY_TYPE, GO_MEMORY_TYPE_VALUE_OTHER, GO_MEMORY_TYPE_VALUE_STACK, ATTR_GRAPHQL_DOCUMENT, ATTR_GRAPHQL_OPERATION_NAME, ATTR_GRAPHQL_OPERATION_TYPE, GRAPHQL_OPERATION_TYPE_VALUE_MUTATION, GRAPHQL_OPERATION_TYPE_VALUE_QUERY, GRAPHQL_OPERATION_TYPE_VALUE_SUBSCRIPTION, ATTR_HEROKU_APP_ID, ATTR_HEROKU_RELEASE_COMMIT, ATTR_HEROKU_RELEASE_CREATION_TIMESTAMP, ATTR_HOST_ARCH, HOST_ARCH_VALUE_AMD64, HOST_ARCH_VALUE_ARM32, HOST_ARCH_VALUE_ARM64, HOST_ARCH_VALUE_IA64, HOST_ARCH_VALUE_PPC32, HOST_ARCH_VALUE_PPC64, HOST_ARCH_VALUE_S390X, HOST_ARCH_VALUE_X86, ATTR_HOST_CPU_CACHE_L2_SIZE, ATTR_HOST_CPU_FAMILY, ATTR_HOST_CPU_MODEL_ID, ATTR_HOST_CPU_MODEL_NAME, ATTR_HOST_CPU_STEPPING, ATTR_HOST_CPU_VENDOR_ID, ATTR_HOST_ID, ATTR_HOST_IMAGE_ID, ATTR_HOST_IMAGE_NAME, ATTR_HOST_IMAGE_VERSION, ATTR_HOST_IP, ATTR_HOST_MAC, ATTR_HOST_NAME, ATTR_HOST_TYPE, ATTR_HTTP_CLIENT_IP, ATTR_HTTP_CONNECTION_STATE, HTTP_CONNECTION_STATE_VALUE_ACTIVE, HTTP_CONNECTION_STATE_VALUE_IDLE, ATTR_HTTP_FLAVOR, HTTP_FLAVOR_VALUE_HTTP_1_0, HTTP_FLAVOR_VALUE_HTTP_1_1, HTTP_FLAVOR_VALUE_HTTP_2_0, HTTP_FLAVOR_VALUE_HTTP_3_0, HTTP_FLAVOR_VALUE_QUIC, HTTP_FLAVOR_VALUE_SPDY, ATTR_HTTP_HOST, ATTR_HTTP_METHOD, ATTR_HTTP_REQUEST_BODY_SIZE, HTTP_REQUEST_METHOD_VALUE_QUERY, ATTR_HTTP_REQUEST_SIZE, ATTR_HTTP_REQUEST_CONTENT_LENGTH, ATTR_HTTP_REQUEST_CONTENT_LENGTH_UNCOMPRESSED, ATTR_HTTP_RESPONSE_BODY_SIZE, ATTR_HTTP_RESPONSE_SIZE, ATTR_HTTP_RESPONSE_CONTENT_LENGTH, ATTR_HTTP_RESPONSE_CONTENT_LENGTH_UNCOMPRESSED, ATTR_HTTP_SCHEME, ATTR_HTTP_SERVER_NAME, ATTR_HTTP_STATUS_CODE, ATTR_HTTP_TARGET, ATTR_HTTP_URL, ATTR_HTTP_USER_AGENT, ATTR_HW_BATTERY_CAPACITY, ATTR_HW_BATTERY_CHEMISTRY, ATTR_HW_BATTERY_STATE, HW_BATTERY_STATE_VALUE_CHARGING, HW_BATTERY_STATE_VALUE_DISCHARGING, ATTR_HW_BIOS_VERSION, ATTR_HW_DRIVER_VERSION, ATTR_HW_ENCLOSURE_TYPE, ATTR_HW_FIRMWARE_VERSION, ATTR_HW_GPU_TASK, HW_GPU_TASK_VALUE_DECODER, HW_GPU_TASK_VALUE_ENCODER, HW_GPU_TASK_VALUE_GENERAL, ATTR_HW_ID, ATTR_HW_LIMIT_TYPE, HW_LIMIT_TYPE_VALUE_CRITICAL, HW_LIMIT_TYPE_VALUE_DEGRADED, HW_LIMIT_TYPE_VALUE_HIGH_CRITICAL, HW_LIMIT_TYPE_VALUE_HIGH_DEGRADED, HW_LIMIT_TYPE_VALUE_LOW_CRITICAL, HW_LIMIT_TYPE_VALUE_LOW_DEGRADED, HW_LIMIT_TYPE_VALUE_MAX, HW_LIMIT_TYPE_VALUE_THROTTLED, HW_LIMIT_TYPE_VALUE_TURBO, ATTR_HW_LOGICAL_DISK_RAID_LEVEL, ATTR_HW_LOGICAL_DISK_STATE, HW_LOGICAL_DISK_STATE_VALUE_FREE, HW_LOGICAL_DISK_STATE_VALUE_USED, ATTR_HW_MEMORY_TYPE, ATTR_HW_MODEL, ATTR_HW_NAME, ATTR_HW_NETWORK_LOGICAL_ADDRESSES, ATTR_HW_NETWORK_PHYSICAL_ADDRESS, ATTR_HW_PARENT, ATTR_HW_PHYSICAL_DISK_SMART_ATTRIBUTE, ATTR_HW_PHYSICAL_DISK_STATE, HW_PHYSICAL_DISK_STATE_VALUE_REMAINING, ATTR_HW_PHYSICAL_DISK_TYPE, ATTR_HW_SENSOR_LOCATION, ATTR_HW_SERIAL_NUMBER, ATTR_HW_STATE, HW_STATE_VALUE_DEGRADED, HW_STATE_VALUE_FAILED, HW_STATE_VALUE_NEEDS_CLEANING, HW_STATE_VALUE_OK, HW_STATE_VALUE_PREDICTED_FAILURE, ATTR_HW_TAPE_DRIVE_OPERATION_TYPE, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_CLEAN, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_MOUNT, HW_TAPE_DRIVE_OPERATION_TYPE_VALUE_UNMOUNT, ATTR_HW_TYPE, HW_TYPE_VALUE_BATTERY, HW_TYPE_VALUE_CPU, HW_TYPE_VALUE_DISK_CONTROLLER, HW_TYPE_VALUE_ENCLOSURE, HW_TYPE_VALUE_FAN, HW_TYPE_VALUE_GPU, HW_TYPE_VALUE_LOGICAL_DISK, HW_TYPE_VALUE_MEMORY, HW_TYPE_VALUE_NETWORK, HW_TYPE_VALUE_PHYSICAL_DISK, HW_TYPE_VALUE_POWER_SUPPLY, HW_TYPE_VALUE_TAPE_DRIVE, HW_TYPE_VALUE_TEMPERATURE, HW_TYPE_VALUE_VOLTAGE, ATTR_HW_VENDOR, ATTR_IOS_APP_STATE, IOS_APP_STATE_VALUE_ACTIVE, IOS_APP_STATE_VALUE_BACKGROUND, IOS_APP_STATE_VALUE_FOREGROUND, IOS_APP_STATE_VALUE_INACTIVE, IOS_APP_STATE_VALUE_TERMINATE, ATTR_IOS_STATE, IOS_STATE_VALUE_ACTIVE, IOS_STATE_VALUE_BACKGROUND, IOS_STATE_VALUE_FOREGROUND, IOS_STATE_VALUE_INACTIVE, IOS_STATE_VALUE_TERMINATE, ATTR_JSONRPC_PROTOCOL_VERSION, ATTR_JSONRPC_REQUEST_ID, ATTR_JVM_BUFFER_POOL_NAME, ATTR_JVM_GC_CAUSE, ATTR_K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE, K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE_VALUE_LOGS, K8S_CONTAINER_EPHEMERAL_STORAGE_FS_TYPE_VALUE_ROOTFS, ATTR_K8S_CONTAINER_STATUS_LAST_TERMINATED_REASON, ATTR_K8S_CONTAINER_STATUS_REASON, K8S_CONTAINER_STATUS_REASON_VALUE_COMPLETED, K8S_CONTAINER_STATUS_REASON_VALUE_CONTAINER_CANNOT_RUN, K8S_CONTAINER_STATUS_REASON_VALUE_CONTAINER_CREATING, K8S_CONTAINER_STATUS_REASON_VALUE_CRASH_LOOP_BACK_OFF, K8S_CONTAINER_STATUS_REASON_VALUE_CREATE_CONTAINER_CONFIG_ERROR, K8S_CONTAINER_STATUS_REASON_VALUE_ERR_IMAGE_PULL, K8S_CONTAINER_STATUS_REASON_VALUE_ERROR, K8S_CONTAINER_STATUS_REASON_VALUE_IMAGE_PULL_BACK_OFF, K8S_CONTAINER_STATUS_REASON_VALUE_OOM_KILLED, ATTR_K8S_CONTAINER_STATUS_STATE, K8S_CONTAINER_STATUS_STATE_VALUE_RUNNING, K8S_CONTAINER_STATUS_STATE_VALUE_TERMINATED, K8S_CONTAINER_STATUS_STATE_VALUE_WAITING, ATTR_K8S_HPA_METRIC_TYPE, ATTR_K8S_HPA_NAME, ATTR_K8S_HPA_SCALETARGETREF_API_VERSION, ATTR_K8S_HPA_SCALETARGETREF_KIND, ATTR_K8S_HPA_SCALETARGETREF_NAME, ATTR_K8S_HPA_UID, ATTR_K8S_HUGEPAGE_SIZE, ATTR_K8S_NAMESPACE_PHASE, K8S_NAMESPACE_PHASE_VALUE_ACTIVE, K8S_NAMESPACE_PHASE_VALUE_TERMINATING, ATTR_K8S_NODE_CONDITION_STATUS, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_FALSE, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_TRUE, K8S_NODE_CONDITION_STATUS_VALUE_CONDITION_UNKNOWN, ATTR_K8S_NODE_CONDITION_TYPE, K8S_NODE_CONDITION_TYPE_VALUE_DISK_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_MEMORY_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_NETWORK_UNAVAILABLE, K8S_NODE_CONDITION_TYPE_VALUE_PID_PRESSURE, K8S_NODE_CONDITION_TYPE_VALUE_READY, ATTR_K8S_NODE_SYSTEM_CONTAINER_NAME, ATTR_K8S_PERSISTENTVOLUME_ANNOTATION, ATTR_K8S_PERSISTENTVOLUME_LABEL, ATTR_K8S_PERSISTENTVOLUME_NAME, ATTR_K8S_PERSISTENTVOLUME_RECLAIM_POLICY, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_DELETE, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_RECYCLE, K8S_PERSISTENTVOLUME_RECLAIM_POLICY_VALUE_RETAIN, ATTR_K8S_PERSISTENTVOLUME_STATUS_PHASE, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_AVAILABLE, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_BOUND, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_FAILED, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_PENDING, K8S_PERSISTENTVOLUME_STATUS_PHASE_VALUE_RELEASED, ATTR_K8S_PERSISTENTVOLUME_UID, ATTR_K8S_PERSISTENTVOLUMECLAIM_ANNOTATION, ATTR_K8S_PERSISTENTVOLUMECLAIM_LABEL, ATTR_K8S_PERSISTENTVOLUMECLAIM_NAME, ATTR_K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_BOUND, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_LOST, K8S_PERSISTENTVOLUMECLAIM_STATUS_PHASE_VALUE_PENDING, ATTR_K8S_PERSISTENTVOLUMECLAIM_UID, ATTR_K8S_POD_LABELS, ATTR_K8S_POD_STATUS_PHASE, K8S_POD_STATUS_PHASE_VALUE_FAILED, K8S_POD_STATUS_PHASE_VALUE_PENDING, K8S_POD_STATUS_PHASE_VALUE_RUNNING, K8S_POD_STATUS_PHASE_VALUE_SUCCEEDED, K8S_POD_STATUS_PHASE_VALUE_UNKNOWN, ATTR_K8S_POD_STATUS_REASON, K8S_POD_STATUS_REASON_VALUE_EVICTED, K8S_POD_STATUS_REASON_VALUE_NODE_AFFINITY, K8S_POD_STATUS_REASON_VALUE_NODE_LOST, K8S_POD_STATUS_REASON_VALUE_SHUTDOWN, K8S_POD_STATUS_REASON_VALUE_UNEXPECTED_ADMISSION_ERROR, ATTR_K8S_REPLICATIONCONTROLLER_NAME, ATTR_K8S_REPLICATIONCONTROLLER_UID, ATTR_K8S_RESOURCEQUOTA_NAME, ATTR_K8S_RESOURCEQUOTA_RESOURCE_NAME, ATTR_K8S_RESOURCEQUOTA_UID, ATTR_K8S_SERVICE_ANNOTATION, ATTR_K8S_SERVICE_ENDPOINT_ADDRESS_TYPE, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_FQDN, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_IPV4, K8S_SERVICE_ENDPOINT_ADDRESS_TYPE_VALUE_IPV6, ATTR_K8S_SERVICE_ENDPOINT_CONDITION, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_READY, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_SERVING, K8S_SERVICE_ENDPOINT_CONDITION_VALUE_TERMINATING, ATTR_K8S_SERVICE_ENDPOINT_ZONE, ATTR_K8S_SERVICE_LABEL, ATTR_K8S_SERVICE_NAME, ATTR_K8S_SERVICE_PUBLISH_NOT_READY_ADDRESSES, ATTR_K8S_SERVICE_SELECTOR, ATTR_K8S_SERVICE_TRAFFIC_DISTRIBUTION, ATTR_K8S_SERVICE_TYPE, K8S_SERVICE_TYPE_VALUE_CLUSTER_IP, K8S_SERVICE_TYPE_VALUE_EXTERNAL_NAME, K8S_SERVICE_TYPE_VALUE_LOAD_BALANCER, K8S_SERVICE_TYPE_VALUE_NODE_PORT, ATTR_K8S_SERVICE_UID, ATTR_K8S_STORAGECLASS_NAME, ATTR_K8S_VOLUME_NAME, ATTR_K8S_VOLUME_TYPE, K8S_VOLUME_TYPE_VALUE_CONFIG_MAP, K8S_VOLUME_TYPE_VALUE_DOWNWARD_API, K8S_VOLUME_TYPE_VALUE_EMPTY_DIR, K8S_VOLUME_TYPE_VALUE_LOCAL, K8S_VOLUME_TYPE_VALUE_PERSISTENT_VOLUME_CLAIM, K8S_VOLUME_TYPE_VALUE_SECRET, ATTR_LINUX_MEMORY_SLAB_STATE, LINUX_MEMORY_SLAB_STATE_VALUE_RECLAIMABLE, LINUX_MEMORY_SLAB_STATE_VALUE_UNRECLAIMABLE, ATTR_LOG_FILE_NAME, ATTR_LOG_FILE_NAME_RESOLVED, ATTR_LOG_FILE_PATH, ATTR_LOG_FILE_PATH_RESOLVED, ATTR_LOG_IOSTREAM, LOG_IOSTREAM_VALUE_STDERR, LOG_IOSTREAM_VALUE_STDOUT, ATTR_LOG_RECORD_ORIGINAL, ATTR_LOG_RECORD_UID, ATTR_MAINFRAME_LPAR_NAME, ATTR_MCP_METHOD_NAME, MCP_METHOD_NAME_VALUE_COMPLETION_COMPLETE, MCP_METHOD_NAME_VALUE_ELICITATION_CREATE, MCP_METHOD_NAME_VALUE_INITIALIZE, MCP_METHOD_NAME_VALUE_LOGGING_SET_LEVEL, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_CANCELLED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_INITIALIZED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_MESSAGE, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_PROGRESS, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_PROMPTS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_RESOURCES_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_RESOURCES_UPDATED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_ROOTS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_NOTIFICATIONS_TOOLS_LIST_CHANGED, MCP_METHOD_NAME_VALUE_PING, MCP_METHOD_NAME_VALUE_PROMPTS_GET, MCP_METHOD_NAME_VALUE_PROMPTS_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_READ, MCP_METHOD_NAME_VALUE_RESOURCES_SUBSCRIBE, MCP_METHOD_NAME_VALUE_RESOURCES_TEMPLATES_LIST, MCP_METHOD_NAME_VALUE_RESOURCES_UNSUBSCRIBE, MCP_METHOD_NAME_VALUE_ROOTS_LIST, MCP_METHOD_NAME_VALUE_SAMPLING_CREATE_MESSAGE, MCP_METHOD_NAME_VALUE_TOOLS_CALL, MCP_METHOD_NAME_VALUE_TOOLS_LIST, ATTR_MCP_PROTOCOL_VERSION, ATTR_MCP_RESOURCE_URI, ATTR_MCP_SESSION_ID, ATTR_MESSAGE_COMPRESSED_SIZE, ATTR_MESSAGE_ID, ATTR_MESSAGE_TYPE, MESSAGE_TYPE_VALUE_RECEIVED, MESSAGE_TYPE_VALUE_SENT, ATTR_MESSAGE_UNCOMPRESSED_SIZE, ATTR_MESSAGING_BATCH_MESSAGE_COUNT, ATTR_MESSAGING_CLIENT_ID, ATTR_MESSAGING_CONSUMER_GROUP_NAME, ATTR_MESSAGING_DESTINATION_ANONYMOUS, ATTR_MESSAGING_DESTINATION_NAME, ATTR_MESSAGING_DESTINATION_PARTITION_ID, ATTR_MESSAGING_DESTINATION_SUBSCRIPTION_NAME, ATTR_MESSAGING_DESTINATION_TEMPLATE, ATTR_MESSAGING_DESTINATION_TEMPORARY, ATTR_MESSAGING_DESTINATION_PUBLISH_ANONYMOUS, ATTR_MESSAGING_DESTINATION_PUBLISH_NAME, ATTR_MESSAGING_EVENTHUBS_CONSUMER_GROUP, ATTR_MESSAGING_EVENTHUBS_MESSAGE_ENQUEUED_TIME, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ACK_DEADLINE, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ACK_ID, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_DELIVERY_ATTEMPT, ATTR_MESSAGING_GCP_PUBSUB_MESSAGE_ORDERING_KEY, ATTR_MESSAGING_KAFKA_CONSUMER_GROUP, ATTR_MESSAGING_KAFKA_DESTINATION_PARTITION, ATTR_MESSAGING_KAFKA_MESSAGE_KEY, ATTR_MESSAGING_KAFKA_MESSAGE_OFFSET, ATTR_MESSAGING_KAFKA_MESSAGE_TOMBSTONE, ATTR_MESSAGING_KAFKA_OFFSET, ATTR_MESSAGING_MESSAGE_BODY_SIZE, ATTR_MESSAGING_MESSAGE_CONVERSATION_ID, ATTR_MESSAGING_MESSAGE_ENVELOPE_SIZE, ATTR_MESSAGING_MESSAGE_ID, ATTR_MESSAGING_OPERATION, ATTR_MESSAGING_OPERATION_NAME, ATTR_MESSAGING_OPERATION_TYPE, MESSAGING_OPERATION_TYPE_VALUE_CREATE, MESSAGING_OPERATION_TYPE_VALUE_DELIVER, MESSAGING_OPERATION_TYPE_VALUE_PROCESS, MESSAGING_OPERATION_TYPE_VALUE_PUBLISH, MESSAGING_OPERATION_TYPE_VALUE_RECEIVE, MESSAGING_OPERATION_TYPE_VALUE_SEND, MESSAGING_OPERATION_TYPE_VALUE_SETTLE, ATTR_MESSAGING_RABBITMQ_DESTINATION_ROUTING_KEY, ATTR_MESSAGING_RABBITMQ_MESSAGE_DELIVERY_TAG, ATTR_MESSAGING_ROCKETMQ_CLIENT_GROUP, ATTR_MESSAGING_ROCKETMQ_CONSUMPTION_MODEL, MESSAGING_ROCKETMQ_CONSUMPTION_MODEL_VALUE_BROADCASTING, MESSAGING_ROCKETMQ_CONSUMPTION_MODEL_VALUE_CLUSTERING, ATTR_MESSAGING_ROCKETMQ_MESSAGE_DELAY_TIME_LEVEL, ATTR_MESSAGING_ROCKETMQ_MESSAGE_DELIVERY_TIMESTAMP, ATTR_MESSAGING_ROCKETMQ_MESSAGE_GROUP, ATTR_MESSAGING_ROCKETMQ_MESSAGE_KEYS, ATTR_MESSAGING_ROCKETMQ_MESSAGE_TAG, ATTR_MESSAGING_ROCKETMQ_MESSAGE_TYPE, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_DELAY, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_FIFO, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_NORMAL, MESSAGING_ROCKETMQ_MESSAGE_TYPE_VALUE_TRANSACTION, ATTR_MESSAGING_ROCKETMQ_NAMESPACE, ATTR_MESSAGING_SERVICEBUS_DESTINATION_SUBSCRIPTION_NAME, ATTR_MESSAGING_SERVICEBUS_DISPOSITION_STATUS, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_ABANDON, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_COMPLETE, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_DEAD_LETTER, MESSAGING_SERVICEBUS_DISPOSITION_STATUS_VALUE_DEFER, ATTR_MESSAGING_SERVICEBUS_MESSAGE_DELIVERY_COUNT, ATTR_MESSAGING_SERVICEBUS_MESSAGE_ENQUEUED_TIME, ATTR_MESSAGING_SYSTEM, MESSAGING_SYSTEM_VALUE_ACTIVEMQ, MESSAGING_SYSTEM_VALUE_AWS_SNS, MESSAGING_SYSTEM_VALUE_AWS_SQS, MESSAGING_SYSTEM_VALUE_EVENTGRID, MESSAGING_SYSTEM_VALUE_EVENTHUBS, MESSAGING_SYSTEM_VALUE_GCP_PUBSUB, MESSAGING_SYSTEM_VALUE_JMS, MESSAGING_SYSTEM_VALUE_KAFKA, MESSAGING_SYSTEM_VALUE_PULSAR, MESSAGING_SYSTEM_VALUE_RABBITMQ, MESSAGING_SYSTEM_VALUE_ROCKETMQ, MESSAGING_SYSTEM_VALUE_SERVICEBUS, ATTR_NET_HOST_IP, ATTR_NET_HOST_NAME, ATTR_NET_HOST_PORT, ATTR_NET_PEER_IP, ATTR_NET_PEER_NAME, ATTR_NET_PEER_PORT, ATTR_NET_PROTOCOL_NAME, ATTR_NET_PROTOCOL_VERSION, ATTR_NET_SOCK_FAMILY, NET_SOCK_FAMILY_VALUE_INET, NET_SOCK_FAMILY_VALUE_INET6, NET_SOCK_FAMILY_VALUE_UNIX, ATTR_NET_SOCK_HOST_ADDR, ATTR_NET_SOCK_HOST_PORT, ATTR_NET_SOCK_PEER_ADDR, ATTR_NET_SOCK_PEER_NAME, ATTR_NET_SOCK_PEER_PORT, ATTR_NET_TRANSPORT, NET_TRANSPORT_VALUE_INPROC, NET_TRANSPORT_VALUE_IP_TCP, NET_TRANSPORT_VALUE_IP_UDP, NET_TRANSPORT_VALUE_OTHER, NET_TRANSPORT_VALUE_PIPE, ATTR_NETWORK_CARRIER_ICC, ATTR_NETWORK_CARRIER_MCC, ATTR_NETWORK_CARRIER_MNC, ATTR_NETWORK_CARRIER_NAME, ATTR_NETWORK_CONNECTION_STATE, NETWORK_CONNECTION_STATE_VALUE_CLOSE_WAIT, NETWORK_CONNECTION_STATE_VALUE_CLOSED, NETWORK_CONNECTION_STATE_VALUE_CLOSING, NETWORK_CONNECTION_STATE_VALUE_ESTABLISHED, NETWORK_CONNECTION_STATE_VALUE_FIN_WAIT_1, NETWORK_CONNECTION_STATE_VALUE_FIN_WAIT_2, NETWORK_CONNECTION_STATE_VALUE_LAST_ACK, NETWORK_CONNECTION_STATE_VALUE_LISTEN, NETWORK_CONNECTION_STATE_VALUE_SYN_RECEIVED, NETWORK_CONNECTION_STATE_VALUE_SYN_SENT, NETWORK_CONNECTION_STATE_VALUE_TIME_WAIT, ATTR_NETWORK_CONNECTION_SUBTYPE, NETWORK_CONNECTION_SUBTYPE_VALUE_CDMA, NETWORK_CONNECTION_SUBTYPE_VALUE_CDMA2000_1XRTT, NETWORK_CONNECTION_SUBTYPE_VALUE_EDGE, NETWORK_CONNECTION_SUBTYPE_VALUE_EHRPD, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_0, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_A, NETWORK_CONNECTION_SUBTYPE_VALUE_EVDO_B, NETWORK_CONNECTION_SUBTYPE_VALUE_GPRS, NETWORK_CONNECTION_SUBTYPE_VALUE_GSM, NETWORK_CONNECTION_SUBTYPE_VALUE_HSDPA, NETWORK_CONNECTION_SUBTYPE_VALUE_HSPA, NETWORK_CONNECTION_SUBTYPE_VALUE_HSPAP, NETWORK_CONNECTION_SUBTYPE_VALUE_HSUPA, NETWORK_CONNECTION_SUBTYPE_VALUE_IDEN, NETWORK_CONNECTION_SUBTYPE_VALUE_IWLAN, NETWORK_CONNECTION_SUBTYPE_VALUE_LTE, NETWORK_CONNECTION_SUBTYPE_VALUE_LTE_CA, NETWORK_CONNECTION_SUBTYPE_VALUE_NR, NETWORK_CONNECTION_SUBTYPE_VALUE_NRNSA, NETWORK_CONNECTION_SUBTYPE_VALUE_TD_SCDMA, NETWORK_CONNECTION_SUBTYPE_VALUE_UMTS, ATTR_NETWORK_CONNECTION_TYPE, NETWORK_CONNECTION_TYPE_VALUE_CELL, NETWORK_CONNECTION_TYPE_VALUE_UNAVAILABLE, NETWORK_CONNECTION_TYPE_VALUE_UNKNOWN, NETWORK_CONNECTION_TYPE_VALUE_WIFI, NETWORK_CONNECTION_TYPE_VALUE_WIRED, ATTR_NETWORK_INTERFACE_NAME, ATTR_NETWORK_IO_DIRECTION, NETWORK_IO_DIRECTION_VALUE_RECEIVE, NETWORK_IO_DIRECTION_VALUE_TRANSMIT, ATTR_NFS_OPERATION_NAME, ATTR_NFS_SERVER_REPCACHE_STATUS, ATTR_NODEJS_EVENTLOOP_STATE, NODEJS_EVENTLOOP_STATE_VALUE_ACTIVE, NODEJS_EVENTLOOP_STATE_VALUE_IDLE, ATTR_OCI_MANIFEST_DIGEST, ATTR_ONC_RPC_PROCEDURE_NAME, ATTR_ONC_RPC_PROCEDURE_NUMBER, ATTR_ONC_RPC_PROGRAM_NAME, ATTR_ONC_RPC_VERSION, ATTR_OPENAI_API_TYPE, OPENAI_API_TYPE_VALUE_CHAT_COMPLETIONS, OPENAI_API_TYPE_VALUE_RESPONSES, ATTR_OPENAI_REQUEST_SERVICE_TIER, OPENAI_REQUEST_SERVICE_TIER_VALUE_AUTO, OPENAI_REQUEST_SERVICE_TIER_VALUE_DEFAULT, ATTR_OPENAI_RESPONSE_SERVICE_TIER, ATTR_OPENAI_RESPONSE_SYSTEM_FINGERPRINT, ATTR_OPENSHIFT_CLUSTERQUOTA_NAME, ATTR_OPENSHIFT_CLUSTERQUOTA_UID, ATTR_OPENTRACING_REF_TYPE, OPENTRACING_REF_TYPE_VALUE_CHILD_OF, OPENTRACING_REF_TYPE_VALUE_FOLLOWS_FROM, ATTR_ORACLE_DB_DOMAIN, ATTR_ORACLE_DB_INSTANCE_NAME, ATTR_ORACLE_DB_NAME, ATTR_ORACLE_DB_PDB, ATTR_ORACLE_DB_SERVICE, ATTR_ORACLE_CLOUD_REALM, ATTR_OS_BUILD_ID, ATTR_OS_DESCRIPTION, ATTR_OS_NAME, ATTR_OS_TYPE, OS_TYPE_VALUE_AIX, OS_TYPE_VALUE_DARWIN, OS_TYPE_VALUE_DRAGONFLYBSD, OS_TYPE_VALUE_FREEBSD, OS_TYPE_VALUE_HPUX, OS_TYPE_VALUE_LINUX, OS_TYPE_VALUE_NETBSD, OS_TYPE_VALUE_OPENBSD, OS_TYPE_VALUE_SOLARIS, OS_TYPE_VALUE_WINDOWS, OS_TYPE_VALUE_Z_OS, OS_TYPE_VALUE_ZOS, ATTR_OS_VERSION, ATTR_OTEL_COMPONENT_NAME, ATTR_OTEL_COMPONENT_TYPE, OTEL_COMPONENT_TYPE_VALUE_BATCHING_LOG_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_BATCHING_SPAN_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_GRPC_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_JSON_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_LOG_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_OTLP_HTTP_SPAN_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_PERIODIC_METRIC_READER, OTEL_COMPONENT_TYPE_VALUE_PROMETHEUS_HTTP_TEXT_METRIC_EXPORTER, OTEL_COMPONENT_TYPE_VALUE_SIMPLE_LOG_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_SIMPLE_SPAN_PROCESSOR, OTEL_COMPONENT_TYPE_VALUE_ZIPKIN_HTTP_SPAN_EXPORTER, ATTR_OTEL_LIBRARY_NAME, ATTR_OTEL_LIBRARY_VERSION, ATTR_OTEL_SCOPE_SCHEMA_URL, ATTR_OTEL_SPAN_PARENT_ORIGIN, OTEL_SPAN_PARENT_ORIGIN_VALUE_LOCAL, OTEL_SPAN_PARENT_ORIGIN_VALUE_NONE, OTEL_SPAN_PARENT_ORIGIN_VALUE_REMOTE, ATTR_OTEL_SPAN_SAMPLING_RESULT, OTEL_SPAN_SAMPLING_RESULT_VALUE_DROP, OTEL_SPAN_SAMPLING_RESULT_VALUE_RECORD_AND_SAMPLE, OTEL_SPAN_SAMPLING_RESULT_VALUE_RECORD_ONLY, ATTR_PEER_SERVICE, ATTR_POOL_NAME, ATTR_PPROF_LOCATION_IS_FOLDED, ATTR_PPROF_MAPPING_HAS_FILENAMES, ATTR_PPROF_MAPPING_HAS_FUNCTIONS, ATTR_PPROF_MAPPING_HAS_INLINE_FRAMES, ATTR_PPROF_MAPPING_HAS_LINE_NUMBERS, ATTR_PPROF_PROFILE_COMMENT, ATTR_PPROF_PROFILE_DOC_URL, ATTR_PPROF_PROFILE_DROP_FRAMES, ATTR_PPROF_PROFILE_KEEP_FRAMES, ATTR_PPROF_SCOPE_DEFAULT_SAMPLE_TYPE, ATTR_PPROF_SCOPE_SAMPLE_TYPE_ORDER, ATTR_PROCESS_ARGS_COUNT, ATTR_PROCESS_COMMAND, ATTR_PROCESS_COMMAND_ARGS, ATTR_PROCESS_COMMAND_LINE, ATTR_PROCESS_CONTEXT_SWITCH_TYPE, PROCESS_CONTEXT_SWITCH_TYPE_VALUE_INVOLUNTARY, PROCESS_CONTEXT_SWITCH_TYPE_VALUE_VOLUNTARY, ATTR_PROCESS_CPU_STATE, PROCESS_CPU_STATE_VALUE_SYSTEM, PROCESS_CPU_STATE_VALUE_USER, PROCESS_CPU_STATE_VALUE_WAIT, ATTR_PROCESS_CREATION_TIME, ATTR_PROCESS_ENVIRONMENT_VARIABLE, ATTR_PROCESS_EXECUTABLE_BUILD_ID_GNU, ATTR_PROCESS_EXECUTABLE_BUILD_ID_GO, ATTR_PROCESS_EXECUTABLE_BUILD_ID_HTLHASH, ATTR_PROCESS_EXECUTABLE_BUILD_ID_PROFILING, ATTR_PROCESS_EXECUTABLE_NAME, ATTR_PROCESS_EXECUTABLE_PATH, ATTR_PROCESS_EXIT_CODE, ATTR_PROCESS_EXIT_TIME, ATTR_PROCESS_GROUP_LEADER_PID, ATTR_PROCESS_INTERACTIVE, ATTR_PROCESS_LINUX_CGROUP, ATTR_PROCESS_OWNER, ATTR_PROCESS_PAGING_FAULT_TYPE, PROCESS_PAGING_FAULT_TYPE_VALUE_MAJOR, PROCESS_PAGING_FAULT_TYPE_VALUE_MINOR, ATTR_PROCESS_PARENT_PID, ATTR_PROCESS_PID, ATTR_PROCESS_REAL_USER_ID, ATTR_PROCESS_REAL_USER_NAME, ATTR_PROCESS_RUNTIME_DESCRIPTION, ATTR_PROCESS_RUNTIME_NAME, ATTR_PROCESS_RUNTIME_VERSION, ATTR_PROCESS_SAVED_USER_ID, ATTR_PROCESS_SAVED_USER_NAME, ATTR_PROCESS_SESSION_LEADER_PID, ATTR_PROCESS_STATE, PROCESS_STATE_VALUE_DEFUNCT, PROCESS_STATE_VALUE_RUNNING, PROCESS_STATE_VALUE_SLEEPING, PROCESS_STATE_VALUE_STOPPED, ATTR_PROCESS_TITLE, ATTR_PROCESS_USER_ID, ATTR_PROCESS_USER_NAME, ATTR_PROCESS_VPID, ATTR_PROCESS_WORKING_DIRECTORY, ATTR_PROFILE_FRAME_TYPE, PROFILE_FRAME_TYPE_VALUE_BEAM, PROFILE_FRAME_TYPE_VALUE_CPYTHON, PROFILE_FRAME_TYPE_VALUE_DOTNET, PROFILE_FRAME_TYPE_VALUE_GO, PROFILE_FRAME_TYPE_VALUE_JVM, PROFILE_FRAME_TYPE_VALUE_KERNEL, PROFILE_FRAME_TYPE_VALUE_LUAJIT, PROFILE_FRAME_TYPE_VALUE_NATIVE, PROFILE_FRAME_TYPE_VALUE_PERL, PROFILE_FRAME_TYPE_VALUE_PHP, PROFILE_FRAME_TYPE_VALUE_RUBY, PROFILE_FRAME_TYPE_VALUE_RUST, PROFILE_FRAME_TYPE_VALUE_V8JS, ATTR_RPC_CONNECT_RPC_ERROR_CODE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_ABORTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_ALREADY_EXISTS, RPC_CONNECT_RPC_ERROR_CODE_VALUE_CANCELLED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_DATA_LOSS, RPC_CONNECT_RPC_ERROR_CODE_VALUE_DEADLINE_EXCEEDED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_FAILED_PRECONDITION, RPC_CONNECT_RPC_ERROR_CODE_VALUE_INTERNAL, RPC_CONNECT_RPC_ERROR_CODE_VALUE_INVALID_ARGUMENT, RPC_CONNECT_RPC_ERROR_CODE_VALUE_NOT_FOUND, RPC_CONNECT_RPC_ERROR_CODE_VALUE_OUT_OF_RANGE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_PERMISSION_DENIED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_RESOURCE_EXHAUSTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNAUTHENTICATED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNAVAILABLE, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNIMPLEMENTED, RPC_CONNECT_RPC_ERROR_CODE_VALUE_UNKNOWN, ATTR_RPC_CONNECT_RPC_REQUEST_METADATA, ATTR_RPC_CONNECT_RPC_RESPONSE_METADATA, ATTR_RPC_GRPC_REQUEST_METADATA, ATTR_RPC_GRPC_RESPONSE_METADATA, ATTR_RPC_GRPC_STATUS_CODE, RPC_GRPC_STATUS_CODE_VALUE_OK, RPC_GRPC_STATUS_CODE_VALUE_CANCELLED, RPC_GRPC_STATUS_CODE_VALUE_UNKNOWN, RPC_GRPC_STATUS_CODE_VALUE_INVALID_ARGUMENT, RPC_GRPC_STATUS_CODE_VALUE_DEADLINE_EXCEEDED, RPC_GRPC_STATUS_CODE_VALUE_NOT_FOUND, RPC_GRPC_STATUS_CODE_VALUE_ALREADY_EXISTS, RPC_GRPC_STATUS_CODE_VALUE_PERMISSION_DENIED, RPC_GRPC_STATUS_CODE_VALUE_RESOURCE_EXHAUSTED, RPC_GRPC_STATUS_CODE_VALUE_FAILED_PRECONDITION, RPC_GRPC_STATUS_CODE_VALUE_ABORTED, RPC_GRPC_STATUS_CODE_VALUE_OUT_OF_RANGE, RPC_GRPC_STATUS_CODE_VALUE_UNIMPLEMENTED, RPC_GRPC_STATUS_CODE_VALUE_INTERNAL, RPC_GRPC_STATUS_CODE_VALUE_UNAVAILABLE, RPC_GRPC_STATUS_CODE_VALUE_DATA_LOSS, RPC_GRPC_STATUS_CODE_VALUE_UNAUTHENTICATED, ATTR_RPC_JSONRPC_ERROR_CODE, ATTR_RPC_JSONRPC_ERROR_MESSAGE, ATTR_RPC_JSONRPC_REQUEST_ID, ATTR_RPC_JSONRPC_VERSION, ATTR_RPC_MESSAGE_COMPRESSED_SIZE, ATTR_RPC_MESSAGE_ID, ATTR_RPC_MESSAGE_TYPE, RPC_MESSAGE_TYPE_VALUE_RECEIVED, RPC_MESSAGE_TYPE_VALUE_SENT, ATTR_RPC_MESSAGE_UNCOMPRESSED_SIZE, ATTR_RPC_METHOD, ATTR_RPC_METHOD_ORIGINAL, ATTR_RPC_REQUEST_METADATA, ATTR_RPC_RESPONSE_METADATA, ATTR_RPC_RESPONSE_STATUS_CODE, ATTR_RPC_SERVICE, ATTR_RPC_SYSTEM, RPC_SYSTEM_VALUE_APACHE_DUBBO, RPC_SYSTEM_VALUE_CONNECT_RPC, RPC_SYSTEM_VALUE_DOTNET_WCF, RPC_SYSTEM_VALUE_GRPC, RPC_SYSTEM_VALUE_JAVA_RMI, RPC_SYSTEM_VALUE_JSONRPC, RPC_SYSTEM_VALUE_ONC_RPC, ATTR_RPC_SYSTEM_NAME, RPC_SYSTEM_NAME_VALUE_CONNECTRPC, RPC_SYSTEM_NAME_VALUE_DUBBO, RPC_SYSTEM_NAME_VALUE_GRPC, RPC_SYSTEM_NAME_VALUE_JSONRPC, ATTR_SECURITY_RULE_CATEGORY, ATTR_SECURITY_RULE_DESCRIPTION, ATTR_SECURITY_RULE_LICENSE, ATTR_SECURITY_RULE_NAME, ATTR_SECURITY_RULE_REFERENCE, ATTR_SECURITY_RULE_RULESET_NAME, ATTR_SECURITY_RULE_UUID, ATTR_SECURITY_RULE_VERSION, ATTR_SERVICE_CRITICALITY, SERVICE_CRITICALITY_VALUE_CRITICAL, SERVICE_CRITICALITY_VALUE_HIGH, SERVICE_CRITICALITY_VALUE_LOW, SERVICE_CRITICALITY_VALUE_MEDIUM, ATTR_SERVICE_PEER_NAME, ATTR_SERVICE_PEER_NAMESPACE, ATTR_SESSION_ID, ATTR_SESSION_PREVIOUS_ID, ATTR_SOURCE_ADDRESS, ATTR_SOURCE_PORT, ATTR_STATE, STATE_VALUE_IDLE, STATE_VALUE_USED, ATTR_SYSTEM_CPU_LOGICAL_NUMBER, ATTR_SYSTEM_CPU_STATE, SYSTEM_CPU_STATE_VALUE_IDLE, SYSTEM_CPU_STATE_VALUE_INTERRUPT, SYSTEM_CPU_STATE_VALUE_IOWAIT, SYSTEM_CPU_STATE_VALUE_NICE, SYSTEM_CPU_STATE_VALUE_STEAL, SYSTEM_CPU_STATE_VALUE_SYSTEM, SYSTEM_CPU_STATE_VALUE_USER, ATTR_SYSTEM_DEVICE, ATTR_SYSTEM_FILESYSTEM_MODE, ATTR_SYSTEM_FILESYSTEM_MOUNTPOINT, ATTR_SYSTEM_FILESYSTEM_STATE, SYSTEM_FILESYSTEM_STATE_VALUE_FREE, SYSTEM_FILESYSTEM_STATE_VALUE_RESERVED, SYSTEM_FILESYSTEM_STATE_VALUE_USED, ATTR_SYSTEM_FILESYSTEM_TYPE, SYSTEM_FILESYSTEM_TYPE_VALUE_EXFAT, SYSTEM_FILESYSTEM_TYPE_VALUE_EXT4, SYSTEM_FILESYSTEM_TYPE_VALUE_FAT32, SYSTEM_FILESYSTEM_TYPE_VALUE_HFSPLUS, SYSTEM_FILESYSTEM_TYPE_VALUE_NTFS, SYSTEM_FILESYSTEM_TYPE_VALUE_REFS, ATTR_SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE, SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE_VALUE_FREE, SYSTEM_MEMORY_LINUX_HUGEPAGES_STATE_VALUE_USED, ATTR_SYSTEM_MEMORY_LINUX_SLAB_STATE, SYSTEM_MEMORY_LINUX_SLAB_STATE_VALUE_RECLAIMABLE, SYSTEM_MEMORY_LINUX_SLAB_STATE_VALUE_UNRECLAIMABLE, ATTR_SYSTEM_MEMORY_STATE, SYSTEM_MEMORY_STATE_VALUE_BUFFERS, SYSTEM_MEMORY_STATE_VALUE_CACHED, SYSTEM_MEMORY_STATE_VALUE_FREE, SYSTEM_MEMORY_STATE_VALUE_SHARED, SYSTEM_MEMORY_STATE_VALUE_USED, ATTR_SYSTEM_NETWORK_STATE, SYSTEM_NETWORK_STATE_VALUE_CLOSE, SYSTEM_NETWORK_STATE_VALUE_CLOSE_WAIT, SYSTEM_NETWORK_STATE_VALUE_CLOSING, SYSTEM_NETWORK_STATE_VALUE_DELETE, SYSTEM_NETWORK_STATE_VALUE_ESTABLISHED, SYSTEM_NETWORK_STATE_VALUE_FIN_WAIT_1, SYSTEM_NETWORK_STATE_VALUE_FIN_WAIT_2, SYSTEM_NETWORK_STATE_VALUE_LAST_ACK, SYSTEM_NETWORK_STATE_VALUE_LISTEN, SYSTEM_NETWORK_STATE_VALUE_SYN_RECV, SYSTEM_NETWORK_STATE_VALUE_SYN_SENT, SYSTEM_NETWORK_STATE_VALUE_TIME_WAIT, ATTR_SYSTEM_PAGING_DIRECTION, SYSTEM_PAGING_DIRECTION_VALUE_IN, SYSTEM_PAGING_DIRECTION_VALUE_OUT, ATTR_SYSTEM_PAGING_FAULT_TYPE, SYSTEM_PAGING_FAULT_TYPE_VALUE_MAJOR, SYSTEM_PAGING_FAULT_TYPE_VALUE_MINOR, ATTR_SYSTEM_PAGING_STATE, SYSTEM_PAGING_STATE_VALUE_FREE, SYSTEM_PAGING_STATE_VALUE_USED, ATTR_SYSTEM_PAGING_TYPE, SYSTEM_PAGING_TYPE_VALUE_MAJOR, SYSTEM_PAGING_TYPE_VALUE_MINOR, ATTR_SYSTEM_PROCESS_STATUS, SYSTEM_PROCESS_STATUS_VALUE_DEFUNCT, SYSTEM_PROCESS_STATUS_VALUE_RUNNING, SYSTEM_PROCESS_STATUS_VALUE_SLEEPING, SYSTEM_PROCESS_STATUS_VALUE_STOPPED, ATTR_SYSTEM_PROCESSES_STATUS, SYSTEM_PROCESSES_STATUS_VALUE_DEFUNCT, SYSTEM_PROCESSES_STATUS_VALUE_RUNNING, SYSTEM_PROCESSES_STATUS_VALUE_SLEEPING, SYSTEM_PROCESSES_STATUS_VALUE_STOPPED, ATTR_TEST_CASE_NAME, ATTR_TEST_CASE_RESULT_STATUS, TEST_CASE_RESULT_STATUS_VALUE_FAIL, TEST_CASE_RESULT_STATUS_VALUE_PASS, ATTR_TEST_SUITE_NAME, ATTR_TEST_SUITE_RUN_STATUS, TEST_SUITE_RUN_STATUS_VALUE_ABORTED, TEST_SUITE_RUN_STATUS_VALUE_FAILURE, TEST_SUITE_RUN_STATUS_VALUE_IN_PROGRESS, TEST_SUITE_RUN_STATUS_VALUE_SKIPPED, TEST_SUITE_RUN_STATUS_VALUE_SUCCESS, TEST_SUITE_RUN_STATUS_VALUE_TIMED_OUT, ATTR_THREAD_ID, ATTR_THREAD_NAME, ATTR_TLS_CIPHER, ATTR_TLS_CLIENT_CERTIFICATE, ATTR_TLS_CLIENT_CERTIFICATE_CHAIN, ATTR_TLS_CLIENT_HASH_MD5, ATTR_TLS_CLIENT_HASH_SHA1, ATTR_TLS_CLIENT_HASH_SHA256, ATTR_TLS_CLIENT_ISSUER, ATTR_TLS_CLIENT_JA3, ATTR_TLS_CLIENT_NOT_AFTER, ATTR_TLS_CLIENT_NOT_BEFORE, ATTR_TLS_CLIENT_SERVER_NAME, ATTR_TLS_CLIENT_SUBJECT, ATTR_TLS_CLIENT_SUPPORTED_CIPHERS, ATTR_TLS_CURVE, ATTR_TLS_ESTABLISHED, ATTR_TLS_NEXT_PROTOCOL, ATTR_TLS_PROTOCOL_NAME, TLS_PROTOCOL_NAME_VALUE_SSL, TLS_PROTOCOL_NAME_VALUE_TLS, ATTR_TLS_PROTOCOL_VERSION, ATTR_TLS_RESUMED, ATTR_TLS_SERVER_CERTIFICATE, ATTR_TLS_SERVER_CERTIFICATE_CHAIN, ATTR_TLS_SERVER_HASH_MD5, ATTR_TLS_SERVER_HASH_SHA1, ATTR_TLS_SERVER_HASH_SHA256, ATTR_TLS_SERVER_ISSUER, ATTR_TLS_SERVER_JA3S, ATTR_TLS_SERVER_NOT_AFTER, ATTR_TLS_SERVER_NOT_BEFORE, ATTR_TLS_SERVER_SUBJECT, ATTR_URL_DOMAIN, ATTR_URL_EXTENSION, ATTR_URL_ORIGINAL, ATTR_URL_PORT, ATTR_URL_REGISTERED_DOMAIN, ATTR_URL_SUBDOMAIN, ATTR_URL_TEMPLATE, ATTR_URL_TOP_LEVEL_DOMAIN, ATTR_USER_EMAIL, ATTR_USER_FULL_NAME, ATTR_USER_HASH, ATTR_USER_ID, ATTR_USER_NAME, ATTR_USER_ROLES, ATTR_USER_AGENT_NAME, ATTR_USER_AGENT_OS_NAME, ATTR_USER_AGENT_OS_VERSION, ATTR_USER_AGENT_SYNTHETIC_TYPE, USER_AGENT_SYNTHETIC_TYPE_VALUE_BOT, USER_AGENT_SYNTHETIC_TYPE_VALUE_TEST, ATTR_USER_AGENT_VERSION, ATTR_V8JS_GC_TYPE, V8JS_GC_TYPE_VALUE_INCREMENTAL, V8JS_GC_TYPE_VALUE_MAJOR, V8JS_GC_TYPE_VALUE_MINOR, V8JS_GC_TYPE_VALUE_WEAKCB, ATTR_V8JS_HEAP_SPACE_NAME, V8JS_HEAP_SPACE_NAME_VALUE_CODE_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_LARGE_OBJECT_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_MAP_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_NEW_SPACE, V8JS_HEAP_SPACE_NAME_VALUE_OLD_SPACE, ATTR_V8JS_RESOURCE_TYPE, V8JS_RESOURCE_TYPE_VALUE_IMMEDIATE, V8JS_RESOURCE_TYPE_VALUE_TCPSERVERWRAP, V8JS_RESOURCE_TYPE_VALUE_TCPWRAP, V8JS_RESOURCE_TYPE_VALUE_TIMEOUT, V8JS_RESOURCE_TYPE_VALUE_TTYWRAP, ATTR_VCS_CHANGE_ID, ATTR_VCS_CHANGE_STATE, VCS_CHANGE_STATE_VALUE_CLOSED, VCS_CHANGE_STATE_VALUE_MERGED, VCS_CHANGE_STATE_VALUE_OPEN, VCS_CHANGE_STATE_VALUE_WIP, ATTR_VCS_CHANGE_TITLE, ATTR_VCS_LINE_CHANGE_TYPE, VCS_LINE_CHANGE_TYPE_VALUE_ADDED, VCS_LINE_CHANGE_TYPE_VALUE_REMOVED, ATTR_VCS_OWNER_NAME, ATTR_VCS_PROVIDER_NAME, VCS_PROVIDER_NAME_VALUE_BITBUCKET, VCS_PROVIDER_NAME_VALUE_GITEA, VCS_PROVIDER_NAME_VALUE_GITHUB, VCS_PROVIDER_NAME_VALUE_GITLAB, VCS_PROVIDER_NAME_VALUE_GITTEA, ATTR_VCS_REF_BASE_NAME, ATTR_VCS_REF_BASE_REVISION, ATTR_VCS_REF_BASE_TYPE, VCS_REF_BASE_TYPE_VALUE_BRANCH, VCS_REF_BASE_TYPE_VALUE_TAG, ATTR_VCS_REF_HEAD_NAME, ATTR_VCS_REF_HEAD_REVISION, ATTR_VCS_REF_HEAD_TYPE, VCS_REF_HEAD_TYPE_VALUE_BRANCH, VCS_REF_HEAD_TYPE_VALUE_TAG, ATTR_VCS_REF_TYPE, VCS_REF_TYPE_VALUE_BRANCH, VCS_REF_TYPE_VALUE_TAG, ATTR_VCS_REPOSITORY_CHANGE_ID, ATTR_VCS_REPOSITORY_CHANGE_TITLE, ATTR_VCS_REPOSITORY_NAME, ATTR_VCS_REPOSITORY_REF_NAME, ATTR_VCS_REPOSITORY_REF_REVISION, ATTR_VCS_REPOSITORY_REF_TYPE, VCS_REPOSITORY_REF_TYPE_VALUE_BRANCH, VCS_REPOSITORY_REF_TYPE_VALUE_TAG, ATTR_VCS_REPOSITORY_URL_FULL, ATTR_VCS_REVISION_DELTA_DIRECTION, VCS_REVISION_DELTA_DIRECTION_VALUE_AHEAD, VCS_REVISION_DELTA_DIRECTION_VALUE_BEHIND, ATTR_WEBENGINE_DESCRIPTION, ATTR_WEBENGINE_NAME, ATTR_WEBENGINE_VERSION, ATTR_ZOS_SMF_ID, ATTR_ZOS_SYSPLEX_NAME;
 var init_experimental_attributes = __esm({
   "node_modules/@opentelemetry/semantic-conventions/build/esm/experimental_attributes.js"() {
     ATTR_ANDROID_APP_STATE = "android.app.state";
@@ -38517,6 +38675,7 @@ var init_experimental_attributes = __esm({
     ATTR_AZURE_COSMOSDB_OPERATION_REQUEST_CHARGE = "azure.cosmosdb.operation.request_charge";
     ATTR_AZURE_COSMOSDB_REQUEST_BODY_SIZE = "azure.cosmosdb.request.body.size";
     ATTR_AZURE_COSMOSDB_RESPONSE_SUB_STATUS_CODE = "azure.cosmosdb.response.sub_status_code";
+    ATTR_AZURE_RESOURCE_GROUP_NAME = "azure.resource_group.name";
     ATTR_AZURE_RESOURCE_PROVIDER_NAMESPACE = "azure.resource_provider.namespace";
     ATTR_AZURE_SERVICE_REQUEST_ID = "azure.service.request.id";
     ATTR_BROWSER_BRANDS = "browser.brands";
@@ -40754,6 +40913,7 @@ __export(index_incubating_exports, {
   ATTR_AZURE_COSMOSDB_OPERATION_REQUEST_CHARGE: () => ATTR_AZURE_COSMOSDB_OPERATION_REQUEST_CHARGE,
   ATTR_AZURE_COSMOSDB_REQUEST_BODY_SIZE: () => ATTR_AZURE_COSMOSDB_REQUEST_BODY_SIZE,
   ATTR_AZURE_COSMOSDB_RESPONSE_SUB_STATUS_CODE: () => ATTR_AZURE_COSMOSDB_RESPONSE_SUB_STATUS_CODE,
+  ATTR_AZURE_RESOURCE_GROUP_NAME: () => ATTR_AZURE_RESOURCE_GROUP_NAME,
   ATTR_AZURE_RESOURCE_PROVIDER_NAMESPACE: () => ATTR_AZURE_RESOURCE_PROVIDER_NAMESPACE,
   ATTR_AZURE_SERVICE_REQUEST_ID: () => ATTR_AZURE_SERVICE_REQUEST_ID,
   ATTR_AZ_NAMESPACE: () => ATTR_AZ_NAMESPACE,
@@ -42969,6 +43129,7 @@ __export(index_incubating_exports, {
   TELEMETRY_SDK_LANGUAGE_VALUE_ERLANG: () => TELEMETRY_SDK_LANGUAGE_VALUE_ERLANG,
   TELEMETRY_SDK_LANGUAGE_VALUE_GO: () => TELEMETRY_SDK_LANGUAGE_VALUE_GO,
   TELEMETRY_SDK_LANGUAGE_VALUE_JAVA: () => TELEMETRY_SDK_LANGUAGE_VALUE_JAVA,
+  TELEMETRY_SDK_LANGUAGE_VALUE_KOTLIN: () => TELEMETRY_SDK_LANGUAGE_VALUE_KOTLIN,
   TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS: () => TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
   TELEMETRY_SDK_LANGUAGE_VALUE_PHP: () => TELEMETRY_SDK_LANGUAGE_VALUE_PHP,
   TELEMETRY_SDK_LANGUAGE_VALUE_PYTHON: () => TELEMETRY_SDK_LANGUAGE_VALUE_PYTHON,
@@ -75166,8 +75327,8 @@ async function $do2(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       if (rawEvent.data === "[DONE]") {
         return { done: true, value: void 0 };
       }
@@ -78452,8 +78613,8 @@ var init_speechv1audiospeechpost = __esm({
     });
     SpeechV1AudioSpeechPostResponse$inboundSchema = smartUnion([
       lazy(() => SpeechResponse$inboundSchema),
-      custom((x) => x instanceof ReadableStream).transform((stream10) => {
-        return new EventStream3(stream10, (rawEvent) => {
+      custom((x) => x instanceof ReadableStream).transform((stream11) => {
+        return new EventStream3(stream11, (rawEvent) => {
           return {
             done: false,
             value: lazy(() => SpeechStreamEvents$inboundSchema).parse(rawEvent)
@@ -79080,8 +79241,8 @@ function isReadableStream(val) {
   if (typeof val !== "object" || val === null) {
     return false;
   }
-  const stream10 = val;
-  return typeof stream10.getReader === "function" && typeof stream10.cancel === "function" && typeof stream10.tee === "function";
+  const stream11 = val;
+  return typeof stream11.getReader === "function" && typeof stream11.cancel === "function" && typeof stream11.tee === "function";
 }
 var init_streams = __esm({
   "node_modules/@mistralai/mistralai/esm/types/streams.js"() {
@@ -79295,8 +79456,8 @@ async function $do5(client, request, options) {
     return [doResult, { status: "request-error", request: req }];
   }
   const response = doResult.value;
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: TranscriptionStreamEvents$inboundSchema.parse(rawEvent)
@@ -83895,8 +84056,8 @@ async function $do53(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: ConversationEvents$inboundSchema.parse(rawEvent)
@@ -84491,8 +84652,8 @@ async function $do60(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: ConversationEvents$inboundSchema.parse(rawEvent)
@@ -84655,8 +84816,8 @@ async function $do62(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: ConversationEvents$inboundSchema.parse(rawEvent)
@@ -92687,8 +92848,8 @@ async function $do146(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       if (rawEvent.data === "[DONE]") {
         return { done: true, value: void 0 };
       }
@@ -98935,8 +99096,8 @@ async function $do152(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: GetStreamEventsV1WorkflowsEventsStreamGetResponseBody$inboundSchema.parse(rawEvent)
@@ -99782,8 +99943,8 @@ async function $do161(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       if (rawEvent.data === "[DONE]") {
         return { done: true, value: void 0 };
       }
@@ -103252,8 +103413,8 @@ async function $do199(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: StreamV1WorkflowsExecutionsExecutionIdStreamGetResponseBody$inboundSchema.parse(rawEvent)
@@ -103350,8 +103511,8 @@ async function $do200(client, request, options) {
   const responseFields = {
     HttpMeta: { Response: response, Request: req }
   };
-  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream10) => {
-    return new EventStream3(stream10, (rawEvent) => {
+  const [result] = await match(sse(200, custom((x) => x instanceof ReadableStream).transform((stream11) => {
+    return new EventStream3(stream11, (rawEvent) => {
       return {
         done: false,
         value: StreamWorkflowExecutionLogsResponseBody$inboundSchema.parse(rawEvent)
@@ -105287,7 +105448,7 @@ function getMistralCachedPromptTokens(usage, promptTokens) {
   const cachedTokens = typeof rawCachedTokens === "number" && Number.isFinite(rawCachedTokens) ? rawCachedTokens : 0;
   return Math.min(promptTokens, Math.max(0, cachedTokens));
 }
-async function consumeChatStream(model, output, stream10, mistralStream) {
+async function consumeChatStream(model, output, stream11, mistralStream) {
   let currentBlock = null;
   const blocks = output.content;
   const blockIndex = () => blocks.length - 1;
@@ -105296,7 +105457,7 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
     if (!block)
       return;
     if (block.type === "text") {
-      stream10.push({
+      stream11.push({
         type: "text_end",
         contentIndex: blockIndex(),
         content: block.text,
@@ -105305,7 +105466,7 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
       return;
     }
     if (block.type === "thinking") {
-      stream10.push({
+      stream11.push({
         type: "thinking_end",
         contentIndex: blockIndex(),
         content: block.thinking,
@@ -105342,10 +105503,10 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
             finishCurrentBlock(currentBlock);
             currentBlock = { type: "text", text: "" };
             output.content.push(currentBlock);
-            stream10.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+            stream11.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
           }
           currentBlock.text += textDelta;
-          stream10.push({
+          stream11.push({
             type: "text_delta",
             contentIndex: blockIndex(),
             delta: textDelta,
@@ -105362,10 +105523,10 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
             finishCurrentBlock(currentBlock);
             currentBlock = { type: "thinking", thinking: "" };
             output.content.push(currentBlock);
-            stream10.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+            stream11.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
           }
           currentBlock.thinking += thinkingDelta;
-          stream10.push({
+          stream11.push({
             type: "thinking_delta",
             contentIndex: blockIndex(),
             delta: thinkingDelta,
@@ -105379,10 +105540,10 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
             finishCurrentBlock(currentBlock);
             currentBlock = { type: "text", text: "" };
             output.content.push(currentBlock);
-            stream10.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+            stream11.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
           }
           currentBlock.text += textDelta;
-          stream10.push({
+          stream11.push({
             type: "text_delta",
             contentIndex: blockIndex(),
             delta: textDelta,
@@ -105417,12 +105578,12 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
         };
         output.content.push(block);
         toolBlocksByKey.set(key, output.content.length - 1);
-        stream10.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+        stream11.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
       }
       const argsDelta = typeof toolCall.function.arguments === "string" ? toolCall.function.arguments : JSON.stringify(toolCall.function.arguments || {});
       block.partialArgs = (block.partialArgs || "") + argsDelta;
       block.arguments = parseStreamingJson(block.partialArgs);
-      stream10.push({
+      stream11.push({
         type: "toolcall_delta",
         contentIndex: toolBlocksByKey.get(key),
         delta: argsDelta,
@@ -105438,7 +105599,7 @@ async function consumeChatStream(model, output, stream10, mistralStream) {
     const toolBlock = block;
     toolBlock.arguments = parseStreamingJson(toolBlock.partialArgs);
     delete toolBlock.partialArgs;
-    stream10.push({
+    stream11.push({
       type: "toolcall_end",
       contentIndex: index,
       toolCall: toolBlock,
@@ -105617,7 +105778,7 @@ var init_mistral_conversations = __esm({
     MISTRAL_TOOL_CALL_ID_LENGTH = 9;
     MAX_MISTRAL_ERROR_BODY_CHARS = 4e3;
     stream6 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = createOutput(model);
         try {
@@ -105637,27 +105798,27 @@ var init_mistral_conversations = __esm({
             payload = nextPayload;
           }
           const mistralStream = await mistral.chat.stream(payload, buildRequestOptions(model, options));
-          stream10.push({ type: "start", partial: output });
-          await consumeChatStream(model, output, stream10, mistralStream);
+          stream11.push({ type: "start", partial: output });
+          await consumeChatStream(model, output, stream11, mistralStream);
           if (options?.signal?.aborted) {
             throw new Error("Request was aborted");
           }
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error("An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.partialArgs;
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatMistralError(error52);
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple5 = (model, context2, options) => {
       const apiKey = options?.apiKey;
@@ -105863,6 +106024,12 @@ __export(openai_codex_responses_exports, {
   stream: () => stream7,
   streamSimple: () => streamSimple6
 });
+function loadNodeOs() {
+  if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+    return null;
+  }
+  return process.getBuiltinModule?.("node:os") ?? null;
+}
 function isTerminalRateLimitError(errorText) {
   return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(errorText);
 }
@@ -105922,9 +106089,31 @@ function normalizeTimeoutMs(value) {
   }
   return Math.floor(value);
 }
+function loadNodeZlib() {
+  if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+    return null;
+  }
+  return process.getBuiltinModule?.("node:zlib") ?? null;
+}
+function compressRequestBodyZstd(bodyJson) {
+  const zlib = loadNodeZlib();
+  if (!zlib || typeof zlib.zstdCompressSync !== "function") {
+    return null;
+  }
+  try {
+    const compressed = zlib.zstdCompressSync(bodyJson, {
+      params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL }
+    });
+    return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+  } catch {
+    return null;
+  }
+}
 function buildRequestBody(model, context2, options) {
+  const toolPlacement = splitDeferredTools(context2, model.compat?.supportsToolSearch ?? false);
   const messages = convertResponsesMessages(model, context2, CODEX_TOOL_CALL_PROVIDERS, {
-    includeSystemPrompt: false
+    includeSystemPrompt: false,
+    deferredTools: toolPlacement.deferred
   });
   const body = {
     model: model.id,
@@ -105935,7 +106124,7 @@ function buildRequestBody(model, context2, options) {
     text: { verbosity: options?.textVerbosity || "low" },
     include: ["reasoning.encrypted_content"],
     prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId),
-    tool_choice: "auto",
+    tool_choice: options?.toolChoice ?? "auto",
     parallel_tool_calls: true
   };
   if (options?.temperature !== void 0) {
@@ -105944,8 +106133,8 @@ function buildRequestBody(model, context2, options) {
   if (options?.serviceTier !== void 0) {
     body.service_tier = options.serviceTier;
   }
-  if (context2.tools && context2.tools.length > 0) {
-    body.tools = convertResponsesTools(context2.tools, { strict: null });
+  if (toolPlacement.immediate.length > 0) {
+    body.tools = convertResponsesTools(toolPlacement.immediate, { strict: null });
   }
   if (options?.reasoningEffort !== void 0) {
     const effort = options.reasoningEffort === "none" ? model.thinkingLevelMap?.off ?? "none" : model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
@@ -106001,8 +106190,8 @@ function resolveCodexWebSocketUrl(baseUrl) {
     url2.protocol = "ws:";
   return url2.toString();
 }
-async function processStream(response, output, stream10, model, options) {
-  await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream10, model, {
+async function processStream(response, output, stream11, model, options) {
+  await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream11, model, {
     serviceTier: options?.serviceTier,
     resolveServiceTier: resolveCodexServiceTier,
     applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model)
@@ -106212,6 +106401,9 @@ function isWebSocketReusable(socket) {
   const readyState = getWebSocketReadyState(socket);
   return readyState === void 0 || readyState === 1;
 }
+function isWebSocketSessionExpired(entry) {
+  return Date.now() - entry.createdAt >= SESSION_WEBSOCKET_MAX_AGE_MS;
+}
 function closeWebSocketSilently(socket, code = 1e3, reason = "done") {
   try {
     socket.close(code, reason);
@@ -106311,7 +106503,10 @@ async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeout
       clearTimeout(cached2.idleTimer);
       cached2.idleTimer = void 0;
     }
-    if (!cached2.busy && isWebSocketReusable(cached2.socket)) {
+    if (!cached2.busy && isWebSocketSessionExpired(cached2)) {
+      closeWebSocketSilently(cached2.socket, 1e3, "connection_age_limit");
+      websocketSessionCache.delete(sessionId);
+    } else if (!cached2.busy && isWebSocketReusable(cached2.socket)) {
       cached2.busy = true;
       return {
         socket: cached2.socket,
@@ -106344,7 +106539,7 @@ async function acquireWebSocket(url2, headers, sessionId, signal, connectTimeout
     }
   }
   const socket = await connectWebSocket(url2, headers, signal, connectTimeoutMs, env2);
-  const entry = { socket, busy: true };
+  const entry = { socket, busy: true, createdAt: Date.now() };
   websocketSessionCache.set(sessionId, entry);
   return {
     socket,
@@ -106569,18 +106764,18 @@ function buildCachedWebSocketRequestBody(entry, body) {
     input: delta
   };
 }
-async function* startWebSocketOutputOnFirstEvent(events, output, stream10, onStart) {
+async function* startWebSocketOutputOnFirstEvent(events, output, stream11, onStart) {
   let started = false;
   for await (const event of events) {
     if (!started) {
       started = true;
       onStart();
-      stream10.push({ type: "start", partial: output });
+      stream11.push({ type: "start", partial: output });
     }
     yield event;
   }
 }
-async function processWebSocketStream(url2, body, headers, output, stream10, model, onStart, idleTimeoutMs, websocketConnectTimeoutMs, options) {
+async function processWebSocketStream(url2, body, headers, output, stream11, model, onStart, idleTimeoutMs, websocketConnectTimeoutMs, options) {
   const { socket, entry, reused, release } = await acquireWebSocket(url2, headers, options?.sessionId, options?.signal, websocketConnectTimeoutMs, options?.env);
   let keepConnection = true;
   const useCachedContext = options?.transport === "websocket-cached" || options?.transport === "auto";
@@ -106610,7 +106805,7 @@ async function processWebSocketStream(url2, body, headers, output, stream10, mod
   }
   try {
     socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
-    await processResponsesStream(startWebSocketOutputOnFirstEvent(mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)), output, stream10, onStart), output, stream10, model, {
+    await processResponsesStream(startWebSocketOutputOnFirstEvent(mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)), output, stream11, onStart), output, stream11, model, {
       serviceTier: options?.serviceTier,
       resolveServiceTier: resolveCodexServiceTier,
       applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model)
@@ -106716,12 +106911,13 @@ function buildWebSocketHeaders(initHeaders, additionalHeaders, accountId, token,
   headers.set("session-id", requestId);
   return headers;
 }
-var __rewriteRelativeImportExtension3, _os, dynamicImport, NODE_OS_SPECIFIER, DEFAULT_CODEX_BASE_URL, JWT_CLAIM_PATH, DEFAULT_MAX_RETRIES, BASE_DELAY_MS, DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS, CODEX_TOOL_CALL_PROVIDERS, WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE, WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE, CODEX_RESPONSE_STATUSES, stream7, streamSimple6, CodexApiError, CodexProtocolError, OPENAI_BETA_RESPONSES_WEBSOCKETS, SESSION_WEBSOCKET_CACHE_TTL_MS, websocketSessionCache, websocketDebugStats, websocketSseFallbackSessions, _cachedWebsocket, WebSocketCloseError;
+var _os, DEFAULT_CODEX_BASE_URL, JWT_CLAIM_PATH, DEFAULT_MAX_RETRIES, BASE_DELAY_MS, DEFAULT_MAX_RETRY_DELAY_MS, DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS, REQUEST_COMPRESSION_ZSTD_LEVEL, CODEX_TOOL_CALL_PROVIDERS, WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE, WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE, CODEX_RESPONSE_STATUSES, stream7, streamSimple6, CodexApiError, CodexProtocolError, OPENAI_BETA_RESPONSES_WEBSOCKETS, SESSION_WEBSOCKET_CACHE_TTL_MS, SESSION_WEBSOCKET_MAX_AGE_MS, websocketSessionCache, websocketDebugStats, websocketSseFallbackSessions, _cachedWebsocket, WebSocketCloseError;
 var init_openai_codex_responses = __esm({
   "node_modules/@earendil-works/pi-ai/dist/api/openai-codex-responses.js"() {
     init_models3();
     init_session_resources();
     init_abort_signals();
+    init_deferred_tools();
     init_diagnostics();
     init_error_body();
     init_event_stream();
@@ -106730,28 +106926,14 @@ var init_openai_codex_responses = __esm({
     init_openai_prompt_cache();
     init_openai_responses_shared();
     init_simple_options();
-    __rewriteRelativeImportExtension3 = function(path4, preserveJsx) {
-      if (typeof path4 === "string" && /^\.\.?\//.test(path4)) {
-        return path4.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m, tsx, d, ext, cm) {
-          return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : d + ext + "." + cm.toLowerCase() + "js";
-        });
-      }
-      return path4;
-    };
-    _os = null;
-    dynamicImport = (specifier) => import(__rewriteRelativeImportExtension3(specifier));
-    NODE_OS_SPECIFIER = "node:os";
-    if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-      dynamicImport(NODE_OS_SPECIFIER).then((m) => {
-        _os = m;
-      });
-    }
+    _os = loadNodeOs();
     DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
     JWT_CLAIM_PATH = "https://api.openai.com/auth";
     DEFAULT_MAX_RETRIES = 0;
     BASE_DELAY_MS = 1e3;
     DEFAULT_MAX_RETRY_DELAY_MS = 6e4;
     DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 15e3;
+    REQUEST_COMPRESSION_ZSTD_LEVEL = 3;
     CODEX_TOOL_CALL_PROVIDERS = /* @__PURE__ */ new Set(["openai", "openai-codex", "opencode"]);
     WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
     WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE = "websocket_connection_limit_reached";
@@ -106764,7 +106946,7 @@ var init_openai_codex_responses = __esm({
       "in_progress"
     ]);
     stream7 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -106811,18 +106993,18 @@ var init_openai_codex_responses = __esm({
             while (true) {
               websocketStarted = false;
               try {
-                await processWebSocketStream(resolveCodexWebSocketUrl(model.baseUrl), body, websocketHeaders, output, stream10, model, () => {
+                await processWebSocketStream(resolveCodexWebSocketUrl(model.baseUrl), body, websocketHeaders, output, stream11, model, () => {
                   websocketStarted = true;
                 }, httpTimeoutMs, websocketConnectTimeoutMs, options);
                 if (options?.signal?.aborted) {
                   throw new Error("Request was aborted");
                 }
-                stream10.push({
+                stream11.push({
                   type: "done",
                   reason: output.stopReason,
                   message: output
                 });
-                stream10.end();
+                stream11.end();
                 return;
               } catch (error52) {
                 const aborted2 = options?.signal?.aborted;
@@ -106850,6 +107032,11 @@ var init_openai_codex_responses = __esm({
               }
             }
           }
+          const compressedBody = compressRequestBodyZstd(bodyJson);
+          if (compressedBody) {
+            sseHeaders.set("content-encoding", "zstd");
+          }
+          const sseBody = compressedBody ?? bodyJson;
           let response;
           let lastError;
           const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -106864,7 +107051,7 @@ var init_openai_codex_responses = __esm({
                 response = await fetch(resolveCodexUrl(model.baseUrl), {
                   method: "POST",
                   headers: sseHeaders,
-                  body: bodyJson,
+                  body: sseBody,
                   signal: combinedSignal.signal
                 });
               } catch (error52) {
@@ -106913,24 +107100,24 @@ var init_openai_codex_responses = __esm({
           if (!response.body) {
             throw new Error("No response body");
           }
-          stream10.push({ type: "start", partial: output });
-          await processStream(response, output, stream10, model, options);
+          stream11.push({ type: "start", partial: output });
+          await processStream(response, output, stream11, model, options);
           if (options?.signal?.aborted) {
             throw new Error("Request was aborted");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.partialJson;
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatProviderError(normalizeProviderError(error52));
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple6 = (model, context2, options) => {
       const apiKey = options?.apiKey;
@@ -106967,6 +107154,7 @@ var init_openai_codex_responses = __esm({
     };
     OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
     SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1e3;
+    SESSION_WEBSOCKET_MAX_AGE_MS = 55 * 60 * 1e3;
     websocketSessionCache = /* @__PURE__ */ new Map();
     websocketDebugStats = /* @__PURE__ */ new Map();
     websocketSseFallbackSessions = /* @__PURE__ */ new Set();
@@ -107063,9 +107251,15 @@ function createClient5(model, context2, apiKey, optionsHeaders, sessionId, compa
     Object.assign(headers, copilotHeaders);
   }
   if (sessionId && compat.sendSessionAffinityHeaders) {
-    headers.session_id = sessionId;
-    headers["x-client-request-id"] = sessionId;
-    headers["x-session-affinity"] = sessionId;
+    if (compat.sessionAffinityFormat === "openrouter") {
+      headers["x-session-id"] = sessionId;
+    } else {
+      if (compat.sessionAffinityFormat === "openai") {
+        headers.session_id = sessionId;
+      }
+      headers["x-client-request-id"] = sessionId;
+      headers["x-session-affinity"] = sessionId;
+    }
   }
   if (optionsHeaders) {
     Object.assign(headers, optionsHeaders);
@@ -107420,9 +107614,10 @@ function convertMessages3(model, context2, compat) {
         const textResult = toolMsg.content.filter(isTextContentBlock).map((block) => block.text).join("\n");
         const hasImages = toolMsg.content.some((c) => c.type === "image");
         const hasText = textResult.length > 0;
+        const toolResultText2 = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
         const toolResultMsg = {
           role: "tool",
-          content: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
+          content: sanitizeSurrogates(toolResultText2),
           tool_call_id: toolMsg.toolCallId
         };
         if (compat.requiresToolResultName && toolMsg.toolName) {
@@ -107559,6 +107754,7 @@ function detectCompat(model) {
     supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
     cacheControlFormat,
     sendSessionAffinityHeaders: false,
+    sessionAffinityFormat: isOpenRouter ? "openrouter" : "openai",
     supportsLongCacheRetention: !(isTogether || isCloudflareWorkersAI || isCloudflareAiGateway || isNvidia || isAntLing)
   };
 }
@@ -107584,6 +107780,7 @@ function getCompat(model) {
     supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
     cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
     sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
+    sessionAffinityFormat: model.compat.sessionAffinityFormat ?? detected.sessionAffinityFormat,
     supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention
   };
 }
@@ -107603,7 +107800,7 @@ var init_openai_completions = __esm({
     init_simple_options();
     init_transform_messages();
     stream8 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -107640,7 +107837,7 @@ var init_openai_completions = __esm({
           };
           const { data: openaiStream, response } = await client.chat.completions.create(params, requestOptions).withResponse();
           await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-          stream10.push({ type: "start", partial: output });
+          stream11.push({ type: "start", partial: output });
           let textBlock = null;
           let thinkingBlock = null;
           let hasFinishReason = false;
@@ -107655,14 +107852,14 @@ var init_openai_completions = __esm({
               return;
             }
             if (block.type === "text") {
-              stream10.push({
+              stream11.push({
                 type: "text_end",
                 contentIndex,
                 content: block.text,
                 partial: output
               });
             } else if (block.type === "thinking") {
-              stream10.push({
+              stream11.push({
                 type: "thinking_end",
                 contentIndex,
                 content: block.thinking,
@@ -107672,7 +107869,7 @@ var init_openai_completions = __esm({
               block.arguments = parseStreamingJson(block.partialArgs);
               delete block.partialArgs;
               delete block.streamIndex;
-              stream10.push({
+              stream11.push({
                 type: "toolcall_end",
                 contentIndex,
                 toolCall: block,
@@ -107684,7 +107881,7 @@ var init_openai_completions = __esm({
             if (!textBlock) {
               textBlock = { type: "text", text: "" };
               blocks.push(textBlock);
-              stream10.push({ type: "text_start", contentIndex: getContentIndex(textBlock), partial: output });
+              stream11.push({ type: "text_start", contentIndex: getContentIndex(textBlock), partial: output });
             }
             return textBlock;
           };
@@ -107696,7 +107893,7 @@ var init_openai_completions = __esm({
                 thinkingSignature
               };
               blocks.push(thinkingBlock);
-              stream10.push({ type: "thinking_start", contentIndex: getContentIndex(thinkingBlock), partial: output });
+              stream11.push({ type: "thinking_start", contentIndex: getContentIndex(thinkingBlock), partial: output });
             }
             return thinkingBlock;
           };
@@ -107732,7 +107929,7 @@ var init_openai_completions = __esm({
                 toolCallBlocksById.set(toolCall.id, block);
               }
               blocks.push(block);
-              stream10.push({
+              stream11.push({
                 type: "toolcall_start",
                 contentIndex: getContentIndex(block),
                 partial: output
@@ -107776,7 +107973,7 @@ var init_openai_completions = __esm({
               if (choice.delta.content !== null && choice.delta.content !== void 0 && choice.delta.content.length > 0) {
                 const block = ensureTextBlock();
                 block.text += choice.delta.content;
-                stream10.push({
+                stream11.push({
                   type: "text_delta",
                   contentIndex: getContentIndex(block),
                   delta: choice.delta.content,
@@ -107799,7 +107996,7 @@ var init_openai_completions = __esm({
                   const thinkingSignature = model.provider === "opencode-go" && foundReasoningField === "reasoning" ? "reasoning_content" : foundReasoningField;
                   const block = ensureThinkingBlock(thinkingSignature);
                   block.thinking += delta;
-                  stream10.push({
+                  stream11.push({
                     type: "thinking_delta",
                     contentIndex: getContentIndex(block),
                     delta,
@@ -107823,7 +108020,7 @@ var init_openai_completions = __esm({
                     block.partialArgs = (block.partialArgs ?? "") + toolCall.function.arguments;
                     block.arguments = parseStreamingJson(block.partialArgs);
                   }
-                  stream10.push({
+                  stream11.push({
                     type: "toolcall_delta",
                     contentIndex: getContentIndex(block),
                     delta,
@@ -107862,8 +108059,8 @@ var init_openai_completions = __esm({
           if (!hasFinishReason) {
             throw new Error("Stream ended without finish_reason");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.index;
@@ -107877,11 +108074,11 @@ var init_openai_completions = __esm({
             output.errorMessage += `
 ${rawMetadata}`;
           }
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple7 = (model, context2, options) => {
       getClientApiKey(model.provider, options?.apiKey, options?.headers);
@@ -107921,6 +108118,9 @@ function getClientApiKey2(provider, apiKey, headers) {
     return "unused";
   throw new Error(`No API key for provider: ${provider}`);
 }
+function detectSessionAffinityFormat(model) {
+  return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+}
 function resolveCacheRetention3(cacheRetention, env2) {
   if (cacheRetention) {
     return cacheRetention;
@@ -107933,8 +108133,9 @@ function resolveCacheRetention3(cacheRetention, env2) {
 function getCompat2(model) {
   return {
     supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
-    sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
-    supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true
+    sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
+    supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
+    supportsToolSearch: model.compat?.supportsToolSearch ?? false
   };
 }
 function getPromptCacheRetention(compat, cacheRetention) {
@@ -107955,10 +108156,14 @@ function createClient6(model, context2, apiKey, optionsHeaders, sessionId) {
     Object.assign(headers, copilotHeaders);
   }
   if (sessionId) {
-    if (compat.sendSessionIdHeader) {
-      headers.session_id = sessionId;
+    if (compat.sessionAffinityFormat === "openrouter") {
+      headers["x-session-id"] = sessionId;
+    } else {
+      if (compat.sessionAffinityFormat === "openai") {
+        headers.session_id = sessionId;
+      }
+      headers["x-client-request-id"] = sessionId;
     }
-    headers["x-client-request-id"] = sessionId;
   }
   if (optionsHeaders) {
     Object.assign(headers, optionsHeaders);
@@ -107971,9 +108176,12 @@ function createClient6(model, context2, apiKey, optionsHeaders, sessionId) {
   });
 }
 function buildParams6(model, context2, options) {
-  const messages = convertResponsesMessages(model, context2, OPENAI_TOOL_CALL_PROVIDERS);
-  const cacheRetention = resolveCacheRetention3(options?.cacheRetention, options?.env);
   const compat = getCompat2(model);
+  const toolPlacement = splitDeferredTools(context2, compat.supportsToolSearch);
+  const messages = convertResponsesMessages(model, context2, OPENAI_TOOL_CALL_PROVIDERS, {
+    deferredTools: toolPlacement.deferred
+  });
+  const cacheRetention = resolveCacheRetention3(options?.cacheRetention, options?.env);
   const params = {
     model: model.id,
     input: messages,
@@ -107983,7 +108191,7 @@ function buildParams6(model, context2, options) {
     store: false
   };
   if (options?.maxTokens) {
-    params.max_output_tokens = options?.maxTokens;
+    params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS2);
   }
   if (options?.temperature !== void 0) {
     params.temperature = options?.temperature;
@@ -107991,8 +108199,11 @@ function buildParams6(model, context2, options) {
   if (options?.serviceTier !== void 0) {
     params.service_tier = options.serviceTier;
   }
-  if (context2.tools && context2.tools.length > 0) {
-    params.tools = convertResponsesTools(context2.tools);
+  if (toolPlacement.immediate.length > 0) {
+    params.tools = convertResponsesTools(toolPlacement.immediate);
+  }
+  if (options?.toolChoice !== void 0) {
+    params.tool_choice = options.toolChoice;
   }
   if (model.reasoning) {
     if (options?.reasoningEffort || options?.reasoningSummary) {
@@ -108030,11 +108241,12 @@ function applyServiceTierPricing2(usage, serviceTier, model) {
   usage.cost.cacheWrite *= multiplier;
   usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 }
-var OPENAI_TOOL_CALL_PROVIDERS, stream9, streamSimple8;
+var OPENAI_TOOL_CALL_PROVIDERS, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS2, stream9, streamSimple8;
 var init_openai_responses = __esm({
   "node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js"() {
     init_openai();
     init_models3();
+    init_deferred_tools();
     init_error_body();
     init_event_stream();
     init_headers2();
@@ -108044,8 +108256,9 @@ var init_openai_responses = __esm({
     init_openai_responses_shared();
     init_simple_options();
     OPENAI_TOOL_CALL_PROVIDERS = /* @__PURE__ */ new Set(["openai", "openai-codex", "opencode"]);
+    OPENAI_RESPONSES_MIN_OUTPUT_TOKENS2 = 16;
     stream9 = (model, context2, options) => {
-      const stream10 = new AssistantMessageEventStream();
+      const stream11 = new AssistantMessageEventStream();
       (async () => {
         const output = {
           role: "assistant",
@@ -108081,8 +108294,8 @@ var init_openai_responses = __esm({
           };
           const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
           await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-          stream10.push({ type: "start", partial: output });
-          await processResponsesStream(openaiStream, output, stream10, model, {
+          stream11.push({ type: "start", partial: output });
+          await processResponsesStream(openaiStream, output, stream11, model, {
             serviceTier: options?.serviceTier,
             applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing2(usage, serviceTier, model)
           });
@@ -108092,8 +108305,8 @@ var init_openai_responses = __esm({
           if (output.stopReason === "aborted" || output.stopReason === "error") {
             throw new Error("An unknown error occurred");
           }
-          stream10.push({ type: "done", reason: output.stopReason, message: output });
-          stream10.end();
+          stream11.push({ type: "done", reason: output.stopReason, message: output });
+          stream11.end();
         } catch (error52) {
           for (const block of output.content) {
             delete block.index;
@@ -108101,11 +108314,11 @@ var init_openai_responses = __esm({
           }
           output.stopReason = options?.signal?.aborted ? "aborted" : "error";
           output.errorMessage = formatOpenAIResponsesError(error52);
-          stream10.push({ type: "error", reason: output.stopReason, error: output });
-          stream10.end();
+          stream11.push({ type: "error", reason: output.stopReason, error: output });
+          stream11.end();
         }
       })();
-      return stream10;
+      return stream11;
     };
     streamSimple8 = (model, context2, options) => {
       getClientApiKey2(model.provider, options?.apiKey, options?.headers);
@@ -108115,6 +108328,308 @@ var init_openai_responses = __esm({
       return stream9(model, context2, {
         ...base,
         reasoningEffort
+      });
+    };
+  }
+});
+
+// node_modules/@earendil-works/pi-ai/dist/api/pi-messages.js
+var pi_messages_exports = {};
+__export(pi_messages_exports, {
+  PiMessagesResponseError: () => PiMessagesResponseError,
+  stream: () => stream10,
+  streamSimple: () => streamSimple9
+});
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function parsePiMessagesErrorBody(body) {
+  try {
+    const parsed = JSON.parse(body);
+    return isRecord(parsed) && isRecord(parsed.error) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function truncateDiagnosticString(value) {
+  const maxLength = 8192;
+  return value.length > maxLength ? `${value.slice(0, maxLength)}\u2026` : value;
+}
+function formatPiMessagesResponseError(response, body, errorBody) {
+  const message = typeof errorBody?.error?.message === "string" ? errorBody.error.message : void 0;
+  const code = typeof errorBody?.error?.code === "string" ? errorBody.error.code : void 0;
+  const suffix = message ?? body;
+  const codeSuffix = code ? ` (${code})` : "";
+  return `${response.status} ${response.statusText}: ${suffix}${codeSuffix}`;
+}
+function createPiMessagesResponseError(model, url2, response, body) {
+  const errorBody = parsePiMessagesErrorBody(body);
+  const code = typeof errorBody?.error?.code === "string" ? errorBody.error.code : void 0;
+  return new PiMessagesResponseError(formatPiMessagesResponseError(response, body, errorBody), code, {
+    version: 1,
+    provider: model.provider,
+    model: model.id,
+    url: url2.toString(),
+    status: response.status,
+    statusText: response.statusText,
+    error: errorBody?.error,
+    body: errorBody ? void 0 : truncateDiagnosticString(body),
+    timestampMs: Date.now()
+  });
+}
+function createEmptyUsage() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+  };
+}
+function appendRewriteDiagnostic(message, rewrite) {
+  if (!rewrite) {
+    return;
+  }
+  appendAssistantMessageDiagnostic(message, {
+    type: "pi_messages_rewrite",
+    timestamp: Date.now(),
+    details: { ...rewrite }
+  });
+}
+function createEventConverter(model) {
+  const partial2 = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: createEmptyUsage(),
+    stopReason: "stop",
+    timestamp: Date.now()
+  };
+  const toolJson = /* @__PURE__ */ new Map();
+  return (event) => {
+    switch (event.type) {
+      case "done":
+        Object.assign(partial2, {
+          stopReason: event.reason,
+          usage: event.usage,
+          responseId: event.responseId
+        });
+        appendRewriteDiagnostic(partial2, event.rewrite);
+        return { type: "done", reason: event.reason, message: partial2 };
+      case "error":
+        Object.assign(partial2, {
+          stopReason: event.reason,
+          usage: event.usage,
+          errorMessage: event.errorMessage,
+          responseId: event.responseId
+        });
+        appendRewriteDiagnostic(partial2, event.rewrite);
+        return { type: "error", reason: event.reason, error: partial2 };
+      case "start":
+        break;
+      case "text_start":
+        partial2.content[event.contentIndex] = { type: "text", text: "" };
+        break;
+      case "text_delta":
+        partial2.content[event.contentIndex].text += event.delta;
+        break;
+      case "text_end":
+        Object.assign(partial2.content[event.contentIndex], {
+          text: event.content,
+          textSignature: event.contentSignature
+        });
+        break;
+      case "thinking_start":
+        partial2.content[event.contentIndex] = { type: "thinking", thinking: "" };
+        break;
+      case "thinking_delta":
+        partial2.content[event.contentIndex].thinking += event.delta;
+        break;
+      case "thinking_end":
+        Object.assign(partial2.content[event.contentIndex], {
+          thinking: event.content,
+          thinkingSignature: event.contentSignature,
+          redacted: event.redacted
+        });
+        break;
+      case "toolcall_start":
+        partial2.content[event.contentIndex] = {
+          type: "toolCall",
+          id: event.id,
+          name: event.toolName,
+          arguments: {}
+        };
+        toolJson.set(event.contentIndex, "");
+        break;
+      case "toolcall_delta": {
+        const json3 = `${toolJson.get(event.contentIndex) ?? ""}${event.delta}`;
+        toolJson.set(event.contentIndex, json3);
+        partial2.content[event.contentIndex].arguments = parseStreamingJson(json3);
+        break;
+      }
+      case "toolcall_end":
+        Object.assign(partial2.content[event.contentIndex], event.toolCall);
+        toolJson.delete(event.contentIndex);
+        return {
+          type: "toolcall_end",
+          contentIndex: event.contentIndex,
+          toolCall: partial2.content[event.contentIndex],
+          partial: partial2
+        };
+    }
+    return { ...event, partial: partial2 };
+  };
+}
+async function* readPiMessagesEvents(stream11) {
+  const decoder = new TextDecoder();
+  const reader = stream11.getReader();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
+      let split = buffer.indexOf("\n\n");
+      while (split !== -1) {
+        const event = parsePiMessagesEvent(buffer.slice(0, split));
+        if (event) {
+          yield event;
+        }
+        buffer = buffer.slice(split + 2);
+        split = buffer.indexOf("\n\n");
+      }
+      if (done) {
+        break;
+      }
+    }
+    if (buffer.trim()) {
+      const event = parsePiMessagesEvent(buffer);
+      if (event) {
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+function parsePiMessagesEvent(raw) {
+  const data = raw.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim();
+  return data && data !== "[DONE]" ? JSON.parse(data) : void 0;
+}
+function createErrorEvent(model, error52, aborted2) {
+  const reason = aborted2 ? "aborted" : "error";
+  const assistantMessage = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: createEmptyUsage(),
+    stopReason: reason,
+    errorMessage: error52 instanceof Error ? error52.message : String(error52),
+    timestamp: Date.now()
+  };
+  if (!aborted2 && error52 instanceof PiMessagesResponseError) {
+    appendAssistantMessageDiagnostic(assistantMessage, createAssistantMessageDiagnostic("pi_messages_response_failure", error52, error52.diagnosticDetails));
+  }
+  return { type: "error", reason, error: assistantMessage };
+}
+function resolveCacheRetention4(cacheRetention, env2) {
+  if (cacheRetention) {
+    return cacheRetention;
+  }
+  return getProviderEnvValue("PI_CACHE_RETENTION", env2) === "long" ? "long" : void 0;
+}
+var PiMessagesResponseError, stream10, streamSimple9;
+var init_pi_messages = __esm({
+  "node_modules/@earendil-works/pi-ai/dist/api/pi-messages.js"() {
+    init_diagnostics();
+    init_event_stream();
+    init_headers2();
+    init_json_parse();
+    init_provider_env();
+    PiMessagesResponseError = class extends Error {
+      code;
+      diagnosticDetails;
+      constructor(message, code, diagnosticDetails) {
+        super(message);
+        this.name = "PiMessagesResponseError";
+        this.code = code;
+        this.diagnosticDetails = diagnosticDetails;
+      }
+    };
+    stream10 = (model, context2, options) => {
+      const eventStream = new AssistantMessageEventStream();
+      const convertEvent = createEventConverter(model);
+      void (async () => {
+        try {
+          const apiKey = options?.apiKey;
+          if (!apiKey) {
+            throw new Error(`No API key provided for provider "${model.provider}"`);
+          }
+          const url2 = new URL(`${model.baseUrl.replace(/\/+$/u, "")}/messages`);
+          if (options?.debug) {
+            url2.searchParams.set("debug", "1");
+          }
+          let payload = {
+            model: model.id,
+            context: context2,
+            options: {
+              temperature: options?.temperature,
+              maxTokens: options?.maxTokens,
+              reasoning: options?.reasoning,
+              cacheRetention: resolveCacheRetention4(options?.cacheRetention, options?.env),
+              sessionId: options?.sessionId,
+              toolChoice: options?.toolChoice
+            }
+          };
+          const nextPayload = await options?.onPayload?.(payload, model);
+          if (nextPayload !== void 0) {
+            payload = nextPayload;
+          }
+          const response = await fetch(url2, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              accept: "text/event-stream",
+              "content-type": "application/json",
+              ...providerHeadersToRecord(options?.headers)
+            },
+            body: JSON.stringify(payload),
+            signal: options?.signal
+          });
+          await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+          if (!response.ok) {
+            const body = await response.text();
+            throw createPiMessagesResponseError(model, url2, response, body);
+          }
+          if (!response.body) {
+            throw new Error(`${model.provider} response has no body`);
+          }
+          for await (const piEvent of readPiMessagesEvents(response.body)) {
+            const event = convertEvent(piEvent);
+            eventStream.push(event);
+            if (event.type === "done" || event.type === "error") {
+              return;
+            }
+          }
+          throw new Error(`${model.provider} stream ended without a terminal event`);
+        } catch (error52) {
+          eventStream.push(createErrorEvent(model, error52, options?.signal?.aborted ?? false));
+        }
+      })();
+      return eventStream;
+    };
+    streamSimple9 = (model, context2, options) => {
+      const extra = options;
+      return stream10(model, context2, {
+        ...options,
+        reasoning: options?.reasoning,
+        toolChoice: extra?.toolChoice,
+        debug: extra?.debug
       });
     };
   }
@@ -108759,9 +109274,13 @@ var openAICompletionsApi = () => lazyApi(() => Promise.resolve().then(() => (ini
 init_lazy();
 var openAIResponsesApi = () => lazyApi(() => Promise.resolve().then(() => (init_openai_responses(), openai_responses_exports)));
 
+// node_modules/@earendil-works/pi-ai/dist/api/pi-messages.lazy.js
+init_lazy();
+var piMessagesApi = () => lazyApi(() => Promise.resolve().then(() => (init_pi_messages(), pi_messages_exports)));
+
 // node_modules/@earendil-works/pi-ai/dist/env-api-keys.js
 init_provider_env();
-var __rewriteRelativeImportExtension4 = function(path4, preserveJsx) {
+var __rewriteRelativeImportExtension3 = function(path4, preserveJsx) {
   if (typeof path4 === "string" && /^\.\.?\//.test(path4)) {
     return path4.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m, tsx, d, ext, cm) {
       return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : d + ext + "." + cm.toLowerCase() + "js";
@@ -108772,18 +109291,18 @@ var __rewriteRelativeImportExtension4 = function(path4, preserveJsx) {
 var _existsSync = null;
 var _homedir = null;
 var _join = null;
-var dynamicImport2 = (specifier) => import(__rewriteRelativeImportExtension4(specifier));
+var dynamicImport = (specifier) => import(__rewriteRelativeImportExtension3(specifier));
 var NODE_FS_SPECIFIER = "node:fs";
-var NODE_OS_SPECIFIER2 = "node:os";
+var NODE_OS_SPECIFIER = "node:os";
 var NODE_PATH_SPECIFIER = "node:path";
 if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
-  dynamicImport2(NODE_FS_SPECIFIER).then((m) => {
+  dynamicImport(NODE_FS_SPECIFIER).then((m) => {
     _existsSync = m.existsSync;
   });
-  dynamicImport2(NODE_OS_SPECIFIER2).then((m) => {
+  dynamicImport(NODE_OS_SPECIFIER).then((m) => {
     _homedir = m.homedir;
   });
-  dynamicImport2(NODE_PATH_SPECIFIER).then((m) => {
+  dynamicImport(NODE_PATH_SPECIFIER).then((m) => {
     _join = m.join;
   });
 }
@@ -108828,6 +109347,7 @@ function getApiKeyEnvVars(provider) {
     groq: "GROQ_API_KEY",
     cerebras: "CEREBRAS_API_KEY",
     xai: "XAI_API_KEY",
+    radius: "PI_GATEWAY_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
     "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
     zai: "ZAI_API_KEY",
@@ -113655,38 +114175,38 @@ function scheduleChunk(chunk, tokensPerSecond) {
   const delayMs = estimateTokens(chunk) / tokensPerSecond * 1e3;
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
-async function streamWithDeltas(stream10, message, minTokenSize, maxTokenSize, tokensPerSecond, signal) {
+async function streamWithDeltas(stream11, message, minTokenSize, maxTokenSize, tokensPerSecond, signal) {
   const partial2 = { ...message, content: [] };
   if (signal?.aborted) {
     const aborted2 = createAbortedMessage(partial2);
-    stream10.push({ type: "error", reason: "aborted", error: aborted2 });
-    stream10.end(aborted2);
+    stream11.push({ type: "error", reason: "aborted", error: aborted2 });
+    stream11.end(aborted2);
     return;
   }
-  stream10.push({ type: "start", partial: { ...partial2 } });
+  stream11.push({ type: "start", partial: { ...partial2 } });
   for (let index = 0; index < message.content.length; index++) {
     if (signal?.aborted) {
       const aborted2 = createAbortedMessage(partial2);
-      stream10.push({ type: "error", reason: "aborted", error: aborted2 });
-      stream10.end(aborted2);
+      stream11.push({ type: "error", reason: "aborted", error: aborted2 });
+      stream11.end(aborted2);
       return;
     }
     const block = message.content[index];
     if (block.type === "thinking") {
       partial2.content = [...partial2.content, { type: "thinking", thinking: "" }];
-      stream10.push({ type: "thinking_start", contentIndex: index, partial: { ...partial2 } });
+      stream11.push({ type: "thinking_start", contentIndex: index, partial: { ...partial2 } });
       for (const chunk of splitStringByTokenSize(block.thinking, minTokenSize, maxTokenSize)) {
         await scheduleChunk(chunk, tokensPerSecond);
         if (signal?.aborted) {
           const aborted2 = createAbortedMessage(partial2);
-          stream10.push({ type: "error", reason: "aborted", error: aborted2 });
-          stream10.end(aborted2);
+          stream11.push({ type: "error", reason: "aborted", error: aborted2 });
+          stream11.end(aborted2);
           return;
         }
         partial2.content[index].thinking += chunk;
-        stream10.push({ type: "thinking_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
+        stream11.push({ type: "thinking_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
       }
-      stream10.push({
+      stream11.push({
         type: "thinking_end",
         contentIndex: index,
         content: block.thinking,
@@ -113696,43 +114216,43 @@ async function streamWithDeltas(stream10, message, minTokenSize, maxTokenSize, t
     }
     if (block.type === "text") {
       partial2.content = [...partial2.content, { type: "text", text: "" }];
-      stream10.push({ type: "text_start", contentIndex: index, partial: { ...partial2 } });
+      stream11.push({ type: "text_start", contentIndex: index, partial: { ...partial2 } });
       for (const chunk of splitStringByTokenSize(block.text, minTokenSize, maxTokenSize)) {
         await scheduleChunk(chunk, tokensPerSecond);
         if (signal?.aborted) {
           const aborted2 = createAbortedMessage(partial2);
-          stream10.push({ type: "error", reason: "aborted", error: aborted2 });
-          stream10.end(aborted2);
+          stream11.push({ type: "error", reason: "aborted", error: aborted2 });
+          stream11.end(aborted2);
           return;
         }
         partial2.content[index].text += chunk;
-        stream10.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
+        stream11.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
       }
-      stream10.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial2 } });
+      stream11.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial2 } });
       continue;
     }
     partial2.content = [...partial2.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
-    stream10.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial2 } });
+    stream11.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial2 } });
     for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {
       await scheduleChunk(chunk, tokensPerSecond);
       if (signal?.aborted) {
         const aborted2 = createAbortedMessage(partial2);
-        stream10.push({ type: "error", reason: "aborted", error: aborted2 });
-        stream10.end(aborted2);
+        stream11.push({ type: "error", reason: "aborted", error: aborted2 });
+        stream11.end(aborted2);
         return;
       }
-      stream10.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
+      stream11.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial2 } });
     }
     partial2.content[index].arguments = block.arguments;
-    stream10.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial2 } });
+    stream11.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial2 } });
   }
   if (message.stopReason === "error" || message.stopReason === "aborted") {
-    stream10.push({ type: "error", reason: message.stopReason, error: message });
-    stream10.end(message);
+    stream11.push({ type: "error", reason: message.stopReason, error: message });
+    stream11.end(message);
     return;
   }
-  stream10.push({ type: "done", reason: message.stopReason, message });
-  stream10.end(message);
+  stream11.push({ type: "done", reason: message.stopReason, message });
+  stream11.end(message);
 }
 function createFauxCore(options) {
   const api = options.api ?? randomId(DEFAULT_API);
@@ -113766,7 +114286,7 @@ function createFauxCore(options) {
     contextWindow: definition.contextWindow ?? 128e3,
     maxTokens: definition.maxTokens ?? 16384
   }));
-  const stream10 = (requestModel, context2, streamOptions) => {
+  const stream11 = (requestModel, context2, streamOptions) => {
     const outer = createAssistantMessageEventStream();
     const step = pendingResponses.shift();
     state.callCount++;
@@ -113792,7 +114312,7 @@ function createFauxCore(options) {
     });
     return outer;
   };
-  const streamSimple10 = (streamModel, context2, streamOptions) => stream10(streamModel, context2, streamOptions);
+  const streamSimple11 = (streamModel, context2, streamOptions) => stream11(streamModel, context2, streamOptions);
   function getModel2(requestedModelId) {
     if (!requestedModelId) {
       return models[0];
@@ -113803,8 +114323,8 @@ function createFauxCore(options) {
     api,
     provider,
     models,
-    stream: stream10,
-    streamSimple: streamSimple10,
+    stream: stream11,
+    streamSimple: streamSimple11,
     getModel: getModel2,
     state,
     setResponses(responses) {
@@ -117758,15 +118278,6 @@ function Compile(schema4) {
 // node_modules/@earendil-works/pi-ai/dist/utils/validation.js
 var validatorCache = /* @__PURE__ */ new WeakMap();
 var TYPEBOX_KIND = /* @__PURE__ */ Symbol.for("TypeBox.Kind");
-function isRecord(value) {
-  return typeof value === "object" && value !== null;
-}
-function isJsonSchemaObject(value) {
-  return isRecord(value);
-}
-function hasTypeBoxMetadata(schema4) {
-  return isRecord(schema4) && Object.getOwnPropertySymbols(schema4).includes(TYPEBOX_KIND);
-}
 function getSchemaTypes(schema4) {
   if (typeof schema4.type === "string") {
     return [schema4.type];
@@ -117791,18 +118302,12 @@ function matchesJsonType(value, type) {
     case "array":
       return Array.isArray(value);
     case "object":
-      return isRecord(value) && !Array.isArray(value);
+      return typeof value === "object" && value !== null && !Array.isArray(value);
     default:
       return false;
   }
 }
-function isValidatorSchema(value) {
-  return isRecord(value);
-}
 function getSubSchemaValidator(schema4) {
-  if (!isValidatorSchema(schema4)) {
-    return void 0;
-  }
   try {
     return getValidator(schema4);
   } catch {
@@ -117893,7 +118398,7 @@ function applySchemaObjectCoercion(value, schema4) {
       value[key] = coerceWithJsonSchema(value[key], propertySchema);
     }
   }
-  if (schema4.additionalProperties && isJsonSchemaObject(schema4.additionalProperties)) {
+  if (schema4.additionalProperties && typeof schema4.additionalProperties === "object") {
     for (const [key, propertyValue] of Object.entries(value)) {
       if (definedKeys.has(key)) {
         continue;
@@ -117913,7 +118418,7 @@ function applySchemaArrayCoercion(value, schema4) {
     }
     return;
   }
-  if (isJsonSchemaObject(schema4.items)) {
+  if (schema4.items && typeof schema4.items === "object") {
     for (let index = 0; index < value.length; index++) {
       value[index] = coerceWithJsonSchema(value[index], schema4.items);
     }
@@ -117954,7 +118459,7 @@ function coerceWithJsonSchema(value, schema4) {
       }
     }
   }
-  if (schemaTypes.includes("object") && isRecord(nextValue) && !Array.isArray(nextValue)) {
+  if (schemaTypes.includes("object") && typeof nextValue === "object" && nextValue !== null && !Array.isArray(nextValue)) {
     applySchemaObjectCoercion(nextValue, schema4);
   }
   if (schemaTypes.includes("array") && Array.isArray(nextValue)) {
@@ -117988,10 +118493,10 @@ function validateToolArguments(tool, toolCall) {
   const args = structuredClone(toolCall.arguments);
   value_exports.Convert(tool.parameters, args);
   const validator = getValidator(tool.parameters);
-  if (!hasTypeBoxMetadata(tool.parameters) && isJsonSchemaObject(tool.parameters)) {
+  if (!Object.getOwnPropertySymbols(tool.parameters).includes(TYPEBOX_KIND)) {
     const coerced = coerceWithJsonSchema(args, tool.parameters);
     if (coerced !== args) {
-      if (isRecord(args) && isRecord(coerced)) {
+      if (typeof args === "object" && args !== null && typeof coerced === "object" && coerced !== null) {
         for (const key of Object.keys(args)) {
           delete args[key];
         }
@@ -118109,6 +118614,24 @@ var AMAZON_BEDROCK_MODELS = {
     contextWindow: 3e5,
     maxTokens: 8192
   },
+  "anthropic.claude-fable-5": {
+    id: "anthropic.claude-fable-5",
+    name: "Claude Fable 5",
+    api: "bedrock-converse-stream",
+    provider: "amazon-bedrock",
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 10,
+      output: 50,
+      cacheRead: 1,
+      cacheWrite: 12.5
+    },
+    contextWindow: 1e6,
+    maxTokens: 128e3
+  },
   "anthropic.claude-haiku-4-5-20251001-v1:0": {
     id: "anthropic.claude-haiku-4-5-20251001-v1:0",
     name: "Claude Haiku 4.5",
@@ -118167,7 +118690,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118185,7 +118708,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118203,7 +118726,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118238,6 +118761,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -118255,6 +118779,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -118289,13 +118814,13 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 16.5,
       output: 82.5,
-      cacheRead: 0.5,
-      cacheWrite: 6.25
+      cacheRead: 1.65,
+      cacheWrite: 20.625
     },
     contextWindow: 1e6,
     maxTokens: 128e3
@@ -118307,7 +118832,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118342,6 +118867,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3.3,
@@ -118359,6 +118885,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -118427,7 +118954,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 11,
@@ -118479,13 +119006,13 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5.5,
       output: 27.5,
-      cacheRead: 0.5,
-      cacheWrite: 6.25
+      cacheRead: 0.55,
+      cacheWrite: 6.875
     },
     contextWindow: 1e6,
     maxTokens: 128e3
@@ -118497,7 +119024,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5.5,
@@ -118515,7 +119042,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5.5,
@@ -118550,6 +119077,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3.3,
@@ -118567,6 +119095,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2.2,
@@ -118584,7 +119113,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -118636,7 +119165,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118654,7 +119183,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118672,7 +119201,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118707,6 +119236,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -118724,6 +119254,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -118768,6 +119299,23 @@ var AMAZON_BEDROCK_MODELS = {
     contextWindow: 128e3,
     maxTokens: 4096
   },
+  "jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    id: "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+    name: "Claude Haiku 4.5 (JP)",
+    api: "bedrock-converse-stream",
+    provider: "amazon-bedrock",
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 5,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 2e5,
+    maxTokens: 64e3
+  },
   "jp.anthropic.claude-opus-4-7": {
     id: "jp.anthropic.claude-opus-4-7",
     name: "Claude Opus 4.7 (JP)",
@@ -118775,7 +119323,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118793,7 +119341,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -118828,6 +119376,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -118845,6 +119394,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -119282,6 +119832,60 @@ var AMAZON_BEDROCK_MODELS = {
     contextWindow: 272e3,
     maxTokens: 128e3
   },
+  "openai.gpt-5.6-luna": {
+    id: "openai.gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "bedrock-converse-stream",
+    provider: "amazon-bedrock",
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "openai.gpt-5.6-sol": {
+    id: "openai.gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "bedrock-converse-stream",
+    provider: "amazon-bedrock",
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "openai.gpt-5.6-terra": {
+    id: "openai.gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "bedrock-converse-stream",
+    provider: "amazon-bedrock",
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
   "openai.gpt-oss-120b": {
     id: "openai.gpt-oss-120b",
     name: "gpt-oss-120b",
@@ -119510,7 +120114,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -119579,7 +120183,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -119597,7 +120201,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -119615,7 +120219,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -119650,6 +120254,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -119667,6 +120272,7 @@ var AMAZON_BEDROCK_MODELS = {
     provider: "amazon-bedrock",
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -119893,108 +120499,6 @@ var ANT_LING_MODELS = {
 
 // node_modules/@earendil-works/pi-ai/dist/providers/anthropic.models.js
 var ANTHROPIC_MODELS = {
-  "claude-3-5-sonnet-20240620": {
-    id: "claude-3-5-sonnet-20240620",
-    name: "Claude Sonnet 3.5",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 8192
-  },
-  "claude-3-5-sonnet-20241022": {
-    id: "claude-3-5-sonnet-20241022",
-    name: "Claude Sonnet 3.5 v2",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 8192
-  },
-  "claude-3-7-sonnet-20250219": {
-    id: "claude-3-7-sonnet-20250219",
-    name: "Claude Sonnet 3.7",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 64e3
-  },
-  "claude-3-haiku-20240307": {
-    id: "claude-3-haiku-20240307",
-    name: "Claude Haiku 3",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 0.25,
-      output: 1.25,
-      cacheRead: 0.03,
-      cacheWrite: 0.3
-    },
-    contextWindow: 2e5,
-    maxTokens: 4096
-  },
-  "claude-3-opus-20240229": {
-    id: "claude-3-opus-20240229",
-    name: "Claude Opus 3",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 15,
-      output: 75,
-      cacheRead: 1.5,
-      cacheWrite: 18.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 4096
-  },
-  "claude-3-sonnet-20240229": {
-    id: "claude-3-sonnet-20240229",
-    name: "Claude Sonnet 3",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 0.3
-    },
-    contextWindow: 2e5,
-    maxTokens: 4096
-  },
   "claude-fable-5": {
     id: "claude-fable-5",
     name: "Claude Fable 5",
@@ -120003,7 +120507,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -120048,23 +120552,6 @@ var ANTHROPIC_MODELS = {
     contextWindow: 2e5,
     maxTokens: 64e3
   },
-  "claude-opus-4-0": {
-    id: "claude-opus-4-0",
-    name: "Claude Opus 4 (latest)",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 15,
-      output: 75,
-      cacheRead: 1.5,
-      cacheWrite: 18.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 32e3
-  },
   "claude-opus-4-1": {
     id: "claude-opus-4-1",
     name: "Claude Opus 4.1 (latest)",
@@ -120085,23 +120572,6 @@ var ANTHROPIC_MODELS = {
   "claude-opus-4-1-20250805": {
     id: "claude-opus-4-1-20250805",
     name: "Claude Opus 4.1",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 15,
-      output: 75,
-      cacheRead: 1.5,
-      cacheWrite: 18.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 32e3
-  },
-  "claude-opus-4-20250514": {
-    id: "claude-opus-4-20250514",
-    name: "Claude Opus 4",
     api: "anthropic-messages",
     provider: "anthropic",
     baseUrl: "https://api.anthropic.com",
@@ -120158,7 +120628,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -120177,7 +120647,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -120196,7 +120666,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -120206,40 +120676,6 @@ var ANTHROPIC_MODELS = {
     },
     contextWindow: 1e6,
     maxTokens: 128e3
-  },
-  "claude-sonnet-4-0": {
-    id: "claude-sonnet-4-0",
-    name: "Claude Sonnet 4 (latest)",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 64e3
-  },
-  "claude-sonnet-4-20250514": {
-    id: "claude-sonnet-4-20250514",
-    name: "Claude Sonnet 4",
-    api: "anthropic-messages",
-    provider: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75
-    },
-    contextWindow: 2e5,
-    maxTokens: 64e3
   },
   "claude-sonnet-4-5": {
     id: "claude-sonnet-4-5",
@@ -120255,7 +120691,7 @@ var ANTHROPIC_MODELS = {
       cacheRead: 0.3,
       cacheWrite: 3.75
     },
-    contextWindow: 2e5,
+    contextWindow: 1e6,
     maxTokens: 64e3
   },
   "claude-sonnet-4-5-20250929": {
@@ -120272,7 +120708,7 @@ var ANTHROPIC_MODELS = {
       cacheRead: 0.3,
       cacheWrite: 3.75
     },
-    contextWindow: 2e5,
+    contextWindow: 1e6,
     maxTokens: 64e3
   },
   "claude-sonnet-4-6": {
@@ -120283,6 +120719,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -120291,7 +120728,7 @@ var ANTHROPIC_MODELS = {
       cacheWrite: 3.75
     },
     contextWindow: 1e6,
-    maxTokens: 64e3
+    maxTokens: 128e3
   },
   "claude-sonnet-5": {
     id: "claude-sonnet-5",
@@ -120301,6 +120738,7 @@ var ANTHROPIC_MODELS = {
     baseUrl: "https://api.anthropic.com",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -120917,6 +121355,77 @@ var AZURE_OPENAI_RESPONSES_MODELS = {
     contextWindow: 105e4,
     maxTokens: 128e3
   },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "azure-openai-responses",
+    provider: "azure-openai-responses",
+    baseUrl: "",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "azure-openai-responses",
+    provider: "azure-openai-responses",
+    baseUrl: "",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "azure-openai-responses",
+    provider: "azure-openai-responses",
+    baseUrl: "",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-realtime-2.1": {
+    id: "gpt-realtime-2.1",
+    name: "GPT-Realtime-2.1",
+    api: "azure-openai-responses",
+    provider: "azure-openai-responses",
+    baseUrl: "",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 4,
+      output: 24,
+      cacheRead: 0.4,
+      cacheWrite: 0
+    },
+    contextWindow: 128e3,
+    maxTokens: 32e3
+  },
   "o1": {
     id: "o1",
     name: "o1",
@@ -121057,6 +121566,24 @@ var AZURE_OPENAI_RESPONSES_MODELS = {
 
 // node_modules/@earendil-works/pi-ai/dist/providers/cerebras.models.js
 var CEREBRAS_MODELS = {
+  "gemma-4-31b": {
+    id: "gemma-4-31b",
+    name: "Gemma 4 31B IT",
+    api: "openai-completions",
+    provider: "cerebras",
+    baseUrl: "https://api.cerebras.ai/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.99,
+      output: 1.49,
+      cacheRead: 0,
+      cacheWrite: 0
+    },
+    contextWindow: 131072,
+    maxTokens: 40960
+  },
   "gpt-oss-120b": {
     id: "gpt-oss-120b",
     name: "GPT OSS 120B",
@@ -121087,7 +121614,7 @@ var CEREBRAS_MODELS = {
     cost: {
       input: 2.25,
       output: 2.75,
-      cacheRead: 0,
+      cacheRead: 2.25,
       cacheWrite: 0
     },
     contextWindow: 131072,
@@ -121213,7 +121740,7 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
     compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -121304,7 +121831,7 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
     compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -121323,7 +121850,7 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
     compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -121342,7 +121869,7 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
     compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -121397,6 +121924,7 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
     compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -121406,6 +121934,25 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     },
     contextWindow: 1e6,
     maxTokens: 64e3
+  },
+  "claude-sonnet-5": {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    api: "anthropic-messages",
+    provider: "cloudflare-ai-gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
+    compat: { "sendSessionAffinityHeaders": true, "forceAdaptiveThinking": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5
+    },
+    contextWindow: 1e6,
+    maxTokens: 128e3
   },
   "gpt-4": {
     id: "gpt-4",
@@ -121601,6 +122148,60 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     contextWindow: 105e4,
     maxTokens: 128e3
   },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-responses",
+    provider: "cloudflare-ai-gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-responses",
+    provider: "cloudflare-ai-gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-responses",
+    provider: "cloudflare-ai-gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
   "o1": {
     id: "o1",
     name: "o1",
@@ -121757,6 +122358,24 @@ var CLOUDFLARE_AI_GATEWAY_MODELS = {
     },
     contextWindow: 131072,
     maxTokens: 131072
+  },
+  "workers-ai/@cf/zai-org/glm-5.2": {
+    id: "workers-ai/@cf/zai-org/glm-5.2",
+    name: "Glm 5.2",
+    api: "openai-completions",
+    provider: "cloudflare-ai-gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false, "maxTokensField": "max_tokens", "supportsStrictMode": false, "supportsLongCacheRetention": false, "sendSessionAffinityHeaders": true },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 1.4,
+      output: 4.4,
+      cacheRead: 0.26,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 262144
   }
 };
 
@@ -122008,7 +122627,7 @@ var DEEPSEEK_MODELS = {
     baseUrl: "https://api.deepseek.com",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0.14,
@@ -122027,7 +122646,7 @@ var DEEPSEEK_MODELS = {
     baseUrl: "https://api.deepseek.com",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0.435,
@@ -122104,12 +122723,12 @@ var FIREWORKS_MODELS = {
     baseUrl: "https://api.fireworks.ai/inference/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false },
     reasoning: true,
-    thinkingLevelMap: { "off": "none", "minimal": null, "low": "high", "medium": "high", "xhigh": "max" },
+    thinkingLevelMap: { "off": "none", "minimal": null, "low": "high", "medium": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 1.4,
       output: 4.4,
-      cacheRead: 0.26,
+      cacheRead: 0.14,
       cacheWrite: 0
     },
     contextWindow: 1048575,
@@ -122262,11 +122881,12 @@ var FIREWORKS_MODELS = {
   "accounts/fireworks/routers/glm-5p2-fast": {
     id: "accounts/fireworks/routers/glm-5p2-fast",
     name: "GLM 5.2 Fast",
-    api: "anthropic-messages",
+    api: "openai-completions",
     provider: "fireworks",
-    baseUrl: "https://api.fireworks.ai/inference",
-    compat: { "sendSessionAffinityHeaders": true, "supportsEagerToolInputStreaming": false, "supportsCacheControlOnTools": false, "supportsLongCacheRetention": false },
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false },
     reasoning: true,
+    thinkingLevelMap: { "off": "none", "minimal": null, "low": "high", "medium": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 2.1,
@@ -122344,6 +122964,7 @@ var GITHUB_COPILOT_MODELS = {
     headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false },
     reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -122400,7 +123021,7 @@ var GITHUB_COPILOT_MODELS = {
     headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -122420,7 +123041,7 @@ var GITHUB_COPILOT_MODELS = {
     headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max", "minimal": "low" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -122428,7 +123049,7 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.5,
       cacheWrite: 6.25
     },
-    contextWindow: 2e5,
+    contextWindow: 1e6,
     maxTokens: 32e3
   },
   "claude-opus-4.8": {
@@ -122440,7 +123061,7 @@ var GITHUB_COPILOT_MODELS = {
     headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max", "minimal": "low" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -122448,7 +123069,7 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.5,
       cacheWrite: 6.25
     },
-    contextWindow: 2e5,
+    contextWindow: 1e6,
     maxTokens: 64e3
   },
   "claude-sonnet-4": {
@@ -122498,7 +123119,7 @@ var GITHUB_COPILOT_MODELS = {
     headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": "low", "xhigh": "max" },
+    thinkingLevelMap: { "max": "max", "minimal": "low" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -122508,6 +123129,26 @@ var GITHUB_COPILOT_MODELS = {
     },
     contextWindow: 1e6,
     maxTokens: 32e3
+  },
+  "claude-sonnet-5": {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    api: "anthropic-messages",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    compat: { "forceAdaptiveThinking": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5
+    },
+    contextWindow: 1e6,
+    maxTokens: 128e3
   },
   "gemini-2.5-pro": {
     id: "gemini-2.5-pro",
@@ -122563,7 +123204,7 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.2,
       cacheWrite: 0
     },
-    contextWindow: 2e5,
+    contextWindow: 1e6,
     maxTokens: 64e3
   },
   "gemini-3.5-flash": {
@@ -122677,7 +123318,7 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.175,
       cacheWrite: 0
     },
-    contextWindow: 4e5,
+    contextWindow: 1e6,
     maxTokens: 128e3
   },
   "gpt-5.4": {
@@ -122696,7 +123337,7 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.25,
       cacheWrite: 0
     },
-    contextWindow: 4e5,
+    contextWindow: 1e6,
     maxTokens: 128e3
   },
   "gpt-5.4-mini": {
@@ -122753,7 +123394,101 @@ var GITHUB_COPILOT_MODELS = {
       cacheRead: 0.5,
       cacheWrite: 0
     },
-    contextWindow: 4e5,
+    contextWindow: 1e6,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-responses",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "minimal": "low", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-responses",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "minimal": "low", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-responses",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "minimal": "low", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 0
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "kimi-k2.7-code": {
+    id: "kimi-k2.7-code",
+    name: "Kimi K2.7 Code",
+    api: "openai-completions",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.95,
+      output: 4,
+      cacheRead: 0.19,
+      cacheWrite: 0
+    },
+    contextWindow: 256e3,
+    maxTokens: 32e3
+  },
+  "mai-code-1-flash-picker": {
+    id: "mai-code-1-flash-picker",
+    name: "MAI-Code-1-Flash",
+    api: "openai-responses",
+    provider: "github-copilot",
+    baseUrl: "https://api.individual.githubcopilot.com",
+    headers: { "User-Agent": "GitHubCopilotChat/0.35.0", "Editor-Version": "vscode/1.107.0", "Editor-Plugin-Version": "copilot-chat/0.35.0", "Copilot-Integration-Id": "vscode-chat" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.75,
+      output: 4.5,
+      cacheRead: 0.075,
+      cacheWrite: 0
+    },
+    contextWindow: 256e3,
     maxTokens: 128e3
   }
 };
@@ -124018,6 +124753,24 @@ var HUGGINGFACE_MODELS = {
     contextWindow: 131072,
     maxTokens: 32768
   },
+  "openai/gpt-oss-20b": {
+    id: "openai/gpt-oss-20b",
+    name: "GPT OSS 20B",
+    api: "openai-completions",
+    provider: "huggingface",
+    baseUrl: "https://router.huggingface.co/v1",
+    compat: { "supportsDeveloperRole": false },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.1,
+      output: 0.5,
+      cacheRead: 0,
+      cacheWrite: 0
+    },
+    contextWindow: 131072,
+    maxTokens: 32768
+  },
   "stepfun-ai/Step-3.5-Flash": {
     id: "stepfun-ai/Step-3.5-Flash",
     name: "Step 3.5 Flash",
@@ -124717,12 +125470,12 @@ var MISTRAL_MODELS = {
     api: "mistral-conversations",
     provider: "mistral",
     baseUrl: "https://api.mistral.ai",
-    reasoning: false,
+    reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.4,
-      output: 2,
-      cacheRead: 0.04,
+      input: 1.5,
+      output: 7.5,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
     contextWindow: 262144,
@@ -125599,9 +126352,9 @@ var NVIDIA_MODELS = {
     contextWindow: 256e3,
     maxTokens: 16384
   },
-  "z-ai/glm-5.1": {
-    id: "z-ai/glm-5.1",
-    name: "GLM-5.1",
+  "z-ai/glm-5.2": {
+    id: "z-ai/glm-5.2",
+    name: "GLM-5.2",
     api: "openai-completions",
     provider: "nvidia",
     baseUrl: "https://integrate.api.nvidia.com/v1",
@@ -125615,7 +126368,7 @@ var NVIDIA_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 1e6,
     maxTokens: 131072
   }
 };
@@ -126122,6 +126875,7 @@ var OPENAI_MODELS = {
     api: "openai-responses",
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "off": "none", "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126129,7 +126883,8 @@ var OPENAI_MODELS = {
       input: 2.5,
       output: 15,
       cacheRead: 0.25,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 5, "output": 22.5, "cacheRead": 0.5, "cacheWrite": 0 }]
     },
     contextWindow: 272e3,
     maxTokens: 128e3
@@ -126140,6 +126895,7 @@ var OPENAI_MODELS = {
     api: "openai-responses",
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "off": "none", "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126176,6 +126932,7 @@ var OPENAI_MODELS = {
     api: "openai-responses",
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126183,7 +126940,8 @@ var OPENAI_MODELS = {
       input: 30,
       output: 180,
       cacheRead: 0,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 60, "output": 270, "cacheRead": 0, "cacheWrite": 0 }]
     },
     contextWindow: 105e4,
     maxTokens: 128e3
@@ -126194,6 +126952,7 @@ var OPENAI_MODELS = {
     api: "openai-responses",
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "off": "none", "xhigh": "xhigh", "minimal": null },
     input: ["text", "image"],
@@ -126201,7 +126960,8 @@ var OPENAI_MODELS = {
       input: 5,
       output: 30,
       cacheRead: 0.5,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 10, "output": 45, "cacheRead": 1, "cacheWrite": 0 }]
     },
     contextWindow: 272e3,
     maxTokens: 128e3
@@ -126219,10 +126979,88 @@ var OPENAI_MODELS = {
       input: 30,
       output: 180,
       cacheRead: 0,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 60, "output": 270, "cacheRead": 0, "cacheWrite": 0 }]
     },
     contextWindow: 105e4,
     maxTokens: 128e3
+  },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "off": "none", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 2, "output": 9, "cacheRead": 0.2, "cacheWrite": 2.5 }]
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "off": "none", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 10, "output": 45, "cacheRead": 1, "cacheWrite": 12.5 }]
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "off": "none", "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 5, "output": 22.5, "cacheRead": 0.5, "cacheWrite": 6.25 }]
+    },
+    contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "gpt-realtime-2.1": {
+    id: "gpt-realtime-2.1",
+    name: "GPT-Realtime-2.1",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 4,
+      output: 24,
+      cacheRead: 0.4,
+      cacheWrite: 0
+    },
+    contextWindow: 128e3,
+    maxTokens: 32e3
   },
   "o1": {
     id: "o1",
@@ -126388,6 +127226,7 @@ var OPENAI_CODEX_MODELS = {
     api: "openai-codex-responses",
     provider: "openai-codex",
     baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
     input: ["text", "image"],
@@ -126395,7 +127234,8 @@ var OPENAI_CODEX_MODELS = {
       input: 2.5,
       output: 15,
       cacheRead: 0.25,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 5, "output": 22.5, "cacheRead": 0.5, "cacheWrite": 0 }]
     },
     contextWindow: 272e3,
     maxTokens: 128e3
@@ -126406,6 +127246,7 @@ var OPENAI_CODEX_MODELS = {
     api: "openai-codex-responses",
     provider: "openai-codex",
     baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
     input: ["text", "image"],
@@ -126424,6 +127265,7 @@ var OPENAI_CODEX_MODELS = {
     api: "openai-codex-responses",
     provider: "openai-codex",
     baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
     reasoning: true,
     thinkingLevelMap: { "xhigh": "xhigh", "minimal": "low" },
     input: ["text", "image"],
@@ -126431,9 +127273,70 @@ var OPENAI_CODEX_MODELS = {
       input: 5,
       output: 30,
       cacheRead: 0.5,
-      cacheWrite: 0
+      cacheWrite: 0,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 10, "output": 45, "cacheRead": 1, "cacheWrite": 0 }]
     },
     contextWindow: 272e3,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max", "minimal": "low" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 2, "output": 9, "cacheRead": 0.2, "cacheWrite": 2.5 }]
+    },
+    contextWindow: 372e3,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max", "minimal": "low" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 10, "output": 45, "cacheRead": 1, "cacheWrite": 12.5 }]
+    },
+    contextWindow: 372e3,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    compat: { "supportsToolSearch": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max", "minimal": "low" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125,
+      tiers: [{ "inputTokensAbove": 272e3, "input": 5, "output": 22.5, "cacheRead": 0.5, "cacheWrite": 6.25 }]
+    },
+    contextWindow: 372e3,
     maxTokens: 128e3
   }
 };
@@ -126457,6 +127360,25 @@ var OPENCODE_MODELS = {
     },
     contextWindow: 2e5,
     maxTokens: 32e3
+  },
+  "claude-fable-5": {
+    id: "claude-fable-5",
+    name: "Claude Fable 5",
+    api: "anthropic-messages",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen",
+    compat: { "forceAdaptiveThinking": true },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 10,
+      output: 50,
+      cacheRead: 1,
+      cacheWrite: 12.5
+    },
+    contextWindow: 1e6,
+    maxTokens: 128e3
   },
   "claude-haiku-4-5": {
     id: "claude-haiku-4-5",
@@ -126517,7 +127439,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -126536,7 +127458,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -126555,7 +127477,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -126608,6 +127530,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -126618,6 +127541,25 @@ var OPENCODE_MODELS = {
     contextWindow: 1e6,
     maxTokens: 64e3
   },
+  "claude-sonnet-5": {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    api: "anthropic-messages",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen",
+    compat: { "forceAdaptiveThinking": true },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5
+    },
+    contextWindow: 1e6,
+    maxTokens: 128e3
+  },
   "deepseek-v4-flash": {
     id: "deepseek-v4-flash",
     name: "DeepSeek V4 Flash",
@@ -126626,7 +127568,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens", "supportsLongCacheRetention": false, "requiresReasoningContentOnAssistantMessages": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0.14,
@@ -126645,7 +127587,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0,
@@ -126664,7 +127606,7 @@ var OPENCODE_MODELS = {
     baseUrl: "https://opencode.ai/zen/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens", "supportsLongCacheRetention": false, "requiresReasoningContentOnAssistantMessages": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 1.74,
@@ -126789,6 +127731,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126807,6 +127750,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126825,6 +127769,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126843,6 +127788,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126861,6 +127807,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126879,6 +127826,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126897,6 +127845,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null },
     input: ["text", "image"],
@@ -126915,6 +127864,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126933,6 +127883,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126951,6 +127902,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126969,6 +127921,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -126987,6 +127940,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -127005,6 +127959,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -127023,6 +127978,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -127041,6 +127997,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh" },
     input: ["text", "image"],
@@ -127059,6 +128016,7 @@ var OPENCODE_MODELS = {
     api: "openai-responses",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
     reasoning: true,
     thinkingLevelMap: { "off": null, "xhigh": "xhigh", "minimal": null, "low": null },
     input: ["text", "image"],
@@ -127070,6 +128028,81 @@ var OPENCODE_MODELS = {
     },
     contextWindow: 105e4,
     maxTokens: 128e3
+  },
+  "gpt-5.6-luna": {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    api: "openai-responses",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-sol": {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    api: "openai-responses",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "gpt-5.6-terra": {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    api: "openai-responses",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "sessionAffinityFormat": "openai-nosession" },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "grok-4.5": {
+    id: "grok-4.5",
+    name: "Grok 4.5",
+    api: "openai-completions",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 5e5,
+    maxTokens: 5e5
   },
   "grok-build-0.1": {
     id: "grok-build-0.1",
@@ -127089,6 +128122,24 @@ var OPENCODE_MODELS = {
     },
     contextWindow: 256e3,
     maxTokens: 256e3
+  },
+  "hy3-free": {
+    id: "hy3-free",
+    name: "Hy3 Free",
+    api: "openai-completions",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0
+    },
+    contextWindow: 19e4,
+    maxTokens: 64e3
   },
   "kimi-k2.5": {
     id: "kimi-k2.5",
@@ -127126,6 +128177,24 @@ var OPENCODE_MODELS = {
     contextWindow: 262144,
     maxTokens: 65536
   },
+  "kimi-k2.7-code": {
+    id: "kimi-k2.7-code",
+    name: "Kimi K2.7 Code",
+    api: "openai-completions",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.95,
+      output: 4,
+      cacheRead: 0.19,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 262144
+  },
   "mimo-v2.5-free": {
     id: "mimo-v2.5-free",
     name: "MiMo V2.5 Free",
@@ -127146,7 +128215,7 @@ var OPENCODE_MODELS = {
   },
   "minimax-m2.5": {
     id: "minimax-m2.5",
-    name: "MiniMax M2.5",
+    name: "MiniMax-M2.5",
     api: "openai-completions",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
@@ -127164,7 +128233,7 @@ var OPENCODE_MODELS = {
   },
   "minimax-m2.7": {
     id: "minimax-m2.7",
-    name: "MiniMax M2.7",
+    name: "MiniMax-M2.7",
     api: "openai-completions",
     provider: "opencode",
     baseUrl: "https://opencode.ai/zen/v1",
@@ -127179,6 +128248,24 @@ var OPENCODE_MODELS = {
     },
     contextWindow: 204800,
     maxTokens: 131072
+  },
+  "minimax-m3": {
+    id: "minimax-m3",
+    name: "MiniMax-M3",
+    api: "openai-completions",
+    provider: "opencode",
+    baseUrl: "https://opencode.ai/zen/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.3,
+      output: 1.2,
+      cacheRead: 0.06,
+      cacheWrite: 0
+    },
+    contextWindow: 512e3,
+    maxTokens: 128e3
   },
   "nemotron-3-ultra-free": {
     id: "nemotron-3-ultra-free",
@@ -127262,7 +128349,7 @@ var OPENCODE_GO_MODELS = {
     baseUrl: "https://opencode.ai/zen/go/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0.14,
@@ -127281,7 +128368,7 @@ var OPENCODE_GO_MODELS = {
     baseUrl: "https://opencode.ai/zen/go/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens", "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 1.74,
@@ -127318,7 +128405,7 @@ var OPENCODE_GO_MODELS = {
     baseUrl: "https://opencode.ai/zen/go/v1",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
     reasoning: true,
-    thinkingLevelMap: { "off": null, "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "off": null, "minimal": null, "low": null, "medium": null, "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 1.4,
@@ -127404,7 +128491,7 @@ var OPENCODE_GO_MODELS = {
   },
   "minimax-m2.7": {
     id: "minimax-m2.7",
-    name: "MiniMax M2.7",
+    name: "MiniMax-M2.7",
     api: "openai-completions",
     provider: "opencode-go",
     baseUrl: "https://opencode.ai/zen/go/v1",
@@ -127422,7 +128509,7 @@ var OPENCODE_GO_MODELS = {
   },
   "minimax-m3": {
     id: "minimax-m3",
-    name: "MiniMax M3 (3x usage)",
+    name: "MiniMax-M3",
     api: "anthropic-messages",
     provider: "opencode-go",
     baseUrl: "https://opencode.ai/zen/go",
@@ -127510,6 +128597,60 @@ var OPENROUTER_MODELS = {
     },
     contextWindow: 256e3,
     maxTokens: 4096
+  },
+  "aion-labs/aion-2.0": {
+    id: "aion-labs/aion-2.0",
+    name: "AionLabs: Aion-2.0",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.8,
+      output: 1.6,
+      cacheRead: 0.2,
+      cacheWrite: 0
+    },
+    contextWindow: 131072,
+    maxTokens: 32768
+  },
+  "aion-labs/aion-3.0": {
+    id: "aion-labs/aion-3.0",
+    name: "AionLabs: Aion-3.0",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 3,
+      output: 6,
+      cacheRead: 0.75,
+      cacheWrite: 0
+    },
+    contextWindow: 131072,
+    maxTokens: 32768
+  },
+  "aion-labs/aion-3.0-mini": {
+    id: "aion-labs/aion-3.0-mini",
+    name: "AionLabs: Aion-3.0-Mini",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.7,
+      output: 1.4,
+      cacheRead: 0.18,
+      cacheWrite: 0
+    },
+    contextWindow: 131072,
+    maxTokens: 32768
   },
   "amazon/nova-2-lite-v1": {
     id: "amazon/nova-2-lite-v1",
@@ -127627,6 +128768,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -127717,7 +128859,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -127736,7 +128878,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -127755,7 +128897,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 30,
@@ -127774,7 +128916,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -127793,7 +128935,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 10,
@@ -127848,6 +128990,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -127866,6 +129009,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "thinkingFormat": "openrouter", "cacheControlFormat": "anthropic" },
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -127893,24 +129037,6 @@ var OPENROUTER_MODELS = {
     },
     contextWindow: 262144,
     maxTokens: 8e4
-  },
-  "arcee-ai/trinity-mini": {
-    id: "arcee-ai/trinity-mini",
-    name: "Arcee AI: Trinity Mini",
-    api: "openai-completions",
-    provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 0.045,
-      output: 0.15,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 131072,
-    maxTokens: 131072
   },
   "arcee-ai/virtuoso-large": {
     id: "arcee-ai/virtuoso-large",
@@ -128089,7 +129215,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 128e3,
     maxTokens: 16e3
   },
   "deepseek/deepseek-chat-v3-0324": {
@@ -128102,8 +129228,8 @@ var OPENROUTER_MODELS = {
     reasoning: false,
     input: ["text"],
     cost: {
-      input: 0.2,
-      output: 0.77,
+      input: 0.24,
+      output: 0.9,
       cacheRead: 0.135,
       cacheWrite: 0
     },
@@ -128120,8 +129246,8 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.21,
-      output: 0.79,
+      input: 0.25,
+      output: 0.95,
       cacheRead: 0.13,
       cacheWrite: 0
     },
@@ -128143,7 +129269,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 163840,
+    contextWindow: 64e3,
     maxTokens: 16e3
   },
   "deepseek/deepseek-r1-0528": {
@@ -128192,12 +129318,12 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.2288,
-      output: 0.3432,
-      cacheRead: 0.02288,
+      input: 0.2145,
+      output: 0.32175,
+      cacheRead: 0.02145,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 128e3,
     maxTokens: 64e3
   },
   "deepseek/deepseek-v3.2-exp": {
@@ -128226,16 +129352,16 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter", "requiresReasoningContentOnAssistantMessages": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "xhigh" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": null, "xhigh": "xhigh" },
     input: ["text"],
     cost: {
-      input: 0.098,
-      output: 0.196,
-      cacheRead: 0.02,
+      input: 0.09,
+      output: 0.18,
+      cacheRead: 0.018,
       cacheWrite: 0
     },
     contextWindow: 1048576,
-    maxTokens: 4096
+    maxTokens: 65536
   },
   "deepseek/deepseek-v4-pro": {
     id: "deepseek/deepseek-v4-pro",
@@ -128245,7 +129371,7 @@ var OPENROUTER_MODELS = {
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter", "requiresReasoningContentOnAssistantMessages": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "xhigh": "xhigh" },
+    thinkingLevelMap: { "minimal": null, "low": null, "medium": null, "high": "high", "max": null, "xhigh": "xhigh" },
     input: ["text"],
     cost: {
       input: 0.435,
@@ -128277,24 +129403,6 @@ var OPENROUTER_MODELS = {
   "google/gemini-2.5-flash-lite": {
     id: "google/gemini-2.5-flash-lite",
     name: "Google: Gemini 2.5 Flash Lite",
-    api: "openai-completions",
-    provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 0.1,
-      output: 0.4,
-      cacheRead: 0.01,
-      cacheWrite: 0.083333
-    },
-    contextWindow: 1048576,
-    maxTokens: 65535
-  },
-  "google/gemini-2.5-flash-lite-preview-09-2025": {
-    id: "google/gemini-2.5-flash-lite-preview-09-2025",
-    name: "Google: Gemini 2.5 Flash Lite Preview 09-2025",
     api: "openai-completions",
     provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1",
@@ -128469,7 +129577,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0.2,
       cacheWrite: 0.375
     },
-    contextWindow: 1048756,
+    contextWindow: 1048576,
     maxTokens: 65536
   },
   "google/gemini-3.5-flash": {
@@ -128559,7 +129667,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "google/gemma-4-31b-it": {
@@ -128572,13 +129680,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.12,
+      input: 0.06,
       output: 0.35,
-      cacheRead: 0.09,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 262144,
-    maxTokens: 262144
+    maxTokens: 8192
   },
   "google/gemma-4-31b-it:free": {
     id: "google/gemma-4-31b-it:free",
@@ -128596,7 +129704,7 @@ var OPENROUTER_MODELS = {
       cacheWrite: 0
     },
     contextWindow: 262144,
-    maxTokens: 8192
+    maxTokens: 32768
   },
   "ibm-granite/granite-4.1-8b": {
     id: "ibm-granite/granite-4.1-8b",
@@ -128689,6 +129797,24 @@ var OPENROUTER_MODELS = {
     contextWindow: 262144,
     maxTokens: 65536
   },
+  "kwaipilot/kat-coder-air-v2.5": {
+    id: "kwaipilot/kat-coder-air-v2.5",
+    name: "Kwaipilot: KAT-Coder-Air V2.5",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: false,
+    input: ["text"],
+    cost: {
+      input: 0.15,
+      output: 0.6,
+      cacheRead: 0.03,
+      cacheWrite: 0
+    },
+    contextWindow: 256e3,
+    maxTokens: 8e4
+  },
   "kwaipilot/kat-coder-pro-v2": {
     id: "kwaipilot/kat-coder-pro-v2",
     name: "Kwaipilot: KAT-Coder-Pro V2",
@@ -128707,23 +129833,23 @@ var OPENROUTER_MODELS = {
     contextWindow: 256e3,
     maxTokens: 8e4
   },
-  "liquid/lfm-2.5-1.2b-thinking:free": {
-    id: "liquid/lfm-2.5-1.2b-thinking:free",
-    name: "LiquidAI: LFM2.5-1.2B-Thinking (free)",
+  "kwaipilot/kat-coder-pro-v2.5": {
+    id: "kwaipilot/kat-coder-pro-v2.5",
+    name: "Kwaipilot: KAT-Coder-Pro V2.5",
     api: "openai-completions",
     provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1",
     compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
-    reasoning: true,
+    reasoning: false,
     input: ["text"],
     cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
+      input: 0.74,
+      output: 2.96,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
-    contextWindow: 32768,
-    maxTokens: 4096
+    contextWindow: 256e3,
+    maxTokens: 8e4
   },
   "meta-llama/llama-3.1-70b-instruct": {
     id: "meta-llama/llama-3.1-70b-instruct",
@@ -128794,7 +129920,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 65536,
     maxTokens: 4096
   },
   "meta-llama/llama-4-maverick": {
@@ -128807,8 +129933,8 @@ var OPENROUTER_MODELS = {
     reasoning: false,
     input: ["text", "image"],
     cost: {
-      input: 0.15,
-      output: 0.6,
+      input: 0.2,
+      output: 0.8,
       cacheRead: 0,
       cacheWrite: 0
     },
@@ -128830,7 +129956,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 1e7,
+    contextWindow: 327680,
     maxTokens: 16384
   },
   "minimax/minimax-m1": {
@@ -128862,12 +129988,12 @@ var OPENROUTER_MODELS = {
     input: ["text"],
     cost: {
       input: 0.255,
-      output: 1,
-      cacheRead: 0.03,
+      output: 1.02,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 204800,
-    maxTokens: 196608
+    maxTokens: 131072
   },
   "minimax/minimax-m2.1": {
     id: "minimax/minimax-m2.1",
@@ -128879,13 +130005,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.29,
-      output: 0.95,
+      input: 0.3,
+      output: 1.2,
       cacheRead: 0.03,
       cacheWrite: 0
     },
     contextWindow: 204800,
-    maxTokens: 196608
+    maxTokens: 131072
   },
   "minimax/minimax-m2.5": {
     id: "minimax/minimax-m2.5",
@@ -128897,12 +130023,12 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.12,
-      output: 0.48,
-      cacheRead: 0,
+      input: 0.15,
+      output: 0.9,
+      cacheRead: 0.05,
       cacheWrite: 0
     },
-    contextWindow: 204800,
+    contextWindow: 196608,
     maxTokens: 196608
   },
   "minimax/minimax-m2.7": {
@@ -128915,12 +130041,12 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.18,
-      output: 0.72,
+      input: 0.24,
+      output: 0.96,
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 204800,
+    contextWindow: 196608,
     maxTokens: 196608
   },
   "minimax/minimax-m3": {
@@ -128938,8 +130064,8 @@ var OPENROUTER_MODELS = {
       cacheRead: 0.06,
       cacheWrite: 0
     },
-    contextWindow: 1048576,
-    maxTokens: 512e3
+    contextWindow: 1e6,
+    maxTokens: 131072
   },
   "mistralai/codestral-2508": {
     id: "mistralai/codestral-2508",
@@ -129295,11 +130421,11 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 0.6,
       output: 2.5,
-      cacheRead: 0.6,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
     contextWindow: 262144,
-    maxTokens: 262144
+    maxTokens: 100352
   },
   "moonshotai/kimi-k2.5": {
     id: "moonshotai/kimi-k2.5",
@@ -129329,9 +130455,9 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.55,
-      output: 3.2,
-      cacheRead: 0.11,
+      input: 0.66,
+      output: 3.41,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
     contextWindow: 262144,
@@ -129347,13 +130473,49 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.74,
-      output: 3.5,
-      cacheRead: 0.15,
+      input: 0.719,
+      output: 3.49,
+      cacheRead: 0.149,
       cacheWrite: 0
     },
     contextWindow: 262144,
-    maxTokens: 16384
+    maxTokens: 262144
+  },
+  "nex-agi/nex-n2-mini": {
+    id: "nex-agi/nex-n2-mini",
+    name: "Nex AGI: Nex-N2-Mini",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.025,
+      output: 0.1,
+      cacheRead: 25e-4,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 262144
+  },
+  "nex-agi/nex-n2-pro": {
+    id: "nex-agi/nex-n2-pro",
+    name: "Nex AGI: Nex-N2-Pro",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.25,
+      output: 1,
+      cacheRead: 0.025,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 262144
   },
   "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
     id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
@@ -129437,13 +130599,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.085,
-      output: 0.4,
+      input: 0.08,
+      output: 0.45,
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 1e6,
-    maxTokens: 16384
+    contextWindow: 262144,
+    maxTokens: 4096
   },
   "nvidia/nemotron-3-super-120b-a12b:free": {
     id: "nvidia/nemotron-3-super-120b-a12b:free",
@@ -129460,7 +130622,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 1e6,
+    contextWindow: 262144,
     maxTokens: 262144
   },
   "nvidia/nemotron-3-ultra-550b-a55b": {
@@ -129478,7 +130640,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0.1,
       cacheWrite: 0
     },
-    contextWindow: 1e6,
+    contextWindow: 262144,
     maxTokens: 16384
   },
   "nvidia/nemotron-3-ultra-550b-a55b:free": {
@@ -129871,11 +131033,11 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 0.05,
       output: 0.4,
-      cacheRead: 0.01,
+      cacheRead: 5e-3,
       cacheWrite: 0
     },
     contextWindow: 4e5,
-    maxTokens: 4096
+    maxTokens: 128e3
   },
   "openai/gpt-5-pro": {
     id: "openai/gpt-5-pro",
@@ -129907,7 +131069,7 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 1.25,
       output: 10,
-      cacheRead: 0.13,
+      cacheRead: 0.125,
       cacheWrite: 0
     },
     contextWindow: 4e5,
@@ -130213,6 +131375,120 @@ var OPENROUTER_MODELS = {
     contextWindow: 105e4,
     maxTokens: 128e3
   },
+  "openai/gpt-5.6-luna": {
+    id: "openai/gpt-5.6-luna",
+    name: "OpenAI: GPT-5.6 Luna",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-luna-pro": {
+    id: "openai/gpt-5.6-luna-pro",
+    name: "OpenAI: GPT-5.6 Luna Pro",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-sol": {
+    id: "openai/gpt-5.6-sol",
+    name: "OpenAI: GPT-5.6 Sol",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-sol-pro": {
+    id: "openai/gpt-5.6-sol-pro",
+    name: "OpenAI: GPT-5.6 Sol Pro",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-terra": {
+    id: "openai/gpt-5.6-terra",
+    name: "OpenAI: GPT-5.6 Terra",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-terra-pro": {
+    id: "openai/gpt-5.6-terra-pro",
+    name: "OpenAI: GPT-5.6 Terra Pro",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "thinkingFormat": "openrouter" },
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
   "openai/gpt-audio": {
     id: "openai/gpt-audio",
     name: "OpenAI: GPT Audio",
@@ -130279,24 +131555,6 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 0.03,
       output: 0.15,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 131072,
-    maxTokens: 131072
-  },
-  "openai/gpt-oss-120b:free": {
-    id: "openai/gpt-oss-120b:free",
-    name: "OpenAI: gpt-oss-120b (free)",
-    api: "openai-completions",
-    provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    compat: { "thinkingFormat": "openrouter" },
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 0,
-      output: 0,
       cacheRead: 0,
       cacheWrite: 0
     },
@@ -130609,9 +131867,9 @@ var OPENROUTER_MODELS = {
     contextWindow: 262144,
     maxTokens: 32768
   },
-  "poolside/laguna-xs.2": {
-    id: "poolside/laguna-xs.2",
-    name: "Poolside: Laguna XS.2",
+  "poolside/laguna-xs-2.1": {
+    id: "poolside/laguna-xs-2.1",
+    name: "Poolside: Laguna XS 2.1",
     api: "openai-completions",
     provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1",
@@ -130619,17 +131877,17 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.1,
-      output: 0.2,
-      cacheRead: 0.05,
+      input: 0.06,
+      output: 0.12,
+      cacheRead: 0.03,
       cacheWrite: 0
     },
     contextWindow: 262144,
     maxTokens: 32768
   },
-  "poolside/laguna-xs.2:free": {
-    id: "poolside/laguna-xs.2:free",
-    name: "Poolside: Laguna XS.2 (free)",
+  "poolside/laguna-xs-2.1:free": {
+    id: "poolside/laguna-xs-2.1:free",
+    name: "Poolside: Laguna XS 2.1 (free)",
     api: "openai-completions",
     provider: "openrouter",
     baseUrl: "https://openrouter.ai/api/v1",
@@ -130660,7 +131918,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 32768,
     maxTokens: 16384
   },
   "qwen/qwen-2.5-7b-instruct": {
@@ -130678,7 +131936,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 32768,
     maxTokens: 32768
   },
   "qwen/qwen-plus": {
@@ -130750,7 +132008,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131702,
+    contextWindow: 40960,
     maxTokens: 40960
   },
   "qwen/qwen3-235b-a22b": {
@@ -130782,7 +132040,7 @@ var OPENROUTER_MODELS = {
     input: ["text"],
     cost: {
       input: 0.09,
-      output: 0.1,
+      output: 0.55,
       cacheRead: 0,
       cacheWrite: 0
     },
@@ -130804,7 +132062,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
+    contextWindow: 131072,
     maxTokens: 4096
   },
   "qwen/qwen3-30b-a3b": {
@@ -130822,7 +132080,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 40960,
     maxTokens: 16384
   },
   "qwen/qwen3-30b-a3b-instruct-2507": {
@@ -130840,7 +132098,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 128e3,
     maxTokens: 32e3
   },
   "qwen/qwen3-30b-a3b-thinking-2507": {
@@ -130853,13 +132111,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.08,
-      output: 0.4,
-      cacheRead: 0.08,
+      input: 0.13,
+      output: 1.56,
+      cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
-    maxTokens: 131072
+    contextWindow: 81920,
+    maxTokens: 32768
   },
   "qwen/qwen3-32b": {
     id: "qwen/qwen3-32b",
@@ -130876,7 +132134,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 131072,
+    contextWindow: 40960,
     maxTokens: 16384
   },
   "qwen/qwen3-8b": {
@@ -130889,9 +132147,9 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.05,
-      output: 0.4,
-      cacheRead: 0.05,
+      input: 0.117,
+      output: 0.455,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 131072,
@@ -130912,7 +132170,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 1048576,
+    contextWindow: 262144,
     maxTokens: 65536
   },
   "qwen/qwen3-coder-30b-a3b-instruct": {
@@ -131002,7 +132260,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 1048576,
+    contextWindow: 262e3,
     maxTokens: 262e3
   },
   "qwen/qwen3-max": {
@@ -131092,7 +132350,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "qwen/qwen3-vl-235b-a22b-instruct": {
@@ -131146,7 +132404,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "qwen/qwen3-vl-30b-a3b-thinking": {
@@ -131182,7 +132440,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "qwen/qwen3-vl-8b-instruct": {
@@ -131195,12 +132453,12 @@ var OPENROUTER_MODELS = {
     reasoning: false,
     input: ["text", "image"],
     cost: {
-      input: 0.08,
-      output: 0.5,
+      input: 0.117,
+      output: 0.455,
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 256e3,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "qwen/qwen3-vl-8b-thinking": {
@@ -131218,7 +132476,7 @@ var OPENROUTER_MODELS = {
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 256e3,
+    contextWindow: 131072,
     maxTokens: 32768
   },
   "qwen/qwen3.5-122b-a10b": {
@@ -131287,10 +132545,10 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 0.385,
       output: 2.45,
-      cacheRead: 0,
+      cacheRead: 0.111,
       cacheWrite: 0
     },
-    contextWindow: 256e3,
+    contextWindow: 131072,
     maxTokens: 4096
   },
   "qwen/qwen3.5-9b": {
@@ -131375,13 +132633,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.285,
+      input: 0.289,
       output: 2.4,
       cacheRead: 0,
       cacheWrite: 0
     },
-    contextWindow: 262144,
-    maxTokens: 262140
+    contextWindow: 131072,
+    maxTokens: 131072
   },
   "qwen/qwen3.6-35b-a3b": {
     id: "qwen/qwen3.6-35b-a3b",
@@ -131599,6 +132857,24 @@ var OPENROUTER_MODELS = {
     contextWindow: 256e3,
     maxTokens: 256e3
   },
+  "tencent/hy3": {
+    id: "tencent/hy3",
+    name: "Tencent: Hy3",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.14,
+      output: 0.58,
+      cacheRead: 0.035,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 4096
+  },
   "tencent/hy3-preview": {
     id: "tencent/hy3-preview",
     name: "Tencent: Hy3 preview",
@@ -131616,6 +132892,24 @@ var OPENROUTER_MODELS = {
     },
     contextWindow: 262144,
     maxTokens: 4096
+  },
+  "tencent/hy3:free": {
+    id: "tencent/hy3:free",
+    name: "Tencent: Hy3 (free)",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0
+    },
+    contextWindow: 262144,
+    maxTokens: 262144
   },
   "thedrummer/unslopnemo-12b": {
     id: "thedrummer/unslopnemo-12b",
@@ -131689,6 +132983,24 @@ var OPENROUTER_MODELS = {
     contextWindow: 1e6,
     maxTokens: 4096
   },
+  "x-ai/grok-4.5": {
+    id: "x-ai/grok-4.5",
+    name: "xAI: Grok 4.5",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 5e5,
+    maxTokens: 4096
+  },
   "x-ai/grok-build-0.1": {
     id: "x-ai/grok-build-0.1",
     name: "xAI: Grok Build 0.1",
@@ -131719,10 +133031,10 @@ var OPENROUTER_MODELS = {
     cost: {
       input: 0.105,
       output: 0.28,
-      cacheRead: 0,
+      cacheRead: 0.028,
       cacheWrite: 0
     },
-    contextWindow: 1048576,
+    contextWindow: 262144,
     maxTokens: 4096
   },
   "xiaomi/mimo-v2.5-pro": {
@@ -131808,12 +133120,12 @@ var OPENROUTER_MODELS = {
     input: ["text"],
     cost: {
       input: 0.43,
-      output: 1.74,
+      output: 1.75,
       cacheRead: 0.08,
       cacheWrite: 0
     },
-    contextWindow: 202752,
-    maxTokens: 131072
+    contextWindow: 198e3,
+    maxTokens: 16384
   },
   "z-ai/glm-4.6v": {
     id: "z-ai/glm-4.6v",
@@ -131884,8 +133196,8 @@ var OPENROUTER_MODELS = {
       cacheRead: 0.119,
       cacheWrite: 0
     },
-    contextWindow: 202752,
-    maxTokens: 4096
+    contextWindow: 198e3,
+    maxTokens: 128e3
   },
   "z-ai/glm-5-turbo": {
     id: "z-ai/glm-5-turbo",
@@ -131915,13 +133227,13 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.975,
-      output: 4.3,
-      cacheRead: 0,
+      input: 0.966,
+      output: 3.036,
+      cacheRead: 0.1794,
       cacheWrite: 0
     },
-    contextWindow: 202752,
-    maxTokens: 4096
+    contextWindow: 2e5,
+    maxTokens: 128e3
   },
   "z-ai/glm-5.2": {
     id: "z-ai/glm-5.2",
@@ -131934,13 +133246,13 @@ var OPENROUTER_MODELS = {
     thinkingLevelMap: { "xhigh": "xhigh" },
     input: ["text"],
     cost: {
-      input: 0.93,
-      output: 3,
-      cacheRead: 0.18,
+      input: 0.924,
+      output: 2.904,
+      cacheRead: 0.1716,
       cacheWrite: 0
     },
-    contextWindow: 1048576,
-    maxTokens: 32768
+    contextWindow: 1024e3,
+    maxTokens: 128e3
   },
   "z-ai/glm-5v-turbo": {
     id: "z-ai/glm-5v-turbo",
@@ -132078,9 +133390,9 @@ var OPENROUTER_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.55,
-      output: 3.2,
-      cacheRead: 0.11,
+      input: 0.66,
+      output: 3.41,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
     contextWindow: 262144,
@@ -132099,7 +133411,7 @@ var OPENROUTER_MODELS = {
       input: 5,
       output: 30,
       cacheRead: 0.5,
-      cacheWrite: 0
+      cacheWrite: 6.25
     },
     contextWindow: 105e4,
     maxTokens: 128e3
@@ -132121,6 +133433,24 @@ var OPENROUTER_MODELS = {
     },
     contextWindow: 4e5,
     maxTokens: 128e3
+  },
+  "~x-ai/grok-latest": {
+    id: "~x-ai/grok-latest",
+    name: "xAI: Grok Latest",
+    api: "openai-completions",
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    compat: { "supportsDeveloperRole": false, "thinkingFormat": "openrouter" },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 5e5,
+    maxTokens: 4096
   }
 };
 
@@ -132341,8 +133671,8 @@ var TOGETHER_MODELS = {
     reasoning: false,
     input: ["text"],
     cost: {
-      input: 0.88,
-      output: 0.88,
+      input: 1.04,
+      output: 1.04,
       cacheRead: 0,
       cacheWrite: 0
     },
@@ -132998,22 +134328,24 @@ var VERCEL_AI_GATEWAY_MODELS = {
     contextWindow: 2e5,
     maxTokens: 4096
   },
-  "anthropic/claude-3.5-haiku": {
-    id: "anthropic/claude-3.5-haiku",
-    name: "Claude 3.5 Haiku",
+  "anthropic/claude-fable-5": {
+    id: "anthropic/claude-fable-5",
+    name: "Claude Fable 5",
     api: "anthropic-messages",
     provider: "vercel-ai-gateway",
     baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: false,
+    compat: { "forceAdaptiveThinking": true },
+    reasoning: true,
+    thinkingLevelMap: { "off": null, "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
-      input: 0.8,
-      output: 4,
-      cacheRead: 0.08,
-      cacheWrite: 1
+      input: 10,
+      output: 50,
+      cacheRead: 1,
+      cacheWrite: 12.5
     },
-    contextWindow: 2e5,
-    maxTokens: 8192
+    contextWindow: 1e6,
+    maxTokens: 128e3
   },
   "anthropic/claude-haiku-4.5": {
     id: "anthropic/claude-haiku-4.5",
@@ -133047,7 +134379,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
       cacheWrite: 18.75
     },
     contextWindow: 2e5,
-    maxTokens: 32e3
+    maxTokens: 8192
   },
   "anthropic/claude-opus-4.1": {
     id: "anthropic/claude-opus-4.1",
@@ -133091,7 +134423,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     baseUrl: "https://ai-gateway.vercel.sh",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "max" },
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -133110,7 +134442,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     baseUrl: "https://ai-gateway.vercel.sh",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -133129,7 +134461,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     baseUrl: "https://ai-gateway.vercel.sh",
     compat: { "forceAdaptiveThinking": true, "supportsTemperature": false },
     reasoning: true,
-    thinkingLevelMap: { "xhigh": "xhigh" },
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 5,
@@ -133155,7 +134487,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
       cacheWrite: 3.75
     },
     contextWindow: 1e6,
-    maxTokens: 64e3
+    maxTokens: 8192
   },
   "anthropic/claude-sonnet-4.5": {
     id: "anthropic/claude-sonnet-4.5",
@@ -133182,6 +134514,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     baseUrl: "https://ai-gateway.vercel.sh",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 3,
@@ -133200,6 +134533,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     baseUrl: "https://ai-gateway.vercel.sh",
     compat: { "forceAdaptiveThinking": true },
     reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh", "max": "max" },
     input: ["text", "image"],
     cost: {
       input: 2,
@@ -133209,23 +134543,6 @@ var VERCEL_AI_GATEWAY_MODELS = {
     },
     contextWindow: 1e6,
     maxTokens: 128e3
-  },
-  "arcee-ai/trinity-large-preview": {
-    id: "arcee-ai/trinity-large-preview",
-    name: "Trinity Large Preview",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: false,
-    input: ["text"],
-    cost: {
-      input: 0.25,
-      output: 1,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 131e3,
-    maxTokens: 131e3
   },
   "arcee-ai/trinity-large-thinking": {
     id: "arcee-ai/trinity-large-thinking",
@@ -133355,12 +134672,12 @@ var VERCEL_AI_GATEWAY_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.6,
-      output: 1.7,
-      cacheRead: 0,
+      input: 0.21,
+      output: 0.79,
+      cacheRead: 0.13,
       cacheWrite: 0
     },
-    contextWindow: 128e3,
+    contextWindow: 163840,
     maxTokens: 128e3
   },
   "deepseek/deepseek-v3.1-terminus": {
@@ -133425,7 +134742,7 @@ var VERCEL_AI_GATEWAY_MODELS = {
     cost: {
       input: 0.14,
       output: 0.28,
-      cacheRead: 28e-4,
+      cacheRead: 0.028,
       cacheWrite: 0
     },
     contextWindow: 1e6,
@@ -133686,6 +135003,23 @@ var VERCEL_AI_GATEWAY_MODELS = {
     contextWindow: 1e6,
     maxTokens: 32e3
   },
+  "kwaipilot/kat-coder-air-v2.5": {
+    id: "kwaipilot/kat-coder-air-v2.5",
+    name: "Kat Coder Air V2.5",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    input: ["text"],
+    cost: {
+      input: 0.15,
+      output: 0.6,
+      cacheRead: 0.03,
+      cacheWrite: 0
+    },
+    contextWindow: 256e3,
+    maxTokens: 8e4
+  },
   "kwaipilot/kat-coder-pro-v1": {
     id: "kwaipilot/kat-coder-pro-v1",
     name: "KAT-Coder-Pro V1",
@@ -133720,39 +135054,22 @@ var VERCEL_AI_GATEWAY_MODELS = {
     contextWindow: 256e3,
     maxTokens: 256e3
   },
-  "meituan/longcat-flash-chat": {
-    id: "meituan/longcat-flash-chat",
-    name: "LongCat Flash Chat",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: false,
-    input: ["text"],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 128e3,
-    maxTokens: 1e5
-  },
-  "meituan/longcat-flash-thinking-2601": {
-    id: "meituan/longcat-flash-thinking-2601",
-    name: "LongCat Flash Thinking 2601",
+  "kwaipilot/kat-coder-pro-v2.5": {
+    id: "kwaipilot/kat-coder-pro-v2.5",
+    name: "Kat Coder Pro V2.5",
     api: "anthropic-messages",
     provider: "vercel-ai-gateway",
     baseUrl: "https://ai-gateway.vercel.sh",
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
+      input: 0.74,
+      output: 2.96,
+      cacheRead: 0.15,
       cacheWrite: 0
     },
-    contextWindow: 32768,
-    maxTokens: 32768
+    contextWindow: 256e3,
+    maxTokens: 8e4
   },
   "meta/llama-3.1-70b": {
     id: "meta/llama-3.1-70b",
@@ -133872,6 +135189,23 @@ var VERCEL_AI_GATEWAY_MODELS = {
     },
     contextWindow: 128e3,
     maxTokens: 8192
+  },
+  "meta/muse-spark-1.1": {
+    id: "meta/muse-spark-1.1",
+    name: "Muse Spark 1.1",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 1.25,
+      output: 4.25,
+      cacheRead: 0.15,
+      cacheWrite: 0
+    },
+    contextWindow: 1048576,
+    maxTokens: 1048576
   },
   "minimax/minimax-m2": {
     id: "minimax/minimax-m2",
@@ -134042,23 +135376,6 @@ var VERCEL_AI_GATEWAY_MODELS = {
     },
     contextWindow: 256e3,
     maxTokens: 256e3
-  },
-  "mistral/devstral-small": {
-    id: "mistral/devstral-small",
-    name: "Devstral Small 1.1",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: false,
-    input: ["text"],
-    cost: {
-      input: 0.1,
-      output: 0.3,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 128e3,
-    maxTokens: 64e3
   },
   "mistral/devstral-small-2": {
     id: "mistral/devstral-small-2",
@@ -134258,23 +135575,6 @@ var VERCEL_AI_GATEWAY_MODELS = {
     cost: {
       input: 0.15,
       output: 0.15,
-      cacheRead: 0,
-      cacheWrite: 0
-    },
-    contextWindow: 128e3,
-    maxTokens: 4e3
-  },
-  "mistral/pixtral-large": {
-    id: "mistral/pixtral-large",
-    name: "Pixtral Large",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: false,
-    input: ["text", "image"],
-    cost: {
-      input: 2,
-      output: 6,
       cacheRead: 0,
       cacheWrite: 0
     },
@@ -134990,6 +136290,60 @@ var VERCEL_AI_GATEWAY_MODELS = {
     contextWindow: 1e6,
     maxTokens: 128e3
   },
+  "openai/gpt-5.6-luna": {
+    id: "openai/gpt-5.6-luna",
+    name: "GPT 5.6 Luna",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 1,
+      output: 6,
+      cacheRead: 0.1,
+      cacheWrite: 1.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-sol": {
+    id: "openai/gpt-5.6-sol",
+    name: "GPT 5.6 Sol",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 5,
+      output: 30,
+      cacheRead: 0.5,
+      cacheWrite: 6.25
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
+  "openai/gpt-5.6-terra": {
+    id: "openai/gpt-5.6-terra",
+    name: "GPT 5.6 Terra",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    thinkingLevelMap: { "xhigh": "xhigh" },
+    input: ["text", "image"],
+    cost: {
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      cacheWrite: 3.125
+    },
+    contextWindow: 105e4,
+    maxTokens: 128e3
+  },
   "openai/gpt-oss-120b": {
     id: "openai/gpt-oss-120b",
     name: "GPT OSS 120B",
@@ -135347,6 +136701,23 @@ var VERCEL_AI_GATEWAY_MODELS = {
     contextWindow: 1e6,
     maxTokens: 1e6
   },
+  "xai/grok-4.5": {
+    id: "xai/grok-4.5",
+    name: "Grok 4.5",
+    api: "anthropic-messages",
+    provider: "vercel-ai-gateway",
+    baseUrl: "https://ai-gateway.vercel.sh",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 5e5,
+    maxTokens: 5e5
+  },
   "xai/grok-build-0.1": {
     id: "xai/grok-build-0.1",
     name: "Grok Build 0.1",
@@ -135363,40 +136734,6 @@ var VERCEL_AI_GATEWAY_MODELS = {
     },
     contextWindow: 256e3,
     maxTokens: 256e3
-  },
-  "xiaomi/mimo-v2-flash": {
-    id: "xiaomi/mimo-v2-flash",
-    name: "MiMo V2 Flash",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 0.1,
-      output: 0.3,
-      cacheRead: 0.01,
-      cacheWrite: 0
-    },
-    contextWindow: 262144,
-    maxTokens: 32e3
-  },
-  "xiaomi/mimo-v2-pro": {
-    id: "xiaomi/mimo-v2-pro",
-    name: "MiMo V2 Pro",
-    api: "anthropic-messages",
-    provider: "vercel-ai-gateway",
-    baseUrl: "https://ai-gateway.vercel.sh",
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 1,
-      output: 3,
-      cacheRead: 0.2,
-      cacheWrite: 0
-    },
-    contextWindow: 1e6,
-    maxTokens: 128e3
   },
   "xiaomi/mimo-v2.5": {
     id: "xiaomi/mimo-v2.5",
@@ -135645,12 +136982,12 @@ var VERCEL_AI_GATEWAY_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 1.5,
-      output: 4.5,
-      cacheRead: 0.3,
+      input: 1.4,
+      output: 4.4,
+      cacheRead: 0.26,
       cacheWrite: 0
     },
-    contextWindow: 1e6,
+    contextWindow: 104e4,
     maxTokens: 128e3
   },
   "zai/glm-5.2-fast": {
@@ -135662,9 +136999,9 @@ var VERCEL_AI_GATEWAY_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 3,
-      output: 10.25,
-      cacheRead: 0.5,
+      input: 2.1,
+      output: 6.6,
+      cacheRead: 0.21,
       cacheWrite: 0
     },
     contextWindow: 1e6,
@@ -135780,6 +137117,24 @@ var XAI_MODELS = {
     },
     contextWindow: 1e6,
     maxTokens: 3e4
+  },
+  "grok-4.5": {
+    id: "grok-4.5",
+    name: "Grok 4.5",
+    api: "openai-completions",
+    provider: "xai",
+    baseUrl: "https://api.x.ai/v1",
+    compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": false },
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 2,
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0
+    },
+    contextWindow: 5e5,
+    maxTokens: 5e5
   },
   "grok-build-0.1": {
     id: "grok-build-0.1",
@@ -135933,24 +137288,6 @@ var XIAOMI_MODELS = {
 
 // node_modules/@earendil-works/pi-ai/dist/providers/xiaomi-token-plan-ams.models.js
 var XIAOMI_TOKEN_PLAN_AMS_MODELS = {
-  "mimo-v2-omni": {
-    id: "mimo-v2-omni",
-    name: "MiMo-V2-Omni",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-ams",
-    baseUrl: "https://token-plan-ams.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 262144,
-    maxTokens: 131072
-  },
   "mimo-v2-pro": {
     id: "mimo-v2-pro",
     name: "MiMo-V2-Pro",
@@ -135961,9 +137298,9 @@ var XIAOMI_TOKEN_PLAN_AMS_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -135979,9 +137316,9 @@ var XIAOMI_TOKEN_PLAN_AMS_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -135997,27 +137334,9 @@ var XIAOMI_TOKEN_PLAN_AMS_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 1048576,
-    maxTokens: 131072
-  },
-  "mimo-v2.5-pro-ultraspeed": {
-    id: "mimo-v2.5-pro-ultraspeed",
-    name: "MiMo-V2.5-Pro-UltraSpeed",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-ams",
-    baseUrl: "https://token-plan-ams.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 1.305,
-      output: 2.61,
-      cacheRead: 0.0108,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136027,24 +137346,6 @@ var XIAOMI_TOKEN_PLAN_AMS_MODELS = {
 
 // node_modules/@earendil-works/pi-ai/dist/providers/xiaomi-token-plan-cn.models.js
 var XIAOMI_TOKEN_PLAN_CN_MODELS = {
-  "mimo-v2-omni": {
-    id: "mimo-v2-omni",
-    name: "MiMo-V2-Omni",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-cn",
-    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 262144,
-    maxTokens: 131072
-  },
   "mimo-v2-pro": {
     id: "mimo-v2-pro",
     name: "MiMo-V2-Pro",
@@ -136055,9 +137356,9 @@ var XIAOMI_TOKEN_PLAN_CN_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136073,9 +137374,9 @@ var XIAOMI_TOKEN_PLAN_CN_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136091,27 +137392,9 @@ var XIAOMI_TOKEN_PLAN_CN_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 1048576,
-    maxTokens: 131072
-  },
-  "mimo-v2.5-pro-ultraspeed": {
-    id: "mimo-v2.5-pro-ultraspeed",
-    name: "MiMo-V2.5-Pro-UltraSpeed",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-cn",
-    baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 1.305,
-      output: 2.61,
-      cacheRead: 0.0108,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136121,24 +137404,6 @@ var XIAOMI_TOKEN_PLAN_CN_MODELS = {
 
 // node_modules/@earendil-works/pi-ai/dist/providers/xiaomi-token-plan-sgp.models.js
 var XIAOMI_TOKEN_PLAN_SGP_MODELS = {
-  "mimo-v2-omni": {
-    id: "mimo-v2-omni",
-    name: "MiMo-V2-Omni",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-sgp",
-    baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 262144,
-    maxTokens: 131072
-  },
   "mimo-v2-pro": {
     id: "mimo-v2-pro",
     name: "MiMo-V2-Pro",
@@ -136149,9 +137414,9 @@ var XIAOMI_TOKEN_PLAN_SGP_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136167,9 +137432,9 @@ var XIAOMI_TOKEN_PLAN_SGP_MODELS = {
     reasoning: true,
     input: ["text", "image"],
     cost: {
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 28e-4,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136185,27 +137450,9 @@ var XIAOMI_TOKEN_PLAN_SGP_MODELS = {
     reasoning: true,
     input: ["text"],
     cost: {
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 36e-4,
-      cacheWrite: 0
-    },
-    contextWindow: 1048576,
-    maxTokens: 131072
-  },
-  "mimo-v2.5-pro-ultraspeed": {
-    id: "mimo-v2.5-pro-ultraspeed",
-    name: "MiMo-V2.5-Pro-UltraSpeed",
-    api: "openai-completions",
-    provider: "xiaomi-token-plan-sgp",
-    baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
-    compat: { "requiresReasoningContentOnAssistantMessages": true, "thinkingFormat": "deepseek" },
-    reasoning: true,
-    input: ["text"],
-    cost: {
-      input: 1.305,
-      output: 2.61,
-      cacheRead: 0.0108,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
       cacheWrite: 0
     },
     contextWindow: 1048576,
@@ -136295,7 +137542,7 @@ var ZAI_MODELS = {
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": true, "thinkingFormat": "zai", "zaiToolStream": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0,
@@ -136408,7 +137655,7 @@ var ZAI_CODING_CN_MODELS = {
     baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
     compat: { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": true, "thinkingFormat": "zai", "zaiToolStream": true },
     reasoning: true,
-    thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "xhigh": "max" },
+    thinkingLevelMap: { "minimal": null, "low": "high", "medium": "high", "high": "high", "max": "max" },
     input: ["text"],
     cost: {
       input: 0,
@@ -136484,7 +137731,11 @@ init_models3();
 // node_modules/@earendil-works/pi-ai/dist/providers/amazon-bedrock.js
 init_models3();
 var bedrockAuth = {
-  name: "AWS credentials",
+  name: "Bedrock API key or AWS credentials",
+  login: async (callbacks) => ({
+    type: "api_key",
+    key: await callbacks.prompt({ type: "secret", message: "Enter Bedrock API key" })
+  }),
   resolve: async ({ ctx, credential }) => {
     if (credential?.key)
       return { auth: { apiKey: credential.key }, source: "stored credential" };
@@ -136531,7 +137782,7 @@ function antLingProvider() {
 init_models3();
 
 // node_modules/@earendil-works/pi-ai/dist/utils/oauth/load.js
-var __rewriteRelativeImportExtension5 = function(path4, preserveJsx) {
+var __rewriteRelativeImportExtension4 = function(path4, preserveJsx) {
   if (typeof path4 === "string" && /^\.\.?\//.test(path4)) {
     return path4.replace(/\.(tsx)$|((?:\.d)?)((?:\.[^./]+?)?)\.([cm]?)ts$/i, function(m, tsx, d, ext, cm) {
       return tsx ? preserveJsx ? ".jsx" : ".js" : d && (!ext || !cm) ? m : d + ext + "." + cm.toLowerCase() + "js";
@@ -136541,7 +137792,7 @@ var __rewriteRelativeImportExtension5 = function(path4, preserveJsx) {
 };
 var importOAuthModule = (specifier) => {
   const runtimeSpecifier = import.meta.url.endsWith(".js") ? specifier.replace(/\.ts$/, ".js") : specifier;
-  return import(__rewriteRelativeImportExtension5(runtimeSpecifier));
+  return import(__rewriteRelativeImportExtension4(runtimeSpecifier));
 };
 var loadAnthropicOAuth = async () => (await importOAuthModule("./anthropic.ts")).anthropicOAuth;
 var loadOpenAICodexOAuth = async () => (await importOAuthModule("./openai-codex.ts")).openaiCodexOAuth;
@@ -136596,12 +137847,8 @@ var CLOUDFLARE_API_KEY = "CLOUDFLARE_API_KEY";
 var CLOUDFLARE_ACCOUNT_ID = "CLOUDFLARE_ACCOUNT_ID";
 var CLOUDFLARE_GATEWAY_ID = "CLOUDFLARE_GATEWAY_ID";
 async function resolveValue(name, ctx, credential) {
-  if (credential) {
-    if (name === CLOUDFLARE_API_KEY)
-      return credential.key;
-    return credential.env?.[name];
-  }
-  return ctx.env(name);
+  const fromCredential = credential ? name === CLOUDFLARE_API_KEY ? credential.key : credential.env?.[name] : void 0;
+  return fromCredential ?? await ctx.env(name);
 }
 function resolveCloudflareBaseUrl(model, accountId, gatewayId) {
   return model.baseUrl.replaceAll(`{${CLOUDFLARE_ACCOUNT_ID}}`, accountId).replaceAll(`{${CLOUDFLARE_GATEWAY_ID}}`, gatewayId ?? "");
@@ -137160,20 +138407,20 @@ function builtinModels(options) {
 var getModel = getBuiltinModel;
 var getModels = getBuiltinModels;
 var apiProviderRegistry = /* @__PURE__ */ new Map();
-function wrapStream(api, stream10) {
+function wrapStream(api, stream11) {
   return (model, context2, options) => {
     if (model.api !== api) {
       throw new Error(`Mismatched api: ${model.api} expected ${api}`);
     }
-    return stream10(model, context2, options);
+    return stream11(model, context2, options);
   };
 }
-function wrapStreamSimple(api, streamSimple10) {
+function wrapStreamSimple(api, streamSimple11) {
   return (model, context2, options) => {
     if (model.api !== api) {
       throw new Error(`Mismatched api: ${model.api} expected ${api}`);
     }
-    return streamSimple10(model, context2, options);
+    return streamSimple11(model, context2, options);
   };
 }
 function registerApiProvider(provider, sourceId) {
@@ -137222,7 +138469,8 @@ var BUILTIN_APIS = [
   ["google-generative-ai", googleGenerativeAIApi()],
   ["google-vertex", googleVertexApi()],
   ["mistral-conversations", mistralConversationsApi()],
-  ["bedrock-converse-stream", bedrockConverseStreamApi()]
+  ["bedrock-converse-stream", bedrockConverseStreamApi()],
+  ["pi-messages", piMessagesApi()]
 ];
 var builtinApiProviderInstances = /* @__PURE__ */ new Map();
 function registerBuiltInApiProviders() {
@@ -137235,6 +138483,7 @@ function registerBuiltInApiProviders() {
 }
 registerBuiltInApiProviders();
 var compatModels = builtinModels();
+var AMBIENT_AUTH_MARKER = "<authenticated>";
 function hasExplicitApiKey(apiKey) {
   return typeof apiKey === "string" && apiKey.trim().length > 0;
 }
@@ -137242,7 +138491,7 @@ function withEnvApiKey(model, options) {
   if (hasExplicitApiKey(options?.apiKey))
     return options;
   const apiKey = getEnvApiKey(model.provider, options?.env);
-  if (!apiKey)
+  if (!apiKey || apiKey === AMBIENT_AUTH_MARKER)
     return options;
   return { ...options, apiKey };
 }
@@ -137257,7 +138506,7 @@ function resolveApiProvider(api) {
   }
   return provider;
 }
-function streamSimple9(model, context2, options) {
+function streamSimple10(model, context2, options) {
   if (shouldUseBuiltinModels(model)) {
     return compatModels.streamSimple(model, context2, options);
   }
@@ -137328,7 +138577,7 @@ async function runLoop(initialContext, newMessages, initialConfig, signal, emit,
       const toolResults = [];
       hasMoreToolCalls = false;
       if (toolCalls.length > 0) {
-        const executedToolBatch = await executeToolCalls(currentContext, message, config2, signal, emit);
+        const executedToolBatch = message.stopReason === "length" ? await failToolCallsFromTruncatedMessage(toolCalls, emit) : await executeToolCalls(currentContext, message, config2, signal, emit);
         toolResults.push(...executedToolBatch.messages);
         hasMoreToolCalls = !executedToolBatch.terminate;
         for (const result of toolResults) {
@@ -137383,7 +138632,7 @@ async function streamAssistantResponse(context2, config2, signal, emit, streamFn
     messages: llmMessages,
     tools: context2.tools
   };
-  const streamFunction = streamFn || streamSimple9;
+  const streamFunction = streamFn || streamSimple10;
   const resolvedApiKey = (config2.getApiKey ? await config2.getApiKey(config2.model.provider) : void 0) || config2.apiKey;
   const response = await streamFunction(config2.model, llmContext, {
     ...config2,
@@ -137444,6 +138693,27 @@ async function streamAssistantResponse(context2, config2, signal, emit, streamFn
   }
   await emit({ type: "message_end", message: finalMessage });
   return finalMessage;
+}
+async function failToolCallsFromTruncatedMessage(toolCalls, emit) {
+  const messages = [];
+  for (const toolCall of toolCalls) {
+    await emit({
+      type: "tool_execution_start",
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      args: toolCall.arguments
+    });
+    const finalized = {
+      toolCall,
+      result: createErrorToolResult(`Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`),
+      isError: true
+    };
+    await emitToolExecutionEnd(finalized, emit);
+    const toolResultMessage = createToolResultMessage(finalized);
+    await emitToolResultMessage(toolResultMessage, emit);
+    messages.push(toolResultMessage);
+  }
+  return { messages, terminate: false };
 }
 async function executeToolCalls(currentContext, assistantMessage, config2, signal, emit) {
   const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
@@ -137649,6 +138919,7 @@ async function finalizeExecutedToolCall(currentContext, assistantMessage, prepar
       }, signal);
       if (afterResult) {
         result = {
+          ...result,
           content: afterResult.content ?? result.content,
           details: afterResult.details ?? result.details,
           terminate: afterResult.terminate ?? result.terminate
@@ -137686,8 +138957,11 @@ function createToolResultMessage(finalized) {
     role: "toolResult",
     toolCallId: finalized.toolCall.id,
     toolName: finalized.toolCall.name,
-    content: finalized.result.content,
+    // Untyped tools (JS extensions) can return results without content; normalize
+    // so the null never enters session history or provider payloads.
+    content: finalized.result.content ?? [],
     details: finalized.result.details,
+    ...finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {},
     isError: finalized.isError,
     timestamp: Date.now()
   };
@@ -137805,7 +139079,7 @@ var Agent = class {
     this._state = createMutableAgentState(options.initialState);
     this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
     this.transformContext = options.transformContext;
-    this.streamFn = options.streamFn ?? streamSimple9;
+    this.streamFn = options.streamFn ?? streamSimple10;
     this.getApiKey = options.getApiKey;
     this.onPayload = options.onPayload;
     this.onResponse = options.onResponse;
@@ -155016,12 +156290,12 @@ function streamOnhandFast(model, context2, options = {}) {
     });
   }
   if (effectiveModel?.provider === OPENROUTER_API_PROVIDER) {
-    return streamSimple9(effectiveModel, context2, {
+    return streamSimple10(effectiveModel, context2, {
       ...baseOptions,
       ...effectiveModel?.reasoning && (reasoningProfile?.reasoningEffort === "low" || reasoningProfile?.reasoningEffort === "medium") ? { reasoning: reasoningProfile.reasoningEffort } : {}
     });
   }
-  return streamSimple9(effectiveModel, context2, baseOptions);
+  return streamSimple10(effectiveModel, context2, baseOptions);
 }
 function compactOnhandTelemetryId(value, maxLength = 80) {
   return String(value || "").trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, maxLength);
@@ -157481,7 +158755,7 @@ function createOnhandBrowserRuntime(host) {
     const classify = async () => {
       const apiKey = await resolveApiKey3(model.provider);
       const store2 = await loadStore();
-      const stream10 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
+      const stream11 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
         apiKey,
         onhandCodexFastMode: Boolean(store2.settings.codexFastModeEnabled),
         onhandReasoningProfile: {
@@ -157490,7 +158764,7 @@ function createOnhandBrowserRuntime(host) {
           textVerbosity: "low"
         }
       });
-      const message = await stream10.result();
+      const message = await stream11.result();
       return parseModelIntentClassification(assistantMessageTextContent(message));
     };
     return await Promise.race([
