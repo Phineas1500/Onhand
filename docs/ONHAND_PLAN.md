@@ -109,6 +109,8 @@ The v1 shell is the browser extension side panel. The Electron app, localhost br
 Detailed migration notes live in:
 
 - `docs/BROWSER_ONLY_MIGRATION.md`
+- `docs/AGENT_RUNTIME_PROFILES_PLAN.md` for the frontier-first agent runtime,
+  guided free-tier profile, semantic-gate removal, and model evaluation plan
 
 ## 5.2 Agent engine
 Use **Pi's browser-compatible lower-level packages** as the agent runtime.

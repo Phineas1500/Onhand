@@ -5,6 +5,8 @@ import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@eare
 // there to keep this call site stable across the bump.
 import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAICodexResponses, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai/compat";
 import * as Sentry from "@sentry/browser";
+import { assertConstitutionPrompt } from "./agent/constitution";
+import { resolveExecutionProfile, type ExecutionProfile } from "./agent/execution-profile";
 import {
 	getBrowserOAuthApiKey,
 	getBrowserOAuthProvider,
@@ -16,6 +18,32 @@ import {
 	type BrowserOAuthCredentials,
 	type BrowserOAuthProgressEvent,
 } from "./browser-oauth";
+import type { LearningEvidenceAssessment, LearningResearchPlan } from "./research/evidence-types";
+import {
+	ARTIFACT_TOOL_NAMES,
+	BROAD_SOURCE_TOOL_NAMES,
+	CORE_READ_TOOL_NAMES,
+	DEBUG_INSPECTION_TOOL_NAMES,
+	ELEMENT_READ_TOOL_NAMES,
+	INTERACTION_TOOL_NAMES,
+	KNOWN_BROWSER_TOOL_NAMES,
+	LEARNING_TOOL_NAMES,
+	LINK_NAVIGATION_TOOL_NAMES,
+	PAGE_CHANGE_TOOL_NAMES,
+	PDF_ANNOTATION_TOOL_NAMES,
+	PDF_CORPUS_TOOL_NAMES,
+	PDF_TOOL_NAMES,
+	READER_SEARCH_TOOL_NAMES,
+	RUNTIME_JS_TOOL_NAMES,
+	TAB_TOOL_NAMES,
+	VISUAL_CONTEXT_TOOL_NAMES,
+	VISUAL_GROUNDING_TOOL_NAMES,
+} from "./tools/registry";
+import {
+	applyBackgroundFocusDefault,
+	buildEmptyHighlightTextGuardResult,
+	normalizeOpenTabUrlForComparison,
+} from "./tools/runtime-invariants";
 
 declare const chrome: any;
 
@@ -114,6 +142,12 @@ interface UiTurn {
 	pending: boolean;
 	error: boolean;
 	createdAt: string;
+	executionProfile?: ExecutionProfile;
+	// Persisted execution counters used by the trajectory evaluator. These are
+	// behavioral metadata only: they contain no prompt or page content.
+	modelCalls?: number;
+	durationMs?: number;
+	provisionalAnswerExposed?: boolean;
 	errorReport?: RuntimeErrorReportSnapshot | null;
 }
 
@@ -540,11 +574,12 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
+const ACTIVE_EXECUTION_PROFILE = resolveExecutionProfile({ legacyOnly: true }).profile;
 const REALTIME_API_KEY_SETUP_MESSAGE =
 	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 let smokeModelRegistration: ReturnType<typeof registerFauxProvider> | null = null;
 
-const ONHAND_SYSTEM_PROMPT = `You are Onhand, a contextual tutor running inside a Chromium extension side panel.
+const ONHAND_SYSTEM_PROMPT = assertConstitutionPrompt(`You are Onhand, a contextual tutor running inside a Chromium extension side panel.
 
 Onhand's constitution:
 - The page is the canvas. Read the page before answering when page context matters; anchor every answer drawn from the page with a source highlight on the supporting text, and add short marginal notes where they add interpretation. Keep the page unmarked only when the user asks for no page changes or the page does not support the claim.
@@ -585,7 +620,7 @@ Default answer mode:
 - When an answer draws on more than one tab or document, highlight or cite each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not grounded in; if no open source supports a claim, say so rather than borrowing a nearby highlight.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
-Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use Markdown structure sparingly but intentionally; do not use horizontal rules as separators. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead.`;
+Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use Markdown structure sparingly but intentionally; do not use horizontal rules as separators. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead.`);
 
 const ONHAND_LEARNING_MODE_APPEND = `Learning is enabled for this request.
 
@@ -918,59 +953,6 @@ const RECORD_LEARNING_EVENT_SCHEMA = Type.Object({
 	tabTitle: Type.Optional(Type.String({ description: "Source tab title for the learning event" })),
 });
 
-const CORE_READ_TOOL_NAMES = [
-	"browser_get_visible_text",
-	"browser_extract_content",
-	"browser_get_selection",
-	"browser_get_viewport_headings",
-	"browser_get_scroll_state",
-];
-const READER_SEARCH_TOOL_NAMES = ["browser_textbook_search"];
-
-const VISUAL_CONTEXT_TOOL_NAMES = ["browser_get_visible_region_image"];
-const VISUAL_GROUNDING_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation", "browser_clear_annotations"];
-const PDF_ANNOTATION_TOOL_NAMES = ["browser_highlight_text", "browser_show_note", "browser_scroll_to_annotation"];
-const PAGE_CHANGE_TOOL_NAMES = [
-	"browser_highlight_text",
-	"browser_show_note",
-	"browser_clear_annotations",
-	"browser_capture_state",
-	"browser_restore_state",
-];
-const TAB_TOOL_NAMES = ["browser_list_tabs", "browser_activate_tab", "browser_navigate", "browser_open_pdf_in_onhand_viewer"];
-const PDF_TOOL_NAMES = ["browser_pdf_search", "browser_pdf_read_pages", "browser_pdf_jump_to_page", "browser_pdf_capture_page_image", "browser_pdf_find_citation"];
-const PDF_CORPUS_TOOL_NAMES = ["browser_search_linked_pdf_corpus"];
-const ELEMENT_READ_TOOL_NAMES = ["browser_find_elements"];
-const INTERACTION_TOOL_NAMES = [
-	"browser_find_elements",
-	"browser_wait_for_selector",
-	"browser_click",
-	"browser_type",
-	"browser_click_text",
-	"browser_type_by_label",
-	"browser_pick_elements",
-];
-const LINK_NAVIGATION_TOOL_NAMES = ["browser_find_elements", "browser_wait_for_selector", "browser_click", "browser_click_text"];
-const DEBUG_INSPECTION_TOOL_NAMES = ["browser_collect_console", "browser_collect_network", "browser_get_dom", "browser_capture_screenshot"];
-const RUNTIME_JS_TOOL_NAMES = ["browser_run_js"];
-const ARTIFACT_TOOL_NAMES = ["browser_capture_state", "browser_list_artifacts", "browser_restore_state"];
-const LEARNING_TOOL_NAMES = ["onhand_record_learning_event"];
-const BROAD_SOURCE_TOOL_NAMES = [...CORE_READ_TOOL_NAMES, ...TAB_TOOL_NAMES, ...ELEMENT_READ_TOOL_NAMES];
-const KNOWN_BROWSER_TOOL_NAMES = new Set([
-	...CORE_READ_TOOL_NAMES,
-	...READER_SEARCH_TOOL_NAMES,
-	...VISUAL_CONTEXT_TOOL_NAMES,
-	...VISUAL_GROUNDING_TOOL_NAMES,
-	...PAGE_CHANGE_TOOL_NAMES,
-	...TAB_TOOL_NAMES,
-	...PDF_TOOL_NAMES,
-	...PDF_CORPUS_TOOL_NAMES,
-	...ELEMENT_READ_TOOL_NAMES,
-	...INTERACTION_TOOL_NAMES,
-	...DEBUG_INSPECTION_TOOL_NAMES,
-	...RUNTIME_JS_TOOL_NAMES,
-	...ARTIFACT_TOOL_NAMES,
-]);
 const EXACT_TOOL_NAME_PATTERN = /\bbrowser_[a-z_]+\b/g;
 
 function promptNeedsRuntimeJavaScript(text: string, explicitToolNames: Set<string>) {
@@ -1042,10 +1024,10 @@ function promptExplicitlyRequestsSourceFocus(prompt: unknown) {
 }
 
 function applyLearningBackgroundFocusDefault(params: any, commandName: string, request: any) {
-	if (!request?.learningMode || promptExplicitlyRequestsSourceFocus(request?.displayPrompt)) return params;
-	if (commandName === "navigate" && params?.newTab !== false) return { ...(params || {}), active: false };
-	if (commandName === "open_pdf_in_onhand_viewer") return { ...(params || {}), active: false };
-	return params;
+	return applyBackgroundFocusDefault(params, commandName, {
+		learningMode: Boolean(request?.learningMode),
+		sourceFocusRequested: promptExplicitlyRequestsSourceFocus(request?.displayPrompt),
+	});
 }
 
 const PREINVENTORY_PLANNED_TAB_ID_COMMANDS = new Set([
@@ -3414,6 +3396,7 @@ function createEmptyState(session: RuntimeSession | null, settings: RuntimeSetti
 		activeRequestId: null as string | null,
 		preferences: {
 			runtime: "browser-extension",
+			executionProfile: ACTIVE_EXECUTION_PROFILE,
 			...publicSettings,
 		},
 		updatedAt: Date.now(),
@@ -5700,27 +5683,6 @@ interface ModelIntentClassification {
 	crossTabComparison: boolean;
 	documentReviewMarkup: boolean;
 	problemSolvingHelp: boolean;
-}
-
-interface LearningResearchPlan {
-	problemHelp: boolean;
-	selectedTextIsTarget: boolean;
-	requiresWorkspaceResearch: boolean;
-	target: string;
-	searchQueries: string[];
-	evidenceNeeded: string[];
-	evidenceSlots: Array<{ id: string; description: string; queries: string[] }>;
-	candidateTabIds: number[];
-	maxSources: number;
-	corpusResults?: Array<{ tabId: number; tabTitle: string; linkedPdfCount: number; corpus: any }>;
-	modelCorpusEvidence?: Array<{ id: string; description: string; coverage: string; reason: string; matches: any[] }>;
-}
-
-interface LearningEvidenceAssessment {
-	sufficient: boolean;
-	reason: string;
-	nextQueries: string[];
-	nextCandidateTabIds: number[];
 }
 
 const LEARNING_CORPUS_PREFLIGHT_DEADLINE_MS = 12000;
@@ -9046,24 +9008,6 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 	};
 }
 
-function normalizeOpenTabUrlForComparison(value: unknown, { keepFragment = false }: { keepFragment?: boolean } = {}) {
-	const trimmed = String(value || "").trim();
-	// The restore/dedup path strips the fragment (a saved artifact at /docs should
-	// match an open tab at /docs#intro); the duplicate-tab guard keeps it, so
-	// distinct sections (/docs#intro vs /docs#api) are treated as distinct tabs
-	// and the model can still navigate to a different section of an open page.
-	const text = keepFragment ? trimmed : trimmed.replace(/#.*$/, "");
-	// Only scheme and host are case-insensitive; paths and query values can be
-	// case-sensitive, so lowercasing them would treat distinct pages as
-	// duplicates. Likewise only the origin's root slash is guaranteed
-	// equivalent ("https://x.com/" === "https://x.com"); deeper trailing
-	// slashes can name distinct pages, so they are preserved.
-	const match = text.match(/^(https?:\/\/[^/?#]*)([\s\S]*)$/i);
-	if (!match) return text;
-	const rest = match[2] === "/" ? "" : match[2];
-	return `${match[1].toLowerCase()}${rest}`;
-}
-
 // The user wants an already-open page focused, not read: "take me to the docs
 // page", "switch to the other tab", "open the twelve-factor page". Requires an
 // explicit directional/switch verb (or "open ... tab/page") so read/summarize
@@ -9203,23 +9147,6 @@ function workspaceTabWasOpenedByRequest(request: any, tabId: unknown) {
 			["browser_navigate", "browser_open_pdf_in_onhand_viewer"].includes(String(trace?.toolName || "")) &&
 			traceTargetTabId(trace) === targetTabId,
 	);
-}
-
-function buildEmptyHighlightTextGuardResult(toolName: string, commandName: string, params: any) {
-	if (commandName !== "highlight_text") return null;
-	if (String(params?.text || "").trim()) return null;
-	return {
-		guardrail: {
-			kind: "empty_highlight_text",
-			blockedTool: toolName,
-			blockedCommand: commandName,
-			message: [
-				"browser_highlight_text requires a non-empty exact visible or readable text span.",
-				`Do not call ${toolName} with empty text.`,
-				"Use a short exact heading, phrase, or sentence from browser_extract_content or browser_get_visible_text, then retry if a source marker is still needed.",
-			].join(" "),
-		},
-	};
 }
 
 function isSectionNumberOnlyHighlightText(value: unknown) {
@@ -10137,10 +10064,7 @@ export const __browserRuntimeTest = {
 	buildPostHighlightFailureAnswerNowGuardResultForTest: buildPostHighlightFailureAnswerNowGuardResult,
 	buildOptionalFrameFallbackNoteGuardResultForTest: buildOptionalFrameFallbackNoteGuardResult,
 	buildVisiblePdfSelectionFirstPassGuardResultForTest: buildVisiblePdfSelectionFirstPassGuardResult,
-	promptAsksForTeachingPageSourceMarkerForTest: promptAsksForTeachingPageSourceMarker,
-		promptAsksForStructuredPageSourceMarkerForTest: promptAsksForStructuredPageSourceMarker,
 		promptAllowsPageSourceHighlightsForTest: promptAllowsPageSourceHighlights,
-		promptRequiresPageSourceMarkerForTest: promptRequiresPageSourceMarker,
 		shouldRequirePageSourceMarkerRetryForTest: shouldRequirePageSourceMarkerRetry,
 		buildPageSourceMarkerRetryPromptForTest: buildPageSourceMarkerRetryPrompt,
 		shouldRequirePdfAnchorRetryForTest: shouldRequirePdfAnchorRetry,
@@ -12309,6 +12233,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function updateAssistantDraft(requestId: string, text: string, extra: Record<string, unknown> = {}) {
 		const message = uiState?.messages?.find((entry: UiMessage) => entry.id === `assistant:${requestId}`);
 		if (!message) return;
+		if (activeRequest?.id === requestId && extra.revising === true && String(text || "").trim()) {
+			activeRequest.provisionalAnswerExposed = true;
+		}
 		message.text = text;
 		Object.assign(message, extra);
 		uiState.updatedAt = Date.now();
@@ -12852,11 +12779,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 			finalError = new Error("The model returned an empty answer after reading page context.");
 			}
-			const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
-			await autoPersistReviewSnapshot(session, activeRequest, finalError);
+		const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
+		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
 		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
 		const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
+		const startedAtMs = Date.parse(activeRequest.createdAt || "");
 		updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
 		const turn: UiTurn = {
 			id: requestId,
@@ -12868,6 +12796,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			pending: false,
 			error: Boolean(finalError),
 			createdAt: activeRequest.createdAt,
+			executionProfile: activeRequest.executionProfile || "legacy",
+			modelCalls: Math.max(0, Number(activeRequest.modelCallCount || 0)),
+			durationMs: Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0,
+			provisionalAnswerExposed: Boolean(activeRequest.provisionalAnswerExposed),
 			...(activeRequest.modelIntentClassification ? { modelIntentClassification: activeRequest.modelIntentClassification } : {}),
 			...(activeRequest.modelIntentClassifierError ? { modelIntentClassifierError: activeRequest.modelIntentClassifierError } : {}),
 			...(errorReport ? { errorReport } : {}),
@@ -12891,7 +12823,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
 			activeRequestId: null,
 		});
-		const startedAtMs = Date.parse(activeRequest.createdAt || "");
 		const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
 		const requestSource = compactTelemetryValue(activeRequest.source || "", 32);
 		const telemetrySource = requestSource && requestSource !== "sidebar" ? `extension-${requestSource}` : "";
@@ -15213,7 +15144,6 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			if (!session.name && session.messages.length === 0) {
 				session.name = buildSessionTitleFromPrompt(displayPrompt);
 			}
-
 			beginRequest(session, requestSettings, requestId, displayPrompt);
 			activeRequest = {
 				id: requestId,
@@ -15236,6 +15166,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				initialActiveUrl: "",
 				learningMode,
 				settings: requestSettings,
+				executionProfile: ACTIVE_EXECUTION_PROFILE,
+				modelCallCount: 0,
+				provisionalAnswerExposed: false,
 			};
 			await publishState({ status: "Starting Onhand..." });
 			void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {});
@@ -15405,8 +15338,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					sessionId: session.id,
 					transformContext: (messages) => transformFreeTierContextForModel(model, messages),
 					getApiKey: (provider) => resolveApiKey(provider),
-					streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) =>
-						streamOnhandFast(streamModel, streamContext, {
+					streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) => {
+						activeRequest.modelCallCount = Number(activeRequest.modelCallCount || 0) + 1;
+						return streamOnhandFast(streamModel, streamContext, {
 							...streamOptions,
 							onhandTelemetry: {
 								turnId: requestId,
@@ -15414,7 +15348,8 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							},
 							onhandReasoningProfile: reasoningProfile,
 							onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled),
-						}),
+						});
+					},
 					toolExecution: "parallel",
 				});
 				activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));

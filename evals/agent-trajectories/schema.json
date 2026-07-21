@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onhand.dev/schemas/agent-trajectory-suite-v1.json",
+  "title": "Onhand agent trajectory suite",
+  "type": "object",
+  "required": ["schemaVersion", "suiteId", "cases"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suiteId": { "$ref": "#/$defs/nonEmptyString" },
+    "description": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/trajectoryCase" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trajectoryCase": {
+      "type": "object",
+      "required": ["id", "description", "profiles", "turn", "workspace", "expectations"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "description": { "$ref": "#/$defs/nonEmptyString" },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["legacy", "full-agent", "guided-agent"] }
+        },
+        "turn": { "$ref": "#/$defs/turn" },
+        "workspace": { "$ref": "#/$defs/workspace" },
+        "expectations": { "$ref": "#/$defs/expectations" }
+      }
+    },
+    "turn": {
+      "type": "object",
+      "required": ["mode", "prompt"],
+      "properties": {
+        "mode": { "enum": ["answer", "learning"] },
+        "prompt": { "$ref": "#/$defs/nonEmptyString" },
+        "selectedText": { "type": "string" },
+        "learnerState": { "type": "object" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["activeTabId", "tabs", "resources"],
+      "properties": {
+        "activeTabId": { "$ref": "#/$defs/nonEmptyString" },
+        "tabs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/tab" }
+        },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resource" }
+        }
+      }
+    },
+    "tab": {
+      "type": "object",
+      "required": ["id", "title", "url"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "url": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["id", "tabId", "kind", "passages"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "tabId": { "$ref": "#/$defs/nonEmptyString" },
+        "kind": { "enum": ["html", "pdf", "linked-pdf", "image"] },
+        "parentSourceId": { "$ref": "#/$defs/nonEmptyString" },
+        "passages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/passage" }
+        }
+      }
+    },
+    "passage": {
+      "type": "object",
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "location": { "type": "string" },
+        "text": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "expectations": {
+      "type": "object",
+      "required": ["completion", "mutations", "evidenceSlots"],
+      "properties": {
+        "completion": { "enum": ["answer", "honest-limitation"] },
+        "mutations": { "enum": ["forbidden", "annotations-allowed", "interaction-required"] },
+        "evidenceSlots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidenceSlot" }
+        },
+        "requiredToolGroups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolGroup" }
+        },
+        "forbiddenTools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "minAnnotations": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxAnnotations": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxModelCalls": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxToolCalls": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxToolErrors": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxDuplicateSources": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxFocusChanges": { "$ref": "#/$defs/nonNegativeNumber" },
+        "maxLatencyMs": { "$ref": "#/$defs/nonNegativeNumber" },
+        "requireNoProvisionalAnswer": { "type": "boolean" }
+      }
+    },
+    "evidenceSlot": {
+      "type": "object",
+      "required": ["id", "description", "acceptableEvidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "description": { "$ref": "#/$defs/nonEmptyString" },
+        "requireCitation": { "type": "boolean" },
+        "requireAnnotation": { "type": "boolean" },
+        "acceptableEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["sourceId", "passageIds"],
+            "properties": {
+              "sourceId": { "$ref": "#/$defs/nonEmptyString" },
+              "passageIds": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/nonEmptyString" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "toolGroup": {
+      "type": "object",
+      "required": ["id", "anyOf"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "anyOf": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "minCalls": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

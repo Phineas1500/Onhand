@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://onhand.dev/schemas/agent-trajectory-trace-v1.json",
+  "title": "Normalized Onhand agent trajectory trace",
+  "type": "object",
+  "required": [
+    "caseId",
+    "profile",
+    "model",
+    "iteration",
+    "completed",
+    "honestLimitation",
+    "toolCalls",
+    "evidenceUses",
+    "annotations",
+    "modelCalls",
+    "latencyMs",
+    "duplicateSources",
+    "focusChanges",
+    "unsupportedActionClaims",
+    "pageMutations",
+    "provisionalAnswerExposed"
+  ],
+  "properties": {
+    "caseId": { "$ref": "#/$defs/nonEmptyString" },
+    "profile": { "enum": ["legacy", "full-agent", "guided-agent"] },
+    "model": { "$ref": "#/$defs/nonEmptyString" },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "completed": { "type": "boolean" },
+    "honestLimitation": { "type": "boolean" },
+    "reply": { "type": "string" },
+    "toolCalls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "state"],
+        "properties": {
+          "name": { "$ref": "#/$defs/nonEmptyString" },
+          "state": { "enum": ["complete", "error", "blocked", "recovered"] },
+          "sourceId": { "type": "string" },
+          "passageIds": { "type": "array", "items": { "type": "string" } },
+          "durationMs": { "$ref": "#/$defs/nonNegativeNumber" }
+        }
+      }
+    },
+    "evidenceUses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slotId", "sourceId", "passageId", "citationPresent"],
+        "properties": {
+          "slotId": { "$ref": "#/$defs/nonEmptyString" },
+          "sourceId": { "$ref": "#/$defs/nonEmptyString" },
+          "passageId": { "$ref": "#/$defs/nonEmptyString" },
+          "citationPresent": { "type": "boolean" }
+        }
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sourceId", "passageId"],
+        "properties": {
+          "sourceId": { "$ref": "#/$defs/nonEmptyString" },
+          "passageId": { "$ref": "#/$defs/nonEmptyString" },
+          "annotationId": { "type": "string" }
+        }
+      }
+    },
+    "modelCalls": { "$ref": "#/$defs/nonNegativeNumber" },
+    "latencyMs": { "$ref": "#/$defs/nonNegativeNumber" },
+    "costUsd": { "$ref": "#/$defs/nonNegativeNumber" },
+    "inputTokens": { "$ref": "#/$defs/nonNegativeNumber" },
+    "outputTokens": { "$ref": "#/$defs/nonNegativeNumber" },
+    "duplicateSources": { "$ref": "#/$defs/nonNegativeNumber" },
+    "focusChanges": { "$ref": "#/$defs/nonNegativeNumber" },
+    "unsupportedActionClaims": { "$ref": "#/$defs/nonNegativeNumber" },
+    "pageMutations": { "$ref": "#/$defs/nonNegativeNumber" },
+    "provisionalAnswerExposed": { "type": "boolean" }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "nonNegativeNumber": { "type": "number", "minimum": 0 }
+  }
+}

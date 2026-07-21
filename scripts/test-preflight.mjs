@@ -15,9 +15,20 @@ const REQUIRED_FILES = [
 	"packages/browser-extension/runtime-revision.js",
 	"packages/browser-extension/src/browser-runtime.ts",
 	"packages/browser-extension/src/browser-oauth.ts",
+	"packages/browser-extension/src/agent/constitution.ts",
+	"packages/browser-extension/src/agent/execution-profile.ts",
+	"packages/browser-extension/src/research/evidence-types.ts",
+	"packages/browser-extension/src/tools/registry.ts",
+	"packages/browser-extension/src/tools/runtime-invariants.ts",
 	"docs/ONHAND_CONSTITUTION.md",
 	"scripts/build-browser-runtime.mjs",
 	"scripts/run-browser-runtime-regressions.mjs",
+	"scripts/run-agent-runtime-module-regressions.mjs",
+	"scripts/run-agent-trajectory-eval.mjs",
+	"scripts/run-agent-trajectory-baseline.mjs",
+	"scripts/run-agent-trajectory-eval-regressions.mjs",
+	"scripts/serve-agent-trajectory-fixtures.mjs",
+	"scripts/lib/agent-trajectory-fixtures.mjs",
 	"scripts/run-page-toolkit-regressions.mjs",
 	"scripts/run-sidebar-regressions.mjs",
 	"scripts/run-browser-runtime-smoke.mjs",
@@ -25,6 +36,9 @@ const REQUIRED_FILES = [
 	"scripts/show-chrome-acceptance.mjs",
 	"scripts/sync-browser-tools.mjs",
 	"shared/browser-tools.json",
+	"evals/agent-trajectories/cases.json",
+	"evals/agent-trajectories/schema.json",
+	"evals/agent-trajectories/trace-schema.json",
 ];
 
 const REMOVED_PATHS = [
@@ -47,6 +61,11 @@ const REQUIRED_SCRIPTS = [
 	"website:check-tools",
 	"test:sidebar-regressions",
 	"test:browser-runtime-regressions",
+	"test:agent-runtime-modules",
+	"eval:agent-trajectories",
+	"eval:agent-trajectories:live",
+	"serve:agent-trajectories",
+	"test:agent-trajectory-eval",
 	"smoke:browser-runtime",
 ];
 
