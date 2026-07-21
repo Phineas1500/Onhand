@@ -39,6 +39,14 @@ The broader product plan lives in:
 - `docs/ONHAND_PLAN.md`
 - `docs/VOICE_ARCHITECTURE.md`
 
+## Built with Codex and GPT-5.6
+
+Codex has been both a supported way to run Onhand and the primary coding-agent harness used to develop it. We use Codex to inspect and change the repository, run regression suites, reload the real unpacked extension, and validate browser behavior in Helium instead of relying only on mocked tests.
+
+GPT-5.6 Sol has been our frontier-model target for the more agentic Onhand experience. For the v0.4.3 work, we used it in repeated live browser-trajectory runs across a 10-case evaluation set covering page grounding, selections, multi-tab research, PDFs, interaction, and failure recovery. Those runs helped us identify orchestration and evaluation-harness problems separately from model-quality problems. Onhand still keeps its production-compatible legacy execution profile active while the new full-agent and guided-agent profiles are evaluated before rollout.
+
+See `docs/AGENT_RUNTIME_PROFILES_PLAN.md`, `docs/AGENT_TRAJECTORY_EVAL.md`, and `docs/AGENT_TRAJECTORY_BASELINE_2026-07-21.md` for the architecture, evaluation contract, and current baseline notes.
+
 ## Current repository layout
 
 - `docs/ONHAND_PLAN.md` - product and implementation plan

@@ -1,0 +1,572 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "onhand-core-trajectories-v1",
+  "description": "Production-shaped browser trajectories shared by legacy, full-agent, and guided-agent evaluation.",
+  "cases": [
+    {
+      "id": "current-page-grounded-answer",
+      "description": "Answer a straightforward question from the current page and anchor the supporting passage.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "According to this page, why does the calibration remain stable?"
+      },
+      "workspace": {
+        "activeTabId": "article",
+        "tabs": [
+          { "id": "article", "title": "Calibration field notes", "url": "https://fixtures.onhand.test/calibration" }
+        ],
+        "resources": [
+          {
+            "id": "calibration-article",
+            "tabId": "article",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "calibration-anchor",
+                "location": "section: Results",
+                "text": "The calibration remains stable because every reading is compared with the same reference window."
+              },
+              {
+                "id": "calibration-distractor",
+                "location": "section: Appendix",
+                "text": "The billing dashboard caches monthly summaries."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "mechanism",
+            "description": "The reason calibration stays stable.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              { "sourceId": "calibration-article", "passageIds": ["calibration-anchor"] }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          { "id": "read-current-page", "anyOf": ["browser_extract_content", "browser_capture_page", "browser_research_workspace"] },
+          { "id": "anchor-evidence", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"] }
+        ],
+        "minAnnotations": 1,
+        "maxAnnotations": 2,
+        "maxModelCalls": 3,
+        "maxToolCalls": 6,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "selected-homework-workspace-research",
+      "description": "Use selected homework text, an open course index, and semantically relevant linked PDFs to cover a multipart answer.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "learning",
+        "prompt": "Could you help me solve this?",
+        "selectedText": "Discuss three possible techniques, one related to data augmentation, one related to the loss function, and one related to the training procedure, to regularize the neural network."
+      },
+      "workspace": {
+        "activeTabId": "homework",
+        "tabs": [
+          { "id": "homework", "title": "Assignment 1", "url": "https://fixtures.onhand.test/course/hw1.pdf" },
+          { "id": "course-index", "title": "CS 577 course notes", "url": "https://fixtures.onhand.test/course/" },
+          { "id": "unrelated", "title": "Music", "url": "https://fixtures.onhand.test/music" }
+        ],
+        "resources": [
+          {
+            "id": "homework-pdf",
+            "tabId": "homework",
+            "kind": "pdf",
+            "passages": [
+              { "id": "regularization-question", "location": "page:2", "text": "Discuss three possible techniques, one related to data augmentation, one related to the loss function, and one related to the training procedure." }
+            ]
+          },
+          {
+            "id": "course-page",
+            "tabId": "course-index",
+            "kind": "html",
+            "passages": [
+              { "id": "course-links", "location": "section: Schedule", "text": "Lecture 2: Text Classification. Lecture 16: Pruning. Resources: linked slides." }
+            ]
+          },
+          {
+            "id": "text-classification-slides",
+            "tabId": "course-index",
+            "kind": "linked-pdf",
+            "parentSourceId": "course-page",
+            "passages": [
+              { "id": "augmentation-evidence", "location": "page:31", "text": "Meaning-preserving transformations create additional labeled training examples and reduce reliance on surface wording." }
+            ]
+          },
+          {
+            "id": "pruning-slides",
+            "tabId": "course-index",
+            "kind": "linked-pdf",
+            "parentSourceId": "course-page",
+            "passages": [
+              { "id": "loss-evidence", "location": "page:28", "text": "An L0 penalty controls model complexity through sparsity by favoring fewer nonzero parameters." }
+            ]
+          },
+          {
+            "id": "dropout-paper",
+            "tabId": "course-index",
+            "kind": "linked-pdf",
+            "parentSourceId": "course-page",
+            "passages": [
+              { "id": "training-evidence", "location": "page:1", "text": "Randomly dropping units during training prevents co-adaptation and improves generalization." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "data-augmentation",
+            "description": "A data-level regularization technique and mechanism.",
+            "requireCitation": true,
+            "acceptableEvidence": [
+              { "sourceId": "text-classification-slides", "passageIds": ["augmentation-evidence"] }
+            ]
+          },
+          {
+            "id": "loss-function",
+            "description": "A loss penalty and why it reduces overfitting.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              { "sourceId": "pruning-slides", "passageIds": ["loss-evidence"] }
+            ]
+          },
+          {
+            "id": "training-procedure",
+            "description": "A training-time technique and mechanism.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              { "sourceId": "dropout-paper", "passageIds": ["training-evidence"] }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          { "id": "workspace-discovery", "anyOf": ["browser_list_tabs", "browser_research_workspace"] },
+          { "id": "linked-document-research", "anyOf": ["browser_search_linked_pdf_corpus", "browser_pdf_search", "browser_research_workspace"] },
+          { "id": "evidence-annotation", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"], "minCalls": 2 }
+        ],
+        "minAnnotations": 2,
+        "maxAnnotations": 4,
+        "maxModelCalls": 5,
+        "maxToolCalls": 14,
+        "maxToolErrors": 1,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 45000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "two-paper-comparison",
+      "description": "Compare two open papers using evidence from both rather than answering from only one tab.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Compare how these two papers reduce retrieval latency, and mark the key evidence in each."
+      },
+      "workspace": {
+        "activeTabId": "paper-a",
+        "tabs": [
+          { "id": "paper-a", "title": "Paper A", "url": "https://fixtures.onhand.test/papers/a.pdf" },
+          { "id": "paper-b", "title": "Paper B", "url": "https://fixtures.onhand.test/papers/b.pdf" }
+        ],
+        "resources": [
+          {
+            "id": "paper-a-pdf",
+            "tabId": "paper-a",
+            "kind": "pdf",
+            "passages": [
+              { "id": "paper-a-method", "location": "page:4", "text": "Paper A precomputes compressed document vectors and searches them with an approximate index." }
+            ]
+          },
+          {
+            "id": "paper-b-pdf",
+            "tabId": "paper-b",
+            "kind": "pdf",
+            "passages": [
+              { "id": "paper-b-method", "location": "page:6", "text": "Paper B caches query-independent attention states and reranks a small exact candidate set." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          { "id": "paper-a", "description": "Paper A method.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "paper-a-pdf", "passageIds": ["paper-a-method"] }] },
+          { "id": "paper-b", "description": "Paper B method.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "paper-b-pdf", "passageIds": ["paper-b-method"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "workspace-read", "anyOf": ["browser_list_tabs", "browser_extract_content", "browser_research_workspace"] },
+          { "id": "two-source-annotation", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"], "minCalls": 2 }
+        ],
+        "minAnnotations": 2,
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 10,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 40000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "paper-citation-chase",
+      "description": "Follow a citation from the current paper and distinguish the current paper's claim from the cited result.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Open the cited Atlas result, explain what Atlas actually established, and compare it with this paper's claim."
+      },
+      "workspace": {
+        "activeTabId": "current-paper",
+        "tabs": [
+          { "id": "current-paper", "title": "Current paper", "url": "https://fixtures.onhand.test/papers/current.pdf" }
+        ],
+        "resources": [
+          {
+            "id": "current-paper-pdf",
+            "tabId": "current-paper",
+            "kind": "pdf",
+            "passages": [
+              { "id": "current-claim", "location": "page:3", "text": "We extend Atlas by retaining accuracy when the retrieval index changes online [12]." },
+              { "id": "atlas-reference", "location": "page:12", "text": "[12] Atlas: Static compressed retrieval at web scale." }
+            ]
+          },
+          {
+            "id": "atlas-paper",
+            "tabId": "current-paper",
+            "kind": "linked-pdf",
+            "parentSourceId": "current-paper-pdf",
+            "passages": [
+              { "id": "atlas-result", "location": "page:7", "text": "Atlas reduces static-index memory by 42 percent while preserving top-10 recall within one point." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          { "id": "current-paper-claim", "description": "The extension claimed by the current paper.", "requireCitation": true, "acceptableEvidence": [{ "sourceId": "current-paper-pdf", "passageIds": ["current-claim"] }] },
+          { "id": "cited-paper-result", "description": "The result actually established by Atlas.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "atlas-paper", "passageIds": ["atlas-result"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "citation-follow", "anyOf": ["browser_click", "browser_navigate", "browser_research_workspace"] },
+          { "id": "citation-read", "anyOf": ["browser_pdf_read_pages", "browser_extract_content", "browser_research_workspace"] }
+        ],
+        "minAnnotations": 1,
+        "maxAnnotations": 3,
+        "maxModelCalls": 5,
+        "maxToolCalls": 12,
+        "maxToolErrors": 1,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 45000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "visual-pdf-figure",
+      "description": "Use a rendered PDF figure when extracted text alone cannot answer the question.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "learning",
+        "prompt": "What trend does the highlighted blue curve show in Figure 3, and what does the caption say it represents?"
+      },
+      "workspace": {
+        "activeTabId": "visual-paper",
+        "tabs": [
+          { "id": "visual-paper", "title": "Visual benchmark", "url": "https://fixtures.onhand.test/papers/visual.pdf" }
+        ],
+        "resources": [
+          {
+            "id": "visual-paper-pdf",
+            "tabId": "visual-paper",
+            "kind": "pdf",
+            "passages": [
+              { "id": "figure-3-caption", "location": "page:5", "text": "Figure 3: Blue shows validation error as training examples increase." },
+              { "id": "figure-3-image", "location": "page-image:5", "text": "The blue curve slopes downward from left to right and then levels off." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          { "id": "visual-trend", "description": "The visual direction of the blue curve.", "requireCitation": true, "acceptableEvidence": [{ "sourceId": "visual-paper-pdf", "passageIds": ["figure-3-image"] }] },
+          { "id": "caption-meaning", "description": "What the caption says the curve represents.", "requireCitation": true, "acceptableEvidence": [{ "sourceId": "visual-paper-pdf", "passageIds": ["figure-3-caption"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "visual-read", "anyOf": ["browser_pdf_capture_page_image", "browser_capture_page", "browser_research_workspace"] }
+        ],
+        "maxAnnotations": 2,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 40000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "explicit-no-page-changes",
+      "description": "Honor an explicit request to answer from the page without highlights, notes, navigation, or other mutations.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Summarize the three constraints on this page, but do not highlight, add notes, click, or change the page."
+      },
+      "workspace": {
+        "activeTabId": "constraints",
+        "tabs": [
+          { "id": "constraints", "title": "System constraints", "url": "https://fixtures.onhand.test/constraints" }
+        ],
+        "resources": [
+          {
+            "id": "constraints-page",
+            "tabId": "constraints",
+            "kind": "html",
+            "passages": [
+              { "id": "constraint-list", "location": "section: Constraints", "text": "The system must preserve focus, deduplicate sources, and report failed actions honestly." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "forbidden",
+        "evidenceSlots": [
+          { "id": "constraints", "description": "All three stated constraints.", "requireCitation": false, "acceptableEvidence": [{ "sourceId": "constraints-page", "passageIds": ["constraint-list"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "read-only-page-access", "anyOf": ["browser_extract_content", "browser_capture_page", "browser_research_workspace"] }
+        ],
+        "forbiddenTools": ["browser_highlight_text", "browser_show_note", "browser_click", "browser_type", "browser_navigate", "browser_annotate_evidence"],
+        "minAnnotations": 0,
+        "maxAnnotations": 0,
+        "maxModelCalls": 3,
+        "maxToolCalls": 5,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 25000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "insufficient-source-evidence",
+      "description": "Stop with an honest limitation when neither the current page nor plausible workspace sources support the requested claim.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "What exact percentage improvement did this experiment report for lunar translation accuracy?"
+      },
+      "workspace": {
+        "activeTabId": "experiment",
+        "tabs": [
+          { "id": "experiment", "title": "Translation experiment", "url": "https://fixtures.onhand.test/experiment" },
+          { "id": "notes", "title": "Translation notes", "url": "https://fixtures.onhand.test/notes" }
+        ],
+        "resources": [
+          {
+            "id": "experiment-page",
+            "tabId": "experiment",
+            "kind": "html",
+            "passages": [
+              { "id": "experiment-scope", "location": "section: Scope", "text": "The experiment discusses terrestrial translation quality without reporting lunar results." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "honest-limitation",
+        "mutations": "forbidden",
+        "evidenceSlots": [],
+        "requiredToolGroups": [
+          { "id": "verify-workspace", "anyOf": ["browser_list_tabs", "browser_extract_content", "browser_research_workspace"] }
+        ],
+        "forbiddenTools": ["browser_highlight_text", "browser_show_note", "browser_annotate_evidence"],
+        "maxAnnotations": 0,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 1,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 35000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "relevant-background-tab",
+      "description": "Find one semantically relevant background tab among unrelated tabs without relying on tab order.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "learning",
+        "prompt": "Use my open material to explain why gradient clipping helps this training failure."
+      },
+      "workspace": {
+        "activeTabId": "error-log",
+        "tabs": [
+          { "id": "error-log", "title": "Training run", "url": "https://fixtures.onhand.test/run" },
+          { "id": "shopping", "title": "Shopping cart", "url": "https://fixtures.onhand.test/cart" },
+          { "id": "music", "title": "Playlist", "url": "https://fixtures.onhand.test/playlist" },
+          { "id": "rnn-notes", "title": "Exploding gradients in RNNs", "url": "https://fixtures.onhand.test/rnn-notes.pdf" },
+          { "id": "weather", "title": "Weather", "url": "https://fixtures.onhand.test/weather" }
+        ],
+        "resources": [
+          {
+            "id": "run-log",
+            "tabId": "error-log",
+            "kind": "html",
+            "passages": [
+              { "id": "run-failure", "location": "line:88", "text": "The gradient norm jumps above 900 immediately before the loss becomes NaN." }
+            ]
+          },
+          {
+            "id": "rnn-notes-pdf",
+            "tabId": "rnn-notes",
+            "kind": "pdf",
+            "passages": [
+              { "id": "clipping-mechanism", "location": "page:14", "text": "Gradient clipping rescales an update when its norm exceeds a threshold, preventing an exploding gradient from taking an unstable step." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          { "id": "observed-failure", "description": "The failure visible in the active run.", "requireCitation": true, "acceptableEvidence": [{ "sourceId": "run-log", "passageIds": ["run-failure"] }] },
+          { "id": "clipping-mechanism", "description": "Why clipping addresses the failure.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "rnn-notes-pdf", "passageIds": ["clipping-mechanism"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "tab-inventory", "anyOf": ["browser_list_tabs", "browser_research_workspace"] },
+          { "id": "background-read", "anyOf": ["browser_extract_content", "browser_pdf_read_pages", "browser_research_workspace"] }
+        ],
+        "minAnnotations": 1,
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 9,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 35000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "repeated-concept-follow-up",
+      "description": "Resolve an existing learning check and reuse the concept rather than creating duplicate learner state.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "learning",
+        "prompt": "I think a causal mask stops a token from seeing tokens to its right. Is that the idea?",
+        "learnerState": {
+          "conceptId": "causal-mask",
+          "openCheckId": "causal-mask-check-1"
+        }
+      },
+      "workspace": {
+        "activeTabId": "attention-notes",
+        "tabs": [
+          { "id": "attention-notes", "title": "Attention notes", "url": "https://fixtures.onhand.test/attention" }
+        ],
+        "resources": [
+          {
+            "id": "attention-page",
+            "tabId": "attention-notes",
+            "kind": "html",
+            "passages": [
+              { "id": "mask-definition", "location": "section: Causal attention", "text": "A causal mask prevents a position from attending to future positions while preserving access to itself and earlier positions." }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          { "id": "feedback", "description": "Grounded feedback on the learner's answer.", "requireCitation": false, "acceptableEvidence": [{ "sourceId": "attention-page", "passageIds": ["mask-definition"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "resolve-learning-check", "anyOf": ["onhand_record_learning_event"] }
+        ],
+        "maxAnnotations": 1,
+        "maxModelCalls": 3,
+        "maxToolCalls": 5,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 25000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "explicit-page-interaction",
+      "description": "Perform an explicitly requested page interaction and verify the resulting state rather than merely claiming success.",
+      "profiles": ["legacy", "full-agent", "guided-agent"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Select the Advanced option, apply it, and tell me the status shown afterward."
+      },
+      "workspace": {
+        "activeTabId": "settings",
+        "tabs": [
+          { "id": "settings", "title": "Demo settings", "url": "https://fixtures.onhand.test/settings" }
+        ],
+        "resources": [
+          {
+            "id": "settings-page",
+            "tabId": "settings",
+            "kind": "html",
+            "passages": [
+              { "id": "advanced-option", "location": "control: mode", "text": "Advanced" },
+              { "id": "applied-status", "location": "status", "text": "Advanced mode applied" }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "interaction-required",
+        "evidenceSlots": [
+          { "id": "resulting-status", "description": "The status after applying the option.", "requireCitation": false, "acceptableEvidence": [{ "sourceId": "settings-page", "passageIds": ["applied-status"] }] }
+        ],
+        "requiredToolGroups": [
+          { "id": "change-and-apply", "anyOf": ["browser_click", "browser_click_text"], "minCalls": 2 },
+          { "id": "verify-state", "anyOf": ["browser_extract_content", "browser_capture_page"] }
+        ],
+        "maxAnnotations": 0,
+        "maxModelCalls": 3,
+        "maxToolCalls": 7,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 25000,
+        "requireNoProvisionalAnswer": true
+      }
+    }
+  ]
+}

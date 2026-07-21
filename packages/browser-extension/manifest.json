@@ -4,7 +4,7 @@
 		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
 	},
 	"name": "Onhand",
-	"version": "0.4.2",
+	"version": "0.4.3",
 	"description": "Runs the Onhand contextual tutor directly inside the browser extension.",
 	"minimum_chrome_version": "116",
 	"icons": {

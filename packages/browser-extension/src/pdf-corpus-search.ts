@@ -1,26 +1,13 @@
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
+import type { PdfCorpusEvidenceSlot, PdfCorpusPage, PdfCorpusSource } from "./research/evidence-types";
+
+export type { PdfCorpusEvidenceSlot, PdfCorpusPage, PdfCorpusSource } from "./research/evidence-types";
 
 // MV3 extension service workers cannot start PDF.js's normal nested worker or
 // dynamically import its fallback worker reliably. Supplying the bundled
 // handler lets PDF.js use its in-process fake-worker path without opening tabs.
 (globalThis as any).pdfjsWorker ||= { WorkerMessageHandler };
-
-export interface PdfCorpusSource {
-	title?: string;
-	url: string;
-}
-
-export interface PdfCorpusEvidenceSlot {
-	id: string;
-	description?: string;
-	queries: string[];
-}
-
-interface PdfCorpusPage {
-	pageNumber: number;
-	text: string;
-}
 
 const DEFAULT_PDF_FETCH_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_PDF_BYTES = 40 * 1024 * 1024;

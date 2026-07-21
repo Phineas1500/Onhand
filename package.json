@@ -1,6 +1,6 @@
 {
   "name": "onhand",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Onhand: contextual AI assistant for learning and research running in a browser extension",
   "license": "Apache-2.0",
   "type": "module",
@@ -19,6 +19,7 @@
     "generate:realtime-voice-fixture": "node ./scripts/generate-realtime-voice-fixture.mjs",
     "serve:realtime": "node ./scripts/serve-realtime-session.mjs",
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
+    "serve:agent-trajectories": "node ./scripts/serve-agent-trajectory-fixtures.mjs",
     "website:sync-store": "node ./scripts/sync-chrome-store-version.mjs",
     "website:check-store": "node ./scripts/sync-chrome-store-version.mjs --check",
     "website:sync-release": "node ./scripts/sync-github-release-version.mjs",
@@ -42,6 +43,7 @@
     "test:pdf-toolkit-sweep": "node ./scripts/run-pdf-toolkit-sweep.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
+    "test:agent-runtime-modules": "node ./scripts/run-agent-runtime-module-regressions.mjs",
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
@@ -51,7 +53,10 @@
     "smoke:browser-runtime": "node ./scripts/run-browser-runtime-smoke.mjs",
     "eval:page-prompts": "node ./scripts/run-page-prompt-eval.mjs",
     "eval:page-teaching-smoke": "node ./scripts/run-page-prompt-eval.mjs --case bayesian-no-page-changes --case mdn-fetch-teach --case energy-heat-pump-summary --case bayes-source-derivation",
-    "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs"
+    "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",
+    "eval:agent-trajectories": "node ./scripts/run-agent-trajectory-eval.mjs",
+    "eval:agent-trajectories:live": "node ./scripts/run-agent-trajectory-baseline.mjs",
+    "test:agent-trajectory-eval": "node ./scripts/run-agent-trajectory-eval-regressions.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.80.7",

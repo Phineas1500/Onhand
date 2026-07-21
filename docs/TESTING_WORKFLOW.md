@@ -9,6 +9,7 @@ Run this before opening or updating a PR:
 ```sh
 git diff --check origin/main...HEAD
 npm run build:extension
+npm run test:agent-runtime-modules
 npm run test:browser-runtime-regressions
 npm run smoke:browser-runtime -- --ports
 npm run test:preflight
@@ -60,6 +61,10 @@ npm run smoke:browser-runtime -- --json
 npm run smoke:browser-runtime -- --ports --json
 npm run smoke:browser-runtime -- --real-openai
 npm run eval:free-tier-models -- --dry-run
+npm run eval:agent-trajectories
+npm run test:agent-trajectory-eval
+npm run test:agent-runtime-modules
+npm run eval:agent-trajectories:live -- --case current-page-grounded-answer
 npm run ops:free-tier -- --dry-run
 ```
 
@@ -83,4 +88,9 @@ sends one synthetic privacy-safe event and fails unless Sentry resolves
 `packages/browser-extension/src/browser-runtime.ts`. See `docs/SENTRY.md`.
 
 Use `npm run eval:free-tier-models` with `OPENROUTER_API_KEY` when evaluating a free-tier model change. See `docs/FREE_TIER_MODEL_EVAL.md`.
+Use `npm run eval:agent-trajectories` to validate or score complete browser-task
+traces across the legacy, full-agent, and guided-agent profiles. See
+`docs/AGENT_TRAJECTORY_EVAL.md`. Unlike the single-turn free-tier eval, this
+suite treats evidence coverage, duplicate tabs, focus changes, provisional
+answers, annotations, retries, latency, and cost as one outcome.
 Use `npm run ops:free-tier` with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` after deployment to inspect free-tier health. See `docs/FREE_TIER_OPS.md`.
