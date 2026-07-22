@@ -8,6 +8,11 @@ import * as Sentry from "@sentry/browser";
 import { assertConstitutionPrompt } from "./agent/constitution";
 import { resolveExecutionProfile, type ExecutionProfile } from "./agent/execution-profile";
 import {
+	attachDevelopmentAgentObserver,
+	closeDevelopmentAgentObserver,
+	type DevelopmentAgentObserver,
+} from "./observability/development-agent-observer";
+import {
 	getBrowserOAuthApiKey,
 	getBrowserOAuthProvider,
 	getBrowserOAuthProviders,
@@ -11238,6 +11243,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let storePromise: Promise<any> | null = null;
 	let uiState: any | null = null;
 	let activeAgent: Agent | null = null;
+	let activeDevelopmentAgentObserver: DevelopmentAgentObserver | null = null;
 	let activeRequest: any | null = null;
 
 	// Advanced runtime inspection: retain a compact, redacted decision trace per
@@ -12812,6 +12818,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
 		}
 		await replaceCurrentSession(session);
+		const developmentAgentObserver = activeDevelopmentAgentObserver;
+		activeDevelopmentAgentObserver = null;
+		await closeDevelopmentAgentObserver(developmentAgentObserver);
 		activeAgent = null;
 		await publishState({
 			currentSession: buildSessionState(session),
@@ -15351,6 +15360,15 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						});
 					},
 					toolExecution: "parallel",
+				});
+				activeDevelopmentAgentObserver = await attachDevelopmentAgentObserver(activeAgent, {
+					turnId: requestId,
+					sessionId: session.id,
+					extensionVersion: host.extensionVersion,
+					provider: requestSettings.aiProvider,
+					model: requestSettings.aiModel,
+					executionProfile: activeRequest.executionProfile || "legacy",
+					learningMode,
 				});
 				activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
 

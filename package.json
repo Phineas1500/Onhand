@@ -15,6 +15,7 @@
     "build:browser-runtime": "node ./scripts/build-browser-runtime.mjs && node ./scripts/build-page-toolkit-content.mjs && node ./scripts/build-pdf-corpus-search.mjs",
     "build:pdf-viewer": "node ./scripts/build-pdf-viewer.mjs",
     "build:extension": "npm run build:browser-runtime && npm run build:pdf-viewer",
+    "build:extension:raindrop-local": "ONHAND_RAINDROP_WORKSHOP_URL=http://localhost:5899/v1/ npm run build:extension",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
     "generate:realtime-voice-fixture": "node ./scripts/generate-realtime-voice-fixture.mjs",
     "serve:realtime": "node ./scripts/serve-realtime-session.mjs",
@@ -44,6 +45,7 @@
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
     "test:agent-runtime-modules": "node ./scripts/run-agent-runtime-module-regressions.mjs",
+    "test:raindrop-pilot": "node ./scripts/run-raindrop-development-pilot-regressions.mjs",
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
@@ -73,6 +75,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@raindrop-ai/pi-agent": "0.1.0",
     "@sentry/cli": "^3.5.0",
     "esbuild": "^0.28.1",
     "ws": "^8.21.0"

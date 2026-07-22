@@ -148483,6 +148483,13 @@ function resolveExecutionProfile({
   return { profile: capabilities.defaultProfile, source: "model-capabilities", capabilities };
 }
 
+// packages/browser-extension/src/observability/development-agent-observer-disabled-shim.ts
+async function attachDevelopmentAgentObserver() {
+  return null;
+}
+async function closeDevelopmentAgentObserver() {
+}
+
 // packages/browser-extension/src/browser-oauth.ts
 var OAUTH_TIMEOUT_MS = 10 * 60 * 1e3;
 var OAUTH_EXPIRY_SKEW_MS = 5 * 60 * 1e3;
@@ -157202,6 +157209,7 @@ function createOnhandBrowserRuntime(host) {
   let storePromise = null;
   let uiState = null;
   let activeAgent = null;
+  let activeDevelopmentAgentObserver = null;
   let activeRequest = null;
   const DEBUG_TURN_TRACE_MAX = 12;
   const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
@@ -158584,6 +158592,9 @@ function createOnhandBrowserRuntime(host) {
       session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
     }
     await replaceCurrentSession(session);
+    const developmentAgentObserver = activeDevelopmentAgentObserver;
+    activeDevelopmentAgentObserver = null;
+    await closeDevelopmentAgentObserver(developmentAgentObserver);
     activeAgent = null;
     await publishState({
       currentSession: buildSessionState(session),
@@ -160847,6 +160858,15 @@ function createOnhandBrowserRuntime(host) {
             });
           },
           toolExecution: "parallel"
+        });
+        activeDevelopmentAgentObserver = await attachDevelopmentAgentObserver(activeAgent, {
+          turnId: requestId,
+          sessionId: session.id,
+          extensionVersion: host.extensionVersion,
+          provider: requestSettings.aiProvider,
+          model: requestSettings.aiModel,
+          executionProfile: activeRequest.executionProfile || "legacy",
+          learningMode
         });
         activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
         void activeAgent.prompt(
