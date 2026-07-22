@@ -60,6 +60,34 @@ score reports beneath an ignored `tmp/agent-trajectories/<timestamp>/`
 directory. `--keep-tabs` is useful for visible QA; omit it in repeated runs so
 the fixture workspace is cleaned between cases.
 
+To exclude personal tabs and browsing state, let the runner launch a stable,
+ignored fixture-only browser profile:
+
+```sh
+npm run eval:agent-trajectories:live -- \
+  --launch-isolated \
+  --case current-page-grounded-answer
+```
+
+The isolated profile defaults to `tmp/agent-trajectory-browser-profile` and
+loads only the unpacked extension. Keeping this profile stable is important for
+honest free-tier testing because it preserves the same anonymous device
+identity across runs. A separate window in the user's normal profile does not
+provide equivalent isolation because Onhand intentionally scans workspace
+metadata across all open browser windows.
+
+To exercise cancellation deterministically, select exactly one case and pass a
+delay. The runner waits until the runtime reports an active request, starts the
+delay, sends Onhand's real stop command, and persists whatever terminal session
+trace the runtime returns:
+
+```sh
+npm run eval:agent-trajectories:live -- \
+  --launch-isolated \
+  --case selected-homework-workspace-research \
+  --cancel-after-ms 1500
+```
+
 Score normalized traces:
 
 ```sh

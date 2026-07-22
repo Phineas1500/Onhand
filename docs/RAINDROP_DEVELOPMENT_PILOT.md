@@ -20,12 +20,22 @@ runtime profile, extension version, and learning-mode metadata.
 These traces can include prompt text, assistant output, tool arguments, tool
 results, and therefore page content or URLs. Onhand's constructed prompt can
 also contain titles, URLs, selections, or extracted text from unrelated open
-tabs. Use a dedicated fixture-only browser window or profile with unrelated
-tabs closed; loading a safe active page is not sufficient by itself. Do not
+tabs. Use a dedicated fixture-only browser profile; a second window in the
+normal profile is not isolated because Onhand scans across open windows. Do not
 attach a cloud write key and do not commit the Workshop database or exported
 private traces.
 
 ## Reproducible local install
+
+Use the repository-managed setup command. It selects the pinned artifact for
+the current supported platform, verifies the release checksum before
+decompressing it, and keeps the binary under ignored `tmp/`:
+
+```sh
+npm run raindrop:pilot:setup
+```
+
+The equivalent macOS arm64 commands are shown below for auditability.
 
 The following installs the audited macOS arm64 binary under the ignored `tmp/`
 directory instead of modifying the shell profile or agent configuration:
@@ -47,14 +57,11 @@ official Workshop release manifest rather than reusing the arm64 artifact.
 
 ## Run the pilot
 
-Start Workshop with an ignored, repository-local database:
+Start Workshop with an ignored, repository-local database and log:
 
 ```sh
-HOME="$PWD/tmp/raindrop-pilot/home" \
-RAINDROP_WORKSHOP_PORT=5899 \
-RAINDROP_WORKSHOP_BIND_HOST=127.0.0.1 \
-RAINDROP_WORKSHOP_DB_PATH="$PWD/tmp/raindrop-pilot/workshop.db" \
-  tmp/raindrop-pilot/bin/raindrop workshop serve
+npm run raindrop:pilot:start
+npm run raindrop:pilot:status
 ```
 
 In a second terminal, build the explicitly instrumented extension:
@@ -68,6 +75,24 @@ deterministic trajectory fixture, and inspect it at
 `http://127.0.0.1:5899`. The Workshop process and loopback receiver must remain
 running for traces to arrive.
 
+For an automated fixture-only browser profile, use the live trajectory runner's
+isolated mode. The stable ignored profile preserves the same free-tier device
+identity between runs while excluding personal tabs and browsing state:
+
+```sh
+npm run eval:agent-trajectories:live -- \
+  --launch-isolated \
+  --case current-page-grounded-answer \
+  --case two-paper-comparison \
+  --case selected-homework-workspace-research \
+  --profile legacy
+```
+
+This launches Helium/Chromium with only the unpacked Onhand extension and the
+fixture workspace. Set `ONHAND_TEST_BROWSER` or pass `--browser <path>` if the
+browser is not in a standard location. Use `--keep-browser` only for visual
+inspection.
+
 Workshop `0.1.16` with `@raindrop-ai/pi-agent` `0.1.0` currently reports token
 usage on both the run root and its nested model spans. The Workshop run-total
 therefore double-counts input and output tokens. Use the individual model-span
@@ -80,8 +105,9 @@ npm run test:raindrop-pilot
 ```
 
 That test proves the default build excludes the SDK, the explicit pilot build
-includes it, an external endpoint is rejected, and the generated runtime is
-restored to the default non-instrumented build afterward.
+includes it, an external endpoint is rejected, an unavailable Workshop remains
+fail-open without blocking or rejecting the Pi agent lifecycle, and the
+generated runtime is restored to the default non-instrumented build afterward.
 
 ## Initial validation
 
@@ -105,12 +131,16 @@ Workshop makes raw model/tool nesting and payloads fast to inspect, while the
 existing evaluator remains the authoritative pass/fail and cross-model scoring
 layer.
 
+The isolated free-tier matrix and prioritized product findings are recorded in
+`docs/RAINDROP_PILOT_FINDINGS_2026-07-22.md`.
+
 ## Stop and clean up
 
-Stop a foreground Workshop with `Ctrl-C`. To return the unpacked extension to
-its normal build, run:
+Stop the repository-managed Workshop and return the unpacked extension to its
+normal build:
 
 ```sh
+npm run raindrop:pilot:stop
 npm run build:extension
 ```
 
@@ -126,3 +156,18 @@ vendor disclosures, CSP/host permissions, operational cost, and whether the
 privacy policy needs to change. Promote only if local traces uncover actionable
 issues that Onhand's normalized trajectory evaluator and existing diagnostics
 do not already reveal efficiently.
+
+## Known pilot gaps
+
+- The observer covers Onhand's main user-facing Pi agent. The separate internal
+  structured tutor/planner agent and the realtime voice transport are not yet
+  traced independently.
+- Timed cancellation can be exercised with `--cancel-after-ms <n>`. A
+  deterministic provider/transport retry injector still needs a dedicated
+  fixture; tool-level recovery loops are visible in Workshop today.
+- Workshop traces are intentionally raw and local. There is no automated
+  redaction, export, or aggregate comparison pipeline, so the normalized
+  trajectory report remains the authoritative cross-model result.
+- The two Raindrop integration issues found during the pilot are recorded as
+  local upstream drafts in `docs/RAINDROP_UPSTREAM_ISSUE_DRAFTS.md`. Posting
+  them is a separate external action.

@@ -49,4 +49,9 @@ try {
 }
 
 if (testError) throw testError;
+const failOpen = spawnSync(process.execPath, ["scripts/run-raindrop-observer-fail-open.mjs"], {
+	cwd: process.cwd(),
+	encoding: "utf8",
+});
+assert.equal(failOpen.status, 0, `Observer fail-open regression failed:\n${failOpen.stderr || failOpen.stdout}`);
 console.log("Raindrop development pilot regressions: PASS");
