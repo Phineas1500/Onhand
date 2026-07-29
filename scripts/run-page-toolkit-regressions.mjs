@@ -60,6 +60,7 @@ async function assertPdfViewerHandoffHelpers() {
 		"isOwnExtensionPdfViewerUrl",
 		"isOnhandPdfViewerLikeUrl",
 		"isHttpLikeUrl",
+		"isFileUrl",
 		"isLikelyPdfResourceUrl",
 		"normalizePdfUrlCandidate",
 		"extractPdfSourceUrlFromViewerLikeUrl",
@@ -481,7 +482,7 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /pointerEvents:\s*"none"/, "PDF viewer highlight containers should not intercept text selection or clicks");
 	assert.doesNotMatch(source, /annotation\.setAttribute\("role",\s*"button"\)/, "PDF viewer highlights should not become note trigger buttons");
 	assert.match(htmlSource, /--scale-factor:\s*1/, "PDF viewer text layer should define a default PDF.js scale factor");
-	assert.match(source, /textLayer\.style\.setProperty\("--scale-factor",\s*String\(currentScale\)\)/, "PDF viewer text layer should use the same scale factor as the canvas");
+	assert.match(source, /viewer\.style\.setProperty\("--scale-factor",\s*String\(committedScale\)\)/, "PDF viewer should set the PDF.js scale factor on the viewer to match the committed canvas scale");
 	assert.match(source, /options\.reuseExisting === true/, "PDF viewer highlight replay should honor reuseExisting");
 	assert.match(source, /findExistingPdfHighlight/, "PDF viewer highlight replay should find existing PDF annotations before creating new ones");
 	assert.match(source, /removeDuplicatePdfHighlights/, "PDF viewer highlight replay should consolidate duplicate saved-artifact overlays");
@@ -500,7 +501,9 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /function capturePdfViewSnapshot/, "PDF viewer should snapshot page position and annotations before re-rendering");
 	assert.match(source, /function restorePdfViewSnapshot/, "PDF viewer should restore page position and annotations after re-rendering");
 	assert.match(source, /window\.addEventListener\("resize",\s*scheduleResizeRender/, "PDF viewer should handle resize without resetting the document");
-	assert.match(source, /renderDocument\(\{\s*preserveView:\s*true\s*\}\)/, "PDF viewer zoom/resize re-renders should preserve view state");
+	assert.match(source, /anchor = captureZoomAnchor\(\)/, "PDF viewer zoom re-renders should anchor the current view before rescaling");
+	assert.match(source, /const annotations = capturePdfAnnotationSnapshots\(\)/, "PDF viewer zoom re-renders should snapshot annotations before rebuilding layers");
+	assert.match(source, /rebuildPdfAnnotationLayers\(annotations, sequence\)/, "PDF viewer zoom re-renders should restore annotations after the re-render");
 	assert.match(source, /case "searchPdf":/, "PDF toolkit bridge should route full-document search");
 	assert.match(source, /case "readPdfPages":/, "PDF toolkit bridge should route page text reads");
 	assert.match(source, /case "getSelectionInfo":\s*return pdfGetSelectionInfo\(\);/, "PDF toolkit bridge should route selected-text reads");
@@ -919,6 +922,11 @@ async function assertTextbookReaderSearchUsesGenericSearchUi() {
 	assert.equal(result.results.some((entry) => /Lochner/.test(entry.snippet || "")), true);
 	assert.equal(result.results.some((entry) => /page 497/i.test(entry.pageLabel || "")), true);
 	assert.equal(result.capabilities.canOpenResult, true);
+	assert.equal(
+		result.dismissedSearchUi?.dismissed,
+		true,
+		`results-only searches must close the reader search panel before returning: ${JSON.stringify(result.dismissedSearchUi)}`,
+	);
 
 	const opened = await searchTextbookReaderInPage({ query: "Lochner", maxResults: 4, openResult: true, resultIndex: 1, timeoutMs: 1000 });
 	assert.equal(opened.openedResult?.index, 1);

@@ -12548,13 +12548,14 @@ async function searchTextbookReaderInPage(options = {}) {
 	}));
 	const totalResultCount = readTotalResultCount();
 	let openedResult = null;
+	let dismissedSearchUi = null;
 	if (openResult && resultEntries[resultIndex - 1]) {
 		const target = resultEntries[resultIndex - 1];
 		const clickable = clickableForResult(target.element);
 		if (clickable) {
 			clickElement(clickable);
 			const navigation = await waitForResultNavigation(beforeUrl, beforeTitle);
-			const dismissedSearchUi = await dismissReaderSearchUi();
+			dismissedSearchUi = await dismissReaderSearchUi();
 			openedResult = {
 				index: resultIndex,
 				title: target.title,
@@ -12573,8 +12574,16 @@ async function searchTextbookReaderInPage(options = {}) {
 			};
 		}
 	}
+	// Never leave the reader's search overlay open behind the tool result:
+	// later highlights would land on the search-state URL/DOM, and closing
+	// the panel afterwards can re-render the content and break those marks.
+	if (!dismissedSearchUi?.dismissed) {
+		const finalDismissal = await dismissReaderSearchUi();
+		if (finalDismissal?.attempted || !dismissedSearchUi) dismissedSearchUi = finalDismissal;
+	}
 	return {
 		ok: true,
+		dismissedSearchUi,
 		surface: "textbook-search",
 		source: "reader-search-ui",
 		adapter,
