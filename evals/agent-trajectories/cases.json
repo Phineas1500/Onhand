@@ -567,6 +567,130 @@
         "maxLatencyMs": 25000,
         "requireNoProvisionalAnswer": true
       }
+    },
+    {
+      "id": "answer-mode-claim-check-background-tab",
+      "description": "Verify a textbook claim against a clearly related background tab in answer mode, with no cross-tab or comparison wording in the prompt, instead of correcting the page from model knowledge.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "My textbook says the bridge collapse is a classic example of resonance. Is that actually right?"
+      },
+      "workspace": {
+        "activeTabId": "textbook",
+        "tabs": [
+          {
+            "id": "textbook",
+            "title": "16.8 Forced Oscillations and Resonance - College Physics",
+            "url": "https://fixtures.onhand.test/physics/resonance"
+          },
+          {
+            "id": "encyclopedia",
+            "title": "Tacoma Narrows Bridge (1940)",
+            "url": "https://fixtures.onhand.test/wiki/tacoma-narrows-1940"
+          },
+          {
+            "id": "shopping",
+            "title": "Shopping cart",
+            "url": "https://fixtures.onhand.test/cart"
+          },
+          {
+            "id": "music",
+            "title": "Playlist",
+            "url": "https://fixtures.onhand.test/playlist"
+          }
+        ],
+        "resources": [
+          {
+            "id": "textbook-page",
+            "tabId": "textbook",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "resonance-claim",
+                "location": "figure:16.28",
+                "text": "In 1940, the Tacoma Narrows Bridge collapsed. Heavy cross winds drove the bridge into oscillations at its resonant frequency."
+              }
+            ]
+          },
+          {
+            "id": "encyclopedia-article",
+            "tabId": "encyclopedia",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "flutter-correction",
+                "location": "section: Cause of the collapse",
+                "text": "The collapse is better described as aeroelastic flutter, a self-excited oscillation, rather than a case of simple forced resonance driven by periodic wind."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "textbook-claim",
+            "description": "The textbook's resonance claim being checked.",
+            "requireCitation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "textbook-page",
+                "passageIds": [
+                  "resonance-claim"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "flutter-correction",
+            "description": "The correction grounded in the clearly related background tab, not model memory.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "encyclopedia-article",
+                "passageIds": [
+                  "flutter-correction"
+                ]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "workspace-read",
+            "anyOf": [
+              "browser_list_tabs",
+              "browser_get_visible_text",
+              "browser_extract_content",
+              "browser_research_workspace"
+            ]
+          },
+          {
+            "id": "background-annotation",
+            "anyOf": [
+              "browser_highlight_text",
+              "browser_annotate_evidence"
+            ]
+          }
+        ],
+        "minAnnotations": 1,
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 9,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 35000,
+        "requireNoProvisionalAnswer": true
+      }
     }
   ]
 }

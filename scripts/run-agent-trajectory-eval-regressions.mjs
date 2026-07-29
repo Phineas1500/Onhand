@@ -55,7 +55,7 @@ function passingCurrentPageTrace() {
 async function main() {
 	const suite = await loadTrajectorySuite(SUITE_PATH);
 	assert.equal(suite.schemaVersion, 1);
-	assert.equal(suite.cases.length, 10);
+	assert.equal(suite.cases.length, 11);
 	assert.equal(new Set(suite.cases.map((testCase) => testCase.id)).size, suite.cases.length);
 
 	const currentPageCase = suite.cases.find((testCase) => testCase.id === "current-page-grounded-answer");
@@ -88,6 +88,53 @@ async function main() {
 	const toolResult = scoreTrajectory(currentPageCase, failedTool);
 	assert.equal(toolResult.status, "fail");
 	assert.ok(toolResult.hardFailures.includes("tool-group:anchor-evidence"));
+
+	const claimCheckCase = suite.cases.find((testCase) => testCase.id === "answer-mode-claim-check-background-tab");
+	assert.ok(claimCheckCase, "the answer-mode background-tab claim-check case must exist");
+	const claimCheckTrace = {
+		caseId: "answer-mode-claim-check-background-tab",
+		profile: "legacy",
+		model: "baseline-model",
+		iteration: 1,
+		completed: true,
+		honestLimitation: false,
+		reply: "Not quite: the collapse is better described as aeroelastic flutter, not simple forced resonance.",
+		toolCalls: [
+			{ name: "browser_get_visible_text", state: "complete", sourceId: "textbook-page", passageIds: ["resonance-claim"], durationMs: 100 },
+			{ name: "browser_extract_content", state: "complete", sourceId: "encyclopedia-article", passageIds: ["flutter-correction"], durationMs: 140 },
+			{ name: "browser_highlight_text", state: "complete", sourceId: "textbook-page", passageIds: ["resonance-claim"], durationMs: 80 },
+			{ name: "browser_highlight_text", state: "complete", sourceId: "encyclopedia-article", passageIds: ["flutter-correction"], durationMs: 90 },
+		],
+		evidenceUses: [
+			{ slotId: "textbook-claim", sourceId: "textbook-page", passageId: "resonance-claim", citationPresent: true },
+			{ slotId: "flutter-correction", sourceId: "encyclopedia-article", passageId: "flutter-correction", citationPresent: true },
+		],
+		annotations: [
+			{ sourceId: "textbook-page", passageId: "resonance-claim", annotationId: "annotation-1" },
+			{ sourceId: "encyclopedia-article", passageId: "flutter-correction", annotationId: "annotation-2" },
+		],
+		modelCalls: 2,
+		latencyMs: 2500,
+		costUsd: 0.002,
+		duplicateSources: 0,
+		focusChanges: 0,
+		unsupportedActionClaims: 0,
+		pageMutations: 2,
+		provisionalAnswerExposed: false,
+	};
+	validateTrajectoryTrace(claimCheckTrace);
+	const claimCheckResult = scoreTrajectory(claimCheckCase, claimCheckTrace);
+	assert.equal(claimCheckResult.status, "pass", "reading and citing the background tab should pass the claim-check case");
+	assert.deepEqual(claimCheckResult.hardFailures, []);
+
+	const memoryOnlyTrace = structuredClone(claimCheckTrace);
+	memoryOnlyTrace.toolCalls = [claimCheckTrace.toolCalls[0], claimCheckTrace.toolCalls[2]];
+	memoryOnlyTrace.evidenceUses = [claimCheckTrace.evidenceUses[0]];
+	memoryOnlyTrace.annotations = [claimCheckTrace.annotations[0]];
+	memoryOnlyTrace.pageMutations = 1;
+	const memoryOnlyResult = scoreTrajectory(claimCheckCase, memoryOnlyTrace);
+	assert.equal(memoryOnlyResult.status, "fail", "correcting the page from model memory while the related tab sits open must fail the eval");
+	assert.ok(memoryOnlyResult.hardFailures.includes("evidence-slot:flutter-correction"));
 
 	const invalidSuite = structuredClone(suite);
 	invalidSuite.cases[0].expectations.evidenceSlots[0].acceptableEvidence[0].passageIds = ["missing-passage"];

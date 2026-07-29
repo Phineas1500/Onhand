@@ -107,7 +107,7 @@ interface RuntimeSettings {
 }
 
 type SpeedMode = "auto" | "fast" | "deep";
-type ReasoningProfileName = "fast" | "balanced" | "deep";
+type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching";
 type ReasoningEffort = "none" | "low" | "medium";
 type TextVerbosity = "low" | "medium";
 
@@ -549,9 +549,9 @@ const RECENT_CONTEXT_REPLY_MAX_CHARS = 700;
 const PRIOR_PAGE_CONTEXT_MAX_CHARS = 5200;
 const PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS = 950;
 const PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
-const ONHAND_MAX_OUTPUT_TOKENS = 900;
-const ONHAND_FAST_OUTPUT_TOKENS = 550;
-const ONHAND_DEEP_OUTPUT_TOKENS = 1100;
+// Single output cap for the unified grounded profile: a ceiling against
+// runaway verbosity, not a target — the conciseness rules govern typical length.
+const ONHAND_MAX_OUTPUT_TOKENS = 1100;
 const ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 460;
 const COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
 const DEFAULT_SETTINGS: RuntimeSettings = {
@@ -589,8 +589,9 @@ const ONHAND_SYSTEM_PROMPT = assertConstitutionPrompt(`You are Onhand, a context
 Onhand's constitution:
 - The page is the canvas. Read the page before answering when page context matters; anchor every answer drawn from the page with a source highlight on the supporting text, and add short marginal notes where they add interpretation. Keep the page unmarked only when the user asks for no page changes or the page does not support the claim.
 - Every material page claim must be grounded in visible/readable page context. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
+- Prefer sources the user can see over your own model knowledge. When a substantive claim — especially one that confirms, corrects, or extends what the current page says — is covered by the current page or a clearly related open tab, read that source and anchor the claim there with a highlight or citation instead of asserting it from memory. A claim that corrects or contradicts the current page must be grounded in a source the user can see: a clearly related open tab first, or a source you open when nothing open covers it. If no open or opened source supports a claim, say plainly that it comes from general knowledge rather than the user's pages.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
-- The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer.
+- The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
 - Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, choose the strongest one to three source highlights, not every point you mention, and add at most one short interpretive note unless the user explicitly asks for notes. Comparisons usually need two source highlights, one per side, with at most one note on the practical difference. Roadmap, list, process, derivation, proof, or other enumerable coverage tasks may need more highlights for required top-level items, but notes should stay sparse and only explain genuinely hard or reusable points. Thorough means covering the relevant required points, not annotating everything nearby.
@@ -616,12 +617,12 @@ Default answer mode:
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
-- In Learning Mode, if the current page does not contain the answer, inspect clearly related open tabs before asking the user or navigating elsewhere. Browser tab metadata is a workspace index: use browser_list_tabs for the complete inventory when the ranked snapshot is insufficient, read likely candidates by tabId in small batches, and expand until the evidence is sufficient or no plausible candidate remains. Outside Learning Mode, use cross-tab retrieval when the prompt requests it. Do not fabricate page support.
+- If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
 - For PDFs, keep the same user-facing flow as normal pages. For selected/highlighted PDF text, use exact selected text from browser_get_selection, copied selection, or captured context first. Chrome's native PDF viewer is usually supported through selection, clipboard, or debugger fallbacks; do not claim it blocks selection merely because a fallback failed. If tool output says the reader is Google Scholar PDF Reader, describe it as Google Scholar PDF Reader even when the top-level tab URL is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open browser_open_pdf_in_onhand_viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open browser_open_pdf_in_onhand_viewer whenever analysis, offscreen/deeper PDF reading, full-PDF search, durable PDF source markers, highlights, or notes would help; skip it only for quick one-sentence or yes/no selected-text answers when selected text is already available in a supported reader. For visual PDF questions about the current figure, slide, equation, diagram, screenshot, or visible page, capture the current PDF page image and answer in the sidebar first; do not automatically search/read/highlight/note just because the user says "try here" or asks what the visible figure shows. Add PDF highlights/notes for visual questions only when the user asks to mark/save/review it, asks where supporting evidence is, needs durable learning context, or the answer depends on a specific text passage. Do not treat a selected named concept, term, section heading, formula label, or paper mechanism as a quick selected-text answer: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. When opening the viewer from another PDF reader, preserve the current selected text/page whenever available. If you use browser_pdf_search or browser_pdf_read_pages to answer from offscreen/deeper PDF pages, add a durable source highlight on the most important supporting passage with browser_highlight_text and a short browser_show_note under 280 characters unless the user asked for no page changes or this is only a quick visual explanation. If the user accepts an offer to go deeper in a PDF with "yes", "please", or similar, complete the offered search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before highlighting; use that viewer only when annotation is needed instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to mark important supporting passages. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient.
 - When the user asks about a cited work ("what does [14] say?", "open this reference", "what paper is that from?"), use browser_pdf_find_citation to look up the bibliography entry instead of searching manually. Highlight the entry in the current paper, then open the suggested URL with browser_navigate (newTab: true) so the user's paper stays open, hand a PDF result to the Onhand viewer, and highlight the passage in the cited work that answers the question. Ground the answer in the cited work itself, noting where both highlights are.
-- When the user explicitly asks to compare or relate the current material to another open tab, another named source, or multiple open documents ("compare with the other paper", "how does this differ from the other open source?", "do these papers agree?"), use browser_list_tabs to identify the other source, read it with explicit tabId parameters (browser_get_visible_text, browser_extract_content, or the PDF tools) instead of switching the user away from their page, and anchor each source separately: browser_highlight_text and browser_show_note accept the same explicit tabId or titleContains after browser_list_tabs, so place a highlight on the key passage in each source tab — including background tabs — and say which tab supports which claim. Never call browser_activate_tab just to place a highlight or note; pass the tab selector to the annotation tool instead. Do not infer cross-tab permission from standalone comparison or agreement wording such as "Do you agree with this?"; answer from the current page and ask before reading other tabs.
+- When an answer draws on another open tab, another named source, or multiple open documents — whether the user asked to compare them ("compare with the other paper", "how does this differ from the other open source?", "do these papers agree?") or you found the clearly related tab yourself — use the workspace scan's tabIds or browser_list_tabs to identify the other source, read it with explicit tabId parameters (browser_get_visible_text, browser_extract_content, or the PDF tools) instead of switching the user away from their page, and anchor each source separately: browser_highlight_text and browser_show_note accept the same explicit tabId or titleContains after browser_list_tabs, so place a highlight on the key passage in each source tab — including background tabs — and say which tab supports which claim. Never call browser_activate_tab just to place a highlight or note; pass the tab selector to the annotation tool instead. Comparison, agreement, or verification wording does not need to name tabs before you use them; auto-use clearly related open tabs without asking first.
 - When an answer draws on more than one tab or document, highlight or cite each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not grounded in; if no open source supports a claim, say so rather than borrowing a nearby highlight.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
@@ -642,8 +643,8 @@ Learning uses a tutoring stance:
 - If the user's latest turn is an answer to an open check, acknowledges/frustrates about a repeated check, or asks "did I not answer?", resolve or respond to that check from the conversation state before doing any new page grounding. Do not add fresh annotations for this meta/follow-up turn.
 - Make the user think out loud when productive: prediction, "say it back", or "what changes if..." prompts must be tied to a highlight or note, not floated in chat.
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
-- Cross-tab retrieval is automatic in Learning Mode. The captured workspace summary is relevance-ranked from metadata for every eligible tab across open browser windows; the current window is a ranking signal, but tab position is never one. Use browser_list_tabs when the compact summary omits tabs, when the current page is insufficient, or when a course/index/master page may lead to better notes. Do not require special wording such as "other tab" before using it.
-- Read likely candidates by explicit tabId without stealing focus. Start with the strongest one to three candidates, then expand only if the evidence is still insufficient. Auto-use clearly related tabs; do not read unrelated tabs merely because they are open, and do not expose unrelated tab details in the answer.
+- Cross-tab retrieval works the same here as in every mode: automatic for clearly related tabs, no special wording required. The captured workspace summary is relevance-ranked from metadata for every eligible tab across open browser windows; the current window is a ranking signal, but tab position is never one. Use browser_list_tabs when the compact summary omits tabs, when the current page is insufficient, or when a course/index/master page may lead to better notes.
+- Read likely candidates by explicit tabId without stealing focus. Start with the strongest one to three candidates, then expand only if the evidence is still insufficient.
 - If an index/master page links to the relevant notes or reading, follow that link in a background tab when possible (browser_navigate with newTab true and active false), inspect the destination by tabId, and anchor the useful passage there. If the destination is a PDF, call browser_open_pdf_in_onhand_viewer with that tabId and active false. Do not activate or switch tabs merely to read, search, highlight, note, or hand off a source PDF. Change focus only when the learner explicitly asks to go there; citation/source controls provide the normal jump path.
 - Record a related tab as a learning source only after you actually inspect or highlight it, and name which source supports each cross-tab claim.
 - Homework/problem priority: if the page or prompt looks like an exercise, problem set, assignment, quiz, exam, or the user asks for a "final answer" to a problem, do not give the final numeric, symbolic, or code answer in Learning mode, even if the user asks directly.
@@ -680,7 +681,7 @@ const OPTIONAL_NUMBER_OR_STRING_SCHEMA = (description: string) =>
 	Type.Optional(Type.Union([Type.Number(), Type.String()], { description }));
 
 const TAB_SELECTOR_SCHEMA = {
-	tabId: OPTIONAL_NUMBER_OR_STRING_SCHEMA("Exact browser tab ID to target. Omit this to use the active tab."),
+	tabId: OPTIONAL_NUMBER_OR_STRING_SCHEMA("Exact browser tab ID to target, from the captured workspace scan ([tabId N]) or browser_list_tabs. Omit this to use the active tab."),
 };
 
 const TAB_MATCH_SCHEMA = {
@@ -5150,6 +5151,41 @@ function hasCompletedTabInventory(request: any) {
 	);
 }
 
+// tabIds printed in the captured workspace metadata scan are grounded — the
+// model can only have read them from the prompt — so they are honored without
+// a prior browser_list_tabs inventory.
+function tabIdListedInWorkspaceScan(request: any, tabId: unknown) {
+	if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
+	const shownTabs = Array.isArray(request?.openTabSummary?.shownTabs) ? request.openTabSummary.shownTabs : [];
+	return shownTabs.some((tab: any) => Number(tab?.id) === tabId);
+}
+
+// A tabId that is not grounded in this turn's workspace scan or completed tab
+// inventory is likely guessed or stale. Silently retargeting the active tab
+// would hand the model the wrong page as if it were the requested one, so
+// withDefaultBrowserTarget marks the params and this guard fails loud with a
+// recovery path instead.
+function untrustedTabTargetErrorResult(toolName: string, commandName: string, effectiveParams: Record<string, unknown>) {
+	const untrustedTabId = (effectiveParams as any)?.__onhandUntrustedTabId;
+	if (untrustedTabId == null) return null;
+	delete (effectiveParams as any).__onhandUntrustedTabId;
+	return {
+		guardrail: {
+			kind: "untrusted_tab_target",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				`tabId ${untrustedTabId} is not in this turn's captured workspace scan or completed browser_list_tabs inventory, so ${toolName} did not run — a guessed or stale tabId would silently target the wrong tab.`,
+				"Call browser_list_tabs for the real inventory, then retry with a listed tabId, or omit tabId to target the active tab.",
+			].join(" "),
+		},
+	};
+}
+
+function buildUntrustedTabTargetGuardResult(toolName: string, commandName: string, effectiveParams: Record<string, unknown>) {
+	return untrustedTabTargetErrorResult(toolName, commandName, effectiveParams);
+}
+
 function annotationIdParts(annotationId: unknown) {
 	const match = String(annotationId || "").trim().match(/^onhand-(\d+)-([A-Za-z0-9]+)$/);
 	return match ? { stamp: match[1], suffix: match[2] } : null;
@@ -6113,55 +6149,22 @@ function assistantMessageTextContent(message: any) {
 		.join("\n");
 }
 
-function classifyPromptForReasoning(prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfileName {
-	const text = String(prompt || "").toLowerCase();
-	const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-	if (hasAttachments) return "deep";
-
-	const asksForToolSmoke =
-		/\bbrowser_[a-z_]+\b|\b(port smoke|ports?|tools?|debug(?:ging)?|diagnostic|dom|console|network|screenshot|selector|artifact|capture|restore)\b/.test(text);
-	const asksForPageAction =
-		/\b(highlight|annotate|note|scroll|click|open|navigate|go to|fill|type|select|press|mark|point (?:me )?to|show me where)\b/.test(text);
-	const asksForDeepWork =
-		/\b(compare|contrast|analy[sz]e|evaluate|argue|evidence|sources?|research|investigate|debug|trace|plan|strategy|detailed|deep|thorough|review|critique|across tabs|multiple tabs|all tabs|roadmap|outline|step[- ]by[- ]step|instead of|(?:another|other|both) tabs?)\b/.test(
-			text,
-		);
-	const asksForConceptualWork =
-		/\b(why|how does|how do|teach|quiz|lesson|step[- ]by[- ]step|walk me through|help me understand)\b/.test(text);
-	const asksForFastAnswer =
-		/\b(one sentence|briefly|quickly|short answer|tl;?dr|no highlights?|no notes?|according to this page|what is|who is|when did|where is|which|how many)\b/.test(
-			text,
-		);
-
-	if (asksForToolSmoke) return "balanced";
-	if (asksForDeepWork) return "deep";
-	if (asksForConceptualWork) return "balanced";
-	if (asksForPageAction) return "balanced";
-	if (learningMode) return "balanced";
-	if (asksForFastAnswer) return "fast";
-	if (text.length > 260) return "balanced";
-	return "fast";
-}
 
 function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfile {
 	const setting: SpeedMode = "auto";
-	const mode = classifyPromptForReasoning(prompt, attachments, learningMode);
-	const base = {
-		setting,
-		mode,
-		reason: `Internal routing chose ${mode}.`,
-	};
+	void attachments;
+	void learningMode;
 	if (promptAsksForDocumentReviewMarkup(prompt)) {
 		// Checked before compact teaching: long pasted feedback routinely trips
 		// the teaching/structured keyword predicates ("summary", "approach"),
 		// and the review lane must win those overlaps.
 		return {
-			...base,
-			mode: "deep",
+			setting,
+			mode: "document-review",
 			reason: "Internal routing chose document review markup.",
 			reasoningEffort: "low",
 			textVerbosity: "low",
-			maxTokens: ONHAND_DEEP_OUTPUT_TOKENS,
+			maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
 			promptPolicy: [
 				"Runtime policy: Document review markup. The user is applying feedback to the open working document, and the on-page marks are the deliverable.",
 				"Read the ENTIRE document with browser_extract_content before placing any marks — the captured snapshot covers only the visible top of the page.",
@@ -6173,8 +6176,8 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 	}
 	if (promptAsksForCompactPageTeaching(prompt)) {
 		return {
-			...base,
-			mode: "balanced",
+			setting,
+			mode: "compact-teaching",
 			reason: "Internal routing chose compact page teaching.",
 			reasoningEffort: "none",
 			textVerbosity: "low",
@@ -6186,36 +6189,19 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 				`Runtime policy: Page teaching/review. Highlight each key concept the page covers for this question — roughly one source highlight per key concept (at most ${TEACHING_SOURCE_HIGHLIGHT_MAX} for this compact pass) — and add ${TEACHING_SOURCE_NOTE_MAX === 1 ? "one short interpretive note (one to two sentences) on the most central highlight" : `up to ${TEACHING_SOURCE_NOTE_MAX} short interpretive notes (one to two sentences each)`}. Keep the chat synthesis concise with short labels or bullets, and let the highlights and notes carry the explanation. Do not write a detached whole-page lecture, and do not include display equations unless the user asked for formulas.`,
 		};
 	}
-	switch (mode) {
-		case "deep":
-			return {
-				...base,
-				reasoningEffort: "low",
-				textVerbosity: "low",
-				maxTokens: ONHAND_DEEP_OUTPUT_TOKENS,
-				promptPolicy:
-					"Runtime policy: Source-thorough pass. Cover each distinct requested key point with source highlights and short interpretive notes where useful. For roadmap/list/process/derivation/proof prompts, do not impose a fixed marker cap; cover every required item the answer names unless a single highlighted list/table contains them. Avoid redundant inspection and unrelated navigation.",
-			};
-		case "balanced":
-				return {
-					...base,
-					reasoningEffort: "none",
-					textVerbosity: "low",
-					maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
-					promptPolicy:
-						"Runtime policy: Focused grounding pass. Anchor the answer with one source highlight on the supporting page text, then answer briefly referencing it (skip the highlight only for no-page-changes requests, quick visual questions, or when the page does not support the claim). Add more highlights/notes when the user asks where evidence is located, when page-level teaching/review needs durable source markers, or when learning/source-navigation work needs durable source highlights. Inspect more only when captured context is insufficient.",
-				};
-		case "fast":
-		default:
-			return {
-				...base,
-				reasoningEffort: "none",
-				textVerbosity: "low",
-				maxTokens: ONHAND_FAST_OUTPUT_TOKENS,
-				promptPolicy:
-					"Runtime policy: Quick grounded answer. Prefer captured context and keep extra page inspection minimal, but still anchor a page-grounded answer with one source highlight on the exact supporting text before the final answer; skip the highlight only for no-page-changes requests, quick visual questions, general-knowledge answers the page does not ground, or when the page does not support the claim. Answer in one to three short readable paragraphs or compact bullets; avoid dense sidebar blocks.",
-			};
-	}
+	// One profile for everything else. There is no fast/balanced/deep depth
+	// dial: the model calibrates inspection depth and verbosity per question
+	// from the grounding rules, and the cap only stops runaway verbosity.
+	return {
+		setting,
+		mode: "grounded",
+		reason: "Internal routing chose the unified grounded profile.",
+		reasoningEffort: "low",
+		textVerbosity: "low",
+		maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
+		promptPolicy:
+			"Runtime policy: Grounded answer pass. Anchor the answer with source highlights on the exact supporting text: one strong highlight for a simple claim; one highlight per distinct key point for multi-part, comparison, or evidence requests; full coverage with no fixed marker cap for roadmap/list/process/derivation/proof prompts. Skip highlights only for no-page-changes requests, quick visual questions, or when no open page supports the claim — and in that case say the claim is general knowledge rather than page-grounded. Prefer captured context and avoid redundant inspection, but captured context is insufficient whenever the answer would rely on knowledge that is not visible on the user's open pages; read the clearly related open tab by tabId and anchor there instead of answering from memory. Ground cross-tab claims in the tab that supports them, one source per claim. Match answer length to the question: one to three short readable paragraphs or compact bullets for ordinary questions, structured depth only when the material requires it; avoid dense sidebar blocks.",
+	};
 }
 
 function buildPromptImages(attachments: any[] = []) {
@@ -7076,7 +7062,7 @@ async function renderBrowserContextDetails(
 			for (const tab of openTabSummary.shownTabs) {
 				const prefix = tab.active ? "* " : "- ";
 				const stateLabel = tab.discarded ? " [discarded; metadata available]" : "";
-				lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""}${stateLabel}`);
+				lines.push(`${prefix}${tab.title || "(untitled)"}${tab.url ? ` - ${tab.url}` : ""} [tabId ${tab.id}]${stateLabel}`);
 			}
 			if (openTabSummary.omittedCount > 0) {
 				lines.push(
@@ -7773,157 +7759,20 @@ function selectToolsForPrompt(
 		forceToolNames?: string[];
 	} = {},
 ) {
-	const toolsByName = new Map(allTools.map((tool) => [tool.name, tool]));
-	const selected = new Set<string>();
-	const text = String(prompt || "").toLowerCase();
-	const explicitToolNames = new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || []);
+	// Tool availability is deliberately not gated on prompt wording: the model
+	// sees the full registry and decides what to use. Behavioral constraints
+	// live in the system/launcher prompts and the runtime guards. The only
+	// exclusions are non-prompt-shaped gates — the advanced runtime inspection
+	// setting (browser_run_js) and the Learning Mode toggle (learning-event
+	// tools).
+	void prompt;
+	void learnerState;
 	const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
-	const wantsAllPorts = /\ball (?:browser )?(?:ports|tools)\b|\bport smoke\b/.test(text);
-	const pageChangePolicy = promptPageChangePolicy(prompt);
-	const selectionFirstPdfQuestion = Boolean(options.selectionFirstPdfQuestion ?? (options.forcePdfTools && promptReferencesVisiblePdfSelectionOrPage(text)));
-	const shouldDeferPdfViewerForQuickSelection = shouldDeferPdfViewerForVisibleSelectionPrompt(text);
-	const deferPdfViewerForVisiblePdfSelection =
-		selectionFirstPdfQuestion &&
-		shouldDeferPdfViewerForQuickSelection &&
-		!["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES].some((name) => explicitToolNames.has(name));
-	const repeatedConcepts = learningMode ? findRepeatedLearnerConceptsForPrompt(normalizeLearnerState(learnerState, "learning"), prompt) : [];
-	const selectableToolNames = allTools
-		.map((tool) => tool.name)
-		.filter((toolName) => runtimeInspectionEnabled || !RUNTIME_JS_TOOL_NAMES.includes(toolName))
-		.filter((toolName) => learningMode || !LEARNING_TOOL_NAMES.includes(toolName));
-
-	const add = (names: string[]) => {
-		for (const name of names) {
-			if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(name)) continue;
-			if (toolsByName.has(name)) selected.add(name);
-		}
-	};
-	const wantsExternalBrowsing = promptAsksForExternalBrowsing(text);
-	const wantsLinkedPageNavigation = promptAsksForLinkedPageNavigation(text);
-	const crossTabComparison = promptAsksForCrossTabComparison(prompt);
-	const sourceOrNavigationPrompt = wantsExternalBrowsing || wantsLinkedPageNavigation || crossTabComparison;
-
-	if (wantsAllPorts) {
-		add(selectableToolNames);
-	} else {
-		add(CORE_READ_TOOL_NAMES);
-		add(ELEMENT_READ_TOOL_NAMES);
-		add([...explicitToolNames]);
-		add(Array.isArray(options.forceToolNames) ? options.forceToolNames : []);
-
-		const needsFocusedReadableContext = promptNeedsFocusedReadableContext(text);
-		const wantsDurableAnchors =
-			promptAllowsPageSourceHighlights(prompt) ||
-			learningMode ||
-			needsFocusedReadableContext ||
-			wantsExternalBrowsing ||
-			wantsLinkedPageNavigation ||
-			crossTabComparison ||
-			explicitToolNames.has("browser_highlight_text") ||
-			explicitToolNames.has("browser_show_note") ||
-			explicitToolNames.has("browser_scroll_to_annotation") ||
-			explicitToolNames.has("browser_clear_annotations");
-		if (wantsDurableAnchors) {
-			add(VISUAL_GROUNDING_TOOL_NAMES);
-		}
-		if (
-			wantsExternalBrowsing ||
-			wantsLinkedPageNavigation ||
-			textHasAny(text, /\b(tab|tabs|window|windows|activate|switch|open|navigate|go to|take me to|url|across tabs|multiple tabs|all tabs)\b/) ||
-			crossTabComparison
-		) {
-			add(TAB_TOOL_NAMES);
-			add(ELEMENT_READ_TOOL_NAMES);
-		}
-		if (
-			options.forcePdfTools ||
-			promptAsksForPdfCorpusOrViewerWork(text)
-		) {
-			add(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES]);
-			add(PDF_ANNOTATION_TOOL_NAMES);
-		}
-		if (
-			textHasAny(
-				text,
-				/\b(?:textbooks?|e-?books?|bookshelf|online book|reader|courseware|vitalsource|pearson|cengage|mcgraw|mheducation|redshelf|brytewave|perusall|zybooks|chapter|section)\b/,
-			) &&
-			textHasAny(
-				text,
-				/\b(?:search|find|where|mention|mentions|mentioned|covered|located|look up|look into|elsewhere|another part|other part|not loaded|not visible|across|entire book|whole book|book-wide)\b/,
-			)
-		) {
-			add(READER_SEARCH_TOOL_NAMES);
-			add(["browser_navigate"]);
-		}
-		if (promptAsksAboutVisualRegion(text)) {
-			add(VISUAL_CONTEXT_TOOL_NAMES);
-		}
-		if (learningMode) {
-			add(LEARNING_TOOL_NAMES);
-			// Learning Mode treats the browser as a workspace. Always make the
-			// complete tab census and safe link-navigation tools available; prompt
-			// wording should affect ranking, not whether cross-tab retrieval exists.
-			add(TAB_TOOL_NAMES);
-			add(LINK_NAVIGATION_TOOL_NAMES);
-		}
-		if (wantsLinkedPageNavigation || textHasAny(text, /\b(click|type|fill|field|button|selector|form|press|pick|choose|wait for|input)\b/)) {
-			add(INTERACTION_TOOL_NAMES);
-		}
-		if (textHasAny(text, /\b(debug|console|network|dom|html|screenshot|javascript|js|run code|evaluate)\b/)) {
-			add(DEBUG_INSPECTION_TOOL_NAMES);
-		}
-		if (runtimeInspectionEnabled && promptNeedsRuntimeJavaScript(text, explicitToolNames)) {
-			add(RUNTIME_JS_TOOL_NAMES);
-		}
-		if (textHasAny(text, /\b(artifact|capture state|save state|restore|session replay|saved page|list artifacts?)\b/)) {
-			add(ARTIFACT_TOOL_NAMES);
-		}
-		if (explicitToolNames.has("browser_show_note")) add(["browser_highlight_text"]);
-		if (explicitToolNames.has("browser_restore_state")) add(["browser_list_artifacts"]);
-	}
-
-	if (!selected.size) add(CORE_READ_TOOL_NAMES);
-	const needsFocusedReadableContext = promptNeedsFocusedReadableContext(text);
-	if (repeatedConcepts.length && !wantsAllPorts && !needsFocusedReadableContext) {
-		for (const name of ["browser_extract_content", "browser_show_note"]) {
-			if (!explicitToolNames.has(name)) selected.delete(name);
-		}
-	}
-	if (pageChangePolicy.forbidsAllPageChanges) {
-		for (const name of PAGE_CHANGE_TOOL_NAMES) selected.delete(name);
-	} else {
-		if (pageChangePolicy.forbidsHighlights) {
-			selected.delete("browser_highlight_text");
-			selected.delete("browser_scroll_to_annotation");
-			selected.delete("browser_clear_annotations");
-		}
-		if (pageChangePolicy.forbidsNotes) selected.delete("browser_show_note");
-	}
-	const needsExactReadableContext = promptNeedsExactReadableContext(text);
-	if (options.suppressExtractContent && !sourceOrNavigationPrompt && !explicitToolNames.has("browser_extract_content") && !needsExactReadableContext && !needsFocusedReadableContext) {
-		selected.delete("browser_extract_content");
-	}
-	if (needsExactReadableContext && selected.has("browser_extract_content") && !explicitToolNames.has("browser_get_visible_text")) {
-		selected.delete("browser_get_visible_text");
-	}
-	if (deferPdfViewerForVisiblePdfSelection && !options.forcePdfTools) {
-		for (const name of PDF_TOOL_NAMES) {
-			if (!explicitToolNames.has(name)) selected.delete(name);
-		}
-	}
-	if (
-		options.forcePdfTools &&
-		selectionFirstPdfQuestion &&
-		!learningMode &&
-		!promptAsksForExternalBrowsing(text) &&
-		!promptAsksForLinkedPageNavigation(text)
-	) {
-		for (const name of ["browser_list_tabs", "browser_activate_tab", "browser_navigate"]) {
-			if (!explicitToolNames.has(name) && !(Array.isArray(options.forceToolNames) && options.forceToolNames.includes(name))) selected.delete(name);
-		}
-	}
-	if (!selected.size) add(CORE_READ_TOOL_NAMES);
-	return allTools.filter((tool) => selected.has(tool.name));
+	return allTools.filter((tool) => {
+		if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
+		if (!learningMode && LEARNING_TOOL_NAMES.includes(tool.name)) return false;
+		return true;
+	});
 }
 
 function shouldIncludeToolInventory(prompt: string) {
@@ -7993,10 +7842,10 @@ function buildLauncherPrompt(
 		"",
 		...(responseFormatRequirement ? [responseFormatRequirement, ""] : []),
 		...(learningResearchDirective ? [learningResearchDirective, ""] : []),
-		"Use this captured context as your starting point. Prefer current and already-open pages over navigation.",
+		"Use this captured context as your starting point. Prefer current and already-open pages over navigation. Already-open pages include background tabs: the workspace scan lists them with tabIds; read clearly related ones by tabId without switching the user's focus.",
 		"Constitution runtime contract:",
 		"- Do page work before chat: anchor the answer with a source highlight on the supporting text (skip only for no-page-changes requests, quick visual questions, or when the page does not support the claim). Add more highlights, notes, and scroll to existing highlights when the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary.",
-		"- Page-material claims need page grounding. Use captured/readable page context for simple answers; use exact highlights and short notes for major claims only when durable source highlights are useful or requested.",
+		"- Page-material claims need page grounding. Use captured/readable page context for simple answers; use exact highlights and short notes for major claims only when durable source highlights are useful or requested. Substantive claims prefer sources the user can see: if a clearly related open tab covers a claim the current page does not, read that tab and anchor the claim there. A claim that corrects or contradicts the current page must be anchored in a source the user can see; a claim no source supports must be labeled general knowledge.",
 		"- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use available tab/navigation tools first and then ground claims on the destination source pages.",
 		linkedNavigationLine,
 			"- Grounding budget: simple questions get one strong source highlight and a short answer. Broad teach/review/walkthrough/summarize requests need one to three durable explanatory source highlights for the central concepts, with at most one short note unless the user explicitly asks for notes. Do not use the page title, course title, reading list, or a generic heading as a source marker; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless the contrast is the whole answer. If only one highlight succeeds, keep the answer focused on that highlighted passage instead of writing a broad unsupported page summary. Roadmap/list/navigation questions are not simple when the answer names multiple items, but notes should still be sparse.",
@@ -9975,6 +9824,8 @@ export const __browserRuntimeTest = {
 	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
 	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
+	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
+	buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
 	applyLearningEvent,
 	buildLearnerStatePromptSummary,
 	buildModelIntentClassifierContextForTest: buildModelIntentClassifierContext,
@@ -10049,7 +9900,6 @@ export const __browserRuntimeTest = {
 	shouldAbortAfterRepeatedHighlightFailuresForTest: shouldAbortAfterRepeatedHighlightFailures,
 	buildPlannerAnchorCandidates,
 	buildReplayAnnotationsFromPageActions,
-	classifyPromptForReasoning,
 	computeDueReviews,
 	createEmptyLearnerState,
 	extractTrailingCheckQuestion,
@@ -10435,6 +10285,10 @@ function createTools(
 					if (commandName !== "highlight_text") return null;
 					const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
 					if (!(effectiveParams as any)?.scanPage) return null;
+					// Let the untrusted-tab-target guard on the normal attempt fail
+					// loud instead of scan-highlighting the active tab as if it were
+					// the requested one.
+					if ((effectiveParams as any)?.__onhandUntrustedTabId != null) return null;
 					recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
 					return await runHighlightScanFallback(effectiveParams, lastError);
 				};
@@ -10512,7 +10366,8 @@ function createTools(
 		{
 			name: "browser_list_tabs",
 			label: "Browser List Tabs",
-			description: "List windows and tabs from the current Chromium browser session.",
+			description:
+				"List all windows and tabs in the current browser session with their tabIds. Use it to inventory the workspace when the captured workspace scan is insufficient or omitted tabs; a completed listing also unlocks tabId and titleContains targeting for read and annotation tools on any tab.",
 			parameters: LIST_TABS_SCHEMA,
 			async execute(_toolCallId, params: any) {
 				const scopedParams = prepareCommandParams(params, "list_tabs") as any;
@@ -10594,7 +10449,10 @@ function createTools(
 				"Capture a specific PDF page as an image for visual grounding of slide layouts, figures, equations, charts, or scanned content. Use text tools too when text is available.",
 			parameters: PDF_PAGE_IMAGE_SCHEMA,
 			async execute(_toolCallId, params: any) {
-				const result = await host.runCommand("pdf_capture_page_image", prepareCommandParams(params, "pdf_capture_page_image") as Record<string, unknown>);
+				const pdfPageImageParams = prepareCommandParams(params, "pdf_capture_page_image") as Record<string, unknown>;
+				const result =
+					untrustedTabTargetErrorResult("browser_pdf_capture_page_image", "pdf_capture_page_image", pdfPageImageParams) ||
+					(await host.runCommand("pdf_capture_page_image", pdfPageImageParams));
 				const attachment = imageAttachmentFromDataUrl(result?.dataUrl, `pdf-page-${result?.pageNumber || params?.pageNumber || "capture"}.png`);
 				const content: any[] = [{ type: "text", text: toolResultTextForModel("browser_pdf_capture_page_image", result) }];
 				if (attachment) {
@@ -10624,7 +10482,10 @@ function createTools(
 				"Capture the visible viewport, a CSS-selector bounding box, or viewport coordinates as an image for equations, charts, diagrams, figures, screenshots, and weak visual text extraction. Selector captures scroll into view by default and reports clipping/tiny-region warnings. Use this before making visual claims when text tools are insufficient; do not use it as the selected-text recovery path for Google Scholar or other third-party PDF readers.",
 			parameters: VISIBLE_REGION_IMAGE_SCHEMA,
 			async execute(_toolCallId, params: any) {
-				const result = await host.runCommand("get_visible_region_image", prepareCommandParams(params, "get_visible_region_image") as Record<string, unknown>);
+				const visibleRegionImageParams = prepareCommandParams(params, "get_visible_region_image") as Record<string, unknown>;
+				const result =
+					untrustedTabTargetErrorResult("browser_get_visible_region_image", "get_visible_region_image", visibleRegionImageParams) ||
+					(await host.runCommand("get_visible_region_image", visibleRegionImageParams));
 				const attachment = imageAttachmentFromDataUrl(result?.dataUrl, "visible-region.png");
 				const content: any[] = [{ type: "text", text: toolResultTextForModel("browser_get_visible_region_image", result) }];
 				if (attachment) {
@@ -10715,7 +10576,10 @@ function createTools(
 				parameters: CAPTURE_STATE_SCHEMA,
 				executionMode: "sequential",
 				async execute(_toolCallId, params: any) {
-					const result = await artifactHooks.captureArtifact(prepareCommandParams(params, "capture_state"));
+					const captureStateParams = prepareCommandParams(params, "capture_state") as Record<string, unknown>;
+					const result =
+						untrustedTabTargetErrorResult("browser_capture_state", "capture_state", captureStateParams) ||
+						(await artifactHooks.captureArtifact(captureStateParams));
 					return {
 						content: [{ type: "text", text: toolResultTextForModel("browser_capture_state", result) }],
 						details: result,
@@ -11993,7 +11857,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					...streamOptions,
 					onhandTelemetry: telemetry,
 					onhandReasoningProfile: {
-						mode: "balanced",
+						mode: "grounded",
 						setting: "auto",
 						reason: "Internal realtime tutor structured tool.",
 						reasoningEffort: "none",
@@ -12585,6 +12449,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
 				(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 				(toolName, commandName, effectiveParams) =>
+					buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
 					buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 					buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 					buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
@@ -13110,7 +12975,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			(annotationCommandAllowsTabMatch &&
 				Boolean(String(normalizedParams?.titleContains || "").trim() || String(normalizedParams?.urlContains || "").trim()));
 		const preservesTrustedWorkspaceTabId = shouldPreserveTrustedWorkspaceTabId(commandName, normalizedParams?.tabId, activeRequest);
-		if (hasExplicitTabSelector && (hasCompletedTabInventory(activeRequest) || preservesTrustedWorkspaceTabId)) {
+		if (
+			hasExplicitTabSelector &&
+			(hasCompletedTabInventory(activeRequest) || preservesTrustedWorkspaceTabId || tabIdListedInWorkspaceScan(activeRequest, normalizedParams?.tabId))
+		) {
 			// Title/url selectors resolve within the last-focused window in the
 			// background; scope them to the request window so a same-title tab in
 			// another window cannot take the annotation. Exact tabIds are global.
@@ -13149,6 +13017,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		};
 		if (typeof targetWindowId === "number") targeted.windowId = targetWindowId;
 		delete targeted.tabId;
+		if (typeof normalizedParams?.tabId === "number" && commandName !== "list_tabs") {
+			targeted.__onhandUntrustedTabId = normalizedParams.tabId;
+		}
 		if (commandName === "activate_tab") return targeted;
 		delete targeted.titleContains;
 		delete targeted.urlContains;
@@ -15272,11 +15143,12 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
 				const firstPassPdfSelectionQuestion = selectionFirstPdfQuestion && browserContextLooksLikePdf(browserContextDetails);
 				const toolSelectionOptions = {
+					// Tool selection itself is ungated; forcePdfTools/forceToolNames
+					// only steer the missing-tool retry heuristics, and
+					// visiblePdfSelectionFirstPass reaches the retry guard chain.
 					forcePdfTools,
-					selectionFirstPdfQuestion,
 					visiblePdfSelectionFirstPass: firstPassPdfSelectionQuestion,
 					advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
-					suppressExtractContent: Boolean(priorPageContext),
 					...(learningResearchPlan?.requiresWorkspaceResearch ? { forceToolNames: LEARNING_RESEARCH_FORCE_TOOL_NAMES } : {}),
 				};
 				activeRequest.toolSelectionOptions = toolSelectionOptions;
@@ -15288,6 +15160,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 						(toolName, commandName, effectiveParams) =>
+							buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
 							buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 							buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 							buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||

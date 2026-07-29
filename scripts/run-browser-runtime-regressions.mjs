@@ -1777,7 +1777,7 @@ async function assertDocumentReviewMarkupLane() {
 	// per-feedback-point mark budget.
 	const settings = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" };
 	const profile = buildProfile(settings, realPhrasing, [], false);
-	assert.equal(profile.mode, "deep");
+	assert.equal(profile.mode, "document-review");
 	assert.match(profile.reason, /document review markup/i);
 	assert.match(profile.promptPolicy, /Document review markup/);
 	assert.match(profile.promptPolicy, /browser_extract_content before placing any marks/);
@@ -2272,7 +2272,7 @@ async function assertConstitutionPromptContract() {
 			buildVisiblePdfSelectionFirstPassGuardResultForTest,
 			buildRepeatedViewportReadGuardResultForTest,
 			buildOptionalFrameFallbackNoteGuardResultForTest,
-		classifyPromptForReasoning,
+		buildReasoningProfileForTest,
 			formatToolResultForModel,
 			getPromptContractForTest,
 			getToolNamesForTest,
@@ -2304,6 +2304,8 @@ async function assertConstitutionPromptContract() {
 			hasCompletedNonActiveWorkspaceReadForTest,
 			applyLearningBackgroundFocusDefaultForTest,
 			shouldPreserveTrustedWorkspaceTabIdForTest,
+			tabIdListedInWorkspaceScanForTest,
+			buildUntrustedTabTargetGuardResultForTest,
 			setModelIntentClassificationForPromptForTest,
 			clearModelIntentClassificationsForTest,
 		} = __browserRuntimeTest || {};
@@ -2315,7 +2317,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(typeof buildRepeatedViewportReadGuardResultForTest, "function", "browser runtime repeated viewport read guard export is missing");
 		assert.equal(typeof buildOptionalFrameFallbackNoteGuardResultForTest, "function", "browser runtime optional frame-fallback note guard export is missing");
 		assert.equal(typeof getPromptContractForTest, "function", "browser runtime prompt contract export is missing");
-		assert.equal(typeof classifyPromptForReasoning, "function", "browser runtime reasoning classifier export is missing");
+		assert.equal(typeof buildReasoningProfileForTest, "function", "browser runtime reasoning profile export is missing");
 		assert.equal(typeof formatToolResultForModel, "function", "browser runtime tool formatter export is missing");
 		assert.equal(typeof getToolNamesForTest, "function", "browser runtime tool selector export is missing");
 		assert.equal(typeof rankOpenTabCandidatesForTest, "function", "browser runtime tab ranking export is missing");
@@ -2422,8 +2424,13 @@ async function assertConstitutionPromptContract() {
 		assert.match(contract.systemPrompt, /Do not treat a selected named concept/);
 		assert.match(contract.systemPrompt, /complete the offered search\/read\/jump\/highlight\/note workflow before answering/);
 		assert.match(contract.systemPrompt, /Never say you will highlight or add a note unless the corresponding tool call already succeeded/);
-		assert.match(contract.systemPrompt, /explicitly asks to compare or relate the current material to another open tab/);
-	assert.match(contract.systemPrompt, /Do not infer cross-tab permission from standalone comparison or agreement wording/);
+		assert.match(contract.systemPrompt, /When an answer draws on another open tab/);
+	assert.match(contract.systemPrompt, /auto-use clearly related open tabs without asking first/);
+	assert.match(contract.systemPrompt, /Prefer sources the user can see over your own model knowledge/);
+	assert.match(contract.systemPrompt, /must be grounded in a source the user can see/);
+	assert.doesNotMatch(contract.systemPrompt, /ask before reading other tabs/);
+	assert.doesNotMatch(contract.systemPrompt, /Outside Learning Mode/);
+	assert.doesNotMatch(contract.systemPrompt, /Do not infer cross-tab permission/);
 	assert.match(contract.systemPrompt, /place a highlight on the key passage in each source tab/);
 	assert.match(contract.systemPrompt, /highlight or cite each substantive claim in the source that supports it/);
 	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not grounded in/);
@@ -2491,6 +2498,16 @@ async function assertConstitutionPromptContract() {
 		runtimeSourceForHighlightPolicy,
 		/if \(commandName === "activate_tab"\) return targeted;[\s\S]{0,120}delete targeted\.titleContains;[\s\S]{0,80}delete targeted\.urlContains;/,
 		"activate_tab should preserve titleContains/urlContains selectors instead of dropping them like read-only page tools",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/\[tabId \$\{tab\.id\}\]/,
+		"the workspace metadata scan should print each candidate's tabId so the model can read background tabs directly",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/tabIdListedInWorkspaceScan\(activeRequest, normalizedParams\?\.tabId\)/,
+		"explicit tabIds listed in the captured workspace scan should be honored without a prior tab inventory",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
@@ -2810,9 +2827,9 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /add at most one replacement highlight and no note/);
 	assert.match(contract.learningModeAppend, /do not open or record a second check/);
 	assert.match(contract.learningModeAppend, /Do not add fresh annotations for this meta\/follow-up turn/);
-	assert.match(contract.learningModeAppend, /Cross-tab retrieval is automatic in Learning Mode/);
+	assert.match(contract.learningModeAppend, /Cross-tab retrieval works the same here as in every mode/);
 	assert.match(contract.learningModeAppend, /relevance-ranked from metadata for every eligible tab/);
-	assert.match(contract.learningModeAppend, /Do not require special wording/);
+	assert.match(contract.learningModeAppend, /no special wording required/);
 	assert.match(contract.learningModeAppend, /Start with the strongest one to three candidates/);
 	assert.match(contract.learningModeAppend, /browser_navigate with newTab true and active false/);
 	assert.match(contract.learningModeAppend, /browser_open_pdf_in_onhand_viewer with that tabId and active false/);
@@ -2852,7 +2869,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningPrompt, /resolve that check with onhand_record_learning_event/);
 	assert.match(contract.learningPrompt, /reasonable paraphrase/);
 	assert.match(contract.learningPrompt, /Concept hygiene/);
-	assert.match(contract.learningPrompt, /Cross-tab retrieval is automatic in Learning Mode/);
+	assert.match(contract.learningPrompt, /Cross-tab retrieval works the same here as in every mode/);
 	assert.match(contract.learningPrompt, /do not start with process narration like "let me ground this"/);
 	assert.match(contract.newConceptLearningPrompt, /Current Learning Mode state for this session/);
 		assert.doesNotMatch(contract.newConceptLearningPrompt, /Likely repeated concepts in the user's latest message/);
@@ -3033,6 +3050,39 @@ async function assertConstitutionPromptContract() {
 			),
 			false,
 			"a current-turn viewer should not authorize navigation against that tab",
+		);
+		const scanTrustRequest = {
+			openTabSummary: {
+				totalCount: 3,
+				shownTabs: [{ id: 71, title: "Tacoma Narrows Bridge (1940)", url: "https://en.wikipedia.org/wiki/Tacoma_Narrows_Bridge_(1940)" }],
+				omittedCount: 0,
+			},
+		};
+		assert.equal(
+			tabIdListedInWorkspaceScanForTest(scanTrustRequest, 71),
+			true,
+			"a tabId printed in the captured workspace scan is grounded and honored without a prior browser_list_tabs inventory",
+		);
+		assert.equal(
+			tabIdListedInWorkspaceScanForTest(scanTrustRequest, 72),
+			false,
+			"a tabId missing from the workspace scan stays untrusted before browser_list_tabs",
+		);
+		assert.equal(tabIdListedInWorkspaceScanForTest({}, 71), false, "a request without a workspace scan trusts no direct tabIds");
+		const untrustedParams = { text: "aeroelastic flutter", __onhandUntrustedTabId: 99 };
+		const untrustedGuard = buildUntrustedTabTargetGuardResultForTest("browser_get_visible_text", "get_visible_text", untrustedParams);
+		assert.match(
+			untrustedGuard?.guardrail?.message || "",
+			/tabId 99/,
+			"an untrusted tabId must fail loud instead of silently reading the active tab as if it were the requested one",
+		);
+		assert.match(untrustedGuard?.guardrail?.message || "", /browser_list_tabs/, "the untrusted-tab error must name the recovery path");
+		assert.equal(untrustedGuard?.guardrail?.kind, "untrusted_tab_target");
+		assert.equal("__onhandUntrustedTabId" in untrustedParams, false, "the sentinel must not leak into executed command params");
+		assert.equal(
+			buildUntrustedTabTargetGuardResultForTest("browser_get_visible_text", "get_visible_text", { text: "aeroelastic flutter" }),
+			null,
+			"grounded params pass through the untrusted-tab guard",
 		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,
@@ -3338,19 +3388,19 @@ async function assertConstitutionPromptContract() {
 	);
 		assert.equal(answerToolNames.includes("onhand_record_learning_event"), false);
 		assert.equal(answerAllToolNames.includes("onhand_record_learning_event"), false);
-		assert.equal(answerToolNames.includes("browser_highlight_text"), false, "ordinary answer-only prompts should not expose highlighter by default");
-		assert.equal(answerToolNames.includes("browser_show_note"), false, "ordinary answer-only prompts should not expose note creation by default");
+		assert.equal(answerToolNames.includes("browser_highlight_text"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+		assert.equal(answerToolNames.includes("browser_show_note"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_navigate"), true, "natural singular source-finding prompts should expose navigation");
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_extract_content"), true, "source-finding prompts should expose readable extraction");
 		assert.equal(firstPrinciplesCachedSourceToolNames.includes("browser_extract_content"), true, "cached source-navigation followups should still expose extraction for destination pages");
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_find_elements"), true, "source-finding prompts should expose element discovery");
-		assert.equal(firstPrinciplesSourceToolNames.includes("browser_click"), false, "source-finding prompts should not expose risky click tools by default");
-		assert.equal(firstPrinciplesSourceToolNames.includes("browser_type"), false, "source-finding prompts should not expose typing tools by default");
-		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), false, "source-finding prompts should not expose runtime JS by default");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_click"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_type"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
 		assert.equal(singularSourceToolNames.includes("browser_navigate"), true, "find a source that... should route to the source-navigation pack");
-		assert.equal(ordinarySourceToolNames.includes("browser_navigate"), false, "ordinary page questions should stay on the current page");
-		assert.equal(ordinarySourceToolNames.includes("browser_click"), false, "ordinary page questions should still gate click tools");
-		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), false, "ordinary page questions should still gate runtime JS");
+		assert.equal(ordinarySourceToolNames.includes("browser_navigate"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+		assert.equal(ordinarySourceToolNames.includes("browser_click"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
 		const missingNavigationRetryTools = missingToolRetryToolNamesForTest(
 			"browser_navigate",
 			"could you find a source that derives it from first principles?",
@@ -3404,7 +3454,7 @@ async function assertConstitutionPromptContract() {
 			assert.equal(toolNames.includes("browser_show_note"), true, `${label} prompts should expose source notes`);
 		}
 	assert.equal(visualToolNames.includes("browser_get_visible_region_image"), true);
-	assert.equal(pdfSelectionToolNames.includes("browser_get_visible_region_image"), false, "PDF selection/deictic prompts should not expose visual capture as the Scholar fallback");
+	assert.equal(pdfSelectionToolNames.includes("browser_get_visible_region_image"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(
 		pdfSelectionToolNames.includes("browser_open_pdf_in_onhand_viewer"),
 		true,
@@ -3437,19 +3487,19 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.equal(
 		pdfSelectionToolNames.includes("browser_clear_annotations"),
-		false,
-		"PDF viewer analysis should not expose destructive clearing by default",
+		true,
+		"the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use",
 	);
-	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_get_visible_region_image"), false, "existing highlighted PDF referents should use viewer handoff instead of visual capture");
+	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_get_visible_region_image"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(
 		pdfHighlightedPeopleToolNames.includes("browser_open_pdf_in_onhand_viewer"),
 		true,
 		"non-trivial highlighted PDF referents should keep viewer handoff available for analysis and annotation",
 	);
-	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_navigate"), false, "existing highlighted PDF referents should stay on the current reader");
+	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_navigate"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(pdfHighlightedPeopleToolNames.includes("browser_highlight_text"), true, "existing highlighted PDF referents should expose highlights for important supporting passages");
 		assert.equal(pdfHighlightedPeopleToolNames.includes("browser_show_note"), true, "existing highlighted PDF referents should expose notes for important supporting passages");
-		assert.equal(pdfHighlightedPeopleToolNames.includes("browser_clear_annotations"), false, "existing highlighted PDF referents should not expose destructive clearing");
+		assert.equal(pdfHighlightedPeopleToolNames.includes("browser_clear_annotations"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 			assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_open_pdf_in_onhand_viewer"), true, "affirmative PDF follow-ups should be able to reopen the viewer before deeper source marking");
 		assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_search"), true, "affirmative PDF follow-ups should keep PDF search available for the accepted deeper pass");
 		assert.equal(pdfAffirmativeFollowupToolNames.includes("browser_pdf_read_pages"), true, "affirmative PDF follow-ups should keep PDF page reading available for the accepted deeper pass");
@@ -4197,24 +4247,24 @@ async function assertConstitutionPromptContract() {
 		"PDF selection prompts should keep viewer handoff available when deeper/viewer reading is requested",
 	);
 	assert.equal(answerAllToolNames.includes("browser_get_visible_region_image"), true, "explicit port smoke should expose all browser tools");
-	assert.equal(genericSmokeToolNames.includes("browser_get_visible_region_image"), false, "generic smoke wording should not expose visual capture");
-	assert.equal(genericSmokeToolNames.includes("browser_run_js"), false, "generic smoke wording should not expose runtime inspection");
+	assert.equal(genericSmokeToolNames.includes("browser_get_visible_region_image"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+	assert.equal(genericSmokeToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
 	assert.equal(noPageChangeToolNames.includes("browser_extract_content"), true, "no-page-change prompts still need read tools");
-	assert.equal(noPageChangeToolNames.includes("browser_highlight_text"), false, "explicit no-highlight prompts must not expose highlighter");
-	assert.equal(noPageChangeToolNames.includes("browser_show_note"), false, "explicit no-note prompts must not expose note tool");
-	assert.equal(noPageChangeToolNames.includes("browser_capture_state"), false, "explicit no-page-change prompts must not expose capture-state");
-	assert.equal(noPageChangeToolNames.includes("browser_restore_state"), false, "explicit no-page-change prompts must not expose restore-state");
+	assert.equal(noPageChangeToolNames.includes("browser_highlight_text"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
+	assert.equal(noPageChangeToolNames.includes("browser_show_note"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
+	assert.equal(noPageChangeToolNames.includes("browser_capture_state"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
+	assert.equal(noPageChangeToolNames.includes("browser_restore_state"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
 	assert.equal(highlightWithoutNotesToolNames.includes("browser_highlight_text"), true, "explicit highlight prompts must keep the highlighter even when notes are forbidden");
-	assert.equal(highlightWithoutNotesToolNames.includes("browser_show_note"), false, "no-note highlight prompts must still hide note creation");
-	assert.equal(answerOnlySectionValueToolNames.includes("browser_highlight_text"), false, "answer-only section/value prompts should not expose highlighter");
-	assert.equal(answerOnlySectionValueToolNames.includes("browser_show_note"), false, "answer-only section/value prompts should not expose note creation");
-	assert.equal(answerOnlySectionValueToolNames.includes("browser_navigate"), false, "read current page prompts should not be treated as linked-page navigation");
-	assert.equal(cachedFollowupToolNames.includes("browser_extract_content"), false, "same-page cached followups should not re-extract full page content");
+	assert.equal(highlightWithoutNotesToolNames.includes("browser_show_note"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_highlight_text"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_show_note"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+	assert.equal(answerOnlySectionValueToolNames.includes("browser_navigate"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
+	assert.equal(cachedFollowupToolNames.includes("browser_extract_content"), true, "extraction stays available; redundant re-extraction is discouraged by prompt policy and guards");
 	assert.equal(cachedFollowupToolNames.includes("browser_get_visible_text"), true, "same-page cached followups should retain lightweight read tools");
 	assert.equal(exactCachedFollowupToolNames.includes("browser_extract_content"), true, "exact formula followups should keep extraction available even with cached context");
-	assert.equal(exactCachedFollowupToolNames.includes("browser_get_visible_text"), false, "exact formula followups should prefer full extraction over visible-only reads");
+	assert.equal(exactCachedFollowupToolNames.includes("browser_get_visible_text"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(tableCachedFollowupToolNames.includes("browser_extract_content"), true, "table/value followups should keep full extraction available even with cached context");
-	assert.equal(tableCachedFollowupToolNames.includes("browser_get_visible_text"), false, "table/value followups should prefer full extraction over visible-only reads");
+	assert.equal(tableCachedFollowupToolNames.includes("browser_get_visible_text"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(cachedComparisonFollowupToolNames.includes("browser_extract_content"), true, "cached comparison followups should keep extraction available for offscreen section coverage");
 	assert.equal(cachedComparisonFollowupToolNames.includes("browser_highlight_text"), true, "cached comparison followups should still be able to create source highlights");
 	assert.equal(cachedComparisonFollowupToolNames.includes("browser_show_note"), true, "cached comparison followups should be able to add one concise comparison note");
@@ -4227,19 +4277,19 @@ async function assertConstitutionPromptContract() {
 	assert.match(priorDocContextWithActiveTabDrift, /docs\.google\.com/);
 	assert.match(priorDocContextWithActiveTabDrift, /iMac took the same chip/);
 	assert.equal(unrelatedActiveTabShouldNotUsePriorDocContext, "", "prior document context should not override an unrelated current-page question");
-	assert.equal(answerToolNames.includes("browser_pdf_search"), false);
+	assert.equal(answerToolNames.includes("browser_pdf_search"), true, "PDF tools are part of the ungated registry");
 	assert.equal(debugToolNames.includes("browser_collect_console"), true, "debug prompts should get console inspection");
-	assert.equal(debugToolNames.includes("browser_run_js"), false, "generic debug prompts should not expose JavaScript execution");
+	assert.equal(debugToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
 	assert.equal(explicitRuntimeToolNames.includes("browser_run_js"), true, "explicit JavaScript prompts should expose browser_run_js");
 	assert.equal(dynamicRuntimeToolNames.includes("browser_run_js"), true, "dynamic runtime-state prompts should expose browser_run_js");
 	assert.equal(disabledExplicitRuntimeToolNames.includes("browser_run_js"), false, "disabled advanced runtime inspection should hide browser_run_js even for explicit JavaScript prompts");
 	assert.equal(comparisonToolNames.includes("browser_list_tabs"), true, "explicit cross-tab comparison prompts should get tab tools");
 	assert.equal(comparisonToolNames.includes("browser_activate_tab"), true);
 	assert.equal(explicitAgreementToolNames.includes("browser_list_tabs"), true, "explicit multi-document agreement prompts should get tab tools");
-	assert.equal(agreementToolNames.includes("browser_list_tabs"), false, "standalone agreement prompts must not get tab enumeration");
-	assert.equal(agreementToolNames.includes("browser_navigate"), false, "standalone agreement prompts must not get navigation");
-	assert.equal(differenceToolNames.includes("browser_list_tabs"), false, "standalone difference prompts must not get tab enumeration");
-	assert.equal(differenceToolNames.includes("browser_navigate"), false, "standalone difference prompts must not get navigation");
+	assert.equal(agreementToolNames.includes("browser_list_tabs"), true, "cross-tab retrieval is standard: every prompt gets the tab tools");
+	assert.equal(agreementToolNames.includes("browser_navigate"), true, "cross-tab retrieval is standard: every prompt gets the tab tools");
+	assert.equal(differenceToolNames.includes("browser_list_tabs"), true, "cross-tab retrieval is standard: every prompt gets the tab tools");
+	assert.equal(differenceToolNames.includes("browser_navigate"), true, "cross-tab retrieval is standard: every prompt gets the tab tools");
 	assert.equal(citationToolNames.includes("browser_pdf_find_citation"), true, "citation prompts should get the citation lookup tool");
 	assert.equal(citationToolNames.includes("browser_open_pdf_in_onhand_viewer"), true);
 	assert.equal(textbookSearchToolNames.includes("browser_textbook_search"), true, "textbook-wide lookup prompts should get reader search");
@@ -4252,7 +4302,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(pdfContextToolNames.includes("browser_pdf_jump_to_page"), true);
 	assert.equal(externalSourceToolNames.includes("browser_navigate"), true);
 	assert.equal(externalSourceToolNames.includes("browser_activate_tab"), true);
-	assert.equal(externalSourceToolNames.includes("browser_click_text"), false, "external-source navigation should not expose click tools unless the prompt asks to open page links");
+	assert.equal(externalSourceToolNames.includes("browser_click_text"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 	assert.equal(linkedNotesToolNames.includes("browser_navigate"), true, "linked-note requests should be able to open note URLs");
 	assert.equal(linkedNotesToolNames.includes("browser_list_tabs"), true, "linked-note requests should be able to recover an already-open index tab");
 	assert.equal(linkedNotesToolNames.includes("browser_activate_tab"), true, "linked-note requests should be able to activate an already-open index tab");
@@ -4270,10 +4320,10 @@ async function assertConstitutionPromptContract() {
 		["review current article", reviewCurrentArticleToolNames],
 		["scan current document", scanCurrentDocumentToolNames],
 	]) {
-		assert.equal(toolNames.includes("browser_list_tabs"), false, `${prompt} prompts must not expose tab enumeration`);
-		assert.equal(toolNames.includes("browser_navigate"), false, `${prompt} prompts must not expose navigation`);
-		assert.equal(toolNames.includes("browser_click"), false, `${prompt} prompts must not expose click interaction`);
-		assert.equal(toolNames.includes("browser_type"), false, `${prompt} prompts must not expose type interaction`);
+		assert.equal(toolNames.includes("browser_list_tabs"), true, `${prompt} prompts get the ungated registry including tab enumeration`);
+		assert.equal(toolNames.includes("browser_navigate"), true, `${prompt} prompts get the ungated registry including navigation`);
+		assert.equal(toolNames.includes("browser_click"), true, `${prompt} prompts get the ungated registry including interaction tools`);
+		assert.equal(toolNames.includes("browser_type"), true, `${prompt} prompts get the ungated registry including interaction tools`);
 	}
 	assert.equal(learningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(learningToolNames.includes("browser_list_tabs"), true, "Learning Mode should always expose complete tab inventory");
@@ -4283,11 +4333,20 @@ async function assertConstitutionPromptContract() {
 	const repeatedLearningToolNames = getToolNamesForTest("How does proposal sampling work?", true, contract.learnerState);
 	assert.equal(repeatedLearningToolNames.includes("onhand_record_learning_event"), true);
 	assert.equal(repeatedLearningToolNames.includes("browser_scroll_to_annotation"), true);
-	assert.equal(repeatedLearningToolNames.includes("browser_show_note"), false);
-	assert.equal(repeatedLearningToolNames.includes("browser_extract_content"), false);
-	assert.equal(classifyPromptForReasoning("what is this term?", [], true), "balanced");
-	assert.equal(classifyPromptForReasoning("What are React components, and why would I split UI into components?", [], false), "balanced");
-	assert.equal(classifyPromptForReasoning("compare the two derivations on this page", [], true), "deep");
+	assert.equal(repeatedLearningToolNames.includes("browser_show_note"), true, "repeated-concept refreshers keep the full registry; reuse guidance lives in prompt policy");
+	assert.equal(repeatedLearningToolNames.includes("browser_extract_content"), true, "repeated-concept refreshers keep the full registry; reuse guidance lives in prompt policy");
+	const unifiedProfile = buildReasoningProfileForTest({}, "My textbook says this collapse is a classic example of resonance. Is that actually right?", [], false);
+	assert.equal(unifiedProfile.mode, "grounded", "ordinary questions all take the single grounded profile — no fast/balanced/deep depth dial");
+	assert.match(unifiedProfile.promptPolicy, /read the clearly related open tab by tabId/);
+	assert.doesNotMatch(unifiedProfile.promptPolicy, /keep extra page inspection minimal/, "the old fast-lane inspection-minimizing pressure must be gone");
+	assert.equal(unifiedProfile.maxTokens >= 1100, true, "verification turns must not shrink to the old fast-lane budget");
+	assert.equal(unifiedProfile.reasoningEffort, "low");
+	assert.equal(buildReasoningProfileForTest({}, "what is this term?", [], true).mode, "grounded", "learning-mode conceptual questions also take the unified profile");
+	assert.equal(
+		buildReasoningProfileForTest({}, "Teach me what this page says about photosynthesis", [], false).mode,
+		"compact-teaching",
+		"the compact teaching deliverable profile survives the lane collapse",
+	);
 }
 
 async function assertPdfCitationFormatting() {
