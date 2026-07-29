@@ -2306,6 +2306,7 @@ async function assertConstitutionPromptContract() {
 			shouldPreserveTrustedWorkspaceTabIdForTest,
 			tabIdListedInWorkspaceScanForTest,
 			buildUntrustedTabTargetGuardResultForTest,
+			describeToolStatusForTargetTabForTest,
 			setModelIntentClassificationForPromptForTest,
 			clearModelIntentClassificationsForTest,
 		} = __browserRuntimeTest || {};
@@ -2511,13 +2512,18 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
-		/promptRequiresPageSourceMarker\(activeRequest\?\.displayPrompt\)[\s\S]{0,160}highlightParams\.scrollIntoView = true/,
-		"page-grounded source markers should scroll matching offscreen text into view by default",
+		/reuseExisting: targetedParams\?\.reuseExisting !== false,[\s\S]{0,400}scrollIntoView: true,/,
+		"model-issued source highlights must always scroll into view — the moving page is the user's live progress signal",
 	);
 	assert.doesNotMatch(
 		runtimeSourceForHighlightPolicy,
-		/highlightParams\.scrollIntoView !== false && promptRequiresPageSourceMarker/,
-		"required page source markers should not honor model-provided scrollIntoView:false",
+		/highlightParams\.scrollIntoView = targetedParams|scrollIntoView: targetedParams\?\.scrollIntoView/,
+		"turn highlights and notes must not honor model-provided scrollIntoView:false",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/highlightTextWithReplayCandidates\(tabId, text, \{\s*scrollIntoView: false/,
+		"session-restore replays must stay still instead of yanking the page on load",
 	);
 	assert.doesNotMatch(
 		runtimeSourceForHighlightPolicy,
@@ -3083,6 +3089,39 @@ async function assertConstitutionPromptContract() {
 			buildUntrustedTabTargetGuardResultForTest("browser_get_visible_text", "get_visible_text", { text: "aeroelastic flutter" }),
 			null,
 			"grounded params pass through the untrusted-tab guard",
+		);
+		const crossTabStatusRequest = {
+			initialActiveTab: { id: 12 },
+			openTabSummary: {
+				totalCount: 2,
+				shownTabs: [{ id: 71, title: "Tacoma Narrows Bridge (1940)", url: "https://en.wikipedia.org/wiki/Tacoma_Narrows_Bridge_(1940)" }],
+				omittedCount: 0,
+			},
+		};
+		assert.equal(
+			describeToolStatusForTargetTabForTest("browser_highlight_text", crossTabStatusRequest, { tabId: 71, text: "flutter" }),
+			"Highlighting the relevant passage — in Tacoma Narrows Bridge (1940)...",
+			"background-tab marks must name the tab they land in",
+		);
+		assert.equal(
+			describeToolStatusForTargetTabForTest("browser_highlight_text", crossTabStatusRequest, { tabId: 12, text: "resonant frequency" }),
+			"Highlighting the relevant passage...",
+			"active-tab marks keep the plain progress label",
+		);
+		assert.equal(
+			describeToolStatusForTargetTabForTest("browser_extract_content", crossTabStatusRequest, { tabId: 99 }),
+			"Extracting readable page content — in another tab...",
+			"unknown background tabs still get a cross-tab progress hint",
+		);
+		assert.equal(
+			describeToolStatusForTargetTabForTest("browser_extract_content", crossTabStatusRequest, null, { id: 99, title: "Billah & Scanlan (AJP 1991)" }),
+			"Extracting readable page content — in Billah & Scanlan (AJP 1991)...",
+			"completed labels prefer the authoritative tab title from the command result",
+		);
+		assert.equal(
+			describeToolStatusForTargetTabForTest("browser_activate_tab", crossTabStatusRequest, { tabId: 71 }),
+			"Switching tabs...",
+			"tab-switching status lines already self-describe",
 		);
 		const activeOnlyReadRequest = {
 			...learningProblemRequest,

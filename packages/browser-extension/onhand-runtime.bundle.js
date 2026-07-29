@@ -149298,14 +149298,14 @@ var HIGHLIGHT_TEXT_SCHEMA = typebox_exports.Object({
   text: typebox_exports.String({ description: "Exact visible or PDF-reader text to highlight on the page" }),
   occurrence: typebox_exports.Optional(typebox_exports.Number({ description: "1-based occurrence of the match to highlight" })),
   clearExisting: typebox_exports.Optional(typebox_exports.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up source highlights accumulate." })),
-  scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Scroll the highlighted match into view" }))
+  scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Scroll the highlighted match into view. Always on for turn highlights; false is not honored." }))
 });
 var SHOW_NOTE_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
   annotationId: typebox_exports.String({ description: "Annotation ID returned by browser_highlight_text" }),
   note: typebox_exports.String({ description: "A short interpretive marginal note (1-2 sentences, under ~280 characters) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. Put longer detail in chat." }),
   label: typebox_exports.Optional(typebox_exports.String({ description: "Optional short label shown above the note" })),
-  scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Keep the highlighted content in view when showing the note" }))
+  scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." }))
 });
 var SCROLL_TO_ANNOTATION_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
@@ -152933,7 +152933,7 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
     reasoningEffort: "low",
     textVerbosity: "low",
     maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
-    promptPolicy: "Runtime policy: Grounded answer pass. Anchor the answer with source highlights on the exact supporting text: one strong highlight for a simple claim; one highlight per distinct key point for multi-part, comparison, or evidence requests; full coverage with no fixed marker cap for roadmap/list/process/derivation/proof prompts. Skip highlights only for no-page-changes requests, quick visual questions, or when no open page supports the claim \u2014 and in that case say the claim is general knowledge rather than page-grounded. Prefer captured context and avoid redundant inspection, but captured context is insufficient whenever the answer would rely on knowledge that is not visible on the user's open pages; read the clearly related open tab by tabId and anchor there instead of answering from memory. Ground cross-tab claims in the tab that supports them, one source per claim. Match answer length to the question: one to three short readable paragraphs or compact bullets for ordinary questions, structured depth only when the material requires it; avoid dense sidebar blocks."
+    promptPolicy: "Runtime policy: Grounded answer pass. Anchor the answer with source highlights on the exact supporting text: one strong highlight for a simple claim; one highlight per distinct key point for multi-part, comparison, or evidence requests; full coverage with no fixed marker cap for roadmap/list/process/derivation/proof prompts. Skip highlights only for no-page-changes requests, quick visual questions, or when no open page supports the claim \u2014 and in that case say the claim is general knowledge rather than page-grounded. Add a short interpretive note only where a mark carries explanatory weight; most confirmatory highlights stand without one. Prefer captured context and avoid redundant inspection, but captured context is insufficient whenever the answer would rely on knowledge that is not visible on the user's open pages; read the clearly related open tab by tabId and anchor there instead of answering from memory. Ground cross-tab claims in the tab that supports them, one source per claim. Match answer length to the question: one to three short readable paragraphs or compact bullets for ordinary questions, structured depth only when the material requires it; avoid dense sidebar blocks."
   };
 }
 function buildPromptImages(attachments = []) {
@@ -155879,6 +155879,7 @@ var __browserRuntimeTest = {
   applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
   shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
   tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
+  describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
   buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
   applyLearningEvent,
   buildLearnerStatePromptSummary,
@@ -156765,6 +156766,27 @@ function getToolStatusMessage(toolName) {
     default:
       return toolName?.startsWith("browser_") ? "Inspecting the current page..." : `Using ${toolName}...`;
   }
+}
+function describeToolStatusForTargetTab(toolName, request, params = null, resultTab = null) {
+  const base = getToolStatusMessage(toolName);
+  if (["browser_list_tabs", "browser_activate_tab", "browser_navigate"].includes(toolName)) return base;
+  const tabId = Number(resultTab?.id ?? params?.tabId);
+  if (!Number.isFinite(tabId) || tabId <= 0) return base;
+  const activeTabId = Number(request?.initialActiveTab?.id || 0);
+  if (!activeTabId || tabId === activeTabId) return base;
+  let title = String(resultTab?.title || "").trim();
+  if (!title) {
+    const shownTabs = Array.isArray(request?.openTabSummary?.shownTabs) ? request.openTabSummary.shownTabs : [];
+    title = String(shownTabs.find((tab) => Number(tab?.id) === tabId)?.title || "").trim();
+  }
+  if (!title) {
+    for (const trace2 of Array.isArray(request?.toolTraces) ? request.toolTraces : []) {
+      const tracedTab = trace2?.resultDetails?.tab;
+      if (Number(tracedTab?.id) === tabId && String(tracedTab?.title || "").trim()) title = String(tracedTab.title).trim();
+    }
+  }
+  const target = title ? truncate2(title, 60) : "another tab";
+  return base.endsWith("...") ? `${base.slice(0, -3)} \u2014 in ${target}...` : `${base} \u2014 in ${target}`;
 }
 function isInternalToolName(toolName) {
   return toolName.startsWith("onhand_");
@@ -157750,19 +157772,19 @@ function createOnhandBrowserRuntime(host) {
     appendActivity({
       id: activityId,
       kind: "tool",
-      label: getToolStatusMessage(toolName),
+      label: describeToolStatusForTargetTab(toolName, activeRequest, params),
       toolName,
       state: "running"
     });
     recordToolTraceStart(toolName, activityId, params);
-    await publishState({ status: getToolStatusMessage(toolName) });
+    await publishState({ status: describeToolStatusForTargetTab(toolName, activeRequest, params) });
     try {
       const result = await host.runCommand("search_linked_pdf_corpus", params);
       recordToolTraceEnd(toolName, activityId, { details: result }, false);
       appendActivity({
         id: activityId,
         kind: "tool",
-        label: getToolStatusMessage(toolName),
+        label: describeToolStatusForTargetTab(toolName, activeRequest, params),
         toolName,
         state: "complete"
       });
@@ -157778,7 +157800,7 @@ function createOnhandBrowserRuntime(host) {
       appendActivity({
         id: activityId,
         kind: "tool",
-        label: getToolStatusMessage(toolName),
+        label: describeToolStatusForTargetTab(toolName, activeRequest, params),
         toolName,
         state: "error"
       });
@@ -158534,14 +158556,14 @@ function createOnhandBrowserRuntime(host) {
       case "tool_execution_start": {
         const toolName = event.toolName || "";
         if (isInternalToolName(toolName)) {
-          void publishState({ status: getToolStatusMessage(toolName) });
+          void publishState({ status: describeToolStatusForTargetTab(toolName, activeRequest, event.args) });
           break;
         }
         recordToolTraceStart(toolName, event.toolCallId || toolName, event.args || {});
         appendActivity({
           id: `tool:${event.toolCallId || toolName}`,
           kind: "tool",
-          label: getToolStatusMessage(toolName),
+          label: describeToolStatusForTargetTab(toolName, activeRequest, event.args),
           toolName,
           state: "running"
         });
@@ -158549,7 +158571,7 @@ function createOnhandBrowserRuntime(host) {
           void trackExtensionEvent("browser_run_js_started", { result: "started" }).catch(() => {
           });
         }
-        void publishState({ status: getToolStatusMessage(toolName) });
+        void publishState({ status: describeToolStatusForTargetTab(toolName, activeRequest, event.args) });
         break;
       }
       case "tool_execution_end": {
@@ -158570,7 +158592,7 @@ function createOnhandBrowserRuntime(host) {
           appendActivity({
             id: activityId,
             kind: "tool",
-            label: getToolStatusMessage(toolName),
+            label: describeToolStatusForTargetTab(toolName, activeRequest, findToolTrace(event.toolCallId || toolName, toolName)?.args),
             toolName,
             state: "retrying"
           });
@@ -158589,7 +158611,7 @@ function createOnhandBrowserRuntime(host) {
             appendActivity({
               id: activityId,
               kind: "tool",
-              label: getToolStatusMessage(toolName),
+              label: describeToolStatusForTargetTab(toolName, activeRequest, findToolTrace(event.toolCallId || toolName, toolName)?.args),
               toolName,
               state: "retrying"
             });
@@ -158603,7 +158625,7 @@ function createOnhandBrowserRuntime(host) {
           appendActivity({
             id: activityId,
             kind: "tool",
-            label: getToolStatusMessage(toolName),
+            label: describeToolStatusForTargetTab(toolName, activeRequest, findToolTrace(event.toolCallId || toolName, toolName)?.args, event.result?.details?.tab || null),
             toolName,
             state: "complete"
           });
@@ -158758,7 +158780,10 @@ function createOnhandBrowserRuntime(host) {
       return {
         ...targetedParams || {},
         note: noteText,
-        annotationId: resolveActiveAnnotationId(activeRequest, targetedParams?.annotationId, noteText)
+        annotationId: resolveActiveAnnotationId(activeRequest, targetedParams?.annotationId, noteText),
+        // Notes announce themselves the same way highlights do; see the
+        // highlight_text prep below.
+        scrollIntoView: true
       };
     }
     if (commandName === "extract_content") {
@@ -158785,10 +158810,15 @@ function createOnhandBrowserRuntime(host) {
     if (commandName !== "highlight_text") return targetedParams;
     const highlightParams = {
       ...targetedParams || {},
-      reuseExisting: targetedParams?.reuseExisting !== false
+      reuseExisting: targetedParams?.reuseExisting !== false,
+      // Model-issued source highlights always scroll into view: the page
+      // moving to the mark is the user's only live signal that Onhand is
+      // working, so model-provided scrollIntoView:false is not honored.
+      // Session-restore replay paths bypass this prep and stay still on
+      // purpose.
+      scrollIntoView: true
     };
     if (promptRequiresPageSourceMarker(activeRequest?.displayPrompt)) {
-      highlightParams.scrollIntoView = true;
       highlightParams.scanPage = true;
     }
     const cleanedHeadingText = cleanMarkdownHeadingHighlightText(highlightParams?.text);
