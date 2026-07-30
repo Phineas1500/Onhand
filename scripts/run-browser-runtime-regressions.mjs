@@ -2413,6 +2413,12 @@ async function assertConstitutionPromptContract() {
 	assert.match(existingAnchorContext, /Multiple heads keep relationships separate/);
 	assert.match(existingAnchorContext, /Do not recreate, re-highlight, or re-note/);
 	assert.match(existingAnchorContext, /browser_scroll_to_annotation/);
+	assert.match(
+		existingAnchorContext,
+		/call browser_scroll_to_annotation with its annotationId once before answering/,
+		"anchor reuse must be tool-verified in the first pass so the marker gate is satisfied without a revision pass",
+	);
+	assert.match(contract.systemPrompt, /call browser_scroll_to_annotation on that anchor once before answering/);
 	assert.match(contract.systemPrompt, /Do not rely on a heading-only highlight/);
 	assert.match(contract.systemPrompt, /do not send a heading-plus-list block as one highlight/);
 	assert.match(contract.systemPrompt, /Do not replace missing list items with nearby headings/);
@@ -2505,6 +2511,22 @@ async function assertConstitutionPromptContract() {
 		/\[tabId \$\{tab\.id\}\]/,
 		"the workspace metadata scan should print each candidate's tabId so the model can read background tabs directly",
 	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/inspect clearly related open tabs before answering/,
+		"cross-tab retrieval should be standard in every mode",
+	);
+	const privacyCopySurfaces = [
+		["website/privacy.html", await (await import("node:fs/promises")).readFile(new URL("../website/privacy.html", import.meta.url), "utf8")],
+		["docs/STORE_LISTING.md", await (await import("node:fs/promises")).readFile(new URL("../docs/STORE_LISTING.md", import.meta.url), "utf8")],
+	];
+	for (const [label, copy] of privacyCopySurfaces) {
+		assert.doesNotMatch(
+			copy,
+			/In Learning mode,? (?:it|this|Onhand) may (?:rank|include|read)/,
+			`${label} must not scope cross-tab reading to Learning mode while the runtime reads clearly related tabs in every mode`,
+		);
+	}
 	assert.match(
 		runtimeSourceForHighlightPolicy,
 		/tabIdListedInWorkspaceScan\(activeRequest, normalizedParams\?\.tabId\)/,
@@ -3653,7 +3675,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(
 			shouldRequirePageSourceMarkerRetryForTest({
 				...pageTeachingWithoutSourceRequest,
-				displayPrompt: "Do these papers agree?",
+				displayPrompt: "Compare these papers and highlight the evidence in both.",
 				toolTraces: [
 					...pageTeachingWithoutSourceRequest.toolTraces,
 					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text", resultDetails: { tab: { id: 5 } } },
@@ -3666,7 +3688,7 @@ async function assertConstitutionPromptContract() {
 		assert.equal(
 			shouldRequirePageSourceMarkerRetryForTest({
 				...pageTeachingWithoutSourceRequest,
-				displayPrompt: "Do these papers agree?",
+				displayPrompt: "Compare these papers and highlight the evidence in both.",
 				toolTraces: [
 					...pageTeachingWithoutSourceRequest.toolTraces,
 					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text", resultDetails: { tab: { id: 5 } } },
@@ -3675,6 +3697,22 @@ async function assertConstitutionPromptContract() {
 			}),
 			true,
 			"cross-tab prompts still require anchors on distinct tabs even when one is reused",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Do these papers agree?",
+			}),
+			false,
+			"bare comparison-shaped prompts no longer force a revision pass; prompt policy owns that middle ground (narrowed G17)",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Why is my textbook wrong about this?",
+			}),
+			false,
+			"claim-check follow-ups must not trigger the forced-marks pass",
 		);
 		const structuredOneHighlightRequest = {
 			...pageTeachingWithoutSourceRequest,

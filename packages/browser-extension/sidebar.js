@@ -5349,7 +5349,7 @@
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 								<div class="onhand-response">
 									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
-									${turn?.pending && turn?.revising && reply ? '<p class="reply-revising">Revising — anchoring the answer on the page…</p>' : ""}
+									${turn?.pending && turn?.revising && reply ? '<p class="reply-revising">Adding source marks on the page…</p>' : ""}
 									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 								</div>

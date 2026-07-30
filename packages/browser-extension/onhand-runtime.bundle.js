@@ -149121,7 +149121,7 @@ Default answer mode:
 - For every question you answer from page material, create one durable source highlight on the exact visible/readable text that supports the answer, then answer in chat referencing that highlight. This applies to ordinary factual questions too: do not answer chat-only when the page supports the claim. Exceptions: if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when the highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
-- For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
+- For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer: call browser_scroll_to_annotation on that anchor once before answering \u2014 the scroll shows which mark backs the answer and counts as the turn's source marker. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
 - Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight one to three central concepts \u2014 never the page title, course title, or a generic heading; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. Add at most one note unless the user explicitly asks for notes. If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
 - Quick visual questions such as "what does this figure show?", "what is this diagram?", or "try here" should usually be sidebar-only after capturing the visible region or PDF page image. Do not automatically add a note for a quick visual explanation. If a durable source marker is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value beyond a label. This does not limit notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.
 - Add a short interpretive note (one to two sentences, under ~280 characters) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note.
@@ -151393,7 +151393,7 @@ function buildExistingAnchorContext(session, maxAnchors = 8) {
   return [
     "Existing session source highlights already available:",
     "Reuse these source highlights on follow-up questions when they support the answer. Do not recreate, re-highlight, or re-note the same passage; add a new source highlight only for genuinely new supporting evidence.",
-    "If you need to bring an existing source highlight into view, use browser_scroll_to_annotation with its annotationId instead of browser_highlight_text.",
+    "When the answer relies on one of these existing source highlights, call browser_scroll_to_annotation with its annotationId once before answering \u2014 the scroll shows which mark backs the answer and counts as this turn's source marker. Never use browser_highlight_text to re-mark the same passage.",
     ...lines
   ].join("\n");
 }
@@ -151773,7 +151773,9 @@ function buildLearningWorkspaceEvidenceFallbackReply(request) {
 function shouldRequirePageSourceMarkerRetry(request) {
   if (!request || request.aborted || request.pageSourceMarkerRetry || request.pdfAnchorRetry) return false;
   if (promptForbidsPageChanges(request.displayPrompt)) return false;
-  if (!promptRequiresPageSourceMarker(request.displayPrompt)) return false;
+  const markerPromptText = normalizePageSourcePromptText(request.displayPrompt);
+  const unambiguousMarkerPrompt = promptAsksForPageAnchors(markerPromptText) || promptAsksForTeachingPageSourceMarker(request.displayPrompt) || promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForDocumentReviewMarkup(request.displayPrompt) || promptAsksForExternalBrowsing(markerPromptText) || promptAsksForLinkedPageNavigation(markerPromptText);
+  if (!unambiguousMarkerPrompt) return false;
   const crossTab = promptAsksForCrossTabComparison(request.displayPrompt);
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
   const baselineRequiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForSinglePageComparison(request.displayPrompt) || crossTab ? 2 : 1;
@@ -158450,7 +158452,7 @@ function createOnhandBrowserRuntime(host) {
       if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
         updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
       }
-      await publishState({ status: "Adding source marker..." });
+      await publishState({ status: "Adding source marks..." });
       queueBlankReplyRetry(activeAgent, buildPageSourceMarkerRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
       });
@@ -158462,7 +158464,7 @@ function createOnhandBrowserRuntime(host) {
       if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
         updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
       }
-      await publishState({ status: "Anchoring PDF answer..." });
+      await publishState({ status: "Adding PDF source marks..." });
       queueBlankReplyRetry(activeAgent, buildPdfAnchorRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
       });
