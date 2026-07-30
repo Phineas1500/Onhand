@@ -46,9 +46,10 @@ OpenAI API key).
 Study sessions are saved locally in your browser, so you can close a
 paper and pick the conversation back up later.
 
-Privacy note: Onhand starts with the active page. In Learning mode it may
-rank metadata from eligible open tabs and read clearly related tabs to answer
-your request; unrelated tabs are not read merely because they are open.
+Privacy note: Onhand starts with the active page. To answer your request it
+may rank titles and URLs of eligible open tabs and read clearly related open
+tabs — in any mode, without switching your view; unrelated tabs are not read
+merely because they are open.
 In API-key and Codex sign-in modes, relevant request and page content goes to your selected provider. In Onhand
 Free mode, request content goes through Onhand's hosted Cloudflare
 Worker to OpenRouter; anonymous diagnostics are required for reliability,
