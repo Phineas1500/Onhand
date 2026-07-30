@@ -7,7 +7,7 @@ Learning Mode exists as a Phase 1 scaffold:
 - Sidebar toggle for Learning Mode.
 - Persisted setting included on prompt submission.
 - Runtime prompt branch via `ONHAND_LEARNING_MODE_APPEND`.
-- Learning Mode bias toward tab context via `browser_list_tabs`.
+- Cross-tab retrieval via the workspace scan and `browser_list_tabs` (standard in every mode since 2026-07-28; Learning Mode adds research planning on top).
 
 This spec defines the product behavior and implementation shape for the next education work, especially session-scoped learner state and the sidebar learning panel.
 
@@ -18,7 +18,7 @@ Implementation progress:
 - Slice C is implemented in the sidebar: Learning Mode sessions with state now show a compact "This session" panel with covered concepts, open checks, and best-effort source jumps with visible success/failure feedback.
 - Slice D is implemented in the Chrome acceptance matrix: Answer Mode control, Learning Mode concept prompt, open-check resolution, and repeated-concept refresher cases are available through `npm run acceptance:chrome -- --suite=learning`.
 - Slice E is implemented as prompt-contract and runtime-enforced behavior: Learning Mode ranks the full open-tab workspace, automatically inspects clearly related sources, and has regression plus manual Chrome acceptance coverage.
-- Cross-session spaced review (pedagogy phase 4) is implemented: assessments are concept-linked, `computeDueReviews` schedules per-concept reviews across sessions with a Leitner-style ladder, and the sidebar shows a review nudge with Review now / snooze actions. Learning Mode turns that end in an unrecorded check question also get a fallback open check.
+- Cross-session spaced review (pedagogy phase 4) is implemented: assessments are concept-linked, `computeDueReviews` schedules per-concept reviews across sessions with a Leitner-style ladder, and the scheduling backend runs; the sidebar review nudge is currently disabled (`REVIEW_NUDGE_ENABLED = false`) per the behavior doc's deferred list. Learning Mode turns that end in an unrecorded check question also get a fallback open check.
 
 ## Product thesis
 
@@ -145,7 +145,7 @@ Learning Mode should use a small set of repeatable moves.
 | Retrieval check | The agent has just explained a substantive idea | Ask the user to restate the claim or mechanism in their own words |
 | Hint-before-correction | The user gives a partial or wrong answer | Point to the passage that resolves the issue before giving the correction |
 | Misconception repair | The question implies a common wrong model | Name the misconception briefly and contrast it with the page evidence |
-| Automatic interleaving | Another open tab is clearly related | Inspect it in the background and connect the useful evidence; ask first only when relevance is ambiguous |
+| Automatic interleaving | Another open tab is clearly related | Inspect it in the background and connect the useful evidence; skip tabs that are not clearly related rather than asking |
 | Direct-answer escape | User asks for speed or shows frustration | Answer directly while staying anchored |
 
 ## Learner state
@@ -366,7 +366,7 @@ Use open tabs as related teaching material.
 Deliverables:
 
 - [x] Prompt guidance to scan tab titles and summaries for related context.
-- [x] Offer-first behavior before switching context.
+- [x] Automatic background inspection of clearly related tabs without switching context (superseded offer-first, 2026-07-28).
 - [x] Manual acceptance with at least three related tabs.
 
 ## Open questions

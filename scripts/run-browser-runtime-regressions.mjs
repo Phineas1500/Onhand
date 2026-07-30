@@ -2442,6 +2442,27 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /highlight or cite each substantive claim in the source that supports it/);
 	assert.match(contract.systemPrompt, /Never attribute a claim to a source it was not grounded in/);
 	assert.match(contract.systemPrompt, /links\/notes\/readings\/resources listed on the current page/);
+	// Drift tripwire (behavior doc §authority): every SETTLED rule that lives as
+	// prompt text keeps a recognizable sentence in the runtime prompt surface.
+	// When one fails, the runtime regressed or the doc changed — reconcile both
+	// (docs/ONHAND_BEHAVIOR_PREFERENCES.md), never just delete the assertion.
+	for (const [rule, surface, pattern] of [
+		["G1 default source highlight", contract.systemPrompt, /create one durable source highlight/],
+		["G5 marginalia placement", contract.systemPrompt, /short marginal notes/],
+		["G6 concise chat", contract.systemPrompt, /Be concise in words, thorough in coverage/],
+		["G7 honest anchoring", contract.systemPrompt, /say so rather than forcing a generic highlight/],
+		["G7 general-knowledge label", contract.systemPrompt, /general knowledge rather than the user's pages/],
+		["G9 per-source citation", contract.systemPrompt, /name that source \(by title\) next to the claim/],
+		["G12 auto cross-tab", contract.systemPrompt, /auto-use clearly related open tabs without asking first/],
+		["G13 web search never first", contract.systemPrompt, /web search is never the first move while open material can answer/],
+		["G14 auto-open on unsupported claims", contract.systemPrompt, /open or search for one that does — in a background tab/],
+		["G18 tool-verified anchor reuse", contract.systemPrompt, /call browser_scroll_to_annotation on that anchor once before answering/],
+		["P4 pages first", contract.systemPrompt, /The user's pages come first/],
+		["§5.1 ask-before-telling", contract.learningModeAppend, /Ask before telling/],
+		["§5.3 homework final-answer gate", contract.learningModeAppend, /do not give the final numeric, symbolic, or code answer/],
+	]) {
+		assert.match(surface, pattern, `settled-rule drift: ${rule} lost its prompt sentence — reconcile the behavior doc and the runtime together`);
+	}
 	assert.match(contract.answerPrompt, /Page-material claims need page grounding/);
 	assert.match(contract.answerPrompt, /Do page work before chat/);
 	assert.match(contract.answerPrompt, /External-source requests are navigation tasks/);
@@ -2845,8 +2866,19 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.runtimeJsPrompt, /\.value for form controls and \.textContent/);
 	assert.doesNotMatch(contract.answerPrompt, /answer now without calling a browser tool/i);
 	assert.doesNotMatch(contract.answerPrompt, /Current Learning Mode state/);
-	assert.match(contract.learningModeAppend, /give a concise page-grounded answer first/);
-	assert.match(contract.learningModeAppend, /Do not make the check the whole answer/);
+	assert.match(contract.learningModeAppend, /Ask before telling: for conceptual questions, lead with one short guiding question/);
+	assert.doesNotMatch(
+		contract.learningModeAppend,
+		/give a concise page-grounded answer first/,
+		"Learning Mode stance is ask-before-telling (behavior doc §5.1); answer-first was a runtime regression",
+	);
+	assert.match(contract.systemPrompt, /web search is never the first move while open material can answer/);
+	assert.match(
+		contract.systemPrompt,
+		/open or search for one that does — in a background tab/,
+		"G14: when open material cannot support a needed claim, Onhand auto-fetches a better source instead of only offering",
+	);
+	assert.match(contract.learningModeAppend, /Do not stack multiple questions before teaching anything/);
 	assert.match(contract.learningModeAppend, /Stay fast: the first move should be a useful source highlight/);
 	assert.match(contract.learningModeAppend, /onhand_record_learning_event/);
 	assert.match(contract.learningModeAppend, /one reviewable learning unit/);
@@ -2867,10 +2899,15 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.learningModeAppend, /final numeric, symbolic, or code answer/);
 	assert.match(contract.learningModeAppend, /even if the user asks directly/);
 	assert.match(contract.learningModeAppend, /ask for the next step the learner should do/);
-	assert.match(contract.learningModeAppend, /Drop the Socratic stance only for non-homework conceptual questions/);
+	assert.match(contract.learningModeAppend, /Skip the guiding-question beat only for trivial factual lookups/);
+	assert.doesNotMatch(
+		contract.learningModeAppend,
+		/Drop the Socratic stance only for non-homework conceptual questions/,
+		"the answer-first-era escape hatch must not undercut ask-before-telling for conceptual questions",
+	);
 	assert.match(contract.learningModeAppend, /homework\/problem priority still wins/);
 	assert.ok(
-		contract.learningModeAppend.indexOf("Homework/problem priority") < contract.learningModeAppend.indexOf("Drop the Socratic stance only"),
+		contract.learningModeAppend.indexOf("Homework/problem priority") < contract.learningModeAppend.indexOf("Skip the guiding-question beat only"),
 		"homework guard must appear before and constrain the direct-answer escape hatch",
 	);
 	assert.match(contract.homeworkLearningPrompt, /Learning mode homework test/);
@@ -2970,6 +3007,20 @@ async function assertConstitutionPromptContract() {
 		assert.equal(compactBusyTabs.omittedCount, 40, "compact context should disclose how many ranked metadata rows were omitted");
 		const completeTabInventoryText = formatToolResultForModel("browser_list_tabs", { tabs: busyWindowTabs });
 		assert.match(completeTabInventoryText, /Unrelated tab 54/, "browser_list_tabs should return the complete inventory beyond the old 40-tab cap");
+	const scannedPdfSearchText = formatToolResultForModel("browser_pdf_search", {
+		query: "resonance",
+		matchCount: 0,
+		matches: [],
+		textLayer: { extractableChars: 0, checkedPages: 8, likelyScanned: true },
+	});
+	assert.match(scannedPdfSearchText, /scanned image without an extractable text layer/, "zero-match searches on scans must diagnose the missing text layer, not imply the terms are absent");
+	assert.match(scannedPdfSearchText, /regionRect/, "the scan diagnosis should teach the region-mark fallback");
+	assert.match(scannedPdfSearchText, /browser_pdf_capture_page_image/, "the scan diagnosis should point at visual grounding");
+	assert.doesNotMatch(
+		formatToolResultForModel("browser_pdf_search", { query: "resonance", matchCount: 0, matches: [] }),
+		/scanned image/,
+		"ordinary zero-match searches keep the plain miss message",
+	);
 		const learningProblemRequest = {
 			learningMode: true,
 			displayPrompt: "Help me reason through Question 3.",

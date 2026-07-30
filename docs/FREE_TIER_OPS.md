@@ -68,7 +68,7 @@ through `FREE_TIER_ALERT_MAX_*` environment variables; run
 - `p95_ms`: whether OpenRouter/provider routing is creating slow responses.
 - `quota_and_rejections`: abuse pressure or overly strict caps.
 - `browser_run_js_*`: constrained advanced runtime-inspection usage. Unexpected
-  growth here means prompts or tool gating need another review.
+  growth here means the prompts or the runtime-inspection setting gate need another review.
 
 The Worker records Analytics Engine fields as documented in `docs/FREE_TIER.md`.
 The ops script uses `_sample_interval` in aggregates because Workers Analytics

@@ -19,7 +19,6 @@ function createState() {
 		preferences: {
 			learningMode: false,
 			realtimeVoiceEnabled: true,
-			speedMode: "auto",
 			extensionVersion: "test",
 			runtimeRevision: "test",
 		},

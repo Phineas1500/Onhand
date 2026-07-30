@@ -973,6 +973,77 @@ function removeDuplicatePdfHighlights(keeper: HTMLElement, rawQuery: string, opt
 	return removed;
 }
 
+function normalizePdfRegionRect(value: any) {
+	if (!value || typeof value !== "object") return null;
+	const left = Number(value.left);
+	const top = Number(value.top);
+	const width = Number(value.width);
+	const height = Number(value.height);
+	if (![left, top, width, height].every((entry) => Number.isFinite(entry))) return null;
+	if (left < 0 || top < 0 || width <= 0 || height <= 0 || left >= 1 || top >= 1) return null;
+	const clampedLeft = Math.max(0, Math.min(0.98, left));
+	const clampedTop = Math.max(0, Math.min(0.98, top));
+	return {
+		left: clampedLeft,
+		top: clampedTop,
+		width: Math.max(0.02, Math.min(1 - clampedLeft, width)),
+		height: Math.max(0.01, Math.min(1 - clampedTop, height)),
+	};
+}
+
+// §3.13 region marks: a durable overlay on a SCANNED page, anchored by
+// normalized page fractions instead of a text quote. Reserved for pages with
+// no extractable text — text pages must anchor to exact quotes so citations
+// stay verifiable. Replays through the same path on zoom rebuilds and
+// artifact restores because the anchor carries regionRect.
+async function pdfHighlightRegion(label: string, regionRect: { left: number; top: number; width: number; height: number }, options: Record<string, any> = {}) {
+	const pageNumber = pdfAnchorPageNumber(options.pdfAnchor);
+	if (!pageNumber) throw new Error("A region highlight requires pdfAnchor.pageNumber.");
+	await ensurePageRendered(pageNumber, renderSequence, { sharpen: false });
+	const page = getPdfPageByNumber(pageNumber);
+	if (!page) throw new Error(`PDF page not found: ${pageNumber}`);
+	const pageText = normalizeText(isPendingPage(page) ? await getPageTextContent(pageNumber) : pdfPageText(page));
+	if (pageText.length >= 40) throw new Error("This page has extractable text; anchor with an exact text quote instead of a region.");
+	const size = { width: page.clientWidth || 1, height: page.clientHeight || 1 };
+	const rect = clampPdfRectToPageSize(
+		{
+			left: regionRect.left * size.width,
+			top: regionRect.top * size.height,
+			width: regionRect.width * size.width,
+			height: regionRect.height * size.height,
+		},
+		size,
+	);
+	if (!rect) throw new Error("Region rect resolved outside the page bounds.");
+	const annotationId = nextAnnotationId();
+	const pdfAnchor = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		document: { url: sourceUrl, title: document.title },
+		pageNumber,
+		matchedText: label,
+		textQuote: { exact: label },
+		regionRect,
+		rects: [rect],
+		occurrence: 1,
+		region: true,
+	};
+	const highlight = document.createElement("div");
+	highlight.setAttribute("data-onhand-highlight-kind", "pdf");
+	highlight.setAttribute("data-onhand-region", "true");
+	highlight.setAttribute("data-onhand-annotation-id", annotationId);
+	highlight.setAttribute("data-onhand-matched-text", label);
+	highlight.setAttribute("data-onhand-pdf-anchor", JSON.stringify(pdfAnchor));
+	applyHighlightStyles(highlight, [rect], rect);
+	ensureAnnotationLayer(page).append(highlight);
+	if (options.scrollIntoView !== false) {
+		highlight.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+		await waitForNextFrame();
+		updatePageFromScroll();
+	}
+	return buildAnnotationResult(highlight, label, { region: true });
+}
+
 async function pdfHighlightText(query: string, options: Record<string, any> = {}) {
 	const rawQuery = String(query || "").trim();
 	if (!rawQuery) throw new Error("highlightText requires a non-empty query");
@@ -993,6 +1064,8 @@ async function pdfHighlightText(query: string, options: Record<string, any> = {}
 			});
 		}
 	}
+	const regionRect = normalizePdfRegionRect(options.pdfAnchor?.regionRect);
+	if (regionRect) return await pdfHighlightRegion(rawQuery, regionRect, options);
 	const targetPageNumber = pdfAnchorPageNumber(options.pdfAnchor);
 	if (targetPageNumber) await ensurePageRendered(targetPageNumber);
 
@@ -1810,6 +1883,29 @@ function parsePdfPageNumbers(options: Record<string, any> = {}) {
 	return [...new Set(values)].sort((a, b) => a - b);
 }
 
+let cachedPdfTextLayerInfo: { extractableChars: number; checkedPages: number; likelyScanned: boolean } | null = null;
+
+// Distinguish "no matches" from "nothing searchable": a scanned/image-only
+// PDF has no text layer at all, and reporting a plain miss misleads the model
+// into thinking the terms are absent rather than the document unreadable.
+async function describePdfTextLayer() {
+	if (cachedPdfTextLayerInfo) return cachedPdfTextLayerInfo;
+	const pageCount = Number(pdfDocument?.numPages || 0);
+	const maxPages = Math.min(pageCount, 30);
+	let extractableChars = 0;
+	let checkedPages = 0;
+	for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+		try {
+			extractableChars += normalizeText(await getPageTextContent(pageNumber)).length;
+		} catch {}
+		checkedPages += 1;
+		if (extractableChars >= 400) break;
+	}
+	const info = { extractableChars, checkedPages, likelyScanned: extractableChars < 40 };
+	cachedPdfTextLayerInfo = info;
+	return info;
+}
+
 async function pdfSearch(options: Record<string, any> = {}) {
 	const query = String(options.query || options.text || "").trim();
 	if (!query) throw new Error("PDF search requires a non-empty query.");
@@ -1878,6 +1974,7 @@ async function pdfSearch(options: Record<string, any> = {}) {
 			});
 		}
 	}
+	const textLayer = matches.length === 0 ? await describePdfTextLayer() : null;
 	return {
 		surface: "pdf",
 		viewer: "onhand-pdf-viewer",
@@ -1886,6 +1983,7 @@ async function pdfSearch(options: Record<string, any> = {}) {
 		query,
 		matchCount: matches.length,
 		matches,
+		...(textLayer ? { textLayer } : {}),
 	};
 }
 
@@ -2891,6 +2989,7 @@ async function loadPdf() {
 	GlobalWorkerOptions.workerSrc = extensionUrl("vendor/pdf.worker.mjs");
 	setStatus("Loading PDF...");
 	pdfDocument = await loadPdfDocumentFromUrl(sourceUrl);
+	cachedPdfTextLayerInfo = null;
 	const pageCount = Number(pdfDocument.numPages || 0);
 	const explicitInitialPageNumber = parseInitialPageNumber(pageCount);
 	const initialPageNumber = explicitInitialPageNumber || pageNumberFromScrollRatio(parseInitialScrollRatio(), pageCount) || 1;

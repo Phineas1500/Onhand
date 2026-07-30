@@ -36,7 +36,7 @@ const { __browserRuntimeTest: T } = await import("../packages/browser-extension/
 
 const INTENT_FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 
-// Routing predicates that decide which lane a prompt takes.
+// Routing predicates that classify a prompt's intent (marker expectations, deliverable profiles).
 function routingFor(prompt) {
 	return {
 		structured: T.promptAsksForStructuredPageSourceMarkerForTest(prompt),
@@ -133,7 +133,7 @@ const SELFTEST = [
 		text: "One codebase tracked in revision control, many deploys",
 		expectGuard: { weakStructured: true },
 	},
-	// A title/heading-like span in the compact-teaching lane is blocked by the
+	// A title/heading-like span in the compact-teaching profile is blocked by the
 	// compact-teaching guard, which runs after the structured guard.
 	{
 		prompt: "summarize this page",

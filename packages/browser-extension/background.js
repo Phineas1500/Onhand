@@ -14187,7 +14187,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				codexFastModeEnabled: message.codexFastModeEnabled,
-				speedMode: message.speedMode,
 			});
 			sendResponse({
 				ok: true,
@@ -14459,7 +14458,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 		if (message?.type === "sidebar:set-speed-mode") {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.updateSettings({
-				speedMode: message.speedMode,
 			});
 			sendResponse({
 				ok: true,

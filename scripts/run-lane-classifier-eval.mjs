@@ -1,4 +1,4 @@
-// Lane-classifier evaluation: compares the regex lane predicates and the
+// Intent-classifier evaluation: compares the regex intent predicates and the
 // experimental model intent classifier against a labeled prompt corpus built
 // from real failures (2026-07 testing sessions + PR #52 review findings).
 //

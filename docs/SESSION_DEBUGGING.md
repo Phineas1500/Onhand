@@ -46,11 +46,11 @@ npm run debug:sessions -- context --current --json
 
 ## Routing And Guard Diagnostics
 
-Onhand routes each prompt to a lane (teaching, comparison, enumerable coverage, review markup, …) and runs a chain of span-quality guards before it highlights. Two tools inspect that logic — one offline, one live.
+Onhand classifies each prompt's intent (teaching, comparison, enumerable coverage, review markup, …) to set marker expectations and pick deliverable profiles, and runs a chain of span-quality guards before it highlights. Two tools inspect that logic — one offline, one live.
 
 ### Offline routing/guard probe
 
-`scripts/probe-routing.mjs` prints the lane predicates and highlight-guard decisions for any prompt with no live turn and no model call, by reading the runtime's `__browserRuntimeTest` export surface:
+`scripts/probe-routing.mjs` prints the intent predicates and highlight-guard decisions for any prompt with no live turn and no model call, by reading the runtime's `__browserRuntimeTest` export surface:
 
 ```sh
 node scripts/probe-routing.mjs "walk me through the twelve factors as a roadmap" \

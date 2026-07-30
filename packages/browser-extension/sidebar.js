@@ -3414,27 +3414,6 @@
 			.onhand-row .learn.on .sw::after {
 				transform: translateX(10px);
 			}
-			.onhand-row .speed {
-				display: inline-flex;
-				align-items: center;
-				gap: 5px;
-				padding: 3px 6px;
-				color: var(--rm-subtext);
-				font: 10.5px var(--rm-font-mono);
-			}
-			.onhand-row .speed select {
-				max-width: 72px;
-				border: 1px solid var(--rm-overlay);
-				border-radius: 2px;
-				background: var(--rm-mantle);
-				color: var(--rm-text);
-				font: 10.5px var(--rm-font-mono);
-				padding: 2px 4px;
-			}
-			.onhand-row .speed select:disabled {
-				opacity: 0.55;
-				cursor: not-allowed;
-			}
 			.onhand-row .spacer {
 				display: none;
 			}

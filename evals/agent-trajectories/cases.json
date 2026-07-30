@@ -51,8 +51,8 @@
           }
         ],
         "requiredToolGroups": [
-          { "id": "read-current-page", "anyOf": ["browser_extract_content", "browser_capture_page", "browser_research_workspace"] },
-          { "id": "anchor-evidence", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"] }
+          { "id": "read-current-page", "anyOf": ["browser_extract_content", "browser_capture_page"] },
+          { "id": "anchor-evidence", "anyOf": ["browser_highlight_text"] }
         ],
         "minAnnotations": 1,
         "maxAnnotations": 2,
@@ -159,9 +159,9 @@
           }
         ],
         "requiredToolGroups": [
-          { "id": "workspace-discovery", "anyOf": ["browser_list_tabs", "browser_research_workspace"] },
-          { "id": "linked-document-research", "anyOf": ["browser_search_linked_pdf_corpus", "browser_pdf_search", "browser_research_workspace"] },
-          { "id": "evidence-annotation", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"], "minCalls": 2 }
+          { "id": "workspace-discovery", "anyOf": ["browser_list_tabs"] },
+          { "id": "linked-document-research", "anyOf": ["browser_search_linked_pdf_corpus", "browser_pdf_search"] },
+          { "id": "evidence-annotation", "anyOf": ["browser_highlight_text"], "minCalls": 2 }
         ],
         "minAnnotations": 2,
         "maxAnnotations": 4,
@@ -215,8 +215,8 @@
           { "id": "paper-b", "description": "Paper B method.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "paper-b-pdf", "passageIds": ["paper-b-method"] }] }
         ],
         "requiredToolGroups": [
-          { "id": "workspace-read", "anyOf": ["browser_list_tabs", "browser_extract_content", "browser_research_workspace"] },
-          { "id": "two-source-annotation", "anyOf": ["browser_highlight_text", "browser_annotate_evidence"], "minCalls": 2 }
+          { "id": "workspace-read", "anyOf": ["browser_list_tabs", "browser_extract_content"] },
+          { "id": "two-source-annotation", "anyOf": ["browser_highlight_text"], "minCalls": 2 }
         ],
         "minAnnotations": 2,
         "maxAnnotations": 3,
@@ -271,8 +271,8 @@
           { "id": "cited-paper-result", "description": "The result actually established by Atlas.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "atlas-paper", "passageIds": ["atlas-result"] }] }
         ],
         "requiredToolGroups": [
-          { "id": "citation-follow", "anyOf": ["browser_click", "browser_navigate", "browser_research_workspace"] },
-          { "id": "citation-read", "anyOf": ["browser_pdf_read_pages", "browser_extract_content", "browser_research_workspace"] }
+          { "id": "citation-follow", "anyOf": ["browser_click", "browser_navigate"] },
+          { "id": "citation-read", "anyOf": ["browser_pdf_read_pages", "browser_extract_content"] }
         ],
         "minAnnotations": 1,
         "maxAnnotations": 3,
@@ -318,7 +318,7 @@
           { "id": "caption-meaning", "description": "What the caption says the curve represents.", "requireCitation": true, "acceptableEvidence": [{ "sourceId": "visual-paper-pdf", "passageIds": ["figure-3-caption"] }] }
         ],
         "requiredToolGroups": [
-          { "id": "visual-read", "anyOf": ["browser_pdf_capture_page_image", "browser_capture_page", "browser_research_workspace"] }
+          { "id": "visual-read", "anyOf": ["browser_pdf_capture_page_image", "browser_capture_page"] }
         ],
         "maxAnnotations": 2,
         "maxModelCalls": 4,
@@ -361,9 +361,9 @@
           { "id": "constraints", "description": "All three stated constraints.", "requireCitation": false, "acceptableEvidence": [{ "sourceId": "constraints-page", "passageIds": ["constraint-list"] }] }
         ],
         "requiredToolGroups": [
-          { "id": "read-only-page-access", "anyOf": ["browser_extract_content", "browser_capture_page", "browser_research_workspace"] }
+          { "id": "read-only-page-access", "anyOf": ["browser_extract_content", "browser_capture_page"] }
         ],
-        "forbiddenTools": ["browser_highlight_text", "browser_show_note", "browser_click", "browser_type", "browser_navigate", "browser_annotate_evidence"],
+        "forbiddenTools": ["browser_highlight_text", "browser_show_note", "browser_click", "browser_type", "browser_navigate"],
         "minAnnotations": 0,
         "maxAnnotations": 0,
         "maxModelCalls": 3,
@@ -405,9 +405,9 @@
         "mutations": "forbidden",
         "evidenceSlots": [],
         "requiredToolGroups": [
-          { "id": "verify-workspace", "anyOf": ["browser_list_tabs", "browser_extract_content", "browser_research_workspace"] }
+          { "id": "verify-workspace", "anyOf": ["browser_list_tabs", "browser_extract_content"] }
         ],
-        "forbiddenTools": ["browser_highlight_text", "browser_show_note", "browser_annotate_evidence"],
+        "forbiddenTools": ["browser_highlight_text", "browser_show_note"],
         "maxAnnotations": 0,
         "maxModelCalls": 4,
         "maxToolCalls": 8,
@@ -462,8 +462,8 @@
           { "id": "clipping-mechanism", "description": "Why clipping addresses the failure.", "requireCitation": true, "requireAnnotation": true, "acceptableEvidence": [{ "sourceId": "rnn-notes-pdf", "passageIds": ["clipping-mechanism"] }] }
         ],
         "requiredToolGroups": [
-          { "id": "tab-inventory", "anyOf": ["browser_list_tabs", "browser_research_workspace"] },
-          { "id": "background-read", "anyOf": ["browser_extract_content", "browser_pdf_read_pages", "browser_research_workspace"] }
+          { "id": "tab-inventory", "anyOf": ["browser_list_tabs"] },
+          { "id": "background-read", "anyOf": ["browser_extract_content", "browser_pdf_read_pages"] }
         ],
         "minAnnotations": 1,
         "maxAnnotations": 3,
@@ -669,15 +669,13 @@
             "anyOf": [
               "browser_list_tabs",
               "browser_get_visible_text",
-              "browser_extract_content",
-              "browser_research_workspace"
+              "browser_extract_content"
             ]
           },
           {
             "id": "background-annotation",
             "anyOf": [
-              "browser_highlight_text",
-              "browser_annotate_evidence"
+              "browser_highlight_text"
             ]
           }
         ],

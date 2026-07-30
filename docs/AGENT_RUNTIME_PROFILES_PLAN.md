@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-07-30.** This plan predates the barebones direction settled in late July 2026. The runtime keeps the single `legacy` execution path; prompt-shaped tool gating and the reasoning-lane router were removed *without* the profile split (see `docs/ONHAND_BEHAVIOR_PREFERENCES.md` v2.2). `browser_research_workspace` and `browser_annotate_evidence` were never built; the full-agent/guided-agent profiles survive only as trace labels. Kept for historical context — do not implement from this document.
+
 # Agent Runtime Profiles and Simplification Plan
 
 Status: in progress

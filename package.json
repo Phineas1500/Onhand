@@ -62,6 +62,7 @@
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",
     "eval:agent-trajectories": "node ./scripts/run-agent-trajectory-eval.mjs",
     "eval:agent-trajectories:live": "node ./scripts/run-agent-trajectory-baseline.mjs",
+    "eval:intent-classifier": "node ./scripts/run-lane-classifier-eval.mjs",
     "test:agent-trajectory-eval": "node ./scripts/run-agent-trajectory-eval-regressions.mjs"
   },
   "dependencies": {

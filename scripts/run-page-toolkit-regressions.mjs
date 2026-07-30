@@ -504,6 +504,11 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /anchor = captureZoomAnchor\(\)/, "PDF viewer zoom re-renders should anchor the current view before rescaling");
 	assert.match(source, /const annotations = capturePdfAnnotationSnapshots\(\)/, "PDF viewer zoom re-renders should snapshot annotations before rebuilding layers");
 	assert.match(source, /rebuildPdfAnnotationLayers\(annotations, sequence\)/, "PDF viewer zoom re-renders should restore annotations after the re-render");
+	assert.match(source, /function describePdfTextLayer/, "the viewer must diagnose missing text layers instead of reporting bare no-match results");
+	assert.match(source, /likelyScanned: extractableChars < 40/, "scan detection should key on near-zero extractable text");
+	assert.match(source, /function pdfHighlightRegion/, "scanned pages need region marks (behavior doc §3.13)");
+	assert.match(source, /This page has extractable text; anchor with an exact text quote instead of a region\./, "region marks must be refused on text pages so citations stay verifiable");
+	assert.match(source, /if \(regionRect\) return await pdfHighlightRegion\(rawQuery, regionRect, options\);/, "region anchors must replay through the normal highlight path for zoom rebuilds and restores");
 	assert.match(source, /case "searchPdf":/, "PDF toolkit bridge should route full-document search");
 	assert.match(source, /case "readPdfPages":/, "PDF toolkit bridge should route page text reads");
 	assert.match(source, /case "getSelectionInfo":\s*return pdfGetSelectionInfo\(\);/, "PDF toolkit bridge should route selected-text reads");

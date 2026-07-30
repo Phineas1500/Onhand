@@ -1,9 +1,10 @@
 # Agent Trajectory Evaluation
 
 The trajectory suite evaluates whether Onhand completes an entire browser task,
-not merely whether a model can produce one plausible answer or tool call. It is
-the release gate for the `full-agent` and `guided-agent` runtime profiles
-described in `docs/AGENT_RUNTIME_PROFILES_PLAN.md`.
+not merely whether a model can produce one plausible answer or tool call. It
+scores production-shaped trajectories for the (sole) `legacy` runtime; the
+`full-agent`/`guided-agent` profile names survive only as trace labels from the
+archived `docs/AGENT_RUNTIME_PROFILES_PLAN.md`.
 
 The fixture and scoring contract is runtime-neutral. The live baseline adapter
 serves the same cases from a deterministic local origin, opens the declared tab
@@ -109,7 +110,7 @@ Each case defines:
 - mutation, focus, deduplication, error, call-count, and latency limits.
 
 The suite intentionally allows both current low-level tools and the proposed
-`browser_research_workspace` / `browser_annotate_evidence` tools. It evaluates
+`browser_research_workspace` / `browser_annotate_evidence` tools (never built; the plan is archived and the fixture alternatives were removed). It evaluates
 the outcome, not one mandatory tool sequence.
 
 Page-, course-, prompt-, and topic-specific terms are fixture data only. They
