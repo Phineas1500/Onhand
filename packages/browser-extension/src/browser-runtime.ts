@@ -589,10 +589,10 @@ const ONHAND_SYSTEM_PROMPT = assertConstitutionPrompt(`You are Onhand, a context
 Onhand's constitution:
 - The page is the canvas. Read the page before answering when page context matters; anchor every answer drawn from the page with a source highlight on the supporting text, and add short marginal notes where they add interpretation. Keep the page unmarked only when the user asks for no page changes or the page does not support the claim.
 - Every material page claim must be grounded in visible/readable page context. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
-- Prefer sources the user can see over your own model knowledge. When a substantive claim — especially one that confirms, corrects, or extends what the current page says — is covered by the current page or a clearly related open tab, read that source and anchor the claim there with a highlight or citation instead of asserting it from memory. A claim that corrects or contradicts the current page must be grounded in a source the user can see: a clearly related open tab first, or a source you open when nothing open covers it. When no open source supports a claim the answer needs, open or search for one that does — in a background tab, without switching the user's focus — and anchor the claim there; web search is never the first move while open material can answer. If fetching a source is clearly inappropriate for the request or fails, say plainly that the claim comes from general knowledge rather than the user's pages.
+- Prefer sources the user can see over your own model knowledge. When a substantive claim — especially one that confirms, corrects, or extends what the current page says — is covered by the current page or a clearly related open tab, read that source and anchor the claim there with a highlight or citation instead of asserting it from memory. A claim that corrects or contradicts the current page must be grounded in a source the user can see: a clearly related open tab first, or a source you open when nothing open covers it. When no open source supports a claim the answer needs, open or search for one that does — in a background tab, without switching the user's focus — and anchor the claim there; web search is never the first move while open material can answer — and a claim check that the current page plus clearly related open tabs already support needs no fetching at all. If fetching a source is clearly inappropriate for the request or fails, say plainly that the claim comes from general knowledge rather than the user's pages.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
-- When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates.
+- When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates. If a destination is blocked by a browser security warning or a bot challenge, never click through or try to bypass it: name the blocked source and why in the answer, note that the user can open it themselves if they choose, and continue with an alternative source.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
 - Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, choose the strongest one to three source highlights, not every point you mention, and add at most one short interpretive note unless the user explicitly asks for notes. Comparisons usually need two source highlights, one per side, with at most one note on the practical difference. Roadmap, list, process, derivation, proof, or other enumerable coverage tasks may need more highlights for required top-level items, but notes should stay sparse and only explain genuinely hard or reusable points. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
@@ -616,7 +616,7 @@ Default answer mode:
 - For explicit named formula/equation/theorem requests, locate that named formula or its section first. Do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula.
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
-- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
+- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
 - If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
@@ -1097,6 +1097,15 @@ function shouldPreserveTrustedWorkspaceTabId(commandName: string, tabId: unknown
 	if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
 	return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : [])
 		.some((candidateTabId: unknown) => Number(candidateTabId) === tabId);
+}
+
+// Transient provider failures (overloaded, rate-limited, 5xx, dropped
+// sockets) deserve one quiet retry before the raw provider error becomes the
+// user-visible reply. Permanent failures (bad key, context overflow) do not.
+function isTransientProviderError(error: unknown) {
+	const message = String((error as any)?.message || error || "").toLowerCase();
+	if (!message) return false;
+	return /overloaded|rate limit|too many requests|temporarily unavailable|please try again|timed out|timeout|econnreset|socket hang up|\b(429|500|502|503|504|529)\b/.test(message);
 }
 
 function nowIso() {
@@ -8497,8 +8506,11 @@ function toolResultTextForModel(toolName: string, result: any) {
 		}
 			case "browser_activate_tab":
 				return `Activated tab: ${formatCompactTab(tab)}`;
-			case "browser_navigate":
+			case "browser_navigate": {
+				const blocked = (details as any)?.blocked;
+				if (blocked?.detail) return `Navigated to: ${formatCompactTab(tab)}\nDestination blocked: ${blocked.detail}`;
 				return `Navigated to: ${formatCompactTab(tab)}`;
+			}
 			case "browser_open_pdf_in_onhand_viewer": {
 				const alreadyOpen = details.alreadyOpen ? "Already open" : "Opened";
 				const pdfUrl = details.pdfUrl ? `\nPDF source: ${details.pdfUrl}` : "";
@@ -9084,6 +9096,39 @@ function sourceTabWasOpenedByRequest(request: any, tabId: unknown) {
 			trace?.resultDetails?.navigation?.createdNewTab === true &&
 			traceTargetTabId(trace) === targetTabId,
 	);
+}
+
+// Research scaffolding cleanup (behavior doc G19): tabs a request opened
+// that earned no mark, note, or artifact are stepping stones — search
+// results pages, blocked interstitials, discarded candidates — and close at
+// turn end. Tabs with annotation work, the initially active tab, and tabs
+// the request merely reused always stay: the marked sources are the session
+// artifact, the scaffolding is not.
+const SCAFFOLDING_KEEP_TOOL_NAMES = new Set([
+	"browser_highlight_text",
+	"browser_show_note",
+	"browser_scroll_to_annotation",
+	"browser_capture_state",
+]);
+
+function collectResearchScaffoldingTabIds(request: any) {
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	const openedTabIds = new Set<number>();
+	for (const trace of traces) {
+		if (trace?.state !== "complete" || trace?.toolName !== "browser_navigate") continue;
+		if (trace?.resultDetails?.navigation?.createdNewTab !== true) continue;
+		const tabId = traceTargetTabId(trace);
+		if (tabId > 0) openedTabIds.add(tabId);
+	}
+	if (!openedTabIds.size) return [];
+	const keepTabIds = new Set<number>([Number(request?.initialActiveTab?.id || 0)]);
+	for (const trace of traces) {
+		if (trace?.state !== "complete") continue;
+		if (!SCAFFOLDING_KEEP_TOOL_NAMES.has(String(trace?.toolName || ""))) continue;
+		const tabId = traceTargetTabId(trace);
+		if (tabId > 0) keepTabIds.add(tabId);
+	}
+	return [...openedTabIds].filter((tabId) => !keepTabIds.has(tabId));
 }
 
 function workspaceTabWasOpenedByRequest(request: any, tabId: unknown) {
@@ -9707,6 +9752,38 @@ function traceHasRealPageWorkProgress(trace: any) {
 	return !String(trace.resultSummary || "").toLowerCase().includes("guardrail");
 }
 
+// A highlight TIMEOUT is not a text-mismatch: the page is stalling or
+// blocking content scripts, and a smaller span cannot fix that. Retrying
+// burns the full per-call cap again (observed: 2x12s on pubs.aip.org), so
+// after one timeout on a tab, further highlight attempts there are blocked
+// with a route to a different source. Text-mismatch failures keep their
+// normal retry-with-smaller-span path.
+function buildHighlightTimeoutTabGuardResult(toolName: string, commandName: string, effectiveParams: Record<string, unknown>, request: any) {
+	if (commandName !== "highlight_text") return null;
+	const targetTabId = Number((effectiveParams as any)?.tabId || 0) || Number(request?.initialActiveTab?.id || 0);
+	if (!targetTabId) return null;
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	const timedOutOnTab = traces.some(
+		(trace: any) =>
+			trace?.state === "error" &&
+			trace?.toolName === "browser_highlight_text" &&
+			/timed out/i.test(String(trace?.error || trace?.resultSummary || "") + JSON.stringify(trace?.resultDetails || {})) &&
+			traceTargetTabId(trace) === targetTabId,
+	);
+	if (!timedOutOnTab) return null;
+	return {
+		guardrail: {
+			kind: "highlight_timeout_tab",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				"Highlighting on this page already timed out — the site appears to block or stall content scripts, so on-page marks cannot be placed there this turn.",
+				"Do not retry highlighting on this tab: mark the supporting passage on a different source instead, or cite this page in chat without an on-page mark and say why.",
+			].join(" "),
+		},
+	};
+}
+
 function buildRepeatedViewportReadGuardResult(toolName: string, commandName: string, request: any) {
 	if (!["get_visible_text", "get_scroll_state", "get_viewport_headings"].includes(commandName)) return null;
 	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
@@ -9918,6 +9995,9 @@ export const __browserRuntimeTest = {
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
 	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
 	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
+	isTransientProviderErrorForTest: isTransientProviderError,
+	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
+	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
 	describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
 	buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
 	applyLearningEvent,
@@ -12571,6 +12651,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 				(toolName, commandName, effectiveParams) =>
 					buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
+					buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 					buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 					buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 					buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||
@@ -12649,6 +12730,15 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				const agentMessages = messagesOverride || activeAgent?.state.messages || [];
 				let finalError = error || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
 				let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
+				if (finalError && !activeRequest.aborted && !activeRequest.transientProviderRetry && activeAgent && isTransientProviderError(finalError)) {
+					activeRequest.transientProviderRetry = true;
+					await publishState({ status: "Model provider is busy — retrying..." });
+					await new Promise((resolve) => setTimeout(resolve, 1500));
+					queueBlankReplyRetry(activeAgent, "The previous model call failed with a temporary provider error. Continue now and answer the user's question.", (retryError) => {
+						void finalizeRequest(session, requestId, retryError);
+					});
+					return;
+				}
 				const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry
 					? findMissingKnownBrowserToolTrace(activeRequest)
 					: null;
@@ -12840,6 +12930,26 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				artifact_count: activeRequest.artifactIds?.length || 0,
 				...toolReliability,
 			});
+		}
+		if (!finalError && !activeRequest.aborted) {
+			const scaffoldingTabIds = collectResearchScaffoldingTabIds(activeRequest);
+			if (scaffoldingTabIds.length) {
+				try {
+					const cleanup = await host.runCommand("close_scaffolding_tabs", { tabIds: scaffoldingTabIds });
+					const closedCount = Number((cleanup as any)?.closedCount || 0);
+					if (closedCount) {
+						activeRequest.closedResearchTabCount = closedCount;
+						appendActivity({
+							id: `cleanup:${activeRequest.id}`,
+							kind: "tool",
+							label: `Closed ${closedCount} unused research tab${closedCount === 1 ? "" : "s"}`,
+							toolName: "browser_navigate",
+							state: "complete",
+						});
+						await publishState({});
+					}
+				} catch {}
+			}
 		}
 		captureDebugTurnTrace(session, finalError, toolReliability);
 		activeRequest = null;
@@ -15288,6 +15398,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 						(toolName, commandName, effectiveParams) =>
 							buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
+							buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 							buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 							buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
 							buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) ||

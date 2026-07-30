@@ -2305,6 +2305,9 @@ async function assertConstitutionPromptContract() {
 			applyLearningBackgroundFocusDefaultForTest,
 			shouldPreserveTrustedWorkspaceTabIdForTest,
 			tabIdListedInWorkspaceScanForTest,
+			isTransientProviderErrorForTest,
+			collectResearchScaffoldingTabIdsForTest,
+			buildHighlightTimeoutTabGuardResultForTest,
 			buildUntrustedTabTargetGuardResultForTest,
 			describeToolStatusForTargetTabForTest,
 			setModelIntentClassificationForPromptForTest,
@@ -2552,6 +2555,16 @@ async function assertConstitutionPromptContract() {
 		runtimeSourceForHighlightPolicy,
 		/tabIdListedInWorkspaceScan\(activeRequest, normalizedParams\?\.tabId\)/,
 		"explicit tabIds listed in the captured workspace scan should be honored without a prior tab inventory",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/transientProviderRetry = true;[\s\S]{0,500}queueBlankReplyRetry/,
+		"transient provider failures should retry once before the raw error becomes the visible reply",
+	);
+	assert.match(
+		runtimeSourceForHighlightPolicy,
+		/collectResearchScaffoldingTabIds\(activeRequest\)[\s\S]{0,400}close_scaffolding_tabs/,
+		"successful turns should close unused research scaffolding tabs (behavior doc G19)",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
@@ -2873,6 +2886,9 @@ async function assertConstitutionPromptContract() {
 		"Learning Mode stance is ask-before-telling (behavior doc §5.1); answer-first was a runtime regression",
 	);
 	assert.match(contract.systemPrompt, /web search is never the first move while open material can answer/);
+	assert.match(contract.systemPrompt, /a claim check that the current page plus clearly related open tabs already support needs no fetching at all/);
+	assert.match(contract.systemPrompt, /Cite every mark you place this turn/);
+	assert.match(contract.systemPrompt, /never click through or try to bypass it/);
 	assert.match(
 		contract.systemPrompt,
 		/open or search for one that does — in a background tab/,
@@ -3016,6 +3032,14 @@ async function assertConstitutionPromptContract() {
 	assert.match(scannedPdfSearchText, /scanned image without an extractable text layer/, "zero-match searches on scans must diagnose the missing text layer, not imply the terms are absent");
 	assert.match(scannedPdfSearchText, /regionRect/, "the scan diagnosis should teach the region-mark fallback");
 	assert.match(scannedPdfSearchText, /browser_pdf_capture_page_image/, "the scan diagnosis should point at visual grounding");
+	assert.match(
+		formatToolResultForModel("browser_navigate", {
+			tab: { id: 9, title: "spiff.cis.rit.edu", url: "http://spiff.cis.rit.edu/paper.pdf" },
+			blocked: { kind: "insecure-site-warning", detail: "The browser is showing a not-secure warning because this site uses plain HTTP. Only the user can click Continue to site; do not retry and do not try to bypass it. Name this blocked source in the answer and use an alternative." },
+		}),
+		/Destination blocked: .*not-secure warning/,
+		"blocked navigations must tell the model why the destination is unreachable",
+	);
 	assert.doesNotMatch(
 		formatToolResultForModel("browser_pdf_search", { query: "resonance", matchCount: 0, matches: [] }),
 		/scanned image/,
@@ -3162,6 +3186,68 @@ async function assertConstitutionPromptContract() {
 			buildUntrustedTabTargetGuardResultForTest("browser_get_visible_text", "get_visible_text", { text: "aeroelastic flutter" }),
 			null,
 			"grounded params pass through the untrusted-tab guard",
+		);
+		assert.equal(
+			isTransientProviderErrorForTest(new Error("Codex error: Our servers are currently overloaded. Please try again later.")),
+			true,
+			"provider overload must earn a quiet retry instead of surfacing as the reply",
+		);
+		assert.equal(isTransientProviderErrorForTest(new Error("429 Too Many Requests")), true);
+		assert.equal(isTransientProviderErrorForTest(new Error("Invalid API key provided")), false, "permanent auth failures must surface immediately");
+		assert.equal(isTransientProviderErrorForTest(new Error("Model context length exceeded")), false);
+		assert.equal(isTransientProviderErrorForTest(null), false);
+		const scaffoldingRequest = {
+			initialActiveTab: { id: 10 },
+			toolTraces: [
+				{ toolName: "browser_navigate", state: "complete", resultDetails: { tab: { id: 31 }, navigation: { createdNewTab: true } } },
+				{ toolName: "browser_navigate", state: "complete", resultDetails: { tab: { id: 32 }, navigation: { createdNewTab: true } } },
+				{ toolName: "browser_navigate", state: "complete", resultDetails: { tab: { id: 33 }, navigation: { createdNewTab: false } } },
+				{ toolName: "browser_highlight_text", state: "complete", resultDetails: { tab: { id: 32 } } },
+			],
+		};
+		assert.deepEqual(
+			collectResearchScaffoldingTabIdsForTest(scaffoldingRequest),
+			[31],
+			"only request-created tabs without marks close; marked sources and reused tabs stay",
+		);
+		assert.deepEqual(
+			collectResearchScaffoldingTabIdsForTest({ initialActiveTab: { id: 31 }, toolTraces: scaffoldingRequest.toolTraces }),
+			[],
+			"the initially active tab never closes even if a trace claims the request created it",
+		);
+		assert.deepEqual(collectResearchScaffoldingTabIdsForTest({ toolTraces: [] }), [], "no created tabs, no cleanup");
+		const timeoutTrace = {
+			toolName: "browser_highlight_text",
+			state: "error",
+			error: "browser_highlight_text failed: browser_highlight_text tool call timed out after 12000ms",
+			effectiveArgs: { tabId: 68, text: "one misleading identification" },
+		};
+		const timeoutGuard = buildHighlightTimeoutTabGuardResultForTest(
+			"browser_highlight_text",
+			"highlight_text",
+			{ tabId: 68, text: "a smaller span" },
+			{ toolTraces: [timeoutTrace] },
+		);
+		assert.match(
+			timeoutGuard?.guardrail?.message || "",
+			/already timed out/,
+			"a second highlight attempt on a tab that timed out must be blocked instead of burning another 12s cap",
+		);
+		assert.match(timeoutGuard?.guardrail?.message || "", /different source/);
+		assert.equal(
+			buildHighlightTimeoutTabGuardResultForTest("browser_highlight_text", "highlight_text", { tabId: 69, text: "x" }, { toolTraces: [timeoutTrace] }),
+			null,
+			"other tabs stay highlightable after one page times out",
+		);
+		assert.equal(
+			buildHighlightTimeoutTabGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				{ tabId: 68, text: "x" },
+				{ toolTraces: [{ ...timeoutTrace, error: "Original highlight text did not match" }] },
+			),
+			null,
+			"text-mismatch failures keep the normal retry-with-smaller-span path",
 		);
 		const crossTabStatusRequest = {
 			initialActiveTab: { id: 12 },

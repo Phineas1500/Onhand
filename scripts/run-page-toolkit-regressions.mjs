@@ -3452,6 +3452,23 @@ async function assertPdfHighlightPrefersVisiblePageMatch() {
 	assert.equal(highlight.pdfAnchor.textQuote.exact, "recurrent neural networks");
 }
 
+async function assertBlockedNavigationClassification() {
+	const declaration = await loadBackgroundFunction("classifyBlockedNavigation");
+	const classify = new Function(`${declaration}
+return classifyBlockedNavigation;`)();
+	const interstitial = new Error("Frame with ID 0 is showing error page");
+	assert.equal(
+		classify({ url: "http://spiff.cis.rit.edu/paper.pdf", title: "spiff.cis.rit.edu" }, interstitial).kind,
+		"insecure-site-warning",
+		"plain-HTTP interstitials must be named so the model reports them instead of silently moving on",
+	);
+	assert.match(classify({ url: "http://spiff.cis.rit.edu/paper.pdf", title: "" }, interstitial).detail, /Only the user can click Continue/);
+	assert.equal(classify({ url: "https://broken.example/paper.pdf", title: "" }, interstitial).kind, "browser-interstitial");
+	assert.equal(classify({ url: "https://pubs.aip.org/article", title: "Just a moment..." }, null).kind, "bot-challenge");
+	assert.equal(classify({ url: "https://example.com/ok", title: "A normal page" }, null), null, "real destinations must not be classified as blocked");
+	assert.equal(classify({ url: "https://example.com/ok", title: "A normal page" }, new Error("Missing host permission")), null, "permission errors are not interstitials");
+}
+
 async function assertPdfSelectionIncludesAnchor() {
 	const { dom, toolkit } = await createToolkit(`
 		<main id="viewer" class="pdfViewer">
@@ -3588,6 +3605,7 @@ async function main() {
 	await assertPdfSourceJumpReportsNearestRenderedPageWhenTargetPageMissing();
 	await assertPdfHighlightPrefersVisiblePageMatch();
 	await assertPdfSelectionIncludesAnchor();
+	await assertBlockedNavigationClassification();
 
 	console.log("Page toolkit regressions: PASS");
 }

@@ -68,6 +68,7 @@ These apply everywhere unless a later section overrides them.
 | G16 | **Tone & formatting** | Plain, scannable, **no preamble or process-narration**. Inline LaTeX (`$…$`) is fine; use display math / tables only when the content genuinely needs them (and lean against them in broad summaries). | `[INFERRED]` from G6 + Constitution |
 | G17 | **Forced-highlight retry** | Because G1 makes highlighting the default, it's fine to retry once to *land* a highlight when one is genuinely warranted — but **G7 overrides**: never let the retry manufacture a generic highlight. Better no highlight + honest note than a bad one. *(Narrowed 2026-07-29: the deterministic retry triggers only on unambiguous marker prompts — explicit anchor/evidence asks, teach/review, enumerable coverage, review markup, source navigation. Classifier-inferred comparison/claim-check shapes are excluded after false positives forced redundant revision passes on good answers. The retry's visible-revision presentation still deviates from Constitution P8 — see §9.)* | `[SETTLED]` |
 | G18 | **Follow-ups reuse anchors** | On a follow-up about already-highlighted material, **scroll to / reuse the existing highlight** rather than re-highlighting the same text. *(Confirmed & enforced 2026-07-29/30: reuse is tool-verified — the runtime calls browser_scroll_to_annotation on the reused anchor, which counts as the turn's source marker, satisfies the G17 gate, and carries tab identity for cross-tab floors.)* | `[SETTLED]` |
+| G19 | **Research scaffolding auto-closes** | Tabs a request opened that earned **no mark, note, or artifact** (search results pages, blocked sites, discarded candidates) **close automatically at turn end**. Marked sources, tabs the request merely reused, and the active tab always stay — the session's marked sources are the artifact; the scaffolding is not. | `[SETTLED 2026-07-30]` |
 
 ---
 
@@ -296,6 +297,8 @@ The `[INFERRED]` items were derived from the owner's stated philosophy rather th
 - **Notes: role-on-the-mark vs. role-in-chat** — whether disagreement/summary turns should move each mark's *role* onto a terse on-page note (truer to §1 "the marks do the talking") and shrink the chat, rather than letting the chat bullet carry the role with sparser notes. Surfaced in a 2026-07-04 calibration; **not yet decided**.
 
 ---
+
+*v2.4 — 2026-07-30 (evening): G19 added — research scaffolding tabs (request-opened, no marks/notes/artifacts) auto-close at turn end; marked sources, reused tabs, and the active tab always stay. Blocked-navigation classification shipped (security interstitials and bot walls are named to the model and reported to the user, never bypassed); transient provider errors get one quiet retry; the mark/cite contract is bidirectional (no uncited marks); G14's brake explicitly covers claim checks the open material already supports.*
 
 *v2.3 — 2026-07-30 (later): §3.13 settled — the Billah & Scanlan session showed pdf_search silently failing on an image-only scan; the viewer now diagnoses missing text layers, and region marks (scanned pages only) shipped with schema, prompt, and gate support.*
 

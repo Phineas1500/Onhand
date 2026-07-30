@@ -10654,6 +10654,46 @@ function assertSafeBrowserNavigationUrl(url) {
 	}
 }
 
+// Distinguish destinations the browser refuses to show from real pages.
+// Security interstitials (plain-HTTP warnings, TLS "connection is not
+// private") render as unscriptable chrome-error documents; bot walls
+// (Cloudflare "Just a moment...") are real pages with telltale titles. The
+// agent must report these and move on — only the user may click through a
+// security warning.
+function classifyBlockedNavigation(tab, probeError) {
+	const url = String(tab?.url || "");
+	const title = String(tab?.title || "").trim();
+	if (probeError) {
+		const message = String(probeError?.message || probeError || "");
+		if (/chrome-error:\/\/chromewebdata|showing error page/i.test(message)) {
+			const insecure = /^http:\/\//i.test(url);
+			return {
+				kind: insecure ? "insecure-site-warning" : "browser-interstitial",
+				detail: insecure
+					? "The browser is showing a not-secure warning because this site uses plain HTTP. Only the user can click Continue to site; do not retry and do not try to bypass it. Name this blocked source in the answer and use an alternative."
+					: "The browser is showing an error or security interstitial for this destination (invalid certificate, unreachable server, or similar). Only the user can click through a security warning; do not retry and do not try to bypass it. Name this blocked source in the answer and use an alternative.",
+			};
+		}
+	}
+	if (/^(just a moment|attention required|access denied|please verify you are (a )?human|checking your browser|verifying you are human)/i.test(title)) {
+		return {
+			kind: "bot-challenge",
+			detail: "The destination is showing a bot-verification challenge instead of the page. Do not attempt to solve or bypass it; use a different source or tell the user to open it manually.",
+		};
+	}
+	return null;
+}
+
+async function probeTabScriptable(tabId) {
+	if (!tabId) return null;
+	try {
+		await chrome.scripting.executeScript({ target: { tabId }, func: () => true });
+		return null;
+	} catch (error) {
+		return error;
+	}
+}
+
 async function navigateBrowser(args = {}) {
 	if (typeof args.url !== "string" || !args.url.trim()) {
 		throw new Error("navigate requires a non-empty 'url'");
@@ -12995,19 +13035,46 @@ async function handleCommand(name, args = {}) {
 				tab: simplifyTab(focusedTab),
 			};
 		}
+			case "close_scaffolding_tabs": {
+				const requested = (Array.isArray(args.tabIds) ? args.tabIds : [])
+					.map((id) => Number(id))
+					.filter((id) => Number.isFinite(id) && id > 0);
+				const closedTabIds = [];
+				for (const tabId of requested.slice(0, 20)) {
+					try {
+						const tab = await chrome.tabs.get(tabId);
+						// Never close a tab the user is looking at, wherever it is.
+						if (!tab || tab.active) continue;
+						await chrome.tabs.remove(tabId);
+						closedTabIds.push(tabId);
+					} catch {}
+				}
+				return { closedTabIds, closedCount: closedTabIds.length };
+			}
 			case "navigate": {
 				const navigation = await navigateBrowser(args);
+				const probeError = await probeTabScriptable(navigation.tab?.id);
+				const blocked = classifyBlockedNavigation(navigation.tab, probeError);
 				return {
 					tab: simplifyTab(navigation.tab),
 					navigation: {
 						createdNewTab: navigation.createdNewTab,
 						reusedExistingTab: navigation.reusedExistingTab,
 					},
+					...(blocked ? { blocked } : {}),
 				};
 			}
 			case "open_pdf_in_onhand_viewer": {
 				const tab = await resolveTargetTab(args);
-				return await withTabCommand(tab.id, () => openPdfInOnhandViewer({ ...args, tabId: tab.id }));
+				return await withTabCommand(tab.id, async () => {
+					try {
+						return await openPdfInOnhandViewer({ ...args, tabId: tab.id });
+					} catch (error) {
+						const blocked = classifyBlockedNavigation(tab, error);
+						if (blocked) throw new Error(`The PDF tab is blocked before it can load. ${blocked.detail}`);
+						throw error;
+					}
+				});
 			}
 		case "get_cookies": {
 			const tab = await resolveTargetTab(args);
