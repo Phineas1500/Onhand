@@ -3712,7 +3712,9 @@ function shouldRequirePageSourceMarkerRetry(request: any) {
 			? Math.max(3, baselineRequiredHighlights)
 			: baselineRequiredHighlights;
 	// Cross-tab prompts need marks on distinct tabs, not just two marks total.
-	const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
+	const completedCount = crossTab
+		? distinctCompletedSourceHighlightTabCount(request)
+		: Math.max(completedSourceHighlightCount(request), completedSourceHighlightTraceCount(request) + completedReusedAnchorCount(request));
 	return completedCount < requiredHighlights;
 }
 
@@ -4379,6 +4381,51 @@ function completedSourceHighlightTraceCount(request: any) {
 	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
 }
 
+// G18 tells follow-ups to reuse existing session anchors instead of
+// re-marking the page, so the marker gate credits tool-verified reuse: a
+// completed browser_scroll_to_annotation call that resolved a real
+// annotation. Reply-text [[cite:...]] markers are model claims, not tool
+// results, and deliberately earn no credit — the gate exists to not trust
+// claims.
+function isCompletedReusedAnchorTrace(trace: any) {
+	if (trace?.state !== "complete" || trace?.toolName !== "browser_scroll_to_annotation") return false;
+	return !String(trace?.resultSummary || "").toLowerCase().includes("guardrail");
+}
+
+function markerGateAnnotationId(trace: any) {
+	const direct = (trace as any)?.effectiveArgs?.annotationId || (trace as any)?.args?.annotationId;
+	if (direct) return String(direct).trim();
+	const summaryMatch = String(trace?.resultSummary || "").match(/\bannotationId:?\s*([A-Za-z0-9_-]+)/i);
+	if (summaryMatch) return summaryMatch[1];
+	const details = trace?.details || trace?.resultDetails;
+	const detailsMatch = details ? JSON.stringify(details).match(/"annotationId"\s*:\s*"([^"]+)"/) : null;
+	return detailsMatch ? detailsMatch[1] : "";
+}
+
+// Deduped against this turn's completed highlights so scrolling to a mark the
+// turn itself placed cannot double-count; scrolls with no recoverable
+// annotationId collapse onto a single credit (the stricter reading, matching
+// the tab-attribution fallback below).
+function completedReusedAnchorCount(request: any) {
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	const newHighlightAnnotationIds = new Set(
+		traces.filter(isCompletedSourceHighlightTrace).map((trace: any) => markerGateAnnotationId(trace)).filter(Boolean),
+	);
+	const reusedAnnotationIds = new Set<string>();
+	let unattributedCredit = 0;
+	for (const trace of traces) {
+		if (!isCompletedReusedAnchorTrace(trace)) continue;
+		const annotationId = markerGateAnnotationId(trace);
+		if (!annotationId) {
+			unattributedCredit = 1;
+			continue;
+		}
+		if (newHighlightAnnotationIds.has(annotationId)) continue;
+		reusedAnnotationIds.add(annotationId);
+	}
+	return reusedAnnotationIds.size + unattributedCredit;
+}
+
 // Cross-tab prompts must anchor each source tab, so a total highlight count
 // is not enough — two marks on the same page would satisfy it while the other
 // tab stays bare. Attribute each completed highlight to a tab: the result's
@@ -4389,7 +4436,11 @@ function completedSourceHighlightTraceCount(request: any) {
 // stricter reading is safe because pageSourceMarkerRetry caps the retry at a
 // single round, so the gate cannot loop.
 function distinctCompletedSourceHighlightTabCount(request: any) {
-	const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
+	// Reused anchors (completed scroll_to_annotation) count with their own
+	// tab identity, so a follow-up may satisfy one source with an existing mark.
+	const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
+		(trace: any) => isCompletedSourceHighlightTrace(trace) || isCompletedReusedAnchorTrace(trace),
+	);
 	const keys = new Set<string>();
 	for (const trace of traces) {
 		const detailsTabId = (trace?.resultDetails as any)?.tab?.id;

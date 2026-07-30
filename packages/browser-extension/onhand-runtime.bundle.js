@@ -151778,7 +151778,7 @@ function shouldRequirePageSourceMarkerRetry(request) {
   if (hasCompletedToolTrace(request, "browser_pdf_read_pages") && !crossTab) return false;
   const baselineRequiredHighlights = promptAsksForStructuredPageSourceMarker(request.displayPrompt) || promptAsksForSinglePageComparison(request.displayPrompt) || crossTab ? 2 : 1;
   const requiredHighlights = crossTab && textHasAny(ownWordsPromptText(request.displayPrompt), /\b(?:all|every|each|three|four|five)\b/) ? Math.max(3, baselineRequiredHighlights) : baselineRequiredHighlights;
-  const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : completedSourceHighlightCount(request);
+  const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request) : Math.max(completedSourceHighlightCount(request), completedSourceHighlightTraceCount(request) + completedReusedAnchorCount(request));
   return completedCount < requiredHighlights;
 }
 function buildPageSourceMarkerRetryPrompt(request, assistantText) {
@@ -151899,8 +151899,42 @@ function completedSourceHighlightCount(request) {
 function completedSourceHighlightTraceCount(request) {
   return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
 }
+function isCompletedReusedAnchorTrace(trace2) {
+  if (trace2?.state !== "complete" || trace2?.toolName !== "browser_scroll_to_annotation") return false;
+  return !String(trace2?.resultSummary || "").toLowerCase().includes("guardrail");
+}
+function markerGateAnnotationId(trace2) {
+  const direct = trace2?.effectiveArgs?.annotationId || trace2?.args?.annotationId;
+  if (direct) return String(direct).trim();
+  const summaryMatch = String(trace2?.resultSummary || "").match(/\bannotationId:?\s*([A-Za-z0-9_-]+)/i);
+  if (summaryMatch) return summaryMatch[1];
+  const details = trace2?.details || trace2?.resultDetails;
+  const detailsMatch = details ? JSON.stringify(details).match(/"annotationId"\s*:\s*"([^"]+)"/) : null;
+  return detailsMatch ? detailsMatch[1] : "";
+}
+function completedReusedAnchorCount(request) {
+  const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+  const newHighlightAnnotationIds = new Set(
+    traces.filter(isCompletedSourceHighlightTrace).map((trace2) => markerGateAnnotationId(trace2)).filter(Boolean)
+  );
+  const reusedAnnotationIds = /* @__PURE__ */ new Set();
+  let unattributedCredit = 0;
+  for (const trace2 of traces) {
+    if (!isCompletedReusedAnchorTrace(trace2)) continue;
+    const annotationId = markerGateAnnotationId(trace2);
+    if (!annotationId) {
+      unattributedCredit = 1;
+      continue;
+    }
+    if (newHighlightAnnotationIds.has(annotationId)) continue;
+    reusedAnnotationIds.add(annotationId);
+  }
+  return reusedAnnotationIds.size + unattributedCredit;
+}
 function distinctCompletedSourceHighlightTabCount(request) {
-  const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace);
+  const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
+    (trace2) => isCompletedSourceHighlightTrace(trace2) || isCompletedReusedAnchorTrace(trace2)
+  );
   const keys = /* @__PURE__ */ new Set();
   for (const trace2 of traces) {
     const detailsTabId = trace2?.resultDetails?.tab?.id;

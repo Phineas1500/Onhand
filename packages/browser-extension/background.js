@@ -4802,6 +4802,11 @@ const createPageToolkit = (options = {}) => {
 			}
 
 			/* Note card — editorial callout, pine-barred */
+			/* flow-root (a BFC) so the card can never slide under floated page
+			   figures/infoboxes: beside a float it shrinks to the free space or
+			   drops below, instead of overlapping the image the way a plain
+			   block box does when a narrow viewport (open side panel) squeezes
+			   the column. */
 			[data-onhand-note-kind="card"] {
 			  background: var(--onhand-mantle) !important;
 			  color: var(--onhand-text) !important;
@@ -4811,7 +4816,7 @@ const createPageToolkit = (options = {}) => {
 			  box-shadow: 0 1px 2px rgba(87, 82, 121, 0.06) !important;
 			  margin: 14px 0 18px !important;
 			  padding: 12px 14px !important;
-			  display: block !important;
+			  display: flow-root !important;
 			  width: fit-content !important;
 			  inline-size: fit-content !important;
 			  max-width: min(32rem, 100%) !important;

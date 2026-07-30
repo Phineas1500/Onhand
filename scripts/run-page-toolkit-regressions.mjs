@@ -1480,6 +1480,11 @@ async function assertNoteDoesNotClearFloats() {
 	const note = dom.window.document.querySelector('[data-onhand-note-kind="card"]');
 	assert.ok(note, "note card was not inserted");
 	assert.equal(dom.window.getComputedStyle(note).clear, "none", "note cards must not clear floated page media");
+	assert.equal(
+		dom.window.getComputedStyle(note).display,
+		"flow-root",
+		"note cards must establish a BFC so they cannot slide under floated figures when an open side panel narrows the column",
+	);
 	assert.equal(note.previousElementSibling?.tagName, "P", "note should be inserted directly after the highlighted paragraph");
 }
 

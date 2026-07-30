@@ -3613,6 +3613,69 @@ async function assertConstitutionPromptContract() {
 			false,
 			"completed page highlights should satisfy the teaching source-marker requirement",
 		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_scroll_to_annotation", state: "complete", effectiveArgs: { annotationId: "onhand-1-old" }, resultSummary: "Scrolled to annotationId onhand-1-old." },
+				],
+			}),
+			false,
+			"tool-verified anchor reuse (a completed scroll_to_annotation) satisfies the marker gate on follow-ups per G18",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page.",
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-2-new" },
+					{ toolName: "browser_scroll_to_annotation", state: "complete", effectiveArgs: { annotationId: "onhand-2-new" }, resultSummary: "Scrolled to annotationId onhand-2-new." },
+				],
+			}),
+			true,
+			"scrolling to a mark placed this same turn must not double-count toward the comparison floor",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Compare rejection sampling and Metropolis-Hastings on this page.",
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-2-new" },
+					{ toolName: "browser_scroll_to_annotation", state: "complete", effectiveArgs: { annotationId: "onhand-1-old" }, resultSummary: "Scrolled to annotationId onhand-1-old." },
+				],
+			}),
+			false,
+			"one fresh mark plus one reused anchor satisfies the two-mark comparison floor",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Do these papers agree?",
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text", resultDetails: { tab: { id: 5 } } },
+					{ toolName: "browser_scroll_to_annotation", state: "complete", effectiveArgs: { annotationId: "onhand-1-old" }, resultSummary: "Scrolled to annotationId onhand-1-old.", resultDetails: { tab: { id: 7 } } },
+				],
+			}),
+			false,
+			"a reused anchor in the second tab satisfies the cross-tab distinct-source floor",
+		);
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({
+				...pageTeachingWithoutSourceRequest,
+				displayPrompt: "Do these papers agree?",
+				toolTraces: [
+					...pageTeachingWithoutSourceRequest.toolTraces,
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text", resultDetails: { tab: { id: 5 } } },
+					{ toolName: "browser_scroll_to_annotation", state: "complete", effectiveArgs: { annotationId: "onhand-1-old" }, resultSummary: "Scrolled to annotationId onhand-1-old.", resultDetails: { tab: { id: 5 } } },
+				],
+			}),
+			true,
+			"cross-tab prompts still require anchors on distinct tabs even when one is reused",
+		);
 		const structuredOneHighlightRequest = {
 			...pageTeachingWithoutSourceRequest,
 			displayPrompt: "Give me a roadmap of the data structures covered on this page.",
