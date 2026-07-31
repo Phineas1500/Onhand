@@ -8030,6 +8030,19 @@
 	function narratePublishedRealtimeAnswer(markdown) {
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
 		const voicePrompt = buildConciseRealtimeSpeechPrompt("Onhand voice answer", markdown);
+		// The prompt must land as a conversation item, not only as response
+		// instructions: if the last user message is still a preamble's "say
+		// exactly this sentence", an instructions-only response repeats the
+		// preamble instead of speaking the answer.
+		sendRealtimeEvent({
+			event_id: realtimeEventId("onhand_published_answer_text"),
+			type: "conversation.item.create",
+			item: {
+				type: "message",
+				role: "user",
+				content: [{ type: "input_text", text: voicePrompt }],
+			},
+		});
 		requestRealtimeResponse(
 			"speak_published_realtime_answer",
 			{

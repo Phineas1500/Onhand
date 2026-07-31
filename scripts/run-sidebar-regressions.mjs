@@ -3461,6 +3461,21 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 
 	const finalResponse = events.filter((event) => event.type === "response.create").at(-1);
 	assert.equal(finalResponse.event_id.includes("speak_published_realtime_answer"), true, "expected queued final response to speak the Onhand answer");
+	const narrationItemIndex = events.findIndex(
+		(event) =>
+			event.type === "conversation.item.create" &&
+			String(event.item?.content?.[0]?.text || "").includes("Give a short spoken version"),
+	);
+	const preambleItemIndex = events.findIndex(
+		(event) =>
+			event.type === "conversation.item.create" &&
+			String(event.item?.content?.[0]?.text || "").includes("Say exactly this sentence"),
+	);
+	assert.ok(narrationItemIndex >= 0, "the concise narration prompt must land as a conversation item, not only response instructions");
+	assert.ok(
+		narrationItemIndex > preambleItemIndex,
+		"the narration item must come after the preamble item so the model does not repeat the preamble as the answer",
+	);
 	assert.equal(finalResponse.response?.tool_choice, "none", "expected queued final response to preserve tool_choice");
 	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected final narration transcript to be suppressed");
 	assert.match(
