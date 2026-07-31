@@ -298,6 +298,8 @@ The `[INFERRED]` items were derived from the owner's stated philosophy rather th
 
 ---
 
+*v2.6 — 2026-07-31: voice answers are spoken as a concise version — verdict first, two or three supporting sentences, ~15 seconds — while the sidebar keeps the full cited answer; draft streaming narration removed (drafts render as text only). Socratic prompts/feedback still speak their full sidebar text verbatim: they are short by design and that choice is test-pinned.*
+
 *v2.5 — 2026-07-30 (night): the bidirectional mark/cite contract gained deterministic enforcement — a turn-end sweep removes bare uncited highlights placed that turn (noted marks, reused anchors, and prior-turn marks always stay), after the prompt rule alone still orphaned roughly one mark per research turn. G12 trust refined the same evening: tabs this turn opened are trusted for in-page commands without a fresh inventory.*
 
 *v2.4 — 2026-07-30 (evening): G19 added — research scaffolding tabs (request-opened, no marks/notes/artifacts) auto-close at turn end; marked sources, reused tabs, and the active tab always stay. Blocked-navigation classification shipped (security interstitials and bot walls are named to the model and reported to the user, never bypassed); transient provider errors get one quiet retry; the mark/cite contract is bidirectional (no uncited marks); G14's brake explicitly covers claim checks the open material already supports.*

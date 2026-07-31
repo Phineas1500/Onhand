@@ -3033,15 +3033,15 @@ async function assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletio
 	const liveAnswer = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-realtime-answer");
 	assert.equal(liveAnswer, null, "expected completed direct voice answers to render only as the saved normal turn");
 	assert.equal(
-		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer") && event.response?.tool_choice === "none"),
+		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_published_realtime_answer") && event.response?.tool_choice === "none"),
 		true,
-		"expected the persisted Onhand answer to be narrated after it appears in the sidebar",
+		"expected the persisted Onhand answer to be narrated (concisely) after it appears in the sidebar",
 	);
 
 	dom.window.close();
 }
 
-async function assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice() {
+async function assertRealtimeDirectAnswerDraftStaysTextUntilSpokenSummary() {
 	const runtimeMessages = [];
 	const events = [];
 	const state = createState();
@@ -3098,18 +3098,20 @@ async function assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice() {
 		false,
 		"expected GPT Realtime not to answer the page question itself",
 	);
-	const chunkPrompt = events.find(
-		(event) =>
-			event.type === "conversation.item.create" &&
-			String(event.item?.content?.[0]?.text || "").includes("Let me read the page first."),
+	assert.equal(
+		events.some((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer_chunk")),
+		false,
+		"pending drafts must not be narrated — the spoken answer is one concise version of the final text",
 	);
-	assert.ok(chunkPrompt, "expected the first short Onhand draft sentence to be queued for Realtime speech");
-	const chunkResponse = events.find((event) => event.type === "response.create" && event.event_id?.includes("speak_onhand_answer_chunk"));
-	assert.ok(chunkResponse, "expected Realtime to speak a chunk of the Onhand draft");
-	assert.equal(chunkResponse.response?.tool_choice, "none");
-	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected spoken chunk transcript to stay out of the sidebar");
-	assert.equal(hooks.getRealtimeDebugState().onhandNarrationRequestId, "request-draft-direct");
-	assert.ok(hooks.getRealtimeDebugState().onhandNarrationCoveredChars > 0, "expected the narration cursor to advance");
+	assert.equal(
+		events.some(
+			(event) =>
+				event.type === "conversation.item.create" &&
+				String(event.item?.content?.[0]?.text || "").includes("Let me read the page first."),
+		),
+		false,
+		"no draft text may be queued for speech while the turn is pending",
+	);
 
 	dom.window.close();
 }
@@ -3451,21 +3453,47 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	await hooks.requestState();
 	await waitForSidebarTick(dom);
 
-	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, false, "expected Onhand narration chunks to use their own queue");
-	assert.equal(hooks.getRealtimeDebugState().onhandNarrationQueueLength, 1, "expected final narration chunk to queue behind the preamble");
-	assert.equal(hooks.getRealtimeDebugState().onhandNarrationRequestId, "request-preamble-direct");
+	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, true, "expected the concise final narration to queue behind the preamble response");
+	assert.equal(hooks.getRealtimeDebugState().onhandNarrationQueueLength, 0, "expected no chunked narration of the final answer");
 
 	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
 	await waitForSidebarTick(dom);
 
 	const finalResponse = events.filter((event) => event.type === "response.create").at(-1);
-	assert.equal(finalResponse.event_id.includes("speak_onhand_answer_chunk"), true, "expected queued final response to speak an Onhand chunk");
+	assert.equal(finalResponse.event_id.includes("speak_published_realtime_answer"), true, "expected queued final response to speak the Onhand answer");
 	assert.equal(finalResponse.response?.tool_choice, "none", "expected queued final response to preserve tool_choice");
 	assert.equal(hooks.getRealtimeDebugState().suppressTranscriptForResponse, true, "expected final narration transcript to be suppressed");
 	assert.match(
 		String(finalResponse.response?.instructions || ""),
-		/Speak only the provided Onhand answer excerpt/,
-		"expected queued final response to preserve exact chunk narration instructions",
+		/short spoken version/,
+		"the final answer must be spoken as a concise version, not read verbatim",
+	);
+	assert.match(
+		String(finalResponse.response?.instructions || ""),
+		/Every claim must come from the text below/,
+		"the concise spoken version must stay within the sidebar answer's claims",
+	);
+	assert.doesNotMatch(
+		String(finalResponse.response?.instructions || ""),
+		/exactly as written/,
+		"published answers must no longer be narrated verbatim",
+	);
+
+	const conciseVoiceSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
+	assert.match(
+		conciseVoiceSource,
+		/buildConciseRealtimeSpeechPrompt\("Onhand voice answer", markdown\)/,
+		"published answers must narrate through the concise speech prompt",
+	);
+	assert.doesNotMatch(
+		conciseVoiceSource,
+		/maybeQueueRealtimeDirectAnswerDraft/,
+		"draft streaming narration must stay removed — drafts render as text only",
+	);
+	assert.match(
+		conciseVoiceSource,
+		/speak a short conversational version: the direct answer first/,
+		"the realtime tutor instructions must demand a short spoken version after publishing",
 	);
 
 	dom.window.close();
@@ -5162,7 +5190,7 @@ await assertRealtimeEmptyInputBufferDoesNotDisconnect();
 await assertRealtimeIdleTimeoutDisconnectsOnlyWhenIdle();
 await assertRealtimeSessionUsesRuntimeAgentMode();
 await assertRealtimeVoiceTranscriptUsesRuntimeAgentAndNarratesCompletion();
-await assertRealtimeDirectAnswerDraftStreamsToSidebarAndVoice();
+await assertRealtimeDirectAnswerDraftStaysTextUntilSpokenSummary();
 await assertRealtimeExternalSourceRequestsCanNavigateFirst();
 await assertRealtimeLinkedNoteRequestsCanOpenLinksFirst();
 await assertRealtimeBrowserHighlightRepairsNearQuoteFromVisibleText();

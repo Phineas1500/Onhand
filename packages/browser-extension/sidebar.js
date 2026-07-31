@@ -5999,7 +5999,6 @@
 			displayTurns.push(currentTurn);
 		}
 		currentState = state;
-		maybeQueueRealtimeDirectAnswerDraft(state, currentTurn);
 		maybeSpeakCompletedRealtimeDirectAnswer(state);
 		renderMeta(state);
 		renderSessionControls(state);
@@ -7740,10 +7739,10 @@
 				"Use exact copied source spans for browser_highlight_text. Do not highlight paraphrases of your own explanation, and do not add extra highlights just to increase source count.",
 					"If the user explicitly asks to highlight a formula/equation, use browser_highlight_text with the selected formula text when available or the closest visible formula label; rendered math matches become block highlights. For ordinary source grounding where rendered math extraction is collapsed or fragmented, highlight the nearby explanatory sentence, label, or caption instead of copying broken formula text. Render a clean formula in the answer only when the intended formula is clear.",
 				"If a highlight attempt fails, retry once with a smaller exact visible span. If it still fails, clearly say what source text you read but could not anchor.",
-				"Speak the answer only after the needed tools have succeeded. Keep the sidebar answer, spoken answer, citations, and saved turn consistent.",
+				"Speak the answer only after the needed tools have succeeded. Keep the sidebar answer, citations, and saved turn consistent; the spoken answer is a faithful short version of the sidebar answer — the same claims, never a different answer.",
 				"Use publish_sidebar_answer only after any needed browser/PDF tool calls; it is never the first tool for a page-material question.",
 				"When calling publish_sidebar_answer, write the full answer in markdown. Do not publish setup phrases like 'Let me explain' or 'Here is the difference' unless the same markdown also contains the complete answer. Do not write manual citation markers like [1]; Onhand will attach citation buttons from the highlighted source.",
-				"Keep spoken answers concise, grounded, and conversational. If evidence is insufficient after using the tools, state what you can see and ask for the needed selection, page, or scroll position.",
+				"After publishing the full answer with publish_sidebar_answer, speak a short conversational version: the direct answer first, then at most two or three supporting sentences. Never read the whole sidebar text, its headings, bullets, citations, or URLs aloud. If evidence is insufficient after using the tools, state what you can see and ask for the needed selection, page, or scroll position.",
 			].join(" ");
 		}
 
@@ -7989,6 +7988,18 @@
 		].join("\n\n");
 	}
 
+	function buildConciseRealtimeSpeechPrompt(label, value) {
+		const text = canonicalRealtimeSpeechText(value);
+		return [
+			`Give a short spoken version of this ${label}. The complete text is already shown in the sidebar, so do not read it all aloud.`,
+			"Lead with the direct answer or verdict, then at most two or three short supporting sentences — conversational, around fifteen seconds of speech.",
+			"Every claim must come from the text below. Do not add facts, sources, numbers, or caveats that are not in it.",
+			"Do not read headings, bullet markers, citations, DOIs, or URLs aloud, and do not describe the sidebar or its formatting.",
+			"Text:",
+			text,
+		].join("\n\n");
+	}
+
 	function realtimePublishedAnswerLooksSubstantive(markdown, turn = realtimeActiveVoiceTurn) {
 		if (!isRealtimeOnlyVoiceMode() || turn?.kind !== "realtime_response" || !hasRealtimePageMaterialContext(currentState)) return true;
 		const text = normalizeRealtimeTranscriptText(canonicalRealtimeSpeechText(markdown));
@@ -8017,7 +8028,7 @@
 
 	function narratePublishedRealtimeAnswer(markdown) {
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
-		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand voice answer", markdown);
+		const voicePrompt = buildConciseRealtimeSpeechPrompt("Onhand voice answer", markdown);
 		requestRealtimeResponse(
 			"speak_published_realtime_answer",
 			{
@@ -9297,15 +9308,6 @@
 		}
 	}
 
-	function maybeQueueRealtimeDirectAnswerDraft(state = currentState, currentTurn = null) {
-		const requestId = realtimePendingDirectAnswerRequestId;
-		if (!requestId || realtimeNarratedDirectAnswerRequestIds.has(requestId)) return;
-		if (state?.activeRequestId !== requestId) return;
-		const turn = currentTurn?.id === requestId ? currentTurn : null;
-		if (!turn?.reply || !turn.pending) return;
-		queueRealtimeOnhandNarrationFromDraft(requestId, turn.reply, { final: false });
-	}
-
 	async function startRealtimeDirectAnswer(prompt, existingVoiceTurn = null) {
 		const text = String(prompt || "").trim();
 		if (!text) throw new Error("answer_directly requires a prompt.");
@@ -9360,7 +9362,7 @@
 		if (!reply) return;
 		const pendingVoiceTurnId = realtimePendingDirectAnswerVoiceTurnId;
 		realtimeNarratedDirectAnswerRequestIds.add(requestId);
-		queueRealtimeOnhandNarrationFromDraft(requestId, reply, { final: true });
+		narratePublishedRealtimeAnswer(reply);
 		clearRealtimeAnswerForTurn(pendingVoiceTurnId ? { id: pendingVoiceTurnId } : null);
 		renderState(state || {});
 		realtimePendingDirectAnswerRequestId = "";
