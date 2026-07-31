@@ -7160,6 +7160,8 @@
 			const samples = new Uint8Array(analyser.fftSize);
 			let loudFrames = 0;
 			let quietFrames = 0;
+			let bargeInFrames = 0;
+			let wasAssistantSpeaking = false;
 			realtimeMicMonitorStartedAt = Date.now();
 			realtimeMicMonitorFrames = 0;
 			realtimeMicNoiseFloorRms = 0;
@@ -7168,6 +7170,12 @@
 			realtimeMicMonitorTimer = setInterval(() => {
 				if (!realtimeConnected) return;
 				const assistantSpeaking = realtimeResponseInProgress || realtimeOutputAudioPlaying;
+				if (assistantSpeaking !== wasAssistantSpeaking) {
+					// The tail of the user's own question must not carry into the
+					// answer window as instant barge-in credit.
+					wasAssistantSpeaking = assistantSpeaking;
+					bargeInFrames = 0;
+				}
 				if (context.state === "suspended") {
 					void context.resume().catch(() => {});
 					if (Date.now() - realtimeMicMonitorStartedAt > 3000 && canUpdateRealtimeMicIdleStatus()) {
@@ -7193,9 +7201,17 @@
 					if (assistantSpeaking) {
 						// Server semantic VAD misses a share of overlapped speech
 						// (and deliberately ignores backchannels), so sustained
-						// local speech while Onhand talks forces the interrupt.
-						if (loudFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES && Date.now() - realtimeLastLocalBargeInAt > 1500) {
+						// local speech while Onhand is audibly talking forces the
+						// interrupt. Silent generation is exempt: cancelling there
+						// kills the answer's speech before it ever starts.
+						if (!realtimeOutputAudioPlaying) {
+							bargeInFrames = 0;
+							return;
+						}
+						bargeInFrames += 1;
+						if (bargeInFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES && Date.now() - realtimeLastLocalBargeInAt > 1500) {
 							realtimeLastLocalBargeInAt = Date.now();
+							bargeInFrames = 0;
 							forceRealtimeLocalBargeIn();
 						}
 						return;
@@ -7214,6 +7230,7 @@
 				}
 				if (assistantSpeaking) {
 					loudFrames = 0;
+					bargeInFrames = 0;
 					return;
 				}
 				if (!realtimeLocalSpeechActive && canUpdateRealtimeMicIdleStatus() && Date.now() - realtimeMicLastIdleStatusAt > REALTIME_MIC_IDLE_STATUS_MS) {

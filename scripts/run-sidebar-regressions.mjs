@@ -2422,8 +2422,18 @@ async function assertRealtimeLocalBargeIn() {
 	);
 	assert.match(
 		sidebarSource,
-		/loudFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES[\s\S]{0,200}forceRealtimeLocalBargeIn\(\)/,
+		/bargeInFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES[\s\S]{0,220}forceRealtimeLocalBargeIn\(\)/,
 		"sustained overlapped speech must schedule the forced interrupt",
+	);
+	assert.match(
+		sidebarSource,
+		/if \(!realtimeOutputAudioPlaying\) \{\s*bargeInFrames = 0;\s*return;\s*\}/,
+		"forced barge-in must only arm while audio is audibly playing — cancelling silent generation mutes the answer",
+	);
+	assert.match(
+		sidebarSource,
+		/assistantSpeaking !== wasAssistantSpeaking[\s\S]{0,180}bargeInFrames = 0;/,
+		"the barge-in counter must reset when the assistant starts speaking so the user's own question cannot carry over",
 	);
 
 	dom.window.close();
