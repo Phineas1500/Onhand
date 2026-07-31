@@ -10,15 +10,16 @@ completions to OpenRouter with Onhand's key.
 - DeepSeek V4 Flash passed the Onhand behavioral matrix (anchored
   answers, learning mode with checks, citation chasing, homework
   refusal) at roughly a cent per turn measured through OpenRouter.
-- Image-bearing requests route server-side to Mistral Small 3.2 because
-  DeepSeek V4 Flash does not support image input. The extension treats
+- Image-bearing requests route server-side to Mistral Small 3.2, the
+  tier's dedicated visual model. The extension treats
   that visual route as a 128K-context path, compacts image-bearing
   agent transcripts, and downscales/compresses retained images before
   the next free-tier model call.
-- The worker pins OpenRouter routing to US hosts (`deepinfra`,
-  `parasail`, `novita`, `wandb`) so free-tier pages and PDFs never
-  transit PRC-hosted APIs, and so only hosts with validated tool-call
-  behavior serve requests.
+- The worker pins OpenRouter routing per model: the GPT-5.6 Luna text
+  route is served by OpenAI itself, and the Mistral visual route stays on
+  vetted US hosts (`deepinfra`, `parasail`, `novita`, `wandb`) — so
+  free-tier pages and PDFs never transit PRC-hosted APIs and only hosts
+  with validated tool-call behavior serve requests.
 - Devices are identified by an anonymous token issued at first use; no
   accounts, emails, or page content are stored. The worker keeps only
   daily request counters.

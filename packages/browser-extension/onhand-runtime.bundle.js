@@ -148944,7 +148944,7 @@ var GOOGLE_API_MODEL = "gemini-2.5-flash";
 var OPENROUTER_API_PROVIDER = "openrouter";
 var OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 var ONHAND_FREE_PROVIDER = "onhand-free";
-var ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
+var ONHAND_FREE_MODEL = "openai/gpt-5.6-luna";
 var ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1048576;
 var ONHAND_FREE_VISUAL_CONTEXT_WINDOW = 131072;
 var ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT = 2;
@@ -150469,7 +150469,7 @@ async function buildFreeTierModel() {
   const quotaBypassSecret = await getFreeTierQuotaBypassSecret();
   return {
     id: ONHAND_FREE_MODEL,
-    name: "Onhand Free (DeepSeek + Mistral Vision)",
+    name: "Onhand Free (GPT-5.6 Luna + Mistral Vision)",
     api: "openai-completions",
     provider: ONHAND_FREE_PROVIDER,
     baseUrl,

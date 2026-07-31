@@ -17,10 +17,16 @@
 //
 // Secrets/bindings: OPENROUTER_API_KEY (secret), FREE_TIER_KV (KV).
 
-const FREE_TIER_TEXT_MODEL = "deepseek/deepseek-v4-flash";
+const FREE_TIER_TEXT_MODEL = "openai/gpt-5.6-luna";
 const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
 const ALLOWED_MODELS = new Set([FREE_TIER_TEXT_MODEL]);
-const ALLOWED_OPENROUTER_PROVIDERS = ["deepinfra", "parasail", "novita", "wandb"];
+// Provider pinning is per-model: Luna is served by OpenAI itself (US-hosted,
+// no PRC transit, tool calls validated in the scenario evals); the visual
+// route keeps the vetted US host set that serves Mistral.
+const ALLOWED_OPENROUTER_PROVIDERS_BY_MODEL = {
+	"openai/gpt-5.6-luna": ["openai"],
+	"mistralai/mistral-small-3.2-24b-instruct": ["deepinfra", "parasail", "novita", "wandb"],
+};
 const UPSTREAM_FALLBACK_STATUSES = new Set([404]);
 const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
@@ -30,7 +36,8 @@ const DEFAULT_DAILY_COST_CAP_USD = 5;
 const DEFAULT_DAILY_REQUEST_CAP = 80;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
-const DEFAULT_HEAVY_TURN_COST_USD = 0.005;
+// Tuned for Luna pricing (~2x DeepSeek per-turn realized cost); env-overridable.
+const DEFAULT_HEAVY_TURN_COST_USD = 0.01;
 const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
 const DAILY_COUNTER_TTL_SECONDS = 60 * 60 * 48;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
@@ -389,7 +396,7 @@ function prepareOpenRouterRequestBody(body, model) {
 	next.model = model;
 	next.max_tokens = Math.min(Number(next.max_tokens || MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
 	// Server-side routing policy always wins over anything client-supplied.
-	next.provider = { only: ALLOWED_OPENROUTER_PROVIDERS };
+	next.provider = { only: ALLOWED_OPENROUTER_PROVIDERS_BY_MODEL[model] || ["openai"] };
 	delete next.transforms;
 	return next;
 }

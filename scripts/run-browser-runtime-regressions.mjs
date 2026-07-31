@@ -320,7 +320,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(validateProviderApiKey("onhand-free", "").ok, true, "keyless provider should validate without a key");
 	assert.ok(getProviderModelOptions("openrouter").some((model) => model.id === "deepseek/deepseek-v4-flash"), "openrouter should offer deepseek v4 flash");
 	assert.ok(getProviderModelOptions("openrouter").length <= 5, "openrouter model options should stay curated");
-	assert.equal(getProviderModelOptions("onhand-free")[0].id, "deepseek/deepseek-v4-flash", "free tier should pin its model");
+	assert.equal(getProviderModelOptions("onhand-free")[0].id, "openai/gpt-5.6-luna", "free tier should pin its model");
 	assert.deepEqual(getProviderModelOptions("onhand-free")[0].input, ["text", "image"], "free tier must preserve image payloads for server-side visual routing");
 	const codexModelIds = getProviderModelOptions("openai-codex").map((model) => model.id);
 	assert.deepEqual(codexModelIds.slice(0, 3), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], "Codex should offer all GPT-5.6 tiers");

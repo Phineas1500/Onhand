@@ -21,7 +21,8 @@ DAILY_COST_CAP_USD = "5"
 TURN_MODEL_CALL_CAP = "50"
 # Ops warnings for turns that are unusually expensive or tool-call heavy.
 HEAVY_TURN_MODEL_CALLS = "10"
-HEAVY_TURN_COST_USD = "0.005"
+# Tuned for Luna pricing (~2x DeepSeek per-turn realized cost).
+HEAVY_TURN_COST_USD = "0.01"
 HEAVY_TURN_TOKENS = "100000"
 REGISTRATIONS_PER_IP_PER_DAY = "5"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"

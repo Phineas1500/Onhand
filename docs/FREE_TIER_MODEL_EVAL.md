@@ -1,5 +1,15 @@
 # Free Tier Model Eval
 
+> **Default switched 2026-07-31:** the text route now runs `openai/gpt-5.6-luna`
+> (served by OpenAI upstream). The deterministic battery scored it a tie with
+> DeepSeek V4 Flash; the decision came from qualitative scenario evals (real
+> extension, real pages): equal substance, far better research discipline —
+> no narration leaks, no fabricated identifiers, flawless scanned-PDF region
+> marking. DeepSeek V4 Flash remains the cost control for future comparisons.
+> The G14 self-initiated source-fetch works on Luna after the 2026-07-31
+> grounding-rule rewrite (verified 3/3 on the honesty probe through the
+> deployed worker).
+
 Use this loop before changing the model that powers Onhand Free. It measures the
 things that matter for this product instead of only comparing token prices:
 anchored page answers, browser tool calls, learning-mode coaching, homework

@@ -411,7 +411,7 @@ const GOOGLE_API_MODEL = "gemini-2.5-flash";
 const OPENROUTER_API_PROVIDER = "openrouter";
 const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_PROVIDER = "onhand-free";
-const ONHAND_FREE_MODEL = "deepseek/deepseek-v4-flash";
+const ONHAND_FREE_MODEL = "openai/gpt-5.6-luna";
 const ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1048576;
 const ONHAND_FREE_VISUAL_CONTEXT_WINDOW = 131072;
 const ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT = 2;
@@ -2219,7 +2219,7 @@ async function buildFreeTierModel() {
 	// to the hosted visual model server-side.
 	return {
 		id: ONHAND_FREE_MODEL,
-		name: "Onhand Free (DeepSeek + Mistral Vision)",
+		name: "Onhand Free (GPT-5.6 Luna + Mistral Vision)",
 		api: "openai-completions",
 		provider: ONHAND_FREE_PROVIDER,
 		baseUrl,
