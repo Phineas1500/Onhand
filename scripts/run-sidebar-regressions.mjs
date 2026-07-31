@@ -2333,6 +2333,50 @@ async function assertRealtimeMicMuteControl() {
 	dom.window.close();
 }
 
+async function assertRealtimeBargeInClearsOutputAudio() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), runtimeMessages);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	assert.ok(hooks?.handleRealtimeServerEvent, "expected realtime server event test hook");
+
+	const sent = [];
+	hooks.setRealtimeDataChannel({ readyState: "open", send: (raw) => sent.push(JSON.parse(raw)) });
+	hooks.setRealtimeConnected(true);
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "output_audio_buffer.started" }));
+	assert.equal(hooks.getRealtimeDebugState().outputAudioPlaying, true, "output buffer playback must be tracked");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+	assert.equal(
+		sent.filter((event) => event.type === "output_audio_buffer.clear").length,
+		1,
+		"user speech during buffered playback must clear the output audio buffer (late barge-in kept playing otherwise)",
+	);
+
+	sent.length = 0;
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+	assert.equal(
+		sent.some((event) => event.type === "output_audio_buffer.clear"),
+		false,
+		"no redundant clear when nothing is playing (the server rejects it with an error)",
+	);
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "output_audio_buffer.started" }));
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "output_audio_buffer.stopped" }));
+	assert.equal(hooks.getRealtimeDebugState().outputAudioPlaying, false, "stopped playback must reset the tracking flag");
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({ type: "error", error: { message: "Error clearing output audio buffer: no active response" } }),
+	);
+	assert.doesNotMatch(
+		hooks.getRealtimeDebugState().status || "",
+		/Voice error/,
+		"an output-buffer error must not tear down the voice session",
+	);
+
+	dom.window.close();
+}
+
 async function assertRealtimeVoiceDisabledState() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -5027,6 +5071,7 @@ await assertLearningSessionPanelSelfHealsSourceJump();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
+await assertRealtimeBargeInClearsOutputAudio();
 await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();

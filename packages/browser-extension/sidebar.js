@@ -212,6 +212,7 @@
 	let realtimeManualVoiceCommitPending = false;
 	let realtimePendingTranscriptionItemId = "";
 	let realtimeResponseInProgress = false;
+	let realtimeOutputAudioPlaying = false;
 	let realtimeResponseCreateQueued = false;
 	let realtimeQueuedResponseRequest = null;
 	let realtimeResponseVoiceTurnId = "";
@@ -9657,6 +9658,11 @@
 				setRealtimeStatus("OpenAI received no mic audio");
 				return;
 			}
+			if (/output audio buffer/i.test(message)) {
+				// A redundant output_audio_buffer.clear is harmless; it must not
+				// tear down the whole voice session.
+				return;
+			}
 			stopRealtimeVoice();
 			setRealtimeStatus("Voice error", message);
 			return;
@@ -9665,10 +9671,30 @@
 			setRealtimeReadyStatus();
 			return;
 		}
+		if (event.type === "output_audio_buffer.started") {
+			realtimeOutputAudioPlaying = true;
+			return;
+		}
+		if (event.type === "output_audio_buffer.stopped" || event.type === "output_audio_buffer.cleared") {
+			realtimeOutputAudioPlaying = false;
+			return;
+		}
 		if (event.type === "input_audio_buffer.speech_started") {
 			clearRealtimeVoiceFallback();
 			pauseRealtimePendingTranscriptFlush();
 			clearRealtimeOnlyVoiceResponse();
+			if (realtimeOutputAudioPlaying && isRealtimeOnlyVoiceMode()) {
+				// interrupt_response only cancels a response that is still
+				// generating. A finished answer keeps playing from the server's
+				// output audio buffer, so late barge-in must clear it explicitly.
+				realtimeOutputAudioPlaying = false;
+				try {
+					sendRealtimeEvent({
+						event_id: realtimeEventId("onhand_clear_output_audio"),
+						type: "output_audio_buffer.clear",
+					});
+				} catch {}
+			}
 			realtimeServerSpeechSeenAt = Date.now();
 			if (
 				realtimeActiveVoiceTurn &&
@@ -9984,6 +10010,7 @@
 		realtimeHandledCallIds.clear();
 		realtimeRestartAfterMicPermission = false;
 		realtimeResponseInProgress = false;
+		realtimeOutputAudioPlaying = false;
 		realtimeResponseCreateQueued = false;
 		realtimeQueuedResponseRequest = null;
 		realtimeResponseVoiceTurnId = "";
@@ -10797,6 +10824,7 @@
 			getRealtimeDebugState() {
 				return {
 					micMuted: realtimeMicMuted,
+					outputAudioPlaying: realtimeOutputAudioPlaying,
 					muteButtonHidden: realtimeMuteButtonEl ? realtimeMuteButtonEl.hidden : true,
 					connected: realtimeConnected,
 					connecting: realtimeConnecting,
