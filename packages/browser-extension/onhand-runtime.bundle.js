@@ -155286,8 +155286,16 @@ function collectResearchScaffoldingTabIds(request) {
   const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
   const openedTabIds = /* @__PURE__ */ new Set();
   for (const trace2 of traces) {
-    if (trace2?.state !== "complete" || trace2?.toolName !== "browser_navigate") continue;
-    if (trace2?.resultDetails?.navigation?.createdNewTab !== true) continue;
+    if (trace2?.state !== "complete") continue;
+    const toolName = String(trace2?.toolName || "");
+    if (toolName === "browser_navigate") {
+      if (trace2?.resultDetails?.navigation?.createdNewTab !== true) continue;
+    } else if (toolName === "browser_open_pdf_in_onhand_viewer") {
+      const details = trace2?.resultDetails || {};
+      if (details.opened !== true || details.alreadyOpen === true || details.replacedCurrentTab === true) continue;
+    } else {
+      continue;
+    }
     const tabId = traceTargetTabId(trace2);
     if (tabId > 0) openedTabIds.add(tabId);
   }

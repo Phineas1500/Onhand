@@ -3255,6 +3255,17 @@ async function assertConstitutionPromptContract() {
 			"the initially active tab never closes even if a trace claims the request created it",
 		);
 		assert.deepEqual(collectResearchScaffoldingTabIdsForTest({ toolTraces: [] }), [], "no created tabs, no cleanup");
+		assert.deepEqual(
+			collectResearchScaffoldingTabIdsForTest({
+				initialActiveTab: { id: 10 },
+				toolTraces: [
+					{ toolName: "browser_open_pdf_in_onhand_viewer", state: "complete", resultDetails: { tab: { id: 34 }, opened: true, alreadyOpen: false, replacedCurrentTab: false } },
+					{ toolName: "browser_open_pdf_in_onhand_viewer", state: "complete", resultDetails: { tab: { id: 35 }, opened: false, alreadyOpen: true, replacedCurrentTab: false } },
+				],
+			}),
+			[34],
+			"detached viewer opens create tabs without navigate traces; unmarked ones must still close at turn end",
+		);
 		assert.equal(typeof collectUncitedTurnMarkRemovalsForTest, "function", "uncited mark sweep export is missing");
 		const sweepCreatedAtMs = Date.parse("2026-07-30T12:00:00.000Z");
 		const sweepId = (stampOffsetMs, suffix) => `onhand-${sweepCreatedAtMs + stampOffsetMs}-${suffix}`;

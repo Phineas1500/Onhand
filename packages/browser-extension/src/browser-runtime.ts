@@ -9154,8 +9154,19 @@ function collectResearchScaffoldingTabIds(request: any) {
 	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
 	const openedTabIds = new Set<number>();
 	for (const trace of traces) {
-		if (trace?.state !== "complete" || trace?.toolName !== "browser_navigate") continue;
-		if (trace?.resultDetails?.navigation?.createdNewTab !== true) continue;
+		if (trace?.state !== "complete") continue;
+		const toolName = String(trace?.toolName || "");
+		if (toolName === "browser_navigate") {
+			if (trace?.resultDetails?.navigation?.createdNewTab !== true) continue;
+		} else if (toolName === "browser_open_pdf_in_onhand_viewer") {
+			// Detached pdfUrl-only opens create the PDF's tab themselves with no
+			// navigate trace, so cleanup must learn tabs from viewer-open results
+			// too — otherwise discarded PDF candidates outlive the turn unmarked.
+			const details: any = trace?.resultDetails || {};
+			if (details.opened !== true || details.alreadyOpen === true || details.replacedCurrentTab === true) continue;
+		} else {
+			continue;
+		}
 		const tabId = traceTargetTabId(trace);
 		if (tabId > 0) openedTabIds.add(tabId);
 	}
