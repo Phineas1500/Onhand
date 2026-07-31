@@ -3805,11 +3805,11 @@ async function withDebuggerTarget(target, fn) {
 	return await trackedTask;
 }
 
-async function withTabCommand(tabId, fn) {
+async function withTabCommand(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS) {
 	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = withOperationTimeout(
 		previousTask.catch(() => {}).then(() => Promise.resolve().then(fn)),
-		TAB_COMMAND_TIMEOUT_MS,
+		timeoutMs,
 		`Timed out waiting for page command on tab ${tabId}`,
 	);
 	const trackedTask = scheduledTask.finally(() => {
@@ -10766,6 +10766,17 @@ async function probeInlineOnhandPdfViewerStatus(tabId, pdfUrl) {
 	return null;
 }
 
+function shouldDetachPdfViewerOpenFromSourceTab(args = {}) {
+	// Only http(s) candidates detach: an explicit file: pdfUrl is trusted
+	// solely against the file already open in the source tab, and explicit
+	// tab targeting (tabId/titleContains/urlContains) means the model wants
+	// that tab as the source.
+	if (typeof args.tabId === "number") return false;
+	if (args.newTab !== true) return false;
+	if (String(args.titleContains || "").trim() || String(args.urlContains || "").trim()) return false;
+	return Boolean(normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: false }));
+}
+
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
@@ -10962,7 +10973,7 @@ async function openPdfInOnhandViewer(args = {}) {
 				inlineViewer,
 				alreadyOpen: sourceTab.url === pdfUrl,
 				opened: true,
-				replacedCurrentTab: args.newTab !== true,
+				replacedCurrentTab: args.newTab !== true && args.detachedNewTab !== true,
 				preservedSourceUrl: true,
 				pageLocationDiagnostics: diagnostics,
 			};
@@ -13065,6 +13076,34 @@ async function handleCommand(name, args = {}) {
 				};
 			}
 			case "open_pdf_in_onhand_viewer": {
+				// A pdfUrl-only newTab open has no meaningful source tab: resolving
+				// one falls back to whatever tab is active, so the whole open (PDF
+				// load + viewer install) must finish inside that unrelated tab's
+				// command budget while selection/page probes aim at it. Give the
+				// PDF its own tab up front and serialize there instead.
+				if (shouldDetachPdfViewerOpenFromSourceTab(args)) {
+					const detachedTab = await chrome.tabs.create({
+						active: args.active !== false,
+						...(typeof args.windowId === "number" ? { windowId: args.windowId } : {}),
+					});
+					const openTimeoutMs = clampNumber(args.timeoutMs, 15000, { min: 100, max: 120000 }) * 2 + 5000;
+					return await withTabCommand(detachedTab.id, async () => {
+						try {
+							return await openPdfInOnhandViewer({
+								...args,
+								tabId: detachedTab.id,
+								newTab: false,
+								detachedNewTab: true,
+								disableSelectionHandoff: true,
+							});
+						} catch (error) {
+							const currentTab = await chrome.tabs.get(detachedTab.id).catch(() => detachedTab);
+							const blocked = classifyBlockedNavigation(currentTab, error);
+							if (blocked) throw new Error(`The PDF tab is blocked before it can load. ${blocked.detail}`);
+							throw error;
+						}
+					}, openTimeoutMs);
+				}
 				const tab = await resolveTargetTab(args);
 				return await withTabCommand(tab.id, async () => {
 					try {

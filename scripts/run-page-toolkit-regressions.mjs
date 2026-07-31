@@ -55,6 +55,34 @@ async function loadFunctionFromFile(relativePath, functionName) {
 	assert.fail(`${functionName} body end not found`);
 }
 
+async function assertDetachedPdfViewerOpenRouting() {
+	const functionNames = ["normalizePdfUrlCandidate", "shouldDetachPdfViewerOpenFromSourceTab"];
+	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
+	const helpers = new Function(`${declarations.join("\n")}\nreturn { ${functionNames.join(", ")} };`)();
+	const detach = helpers.shouldDetachPdfViewerOpenFromSourceTab;
+
+	assert.equal(detach({ pdfUrl: "https://example.test/paper.pdf", newTab: true }), true, "pdfUrl-only newTab opens must detach from the active tab");
+	assert.equal(detach({ pdfUrl: "https://example.test/paper.pdf", newTab: true, tabId: 12 }), false, "an explicit tabId keeps the source tab");
+	assert.equal(detach({ pdfUrl: "https://example.test/paper.pdf" }), false, "without newTab the open converts the source tab");
+	assert.equal(detach({ newTab: true }), false, "no pdfUrl means the source tab is the PDF");
+	assert.equal(detach({ pdfUrl: "file:///Users/me/a.pdf", newTab: true }), false, "file: pdfUrl stays tied to the source tab trust check");
+	assert.equal(detach({ pdfUrl: "https://example.test/paper.pdf", newTab: true, urlContains: "arxiv" }), false, "explicit tab targeting keeps the source tab");
+
+	const backgroundSource = await readSourceFile("packages/browser-extension/background.js");
+	assert.ok(
+		backgroundSource.includes("if (shouldDetachPdfViewerOpenFromSourceTab(args)) {"),
+		"open_pdf_in_onhand_viewer command must route detached opens before resolving a source tab",
+	);
+	assert.ok(
+		backgroundSource.includes("newTab: false,\n\t\t\t\t\t\t\t\tdetachedNewTab: true,\n\t\t\t\t\t\t\t\tdisableSelectionHandoff: true,"),
+		"detached opens must convert the fresh tab in place and skip selection handoff",
+	);
+	assert.ok(
+		backgroundSource.includes("async function withTabCommand(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS)"),
+		"withTabCommand must accept a per-command timeout so detached PDF opens outlive the 15s default",
+	);
+}
+
 async function assertPdfViewerHandoffHelpers() {
 	const functionNames = [
 		"isOwnExtensionPdfViewerUrl",
@@ -3503,6 +3531,7 @@ async function assertPdfSelectionIncludesAnchor() {
 
 async function main() {
 	await assertPdfViewerHandoffHelpers();
+	await assertDetachedPdfViewerOpenRouting();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();
