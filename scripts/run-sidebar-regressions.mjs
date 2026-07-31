@@ -2289,6 +2289,50 @@ async function assertRealtimeMicPickerConstrainsSelectedDevice() {
 	dom.window.close();
 }
 
+async function assertRealtimeMicMuteControl() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), runtimeMessages);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	assert.ok(hooks?.setRealtimeMicMuted, "expected mic mute test hook");
+
+	assert.equal(hooks.getRealtimeDebugState().muteButtonHidden, true, "mute control must stay hidden while voice is idle");
+
+	const track = { enabled: true };
+	hooks.setRealtimeMediaStream({ getAudioTracks: () => [track] });
+	hooks.setRealtimeConnected(true);
+	assert.equal(hooks.getRealtimeDebugState().muteButtonHidden, false, "mute control appears during a live session");
+
+	hooks.setRealtimeMicMuted(true);
+	assert.equal(track.enabled, false, "muting must disable the mic track so side conversation cannot trigger turns");
+	assert.equal(hooks.getRealtimeDebugState().micMuted, true);
+	assert.match(hooks.getRealtimeDebugState().status, /Mic muted — still speaking/, "muted state must say the answer will still be spoken");
+
+	const sentWhileMuted = [];
+	hooks.setRealtimeDataChannel({ readyState: "open", send: (raw) => sentWhileMuted.push(JSON.parse(raw)) });
+	assert.equal(hooks.commitRealtimeVoiceFallback(), false, "muted sessions must never manually commit the input buffer (empty-buffer API error)");
+	hooks.scheduleRealtimeVoiceFallbackCommit();
+	assert.equal(sentWhileMuted.some((event) => event.type === "input_audio_buffer.commit"), false, "no commit events may be sent while muted");
+
+	hooks.setRealtimeMicMuted(false);
+	assert.equal(track.enabled, true, "unmuting must re-enable the mic track");
+	assert.match(hooks.getRealtimeDebugState().status, /Voice ready/, "unmuting returns to the ready status");
+
+	hooks.setRealtimeConnected(true);
+	hooks.setRealtimeActiveVoiceTurn({ id: "turn-1", pending: true });
+	assert.equal(hooks.expireRealtimeIdleTimeout(), false, "idle expiry must defer while a backend voice turn is pending, or the answer arrives as silent text");
+	hooks.setRealtimeActiveVoiceTurn(null);
+	assert.equal(hooks.expireRealtimeIdleTimeout(), true, "idle expiry still ends truly idle sessions");
+
+	hooks.setRealtimeConnected(false);
+	assert.equal(hooks.getRealtimeDebugState().muteButtonHidden, true, "mute control hides when the session ends");
+
+	const sidebarSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
+	assert.match(sidebarSource, /\.onhand-row \.ctl\[hidden\] \{\s*display: none;/, "hidden .ctl buttons must actually be hidden (author display beats the hidden attribute)");
+	assert.match(sidebarSource, /Voice ended — answer shown in the panel/, "dropped speak requests must surface a status instead of silently losing the audio");
+
+	dom.window.close();
+}
+
 async function assertRealtimeVoiceDisabledState() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -3255,9 +3299,14 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	const preamblePrompt = events.find(
 		(event) =>
 			event.type === "conversation.item.create" &&
-			String(event.item?.content?.[0]?.text || "").includes('Say exactly this sentence, with no extra words: "Let me ground that in the page."'),
+			/Say exactly this sentence, with no extra words: "(One sec|Let me|Give me)[^"]+"/.test(String(event.item?.content?.[0]?.text || "")),
 	);
-	assert.ok(preamblePrompt, "expected a delayed fixed preamble prompt while direct answer is pending");
+	assert.ok(preamblePrompt, "expected a delayed rotated preamble prompt while direct answer is pending");
+	assert.doesNotMatch(
+		String(preamblePrompt.item?.content?.[0]?.text || ""),
+		/ground|anchor/i,
+		"voice preambles must not use grounding jargon",
+	);
 	const preambleResponse = events.find((event) => event.type === "response.create" && event.event_id?.includes("backend_preamble"));
 	assert.ok(preambleResponse, "expected delayed preamble to create a realtime response");
 	assert.equal(preambleResponse.response?.tool_choice, "none", "expected preamble to disable tool calls");
@@ -4977,6 +5026,7 @@ await assertLearningSessionPanelReportsSourceFailure();
 await assertLearningSessionPanelSelfHealsSourceJump();
 await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
+await assertRealtimeMicMuteControl();
 await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
@@ -5005,4 +5055,13 @@ await assertRealtimeDirectAnswerPreambleQueuesFinalNarration();
 await assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn();
 await assertRealtimeStandaloneVoiceAnswerPersistsToSession();
 await assertRealtimeAnswerClearsWhenSessionChanges();
+
+// Voice preambles must rotate and stay free of grounding jargon (the runtime
+// bans "let me ground this" as process narration; the spoken layer follows).
+{
+	const sidebarSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
+	assert.doesNotMatch(sidebarSource, /Let me ground that in the page/, "the banned grounding preamble must not return to the voice script");
+	assert.match(sidebarSource, /REALTIME_PREAMBLE_LINES/, "voice preambles should rotate instead of repeating one scripted line");
+}
+
 console.log("sidebar regressions passed");

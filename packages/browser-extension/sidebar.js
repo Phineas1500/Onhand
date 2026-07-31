@@ -3096,6 +3096,9 @@
 				font: 10.5px var(--rm-font-mono);
 				color: var(--rm-subtext);
 			}
+			.onhand-row .ctl[hidden] {
+				display: none;
+			}
 			.onhand-row .ctl {
 				display: inline-flex;
 				align-items: center;
@@ -3173,6 +3176,11 @@
 			.onhand-row .voice.on.error,
 			.onhand-row .voice.connecting.error {
 				color: var(--rm-base);
+			}
+			.onhand-row .ctl.voice-mute[aria-pressed="true"] {
+				background: #b4637a;
+				border-color: #b4637a;
+				color: #fffaf3;
 			}
 			.onhand-realtime-status {
 				flex: 1 1 82px;
@@ -3584,6 +3592,7 @@
 					<input id="fileInput" type="file" multiple hidden />
 					<div id="realtimeVoiceControl" class="onhand-voice-control">
 						<button id="realtimeVoiceButton" class="ctl voice" type="button" aria-label="Start realtime voice tutor" title="Start realtime voice tutor"><svg class="onhand-voice-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /><path d="M12 19v3" /><path d="M8 22h8" /></svg><span class="onhand-sr-only">Voice</span></button>
+						<button id="realtimeMuteButton" class="ctl voice-mute" type="button" aria-pressed="false" aria-label="Mute your mic — Onhand keeps speaking" title="Mute your mic — Onhand keeps speaking" hidden><svg class="onhand-voice-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M5 10v2a7 7 0 0 0 14 0v-2" /><path d="M12 19v3" /><path d="M8 22h8" /><path d="M4 4l16 16" /></svg><span class="onhand-sr-only">Mute mic</span></button>
 						<label id="realtimeMicPicker" class="onhand-mic-picker" title="Realtime microphone input" hidden>
 							<span id="realtimeMicLabel" class="onhand-mic-label">Mic</span>
 							<select id="realtimeMicSelect" class="mic" aria-label="Realtime microphone input" title="Realtime microphone input" hidden></select>
@@ -3652,6 +3661,7 @@
 	const fileInput = shadow.getElementById("fileInput");
 	const realtimeVoiceButton = shadow.getElementById("realtimeVoiceButton");
 	const realtimeStatusEl = shadow.getElementById("realtimeStatus");
+	const realtimeMuteButtonEl = shadow.getElementById("realtimeMuteButton");
 	const realtimeErrorBubble = shadow.getElementById("realtimeErrorBubble");
 	const realtimeErrorText = shadow.getElementById("realtimeErrorText");
 	const realtimeErrorOptionsButton = shadow.getElementById("realtimeErrorOptionsButton");
@@ -6364,7 +6374,44 @@
 		);
 	}
 
+	// Input-only mute: the mic tracks stop feeding the realtime session (so
+	// side conversation cannot trigger or interrupt a turn), while Onhand's
+	// spoken answers keep playing. Visible only during a live session so the
+	// mode toggle and the mute control never sit side by side at rest.
+	let realtimeMicMuted = false;
+
+	function applyRealtimeMicMuted() {
+		const tracks = realtimeMediaStream?.getAudioTracks?.() || [];
+		for (const track of tracks) track.enabled = !realtimeMicMuted;
+	}
+
+	function renderRealtimeMuteButton() {
+		if (!realtimeMuteButtonEl) return;
+		realtimeMuteButtonEl.hidden = !(realtimeConnected || realtimeConnecting);
+		realtimeMuteButtonEl.setAttribute("aria-pressed", realtimeMicMuted ? "true" : "false");
+		const label = realtimeMicMuted ? "Unmute your mic" : "Mute your mic — Onhand keeps speaking";
+		realtimeMuteButtonEl.title = label;
+		realtimeMuteButtonEl.setAttribute("aria-label", label);
+	}
+
+	function setRealtimeMicMuted(muted) {
+		realtimeMicMuted = Boolean(muted);
+		applyRealtimeMicMuted();
+		noteRealtimeActivity();
+		if (realtimeMicMuted) {
+			clearRealtimeVoiceFallback();
+			clearRealtimeOnlyVoiceResponse();
+		}
+		renderRealtimeMuteButton();
+		if (realtimeMicMuted) setRealtimeStatus("Mic muted — still speaking");
+		else if (realtimeConnected) setRealtimeReadyStatus();
+	}
+
 	function setRealtimeReadyStatus(status = "Voice ready · ask, then pause") {
+		if (realtimeMicMuted && (realtimeConnected || realtimeConnecting)) {
+			setRealtimeStatus("Mic muted — still speaking");
+			return;
+		}
 		if (isRealtimeMicDiagnosticStatus()) {
 			renderRealtimeControls();
 			return;
@@ -6607,7 +6654,11 @@
 
 	function expireRealtimeIdleTimeout() {
 		if (!realtimeConnected) return false;
-		if (realtimeResponseInProgress) {
+		// A pending voice turn means a backend tool is still working toward a
+		// spoken answer; ending the session now would deliver the answer as
+		// silent text. Muted sessions hit this hardest: room conversation no
+		// longer resets the timer via speech events.
+		if (realtimeResponseInProgress || realtimeActiveVoiceTurn?.pending) {
 			scheduleRealtimeIdleTimeout();
 			return false;
 		}
@@ -6855,6 +6906,7 @@
 	}
 
 	function scheduleRealtimeOnlyVoiceCommitFallback(reason = "speech_stopped") {
+		if (realtimeMicMuted) return false;
 		if (!isRealtimeOnlyVoiceMode()) return false;
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
 		clearRealtimeOnlyVoiceResponse();
@@ -7008,6 +7060,7 @@
 	}
 
 	function scheduleRealtimeVoiceFallbackCommit() {
+		if (realtimeMicMuted) return;
 		if (isRealtimeOnlyVoiceMode()) return;
 		if (!shouldUseLocalRealtimeFallbackCommit()) return;
 		if (!realtimeConnected || realtimeResponseInProgress || realtimeManualVoiceCommitPending) return;
@@ -7021,6 +7074,7 @@
 	}
 
 	function commitRealtimeVoiceFallback() {
+		if (realtimeMicMuted) return false;
 		if (isRealtimeOnlyVoiceMode()) return false;
 		if (!shouldUseLocalRealtimeFallbackCommit()) return false;
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
@@ -7178,6 +7232,7 @@
 
 	function renderRealtimeControls() {
 		if (!realtimeVoiceButton || !realtimeStatusEl) return;
+		renderRealtimeMuteButton();
 		const voiceEnabled = isRealtimeVoiceEnabledInPreferences();
 		if (!voiceEnabled && (realtimeConnected || realtimeConnecting)) {
 			stopRealtimeVoice("Voice disabled");
@@ -8815,7 +8870,10 @@
 	}
 
 	function speakRealtimeTutorText(kind, prompt, instructions, controlOptions = {}) {
-		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
+		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
+			setRealtimeStatus("Voice ended — answer shown in the panel");
+			return;
+		}
 		sendRealtimeEvent({
 			event_id: realtimeEventId(`onhand_${kind}`),
 			type: "conversation.item.create",
@@ -8835,10 +8893,33 @@
 		);
 	}
 
+	// Spoken filler while the backend turn runs. Rotated so repeated questions
+	// do not get an identical robotic script, and free of "ground"/"anchor"
+	// process jargon per the runtime's wording-hygiene rule.
+	const REALTIME_PREAMBLE_LINES = {
+		socratic_plan: [
+			"Let me find the right line first.",
+			"Let me find where the page shows this.",
+			"One sec — finding the right spot on the page.",
+		],
+		socratic_evaluation: [
+			"Let me check that against the page.",
+			"Let me see how that matches the page.",
+			"One sec — checking that against the page.",
+		],
+		default: [
+			"One sec — let me look at the page.",
+			"Let me take a look.",
+			"Give me a second to check the page.",
+			"Let me pull that up.",
+		],
+	};
+	let realtimePreambleCounter = 0;
+
 	function realtimeBackendPreambleLine(kind) {
-		if (kind === "socratic_plan") return "Let me find the right line first.";
-		if (kind === "socratic_evaluation") return "Let me check that against the page.";
-		return "Let me ground that in the page.";
+		const lines = REALTIME_PREAMBLE_LINES[kind] || REALTIME_PREAMBLE_LINES.default;
+		realtimePreambleCounter += 1;
+		return lines[realtimePreambleCounter % lines.length];
 	}
 
 	function buildRealtimeBackendPreamblePrompt(kind) {
@@ -9518,6 +9599,10 @@
 			let output = null;
 			try {
 				output = await executeRealtimeTool(call.name, parseRealtimeArguments(call.arguments));
+			if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
+				setRealtimeStatus("Voice ended — answer shown in the panel");
+				return;
+			}
 			sendRealtimeEvent({
 				event_id: realtimeEventId("onhand_tool_result"),
 				type: "conversation.item.create",
@@ -9795,6 +9880,9 @@
 			realtimeMicTrackDetails = describeRealtimeMicTrack(audioTracks[0]);
 			void refreshRealtimeMicDevices();
 			startRealtimeMicMonitor(realtimeMediaStream);
+			realtimeMicMuted = false;
+			applyRealtimeMicMuted();
+			renderRealtimeMuteButton();
 
 			const pc = new RTCPeerConnection();
 			const dc = pc.createDataChannel("oai-events");
@@ -9871,6 +9959,7 @@
 	function stopRealtimeVoice(status = "Voice idle") {
 		clearRealtimeIdleTimeout();
 		stopRealtimeMicMonitor();
+		realtimeMicMuted = false;
 		clearRealtimeOnlyVoiceResponse();
 		try {
 			realtimeDataChannel?.close();
@@ -10434,6 +10523,9 @@
 		});
 	});
 
+	realtimeMuteButtonEl?.addEventListener("click", () => {
+		setRealtimeMicMuted(!realtimeMicMuted);
+	});
 	realtimeStatusEl.addEventListener("click", () => {
 		if (!realtimeError) return;
 		realtimeErrorExpanded = !realtimeErrorExpanded;
@@ -10663,6 +10755,13 @@
 				renderRealtimeControls();
 			},
 			setRealtimeStatus,
+			setRealtimeMicMuted,
+			setRealtimeActiveVoiceTurn(turn) {
+				realtimeActiveVoiceTurn = turn;
+			},
+			setRealtimeMediaStream(stream) {
+				realtimeMediaStream = stream;
+			},
 			setRealtimeMicDeviceId(deviceId = "default") {
 				realtimeMicDeviceId = normalizeRealtimeMicDeviceId(deviceId);
 				realtimeMicSelectSignature = "";
@@ -10697,6 +10796,8 @@
 			sendRealtimeTextPrompt,
 			getRealtimeDebugState() {
 				return {
+					micMuted: realtimeMicMuted,
+					muteButtonHidden: realtimeMuteButtonEl ? realtimeMuteButtonEl.hidden : true,
 					connected: realtimeConnected,
 					connecting: realtimeConnecting,
 					status: realtimeStatus,
