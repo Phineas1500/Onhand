@@ -3154,6 +3154,44 @@ async function assertConstitutionPromptContract() {
 			false,
 			"a current-turn viewer should not authorize navigation against that tab",
 		);
+		for (const commandName of ["click_text", "run_js", "get_visible_text"]) {
+			assert.equal(
+				shouldPreserveTrustedWorkspaceTabIdForTest(
+					commandName,
+					54,
+					{
+						...learningProblemRequest,
+						toolTraces: [{ state: "complete", toolName: "browser_navigate", resultDetails: { tab: { id: 54, url: "https://www.google.com/search?q=tacoma" } } }],
+					},
+				),
+				true,
+				`a tab opened by this turn's navigate should remain targetable by ${commandName} (search-results click flow)`,
+			);
+		}
+		assert.equal(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
+				"click_text",
+				55,
+				{
+					...learningProblemRequest,
+					toolTraces: [{ state: "complete", toolName: "browser_navigate", resultDetails: { tab: { id: 54 } } }],
+				},
+			),
+			false,
+			"a tabId the request never opened stays untrusted for click_text",
+		);
+		assert.equal(
+			shouldPreserveTrustedWorkspaceTabIdForTest(
+				"activate_tab",
+				54,
+				{
+					...learningProblemRequest,
+					toolTraces: [{ state: "complete", toolName: "browser_navigate", resultDetails: { tab: { id: 54 } } }],
+				},
+			),
+			false,
+			"request-opened tabs still do not authorize focus changes without an inventory",
+		);
 		const scanTrustRequest = {
 			openTabSummary: {
 				totalCount: 3,

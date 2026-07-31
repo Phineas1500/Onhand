@@ -149530,22 +149530,11 @@ var PREINVENTORY_PLANNED_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
   "scroll_to_annotation",
   "clear_annotations"
 ]);
-var CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS = /* @__PURE__ */ new Set([
-  ...PREINVENTORY_PLANNED_TAB_ID_COMMANDS,
-  "pdf_search",
-  "pdf_read_pages",
-  "pdf_find_citation",
-  "pdf_jump_to_page",
-  "pdf_capture_page_image",
-  "highlight_text",
-  "show_note",
-  "scroll_to_annotation",
-  "clear_annotations"
-]);
+var WORKSPACE_TRUST_EXEMPT_FOCUS_COMMANDS = /* @__PURE__ */ new Set(["navigate", "activate_tab"]);
 function shouldPreserveTrustedWorkspaceTabId(commandName, tabId, request) {
   if (typeof tabId !== "number" || !Number.isFinite(tabId)) return false;
   if (commandName === "open_pdf_in_onhand_viewer" && sourceTabWasOpenedByRequest(request, tabId)) return true;
-  if (CURRENT_TURN_WORKSPACE_TAB_ID_COMMANDS.has(commandName) && workspaceTabWasOpenedByRequest(request, tabId)) return true;
+  if (!WORKSPACE_TRUST_EXEMPT_FOCUS_COMMANDS.has(commandName) && workspaceTabWasOpenedByRequest(request, tabId)) return true;
   if (!PREINVENTORY_PLANNED_TAB_ID_COMMANDS.has(commandName)) return false;
   return (Array.isArray(request?.learningResearchPlan?.candidateTabIds) ? request.learningResearchPlan.candidateTabIds : []).some((candidateTabId) => Number(candidateTabId) === tabId);
 }
