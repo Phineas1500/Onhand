@@ -2458,7 +2458,7 @@ async function assertConstitutionPromptContract() {
 		["G7 general-knowledge label", contract.systemPrompt, /general knowledge rather than the user's pages/],
 		["G9 per-source citation", contract.systemPrompt, /name that source \(by title\) next to the claim/],
 		["G12 auto cross-tab", contract.systemPrompt, /auto-use clearly related open tabs without asking first/],
-		["G13 web search never first", contract.systemPrompt, /web search is never the first move while open material can answer/],
+		["G13 web search never first", contract.systemPrompt, /[Ww]eb search is never the first move while open material can answer/],
 		["G14 auto-open on unsupported claims", contract.systemPrompt, /open or search for one that does — in a background tab/],
 		["G18 tool-verified anchor reuse", contract.systemPrompt, /call browser_scroll_to_annotation on that anchor once before answering/],
 		["P4 pages first", contract.systemPrompt, /The user's pages come first/],
@@ -2886,7 +2886,7 @@ async function assertConstitutionPromptContract() {
 		/give a concise page-grounded answer first/,
 		"Learning Mode stance is ask-before-telling (behavior doc §5.1); answer-first was a runtime regression",
 	);
-	assert.match(contract.systemPrompt, /web search is never the first move while open material can answer/);
+	assert.match(contract.systemPrompt, /[Ww]eb search is never the first move while open material can answer/);
 	assert.match(contract.systemPrompt, /a claim check that the current page plus clearly related open tabs already support needs no fetching at all/);
 	assert.match(contract.systemPrompt, /Cite every mark you place this turn/);
 	assert.match(contract.systemPrompt, /never click through or try to bypass it/);
