@@ -7993,6 +7993,7 @@
 		return [
 			`Give a short spoken version of this ${label}. The complete text is already shown in the sidebar, so do not read it all aloud.`,
 			"Lead with the direct answer or verdict, then at most two or three short supporting sentences — conversational, around fifteen seconds of speech.",
+			"If the text opens with a short verdict or stance phrase, speak that opening verdict word-for-word first, then compress the rest — the first words heard should match the first words shown.",
 			"Every claim must come from the text below. Do not add facts, sources, numbers, or caveats that are not in it.",
 			"Do not read headings, bullet markers, citations, DOIs, or URLs aloud, and do not describe the sidebar or its formatting.",
 			"Text:",

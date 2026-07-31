@@ -3473,6 +3473,11 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 		/Every claim must come from the text below/,
 		"the concise spoken version must stay within the sidebar answer's claims",
 	);
+	assert.match(
+		String(finalResponse.response?.instructions || ""),
+		/speak that opening verdict word-for-word first/,
+		"the spoken version must echo the answer's opening verdict so voice and text agree at the moment users compare them",
+	);
 	assert.doesNotMatch(
 		String(finalResponse.response?.instructions || ""),
 		/exactly as written/,
