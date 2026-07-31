@@ -2377,6 +2377,58 @@ async function assertRealtimeBargeInClearsOutputAudio() {
 	dom.window.close();
 }
 
+async function assertRealtimeLocalBargeIn() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), runtimeMessages);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	assert.ok(hooks?.forceRealtimeLocalBargeIn, "expected local barge-in test hook");
+
+	const sent = [];
+	hooks.setRealtimeDataChannel({ readyState: "open", send: (raw) => sent.push(JSON.parse(raw)) });
+	hooks.setRealtimeConnected(true);
+
+	assert.equal(hooks.forceRealtimeLocalBargeIn(), false, "nothing to interrupt when idle");
+
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "output_audio_buffer.started" }));
+	hooks.setRealtimeResponseInProgress(true);
+	assert.equal(hooks.forceRealtimeLocalBargeIn(), true, "sustained local speech must interrupt the assistant");
+	assert.ok(sent.some((event) => event.type === "response.cancel"), "an in-progress response must be cancelled");
+	assert.ok(sent.some((event) => event.type === "output_audio_buffer.clear"), "buffered playback must be cleared");
+	assert.equal(hooks.getRealtimeDebugState().outputAudioPlaying, false);
+
+	hooks.setRealtimeResponseInProgress(false);
+	const track = { enabled: true };
+	hooks.setRealtimeMediaStream({ getAudioTracks: () => [track] });
+	hooks.setRealtimeMicMuted(true);
+	hooks.setRealtimeResponseInProgress(true);
+	assert.equal(hooks.forceRealtimeLocalBargeIn(), false, "a muted mic can never trigger a barge-in");
+	hooks.setRealtimeMicMuted(false);
+	hooks.setRealtimeResponseInProgress(false);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({ type: "error", error: { message: "Cancellation failed: no active response found" } }),
+	);
+	assert.doesNotMatch(
+		hooks.getRealtimeDebugState().status || "",
+		/Voice error/,
+		"a cancel that raced response.done must not end the session",
+	);
+
+	const sidebarSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
+	assert.match(
+		sidebarSource,
+		/const assistantSpeaking = realtimeResponseInProgress \|\| realtimeOutputAudioPlaying;/,
+		"the mic monitor must keep listening while the assistant speaks (it used to bail on realtimeResponseInProgress)",
+	);
+	assert.match(
+		sidebarSource,
+		/loudFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES[\s\S]{0,200}forceRealtimeLocalBargeIn\(\)/,
+		"sustained overlapped speech must schedule the forced interrupt",
+	);
+
+	dom.window.close();
+}
+
 async function assertRealtimeVoiceDisabledState() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -5072,6 +5124,7 @@ await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeBargeInClearsOutputAudio();
+await assertRealtimeLocalBargeIn();
 await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();

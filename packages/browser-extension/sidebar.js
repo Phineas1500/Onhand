@@ -27,6 +27,7 @@
 	const REALTIME_ONLY_COMMIT_FALLBACK_MS = 1200;
 	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
 	const REALTIME_LOCAL_SPEECH_RMS = 0.002;
+	const REALTIME_LOCAL_BARGE_IN_FRAMES = 5;
 	const REALTIME_LOCAL_SPEECH_MIN_RMS = 0.00085;
 	const REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER = 3.2;
 	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
@@ -194,6 +195,7 @@
 	let realtimeMicNoiseFloorRms = 0;
 	let realtimeMicMonitorStartedAt = 0;
 	let realtimeMicMonitorFrames = 0;
+	let realtimeLastLocalBargeInAt = 0;
 	let realtimeMicDeviceId = "default";
 	let realtimeMicDevices = [];
 	let realtimeActiveMicLabel = "";
@@ -7164,7 +7166,8 @@
 			realtimeAudioContext = context;
 			void context.resume().catch(() => {});
 			realtimeMicMonitorTimer = setInterval(() => {
-				if (!realtimeConnected || realtimeResponseInProgress) return;
+				if (!realtimeConnected) return;
+				const assistantSpeaking = realtimeResponseInProgress || realtimeOutputAudioPlaying;
 				if (context.state === "suspended") {
 					void context.resume().catch(() => {});
 					if (Date.now() - realtimeMicMonitorStartedAt > 3000 && canUpdateRealtimeMicIdleStatus()) {
@@ -7181,12 +7184,22 @@
 				const rms = Math.sqrt(sum / samples.length);
 				realtimeMicCurrentRms = rms;
 				realtimeMicPeakRms = Math.max(rms, realtimeMicPeakRms * 0.94);
-				if (!realtimeLocalSpeechActive) {
+				if (!realtimeLocalSpeechActive && !assistantSpeaking) {
 					realtimeMicNoiseFloorRms = realtimeMicNoiseFloorRms ? realtimeMicNoiseFloorRms * 0.96 + rms * 0.04 : rms;
 				}
 				if (rms > realtimeLocalSpeechThreshold()) {
 					loudFrames += 1;
 					quietFrames = 0;
+					if (assistantSpeaking) {
+						// Server semantic VAD misses a share of overlapped speech
+						// (and deliberately ignores backchannels), so sustained
+						// local speech while Onhand talks forces the interrupt.
+						if (loudFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES && Date.now() - realtimeLastLocalBargeInAt > 1500) {
+							realtimeLastLocalBargeInAt = Date.now();
+							forceRealtimeLocalBargeIn();
+						}
+						return;
+					}
 					if (realtimeVoiceFallbackTimer) {
 						clearTimeout(realtimeVoiceFallbackTimer);
 						realtimeVoiceFallbackTimer = null;
@@ -7197,6 +7210,10 @@
 							setRealtimeStatus(`Mic hears you · level ${formatRealtimeMicLevel(realtimeMicPeakRms)}`);
 						}
 					}
+					return;
+				}
+				if (assistantSpeaking) {
+					loudFrames = 0;
 					return;
 				}
 				if (!realtimeLocalSpeechActive && canUpdateRealtimeMicIdleStatus() && Date.now() - realtimeMicLastIdleStatusAt > REALTIME_MIC_IDLE_STATUS_MS) {
@@ -9637,6 +9654,32 @@
 			}
 		}
 
+	function forceRealtimeLocalBargeIn() {
+		if (!realtimeConnected || realtimeMicMuted) return false;
+		const responseActive = realtimeResponseInProgress;
+		const audioPlaying = realtimeOutputAudioPlaying;
+		if (!responseActive && !audioPlaying) return false;
+		if (responseActive) {
+			try {
+				sendRealtimeEvent({ event_id: realtimeEventId("onhand_local_barge_in_cancel"), type: "response.cancel" });
+			} catch {}
+		}
+		if (audioPlaying) {
+			realtimeOutputAudioPlaying = false;
+			try {
+				sendRealtimeEvent({ event_id: realtimeEventId("onhand_local_barge_in_clear"), type: "output_audio_buffer.clear" });
+			} catch {}
+		}
+		if (
+			realtimeActiveVoiceTurn &&
+			(!isRealtimeOnlyVoiceMode() || responseActive || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
+		) {
+			markRealtimeVoiceTurnStale("user_interrupted");
+		}
+		setRealtimeStatus("Listening...");
+		return true;
+	}
+
 	async function handleRealtimeServerEvent(rawEvent) {
 		let event;
 		try {
@@ -9656,6 +9699,11 @@
 			if (/input audio buffer.*empty|buffer is empty/i.test(message)) {
 				clearRealtimeVoiceFallback();
 				setRealtimeStatus("OpenAI received no mic audio");
+				return;
+			}
+			if (/cancellation failed|no active response/i.test(message)) {
+				// A forced barge-in can race response.done; a cancel that found
+				// nothing to cancel is success, not a session-ending error.
 				return;
 			}
 			if (/output audio buffer/i.test(message)) {
@@ -10018,6 +10066,7 @@
 		realtimeResponseOutputModalities = ["audio"];
 		realtimeResponseAfterDoneStatus = "";
 		realtimeServerSpeechSeenAt = 0;
+		realtimeLastLocalBargeInAt = 0;
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerPrompt = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
@@ -10806,6 +10855,7 @@
 				realtimeServerSpeechSeenAt = Number(value) || 0;
 			},
 			clearRealtimeVoiceFallback,
+			forceRealtimeLocalBargeIn,
 			commitRealtimeVoiceFallback,
 			scheduleRealtimeVoiceFallbackCommit,
 				expireRealtimeIdleTimeout,
