@@ -27,7 +27,8 @@
 	const REALTIME_ONLY_COMMIT_FALLBACK_MS = 1200;
 	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
 	const REALTIME_LOCAL_SPEECH_RMS = 0.002;
-	const REALTIME_LOCAL_BARGE_IN_FRAMES = 5;
+	const REALTIME_LOCAL_BARGE_IN_FRAMES = 6;
+	const REALTIME_BARGE_IN_GRACE_FRAMES = 8;
 	const REALTIME_LOCAL_SPEECH_MIN_RMS = 0.00085;
 	const REALTIME_LOCAL_SPEECH_NOISE_MULTIPLIER = 3.2;
 	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
@@ -7161,6 +7162,8 @@
 			let loudFrames = 0;
 			let quietFrames = 0;
 			let bargeInFrames = 0;
+			let playbackFrames = 0;
+			let playbackResidualFloor = 0;
 			let wasAssistantSpeaking = false;
 			realtimeMicMonitorStartedAt = Date.now();
 			realtimeMicMonitorFrames = 0;
@@ -7195,27 +7198,42 @@
 				if (!realtimeLocalSpeechActive && !assistantSpeaking) {
 					realtimeMicNoiseFloorRms = realtimeMicNoiseFloorRms ? realtimeMicNoiseFloorRms * 0.96 + rms * 0.04 : rms;
 				}
-				if (rms > realtimeLocalSpeechThreshold()) {
-					loudFrames += 1;
+				if (assistantSpeaking) {
+					loudFrames = 0;
 					quietFrames = 0;
-					if (assistantSpeaking) {
-						// Server semantic VAD misses a share of overlapped speech
-						// (and deliberately ignores backchannels), so sustained
-						// local speech while Onhand is audibly talking forces the
-						// interrupt. Silent generation is exempt: cancelling there
-						// kills the answer's speech before it ever starts.
-						if (!realtimeOutputAudioPlaying) {
-							bargeInFrames = 0;
-							return;
-						}
+					if (!realtimeOutputAudioPlaying) {
+						bargeInFrames = 0;
+						playbackFrames = 0;
+						playbackResidualFloor = 0;
+						return;
+					}
+					// Echo-immune forced barge-in: learn the AEC-residual level of
+					// Onhand's own voice for this playback segment, give echo
+					// cancellation time to converge, and only count frames well
+					// above both the speech threshold and that residual — leaked
+					// playback in a silent room must never cut the answer off.
+					playbackFrames += 1;
+					playbackResidualFloor = playbackResidualFloor ? playbackResidualFloor * 0.95 + rms * 0.05 : rms;
+					if (playbackFrames < REALTIME_BARGE_IN_GRACE_FRAMES) {
+						bargeInFrames = 0;
+						return;
+					}
+					const bargeInThreshold = Math.max(realtimeLocalSpeechThreshold() * 4, playbackResidualFloor * 4);
+					if (rms > bargeInThreshold) {
 						bargeInFrames += 1;
 						if (bargeInFrames >= REALTIME_LOCAL_BARGE_IN_FRAMES && Date.now() - realtimeLastLocalBargeInAt > 1500) {
 							realtimeLastLocalBargeInAt = Date.now();
 							bargeInFrames = 0;
 							forceRealtimeLocalBargeIn();
 						}
-						return;
+					} else {
+						bargeInFrames = 0;
 					}
+					return;
+				}
+				if (rms > realtimeLocalSpeechThreshold()) {
+					loudFrames += 1;
+					quietFrames = 0;
 					if (realtimeVoiceFallbackTimer) {
 						clearTimeout(realtimeVoiceFallbackTimer);
 						realtimeVoiceFallbackTimer = null;
@@ -7226,11 +7244,6 @@
 							setRealtimeStatus(`Mic hears you · level ${formatRealtimeMicLevel(realtimeMicPeakRms)}`);
 						}
 					}
-					return;
-				}
-				if (assistantSpeaking) {
-					loudFrames = 0;
-					bargeInFrames = 0;
 					return;
 				}
 				if (!realtimeLocalSpeechActive && canUpdateRealtimeMicIdleStatus() && Date.now() - realtimeMicLastIdleStatusAt > REALTIME_MIC_IDLE_STATUS_MS) {

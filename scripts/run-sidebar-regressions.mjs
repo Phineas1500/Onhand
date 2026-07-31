@@ -2427,8 +2427,18 @@ async function assertRealtimeLocalBargeIn() {
 	);
 	assert.match(
 		sidebarSource,
-		/if \(!realtimeOutputAudioPlaying\) \{\s*bargeInFrames = 0;\s*return;\s*\}/,
+		/if \(!realtimeOutputAudioPlaying\) \{\s*bargeInFrames = 0;\s*playbackFrames = 0;\s*playbackResidualFloor = 0;\s*return;\s*\}/,
 		"forced barge-in must only arm while audio is audibly playing — cancelling silent generation mutes the answer",
+	);
+	assert.match(
+		sidebarSource,
+		/playbackFrames < REALTIME_BARGE_IN_GRACE_FRAMES/,
+		"forced barge-in must wait out echo-cancellation convergence at the start of each playback segment",
+	);
+	assert.match(
+		sidebarSource,
+		/Math\.max\(realtimeLocalSpeechThreshold\(\) \* 4, playbackResidualFloor \* 4\)/,
+		"forced barge-in must require levels well above the learned playback echo residual, not the quiet-room speech threshold",
 	);
 	assert.match(
 		sidebarSource,
