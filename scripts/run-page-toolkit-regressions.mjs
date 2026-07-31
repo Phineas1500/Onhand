@@ -83,6 +83,41 @@ async function assertDetachedPdfViewerOpenRouting() {
 	);
 }
 
+async function assertRemoveAnnotationsTargetsSingleMarks() {
+	const { dom, toolkit } = await createToolkit(
+		`<main><p>The actual failure was due to aeroelastic flutter. Heavy cross winds drove the bridge into oscillations at its resonant frequency.</p></main>`,
+	);
+	const document = dom.window.document;
+	const first = await toolkit.highlightText("aeroelastic flutter", { scrollIntoView: false });
+	const second = await toolkit.highlightText("resonant frequency", { scrollIntoView: false });
+	await toolkit.showNote(second.annotationId, "Keep this one.", { scrollIntoView: false });
+
+	const removed = toolkit.removeAnnotations([first.annotationId]);
+	assert.equal(removed.removedCount, 1);
+	assert.equal(
+		document.querySelectorAll(`[data-onhand-annotation-id="${first.annotationId}"]`).length,
+		0,
+		"the removed mark must leave the DOM",
+	);
+	assert.ok(
+		document.body.textContent.includes("aeroelastic flutter"),
+		"removing a highlight must keep the underlying page text",
+	);
+	assert.ok(
+		document.querySelectorAll(`[data-onhand-annotation-id="${second.annotationId}"]`).length >= 1,
+		"other marks must survive a targeted removal",
+	);
+	assert.ok(
+		document.querySelector(`[data-onhand-note-for="${second.annotationId}"]`),
+		"notes on surviving marks must stay",
+	);
+	assert.throws(
+		() => toolkit.removeAnnotations(["onhand-9999-missing"]),
+		/No annotation found/,
+		"removing an unknown id fails loud so frame dispatch can try the next frame",
+	);
+}
+
 async function assertPdfViewerHandoffHelpers() {
 	const functionNames = [
 		"isOwnExtensionPdfViewerUrl",
@@ -3532,6 +3567,7 @@ async function assertPdfSelectionIncludesAnchor() {
 async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertDetachedPdfViewerOpenRouting();
+	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();

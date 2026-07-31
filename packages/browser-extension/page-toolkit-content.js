@@ -3612,6 +3612,48 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		return removed;
 	};
 
+	const removeAnnotations = (annotationIds) => {
+		const ids = Array.from(
+			new Set(
+				(Array.isArray(annotationIds) ? annotationIds : [annotationIds])
+					.map((id) => String(id || "").trim())
+					.filter(Boolean),
+			),
+		);
+		let removedCount = 0;
+		for (const annotationId of ids) {
+			let removedThis = false;
+			for (const element of Array.from(document.querySelectorAll(annotationSelector(annotationId)))) {
+				if (!(element instanceof Element)) continue;
+				const kind = element.getAttribute("data-onhand-highlight-kind");
+				if (kind === "pdf") {
+					removedThis = removePdfOverlayAnnotation(element) || removedThis;
+					continue;
+				}
+				if (kind === "block") {
+					element.removeAttribute("data-onhand-highlight-kind");
+					element.removeAttribute("data-onhand-annotation-id");
+					element.removeAttribute("data-onhand-theme");
+					removedThis = true;
+					continue;
+				}
+				if (kind === "inline") {
+					const parent = element.parentNode;
+					if (!parent) continue;
+					while (element.firstChild) parent.insertBefore(element.firstChild, element);
+					parent.removeChild(element);
+					parent.normalize?.();
+					removedThis = true;
+				}
+			}
+			if (removeNotesForAnnotation(annotationId) > 0) removedThis = true;
+			getPdfAnnotationRegistry().delete(annotationId);
+			if (removedThis) removedCount += 1;
+		}
+		if (!removedCount) throw new Error(`No annotation found with id: ${ids.join(", ") || "(blank)"}`);
+		return { removedCount, requestedCount: ids.length };
+	};
+
 	const clearAnnotations = () => {
 		getPdfAnnotationRegistry().clear();
 		let clearedNotes = 0;
@@ -5005,6 +5047,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		showNote,
 		captureState,
 		clearAnnotations,
+		removeAnnotations,
 		syncAnnotationTheme,
 		pickElements,
 	};

@@ -9093,6 +9093,50 @@ function sourceTabWasOpenedByRequest(request: any, tabId: unknown) {
 	);
 }
 
+// The mark/cite contract is bidirectional. The prompt already forbids
+// leaving a mark out of the answer ("an uncited mark is clutter on the
+// user's page"), but the model still orphans a mark in a large share of
+// research turns, so the contract is enforced deterministically at turn
+// end: bare highlights placed this turn whose annotationId never appears
+// in the final reply's [[cite:...]] markers are removed from the page and
+// the Sources rail. Noted marks stay (a note is deliberate durable work),
+// and reused anchors from earlier turns are never touched — reuse results
+// are flagged reusedExisting, and web annotation ids carry their creation
+// timestamp as a second check.
+function collectUncitedTurnMarkRemovals(request: any, replyText: unknown) {
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	const citedIds = new Set(
+		Array.from(String(replyText || "").matchAll(/\[\[cite:([^\]\s]+)\]\]/g)).map((match) => match[1].trim()),
+	);
+	// A reply with no citations at all is not treated as "everything is an
+	// orphan": explicit highlight requests ("mark the flutter passage") can
+	// legitimately deliver marks without prose citations. The sweep targets
+	// the partial case — the turn cited some marks and left others behind.
+	if (!citedIds.size) return [];
+	const notedIds = new Set(
+		traces
+			.filter((trace: any) => trace?.state === "complete" && trace?.toolName === "browser_show_note")
+			.map((trace: any) => markerGateAnnotationId(trace))
+			.filter(Boolean),
+	);
+	const requestCreatedAtMs = Date.parse(String(request?.createdAt || ""));
+	const byTab = new Map<number, Set<string>>();
+	for (const trace of traces) {
+		if (!isCompletedSourceHighlightTrace(trace)) continue;
+		const annotationId = markerGateAnnotationId(trace);
+		if (!annotationId || citedIds.has(annotationId) || notedIds.has(annotationId)) continue;
+		const details = trace?.details || trace?.resultDetails;
+		if (details && /"reusedExisting"\s*:\s*true/.test(JSON.stringify(details))) continue;
+		const stamp = Number(annotationIdParts(annotationId)?.stamp || 0);
+		if (stamp && Number.isFinite(requestCreatedAtMs) && stamp < requestCreatedAtMs - 5000) continue;
+		const tabId = traceTargetTabId(trace);
+		if (!(tabId > 0)) continue;
+		if (!byTab.has(tabId)) byTab.set(tabId, new Set<string>());
+		byTab.get(tabId)!.add(annotationId);
+	}
+	return Array.from(byTab.entries()).map(([tabId, annotationIds]) => ({ tabId, annotationIds: Array.from(annotationIds) }));
+}
+
 // Research scaffolding cleanup (behavior doc G19): tabs a request opened
 // that earned no mark, note, or artifact are stepping stones — search
 // results pages, blocked interstitials, discarded candidates — and close at
@@ -9992,6 +10036,7 @@ export const __browserRuntimeTest = {
 	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
 	isTransientProviderErrorForTest: isTransientProviderError,
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
+	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
 	describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
 	buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
@@ -12857,6 +12902,33 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			finalError = new Error("The model returned an empty answer after reading page context.");
 			}
 		const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
+		const uncitedMarkRemovals =
+			!finalError && !activeRequest.aborted ? collectUncitedTurnMarkRemovals(activeRequest, reply) : [];
+		if (uncitedMarkRemovals.length) {
+			// Runs before the turn/session snapshots are persisted so the removed
+			// marks vanish from the Sources rail and review snapshot too, not just
+			// the page. A slow tab must not hold up the visible reply, so each
+			// removal is capped; a missed removal only leaves today's status quo.
+			const removedIds = new Set(uncitedMarkRemovals.flatMap((entry) => entry.annotationIds));
+			activeRequest.pageActions = (activeRequest.pageActions || []).filter(
+				(action: any) => !(action?.type === "annotation" && removedIds.has(String(action?.annotationId || ""))),
+			);
+			for (const entry of uncitedMarkRemovals) {
+				try {
+					await Promise.race([
+						host.runCommand("remove_annotations", { tabId: entry.tabId, annotationIds: entry.annotationIds }),
+						new Promise((resolve) => setTimeout(resolve, 3000)),
+					]);
+				} catch {}
+			}
+			appendActivity({
+				id: `uncited-marks:${activeRequest.id}`,
+				kind: "tool",
+				label: `Removed ${removedIds.size} uncited mark${removedIds.size === 1 ? "" : "s"}`,
+				toolName: "browser_clear_annotations",
+				state: "complete",
+			});
+		}
 		await autoPersistReviewSnapshot(session, activeRequest, finalError);
 		const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
 		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);

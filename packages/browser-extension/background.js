@@ -7739,6 +7739,48 @@ const createPageToolkit = (options = {}) => {
 		return removed;
 	};
 
+	const removeAnnotations = (annotationIds) => {
+		const ids = Array.from(
+			new Set(
+				(Array.isArray(annotationIds) ? annotationIds : [annotationIds])
+					.map((id) => String(id || "").trim())
+					.filter(Boolean),
+			),
+		);
+		let removedCount = 0;
+		for (const annotationId of ids) {
+			let removedThis = false;
+			for (const element of Array.from(document.querySelectorAll(annotationSelector(annotationId)))) {
+				if (!(element instanceof Element)) continue;
+				const kind = element.getAttribute("data-onhand-highlight-kind");
+				if (kind === "pdf") {
+					removedThis = removePdfOverlayAnnotation(element) || removedThis;
+					continue;
+				}
+				if (kind === "block") {
+					element.removeAttribute("data-onhand-highlight-kind");
+					element.removeAttribute("data-onhand-annotation-id");
+					element.removeAttribute("data-onhand-theme");
+					removedThis = true;
+					continue;
+				}
+				if (kind === "inline") {
+					const parent = element.parentNode;
+					if (!parent) continue;
+					while (element.firstChild) parent.insertBefore(element.firstChild, element);
+					parent.removeChild(element);
+					parent.normalize?.();
+					removedThis = true;
+				}
+			}
+			if (removeNotesForAnnotation(annotationId) > 0) removedThis = true;
+			getPdfAnnotationRegistry().delete(annotationId);
+			if (removedThis) removedCount += 1;
+		}
+		if (!removedCount) throw new Error(`No annotation found with id: ${ids.join(", ") || "(blank)"}`);
+		return { removedCount, requestedCount: ids.length };
+	};
+
 	const clearAnnotations = () => {
 		getPdfAnnotationRegistry().clear();
 		let clearedNotes = 0;
@@ -9132,6 +9174,7 @@ const createPageToolkit = (options = {}) => {
 		showNote,
 		captureState,
 		clearAnnotations,
+		removeAnnotations,
 		syncAnnotationTheme,
 		pickElements,
 	};
@@ -9856,6 +9899,7 @@ const GENERIC_WEB_FRAME_PAGE_TOOLKIT_METHODS = new Set([
 	"highlightText",
 	"showNote",
 	"scrollToAnnotation",
+	"removeAnnotations",
 ]);
 
 function shouldTryGenericWebFramePageToolkit(methodName) {
@@ -13546,6 +13590,20 @@ async function handleCommand(name, args = {}) {
 				return {
 					tab: simplifyTab(tab),
 					...cleared,
+				};
+			});
+		}
+		case "remove_annotations": {
+			const annotationIds = (Array.isArray(args.annotationIds) ? args.annotationIds : [])
+				.map((id) => String(id || "").trim())
+				.filter(Boolean);
+			if (!annotationIds.length) throw new Error("remove_annotations requires a non-empty 'annotationIds' array");
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const removed = await runPageToolkitMethod(tab.id, "removeAnnotations", annotationIds);
+				return {
+					tab: simplifyTab(tab),
+					...removed,
 				};
 			});
 		}

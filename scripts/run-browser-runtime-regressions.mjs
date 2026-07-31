@@ -2307,6 +2307,7 @@ async function assertConstitutionPromptContract() {
 			tabIdListedInWorkspaceScanForTest,
 			isTransientProviderErrorForTest,
 			collectResearchScaffoldingTabIdsForTest,
+			collectUncitedTurnMarkRemovalsForTest,
 			buildHighlightTimeoutTabGuardResultForTest,
 			buildUntrustedTabTargetGuardResultForTest,
 			describeToolStatusForTargetTabForTest,
@@ -3254,6 +3255,62 @@ async function assertConstitutionPromptContract() {
 			"the initially active tab never closes even if a trace claims the request created it",
 		);
 		assert.deepEqual(collectResearchScaffoldingTabIdsForTest({ toolTraces: [] }), [], "no created tabs, no cleanup");
+		assert.equal(typeof collectUncitedTurnMarkRemovalsForTest, "function", "uncited mark sweep export is missing");
+		const sweepCreatedAtMs = Date.parse("2026-07-30T12:00:00.000Z");
+		const sweepId = (stampOffsetMs, suffix) => `onhand-${sweepCreatedAtMs + stampOffsetMs}-${suffix}`;
+		const orphanId = sweepId(4000, "aaa111");
+		const citedId = sweepId(5000, "bbb222");
+		const notedId = sweepId(6000, "ccc333");
+		const reusedId = sweepId(7000, "ddd444");
+		const priorTurnId = `onhand-${sweepCreatedAtMs - 60000}-eee555`;
+		const sweepTrace = (annotationId, tabId, extraDetails = {}) => ({
+			state: "complete",
+			toolName: "browser_highlight_text",
+			resultSummary: `Highlighted "x" annotationId: ${annotationId}`,
+			resultDetails: { tab: { id: tabId }, annotationId, ...extraDetails },
+		});
+		const sweepRequest = {
+			createdAt: "2026-07-30T12:00:00.000Z",
+			toolTraces: [
+				sweepTrace(orphanId, 7),
+				sweepTrace(citedId, 7),
+				sweepTrace(notedId, 7),
+				sweepTrace(reusedId, 7, { annotation: { reusedExisting: true } }),
+				sweepTrace(priorTurnId, 7),
+				sweepTrace("onhand-pdf-zz1-1", 9),
+				{ state: "complete", toolName: "browser_show_note", effectiveArgs: { annotationId: notedId }, resultSummary: "Added note" },
+			],
+		};
+		assert.deepEqual(
+			collectUncitedTurnMarkRemovalsForTest(sweepRequest, `Answer. [[cite:${citedId}]]`),
+			[
+				{ tabId: 7, annotationIds: [orphanId] },
+				{ tabId: 9, annotationIds: ["onhand-pdf-zz1-1"] },
+			],
+			"only this turn's bare uncited marks are swept: cited, noted, reused, and prior-turn anchors all stay",
+		);
+		assert.deepEqual(
+			collectUncitedTurnMarkRemovalsForTest(sweepRequest, `A. [[cite:${citedId}]][[cite:${orphanId}]] [[cite:onhand-pdf-zz1-1]]`),
+			[],
+			"stacked and pdf citation markers all count as citations",
+		);
+		assert.deepEqual(
+			collectUncitedTurnMarkRemovalsForTest(sweepRequest, "Done — I marked the passage for you."),
+			[],
+			"a zero-cite reply sweeps nothing: explicit highlight requests deliver marks without prose citations",
+		);
+		const { readFile: readSweepSource } = await import("node:fs/promises");
+		const sweepRuntimeSource = await readSweepSource(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+		assert.match(
+			sweepRuntimeSource,
+			/collectUncitedTurnMarkRemovals\(activeRequest, reply\)/,
+			"finalize must run the uncited-mark sweep against the final reply",
+		);
+		assert.match(sweepRuntimeSource, /host\.runCommand\("remove_annotations"/, "the sweep must remove marks through the host command");
+		const sweepBackgroundSource = await readSweepSource(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+		assert.match(sweepBackgroundSource, /case "remove_annotations": \{/, "background must expose the targeted annotation removal command");
+		const sweepViewerSource = await readSweepSource(new URL("../packages/browser-extension/src/pdf-viewer.ts", import.meta.url), "utf8");
+		assert.match(sweepViewerSource, /case "removeAnnotations":/, "the Onhand PDF viewer must support targeted annotation removal");
 		const timeoutTrace = {
 			toolName: "browser_highlight_text",
 			state: "error",

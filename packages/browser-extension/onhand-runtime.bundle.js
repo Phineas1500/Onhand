@@ -155250,6 +155250,32 @@ function sourceTabWasOpenedByRequest(request, tabId) {
     (trace2) => trace2?.state === "complete" && trace2?.toolName === "browser_navigate" && trace2?.resultDetails?.navigation?.createdNewTab === true && traceTargetTabId(trace2) === targetTabId
   );
 }
+function collectUncitedTurnMarkRemovals(request, replyText) {
+  const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+  const citedIds = new Set(
+    Array.from(String(replyText || "").matchAll(/\[\[cite:([^\]\s]+)\]\]/g)).map((match2) => match2[1].trim())
+  );
+  if (!citedIds.size) return [];
+  const notedIds = new Set(
+    traces.filter((trace2) => trace2?.state === "complete" && trace2?.toolName === "browser_show_note").map((trace2) => markerGateAnnotationId(trace2)).filter(Boolean)
+  );
+  const requestCreatedAtMs = Date.parse(String(request?.createdAt || ""));
+  const byTab = /* @__PURE__ */ new Map();
+  for (const trace2 of traces) {
+    if (!isCompletedSourceHighlightTrace(trace2)) continue;
+    const annotationId = markerGateAnnotationId(trace2);
+    if (!annotationId || citedIds.has(annotationId) || notedIds.has(annotationId)) continue;
+    const details = trace2?.details || trace2?.resultDetails;
+    if (details && /"reusedExisting"\s*:\s*true/.test(JSON.stringify(details))) continue;
+    const stamp = Number(annotationIdParts(annotationId)?.stamp || 0);
+    if (stamp && Number.isFinite(requestCreatedAtMs) && stamp < requestCreatedAtMs - 5e3) continue;
+    const tabId = traceTargetTabId(trace2);
+    if (!(tabId > 0)) continue;
+    if (!byTab.has(tabId)) byTab.set(tabId, /* @__PURE__ */ new Set());
+    byTab.get(tabId).add(annotationId);
+  }
+  return Array.from(byTab.entries()).map(([tabId, annotationIds]) => ({ tabId, annotationIds: Array.from(annotationIds) }));
+}
 var SCAFFOLDING_KEEP_TOOL_NAMES = /* @__PURE__ */ new Set([
   "browser_highlight_text",
   "browser_show_note",
@@ -155989,6 +156015,7 @@ var __browserRuntimeTest = {
   tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
   isTransientProviderErrorForTest: isTransientProviderError,
   collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
+  collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
   buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
   describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
   buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
@@ -158567,6 +158594,29 @@ function createOnhandBrowserRuntime(host) {
       finalError = new Error("The model returned an empty answer after reading page context.");
     }
     const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
+    const uncitedMarkRemovals = !finalError && !activeRequest.aborted ? collectUncitedTurnMarkRemovals(activeRequest, reply) : [];
+    if (uncitedMarkRemovals.length) {
+      const removedIds = new Set(uncitedMarkRemovals.flatMap((entry) => entry.annotationIds));
+      activeRequest.pageActions = (activeRequest.pageActions || []).filter(
+        (action) => !(action?.type === "annotation" && removedIds.has(String(action?.annotationId || "")))
+      );
+      for (const entry of uncitedMarkRemovals) {
+        try {
+          await Promise.race([
+            host.runCommand("remove_annotations", { tabId: entry.tabId, annotationIds: entry.annotationIds }),
+            new Promise((resolve) => setTimeout(resolve, 3e3))
+          ]);
+        } catch {
+        }
+      }
+      appendActivity({
+        id: `uncited-marks:${activeRequest.id}`,
+        kind: "tool",
+        label: `Removed ${removedIds.size} uncited mark${removedIds.size === 1 ? "" : "s"}`,
+        toolName: "browser_clear_annotations",
+        state: "complete"
+      });
+    }
     await autoPersistReviewSnapshot(session, activeRequest, finalError);
     const publicActivities = finalizePublicActivities(uiState?.activities || [], finalError);
     const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);

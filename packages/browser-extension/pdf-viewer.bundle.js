@@ -26359,6 +26359,23 @@ function pdfClearAnnotations() {
   for (const element of [...highlights, ...notes]) element.remove();
   return { clearedPdf: highlights.length, clearedNotes: notes.length, cleared: highlights.length + notes.length };
 }
+function pdfRemoveAnnotations(annotationIds) {
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(annotationIds) ? annotationIds : [annotationIds]).map((id) => String(id || "").trim()).filter(Boolean)
+    )
+  );
+  let removedCount = 0;
+  for (const annotationId of ids) {
+    const elements = Array.from(document.querySelectorAll(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`));
+    if (!elements.length) continue;
+    for (const element of elements) element.remove();
+    removeNotesForAnnotation(annotationId);
+    removedCount += 1;
+  }
+  if (!removedCount) throw new Error(`No annotation found with id: ${ids.join(", ") || "(blank)"}`);
+  return { removedCount, requestedCount: ids.length };
+}
 function capturePdfAnnotationSnapshots() {
   return Array.from(document.querySelectorAll("[data-onhand-highlight-kind='pdf']")).map((annotation) => {
     const annotationId = annotation.getAttribute("data-onhand-annotation-id") || "";
@@ -27033,6 +27050,8 @@ async function runPdfToolkitMethod(methodName, args = []) {
       return pdfCaptureState();
     case "clearAnnotations":
       return pdfClearAnnotations();
+    case "removeAnnotations":
+      return pdfRemoveAnnotations(args[0] || []);
     case "getSelectionInfo":
       return pdfGetSelectionInfo();
     default:
