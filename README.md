@@ -1,4 +1,4 @@
-# Onhand
+# Onhand - all new features are on new-features branch, main is frozen for OpenAI Build Week hackathon judging
 
 Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
 
