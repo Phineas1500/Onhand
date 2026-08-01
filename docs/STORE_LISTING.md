@@ -212,6 +212,9 @@ Disclose collection/handling of:
 - User activity: user prompts, learning-mode responses, extension
   actions, tool activity names/states, diagnostics event names, and
   aggregate counts.
+- Web history: titles and URLs of eligible open tabs, indexed locally for
+  the workspace scan that finds clearly related sources; unrelated tabs
+  are not read merely because they are open.
 - Authentication information: provider API keys and OpenAI Codex sign-in
   state, stored locally in extension storage when the user chooses those
   modes.
