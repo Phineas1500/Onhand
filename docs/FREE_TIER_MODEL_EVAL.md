@@ -9,6 +9,14 @@
 > The G14 self-initiated source-fetch works on Luna after the 2026-07-31
 > grounding-rule rewrite (verified 3/3 on the honesty probe through the
 > deployed worker).
+>
+> **2026-08-01:** `deepseek/deepseek-v4-flash-0731` evaluated as a challenger
+> (deterministic battery: three-way tie after the apostrophe-folding grader
+> fix; qualitative scenario batteries: best-in-class text-PDF retrieval and
+> anchor precision, but leaked process narration in 4/7 turns, two turns ended
+> with no final answer, one run_js-as-reader spree, and no image input —
+> which structurally blocks the scanned-PDF region-mark flow and forces
+> mid-turn visual rerouting). **Kept Luna.**
 
 Use this loop before changing the model that powers Onhand Free. It measures the
 things that matter for this product instead of only comparing token prices:

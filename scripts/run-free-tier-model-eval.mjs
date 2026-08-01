@@ -321,7 +321,9 @@ function scoreFromChecks(checks) {
 }
 
 function normalize(value) {
-	return String(value || "").toLowerCase();
+	// Fold typographic apostrophes/quotes so refusal phrasing like “can’t”
+	// matches straight-quoted check terms.
+	return String(value || "").replace(/[’‘]/g, "'").replace(/[“”]/g, '"').toLowerCase();
 }
 
 function round(value, places = 6) {
