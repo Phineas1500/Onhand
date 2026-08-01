@@ -18,11 +18,8 @@
 	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
 	const SIDEBAR_QUICK_OPEN_KEY_CAPTURE_MS = 15 * 1000;
 	const REALTIME_MIC_DEVICE_STORAGE_KEY = "onhandRealtimeMicDeviceId";
-	const REALTIME_SESSION_URL = "http://127.0.0.1:8787/session";
-	const REALTIME_VOICE_MODE = "realtime-only";
 	const REALTIME_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
 	const REALTIME_BACKEND_PREAMBLE_DELAY_MS = 1200;
-	const REALTIME_TRANSCRIPTION_FALLBACK_MS = 1800;
 	const REALTIME_TRANSCRIPT_FINALIZE_DELAY_MS = 1000;
 	const REALTIME_ONLY_COMMIT_FALLBACK_MS = 1200;
 	const REALTIME_SERVER_VAD_GRACE_MS = 1200;
@@ -202,9 +199,6 @@
 	let realtimeActiveMicLabel = "";
 	let realtimeMicTrackDetails = "";
 	let realtimeMicSelectSignature = "";
-	let realtimeVoiceFallbackTimer = null;
-	let realtimeManualVoiceResponseTimer = null;
-	let realtimeTranscriptionFallbackTimer = null;
 	let realtimePendingTranscriptTimer = null;
 	let realtimePendingTranscriptSegments = [];
 	let realtimeOnlyVoiceResponseTimer = null;
@@ -213,7 +207,6 @@
 	let realtimeLocalSpeechActive = false;
 	let realtimeServerSpeechSeenAt = 0;
 	let realtimeManualVoiceCommitPending = false;
-	let realtimePendingTranscriptionItemId = "";
 	let realtimeResponseInProgress = false;
 	let realtimeOutputAudioPlaying = false;
 	let realtimeResponseCreateQueued = false;
@@ -225,8 +218,6 @@
 	let realtimePendingDirectAnswerRequestId = "";
 	let realtimePendingDirectAnswerPrompt = "";
 	let realtimePendingDirectAnswerVoiceTurnId = "";
-	let realtimePendingSocraticMove = null;
-	let realtimeSocraticTurnCounter = 0;
 	let realtimeVoiceTurnCounter = 0;
 	let realtimeActiveVoiceTurn = null;
 	let realtimeLastReadableBrowserTool = "";
@@ -234,7 +225,6 @@
 	const realtimeNarratedDirectAnswerRequestIds = new Set();
 	const realtimePersistedVoiceTurnIds = new Set();
 	const realtimeHandledCallIds = new Set();
-	const realtimeAudioFallbackItemIds = new Set();
 	const REALTIME_READ_TOOL_NAMES = new Set([
 		"browser_get_visible_text",
 		"browser_get_visible_region_image",
@@ -5516,16 +5506,6 @@
 			`;
 		}
 
-		function renderRealtimeAnswerCopyButton(markdown) {
-			const text = String(markdown || "").trim();
-			if (!text || realtimeAnswer?.pending) return "";
-			return `
-				<div class="onhand-copy-row">
-					<button class="onhand-copy-button" data-copy-realtime-answer="true" type="button" aria-label="Copy Onhand response">Copy</button>
-				</div>
-			`;
-		}
-
 		function findCopyTurnById(turnId) {
 			const id = String(turnId || "").trim();
 			if (!id) return null;
@@ -5567,10 +5547,7 @@
 
 		async function copyReplyFromButton(button) {
 			const turnId = button.dataset.copyTurnId || "";
-			const text =
-				button.dataset.copyRealtimeAnswer === "true"
-					? String(realtimeAnswer?.markdown || "").trim()
-					: stripCitationMarkers(String(findCopyTurnById(turnId)?.reply || "")).trim();
+			const text = stripCitationMarkers(String(findCopyTurnById(turnId)?.reply || "")).trim();
 			try {
 				await copyTextToClipboard(text);
 				setCopyButtonState(button, "copied");
@@ -5581,7 +5558,7 @@
 
 		function copyButtonFromEvent(root, event) {
 			const target = event.target instanceof Element ? event.target : null;
-			const button = target?.closest("[data-copy-turn-id], [data-copy-realtime-answer]");
+			const button = target?.closest("[data-copy-turn-id]");
 			return button instanceof HTMLElement && root.contains(button) ? button : null;
 		}
 
@@ -5873,16 +5850,6 @@
 		});
 	}
 
-	function renderActivity() {
-		activityEl.innerHTML = "";
-	}
-
-	function findTurnForRealtimeAnswer(state, sourceTurnId) {
-		const id = String(sourceTurnId || "").trim();
-		if (!id) return null;
-		return (Array.isArray(state?.turns) ? state.turns : []).find((turn) => String(turn?.id || "") === id) || null;
-	}
-
 	function collectActionsThroughTurn(state, sourceTurnId = "") {
 		const turns = Array.isArray(state?.turns) ? state.turns : [];
 		const actions = [];
@@ -5919,17 +5886,6 @@
 				.sort((left, right) => right.score - left.score)
 				.map((entry) => entry.action),
 		).slice(0, limit);
-	}
-
-	function getRealtimeAnswerSourceActions(state, sourceTurn, markdown) {
-		const directActions = dedupePageActions([
-			...(Array.isArray(realtimeAnswer?.pageActions) ? realtimeAnswer.pageActions : []),
-			...(Array.isArray(sourceTurn?.pageActions) ? sourceTurn.pageActions : []),
-		]);
-		if (directActions.length) return directActions;
-		const sourceText = [sourceTurn?.userPrompt, realtimeAnswer?.userPrompt, markdown].filter(Boolean).join(" ");
-		const priorActions = collectActionsThroughTurn(state, sourceTurn?.id || "");
-		return selectRelevantCitationActions(priorActions, sourceText);
 	}
 
 	function sourceDisclosureKey(actions, preferredKey = "") {
@@ -6010,7 +5966,6 @@
 		messagesEl.hidden = false;
 		const annotationCount = renderPageIndex(state);
 		renderMessages(displayTurns, annotationCount);
-		renderActivity();
 		renderLatestReply(state, currentTurn);
 		renderActions(state);
 
@@ -6399,7 +6354,7 @@
 		applyRealtimeMicMuted();
 		noteRealtimeActivity();
 		if (realtimeMicMuted) {
-			clearRealtimeVoiceFallback();
+			realtimeManualVoiceCommitPending = false;
 			clearRealtimeOnlyVoiceResponse();
 		}
 		renderRealtimeMuteButton();
@@ -6424,7 +6379,6 @@
 	}
 
 	function clearRealtimeSessionLocalState() {
-		clearRealtimeTranscriptionFallback();
 		clearRealtimePendingTranscript();
 		clearRealtimeOnlyVoiceResponse();
 		clearRealtimeBackendPreamble();
@@ -6433,16 +6387,10 @@
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerPrompt = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
-		realtimePendingSocraticMove = null;
 		realtimeActiveVoiceTurn = null;
 		realtimeResponseVoiceTurnId = "";
 		realtimeSuppressTranscriptForResponse = false;
 		realtimeResponseAfterDoneStatus = "";
-		realtimeAudioFallbackItemIds.clear();
-	}
-
-	function isRealtimeOnlyVoiceMode() {
-		return REALTIME_VOICE_MODE === "realtime-only";
 	}
 
 	function realtimePromptAsksForExternalBrowsing(prompt) {
@@ -6480,10 +6428,6 @@
 			/search\?/.test(url) ||
 			/[?&]q=/.test(url)
 		);
-	}
-
-	function shouldUseLocalRealtimeFallbackCommit() {
-		return REALTIME_VOICE_MODE === "local-fallback";
 	}
 
 	function beginRealtimeVoiceTurn(kind, prompt) {
@@ -6700,15 +6644,6 @@
 			clearInterval(realtimeMicMonitorTimer);
 			realtimeMicMonitorTimer = null;
 		}
-		if (realtimeVoiceFallbackTimer) {
-			clearTimeout(realtimeVoiceFallbackTimer);
-			realtimeVoiceFallbackTimer = null;
-		}
-		if (realtimeManualVoiceResponseTimer) {
-			clearTimeout(realtimeManualVoiceResponseTimer);
-			realtimeManualVoiceResponseTimer = null;
-		}
-		clearRealtimeTranscriptionFallback();
 		clearRealtimePendingTranscript();
 		clearRealtimeBackendPreamble();
 		realtimeLocalSpeechActive = false;
@@ -6868,27 +6803,6 @@
 		}
 	}
 
-	function clearRealtimeVoiceFallback() {
-		if (realtimeVoiceFallbackTimer) {
-			clearTimeout(realtimeVoiceFallbackTimer);
-			realtimeVoiceFallbackTimer = null;
-		}
-		if (realtimeManualVoiceResponseTimer) {
-			clearTimeout(realtimeManualVoiceResponseTimer);
-			realtimeManualVoiceResponseTimer = null;
-		}
-		clearRealtimeTranscriptionFallback();
-		realtimeManualVoiceCommitPending = false;
-	}
-
-	function clearRealtimeTranscriptionFallback() {
-		if (realtimeTranscriptionFallbackTimer) {
-			clearTimeout(realtimeTranscriptionFallbackTimer);
-			realtimeTranscriptionFallbackTimer = null;
-		}
-		realtimePendingTranscriptionItemId = "";
-	}
-
 	function clearRealtimePendingTranscript() {
 		if (realtimePendingTranscriptTimer) {
 			clearTimeout(realtimePendingTranscriptTimer);
@@ -6906,7 +6820,6 @@
 
 	function scheduleRealtimeOnlyVoiceCommitFallback(reason = "speech_stopped") {
 		if (realtimeMicMuted) return false;
-		if (!isRealtimeOnlyVoiceMode()) return false;
 		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
 		clearRealtimeOnlyVoiceResponse();
 		realtimeOnlyVoiceResponseTimer = setTimeout(() => {
@@ -6941,55 +6854,14 @@
 		}
 	}
 
-	function startRealtimeAudioResponseFallback(itemId = "", reason = "response_for_voice_pause") {
-		clearRealtimeTranscriptionFallback();
-		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
-		const audioItemId = String(itemId || "").trim();
-		if (audioItemId) realtimeAudioFallbackItemIds.add(audioItemId);
-		const voiceTurn = beginRealtimeVoiceTurn("realtime_response", "Voice question");
-		voiceTurn.audioItemId = audioItemId;
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: "",
-			status: "Thinking",
-			pending: true,
-			published: false,
-		});
-		setRealtimeStatus("Thinking...");
-		requestRealtimeResponse(reason);
-		return true;
-	}
-
-	function scheduleRealtimeTranscriptionFallbackResponse(itemId = "") {
-		if (isRealtimeOnlyVoiceMode()) return;
-		if (!shouldUseLocalRealtimeFallbackCommit()) return;
-		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
-		clearRealtimeTranscriptionFallback();
-		realtimePendingTranscriptionItemId = String(itemId || "").trim();
-		realtimeTranscriptionFallbackTimer = setTimeout(() => {
-			const fallbackItemId = realtimePendingTranscriptionItemId;
-			startRealtimeAudioResponseFallback(fallbackItemId, "response_for_voice_pause");
-		}, REALTIME_TRANSCRIPTION_FALLBACK_MS);
-	}
-
-	function noteRealtimeTranscriptHandledByAudioFallback(itemId, transcript) {
-		const audioItemId = String(itemId || "").trim();
-		if (!audioItemId || !realtimeAudioFallbackItemIds.has(audioItemId)) return false;
-		const text = String(transcript || "").trim();
-		if (text && realtimeActiveVoiceTurn?.audioItemId === audioItemId) {
-			realtimeActiveVoiceTurn.prompt = text;
-			updateRealtimeAnswerForTurn(realtimeActiveVoiceTurn, {});
-		}
-		return true;
-	}
-
 	async function processRealtimeVoiceTranscript(transcript) {
 		const text = String(transcript || "").replace(/\s+/g, " ").trim();
 		if (!text) return false;
-		if (isRealtimeOnlyVoiceMode() && shouldRouteRealtimePromptThroughOnhand(text)) {
+		if (shouldRouteRealtimePromptThroughOnhand(text)) {
 			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
 			return true;
 		}
-		if (isRealtimeOnlyVoiceMode()) {
+		{
 			const voiceTurn =
 				realtimeActiveVoiceTurn?.kind === "realtime_response" && !realtimeResponseInProgress
 					? realtimeActiveVoiceTurn
@@ -7010,25 +6882,6 @@
 			setRealtimeStatus("Reading page...");
 			return true;
 		}
-		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
-			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
-		} else if (shouldRouteRealtimePromptThroughSocraticPlan(text)) {
-			await startRealtimeSocraticPlan(text, beginRealtimeVoiceTurn("socratic_plan", text));
-		} else if (shouldRouteRealtimePromptThroughOnhand(text)) {
-			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
-		} else {
-			const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
-			updateRealtimeAnswerForTurn(voiceTurn, {
-				markdown: "",
-				status: "Thinking",
-				pending: true,
-				published: false,
-			});
-			sendRealtimeSessionUpdate();
-			requestRealtimeResponse("response_for_voice_transcript");
-			setRealtimeStatus("Thinking...");
-		}
-		return true;
 	}
 
 	async function flushRealtimePendingTranscript() {
@@ -7056,50 +6909,6 @@
 		setRealtimeStatus("Heard you · waiting for a pause...");
 		scheduleRealtimePendingTranscriptFlush();
 		return true;
-	}
-
-	function scheduleRealtimeVoiceFallbackCommit() {
-		if (realtimeMicMuted) return;
-		if (isRealtimeOnlyVoiceMode()) return;
-		if (!shouldUseLocalRealtimeFallbackCommit()) return;
-		if (!realtimeConnected || realtimeResponseInProgress || realtimeManualVoiceCommitPending) return;
-		const serverVadElapsed = realtimeServerSpeechSeenAt ? Date.now() - realtimeServerSpeechSeenAt : Number.POSITIVE_INFINITY;
-		const serverVadGraceDelay = Number.isFinite(serverVadElapsed) ? Math.max(0, REALTIME_SERVER_VAD_GRACE_MS - serverVadElapsed) : 0;
-		if (realtimeVoiceFallbackTimer) clearTimeout(realtimeVoiceFallbackTimer);
-		realtimeVoiceFallbackTimer = setTimeout(() => {
-			realtimeVoiceFallbackTimer = null;
-			commitRealtimeVoiceFallback();
-		}, 650 + serverVadGraceDelay);
-	}
-
-	function commitRealtimeVoiceFallback() {
-		if (realtimeMicMuted) return false;
-		if (isRealtimeOnlyVoiceMode()) return false;
-		if (!shouldUseLocalRealtimeFallbackCommit()) return false;
-		if (!realtimeConnected || realtimeResponseInProgress || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
-		if (realtimeServerSpeechSeenAt && Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
-			scheduleRealtimeVoiceFallbackCommit();
-			return false;
-		}
-		try {
-			realtimeManualVoiceCommitPending = true;
-			setRealtimeStatus("Submitting voice...");
-			sendRealtimeEvent({
-				event_id: realtimeEventId("onhand_voice_commit"),
-				type: "input_audio_buffer.commit",
-			});
-			realtimeManualVoiceResponseTimer = setTimeout(() => {
-				realtimeManualVoiceResponseTimer = null;
-				if (!realtimeManualVoiceCommitPending || realtimeResponseInProgress) return;
-				realtimeManualVoiceCommitPending = false;
-				requestRealtimeResponse("response_for_voice_pause");
-			}, 900);
-			return true;
-		} catch (error) {
-			realtimeManualVoiceCommitPending = false;
-			setRealtimeStatus("Voice error", error?.message || String(error));
-			return false;
-		}
 	}
 
 	function formatRealtimeMicLevel(rms) {
@@ -7229,10 +7038,6 @@
 				if (rms > realtimeLocalSpeechThreshold()) {
 					loudFrames += 1;
 					quietFrames = 0;
-					if (realtimeVoiceFallbackTimer) {
-						clearTimeout(realtimeVoiceFallbackTimer);
-						realtimeVoiceFallbackTimer = null;
-					}
 					if (loudFrames >= 2 && !realtimeLocalSpeechActive) {
 						realtimeLocalSpeechActive = true;
 						if (Date.now() - realtimeServerSpeechSeenAt > REALTIME_SERVER_VAD_GRACE_MS) {
@@ -7256,13 +7061,8 @@
 					realtimeLocalSpeechActive = false;
 					loudFrames = 0;
 					quietFrames = 0;
-					if (isRealtimeOnlyVoiceMode() || !shouldUseLocalRealtimeFallbackCommit()) {
-						setRealtimeStatus("Mic heard a pause · waiting for transcript");
-						scheduleRealtimeOnlyVoiceCommitFallback("local_pause");
-					} else {
-						setRealtimeStatus("Mic heard a pause · waiting for API");
-						scheduleRealtimeVoiceFallbackCommit();
-					}
+					setRealtimeStatus("Mic heard a pause · waiting for transcript");
+					scheduleRealtimeOnlyVoiceCommitFallback("local_pause");
 					if (Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
 						realtimeMicLastIdleStatusAt = Date.now();
 					}
@@ -7743,32 +7543,19 @@
 		}
 
 	function realtimeInputAudioConfig() {
-		if (isRealtimeOnlyVoiceMode()) {
-			return {
-				noise_reduction: { type: "far_field" },
-				transcription: { model: "gpt-4o-mini-transcribe" },
-				turn_detection: {
-					type: "semantic_vad",
-					eagerness: "medium",
-					create_response: false,
-					interrupt_response: true,
-				},
-			};
-		}
 		return {
 			noise_reduction: { type: "far_field" },
 			transcription: { model: "gpt-4o-mini-transcribe" },
 			turn_detection: {
 				type: "semantic_vad",
-				eagerness: "low",
+				eagerness: "medium",
 				create_response: false,
-				interrupt_response: false,
+				interrupt_response: true,
 			},
 		};
 	}
 
 	function sendRealtimeSessionUpdate() {
-		const realtimeOnly = isRealtimeOnlyVoiceMode();
 		sendRealtimeEvent({
 			event_id: realtimeEventId("onhand_session_update"),
 			type: "session.update",
@@ -7776,11 +7563,9 @@
 				type: "realtime",
 				output_modalities: ["audio"],
 				audio: { input: realtimeInputAudioConfig() },
-				instructions: realtimeOnly
-					? realtimeTutorInstructions()
-					: "You are Onhand's realtime audio interface. Use semantic patience for microphone turns. Do not answer page questions from audio by yourself; Onhand will send exact answer text to speak when the runtime agent has finished page grounding.",
-				tools: realtimeOnly ? realtimeToolDefinitions() : [],
-				tool_choice: realtimeOnly ? REALTIME_FORCED_INITIAL_TOOL_CHOICE : "auto",
+				instructions: realtimeTutorInstructions(),
+				tools: realtimeToolDefinitions(),
+				tool_choice: REALTIME_FORCED_INITIAL_TOOL_CHOICE,
 			},
 		});
 	}
@@ -7869,19 +7654,6 @@
 			}
 		}
 
-		try {
-			const response = await fetch(REALTIME_SESSION_URL, {
-				method: "POST",
-				headers: { "Content-Type": "application/sdp" },
-				body: sdp,
-			});
-			const answerSdp = await response.text();
-			if (response.ok) return answerSdp;
-			errors.push(answerSdp || `Local Realtime session server returned ${response.status}.`);
-		} catch (error) {
-			errors.push(error?.message || String(error));
-		}
-
 		throw new Error(`Could not create Realtime session. ${errors.filter(Boolean).join(" ")}`);
 	}
 
@@ -7918,7 +7690,7 @@
 		const text = String(prompt || "").trim();
 		if (!text) return false;
 		if (isRealtimeCalendarRequest(text)) return false;
-		if (shouldRouteRealtimePromptThroughSocraticPlan(text, state) || shouldRouteRealtimePromptThroughSocraticEvaluation(text, state)) return false;
+		if (shouldRouteRealtimePromptThroughSocraticPlan(text, state)) return false;
 		return hasRealtimePageMaterialContext(state);
 	}
 
@@ -7937,22 +7709,7 @@
 		if (isRealtimeCalendarRequest(text)) return false;
 		if (!hasRealtimePageMaterialContext(state)) return false;
 		if (!isExplicitRealtimeSocraticRequest(text)) return false;
-		return !realtimePendingSocraticMove;
-	}
-
-	function looksLikeNewRealtimeQuestion(prompt) {
-		const text = String(prompt || "").trim();
-		if (!text) return false;
-		if (/[?]\s*$/.test(text)) return true;
-		return /^(what|why|how|where|when|which|who|can you|could you|would you|explain|tell me|show me)\b/i.test(text);
-	}
-
-	function shouldRouteRealtimePromptThroughSocraticEvaluation(prompt, state = currentState) {
-		const text = String(prompt || "").trim();
-		if (!text || !realtimePendingSocraticMove) return false;
-		if (!Boolean(state?.preferences?.learningMode)) return false;
-		if (isRealtimeCalendarRequest(text)) return false;
-		return !looksLikeNewRealtimeQuestion(text);
+		return true;
 	}
 
 	function compactRealtimeTutorText(value, maxLength = 240) {
@@ -7973,17 +7730,6 @@
 			.trim();
 	}
 
-	function buildExactRealtimeSpeechPrompt(label, value) {
-		const text = canonicalRealtimeSpeechText(value);
-		return [
-			`Speak this ${label} exactly as written below.`,
-			"Do not paraphrase, summarize, add examples, omit clauses, or change the meaning.",
-			"Read symbols naturally, but keep the same words as the sidebar text.",
-			"Text:",
-			text,
-		].join("\n\n");
-	}
-
 	function buildConciseRealtimeSpeechPrompt(label, value) {
 		const text = canonicalRealtimeSpeechText(value);
 		return [
@@ -7998,7 +7744,7 @@
 	}
 
 	function realtimePublishedAnswerLooksSubstantive(markdown, turn = realtimeActiveVoiceTurn) {
-		if (!isRealtimeOnlyVoiceMode() || turn?.kind !== "realtime_response" || !hasRealtimePageMaterialContext(currentState)) return true;
+		if (turn?.kind !== "realtime_response" || !hasRealtimePageMaterialContext(currentState)) return true;
 		const text = normalizeRealtimeTranscriptText(canonicalRealtimeSpeechText(markdown));
 		if (!text) return false;
 		const prompt = normalizeRealtimeTranscriptText(turn?.prompt || "");
@@ -8623,7 +8369,6 @@
 		}
 
 		function realtimeResponseOptionsAfterTool(toolName, output) {
-			if (!isRealtimeOnlyVoiceMode()) return {};
 			if (output?.autoAnchor?.ok) {
 				return realtimeForcedPublishResponseOptions("source span already highlighted");
 			}
@@ -8885,97 +8630,10 @@
 			};
 		}
 
-	function normalizeRealtimePedagogicalMove(value, fallbackPrompt = "") {
-		const raw = value?.move && typeof value.move === "object" ? value.move : value && typeof value === "object" ? value : {};
-		const rawAnchor = raw.anchor && typeof raw.anchor === "object" ? raw.anchor : {};
-		const anchorText = compactRealtimeTutorText(rawAnchor.text_excerpt || rawAnchor.text || raw.text_excerpt || fallbackPrompt, 220);
-		const voiceScript =
-			compactRealtimeTutorText(raw.voice_script || raw.question || raw.prompt, 220) ||
-			"Looking at the highlighted line, what do you think it is saying in your own words?";
-		const expectedConcepts = Array.isArray(raw.expected_concepts)
-			? raw.expected_concepts.map((entry) => compactRealtimeTutorText(entry, 80)).filter(Boolean).slice(0, 4)
-			: [];
-		return {
-			anchor: {
-				text_excerpt: anchorText,
-				kind: compactRealtimeTutorText(rawAnchor.kind || "question_anchor", 40) || "question_anchor",
-				note: compactRealtimeTutorText(rawAnchor.note || raw.note || "Key evidence for this question.", 80),
-			},
-			move_type: compactRealtimeTutorText(raw.move_type || "prediction_prompt", 40) || "prediction_prompt",
-			voice_script: voiceScript,
-			sidebar_markdown: compactRealtimeTutorText(raw.sidebar_markdown || `**Your turn:** ${voiceScript}`, 360),
-			expected_concepts: expectedConcepts.length ? expectedConcepts : ["Page concept"],
-			stuck_fallback: compactRealtimeTutorText(raw.stuck_fallback || "Focus on the highlighted wording.", 180),
-			misconceptions: Array.isArray(raw.misconceptions) ? raw.misconceptions.slice(0, 3) : [],
-		};
-	}
-
-	function normalizeRealtimePedagogicalEvaluation(value) {
-		const raw = value?.evaluation && typeof value.evaluation === "object" ? value.evaluation : value && typeof value === "object" ? value : {};
-		const feedback = compactRealtimeTutorText(raw.feedback_summary || raw.voice_script || raw.sidebar_markdown, 220) || "Good start. Tie that back to the highlighted line.";
-		return {
-			correct_points: Array.isArray(raw.correct_points) ? raw.correct_points.slice(0, 3) : [],
-			missed_points: Array.isArray(raw.missed_points) ? raw.missed_points.slice(0, 3) : [],
-			next_move: ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "nudge",
-			feedback_summary: feedback,
-			voice_script: compactRealtimeTutorText(raw.voice_script || feedback, 220),
-			sidebar_markdown: compactRealtimeTutorText(raw.sidebar_markdown || feedback, 420),
-			assessment: compactRealtimeTutorText(raw.assessment || "partial", 24) || "partial",
-			evidence: compactRealtimeTutorText(raw.evidence || feedback, 260),
-		};
-	}
-
-	function findRealtimeOpenedCheck(learnerState, promptText) {
-		const target = compactRealtimeTutorText(promptText, 180).toLowerCase();
-		const checks = Array.isArray(learnerState?.openChecks) ? learnerState.openChecks : [];
-		if (!checks.length) return null;
-		return (
-			[...checks]
-				.reverse()
-				.find((check) => target && compactRealtimeTutorText(check?.promptText, 180).toLowerCase() === target) ||
-			checks.at(-1) ||
-			null
-		);
-	}
-
-	function speakRealtimeTutorText(kind, prompt, instructions, controlOptions = {}) {
-		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
-			setRealtimeStatus("Voice ended — answer shown in the panel");
-			return;
-		}
-		sendRealtimeEvent({
-			event_id: realtimeEventId(`onhand_${kind}`),
-			type: "conversation.item.create",
-			item: {
-				type: "message",
-				role: "user",
-				content: [{ type: "input_text", text: prompt }],
-			},
-		});
-		requestRealtimeResponse(
-			kind,
-			{
-				instructions,
-				tool_choice: "none",
-			},
-			controlOptions,
-		);
-	}
-
 	// Spoken filler while the backend turn runs. Rotated so repeated questions
 	// do not get an identical robotic script, and free of "ground"/"anchor"
 	// process jargon per the runtime's wording-hygiene rule.
 	const REALTIME_PREAMBLE_LINES = {
-		socratic_plan: [
-			"Let me find the right line first.",
-			"Let me find where the page shows this.",
-			"One sec — finding the right spot on the page.",
-		],
-		socratic_evaluation: [
-			"Let me check that against the page.",
-			"Let me see how that matches the page.",
-			"One sec — checking that against the page.",
-		],
 		default: [
 			"One sec — let me look at the page.",
 			"Let me take a look.",
@@ -9002,8 +8660,6 @@
 	}
 
 	function realtimeBackendPreambleStatus(kind) {
-		if (kind === "socratic_plan") return "Planning tutor move...";
-		if (kind === "socratic_evaluation") return "Checking answer...";
 		return "Using Onhand...";
 	}
 
@@ -9040,186 +8696,6 @@
 		}, REALTIME_BACKEND_PREAMBLE_DELAY_MS);
 	}
 
-	async function requestRealtimePedagogicalMove(prompt, voiceTurn = null) {
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:realtime-plan-pedagogical-move",
-			userQuestion: prompt,
-			voiceTurnId: voiceTurn?.id || "",
-			windowId: await ensureCurrentWindowId(),
-		});
-		if (!response?.ok) throw new Error(response?.error || "Could not plan a Learning Mode voice move.");
-		return normalizeRealtimePedagogicalMove(response.result?.move || response.result, prompt);
-	}
-
-	async function requestRealtimePedagogicalEvaluation(userResponse, previousMove, voiceTurn = null) {
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:realtime-evaluate-response",
-			userResponse,
-			previousMove,
-			voiceTurnId: voiceTurn?.id || "",
-			windowId: await ensureCurrentWindowId(),
-		});
-		if (!response?.ok) throw new Error(response?.error || "Could not evaluate the Learning Mode voice response.");
-		return normalizeRealtimePedagogicalEvaluation(response.result?.evaluation || response.result);
-	}
-
-	async function annotateRealtimePedagogicalMove(move) {
-		const anchorText = compactRealtimeTutorText(move?.anchor?.text_excerpt, 220);
-		if (!anchorText) return null;
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:realtime-annotate",
-			windowId: await ensureCurrentWindowId(),
-			anchors: [
-				{
-					text: anchorText,
-					note: compactRealtimeTutorText(move?.anchor?.note || "Key evidence for this question.", 80),
-					label: "Tutor prompt",
-					conceptLabel: compactRealtimeTutorText(move?.expected_concepts?.[0] || "Page concept", 80),
-					checkKind: move?.move_type === "retrieval_prompt" ? "retrieval" : "prediction",
-					checkPrompt: compactRealtimeTutorText(move?.voice_script, 180),
-				},
-			],
-		});
-		if (!response?.ok) throw new Error(response?.error || "Could not annotate the Socratic prompt.");
-		await requestState();
-		const result = response.result || null;
-		if (result && typeof result === "object" && !Array.isArray(result.pageActions)) {
-			result.pageActions = buildRealtimeAnnotationPageActions(result);
-		}
-		return result;
-	}
-
-	async function recordRealtimePedagogicalEvaluation(evaluation, pendingMove) {
-		const checkId = compactRealtimeTutorText(pendingMove?.checkId, 120);
-		if (!checkId) return null;
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:realtime-record-learning-event",
-			event: {
-				kind: "check_resolved",
-				checkId,
-				assessment: evaluation.assessment,
-				evidence: evaluation.evidence || evaluation.feedback_summary,
-			},
-		});
-		if (!response?.ok) throw new Error(response?.error || "Could not update learner state.");
-		await requestState();
-		return response.result || null;
-	}
-
-	async function startRealtimeSocraticPlan(prompt, existingVoiceTurn = null) {
-		const text = String(prompt || "").trim();
-		if (!text) throw new Error("A Learning Mode voice question is required.");
-		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("socratic_plan", text);
-		const voiceTurnId = voiceTurn.id || `voice_turn_${++realtimeSocraticTurnCounter}`;
-		realtimePendingDirectAnswerRequestId = "";
-		realtimePendingDirectAnswerPrompt = "";
-		realtimePendingDirectAnswerVoiceTurnId = "";
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: "Planning a page-grounded tutor prompt...",
-			status: "Planning",
-			pending: true,
-			published: true,
-		});
-		scheduleRealtimeBackendPreamble(voiceTurn, "socratic_plan");
-		let move;
-		try {
-			await ensureRealtimePdfSurfaceForVoice();
-			if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
-			setRealtimeStatus("Planning tutor move...");
-			move = await requestRealtimePedagogicalMove(text, voiceTurn);
-		} finally {
-			clearRealtimeBackendPreamble(voiceTurn);
-		}
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
-		const annotationResult = await annotateRealtimePedagogicalMove(move);
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, voiceTurnId, responseAlreadyRequested: true };
-		const openedCheck = findRealtimeOpenedCheck(annotationResult?.learnerState, move.voice_script);
-		const pageActions = dedupePageActions(Array.isArray(annotationResult?.pageActions) ? annotationResult.pageActions : []);
-		appendRealtimeTurnPageActions(voiceTurn, pageActions);
-		realtimePendingSocraticMove = {
-			voiceTurnId,
-			userQuestion: text,
-			move,
-			checkId: openedCheck?.checkId || "",
-			pageActions,
-			createdAt: new Date().toISOString(),
-		};
-		const sidebarText = move.sidebar_markdown || `**Your turn:** ${move.voice_script}`;
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: sidebarText,
-			status: "Tutor prompt",
-			pending: false,
-			published: true,
-		});
-		await persistRealtimeVoiceTurn(voiceTurn, sidebarText, { status: "Tutor prompt", pageActions });
-		speakRealtimeTutorText(
-			"speak_socratic_prompt",
-			buildExactRealtimeSpeechPrompt("Socratic prompt", sidebarText),
-			"Speak only the provided text. Do not paraphrase, summarize, add or remove words, answer the prompt, or call tools.",
-			{
-				trackVoiceTurn: false,
-				suppressTranscript: true,
-				afterDoneStatus: "Voice ready · ask, then pause",
-			},
-		);
-		setRealtimeStatus("Speaking tutor prompt...");
-		return { planned: true, voiceTurnId, move, checkId: openedCheck?.checkId || "", responseAlreadyRequested: true };
-	}
-
-	async function startRealtimeSocraticEvaluation(userResponse, existingVoiceTurn = null) {
-		const text = String(userResponse || "").trim();
-		if (!text) throw new Error("A student response is required.");
-		const pendingMove = realtimePendingSocraticMove;
-		if (!pendingMove) return await startRealtimeSocraticPlan(text, existingVoiceTurn);
-		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("socratic_evaluation", text);
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: "Checking your answer against the page...",
-			status: "Checking answer",
-			pending: true,
-			published: true,
-		});
-		scheduleRealtimeBackendPreamble(voiceTurn, "socratic_evaluation");
-		let evaluation;
-		try {
-			await ensureRealtimePdfSurfaceForVoice();
-			if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
-			setRealtimeStatus("Checking answer...");
-			evaluation = await requestRealtimePedagogicalEvaluation(text, pendingMove.move, voiceTurn);
-		} finally {
-			clearRealtimeBackendPreamble(voiceTurn);
-		}
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
-		await recordRealtimePedagogicalEvaluation(evaluation, pendingMove);
-		if (!isRealtimeVoiceTurnCurrent(voiceTurn)) return { stale: true, responseAlreadyRequested: true };
-		realtimePendingSocraticMove = null;
-		const pageActions = dedupePageActions(Array.isArray(pendingMove.pageActions) ? pendingMove.pageActions : []);
-		appendRealtimeTurnPageActions(voiceTurn, pageActions);
-		const sidebarText = evaluation.sidebar_markdown || evaluation.feedback_summary;
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: sidebarText,
-			status: "Tutor feedback",
-			pending: false,
-			published: true,
-		});
-		await persistRealtimeVoiceTurn(voiceTurn, sidebarText, { status: "Tutor feedback", pageActions });
-		speakRealtimeTutorText(
-			"speak_socratic_feedback",
-			buildExactRealtimeSpeechPrompt("Learning Mode feedback", sidebarText),
-			"Speak only the provided text. Do not paraphrase, summarize, add or remove words, call tools, or add page claims.",
-			{
-				trackVoiceTurn: false,
-				suppressTranscript: true,
-				afterDoneStatus: "Voice ready · ask, then pause",
-			},
-		);
-		setRealtimeStatus("Speaking tutor feedback...");
-		return { evaluated: true, evaluation, responseAlreadyRequested: true };
-	}
-
-	function stripRealtimeVoiceDisplayPrefix(value) {
-		return String(value || "").replace(/^\[Voice\]\s*/i, "").trim();
-	}
-
 	function findRealtimeDirectAnswerTurn(state, requestId) {
 		const id = String(requestId || "").trim();
 		if (!id) return null;
@@ -9231,7 +8707,6 @@
 		const text = String(prompt || "").trim();
 		if (!text) throw new Error("answer_directly requires a prompt.");
 		const voiceTurn = existingVoiceTurn || beginRealtimeVoiceTurn("direct_answer", text);
-		realtimePendingSocraticMove = null;
 		updateRealtimeAnswerForTurn(voiceTurn, {
 			markdown: "Grounding this with Onhand...",
 			status: "Using Onhand",
@@ -9291,8 +8766,7 @@
 
 	function realtimeTurnNeedsGroundedAnchor(turn = realtimeActiveVoiceTurn) {
 		return Boolean(
-			isRealtimeOnlyVoiceMode() &&
-				turn?.kind === "realtime_response" &&
+			turn?.kind === "realtime_response" &&
 				hasRealtimePageMaterialContext(currentState) &&
 				!realtimeSuppressTranscriptForResponse &&
 				!realtimeVoiceTurnHasAnchor(turn),
@@ -9548,15 +9022,6 @@
 				}
 				return { published: true, responseAlreadyRequested: true };
 			}
-			case "answer_directly": {
-				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
-			}
-			case "plan_pedagogical_move": {
-				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
-			}
-			case "evaluate_response": {
-				throw new Error("Realtime voice no longer delegates to GPT-5.5; use browser_* tools and publish_sidebar_answer.");
-			}
 			default:
 				throw new Error(`Unknown realtime tool: ${name || "(blank)"}`);
 		}
@@ -9622,7 +9087,7 @@
 		}
 		if (
 			realtimeActiveVoiceTurn &&
-			(!isRealtimeOnlyVoiceMode() || responseActive || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
+			(responseActive || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
 		) {
 			markRealtimeVoiceTurnStale("user_interrupted");
 		}
@@ -9647,7 +9112,7 @@
 				return;
 			}
 			if (/input audio buffer.*empty|buffer is empty/i.test(message)) {
-				clearRealtimeVoiceFallback();
+				realtimeManualVoiceCommitPending = false;
 				setRealtimeStatus("OpenAI received no mic audio");
 				return;
 			}
@@ -9678,10 +9143,10 @@
 			return;
 		}
 		if (event.type === "input_audio_buffer.speech_started") {
-			clearRealtimeVoiceFallback();
+			realtimeManualVoiceCommitPending = false;
 			pauseRealtimePendingTranscriptFlush();
 			clearRealtimeOnlyVoiceResponse();
-			if (realtimeOutputAudioPlaying && isRealtimeOnlyVoiceMode()) {
+			if (realtimeOutputAudioPlaying) {
 				// interrupt_response only cancels a response that is still
 				// generating. A finished answer keeps playing from the server's
 				// output audio buffer, so late barge-in must clear it explicitly.
@@ -9696,7 +9161,7 @@
 			realtimeServerSpeechSeenAt = Date.now();
 			if (
 				realtimeActiveVoiceTurn &&
-				(!isRealtimeOnlyVoiceMode() || realtimeResponseInProgress || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
+				(realtimeResponseInProgress || (realtimeAnswer?.markdown && !realtimeAnswer?.pending))
 			) {
 				markRealtimeVoiceTurnStale("user_interrupted");
 			}
@@ -9704,68 +9169,39 @@
 			return;
 		}
 		if (event.type === "input_audio_buffer.speech_stopped") {
-			clearRealtimeVoiceFallback();
+			realtimeManualVoiceCommitPending = false;
 			realtimeServerSpeechSeenAt = Date.now();
-			setRealtimeStatus(isRealtimeOnlyVoiceMode() ? "Transcribing..." : "Transcribing...");
-			if (isRealtimeOnlyVoiceMode()) {
-				scheduleRealtimeOnlyVoiceCommitFallback("speech_stopped");
-				return;
-			}
-			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
+			setRealtimeStatus("Transcribing...");
+			scheduleRealtimeOnlyVoiceCommitFallback("speech_stopped");
 			return;
 		}
 		if (event.type === "input_audio_buffer.committed") {
-			clearRealtimeVoiceFallback();
 			clearRealtimeOnlyVoiceResponse();
 			realtimeManualVoiceCommitPending = false;
 			realtimeServerSpeechSeenAt = Date.now();
-			if (isRealtimeOnlyVoiceMode()) {
-				ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
-				setRealtimeStatus("Thinking...");
-				return;
-			}
-			setRealtimeStatus("Transcribing...");
-			scheduleRealtimeTranscriptionFallbackResponse(event.item_id);
+			ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
+			setRealtimeStatus("Thinking...");
 			return;
 		}
 		if (event.type === "conversation.item.input_audio_transcription.failed") {
 			clearRealtimeOnlyVoiceResponse();
 			realtimeManualVoiceCommitPending = false;
-			if (isRealtimeOnlyVoiceMode()) {
-				ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
-				return;
-			}
-			if (!shouldUseLocalRealtimeFallbackCommit()) {
-				setRealtimeStatus("Voice ready · ask, then pause", "Could not transcribe that voice turn. Please try again.");
-				return;
-			}
-			if (startRealtimeAudioResponseFallback(event.item_id, "response_after_transcription_failed")) {
-				setRealtimeStatus("Thinking from audio...");
-			} else {
-				setRealtimeReadyStatus();
-			}
+			ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
 			return;
 		}
 		if (event.type === "conversation.item.input_audio_transcription.completed" && event.transcript) {
 			const transcript = String(event.transcript || "").trim();
 			clearRealtimeOnlyVoiceResponse();
 			realtimeManualVoiceCommitPending = false;
-			if (isRealtimeOnlyVoiceMode()) {
-				clearRealtimeTranscriptionFallback();
-				const turn = ensureRealtimeAudioVoiceTurn(event.item_id, transcript || "Voice question");
-				if (transcript) appendRealtimeUserTranscriptToTurn(turn, transcript);
-				queueRealtimeVoiceTranscript(transcript);
-				return;
-			}
-			if (noteRealtimeTranscriptHandledByAudioFallback(event.item_id, transcript)) return;
-			clearRealtimeTranscriptionFallback();
+			const turn = ensureRealtimeAudioVoiceTurn(event.item_id, transcript || "Voice question");
+			if (transcript) appendRealtimeUserTranscriptToTurn(turn, transcript);
 			queueRealtimeVoiceTranscript(transcript);
 			return;
 		}
 		if (event.type === "response.created") {
-			clearRealtimeVoiceFallback();
+			realtimeManualVoiceCommitPending = false;
 			clearRealtimeOnlyVoiceResponse();
-			if (isRealtimeOnlyVoiceMode() && !realtimeSuppressTranscriptForResponse) {
+			if (!realtimeSuppressTranscriptForResponse) {
 				const turn = ensureRealtimeAudioVoiceTurn("", "Voice question");
 				if (!realtimeResponseVoiceTurnId && turn?.id) realtimeResponseVoiceTurnId = turn.id;
 			}
@@ -9872,7 +9308,6 @@
 				});
 				if (shouldNarrateFinalText) narratePublishedRealtimeAnswer(finalText);
 			}
-			if (activeTurn?.audioItemId) realtimeAudioFallbackItemIds.delete(activeTurn.audioItemId);
 			if (!continuingAfterTool) realtimeResponseVoiceTurnId = "";
 			if (!continuingAfterTool && !activeTurn && realtimeActiveVoiceTurn) {
 				if (responseAfterDoneStatus) setRealtimeStatus(responseAfterDoneStatus);
@@ -10019,10 +9454,7 @@
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerPrompt = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
-		realtimePendingSocraticMove = null;
 		realtimeActiveVoiceTurn = null;
-		realtimePendingTranscriptionItemId = "";
-		realtimeAudioFallbackItemIds.clear();
 		setRealtimeStatus(status);
 	}
 
@@ -10032,11 +9464,11 @@
 		}
 		const text = String(prompt || "").trim();
 		if (!text) return;
-		if (isRealtimeOnlyVoiceMode() && shouldRouteRealtimePromptThroughOnhand(text)) {
+		if (shouldRouteRealtimePromptThroughOnhand(text)) {
 			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
 			return;
 		}
-		if (isRealtimeOnlyVoiceMode()) {
+		{
 			noteRealtimeActivity();
 			const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
 			updateRealtimeAnswerForTurn(voiceTurn, {
@@ -10061,38 +9493,6 @@
 			setRealtimeStatus("Thinking...");
 			return;
 		}
-		if (shouldRouteRealtimePromptThroughSocraticEvaluation(text)) {
-			await startRealtimeSocraticEvaluation(text, beginRealtimeVoiceTurn("socratic_evaluation", text));
-			return;
-		}
-		if (shouldRouteRealtimePromptThroughSocraticPlan(text)) {
-			await startRealtimeSocraticPlan(text, beginRealtimeVoiceTurn("socratic_plan", text));
-			return;
-		}
-		if (shouldRouteRealtimePromptThroughOnhand(text)) {
-			await startRealtimeDirectAnswer(text, beginRealtimeVoiceTurn("direct_answer", text));
-			return;
-		}
-		noteRealtimeActivity();
-		const voiceTurn = beginRealtimeVoiceTurn("realtime_response", text);
-		updateRealtimeAnswerForTurn(voiceTurn, {
-			markdown: "",
-			status: "Thinking",
-			pending: true,
-			published: false,
-		});
-		sendRealtimeSessionUpdate();
-		sendRealtimeEvent({
-			event_id: realtimeEventId("onhand_user_text"),
-			type: "conversation.item.create",
-			item: {
-				type: "message",
-				role: "user",
-				content: [{ type: "input_text", text }],
-			},
-		});
-		requestRealtimeResponse("response_for_text");
-		setRealtimeStatus("Thinking...");
 	}
 
 	function setMenuOpen(nextOpen) {
@@ -10803,16 +10203,12 @@
 			setRealtimeServerSpeechSeenAt(value = Date.now()) {
 				realtimeServerSpeechSeenAt = Number(value) || 0;
 			},
-			clearRealtimeVoiceFallback,
 			forceRealtimeLocalBargeIn,
-			commitRealtimeVoiceFallback,
-			scheduleRealtimeVoiceFallbackCommit,
 				expireRealtimeIdleTimeout,
 					getRealtimeToolDefinitions: realtimeToolDefinitions,
 					getRealtimeTutorInstructions: realtimeTutorInstructions,
 					getRealtimeInitialGroundedResponseOptions: realtimeInitialGroundedResponseOptions,
 					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
-					isRealtimeOnlyVoiceMode,
 				sendRealtimeSessionUpdate,
 				handleRealtimeServerEvent,
 			ensureRealtimePdfSurfaceForVoice,
@@ -10834,9 +10230,7 @@
 					queuedResponseReason: realtimeQueuedResponseRequest?.reason || "",
 					suppressTranscriptForResponse: realtimeSuppressTranscriptForResponse,
 					manualVoiceCommitPending: realtimeManualVoiceCommitPending,
-					pendingTranscriptionItemId: realtimePendingTranscriptionItemId,
 					realtimeOnlyVoiceResponsePending: Boolean(realtimeOnlyVoiceResponseTimer),
-					audioFallbackItemIds: Array.from(realtimeAudioFallbackItemIds),
 					micCurrentRms: realtimeMicCurrentRms,
 					micPeakRms: realtimeMicPeakRms,
 					micNoiseFloorRms: realtimeMicNoiseFloorRms,
@@ -10847,7 +10241,6 @@
 					activeMicLabel: realtimeActiveMicLabel,
 					micTrackDetails: realtimeMicTrackDetails,
 					pendingDirectAnswerRequestId: realtimePendingDirectAnswerRequestId,
-					pendingSocraticMove: realtimePendingSocraticMove,
 					activeVoiceTurn: realtimeActiveVoiceTurn,
 				};
 			},

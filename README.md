@@ -45,7 +45,7 @@ Codex has been both a supported way to run Onhand and the primary coding-agent h
 
 GPT-5.6 Sol has been our frontier-model target for the more agentic Onhand experience. For the v0.4.3 work, we used it in repeated live browser-trajectory runs across a 10-case evaluation set covering page grounding, selections, multi-tab research, PDFs, interaction, and failure recovery. Those runs helped us identify orchestration and evaluation-harness problems separately from model-quality problems. Onhand runs a single production execution path; the planned full-agent/guided-agent profile split was archived in favor of the barebones direction (see docs/AGENT_RUNTIME_PROFILES_PLAN.md).
 
-See `docs/AGENT_RUNTIME_PROFILES_PLAN.md`, `docs/AGENT_TRAJECTORY_EVAL.md`, and `docs/AGENT_TRAJECTORY_BASELINE_2026-07-21.md` for the architecture, evaluation contract, and current baseline notes.
+See `docs/AGENT_TRAJECTORY_EVAL.md` for the evaluation contract, and `docs/AGENT_TRAJECTORY_BASELINE_2026-07-21.md` for the dated 0.4.2 baseline. (`docs/AGENT_RUNTIME_PROFILES_PLAN.md` is an archived plan kept for history, not an architecture reference.)
 
 ## Current repository layout
 
@@ -149,35 +149,44 @@ Voice requires an OpenAI platform API key saved in the Onhand options page. Open
 
 ## Browser Runtime Tools
 
-- `browser_list_tabs`
-- `browser_activate_tab`
-- `browser_navigate`
-- `browser_open_pdf_in_onhand_viewer`
+The canonical tool manifest is `shared/browser-tools.json` (kept in sync with the runtime and the website by `npm run website:check-tools`). Current tools:
+
 - `browser_extract_content`
+- `browser_get_visible_text`
+- `browser_get_selection`
+- `browser_get_viewport_headings`
+- `browser_get_scroll_state`
+- `browser_get_visible_region_image`
+- `browser_get_dom`
+- `browser_textbook_search`
+- `browser_search_linked_pdf_corpus`
+- `browser_pdf_search`
+- `browser_pdf_read_pages`
+- `browser_pdf_jump_to_page`
+- `browser_pdf_capture_page_image`
+- `browser_pdf_find_citation`
+- `browser_open_pdf_in_onhand_viewer`
 - `browser_highlight_text`
 - `browser_show_note`
 - `browser_scroll_to_annotation`
 - `browser_clear_annotations`
-- `browser_get_visible_text`
-- `browser_get_visible_region_image`
-- `browser_get_selection`
-- `browser_get_viewport_headings`
-- `browser_get_scroll_state`
-- `browser_capture_state`
-- `browser_list_artifacts`
-- `browser_restore_state`
-- `browser_find_elements`
-- `browser_wait_for_selector`
+- `browser_list_tabs`
+- `browser_activate_tab`
+- `browser_navigate`
 - `browser_click`
 - `browser_type`
 - `browser_click_text`
 - `browser_type_by_label`
+- `browser_find_elements`
+- `browser_wait_for_selector`
 - `browser_pick_elements`
+- `browser_capture_screenshot`
+- `browser_capture_state`
+- `browser_list_artifacts`
+- `browser_restore_state`
 - `browser_collect_console`
 - `browser_collect_network`
-- `browser_get_dom`
-- `browser_capture_screenshot`
-- `browser_run_js` (optional last-resort runtime-state inspection for complex client-side pages)
+- `browser_run_js`
 
 ## Notes
 

@@ -1,5 +1,7 @@
 # Onhand Product + Implementation Plan
 
+> **Partially archived (2026-07-31).** The product vision holds; the mechanics (global hotkey, command palette, `state.json` artifacts) predate the browser-extension direction and no longer describe the product.
+
 ## 1. Vision
 
 Onhand is an AI learning and research assistant that helps users understand what is already in front of them instead of pulling them away into a separate chat window.

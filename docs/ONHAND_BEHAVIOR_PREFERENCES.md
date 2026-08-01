@@ -298,6 +298,8 @@ The `[INFERRED]` items were derived from the owner's stated philosophy rather th
 
 ---
 
+*v2.8 — 2026-07-31 (night): dead-code audit acted on — the unreachable Socratic voice machinery (sidebar planner/evaluator flows, runtime pedagogical backends, throw-stub realtime tools) was deleted pending a redesign against the realtime-only architecture (owner: Learning Mode is core — rebuild deliberately, don't resurrect scaffolding); the pre-June voice relay/fallback tree, the localhost session fallback, and assorted zero-reference functions went with it. The spaced-review nudge stays mothballed by owner decision. Four orphaned live-behavior regression tests were re-invoked (three others are TODO-flagged pending fixture refresh).*
+
 *v2.7 — 2026-07-31 (later): G14's constitution bullet rewritten as a front-loaded decision procedure ("Before answering from memory, check every substantive claim...") with the new imperative "Never present model knowledge as if it came from the page" — same rule for every model, all tripwire phrases preserved. The cheap-tier gap it targeted closed: Luna self-initiates the G14 fetch 3/3 on the honesty probe with the counter-probe clean (an earlier contrary reading came from a stale service worker running the old bundle).*
 
 *v2.6 — 2026-07-31: voice answers are spoken as a concise version — verdict first, two or three supporting sentences, ~15 seconds — while the sidebar keeps the full cited answer; draft streaming narration removed (drafts render as text only). Socratic prompts/feedback still speak their full sidebar text verbatim: they are short by design and that choice is test-pinned.*

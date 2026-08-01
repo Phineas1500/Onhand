@@ -34,7 +34,7 @@ const API_PROVIDERS = {
 	},
 	"onhand-free": {
 		name: "Onhand Free (beta)",
-		defaultModel: "deepseek/deepseek-v4-flash",
+		defaultModel: "openai/gpt-5.6-luna",
 		keyLabel: "No key needed",
 		keyPlaceholder: "",
 		keyless: true,

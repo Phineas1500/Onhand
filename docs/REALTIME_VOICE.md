@@ -1,5 +1,7 @@
 # Realtime Voice Tutor
 
+> **Update 2026-07-31:** The Socratic voice delegation described below (`answer_directly` / `plan_pedagogical_move` / `evaluate_response`, the sidebar pedagogical planner/evaluator) was retired and deleted. It had been unreachable since the June realtime-only routing change. Voice Learning Mode will be redesigned against the realtime-only architecture; text-mode Learning is unaffected. Sections mentioning those tools are historical.
+
 Onhand has an experimental Realtime voice tutor branch that layers `gpt-realtime-2.1` speech-to-speech interaction over the existing browser-extension tutor.
 
 The integration follows the OpenAI Realtime WebRTC unified-interface setup:

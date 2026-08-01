@@ -105,13 +105,11 @@ interface RuntimeSettings {
 	codexFastModeEnabled: boolean;
 }
 
-type SpeedMode = "auto" | "fast" | "deep";
 type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching";
 type ReasoningEffort = "none" | "low" | "medium";
 type TextVerbosity = "low" | "medium";
 
 interface ReasoningProfile {
-	setting: SpeedMode;
 	mode: ReasoningProfileName;
 	reason: string;
 	reasoningEffort: ReasoningEffort;
@@ -580,8 +578,6 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 const ACTIVE_EXECUTION_PROFILE = resolveExecutionProfile({ legacyOnly: true }).profile;
-const REALTIME_API_KEY_SETUP_MESSAGE =
-	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
 let smokeModelRegistration: ReturnType<typeof registerFauxProvider> | null = null;
 
 const ONHAND_SYSTEM_PROMPT = assertConstitutionPrompt(`You are Onhand, a contextual tutor running inside a Chromium extension side panel.
@@ -6238,7 +6234,6 @@ function assistantMessageTextContent(message: any) {
 
 
 function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfile {
-	const setting: SpeedMode = "auto";
 	void attachments;
 	void learningMode;
 	if (promptAsksForDocumentReviewMarkup(prompt)) {
@@ -6246,7 +6241,6 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 		// the teaching/structured keyword predicates ("summary", "approach"),
 		// and the review lane must win those overlaps.
 		return {
-			setting,
 			mode: "document-review",
 			reason: "Internal routing chose document review markup.",
 			reasoningEffort: "low",
@@ -6263,7 +6257,6 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 	}
 	if (promptAsksForCompactPageTeaching(prompt)) {
 		return {
-			setting,
 			mode: "compact-teaching",
 			reason: "Internal routing chose compact page teaching.",
 			reasoningEffort: "none",
@@ -6280,7 +6273,6 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 	// dial: the model calibrates inspection depth and verbosity per question
 	// from the grounding rules, and the cap only stops runaway verbosity.
 	return {
-		setting,
 		mode: "grounded",
 		reason: "Internal routing chose the unified grounded profile.",
 		reasoningEffort: "low",
@@ -10041,7 +10033,6 @@ export const __browserRuntimeTest = {
 	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
 	isRestorablePageUrlForTest: isRestorablePageUrl,
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
-	extractToolErrorTextForTest: extractToolErrorText,
 	applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
 	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
 	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
@@ -10060,7 +10051,6 @@ export const __browserRuntimeTest = {
 	buildLearningResearchDirectiveForTest: buildLearningResearchDirective,
 	buildLearningCorpusRerankerPromptForTest: buildLearningCorpusRerankerPrompt,
 	parseLearningCorpusRerankerForTest: parseLearningCorpusReranker,
-	flattenLearningCorpusCandidatesForTest: flattenLearningCorpusCandidates,
 	hydrateLearningResearchPlanWithCorpusForTest: hydrateLearningResearchPlanWithCorpus,
 	buildLearningEvidenceAssessmentPromptForTest: buildLearningEvidenceAssessmentPrompt,
 	parseLearningEvidenceAssessmentForTest: parseLearningEvidenceAssessment,
@@ -12110,7 +12100,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					onhandTelemetry: telemetry,
 					onhandReasoningProfile: {
 						mode: "grounded",
-						setting: "auto",
 						reason: "Internal structured planning call.",
 						reasoningEffort: "none",
 						textVerbosity: "low",
@@ -12230,126 +12219,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			host.log?.("Learning evidence assessment failed; using mechanical fallback", error);
 			return null;
 		}
-	}
-
-	async function runRealtimePedagogicalPlanner(request: any) {
-		const store = await loadStore();
-		const session = store.sessions[store.currentSessionId] as RuntimeSession;
-		const userQuestion = compactInternalText(request?.userQuestion || request?.user_question || request?.prompt, 600);
-		if (!userQuestion) throw new Error("userQuestion is required.");
-		const targetWindowId =
-			typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
-		if (!promptReferencesVisiblePdfSelectionOrPage(userQuestion)) {
-			await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
-		}
-		let browserContextDetails = await renderBrowserContextDetails(host, {
-			targetWindowId,
-			includeReadableContent: true,
-			readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
-			includeVisualRegionImage: promptAsksAboutVisualRegion(userQuestion),
-			prompt: userQuestion,
-			learningMode: true,
-		});
-		if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userQuestion, browserContextDetails)) {
-			browserContextDetails = await renderBrowserContextDetails(host, {
-				targetWindowId,
-				includeReadableContent: true,
-				readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
-				includeVisualRegionImage: true,
-				prompt: userQuestion,
-				learningMode: true,
-			});
-		}
-		const browserContext = browserContextDetails.text;
-		const anchorCandidates = buildPlannerAnchorCandidates({
-			userQuestion,
-			selection: browserContextDetails.selection,
-			visible: browserContextDetails.visible,
-			extracted: browserContextDetails.extracted,
-			browserContext,
-		});
-		const recentConversation = buildRecentConversationContext(session);
-		const learnerState = setLearnerStateMode(session.learnerState, "learning");
-		let raw = "";
-		try {
-			raw = await runInternalTutorJsonPrompt(
-				buildRealtimePlannerPrompt({
-					userQuestion,
-					browserContext,
-					anchorCandidates,
-					recentConversation,
-					learnerState,
-				}),
-				store.settings,
-				850,
-				15000,
-				buildVisualRegionPromptImages(browserContextDetails.visualRegion),
-			);
-		} catch (error) {
-			host.log?.("internal realtime planner failed; using fallback", error);
-			raw = "";
-		}
-		return {
-			move: normalizePlannerMove(raw, { userQuestion, browserContext, anchorCandidates }),
-			raw,
-			model: store.settings.aiModel,
-			provider: store.settings.aiProvider,
-		};
-	}
-
-	async function runRealtimePedagogicalEvaluator(request: any) {
-		const store = await loadStore();
-		const session = store.sessions[store.currentSessionId] as RuntimeSession;
-		const userResponse = compactInternalText(request?.userResponse || request?.user_response || request?.response, 800);
-		if (!userResponse) throw new Error("userResponse is required.");
-		const previousMove = request?.previousMove || request?.previous_move || {};
-		const targetWindowId =
-			typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
-		if (!promptReferencesVisiblePdfSelectionOrPage(userResponse)) {
-			await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
-		}
-		let browserContextDetails = await renderBrowserContextDetails(host, {
-			targetWindowId,
-			includeVisualRegionImage: promptAsksAboutVisualRegion(userResponse),
-			prompt: userResponse,
-			learningMode: true,
-		});
-		if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userResponse, browserContextDetails)) {
-			browserContextDetails = await renderBrowserContextDetails(host, {
-				targetWindowId,
-				includeVisualRegionImage: true,
-				prompt: userResponse,
-				learningMode: true,
-			});
-		}
-		const browserContext = browserContextDetails.text;
-		const recentConversation = buildRecentConversationContext(session);
-		const learnerState = setLearnerStateMode(session.learnerState, "learning");
-		let raw = "";
-		try {
-			raw = await runInternalTutorJsonPrompt(
-				buildRealtimeEvaluatorPrompt({
-					userResponse,
-					previousMove,
-					browserContext,
-					recentConversation,
-					learnerState,
-				}),
-				store.settings,
-				850,
-				15000,
-				buildVisualRegionPromptImages(browserContextDetails.visualRegion),
-			);
-		} catch (error) {
-			host.log?.("internal realtime evaluator failed; using fallback", error);
-			raw = "";
-		}
-		return {
-			evaluation: normalizeEvaluatorMove(raw, { userResponse, previousMove }),
-			raw,
-			model: store.settings.aiModel,
-			provider: store.settings.aiProvider,
-		};
 	}
 
 	function updateAssistantDraft(requestId: string, text: string, extra: Record<string, unknown> = {}) {
@@ -14780,14 +14649,6 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			return await recordRealtimeVoiceTurn(request);
 		},
 
-		async planRealtimePedagogicalMove(request: any) {
-			return await runRealtimePedagogicalPlanner(request);
-		},
-
-		async evaluateRealtimePedagogicalResponse(request: any) {
-			return await runRealtimePedagogicalEvaluator(request);
-		},
-
 		async getSettings() {
 			return await getPublicSettings();
 		},
@@ -15317,8 +15178,8 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			// classification for the same wording.
 			clearModelIntentClassifications();
 			// Kick the classification off concurrently with PDF handoff and page
-			// capture below; its first consumers (the reasoning profile, prior-page
-			// context, and tool selection) await it after capture completes, so the
+			// capture below; its first consumers (the reasoning profile and
+			// prior-page context) await it after capture completes, so the
 			// classifier latency hides behind work the request does anyway.
 			const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier
 				? (async () => {

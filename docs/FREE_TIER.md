@@ -7,9 +7,10 @@ completions to OpenRouter with Onhand's key.
 
 ## Why this shape
 
-- DeepSeek V4 Flash passed the Onhand behavioral matrix (anchored
-  answers, learning mode with checks, citation chasing, homework
-  refusal) at roughly a cent per turn measured through OpenRouter.
+- GPT-5.6 Luna won the 2026-07-31 model evaluation (deterministic battery
+  tie with DeepSeek V4 Flash, decisively better research discipline in
+  live scenario runs) at fractions of a cent per turn measured through
+  OpenRouter; see docs/FREE_TIER_MODEL_EVAL.md.
 - Image-bearing requests route server-side to Mistral Small 3.2, the
   tier's dedicated visual model. The extension treats
   that visual route as a 128K-context path, compacts image-bearing
@@ -26,7 +27,7 @@ completions to OpenRouter with Onhand's key.
 
 ## Cost controls
 
-- client-visible model allowlist: `deepseek/deepseek-v4-flash`; requests
+- client-visible model allowlist: `openai/gpt-5.6-luna`; requests
   whose message history contains image content are rewritten upstream to
   `mistralai/mistral-small-3.2-24b-instruct`
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)

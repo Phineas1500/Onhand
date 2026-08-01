@@ -9257,91 +9257,6 @@ async function assertExactExtractContentPromptsInjectQuery() {
 	assert.equal(extractTrace.effectiveArgs.maxChars >= 30000, true);
 }
 
-async function assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled() {
-	installChromeStorageStub();
-	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const host = createReplayHost({
-		visibleText: "Lower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
-		extractedMarkdown:
-			"Alpha smoke content confirms readable extraction, visible text, highlighting, notes, and artifact restore on this local page.\n\nLower Section\nDelta lower content gives scroll and scroll-to-annotation tests enough page height.",
-	});
-	const runtime = createOnhandBrowserRuntime(host);
-	await runtime.updateSettings({
-		aiProvider: "onhand-smoke",
-		aiModel: "onhand-smoke-1",
-		aiApiKey: "test",
-		authMode: "api-key",
-	});
-	const result = await runtime.planRealtimePedagogicalMove({
-		userQuestion: "What does this page say about Alpha smoke content?",
-		targetWindowId: 3,
-	});
-	assert.match(result.move.anchor.text_excerpt, /^Alpha smoke content confirms readable extraction/);
-	assert.doesNotMatch(result.move.anchor.text_excerpt, /^Delta lower content/);
-	assert.equal(host.calls.some((call) => call.name === "extract_content" && call.args.tabId === 7), true);
-}
-
-async function assertRealtimePlannerOpensDirectPdfBeforePlanning() {
-	installChromeStorageStub();
-	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const host = createReplayHost({
-		tabs: [
-			replaySmokeTab({
-				id: 17,
-				windowId: 3,
-				active: true,
-				title: "paper.pdf",
-				url: "https://example.test/paper.pdf",
-			}),
-		],
-		visibleText: "[p. 2] Recurrent neural networks preserve sequence state across tokens.",
-		extractedMarkdown: "Recurrent neural networks preserve sequence state across tokens.",
-	});
-	const runtime = createOnhandBrowserRuntime(host);
-	await runtime.updateSettings({
-		aiProvider: "onhand-smoke",
-		aiModel: "onhand-smoke-1",
-		aiApiKey: "test",
-		authMode: "api-key",
-	});
-	const result = await runtime.planRealtimePedagogicalMove({
-		userQuestion: "What does this PDF say about recurrent neural networks?",
-		targetWindowId: 3,
-	});
-	const openIndex = host.calls.findIndex((call) => call.name === "open_pdf_in_onhand_viewer");
-	const visibleIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
-	assert.ok(openIndex >= 0, "expected realtime planner to open direct PDFs in the Onhand viewer first");
-	assert.ok(visibleIndex >= 0, "expected realtime planner to read visible PDF text after handoff");
-	assert.ok(openIndex < visibleIndex, "expected PDF handoff before context reads");
-	assert.match(result.move.anchor.text_excerpt, /Recurrent neural networks preserve sequence state/);
-}
-
-async function assertRealtimePlannerCapturesVisualRegionForVisualQuestions() {
-	installChromeStorageStub();
-	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const host = createReplayHost({
-		visibleText: "Validation chart",
-		extractedMarkdown: "Validation chart",
-	});
-	const runtime = createOnhandBrowserRuntime(host);
-	await runtime.updateSettings({
-		aiProvider: "onhand-smoke",
-		aiModel: "onhand-smoke-1",
-		aiApiKey: "test",
-		authMode: "api-key",
-	});
-	await runtime.planRealtimePedagogicalMove({
-		userQuestion: "What does this chart show about accuracy?",
-		targetWindowId: 3,
-	});
-	const visualIndex = host.calls.findIndex((call) => call.name === "get_visible_region_image");
-	const visibleIndex = host.calls.findIndex((call) => call.name === "get_visible_text");
-	assert.ok(visualIndex >= 0, "expected realtime planner to capture a visible-region image for visual questions");
-	assert.ok(visibleIndex >= 0, "expected realtime planner to still read text context");
-	assert.equal(host.calls[visualIndex].args.tabId, 7);
-	assert.equal(host.calls[visualIndex].args.label, "current visible region");
-}
-
 async function assertUnknownPdfSelectionOpensViewerAndAsksForReselect() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -10464,9 +10379,6 @@ async function main() {
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
 	await assertExactExtractContentPromptsInjectQuery();
-	await assertRealtimePlannerUsesPageMatchedAnchorsWhenScrolled();
-	await assertRealtimePlannerOpensDirectPdfBeforePlanning();
-	await assertRealtimePlannerCapturesVisualRegionForVisualQuestions();
 	await assertUnknownPdfSelectionOpensViewerAndAsksForReselect();
 	await assertVisualPdfQuestionsCaptureCurrentPageImageBeforeAnswering();
 	await assertExplicitPdfHandoffRunsBeforeAgentContext();

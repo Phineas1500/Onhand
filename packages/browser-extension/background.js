@@ -14498,31 +14498,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
-		if (message?.type === "sidebar:realtime-plan-pedagogical-move") {
-			const runtime = getOnhandBrowserRuntime();
-			sendResponse({
-				ok: true,
-				result: await runtime.planRealtimePedagogicalMove({
-					userQuestion: message.userQuestion,
-					targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
-				}),
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-evaluate-response") {
-			const runtime = getOnhandBrowserRuntime();
-			sendResponse({
-				ok: true,
-				result: await runtime.evaluateRealtimePedagogicalResponse({
-					userResponse: message.userResponse,
-					previousMove: message.previousMove,
-					targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
-				}),
-			});
-			return;
-		}
-
 		if (message?.type === "sidebar:realtime-session") {
 			sendResponse({
 				ok: true,
@@ -14578,15 +14553,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			sendResponse({
 				ok: true,
 				result: await annotateRealtimePage(message),
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-record-learning-event") {
-			const runtime = getOnhandBrowserRuntime();
-			sendResponse({
-				ok: true,
-				result: await runtime.recordLearningEvent(message.event || {}),
 			});
 			return;
 		}

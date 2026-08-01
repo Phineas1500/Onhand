@@ -4,4 +4,4 @@ node_modules/
 *.log
 .env
 tmp/
-dist/*.zip
+dist/

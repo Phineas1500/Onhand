@@ -1,5 +1,7 @@
 # Voice Architecture
 
+> **Update 2026-07-31:** The Socratic voice delegation described below (`answer_directly` / `plan_pedagogical_move` / `evaluate_response`, the sidebar pedagogical planner/evaluator) was retired and deleted. It had been unreachable since the June realtime-only routing change. Voice Learning Mode will be redesigned against the realtime-only architecture; text-mode Learning is unaffected. Sections mentioning those tools are historical.
+
 ## Status
 
 Planning document for integrating `gpt-realtime-2.1` into Onhand as a page-anchored tutoring layer. The current branch has a Realtime WebRTC prototype in the browser extension; this document describes the target architecture before the prototype becomes product behavior.

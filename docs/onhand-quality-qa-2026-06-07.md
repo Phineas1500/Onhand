@@ -1,5 +1,7 @@
 # Onhand quality QA - 2026-06-07
 
+> **Archived QA session notes (2026-06-07).** Historical record; no code references this document.
+
 ## Goal
 
 Evaluate whether Onhand follows its constitution across realistic learning and research pages:

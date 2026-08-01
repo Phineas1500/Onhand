@@ -152938,12 +152938,10 @@ function assistantMessageTextContent(message) {
   return (Array.isArray(message.content) ? message.content : []).filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n");
 }
 function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false) {
-  const setting = "auto";
   void attachments;
   void learningMode;
   if (promptAsksForDocumentReviewMarkup(prompt)) {
     return {
-      setting,
       mode: "document-review",
       reason: "Internal routing chose document review markup.",
       reasoningEffort: "low",
@@ -152960,7 +152958,6 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
   }
   if (promptAsksForCompactPageTeaching(prompt)) {
     return {
-      setting,
       mode: "compact-teaching",
       reason: "Internal routing chose compact page teaching.",
       reasoningEffort: "none",
@@ -152975,7 +152972,6 @@ function buildReasoningProfile(settings2, prompt, attachments = [], learningMode
     };
   }
   return {
-    setting,
     mode: "grounded",
     reason: "Internal routing chose the unified grounded profile.",
     reasoningEffort: "low",
@@ -154434,10 +154430,6 @@ function buildPlannerAnchorCandidates(input) {
   }
   return candidates.sort((left, right) => right.score - left.score || left.text.length - right.text.length).slice(0, 5);
 }
-function formatPlannerAnchorCandidatesForPrompt(candidates) {
-  if (!candidates.length) return "";
-  return candidates.map((candidate, index) => `${index + 1}. (${candidate.source}) ${candidate.text}`).join("\n");
-}
 function choosePlannerAnchorText(rawAnchorText, fallback) {
   const candidates = Array.isArray(fallback.anchorCandidates) ? fallback.anchorCandidates : [];
   const bestCandidate = candidates[0];
@@ -154490,90 +154482,6 @@ function normalizePlannerMove(rawValue, fallback) {
       nudge: compactInternalText(entry?.nudge, 180)
     })).filter((entry) => entry.wrong_idea || entry.nudge).slice(0, 3) : []
   };
-}
-function normalizeEvaluatorMove(rawValue, fallback) {
-  const raw = parseJsonObject(rawValue);
-  const previousVoice = compactInternalText(fallback.previousMove?.voice_script || fallback.previousMove?.question, 180);
-  const correctPoints = Array.isArray(raw.correct_points) ? raw.correct_points.map((entry) => ({
-    concept: compactInternalText(entry?.concept || entry, 100),
-    anchor_text: compactInternalText(entry?.anchor_text, 180)
-  })).filter((entry) => entry.concept || entry.anchor_text).slice(0, 3) : [];
-  const missedPoints = Array.isArray(raw.missed_points) ? raw.missed_points.map((entry) => ({
-    concept: compactInternalText(entry?.concept || entry, 100),
-    anchor_text: compactInternalText(entry?.anchor_text, 180),
-    nudge: compactInternalText(entry?.nudge, 180)
-  })).filter((entry) => entry.concept || entry.anchor_text || entry.nudge).slice(0, 3) : [];
-  const nextMove = ["nudge", "deeper", "move_on", "direct_answer_escape"].includes(raw.next_move) ? raw.next_move : "move_on";
-  const feedback = compactInternalText(raw.feedback_summary || raw.voice_script || raw.sidebar_markdown, 220) || (previousVoice ? "Good start \u2014 that answers the check. I'll mark it and move on." : "Good start \u2014 that answers the check.");
-  return {
-    correct_points: correctPoints,
-    missed_points: missedPoints,
-    next_move: nextMove,
-    feedback_summary: feedback,
-    voice_script: compactInternalText(raw.voice_script || feedback, 220) || feedback,
-    sidebar_markdown: compactInternalText(raw.sidebar_markdown || feedback, 420) || feedback,
-    assessment: compactInternalText(raw.assessment || (missedPoints.length ? "partial" : "correct"), 24) || "partial",
-    evidence: compactInternalText(raw.evidence || fallback.userResponse, 260)
-  };
-}
-function buildRealtimePlannerPrompt(options) {
-  const learnerStateSummary = buildLearnerStatePromptSummary(options.learnerState, options.userQuestion);
-  const anchorCandidateText = formatPlannerAnchorCandidatesForPrompt(options.anchorCandidates || []);
-  return [
-    `${ONHAND_INTERNAL_PROMPT_PREFIX} Realtime Learning Mode planner.`,
-    "Return only JSON. Do not wrap it in markdown.",
-    "You are planning one Socratic voice tutoring move for a student reading the current browser page.",
-    "Do not answer the user's question. Produce a question or nudge that helps the student reason from the page.",
-    "Required output shape:",
-    `{"anchor":{"text_excerpt":"exact visible text from the page","kind":"question_anchor","note":"max 80 chars"},"move_type":"prediction_prompt|retrieval_prompt|clarifying_question","voice_script":"one short spoken question, max 35 words","sidebar_markdown":"written mirror, max 280 chars","expected_concepts":["short concept labels"],"stuck_fallback":"one hint, max 25 words","misconceptions":[{"wrong_idea":"...","nudge":"..."}]}`,
-    "Hard constraints:",
-    "- anchor.text_excerpt is required and must be copied from the captured page context when possible.",
-    "- If Question-matched anchor candidates are present, choose anchor.text_excerpt from those candidates unless the user clearly asks about a different page area.",
-    "- If a visible-region image is attached, use it only for the visual part of the move and keep the page reference tied to exact text when exact text is available.",
-    "- If the visual region is necessary but no exact text source is available, set anchor.kind to visual_region and make voice_script ask the student to identify or select the relevant visual part instead of inventing an explanation.",
-    "- Do not include an answer field.",
-    "- The voice_script should be one question or one hint, not an explanation.",
-    "- The note must be local marginalia, not a summary.",
-    ...options.recentConversation ? ["", "Recent conversation:", options.recentConversation] : [],
-    "",
-    learnerStateSummary,
-    "",
-    `User question:
-${options.userQuestion}`,
-    ...anchorCandidateText ? ["", "Question-matched anchor candidates:", anchorCandidateText] : [],
-    "",
-    "Captured browser context:",
-    options.browserContext
-  ].join("\n");
-}
-function buildRealtimeEvaluatorPrompt(options) {
-  const previousMoveText = JSON.stringify(options.previousMove || {}, null, 2);
-  return [
-    `${ONHAND_INTERNAL_PROMPT_PREFIX} Realtime Learning Mode evaluator.`,
-    "Return only JSON. Do not wrap it in markdown.",
-    "Evaluate the student's spoken response to the previous Socratic move. Nudge before correcting.",
-    "Required output shape:",
-    `{"correct_points":[{"concept":"...","anchor_text":"exact page text if relevant"}],"missed_points":[{"concept":"...","anchor_text":"exact page text if relevant","nudge":"..."}],"next_move":"nudge|deeper|move_on|direct_answer_escape","feedback_summary":"under 30 words","voice_script":"under 35 words","sidebar_markdown":"brief durable mirror","assessment":"correct|partial|incorrect|skipped","evidence":"brief model-visible rationale"}`,
-    "Hard constraints:",
-    "- Keep feedback short enough for voice.",
-    "- Anchor page-material feedback to the previous move or captured page context.",
-    "- If feedback depends on an attached visible-region image, refer to the visual region explicitly and avoid unsupported claims when the image or text source is insufficient.",
-    "- Treat a reasonable paraphrase as an answer, even if it is informal. Do not repeat the same question after the student answers it.",
-    "- If the user asks whether they already answered, says they just answered, or seems frustrated, acknowledge that and set next_move to direct_answer_escape or move_on.",
-    "- Prefer move_on for substantially correct or partially correct answers. Use nudge only when the response is clearly missing the central point.",
-    ...options.recentConversation ? ["", "Recent conversation:", options.recentConversation] : [],
-    "",
-    buildLearnerStatePromptSummary(options.learnerState, options.userResponse),
-    "",
-    "Previous pedagogical move:",
-    previousMoveText,
-    "",
-    `Student response:
-${options.userResponse}`,
-    "",
-    "Captured browser context:",
-    options.browserContext
-  ].join("\n");
 }
 function toolResultText(result, maxChars = 5e3) {
   return truncate2(JSON.stringify(result, null, 2), maxChars);
@@ -156017,7 +155925,6 @@ var __browserRuntimeTest = {
   onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
   isRestorablePageUrlForTest: isRestorablePageUrl,
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
-  extractToolErrorTextForTest: extractToolErrorText,
   applyLearningBackgroundFocusDefaultForTest: applyLearningBackgroundFocusDefault,
   shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
   tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
@@ -156036,7 +155943,6 @@ var __browserRuntimeTest = {
   buildLearningResearchDirectiveForTest: buildLearningResearchDirective,
   buildLearningCorpusRerankerPromptForTest: buildLearningCorpusRerankerPrompt,
   parseLearningCorpusRerankerForTest: parseLearningCorpusReranker,
-  flattenLearningCorpusCandidatesForTest: flattenLearningCorpusCandidates,
   hydrateLearningResearchPlanWithCorpusForTest: hydrateLearningResearchPlanWithCorpus,
   buildLearningEvidenceAssessmentPromptForTest: buildLearningEvidenceAssessmentPrompt,
   parseLearningEvidenceAssessmentForTest: parseLearningEvidenceAssessment,
@@ -157885,7 +157791,6 @@ function createOnhandBrowserRuntime(host) {
         onhandTelemetry: telemetry,
         onhandReasoningProfile: {
           mode: "grounded",
-          setting: "auto",
           reason: "Internal structured planning call.",
           reasoningEffort: "none",
           textVerbosity: "low",
@@ -158002,122 +157907,6 @@ function createOnhandBrowserRuntime(host) {
       host.log?.("Learning evidence assessment failed; using mechanical fallback", error52);
       return null;
     }
-  }
-  async function runRealtimePedagogicalPlanner(request) {
-    const store2 = await loadStore();
-    const session = store2.sessions[store2.currentSessionId];
-    const userQuestion = compactInternalText(request?.userQuestion || request?.user_question || request?.prompt, 600);
-    if (!userQuestion) throw new Error("userQuestion is required.");
-    const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
-    if (!promptReferencesVisiblePdfSelectionOrPage(userQuestion)) {
-      await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
-    }
-    let browserContextDetails = await renderBrowserContextDetails(host, {
-      targetWindowId,
-      includeReadableContent: true,
-      readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
-      includeVisualRegionImage: promptAsksAboutVisualRegion(userQuestion),
-      prompt: userQuestion,
-      learningMode: true
-    });
-    if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userQuestion, browserContextDetails)) {
-      browserContextDetails = await renderBrowserContextDetails(host, {
-        targetWindowId,
-        includeReadableContent: true,
-        readableMaxChars: REALTIME_READABLE_CONTEXT_MAX_CHARS,
-        includeVisualRegionImage: true,
-        prompt: userQuestion,
-        learningMode: true
-      });
-    }
-    const browserContext = browserContextDetails.text;
-    const anchorCandidates = buildPlannerAnchorCandidates({
-      userQuestion,
-      selection: browserContextDetails.selection,
-      visible: browserContextDetails.visible,
-      extracted: browserContextDetails.extracted,
-      browserContext
-    });
-    const recentConversation = buildRecentConversationContext(session);
-    const learnerState = setLearnerStateMode(session.learnerState, "learning");
-    let raw = "";
-    try {
-      raw = await runInternalTutorJsonPrompt(
-        buildRealtimePlannerPrompt({
-          userQuestion,
-          browserContext,
-          anchorCandidates,
-          recentConversation,
-          learnerState
-        }),
-        store2.settings,
-        850,
-        15e3,
-        buildVisualRegionPromptImages(browserContextDetails.visualRegion)
-      );
-    } catch (error52) {
-      host.log?.("internal realtime planner failed; using fallback", error52);
-      raw = "";
-    }
-    return {
-      move: normalizePlannerMove(raw, { userQuestion, browserContext, anchorCandidates }),
-      raw,
-      model: store2.settings.aiModel,
-      provider: store2.settings.aiProvider
-    };
-  }
-  async function runRealtimePedagogicalEvaluator(request) {
-    const store2 = await loadStore();
-    const session = store2.sessions[store2.currentSessionId];
-    const userResponse = compactInternalText(request?.userResponse || request?.user_response || request?.response, 800);
-    if (!userResponse) throw new Error("userResponse is required.");
-    const previousMove = request?.previousMove || request?.previous_move || {};
-    const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
-    if (!promptReferencesVisiblePdfSelectionOrPage(userResponse)) {
-      await runRealtimePdfHandoffIfNeeded(host, targetWindowId);
-    }
-    let browserContextDetails = await renderBrowserContextDetails(host, {
-      targetWindowId,
-      includeVisualRegionImage: promptAsksAboutVisualRegion(userResponse),
-      prompt: userResponse,
-      learningMode: true
-    });
-    if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(userResponse, browserContextDetails)) {
-      browserContextDetails = await renderBrowserContextDetails(host, {
-        targetWindowId,
-        includeVisualRegionImage: true,
-        prompt: userResponse,
-        learningMode: true
-      });
-    }
-    const browserContext = browserContextDetails.text;
-    const recentConversation = buildRecentConversationContext(session);
-    const learnerState = setLearnerStateMode(session.learnerState, "learning");
-    let raw = "";
-    try {
-      raw = await runInternalTutorJsonPrompt(
-        buildRealtimeEvaluatorPrompt({
-          userResponse,
-          previousMove,
-          browserContext,
-          recentConversation,
-          learnerState
-        }),
-        store2.settings,
-        850,
-        15e3,
-        buildVisualRegionPromptImages(browserContextDetails.visualRegion)
-      );
-    } catch (error52) {
-      host.log?.("internal realtime evaluator failed; using fallback", error52);
-      raw = "";
-    }
-    return {
-      evaluation: normalizeEvaluatorMove(raw, { userResponse, previousMove }),
-      raw,
-      model: store2.settings.aiModel,
-      provider: store2.settings.aiProvider
-    };
   }
   function updateAssistantDraft(requestId, text, extra = {}) {
     const message = uiState?.messages?.find((entry) => entry.id === `assistant:${requestId}`);
@@ -160275,12 +160064,6 @@ function createOnhandBrowserRuntime(host) {
     },
     async recordRealtimeVoiceTurn(request) {
       return await recordRealtimeVoiceTurn(request);
-    },
-    async planRealtimePedagogicalMove(request) {
-      return await runRealtimePedagogicalPlanner(request);
-    },
-    async evaluateRealtimePedagogicalResponse(request) {
-      return await runRealtimePedagogicalEvaluator(request);
     },
     async getSettings() {
       return await getPublicSettings();

@@ -1,5 +1,7 @@
 # PDF Annotation Strategy
 
+> **Archived (superseded).** This pre-implementation strategy predates the shipped PDF viewer (`pdf-viewer.bundle.js`) and corpus search. Kept for history; not an implementation guide.
+
 Status: implementation direction with controlled fixtures, an initial Onhand-owned PDF viewer slice, and a handoff path from direct/native PDF tabs.
 
 ## Decision

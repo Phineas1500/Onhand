@@ -1,5 +1,7 @@
 # Onhand Pedagogy Plan
 
+> **Partially archived (2026-07-31).** The vision sections still inform Learning Mode; the implementation sections reference `onhand-agent.mjs`, a runtime that no longer exists. Do not follow file/line instructions here.
+
 ## 0. Framing
 
 Onhand today is very good at *information delivery*: finding the right passage, highlighting it, explaining it in context. That is already a real UX improvement over chatbots, but it is still fundamentally "user asks, agent answers."
