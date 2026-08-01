@@ -84,3 +84,52 @@ lacks a browser-safe entry point. Sanitized upstream drafts are in
   agent.
 - After fixing P0 issues, repeat the matrix before considering any production
   Raindrop integration or privacy-policy change.
+
+
+## Matrix refresh — 2026-07-31 (Luna free tier, post-cleanup runtime)
+
+Re-run of the three-case isolated matrix against the deployed Luna worker
+(`onhand-free / openai/gpt-5.6-luna`) on the post-cleanup runtime.
+
+| Case | Score | Latency | Model calls | Tool calls/errors | Annotations counted |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Current HTML grounding | **1.000** (was 0.550) | 13.3 s | 2 | 1 / 0 | 1 |
+| Two open PDFs | 0.383 | 100.4 s | 9 | 14 / 4 | 0 |
+| Selected homework + workspace | 0.467 | 147.0 s | 22 | 20 / 0 | 0 |
+
+### Resolved since July
+
+- **P0 tool-surface mismatch: fixed.** No `Tool ... not found` errors in any
+  case; the HTML grounding case that previously failed on a missing highlight
+  tool now scores 1.000 with its annotation counted. The fix was deriving the
+  prompt, model-visible tools, and executable registry from one source
+  (tool-selection ungating).
+
+### Reproduced and localized
+
+- **P0 annotation receipt mismatch: still present, now localized to the
+  evaluator.** In both PDF cases, `browser_highlight_text` completed without
+  error and `evidenceUses` even matched citations (`citationPresent: true`),
+  yet `annotations` normalized to zero — while the HTML case counted its
+  annotation. Product-side receipts are healthy (live sessions show PDF
+  pageActions and citation chips working). The gap is in
+  `evidenceReceipt()` (`scripts/lib/agent-trajectory-fixtures.mjs`): its
+  passage/URL mapping does not match the PDF-viewer annotation action shape.
+  Until fixed, PDF-case scores are floors, not measurements — both PDF cases
+  above lose their annotation-coverage points to the counter, not the model.
+
+### Harness fixes landed with this refresh
+
+- The stable fixture profile resurrected a **July-era cached extension service
+  worker** (Chromium caches unpacked-extension code per profile), which sent
+  the old free-tier model id and 400'd every request against the Luna-only
+  worker. `--launch-isolated` now starts from a fresh profile by default
+  (`--keep-profile` opts out); `developerPrivate.reload` is not an option for
+  command-line-loaded extensions (it unloads them).
+- The runner's free-tier configuration no longer pins the retired
+  `deepseek/deepseek-v4-flash` id.
+
+### Next
+
+- Fix `evidenceReceipt()` PDF action mapping, then re-score the two PDF cases;
+  only after that are latency/call budgets worth tuning for Luna.

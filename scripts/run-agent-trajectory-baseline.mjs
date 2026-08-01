@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -47,6 +47,7 @@ function parseArgs(argv) {
 		keepBrowser: false,
 		keepTabs: false,
 		launchIsolated: false,
+		keepProfile: false,
 		outDir: "",
 		port: DEFAULT_PORT,
 		portExplicit: false,
@@ -81,6 +82,7 @@ function parseArgs(argv) {
 		else if (value === "--keep-tabs") args.keepTabs = true;
 		else if (value === "--keep-browser") args.keepBrowser = true;
 		else if (value === "--launch-isolated") args.launchIsolated = true;
+		else if (value === "--keep-profile") args.keepProfile = true;
 		else if (value === "--free-tier") args.freeTier = true;
 		else if (value === "-h" || value === "--help") {
 			console.log(`Usage: npm run eval:agent-trajectories:live -- [options]
@@ -189,6 +191,13 @@ async function launchIsolatedBrowser(options) {
 	const browserPath = findBrowser(options.browserPath);
 	if (!browserPath) throw new Error(`No Chromium-family browser found; set --browser or ONHAND_TEST_BROWSER.`);
 	if (!options.portExplicit) options.port = await pickAvailablePort();
+	// Chromium caches the unpacked extension's service worker inside the
+	// profile, so a reused profile can resurrect stale extension code across
+	// launches (observed 2026-07-31: a July-era worker sent the old free-tier
+	// model id and every request 400'd; developerPrivate.reload unloads
+	// command-line extensions instead of reloading them). Start from a fresh
+	// profile unless --keep-profile explicitly opts into the cached one.
+	if (!options.keepProfile) await rm(options.browserProfile, { recursive: true, force: true });
 	await mkdir(options.browserProfile, { recursive: true });
 	const browser = spawn(
 		browserPath,
@@ -264,7 +273,7 @@ async function configureIsolatedFreeTier(cdp) {
 			return await chrome.runtime.sendMessage({
 				type: "browser-runtime:update-settings",
 				aiProvider: "onhand-free",
-				aiModel: "deepseek/deepseek-v4-flash",
+				aiModel: "openai/gpt-5.6-luna",
 				authMode: "api-key",
 				diagnosticsEnabled: true
 			});
