@@ -3454,7 +3454,6 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	await waitForSidebarTick(dom);
 
 	assert.equal(hooks.getRealtimeDebugState().responseCreateQueued, true, "expected the concise final narration to queue behind the preamble response");
-	assert.equal(hooks.getRealtimeDebugState().onhandNarrationQueueLength, 0, "expected no chunked narration of the final answer");
 
 	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: { output: [] } }));
 	await waitForSidebarTick(dom);
@@ -3509,6 +3508,11 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 		conciseVoiceSource,
 		/maybeQueueRealtimeDirectAnswerDraft/,
 		"draft streaming narration must stay removed — drafts render as text only",
+	);
+	assert.doesNotMatch(
+		conciseVoiceSource,
+		/OnhandNarration|answer excerpt/,
+		"the dead chunk-narration subsystem must stay deleted",
 	);
 	assert.match(
 		conciseVoiceSource,

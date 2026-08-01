@@ -225,9 +225,6 @@
 	let realtimePendingDirectAnswerRequestId = "";
 	let realtimePendingDirectAnswerPrompt = "";
 	let realtimePendingDirectAnswerVoiceTurnId = "";
-	let realtimeOnhandNarrationRequestId = "";
-	let realtimeOnhandNarrationCoveredChars = 0;
-	let realtimeOnhandNarrationQueue = [];
 	let realtimePendingSocraticMove = null;
 	let realtimeSocraticTurnCounter = 0;
 	let realtimeVoiceTurnCounter = 0;
@@ -6436,7 +6433,6 @@
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerPrompt = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
-		resetRealtimeOnhandNarration();
 		realtimePendingSocraticMove = null;
 		realtimeActiveVoiceTurn = null;
 		realtimeResponseVoiceTurnId = "";
@@ -9231,97 +9227,6 @@
 		return turns.find((turn) => turn?.id === id) || null;
 	}
 
-	function resetRealtimeOnhandNarration(requestId = "") {
-		realtimeOnhandNarrationRequestId = String(requestId || "").trim();
-		realtimeOnhandNarrationCoveredChars = 0;
-		realtimeOnhandNarrationQueue = [];
-	}
-
-	function realtimeOnhandNarrationChunkLength(remainingText, final = false) {
-		const text = String(remainingText || "").trim();
-		if (!text) return 0;
-		if (final) return text.length;
-		const minChars = realtimeOnhandNarrationCoveredChars > 0 ? 70 : 24;
-		const maxChars = 280;
-		let fallbackBoundary = 0;
-		const sentencePattern = /[.!?](?=\s|$)/g;
-		let match;
-		while ((match = sentencePattern.exec(text))) {
-			const end = match.index + 1;
-			if (end >= minChars) return end;
-			fallbackBoundary = end;
-		}
-		if (fallbackBoundary >= 35 && text.length >= minChars) return fallbackBoundary;
-		if (text.length < maxChars) return 0;
-		const slice = text.slice(0, maxChars);
-		const space = slice.lastIndexOf(" ");
-		return space > minChars ? space : maxChars;
-	}
-
-	function enqueueRealtimeOnhandNarrationChunk(requestId, chunkText, final = false) {
-		const text = canonicalRealtimeSpeechText(chunkText);
-		if (!requestId || !text) return false;
-		realtimeOnhandNarrationQueue.push({ requestId, text, final: Boolean(final) });
-		startNextRealtimeOnhandNarrationChunk();
-		return true;
-	}
-
-	function queueRealtimeOnhandNarrationFromDraft(requestId, draftText, options = {}) {
-		const id = String(requestId || "").trim();
-		if (!id) return false;
-		const text = canonicalRealtimeSpeechText(draftText);
-		if (!text) return false;
-		if (realtimeOnhandNarrationRequestId !== id || realtimeOnhandNarrationCoveredChars > text.length) {
-			resetRealtimeOnhandNarration(id);
-		}
-		const rawRemaining = text.slice(realtimeOnhandNarrationCoveredChars);
-		const leading = rawRemaining.length - rawRemaining.trimStart().length;
-		const start = realtimeOnhandNarrationCoveredChars + leading;
-		const remaining = rawRemaining.trimStart();
-		const length = realtimeOnhandNarrationChunkLength(remaining, Boolean(options.final));
-		if (length <= 0) return false;
-		const chunk = remaining.slice(0, length).trim();
-		realtimeOnhandNarrationCoveredChars = start + length;
-		return enqueueRealtimeOnhandNarrationChunk(id, chunk, Boolean(options.final && realtimeOnhandNarrationCoveredChars >= text.length));
-	}
-
-	function startNextRealtimeOnhandNarrationChunk() {
-		if (realtimeResponseInProgress || !realtimeOnhandNarrationQueue.length) return false;
-		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
-		const chunk = realtimeOnhandNarrationQueue.shift();
-		if (!chunk?.text) return startNextRealtimeOnhandNarrationChunk();
-		const voicePrompt = buildExactRealtimeSpeechPrompt("Onhand answer excerpt", chunk.text);
-		try {
-			sendRealtimeEvent({
-				event_id: realtimeEventId("onhand_answer_chunk_ready"),
-				type: "conversation.item.create",
-				item: {
-					type: "message",
-					role: "user",
-					content: [{ type: "input_text", text: voicePrompt }],
-				},
-			});
-			requestRealtimeResponse(
-				"speak_onhand_answer_chunk",
-				{
-					instructions:
-						"Speak only the provided Onhand answer excerpt. Do not paraphrase, summarize, add or remove words, call tools, or add new page claims. Continue naturally without saying that this is an excerpt.",
-					tool_choice: "none",
-				},
-				{
-					trackVoiceTurn: false,
-					suppressTranscript: true,
-					afterDoneStatus: realtimeOnhandNarrationQueue.length ? "Speaking Onhand answer..." : "Voice ready · ask, then pause",
-				},
-			);
-			setRealtimeStatus("Speaking Onhand answer...");
-			return true;
-		} catch (error) {
-			setRealtimeStatus("Voice ready · ask, then pause", error?.message || String(error));
-			return false;
-		}
-	}
-
 	async function startRealtimeDirectAnswer(prompt, existingVoiceTurn = null) {
 		const text = String(prompt || "").trim();
 		if (!text) throw new Error("answer_directly requires a prompt.");
@@ -9356,7 +9261,6 @@
 		realtimePendingDirectAnswerRequestId = String(response.requestId || "");
 		realtimePendingDirectAnswerPrompt = text;
 		realtimePendingDirectAnswerVoiceTurnId = voiceTurn.id;
-		resetRealtimeOnhandNarration(response.requestId || "");
 		await requestState();
 		return { started: true, requestId: response.requestId || "", responseAlreadyRequested: true };
 	}
@@ -9382,7 +9286,7 @@
 		realtimePendingDirectAnswerRequestId = "";
 		realtimePendingDirectAnswerVoiceTurnId = "";
 		realtimePendingDirectAnswerPrompt = "";
-		if (!realtimeOnhandNarrationQueue.length && !realtimeResponseInProgress) setRealtimeReadyStatus();
+		if (!realtimeResponseInProgress) setRealtimeReadyStatus();
 	}
 
 	function realtimeTurnNeedsGroundedAnchor(turn = realtimeActiveVoiceTurn) {
@@ -9970,7 +9874,6 @@
 			}
 			if (activeTurn?.audioItemId) realtimeAudioFallbackItemIds.delete(activeTurn.audioItemId);
 			if (!continuingAfterTool) realtimeResponseVoiceTurnId = "";
-			if (!continuingAfterTool && startNextRealtimeOnhandNarrationChunk()) return;
 			if (!continuingAfterTool && !activeTurn && realtimeActiveVoiceTurn) {
 				if (responseAfterDoneStatus) setRealtimeStatus(responseAfterDoneStatus);
 				return;
@@ -10944,9 +10847,6 @@
 					activeMicLabel: realtimeActiveMicLabel,
 					micTrackDetails: realtimeMicTrackDetails,
 					pendingDirectAnswerRequestId: realtimePendingDirectAnswerRequestId,
-					onhandNarrationRequestId: realtimeOnhandNarrationRequestId,
-					onhandNarrationCoveredChars: realtimeOnhandNarrationCoveredChars,
-					onhandNarrationQueueLength: realtimeOnhandNarrationQueue.length,
 					pendingSocraticMove: realtimePendingSocraticMove,
 					activeVoiceTurn: realtimeActiveVoiceTurn,
 				};
