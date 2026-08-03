@@ -2900,12 +2900,6 @@
 				color: var(--rm-subtext);
 				font-style: italic;
 			}
-			.reply-revising {
-				color: var(--rm-subtext);
-				font-style: italic;
-				font-size: 12px;
-				margin-top: 6px;
-			}
 			.reply-math-block,
 			.reply-math-inline {
 				color: var(--rm-text);
@@ -5337,7 +5331,6 @@
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 								<div class="onhand-response">
 									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
-									${turn?.pending && turn?.revising && reply ? '<p class="reply-revising">Adding source marks on the page…</p>' : ""}
 									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 								</div>
@@ -7536,7 +7529,17 @@
 	}
 
 		function realtimeTutorInstructions() {
+			const learningModeOn = Boolean(currentState?.preferences?.learningMode);
+			const learningLines = learningModeOn
+				? [
+						"Learning Mode is ON for this session:",
+						"For conceptual questions, ask one short guiding question anchored to a highlighted passage before explaining; once the user engages, asks again directly, or sounds frustrated, give the full page-grounded answer — except graded homework finals below.",
+						"Homework/graded work: if the page or question looks like an exercise, problem set, quiz, or exam, never speak or publish the final numeric, symbolic, or code answer, even on a direct ask. Say briefly what made it look like graded work, coach the next step against the highlighted setup, and name the escape: turning Learning mode off gives the direct answer. If the user clearly says it is their own non-graded example, answer it directly.",
+						"If the user says \"don't tell me the answer\" or asks to be quizzed, honor it: guide with short questions anchored on the page instead of answering.",
+					]
+				: [];
 			return [
+				...learningLines,
 				"You are Onhand's realtime voice tutor and page-grounded browser agent for a student reading the current browser page.",
 				"You are the only model for this voice turn: handle audio, page grounding, analysis, browser/PDF actions, citations, annotations, and final answer yourself.",
 				"The typed GPT-5.5 Onhand agent and this Realtime agent must follow the same product behavior. The only differences are audio input/output and voice patience.",
@@ -9821,6 +9824,11 @@
 	}
 
 	learningModeToggle.addEventListener("change", () => {
+		queueMicrotask(() => {
+			try {
+				if (realtimeConnected && realtimeDataChannel?.readyState === "open") sendRealtimeSessionUpdate();
+			} catch {}
+		});
 		const nextValue = Boolean(learningModeToggle.checked);
 		void updateLearningMode(nextValue).catch((error) => {
 			learningModeToggle.checked = !nextValue;

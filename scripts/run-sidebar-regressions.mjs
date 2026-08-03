@@ -2317,6 +2317,27 @@ async function assertRealtimeBargeInClearsOutputAudio() {
 	dom.window.close();
 }
 
+async function assertRealtimeLearningModeReachesVoiceInstructions() {
+	const runtimeMessages = [];
+	const learningState = createState();
+	learningState.preferences = { ...learningState.preferences, realtimeVoiceEnabled: true, learningMode: true };
+	const dom = await renderSidebar(learningState, runtimeMessages);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	const learningInstructions = hooks.getRealtimeTutorInstructions();
+	assert.match(learningInstructions, /Learning Mode is ON/, "voice instructions must carry the Learning Mode rules when the toggle is on");
+	assert.match(learningInstructions, /never speak or publish the final numeric, symbolic, or code answer/, "the homework gate must reach voice");
+	assert.match(learningInstructions, /turning Learning mode off gives the direct answer/, "the \u00a75.3 escape must be named in voice");
+	assert.match(learningInstructions, /don't tell me the answer/, "the quiz-me/don't-tell request must be honored in voice");
+	dom.window.close();
+
+	const answerState = createState();
+	answerState.preferences = { ...answerState.preferences, realtimeVoiceEnabled: true, learningMode: false };
+	const dom2 = await renderSidebar(answerState, []);
+	const hooks2 = dom2.window.__onhandSidebarTestHooks;
+	assert.doesNotMatch(hooks2.getRealtimeTutorInstructions(), /Learning Mode is ON/, "answer-mode voice must not carry learning gates");
+	dom2.window.close();
+}
+
 async function assertRealtimeLocalBargeIn() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), runtimeMessages);
@@ -4818,6 +4839,7 @@ await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeBargeInClearsOutputAudio();
+await assertRealtimeLearningModeReachesVoiceInstructions();
 await assertRealtimeLocalBargeIn();
 await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();

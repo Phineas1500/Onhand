@@ -149072,7 +149072,7 @@ var PRIOR_PAGE_CONTEXT_MAX_CHARS = 5200;
 var PRIOR_PAGE_CONTEXT_SECTION_MAX_CHARS = 950;
 var PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 var ONHAND_MAX_OUTPUT_TOKENS = 1100;
-var ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 460;
+var ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 800;
 var COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
 var DEFAULT_SETTINGS = {
   learningMode: false,
@@ -149111,10 +149111,10 @@ Onhand's constitution:
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates. If a destination is blocked by a browser security warning or a bot challenge, never click through or try to bypass it: name the blocked source and why in the answer, note that the user can open it themselves if they choose, and continue with an alternative source.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
-- Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, choose the strongest one to three source highlights, not every point you mention, and add at most one short interpretive note unless the user explicitly asks for notes. Comparisons usually need two source highlights, one per side, with at most one note on the practical difference. Roadmap, list, process, derivation, proof, or other enumerable coverage tasks may need more highlights for required top-level items, but notes should stay sparse and only explain genuinely hard or reusable points. Thorough means covering the relevant required points, not annotating everything nearby.
+- Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, highlight the key concepts the answer actually rests on \u2014 typically three to six meaningful source highlights, not every point you mention. Give each interpretive highlight a short note (one to two sentences) naming its role or explaining the hard step; purely confirmatory highlights stand without one. Comparisons usually need two source highlights, one per side, each with a short note on its side of the difference. Roadmap, list, process, derivation, proof, or other enumerable coverage tasks give every required top-level item its own highlight. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
-- Stay unobtrusive but make the marginalia carry weight. Add short interpretive notes only where they add future replay value \u2014 name the passage's role or explain the hard step under ~280 characters. Do not add a note for every highlight, and do not duplicate what the highlight already says. Place any longer detail in chat.
+- Stay unobtrusive but make the marginalia carry weight. Add short interpretive notes only where they add future replay value \u2014 name the passage's role or explain the hard step under ~280 characters. Do not add notes to purely confirmatory highlights, and do not duplicate what the highlight already says. The notes carry the depth: put the explanation on the mark it belongs to, and keep the chat to the verdict and the synthesis across marks.
 - Wording hygiene: do not narrate internal page-work plans or grounding preambles with phrases like "let me anchor", "let me ground this", "I'll anchor", "highlighted above", or "I highlighted". Start with the answer, then reference the source naturally.
 - Math formatting: when writing LaTeX symbols or equations, wrap inline math in $...$ and display equations in $$...$$. Never leave raw LaTeX commands such as \\cdot, \\sqrt, \\frac, or \\text{} outside math delimiters, including inside bullets and numbered steps. If extracted page math is fragmented or missing operators, do not copy it verbatim into chat or source highlights; either rewrite a clean formula only when the intended formula is clear from context, or explain the relationship in words.
 
@@ -149123,7 +149123,7 @@ Default answer mode:
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer: call browser_scroll_to_annotation on that anchor once before answering \u2014 the scroll shows which mark backs the answer and counts as the turn's source marker. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
-- Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight one to three central concepts \u2014 never the page title, course title, or a generic heading; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. Add at most one note unless the user explicitly asks for notes. If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
+- Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight the central concepts \u2014 typically three to six \u2014 never the page title, course title, or a generic heading; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. Give each interpretive highlight its short note; skip notes only on purely confirmatory marks. If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
 - Quick visual questions such as "what does this figure show?", "what is this diagram?", or "try here" should usually be sidebar-only after capturing the visible region or PDF page image. Do not automatically add a note for a quick visual explanation. If a durable source marker is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value beyond a label. This does not limit notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.
 - Add a short interpretive note (one to two sentences, under ~280 characters) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note.
 - Only successful highlight/note tool results count as source markers. If a highlight attempt fails, retry once with a smaller exact visible span, then omit/qualify that claim in chat.
@@ -149143,7 +149143,7 @@ Default answer mode:
 - When an answer draws on more than one tab or document, highlight or cite each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not grounded in; if no open source supports a claim, say so rather than borrowing a nearby highlight.
 - If the user explicitly asks for no page changes, keep the answer short and name the visible/source context you relied on.
 
-Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use Markdown structure sparingly but intentionally; do not use horizontal rules as separators. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead.`);
+Use click/type/navigation tools only when the user is clearly asking you to interact with the page. Do not submit forms, transmit sensitive data, create accounts, change permissions, or take high-stakes actions unless the user explicitly provided that instruction for the specific site and action. Use Markdown structure sparingly but intentionally; do not use horizontal rules as separators. Use a small Markdown table only when the user asks for one or a genuine multi-dimension comparison reads better as a grid; otherwise use compact labeled bullets.`);
 var ONHAND_LEARNING_MODE_APPEND = `Learning is enabled for this request.
 
 Learning uses a tutoring stance:
@@ -149325,7 +149325,7 @@ var HIGHLIGHT_TEXT_SCHEMA = typebox_exports.Object({
 var SHOW_NOTE_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
   annotationId: typebox_exports.String({ description: "Annotation ID returned by browser_highlight_text" }),
-  note: typebox_exports.String({ description: "A short interpretive marginal note (1-2 sentences, under ~280 characters) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. Put longer detail in chat." }),
+  note: typebox_exports.String({ description: "A short interpretive marginal note (1-2 sentences, under ~280 characters) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. The note carries the explanation for its mark." }),
   label: typebox_exports.Optional(typebox_exports.String({ description: "Optional short label shown above the note" })),
   scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." }))
 });
@@ -149686,8 +149686,8 @@ var HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_WORDS = 10;
 var HIGHLIGHT_COMMAND_TIMEOUT_MS = 6e3;
 var HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12e3;
 var ANNOTATION_COMMAND_TIMEOUT_MS = 6e3;
-var TEACHING_SOURCE_HIGHLIGHT_MAX = 3;
-var TEACHING_SOURCE_NOTE_MAX = 1;
+var TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
+var TEACHING_SOURCE_NOTE_MAX = 6;
 var COMPACT_TEACHING_HIGHLIGHT_ERROR_LIMIT = 2;
 var STRUCTURED_SOURCE_NOTE_MAX = 3;
 var COMPARISON_SOURCE_HIGHLIGHT_MAX = 4;
@@ -149887,12 +149887,12 @@ function buildRepeatedHighlightFailureGuardResult(toolName, commandName, request
         "Highlighting has failed repeatedly on this source page.",
         `Do not call ${toolName} again on the same page for this turn.`,
         "Open or activate a different credible source page, a simpler printable page, or another already-open source tab, then retry one short exact source highlight there before answering.",
-        "Only answer without a durable highlight if the alternate source page also fails. Do not use Markdown tables or horizontal rules."
+        "Only answer without a durable highlight if the alternate source page also fails. Do not use horizontal rules."
       ].join(" ") : [
         "Highlighting has failed repeatedly on this page, so durable source highlights are not available here.",
         `Do not call ${toolName} again for this turn.`,
         "Answer the user's question now from the readable page content.",
-        "Do not mention highlight failures, source-marker status, or claim the page is highlighted. Do not use Markdown tables or horizontal rules."
+        "Do not mention highlight failures, source-marker status, or claim the page is highlighted. Do not use horizontal rules."
       ].join(" ")
     }
   };
@@ -150992,36 +150992,13 @@ function learningCheckAnswerMatchesOpenCheck(prompt, check2, state) {
   }
   return false;
 }
-function buildLearningCheckAcknowledgement(prompt, check2, state) {
-  const cleanPrompt = stripVoicePromptPrefix(prompt);
-  const conceptLabel = getLearnerConceptLabel(state, check2.conceptId);
-  const meta3 = isLearningCheckMetaFollowup(prompt);
-  const promptText = truncate2(check2.promptText, 160);
-  if (meta3) {
-    return [
-      "Yes \u2014 you did answer it. I should have treated that as your response instead of asking the same check again.",
-      `I'll mark this ${check2.kind} check on ${conceptLabel} as answered and keep using the existing source highlight for it.`
-    ].join("\n\n");
-  }
-  return [
-    `Recorded \u2014 I've noted your answer to the check: "${promptText}"`,
-    `To check yourself, compare your answer with the highlighted passage on the page${conceptLabel ? ` for ${conceptLabel}` : ""}. Ask me to walk through it if you want a second look.`
-  ].join("\n\n");
-}
-function buildLearningCheckFollowup(prompt, state) {
-  const learnerState = normalizeLearnerState(state, "learning");
-  const check2 = getLatestOpenLearningCheck(learnerState);
-  if (!check2) return null;
-  const metaFollowup = isLearningCheckMetaFollowup(prompt);
-  if (!metaFollowup && !isLikelyLearningCheckAnswer(prompt)) return null;
-  if (!metaFollowup && !learningCheckAnswerMatchesOpenCheck(prompt, check2, learnerState)) return null;
-  const assessment = "partial";
-  return {
-    check: check2,
-    learnerState,
-    assessment,
-    reply: buildLearningCheckAcknowledgement(prompt, check2, learnerState)
-  };
+function findAnsweredOpenLearningCheck(state, prompt) {
+  const check2 = getLatestOpenLearningCheck(state);
+  if (!check2 || !String(prompt || "").trim()) return null;
+  if (isLearningCheckMetaFollowup(prompt)) return check2;
+  if (!isLikelyLearningCheckAnswer(prompt)) return null;
+  if (!learningCheckAnswerMatchesOpenCheck(prompt, check2, state)) return null;
+  return check2;
 }
 function createSession(name = null) {
   const timestamp2 = nowIso();
@@ -152550,6 +152527,18 @@ function findRepeatedLearnerConceptsForPrompt(state, latestPrompt) {
 function buildLearnerStatePromptSummary(rawState, latestPrompt = "") {
   const state = normalizeLearnerState(rawState, "learning");
   const lines = ["Current Learning Mode state for this session:"];
+  const answeredCheck = findAnsweredOpenLearningCheck(state, latestPrompt);
+  if (answeredCheck) {
+    const anchorNote = answeredCheck.annotationId ? `, anchored at annotationId ${answeredCheck.annotationId}` : "";
+    lines.push(
+      "- The user's message answers the open check below. Grade it on the page:",
+      `  - Check: "${truncate2(answeredCheck.promptText, 200)}" (checkId ${answeredCheck.checkId}${anchorNote}).`,
+      "  - Re-read the anchored passage first; browser_scroll_to_annotation on that annotationId counts as this turn's source marker.",
+      "  - Judge the answer honestly against the passage \u2014 correct, partial, or incorrect \u2014 and say which, briefly and kindly, pointing at the mark.",
+      "  - If the answer is wrong or partial, coach toward the passage without giving the final answer away.",
+      `  - Then call onhand_record_learning_event with kind "check_resolved", checkId "${answeredCheck.checkId}", your honest assessment, and one-line evidence.`
+    );
+  }
   const repeatedConcepts = findRepeatedLearnerConceptsForPrompt(state, latestPrompt);
   if (!state.conceptsIntroduced.length && !state.openChecks.length && !state.responses.length) {
     lines.push("- No concepts or checks have been recorded yet.");
@@ -154307,8 +154296,8 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     linkedNavigationLine,
     "- Grounding budget: simple questions get one strong source highlight and a short answer. Broad teach/review/walkthrough/summarize requests need one to three durable explanatory source highlights for the central concepts, with at most one short note unless the user explicitly asks for notes. Do not use the page title, course title, reading list, or a generic heading as a source marker; prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless the contrast is the whole answer. If only one highlight succeeds, keep the answer focused on that highlighted passage instead of writing a broad unsupported page summary. Roadmap/list/navigation questions are not simple when the answer names multiple items, but notes should still be sparse.",
     "- Quick visual questions such as what a figure, diagram, chart, equation, screenshot, slide, or visible PDF page shows should usually stay sidebar-only after visual capture. Do not automatically add a note for these quick visual explanations. If durable context is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value. This does not reduce notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.",
-    "- Add short interpretive notes only where they add future replay value; name the passage's role or explain the hard step under 280 characters, but do not paraphrase the highlight. Do not add a note for every highlight. Put longer detail in chat.",
-    "- Write for the narrow side panel: use short paragraphs, compact labels, bullets, or numbered steps for diagrams, processes, comparisons, lists, and multi-part ideas. Do not use Markdown tables unless the user explicitly asks for a table; use compact labeled bullets instead. Do not use horizontal rules like --- as section separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add long unhighlighted 'other topics' or method-roadmap lists; offer to expand instead. For visual explanations, labels like What it shows, How to read it, and Takeaway are preferred when useful.",
+    "- Give each interpretive highlight a short note (one to two sentences, under 280 characters) naming its role or explaining the hard step; do not paraphrase the highlight, and skip notes on purely confirmatory marks. The notes carry the depth; keep the chat to the verdict and the synthesis across marks.",
+    "- Write for the narrow side panel: use short paragraphs, compact labels, bullets, or numbered steps for diagrams, processes, comparisons, lists, and multi-part ideas. Use a small Markdown table only when the user asks for one or a genuine multi-dimension comparison reads better as a grid; otherwise use compact labeled bullets. Do not use horizontal rules like --- as section separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add long unhighlighted 'other topics' or method-roadmap lists; offer to expand instead. For visual explanations, labels like What it shows, How to read it, and Takeaway are preferred when useful.",
     "- Failed highlight attempts are not source markers. Retry once with a smaller exact visible span, or leave that claim out of the answer.",
     "- If the captured context already includes the needed text, answer from it and avoid extra read or annotation tools unless the user asked for highlights/citations or the request is a page-level teaching/review summary.",
     "- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, highlight each key point you actually explain; do not add extra highlights just to increase source count. For comparison prompts, usually create two concise source highlights, one for each side, plus one short marginal note on the practical difference or takeaway; add at most one direct contrast/conclusion highlight when the page states it. For roadmap/list/process/derivation/proof prompts, mark every required top-level item before child/subtopic items; do not silently drop required items that the page contains. Do not highlight full algorithms or every sub-step unless asked. Keep the answer concise.",
@@ -154330,7 +154319,7 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     ...toolSpecificPolicyLines,
     ...evalLauncherAppend ? ["", "Temporary prompt-eval launcher policy candidate:", evalLauncherAppend] : [],
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
-    "Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Avoid Markdown tables unless explicitly requested.",
+    "Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Use a small table only for a genuine multi-dimension comparison or an explicit request.",
     ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
   ].filter((line, index, lines) => {
     if (typeof line !== "string") return true;
@@ -156229,8 +156218,8 @@ var __browserRuntimeTest = {
   },
   missingToolRetryToolNamesForTest: missingToolRetryToolNamesForPrompt,
   findMissingKnownBrowserToolTraceForTest: findMissingKnownBrowserToolTrace,
-  buildLearningCheckFollowupForTest(prompt, learnerState) {
-    return buildLearningCheckFollowup(prompt, learnerState);
+  findAnsweredOpenLearningCheckForTest(learnerState, prompt) {
+    return findAnsweredOpenLearningCheck(normalizeLearnerState(learnerState, "learning"), prompt);
   },
   setLearnerStateMode,
   summarizeRestoredArtifact
@@ -157924,9 +157913,6 @@ function createOnhandBrowserRuntime(host) {
   function updateAssistantDraft(requestId, text, extra = {}) {
     const message = uiState?.messages?.find((entry) => entry.id === `assistant:${requestId}`);
     if (!message) return;
-    if (activeRequest?.id === requestId && extra.revising === true && String(text || "").trim()) {
-      activeRequest.provisionalAnswerExposed = true;
-    }
     message.text = text;
     Object.assign(message, extra);
     uiState.updatedAt = Date.now();
@@ -158314,9 +158300,7 @@ function createOnhandBrowserRuntime(host) {
           ...retryTools.filter((tool) => !existingToolNames.has(tool.name))
         ];
         resetAssistantDraftText(activeRequest);
-        if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
-          updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
-        }
+        updateAssistantDraft(requestId, "", { pending: true });
         await publishState({ status: "Retrying with needed browser tool..." });
         queueBlankReplyRetry(activeAgent, buildMissingToolRetryPrompt(activeRequest, missingToolName), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
@@ -158357,9 +158341,7 @@ function createOnhandBrowserRuntime(host) {
       if (activeAgent && retryCount < 2) {
         activeRequest.learningWorkspaceEvidenceRetryCount = retryCount + 1;
         resetAssistantDraftText(activeRequest);
-        if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
-          updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
-        }
+        updateAssistantDraft(requestId, "", { pending: true });
         await publishState({ status: retryCount === 0 ? "Checking related learning sources..." : "Reading a related learning source..." });
         queueBlankReplyRetry(activeAgent, buildLearningWorkspaceEvidenceRetryPrompt(activeRequest, assistantText), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
@@ -158371,9 +158353,7 @@ function createOnhandBrowserRuntime(host) {
     if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest) && activeAgent) {
       activeRequest.pageSourceMarkerRetry = true;
       resetAssistantDraftText(activeRequest);
-      if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
-        updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
-      }
+      updateAssistantDraft(requestId, "", { pending: true });
       await publishState({ status: "Adding source marks..." });
       queueBlankReplyRetry(activeAgent, buildPageSourceMarkerRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
@@ -158383,9 +158363,7 @@ function createOnhandBrowserRuntime(host) {
     if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
       activeRequest.pdfAnchorRetry = true;
       resetAssistantDraftText(activeRequest);
-      if (!activeRequest.suppressAssistantDraftUntilResearchComplete) {
-        updateAssistantDraft(requestId, assistantText, { pending: true, revising: true });
-      }
+      updateAssistantDraft(requestId, "", { pending: true });
       await publishState({ status: "Adding PDF source marks..." });
       queueBlankReplyRetry(activeAgent, buildPdfAnchorRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
@@ -158539,7 +158517,7 @@ function createOnhandBrowserRuntime(host) {
             });
             break;
           }
-          updateAssistantDraft(requestId, draftText, { pending: true, revising: false });
+          updateAssistantDraft(requestId, draftText, { pending: true });
           void publishState({ status: "Responding..." });
         } else if (assistantEvent?.type === "thinking_delta" && !activeRequest.reply.trim()) {
           void publishState({ status: "Thinking..." });
@@ -160602,22 +160580,6 @@ function createOnhandBrowserRuntime(host) {
       void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {
       });
       try {
-        const learningFollowup = learningMode ? buildLearningCheckFollowup(prompt, session.learnerState) : null;
-        if (learningFollowup) {
-          await recordLearningEventForSession(
-            session,
-            {
-              kind: "check_resolved",
-              checkId: learningFollowup.check.checkId,
-              assessment: learningFollowup.assessment,
-              evidence: stripVoicePromptPrefix(prompt)
-            },
-            "learning"
-          );
-          activeRequest.reply = learningFollowup.reply;
-          await finalizeRequest(session, requestId, null, []);
-          return { requestId };
-        }
         const model = await getConfiguredModel(store2.settings);
         const selectionFirstPdfQuestion = promptReferencesVisiblePdfSelectionOrPage(prompt);
         let browserContextDetails = await renderBrowserContextDetails(host, {

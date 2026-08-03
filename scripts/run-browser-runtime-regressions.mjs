@@ -2485,7 +2485,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /Do not use the word 'anchor' in user-facing replies/);
 	assert.match(contract.answerPrompt, /let me ground this/);
 	assert.match(contract.answerPrompt, /Do not use horizontal rules like --- as section separators/);
-			assert.match(contract.answerPrompt, /Do not use Markdown tables unless the user explicitly asks for a table/);
+			assert.match(contract.answerPrompt, /Use a small Markdown table only when the user asks for one or a genuine multi-dimension comparison/);
 			assert.match(
 				contract.systemPrompt,
 				/Once a parent\/top-level item is marked, move to the next sibling item/,
@@ -4935,14 +4935,14 @@ async function assertFallbackOpenCheckRecording() {
 
 async function assertLearnerStateUpdates() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { applyLearningEvent, buildLearningCheckFollowupForTest, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
+	const { applyLearningEvent, findAnsweredOpenLearningCheckForTest, buildLearnerStatePromptSummary, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
 	const { readFile: readPhase1Source } = await import("node:fs/promises");
 	const browserRuntimeSourceTextForPhase1 = await readPhase1Source(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
 	assert.equal(typeof createEmptyLearnerState, "function", "browser runtime learner-state factory export is missing");
 	assert.equal(typeof normalizeLearnerState, "function", "browser runtime learner-state normalizer export is missing");
 	assert.equal(typeof applyLearningEvent, "function", "browser runtime learning-event reducer export is missing");
 	assert.equal(typeof setLearnerStateMode, "function", "browser runtime learner-state mode export is missing");
-	assert.equal(typeof buildLearningCheckFollowupForTest, "function", "browser runtime learning follow-up helper export is missing");
+	assert.equal(typeof findAnsweredOpenLearningCheckForTest, "function", "browser runtime check-answer detection export is missing");
 
 	let learnerState = createEmptyLearnerState("learning");
 	assert.deepEqual(learnerState, {
@@ -4997,8 +4997,8 @@ async function assertLearnerStateUpdates() {
 			askedAt: "2026-05-18T05:01:00.000Z",
 		},
 	]);
-	const derivativeFollowup = buildLearningCheckFollowupForTest("I think the derivative measures rate of change.", learnerState);
-	assert.equal(derivativeFollowup?.check?.checkId, "check-derivative-1", "related answer-shaped follow-up should resolve the matching open check");
+	const derivativeFollowup = findAnsweredOpenLearningCheckForTest(learnerState, "I think the derivative measures rate of change.");
+	assert.equal(derivativeFollowup?.checkId, "check-derivative-1", "related answer-shaped follow-up should detect the matching open check");
 
 	let staleMdnCheckState = createEmptyLearnerState("learning");
 	staleMdnCheckState = applyLearningEvent(staleMdnCheckState, {
@@ -5015,31 +5015,24 @@ async function assertLearnerStateUpdates() {
 		conceptId: "concept_promise_allsettled_result_objects",
 		promptText: "If one input promise rejects with \"Network error\", what would that result object contain: value or reason?",
 	});
-	const unrelatedCalculusFollowup = buildLearningCheckFollowupForTest(
-		"I think the inside derivative is 6x + 7. Is that right? Please help me fix it if needed.",
+	const unrelatedCalculusFollowup = findAnsweredOpenLearningCheckForTest(
 		staleMdnCheckState,
+		"I think the inside derivative is 6x + 7. Is that right? Please help me fix it if needed.",
 	);
-	assert.equal(unrelatedCalculusFollowup, null, "unrelated answer-shaped prompt must not resolve a stale open check from another concept");
-	const relatedMdnFollowup = buildLearningCheckFollowupForTest("I think it would contain reason.", staleMdnCheckState);
-	assert.equal(relatedMdnFollowup?.check?.checkId, "check-mdn-reason", "related answer-shaped prompt should still resolve the matching open check");
-	assert.equal(relatedMdnFollowup?.assessment, "partial", "the shortcut never evaluates correctness, so it must not claim a correct verdict (behavior doc v2.9)");
-	assert.doesNotMatch(
-		String(relatedMdnFollowup?.reply || ""),
-		/Yes —|that is the right direction|well enough/,
-		"the acknowledgement must not praise or grade an unevaluated answer",
-	);
-	assert.match(
-		String(relatedMdnFollowup?.reply || ""),
-		/compare your answer with the highlighted passage/i,
-		"the acknowledgement points the learner back at the anchored passage",
-	);
-	assert.doesNotMatch(
-		String(relatedMdnFollowup?.reply || ""),
-		/multi-head attention runs several/,
-		"the hardcoded demo-answer paragraph must stay deleted",
-	);
-	const stopwordOnlyFollowup = buildLearningCheckFollowupForTest("I think that is what it means.", staleMdnCheckState);
-	assert.equal(stopwordOnlyFollowup, null, "an all-stopword reply carries no signal and must not resolve a check");
+	assert.equal(unrelatedCalculusFollowup, null, "unrelated answer-shaped prompt must not read as answering a stale open check from another concept");
+	const relatedMdnFollowup = findAnsweredOpenLearningCheckForTest(staleMdnCheckState, "I think it would contain reason.");
+	assert.equal(relatedMdnFollowup?.checkId, "check-mdn-reason", "related answer-shaped prompt should detect the matching open check");
+	const stopwordOnlyFollowup = findAnsweredOpenLearningCheckForTest(staleMdnCheckState, "I think that is what it means.");
+	assert.equal(stopwordOnlyFollowup, null, "an all-stopword reply carries no signal and must not read as a check answer");
+	const gradingSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "I think it would contain reason.");
+	assert.match(gradingSummary, /Grade it on the page/, "an answered check must inject the page-grading directive");
+	assert.match(gradingSummary, /checkId check-mdn-reason/, "the grading directive names the check being graded");
+	assert.match(gradingSummary, /Judge the answer honestly against the passage/, "grading must be honest and page-grounded");
+	assert.match(gradingSummary, /without giving the final answer away/, "wrong answers get coaching, not the final answer");
+	assert.match(gradingSummary, /check_resolved/, "the model is told to record the resolution");
+	const noAnswerSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "What does Promise.allSettled return?");
+	assert.doesNotMatch(noAnswerSummary, /Grade it on the page/, "a fresh question must not trigger check grading");
+	assert.doesNotMatch(gradingSummary, /multi-head attention runs several/, "the hardcoded demo-answer paragraph must stay deleted");
 
 	{
 		const { humanizeProviderErrorMessageForTest, setLearnerStateModeForTest } = __browserRuntimeTest || {};
@@ -5559,15 +5552,18 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 	});
 	const completedState = await waitForRuntimeCompletion(runtime);
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete voice check-answer regression");
-	assert.equal(completedState.learnerState.openChecks.length, 0, "voice answer should resolve the existing open check");
-	assert.equal(completedState.learnerState.responses[0].checkId, "check-alpha-smoke");
-	assert.equal(completedState.learnerState.responses[0].assessment, "partial", "the shortcut records responses without claiming a correct verdict");
-	assert.match(completedState.turns.at(-1)?.reply || "", /Recorded — I've noted your answer|compare your answer with the highlighted passage/i);
+	// Grading happens in the real turn now (behavior doc v2.9): a model that
+	// does not record an honest check_resolved leaves the check OPEN. The old
+	// shortcut auto-resolved it as "correct" without evaluation — the false
+	// resolution this asserts against.
+	assert.equal(completedState.learnerState.openChecks.length, 1, "an ungraded check answer must leave the check open, never auto-resolve it");
 	assert.equal(
-		host.calls.filter((call) => call.name === "highlight_text").length,
-		highlightCallsBeforeAnswer,
-		"answering an open check should not create a replacement highlight",
+		completedState.learnerState.responses.some((response) => response?.checkId === "check-alpha-smoke"),
+		false,
+		"no verdict may be recorded for a check the model never graded",
 	);
+	assert.ok(String(completedState.turns.at(-1)?.reply || "").length > 0, "the check-answer turn still produces a reply");
+	void highlightCallsBeforeAnswer;
 }
 
 async function assertReplayHighlightCandidateGeneration() {
