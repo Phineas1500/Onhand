@@ -627,7 +627,7 @@ Use click/type/navigation tools only when the user is clearly asking you to inte
 const ONHAND_LEARNING_MODE_APPEND = `Learning is enabled for this request.
 
 Learning uses a tutoring stance:
-- Ask before telling: for conceptual questions, lead with one short guiding question — a prediction, "what do you notice", or "say it back" — anchored to a highlight on the supporting passage, and reveal the full explanation after the user engages. If the user answers, asks again directly, or shows frustration, give the direct page-grounded answer without further gating. Do not stack multiple questions before teaching anything.
+- Ask before telling: for conceptual questions, lead with one short guiding question — a prediction, "what do you notice", or "say it back" — anchored to a highlight on the supporting passage, and reveal the full explanation after the user engages. If the user answers, asks again directly, or shows frustration, give the direct page-grounded answer without further gating — except graded homework/problem finals, where the homework priority below still applies. Do not stack multiple questions before teaching anything.
 - Stay fast: the first move should be a useful source highlight or page-grounded prompt, not a long preamble. In the answer, do not start with process narration like "let me ground this"; start with the lesson.
 - Scaffold from the user's open material and recent conversation. If a prerequisite concept is needed, point to it first.
 - Use onhand_record_learning_event to keep learner state current: record a concept when you introduce it, record a prediction/retrieval check when you place it, and resolve an open check before moving on when the user answers it.
@@ -643,7 +643,7 @@ Learning uses a tutoring stance:
 - Read likely candidates by explicit tabId without stealing focus. Start with the strongest one to three candidates, then expand only if the evidence is still insufficient.
 - If an index/master page links to the relevant notes or reading, follow that link in a background tab when possible (browser_navigate with newTab true and active false), inspect the destination by tabId, and anchor the useful passage there. If the destination is a PDF, call browser_open_pdf_in_onhand_viewer with that tabId and active false. Do not activate or switch tabs merely to read, search, highlight, note, or hand off a source PDF. Change focus only when the learner explicitly asks to go there; citation/source controls provide the normal jump path.
 - Record a related tab as a learning source only after you actually inspect or highlight it, and name which source supports each cross-tab claim.
-- Homework/problem priority: if the page or prompt looks like an exercise, problem set, assignment, quiz, exam, or the user asks for a "final answer" to a problem, do not give the final numeric, symbolic, or code answer in Learning mode, even if the user asks directly.
+- Homework/problem priority: if the page or prompt looks like an exercise, problem set, assignment, quiz, exam, or the user asks for a "final answer" to a problem, do not give the final numeric, symbolic, or code answer in Learning mode, even if the user asks directly. When you withhold for this reason, say so briefly — name what made the request look like graded work — and make the escape clear: switching Learning mode off gives the direct answer. If the user has clearly identified the material as their own non-graded example, answer it directly.
 - For homework/problem prompts, highlight the problem and the relevant rule or setup, add a short note if helpful, then ask for the next step the learner should do. For example, ask them to identify inside/outside functions, compute the inner derivative, choose the rule, or write the next line. Do not reveal the final answer until the user switches to answer mode or presents their own completed work and asks for feedback.
 - Skip the guiding-question beat only for trivial factual lookups, requests to produce study artifacts (summaries, outlines, flashcards), meta/follow-up turns about an open check, or visibly frustrated users — answer those directly. The homework/problem priority still wins over every skip. Still ground material claims in page context.`;
 
@@ -1981,7 +1981,13 @@ function normalizeLearnerState(rawState: unknown, modeOverride?: LearnerMode): L
 }
 
 function setLearnerStateMode(rawState: unknown, mode: LearnerMode): LearnerState {
-	return normalizeLearnerState(rawState, mode);
+	const state = normalizeLearnerState(rawState, mode);
+	// Toggling Learning mode off resets the session's learner state (behavior
+	// doc §5.4): stale checks must not resurrect when the mode comes back on.
+	if (mode !== "learning" && state.mode !== "learning") {
+		return { ...state, conceptsIntroduced: [], openChecks: [], responses: [] };
+	}
+	return state;
 }
 
 function dedupeLearnerConcepts(concepts: LearnerConcept[]) {
@@ -2788,7 +2794,8 @@ function learningCheckMatchTokens(value: unknown) {
 
 function learningCheckAnswerMatchesOpenCheck(prompt: string, check: LearnerCheck, state: LearnerState) {
 	const answerTokens = learningCheckMatchTokens(prompt);
-	if (!answerTokens.size) return true;
+	// An all-stopword reply carries no signal about the check; do not resolve.
+	if (!answerTokens.size) return false;
 	const conceptLabel = getLearnerConceptLabel(state, check.conceptId);
 	const checkTokens = learningCheckMatchTokens(`${conceptLabel} ${check.promptText}`);
 	for (const token of answerTokens) {
@@ -2808,15 +2815,9 @@ function buildLearningCheckAcknowledgement(prompt: string, check: LearnerCheck, 
 			`I'll mark this ${check.kind} check on ${conceptLabel} as answered and keep using the existing source highlight for it.`,
 		].join("\n\n");
 	}
-	if (/\bmulti[- ]?head|attention\b/i.test(`${conceptLabel} ${promptText} ${cleanPrompt}`)) {
-		return [
-			"Yes — that is the right direction.",
-			"More precisely: multi-head attention runs several learned attention heads in parallel, so the model can build different weighted token-relationship patterns at the same time. I'll mark that check as answered.",
-		].join("\n\n");
-	}
 	return [
-		"Yes — that answers the check well enough to move on.",
-		`I'll mark the check as answered. The open prompt was: "${promptText}"`,
+		`Recorded — I've noted your answer to the check: "${promptText}"`,
+		`To check yourself, compare your answer with the highlighted passage on the page${conceptLabel ? ` for ${conceptLabel}` : ""}. Ask me to walk through it if you want a second look.`,
 	].join("\n\n");
 }
 
@@ -2827,7 +2828,10 @@ function buildLearningCheckFollowup(prompt: string, state: unknown) {
 	const metaFollowup = isLearningCheckMetaFollowup(prompt);
 	if (!metaFollowup && !isLikelyLearningCheckAnswer(prompt)) return null;
 	if (!metaFollowup && !learningCheckAnswerMatchesOpenCheck(prompt, check, learnerState)) return null;
-	const assessment = metaFollowup ? "partial" : "correct";
+	// Nothing here evaluates correctness (that is the page-graded checks work,
+	// behavior doc v2.9); record the response neutrally rather than claiming a
+	// verdict the runtime never judged.
+	const assessment = "partial";
 	return {
 		check,
 		learnerState,
@@ -5217,10 +5221,26 @@ function shouldRecordFallbackOpenCheckForRequest(request: any, reply: string) {
 	return Boolean(extractTrailingCheckQuestion(reply));
 }
 
+// Provider/worker failures arrive as "429: {\"error\":{\"message\":\"...\"}}" —
+// an HTTP status wrapping a JSON envelope around copy that is often written
+// for users (the free-tier quota messages). Surface the inner message.
+function humanizeProviderErrorMessage(rawMessage: unknown) {
+	const raw = String(rawMessage || "").trim();
+	if (!raw) return "";
+	const match = raw.match(/^(\d{3}):\s*(\{[\s\S]*\})$/);
+	if (!match) return raw;
+	try {
+		const body = JSON.parse(match[2]);
+		const inner = body?.error?.message || body?.message;
+		if (typeof inner === "string" && inner.trim()) return inner.trim();
+	} catch {}
+	return raw;
+}
+
 function buildFinalAssistantReply(assistantText: string, finalError: Error | null, request: any = null) {
 	const text = sanitizeAssistantVisibleReply(assistantText, request);
 	if (!finalError) return text || "(No reply generated.)";
-	const errorReply = `Error: ${finalError.message || "Prompt failed."}`;
+	const errorReply = `Error: ${humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
 	const automatedRetryFailedBeforeFreshText =
 		Boolean(request?.pdfAnchorRetry || request?.pageSourceMarkerRetry || request?.blankReplyRetry) && !String(request?.reply || "").trim();
 	if (automatedRetryFailedBeforeFreshText) return errorReply;
@@ -10039,6 +10059,8 @@ export const __browserRuntimeTest = {
 	isTransientProviderErrorForTest: isTransientProviderError,
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
+	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
+	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
 	describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
 	buildUntrustedTabTargetGuardResultForTest: buildUntrustedTabTargetGuardResult,
@@ -12730,7 +12752,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						if (!hasCompletedNonActiveWorkspaceRead(activeRequest)) assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
 					}
 				}
-				if (!finalError && !activeRequest.aborted && !activeRequest.learningResearchPlan && shouldRequireLearningWorkspaceEvidence(activeRequest)) {
+				if (!finalError && !activeRequest.aborted && !activeRequest.learningResearchPlan?.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence(activeRequest)) {
 					const retryCount = Number(activeRequest.learningWorkspaceEvidenceRetryCount || 0);
 					if (activeAgent && retryCount < 2) {
 						activeRequest.learningWorkspaceEvidenceRetryCount = retryCount + 1;

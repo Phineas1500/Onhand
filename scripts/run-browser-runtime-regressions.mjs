@@ -4936,6 +4936,8 @@ async function assertFallbackOpenCheckRecording() {
 async function assertLearnerStateUpdates() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const { applyLearningEvent, buildLearningCheckFollowupForTest, createEmptyLearnerState, normalizeLearnerState, setLearnerStateMode } = __browserRuntimeTest || {};
+	const { readFile: readPhase1Source } = await import("node:fs/promises");
+	const browserRuntimeSourceTextForPhase1 = await readPhase1Source(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
 	assert.equal(typeof createEmptyLearnerState, "function", "browser runtime learner-state factory export is missing");
 	assert.equal(typeof normalizeLearnerState, "function", "browser runtime learner-state normalizer export is missing");
 	assert.equal(typeof applyLearningEvent, "function", "browser runtime learning-event reducer export is missing");
@@ -5020,6 +5022,54 @@ async function assertLearnerStateUpdates() {
 	assert.equal(unrelatedCalculusFollowup, null, "unrelated answer-shaped prompt must not resolve a stale open check from another concept");
 	const relatedMdnFollowup = buildLearningCheckFollowupForTest("I think it would contain reason.", staleMdnCheckState);
 	assert.equal(relatedMdnFollowup?.check?.checkId, "check-mdn-reason", "related answer-shaped prompt should still resolve the matching open check");
+	assert.equal(relatedMdnFollowup?.assessment, "partial", "the shortcut never evaluates correctness, so it must not claim a correct verdict (behavior doc v2.9)");
+	assert.doesNotMatch(
+		String(relatedMdnFollowup?.reply || ""),
+		/Yes —|that is the right direction|well enough/,
+		"the acknowledgement must not praise or grade an unevaluated answer",
+	);
+	assert.match(
+		String(relatedMdnFollowup?.reply || ""),
+		/compare your answer with the highlighted passage/i,
+		"the acknowledgement points the learner back at the anchored passage",
+	);
+	assert.doesNotMatch(
+		String(relatedMdnFollowup?.reply || ""),
+		/multi-head attention runs several/,
+		"the hardcoded demo-answer paragraph must stay deleted",
+	);
+	const stopwordOnlyFollowup = buildLearningCheckFollowupForTest("I think that is what it means.", staleMdnCheckState);
+	assert.equal(stopwordOnlyFollowup, null, "an all-stopword reply carries no signal and must not resolve a check");
+
+	{
+		const { humanizeProviderErrorMessageForTest, setLearnerStateModeForTest } = __browserRuntimeTest || {};
+		assert.equal(
+			humanizeProviderErrorMessageForTest('429: {"error":{"message":"You\u2019ve reached today\u2019s Onhand Free limit. It resets tomorrow."}}'),
+			"You\u2019ve reached today\u2019s Onhand Free limit. It resets tomorrow.",
+			"provider error JSON envelopes must unwrap to their inner message",
+		);
+		assert.equal(humanizeProviderErrorMessageForTest("The model returned an empty answer."), "The model returned an empty answer.");
+		assert.equal(humanizeProviderErrorMessageForTest("500: not-json{"), "500: not-json{");
+		const toggledOff = setLearnerStateModeForTest(staleMdnCheckState, "answer");
+		assert.equal(toggledOff.openChecks.length, 0, "toggling Learning mode off resets open checks (behavior doc \u00a75.4)");
+		assert.equal(toggledOff.conceptsIntroduced.length, 0, "toggling Learning mode off resets concepts");
+		const runtimeSourceForNets = String(browserRuntimeSourceTextForPhase1 || "");
+		assert.match(
+			runtimeSourceForNets,
+			/!activeRequest\.learningResearchPlan\?\.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence/,
+			"the workspace-evidence net must arm whenever the planner did not affirmatively require research (a false flag must not disarm both nets)",
+		);
+		assert.match(
+			runtimeSourceForNets,
+			/name what made the request look like graded work/,
+			"settled-rule drift: \u00a75.3 misclassification guard lost its prompt sentence",
+		);
+		assert.match(
+			runtimeSourceForNets,
+			/clearly identified the material as their own non-graded example/,
+			"settled-rule drift: \u00a75.3 own-material carve-out lost its prompt sentence",
+		);
+	}
 
 	learnerState = applyLearningEvent(
 		learnerState,
@@ -5501,8 +5551,8 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 	await waitForRuntimeCompletion(runtime);
 	const highlightCallsBeforeAnswer = host.calls.filter((call) => call.name === "highlight_text").length;
 	await runtime.submitPrompt({
-		prompt: "I think it is saying this is the important page concept.",
-		displayPrompt: "[Voice] I think it is saying this is the important page concept.",
+		prompt: "I think the Alpha smoke content plays the role of confirming extraction works.",
+		displayPrompt: "[Voice] I think the Alpha smoke content plays the role of confirming extraction works.",
 		source: "realtime-voice-direct-answer",
 		attachments: [],
 		learningMode: true,
@@ -5511,8 +5561,8 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 	assert.equal(completedState?.activeRequestId, null, "runtime did not complete voice check-answer regression");
 	assert.equal(completedState.learnerState.openChecks.length, 0, "voice answer should resolve the existing open check");
 	assert.equal(completedState.learnerState.responses[0].checkId, "check-alpha-smoke");
-	assert.equal(completedState.learnerState.responses[0].assessment, "correct");
-	assert.match(completedState.turns.at(-1)?.reply || "", /answers the check|right direction/i);
+	assert.equal(completedState.learnerState.responses[0].assessment, "partial", "the shortcut records responses without claiming a correct verdict");
+	assert.match(completedState.turns.at(-1)?.reply || "", /Recorded — I've noted your answer|compare your answer with the highlighted passage/i);
 	assert.equal(
 		host.calls.filter((call) => call.name === "highlight_text").length,
 		highlightCallsBeforeAnswer,

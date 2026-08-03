@@ -3506,6 +3506,14 @@
 				letter-spacing: 0.04em;
 				margin-top: 2px;
 			}
+			.onhand-action-notice {
+				margin: 8px 0;
+				padding: 6px 10px;
+				border-radius: 6px;
+				background: var(--onhand-surface-muted, rgba(180, 99, 122, 0.12));
+				color: var(--onhand-text-muted, inherit);
+				font-size: 12px;
+			}
 			.onhand-empty {
 				padding: 20px 22px;
 				font-size: 15px;
@@ -4268,7 +4276,7 @@
 		return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 	}
 
-	function pluralize(count, singular, plural = `${singular}s`) {
+	function pluralize(count, singular, plural = singular.endsWith("y") ? `${singular.slice(0, -1)}ies` : `${singular}s`) {
 		return `${count} ${count === 1 ? singular : plural}`;
 	}
 
@@ -5178,7 +5186,7 @@
 								>
 									<span class="onhand-index-num">${index + 1}</span>
 									<span class="onhand-index-text">${escapeHtml(item.text || "Page annotation")}</span>
-									<span class="onhand-index-kind">highlight</span>
+									<span class="onhand-index-kind">${item.kind === "note" ? "note" : "highlight"}</span>
 								</button>
 								${
 									item.noteText
@@ -5257,7 +5265,7 @@
 		const running = tools.find((activity) => activity?.state === "running");
 		if (turn?.pending) return running ? `Working · ${trimProgressLabel(running.label || running.toolName)}` : "Working";
 		const parts = ["Done"];
-		if (tools.length) parts.push(pluralize(tools.length, "page step"));
+		if (tools.length) parts.push(pluralize(tools.length, "step"));
 		const recoveredCount = tools.filter((activity) => activity?.state === "recovered").length;
 		if (recoveredCount) parts.push(`recovered ${pluralize(recoveredCount, "retry")}`);
 		const highlightCount = actions.filter((action) => action?.type === "annotation").length;
@@ -5328,7 +5336,7 @@
 						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
 							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 								<div class="onhand-response">
-									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking...</p>'}
+									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
 									${turn?.pending && turn?.revising && reply ? '<p class="reply-revising">Adding source marks on the page…</p>' : ""}
 									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
@@ -5667,13 +5675,23 @@
 			);
 		}
 
-		function renderMessages(turns, annotationCount = 0) {
+		function showTransientMessageNotice(text) {
+		const existing = messagesEl.querySelector(".onhand-action-notice");
+		if (existing) existing.remove();
+		const notice = document.createElement("div");
+		notice.className = "onhand-action-notice";
+		notice.textContent = String(text || "").slice(0, 200);
+		messagesEl.appendChild(notice);
+		setTimeout(() => notice.remove(), 6000);
+	}
+
+	function renderMessages(turns, annotationCount = 0) {
 			const emptyMarkup = annotationCount
 				? ""
 				: `
 				<div class="onhand-empty">
-					<div class="lede">Nothing on this page yet.</div>
-					<div class="empty-body">Ask about the article, highlight a passage, or resume one of yesterday's entries from the menu.</div>
+					<div class="lede">Ask about this page.</div>
+					<div class="empty-body">Onhand answers by highlighting the exact passages it used, right on the page — with notes in the margins and citations you can click. Select text first to ask about a specific part.</div>
 					</div>
 			`;
 			const markup = renderTurnListMarkup(turns, emptyMarkup);
@@ -5682,7 +5700,11 @@
 			messagesEl.innerHTML = markup;
 			bindProgressToggles(messagesEl);
 			bindSourceDisclosures(messagesEl);
-			bindActionButtons(messagesEl);
+			bindActionButtons(messagesEl, {
+				onError(error) {
+					showTransientMessageNotice(error?.message || "Could not jump to that mark — the page may have changed.");
+				},
+			});
 			bindCopyButtons(messagesEl);
 			bindErrorReportButtons(messagesEl);
 		}
@@ -5917,7 +5939,7 @@
 
 	function getTurnSourceActions(turn) {
 		return dedupePageActions(Array.isArray(turn?.pageActions) ? turn.pageActions : []).filter(
-			(action) => action?.type === "annotation" || action?.type === "note" || action?.type === "visual" || action?.type === "tab",
+			(action) => action?.type === "annotation" || action?.type === "note" || action?.type === "visual",
 		);
 	}
 
@@ -6001,7 +6023,7 @@
 		if (!response?.ok) {
 			renderState({
 				currentSession: { sessionName: "Onhand unavailable" },
-				status: response?.error || "Could not reach the local Onhand runtime.",
+				status: response?.error || "Onhand's background runtime did not respond. Reload the extension and try again.",
 				messages: [],
 				activities: [],
 				pageActions: [],
@@ -7061,7 +7083,7 @@
 					realtimeLocalSpeechActive = false;
 					loudFrames = 0;
 					quietFrames = 0;
-					setRealtimeStatus("Mic heard a pause · waiting for transcript");
+					setRealtimeStatus("Heard you — finishing the transcript...");
 					scheduleRealtimeOnlyVoiceCommitFallback("local_pause");
 					if (Date.now() - realtimeServerSpeechSeenAt <= REALTIME_SERVER_VAD_GRACE_MS) {
 						realtimeMicLastIdleStatusAt = Date.now();
@@ -7524,7 +7546,7 @@
 				"Every material claim is anchored. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.",
 				"For page, passage, document, PDF, concept, equation, chart, or slide questions, first inspect the page with browser_get_visible_text, browser_get_selection, browser_get_viewport_headings, browser_extract_content, browser_pdf_search, or browser_pdf_read_pages before making page-specific claims.",
 				"After reading page/PDF text for a page-material question, call browser_highlight_text with one short exact source span that supports a claim you actually explain before speaking the final answer. Add browser_show_note when a short marginal note would help.",
-				"For comparative questions, anchor the specific sentence or list item that names the comparison; for the current Transformers notes, the multi-head attention anchor should be the exact line about multiple weighted graphs in parallel when it supports the answer.",
+				"For comparative questions, anchor the specific sentence or list item that names the comparison.",
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
 				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
@@ -8285,9 +8307,6 @@
 			const queryTokenSet = new Set(queryTokens);
 			const chunks = realtimeReadableTextChunks(readableText);
 			const compactQuery = normalizeCitationText(requestedText);
-			const asksMultiHeadAttention =
-				/\bmulti[-\s]?headed?\b|\bmulti[-\s]?head\b|\bmultiple heads?\b/i.test(requestedText) &&
-				/\battention\b/i.test(requestedText);
 			const scored = [];
 			for (const chunk of chunks) {
 				if (chunk.toLowerCase() === requestedText.toLowerCase()) continue;
@@ -8302,14 +8321,10 @@
 				const density = overlap / Math.max(chunkTokenSet.size, 1);
 				const compactChunk = normalizeCitationText(chunk);
 				const substringBonus = compactChunk.includes(compactQuery) || compactQuery.includes(compactChunk) ? 80 : 0;
-				const multiHeadBonus =
-					asksMultiHeadAttention && /\bmulti[-\s]?head\b/i.test(chunk) && /\bparallel|multiple weighted graphs|heads?\b/i.test(chunk)
-						? 120
-						: 0;
 				if (overlap < 2 || coverage < 0.42) continue;
 				scored.push({
 					text: chunk,
-					score: overlap * 20 + coverage * 50 + density * 20 + substringBonus + multiHeadBonus - chunk.length * 0.01,
+					score: overlap * 20 + coverage * 50 + density * 20 + substringBonus - chunk.length * 0.01,
 				});
 			}
 			return scored
@@ -8353,7 +8368,6 @@
 				"Do not publish a lead-in by itself. The markdown must be the complete answer to the student's question.",
 				"Do not write manual citation markers like [1] in the markdown; Onhand will attach citation buttons from the highlighted source.",
 				"For a comparison question, explicitly name both sides of the comparison and explain the difference in 2-4 concise sentences.",
-				"For the single-headed versus multi-headed attention question, say that single-headed attention uses one attention pattern/map, while multi-headed attention uses several heads in parallel so different relation patterns can be learned at the same time.",
 				reason ? `Correction reason: ${reason}.` : "",
 			]
 				.filter(Boolean)
@@ -9113,7 +9127,7 @@
 			}
 			if (/input audio buffer.*empty|buffer is empty/i.test(message)) {
 				realtimeManualVoiceCommitPending = false;
-				setRealtimeStatus("OpenAI received no mic audio");
+				setRealtimeStatus("No mic audio reached the voice service");
 				return;
 			}
 			if (/cancellation failed|no active response/i.test(message)) {
@@ -9180,7 +9194,7 @@
 			realtimeManualVoiceCommitPending = false;
 			realtimeServerSpeechSeenAt = Date.now();
 			ensureRealtimeAudioVoiceTurn(event.item_id, "Voice question");
-			setRealtimeStatus("Thinking...");
+			setRealtimeStatus("Thinking…");
 			return;
 		}
 		if (event.type === "conversation.item.input_audio_transcription.failed") {
@@ -9207,7 +9221,7 @@
 			}
 			realtimeResponseInProgress = true;
 			realtimeTranscriptBuffer = "";
-			setRealtimeStatus("Thinking...");
+			setRealtimeStatus("Thinking…");
 			return;
 		}
 		if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
@@ -9490,7 +9504,7 @@
 			requestRealtimeResponse("response_for_text", realtimeInitialGroundedResponseOptions(text), {
 				voiceTurnId: voiceTurn.id,
 			});
-			setRealtimeStatus("Thinking...");
+			setRealtimeStatus("Thinking…");
 			return;
 		}
 	}

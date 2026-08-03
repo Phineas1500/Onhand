@@ -2562,7 +2562,7 @@ async function assertRealtimeCommittedAudioCreatesRealtimeTurn() {
 	await waitForSidebarTick(dom);
 
 	assert.equal(events.some((event) => event.type === "response.create"), false, "expected committed audio to let Realtime server VAD create the response");
-	assert.equal(hooks.getRealtimeDebugState().status, "Thinking...");
+	assert.equal(hooks.getRealtimeDebugState().status, "Thinking…");
 	assert.equal(hooks.getRealtimeDebugState().activeVoiceTurn?.kind, "realtime_response");
 
 	dom.window.close();
@@ -2757,7 +2757,7 @@ async function assertRealtimeEmptyInputBufferDoesNotDisconnect() {
 	const state = hooks.getRealtimeDebugState();
 	assert.equal(state.connected, true, "expected empty input-buffer error not to disconnect voice");
 	assert.equal(state.manualVoiceCommitPending, false);
-	assert.equal(state.status, "OpenAI received no mic audio");
+	assert.equal(state.status, "No mic audio reached the voice service");
 	assert.equal(state.error, "");
 
 	dom.window.close();
@@ -4494,7 +4494,7 @@ async function assertActiveComposerButtonStopsCurrentRequest() {
 	const state = createState();
 	state.activeRequestId = "request-active";
 	state.currentTurnId = "request-active";
-	state.status = "Thinking...";
+	state.status = "Thinking…";
 	const dom = await renderSidebar(state, runtimeMessages);
 	const host = dom.window.document.getElementById("onhand-extension-sidebar-host");
 	const shadow = host.shadowRoot;
