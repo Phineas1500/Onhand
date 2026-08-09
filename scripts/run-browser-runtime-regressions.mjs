@@ -1552,6 +1552,22 @@ async function assertSelectionFormatting() {
 		/Do not call browser_highlight_text again/,
 		"compact teaching highlight budget should instruct the model to stop retrying markers",
 	);
+	assert.equal(
+		buildCompactTeachingNoteFailureGuardResultForTest(
+			"browser_show_note",
+			"show_note",
+			"Teach me what this page says about fetch.",
+			{
+				displayPrompt: "Teach me what this page says about fetch.",
+				toolTraces: [
+					{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
+					{ toolName: "browser_show_note", state: "error" },
+				],
+			},
+		),
+		null,
+		"one transient note failure must not forfeit the per-mark note budget",
+	);
 	const compactTeachingNoteFailureGuard = buildCompactTeachingNoteFailureGuardResultForTest(
 		"browser_show_note",
 		"show_note",
@@ -1561,13 +1577,14 @@ async function assertSelectionFormatting() {
 			toolTraces: [
 				{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text: The Fetch API provides a JavaScript interface for making HTTP requests." },
 				{ toolName: "browser_show_note", state: "error" },
+				{ toolName: "browser_show_note", state: "error" },
 			],
 		},
 	);
 	assert.equal(
 		compactTeachingNoteFailureGuard?.guardrail?.kind,
 		"compact_teaching_note_failure",
-		"compact teaching prompts should not retry optional notes after a note failure",
+		"compact teaching prompts should stop retrying notes after repeated failures with none landed",
 	);
 	assert.match(
 		formatToolResultForModel("browser_show_note", compactTeachingNoteFailureGuard),
@@ -3916,7 +3933,7 @@ async function assertConstitutionPromptContract() {
 		);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /durable page source marker/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_highlight_text/);
-	assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /browser_show_note at most once/);
+	assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /Give each interpretive highlight a short browser_show_note/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /Do not use the page title, course title, reading list, or a generic heading/);
 		assert.match(buildPageSourceMarkerRetryPromptForTest(pageTeachingWithoutSourceRequest, "Draft answer"), /only one source marker succeeded/);
 		assert.equal(
@@ -4303,6 +4320,25 @@ async function assertConstitutionPromptContract() {
 				},
 			);
 			assert.equal(roadmapNoteBudgetGuard, null, "enumerable structured prompts should allow notes on each interpretive highlight");
+			assert.equal(
+				buildStructuredNoteBudgetGuardResultForTest(
+					"browser_show_note",
+					"show_note",
+					"Compare arrays and linked lists on this page.",
+					{
+						displayPrompt: "Compare arrays and linked lists on this page.",
+						toolTraces: [
+							{
+								toolName: "browser_show_note",
+								state: "complete",
+								resultSummary: "Added note: Arrays optimize indexed lookup for constant-time reads.",
+							},
+						],
+					},
+				),
+				null,
+				"comparison prompts must allow a note on each side of the difference",
+			);
 			const structuredNoteBudgetGuard = buildStructuredNoteBudgetGuardResultForTest(
 				"browser_show_note",
 				"show_note",
@@ -4313,12 +4349,17 @@ async function assertConstitutionPromptContract() {
 						{
 							toolName: "browser_show_note",
 							state: "complete",
-							resultSummary: "Added note: Arrays optimize indexed lookup; linked lists optimize local insertion.",
+							resultSummary: "Added note: Arrays optimize indexed lookup for constant-time reads.",
+						},
+						{
+							toolName: "browser_show_note",
+							state: "complete",
+							resultSummary: "Added note: Linked lists optimize local insertion without reallocation.",
 						},
 					],
 				},
 			);
-			assert.equal(structuredNoteBudgetGuard?.guardrail?.kind, "structured_note_budget", "comparison prompts should not add multiple optional takeaway notes");
+			assert.equal(structuredNoteBudgetGuard?.guardrail?.kind, "structured_note_budget", "comparison prompts should stop after one note per side");
 			assert.equal(
 				buildStructuredNoteBudgetGuardResultForTest(
 					"browser_show_note",
@@ -5085,6 +5126,31 @@ async function assertLearnerStateUpdates() {
 	const noAnswerSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "What does Promise.allSettled return?");
 	assert.doesNotMatch(noAnswerSummary, /Grade it on the page/, "a fresh question must not trigger check grading");
 	assert.doesNotMatch(gradingSummary, /multi-head attention runs several/, "the hardcoded demo-answer paragraph must stay deleted");
+	assert.doesNotMatch(
+		gradingSummary,
+		/browser_scroll_to_annotation on that annotationId/,
+		"a check with no saved annotation must not point the model at a nonexistent annotationId",
+	);
+	assert.match(
+		gradingSummary,
+		/highlight the exact supporting span with browser_highlight_text/,
+		"an unanchored check re-grounds with a fresh highlight instead",
+	);
+	const anchoredGradingSummary = buildLearnerStatePromptSummary(learnerState, "I think the derivative measures rate of change.");
+	assert.match(
+		anchoredGradingSummary,
+		/browser_scroll_to_annotation on that annotationId/,
+		"an anchored check re-grounds by scrolling to its saved annotation",
+	);
+	const metaFollowupSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "Didn't I already answer that?");
+	assert.doesNotMatch(metaFollowupSummary, /Grade it on the page/, "a repeat complaint must not be graded as a new answer");
+	assert.match(metaFollowupSummary, /Do not grade this message as a new answer/, "the meta-followup gets the acknowledgement directive");
+	assert.match(
+		metaFollowupSummary,
+		/resolve the check as partial or correct based on the user's earlier answer/,
+		"the meta-followup resolves the check from the earlier answer, not the complaint text",
+	);
+	assert.match(metaFollowupSummary, /check_resolved/, "the meta-followup still records an honest resolution");
 
 	{
 		const { humanizeProviderErrorMessageForTest, setLearnerStateModeForTest } = __browserRuntimeTest || {};
@@ -5615,7 +5681,78 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 		"no verdict may be recorded for a check the model never graded",
 	);
 	assert.ok(String(completedState.turns.at(-1)?.reply || "").length > 0, "the check-answer turn still produces a reply");
-	void highlightCallsBeforeAnswer;
+	assert.equal(
+		host.calls.filter((call) => call.name === "highlight_text").length,
+		highlightCallsBeforeAnswer,
+		"answering an open check should not create a replacement highlight",
+	);
+}
+
+async function assertGateAwareDraftBuffering() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { shouldBufferAssistantDraftUntilSettledForTest } = __browserRuntimeTest || {};
+	assert.equal(typeof shouldBufferAssistantDraftUntilSettledForTest, "function", "draft buffering predicate export is missing");
+	assert.equal(
+		shouldBufferAssistantDraftUntilSettledForTest({ displayPrompt: "Teach me what this page says about fetch." }),
+		true,
+		"gate-eligible teaching prompts must buffer the draft until the turn settles",
+	);
+	assert.equal(
+		shouldBufferAssistantDraftUntilSettledForTest({ displayPrompt: "What time zone does this meeting use?" }),
+		false,
+		"conversational prompts have no finalize gates and keep streaming",
+	);
+	assert.equal(
+		shouldBufferAssistantDraftUntilSettledForTest({ displayPrompt: "Teach me this page but do not add highlights or notes." }),
+		false,
+		"no-page-changes prompts disarm the marker gates and keep streaming",
+	);
+	assert.equal(
+		shouldBufferAssistantDraftUntilSettledForTest({
+			displayPrompt: "What does the introduction say?",
+			toolTraces: [{ toolName: "browser_pdf_read_pages", state: "complete" }],
+		}),
+		true,
+		"a completed PDF read arms the PDF-anchor gate mid-turn and starts buffering",
+	);
+
+	// End-to-end: a gate-eligible teaching turn must never render provisional
+	// draft text before the turn settles (P8 buffer-until-final, scoped). The
+	// smoke teaching script streams prose before its batched mark calls, so at
+	// tool-execution time the pre-fix draft would already be visibly non-empty
+	// — the host wrapper observes the UI state at exactly that moment.
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	const midTurnPendingDrafts = [];
+	const originalRunCommand = host.runCommand.bind(host);
+	host.runCommand = async (name, args) => {
+		const midState = await runtime.getState();
+		for (const message of midState.messages || []) {
+			if (String(message?.id || "").startsWith("assistant:") && message?.pending && String(message?.text || "").trim()) {
+				midTurnPendingDrafts.push(`${name}: ${message.text}`);
+			}
+		}
+		return originalRunCommand(name, args);
+	};
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-learning-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		learningMode: true,
+	});
+	await runtime.submitPrompt({
+		prompt: "Teach this page concept in Learning Mode.",
+		displayPrompt: "Teach this page concept in Learning Mode.",
+		attachments: [],
+		learningMode: true,
+	});
+	const state = await waitForRuntimeCompletion(runtime);
+	assert.equal(state?.activeRequestId, null, "runtime did not complete the buffered teaching turn");
+	assert.ok(host.calls.some((call) => call.name === "highlight_text"), "the buffered teaching turn still places its marks");
+	assert.deepEqual(midTurnPendingDrafts, [], "a gate-eligible teaching turn must never render provisional draft text before settle");
+	assert.ok(String(state.turns.at(-1)?.reply || "").length > 0, "the buffered turn still renders its settled reply");
 }
 
 async function assertReplayHighlightCandidateGeneration() {
@@ -10424,6 +10561,7 @@ async function main() {
 	await assertModelIntentClassifierDefaultsOn();
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
+	await assertGateAwareDraftBuffering();
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();

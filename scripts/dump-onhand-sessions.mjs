@@ -14,8 +14,24 @@ const FREE_TIER_QUOTA_BYPASS_MIN_LENGTH = 16;
 
 const REPLAY_COMMANDS = new Set(["show", "timeline", "tools", "actions", "artifacts", "turn", "grep", "context"]);
 const MAINTENANCE_COMMANDS = new Set(["cleanup-drivers", "reload-extension"]);
-const CONTROL_COMMANDS = new Set(["new", "switch", "restore", "stop", "ask", "ask-new-url", "open-url", "artifact", "activate-action", "scroll", "free-tier-bypass"]);
-const DIAGNOSTIC_COMMANDS = new Set(["latest-errors", "tool-retries", "diff-tools"]);
+const CONTROL_COMMANDS = new Set([
+	"new",
+	"switch",
+	"restore",
+	"stop",
+	"ask",
+	"ask-new-url",
+	"open-url",
+	"artifact",
+	"activate-action",
+	"scroll",
+	"free-tier-bypass",
+	"learning-mode",
+	"delete-session",
+	"rename-session",
+	"open-pdf-viewer",
+]);
+const DIAGNOSTIC_COMMANDS = new Set(["latest-errors", "tool-retries", "diff-tools", "turn-trace"]);
 const ALL_COMMANDS = new Set(["list", "state", "watch", ...REPLAY_COMMANDS, ...CONTROL_COMMANDS, ...DIAGNOSTIC_COMMANDS]);
 
 const DIAGNOSTIC_TOOL_NAMES = [
@@ -46,7 +62,7 @@ function printUsage() {
   npm run debug:sessions -- tool-retries [options]
   npm run debug:sessions -- diff-tools --session-a <id> --session-b <id> [options]
   npm run debug:sessions -- open-url <url> [--new-tab] [options]
-  npm run debug:sessions -- ask-new-url <url> "question" [--wait] [options]
+  npm run debug:sessions -- ask-new-url <url> "question" [options]  (starts a new session and always waits)
   npm run debug:sessions -- new [options]
   npm run debug:sessions -- ask "question" [--new] [--wait] [options]
   npm run debug:sessions -- stop [options]
@@ -56,6 +72,11 @@ function printUsage() {
   npm run debug:sessions -- activate-action --key <action_key> [session selector] [options]
   npm run debug:sessions -- scroll --annotation-id <id> [--target annotation|note] [options]
   npm run debug:sessions -- free-tier-bypass <status|enable|disable|device-hash> [options]
+  npm run debug:sessions -- learning-mode [on|off|status] [options]
+  npm run debug:sessions -- delete-session <session_id|query> [options]
+  npm run debug:sessions -- rename-session "New name" [options]
+  npm run debug:sessions -- open-pdf-viewer [--tab-id <id>] [options]
+  npm run debug:sessions -- turn-trace [--limit <n>] [options]
   npm run debug:sessions -- cleanup-drivers [options]
   npm run debug:sessions -- reload-extension [options]
 
@@ -101,7 +122,18 @@ Options:
   --annotation-id <id>   Annotation id for scroll.
   --target <kind>        scroll target: annotation or note.
   --learning             Submit ask with learning mode enabled.
+  --tab-id <id>          Target tab id for open-pdf-viewer.
   -h, --help             Show this help.
+
+Learning mode:
+  learning-mode on/off persists the sidebar Learning toggle (same as clicking
+  it). status (the default) prints the current mode plus the learner state:
+  open checks, introduced concepts, and recent check resolutions.
+
+Turn traces:
+  turn-trace prints the runtime's redacted per-turn decision traces (routing
+  predicates, every tool call with its guardrail/error state, and
+  provisionalAnswerExposed), newest first. Survives worker restarts.
 
 Free-tier bypass:
   enable reads ONHAND_FREE_QUOTA_BYPASS_SECRET from the shell and stores it in
@@ -263,6 +295,10 @@ function parseArgs(argv) {
 			const windowId = Number(readValue("--window-id"));
 			if (!Number.isFinite(windowId)) throw new Error("--window-id must be a number.");
 			args.windowId = windowId;
+		} else if (value === "--tab-id" || value.startsWith("--tab-id=")) {
+			const tabId = Number(readValue("--tab-id"));
+			if (!Number.isFinite(tabId)) throw new Error("--tab-id must be a number.");
+			args.tabId = tabId;
 		} else if (!value.startsWith("-")) {
 			args.positional.push(value);
 		} else {
@@ -279,7 +315,7 @@ function parseArgs(argv) {
 	}
 	if (args.command === "grep" && !args.query && args.positional.length) args.query = args.positional.join(" ");
 	if (args.command === "turn" && !args.turn && args.positional.length) args.turn = args.positional[0];
-	if ((args.command === "switch" || args.command === "restore") && !args.sessionId && !args.query && args.positional.length) {
+	if ((args.command === "switch" || args.command === "restore" || args.command === "delete-session") && !args.sessionId && !args.query && args.positional.length) {
 		const selector = args.positional.join(" ");
 		if (selector.startsWith("session_")) args.sessionId = selector;
 		else args.query = selector;
@@ -1222,13 +1258,20 @@ async function handleAsk(driver, args) {
 	if (args.newSession) {
 		await checkedMessage(driver.sendMessage, { type: "sidebar:new-session", windowId: args.windowId });
 	}
+	// Mirror the sidebar: a submitted turn carries the Learning toggle state, so
+	// the persisted preference (learning-mode on) applies without --learning.
+	let learningMode = Boolean(args.learningMode);
+	if (!learningMode) {
+		const stateResponse = await checkedMessage(driver.sendMessage, { type: "sidebar:fetch-state", windowId: args.windowId });
+		learningMode = Boolean((stateResponse.state || stateResponse)?.preferences?.learningMode);
+	}
 	const payload = {
 		type: "sidebar:submit-prompt",
 		prompt,
 		displayPrompt: args.displayPrompt || prompt,
 		attachments: [],
 		source: args.source || "cli",
-		learningMode: Boolean(args.learningMode),
+		learningMode,
 		windowId: args.windowId,
 		...(args.evalVariant ? { evalVariant: args.evalVariant } : {}),
 		...(evalSystemPromptAppend ? { evalSystemPromptAppend } : {}),
@@ -1275,6 +1318,53 @@ async function resolveOptionalSessionPath(driver, args) {
 	return await resolveSessionId(args, list, driver.sendMessage, { defaultCurrent: true });
 }
 
+function formatLearningMode(result, textLimit) {
+	const lines = [`Learning Mode: ${result.learningMode ? "ON" : "OFF"}`];
+	const learner = result.learnerState || {};
+	const concepts = Array.isArray(learner.conceptsIntroduced) ? learner.conceptsIntroduced : [];
+	const openChecks = Array.isArray(learner.openChecks) ? learner.openChecks : [];
+	const responses = Array.isArray(learner.responses) ? learner.responses : [];
+	lines.push(`Learner state: ${concepts.length} concept${concepts.length === 1 ? "" : "s"}, ${openChecks.length} open check${openChecks.length === 1 ? "" : "s"}, ${responses.length} resolved`);
+	for (const check of openChecks.slice(-5)) {
+		const anchor = check.annotationId ? ` [${check.annotationId}]` : " [no annotation]";
+		lines.push(`  open ${check.checkId} (${check.kind || "check"})${anchor}: ${truncateText(check.promptText, textLimit)}`);
+	}
+	for (const response of responses.slice(-3)) {
+		lines.push(`  resolved ${response.checkId}: ${response.assessment}${response.evidence ? ` - ${truncateText(response.evidence, 140)}` : ""}`);
+	}
+	return `${lines.join("\n")}\n`;
+}
+
+function formatTurnTraces(traces, textLimit) {
+	if (!traces.length) return "No turn traces recorded yet.\n";
+	const lines = [];
+	traces.forEach((trace, index) => {
+		lines.push(
+			`${index + 1}. ${trace.createdAt || "?"} ${trace.result || "?"} turn ${trace.turnId || "?"} (session ${trace.sessionId || "?"})`,
+		);
+		lines.push(`   prompt: ${truncateText(trace.prompt, textLimit)}`);
+		if (typeof trace.provisionalAnswerExposed === "boolean") {
+			lines.push(`   provisionalAnswerExposed: ${trace.provisionalAnswerExposed}`);
+		}
+		const predicates = trace.routing?.predicates || {};
+		const activeLanes = Object.entries(predicates).filter(([, value]) => value).map(([key]) => key);
+		const routingFlags = [];
+		if (trace.routing?.gateEligible) routingFlags.push("gate-eligible");
+		if (trace.routing?.bufferedUntilSettled) routingFlags.push("buffered-until-settled");
+		lines.push(
+			`   routing: ${activeLanes.length ? activeLanes.join(", ") : "(no marker lanes)"}${routingFlags.length ? ` [${routingFlags.join(", ")}]` : ""}${trace.routing?.classifier ? " +classifier" : ""}`,
+		);
+		const toolCalls = Array.isArray(trace.toolCalls) ? trace.toolCalls : [];
+		for (const call of toolCalls) {
+			const duration = Number.isFinite(call.durationMs) ? ` ${call.durationMs}ms` : "";
+			const detail = call.state === "error" || /guardrail|blocked/i.test(String(call.result || "")) ? ` - ${truncateText(call.result, 200)}` : "";
+			lines.push(`   ${call.tool} ${call.state}${duration}${detail}`);
+		}
+		lines.push("");
+	});
+	return lines.join("\n");
+}
+
 function formatControlResponse(command, response) {
 	switch (command) {
 		case "new":
@@ -1285,6 +1375,10 @@ function formatControlResponse(command, response) {
 			return `Restored ${response.restoredCount || 0} page state${response.restoredCount === 1 ? "" : "s"}.\n`;
 		case "stop":
 			return `Stopped: ${response.stopped ? "yes" : "no"}\n`;
+		case "delete-session":
+			return `Deleted session: ${response.deletedSessionId || "(unknown)"}\nCurrent session: ${response.currentSession?.sessionId || "(unknown)"}\n`;
+		case "rename-session":
+			return `Renamed current session to: ${response.currentSession?.sessionName || "(unknown)"}\n`;
 		default:
 			return `${JSON.stringify(response, null, 2)}\n`;
 	}
@@ -1769,6 +1863,64 @@ async function main() {
 				};
 				await writeOutput(args, args.json ? `${JSON.stringify(output, null, 2)}\n` : `Activated saved action ${key} after direct scroll failed: ${firstErrorLine(error)}\n`);
 			}
+			return;
+		}
+		if (args.command === "learning-mode") {
+			const mode = String(args.positional[0] || "status").toLowerCase();
+			if (!["on", "off", "status"].includes(mode)) throw new Error("learning-mode takes on, off, or status.");
+			if (mode !== "status") {
+				await checkedMessage(driver.sendMessage, {
+					type: "sidebar:set-learning-mode",
+					learningMode: mode === "on",
+				});
+			}
+			const stateResponse = await checkedMessage(driver.sendMessage, { type: "sidebar:fetch-state", windowId: args.windowId });
+			const state = stateResponse.state || stateResponse;
+			const result = {
+				learningMode: Boolean(state?.preferences?.learningMode),
+				learnerState: state?.learnerState || null,
+			};
+			await writeOutput(args, args.json ? `${JSON.stringify(result, null, 2)}\n` : formatLearningMode(result, args.textLimit));
+			return;
+		}
+		if (args.command === "delete-session") {
+			const list = await getSessionList(driver, args);
+			const sessionId = await resolveSessionId(args, list, driver.sendMessage, { defaultCurrent: false });
+			if (!sessionId) throw new Error("delete-session requires a session id or query.");
+			const response = await checkedMessage(driver.sendMessage, {
+				type: "sidebar:delete-session",
+				sessionPath: sessionId,
+				windowId: args.windowId,
+			});
+			await writeOutput(args, args.json ? `${JSON.stringify(response, null, 2)}\n` : formatControlResponse(args.command, response));
+			return;
+		}
+		if (args.command === "rename-session") {
+			const name = args.positional.join(" ").trim();
+			if (!name) throw new Error("rename-session requires the new session name.");
+			const response = await checkedMessage(driver.sendMessage, { type: "sidebar:rename-session", sessionName: name });
+			await writeOutput(args, args.json ? `${JSON.stringify(response, null, 2)}\n` : formatControlResponse(args.command, response));
+			return;
+		}
+		if (args.command === "open-pdf-viewer") {
+			const response = await checkedMessage(driver.sendMessage, {
+				type: "sidebar:open-pdf-viewer",
+				...(args.tabId !== undefined ? { tabId: args.tabId } : {}),
+				windowId: args.windowId,
+			});
+			const result = response.result || response;
+			const summary = [
+				`Opened: ${result?.opened === false ? "no" : "yes"}${result?.alreadyOpen ? " (already open)" : ""}`,
+				result?.pdfUrl ? `PDF: ${result.pdfUrl}` : "",
+				result?.viewerUrl ? `Viewer: ${result.viewerUrl}` : "",
+			].filter(Boolean).join("\n");
+			await writeOutput(args, args.json ? `${JSON.stringify(response, null, 2)}\n` : `${summary}\n`);
+			return;
+		}
+		if (args.command === "turn-trace") {
+			const response = await checkedMessage(driver.sendMessage, { type: "debug:fetch-turn-trace", limit: args.limit });
+			const traces = Array.isArray(response.traces) ? response.traces : [];
+			await writeOutput(args, args.json ? `${JSON.stringify(traces, null, 2)}\n` : formatTurnTraces(traces, args.textLimit));
 			return;
 		}
 		if (args.command === "ask" || args.command === "ask-new-url") {

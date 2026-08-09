@@ -7529,7 +7529,13 @@
 	}
 
 		function realtimeTutorInstructions() {
-			const learningModeOn = Boolean(currentState?.preferences?.learningMode);
+			// Read the live toggle first: on a mid-session flip the change handler
+			// re-sends session instructions before updateLearningMode's async round
+			// trip lands in currentState, and an OR-fallback would keep stale ON
+			// instructions when flipping OFF.
+			const learningModeOn = Boolean(
+				learningModeToggle instanceof HTMLInputElement ? learningModeToggle.checked : currentState?.preferences?.learningMode,
+			);
 			const learningLines = learningModeOn
 				? [
 						"Learning Mode is ON for this session:",

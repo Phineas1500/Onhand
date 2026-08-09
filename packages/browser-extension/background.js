@@ -4841,6 +4841,15 @@ const createPageToolkit = (options = {}) => {
 
 	const waitForLayout = (timeoutMs = 250) =>
 		new Promise((resolve) => {
+			// Hidden/occluded documents never fire rAF and throttle timers to ≥1s
+			// ticks, so the nominal cap balloons into multi-second stalls that blow
+			// the 6s annotation command budget. Layout is still computed
+			// synchronously on demand (getBoundingClientRect), so with no paint
+			// pending there is nothing to wait for.
+			if (document.visibilityState === "hidden") {
+				resolve();
+				return;
+			}
 			let settled = false;
 			const finish = () => {
 				if (settled) return;
@@ -7884,6 +7893,12 @@ const createPageToolkit = (options = {}) => {
 		if (html?.style) html.style.scrollBehavior = "auto";
 		if (body?.style) body.style.scrollBehavior = "auto";
 		try {
+			// Wall-clock deadline, not just an attempt cap: on a page that never
+			// converges (unrendered tab with zero viewport, oscillating scroll
+			// containers), six throttled waits alone can exceed the whole 6s
+			// annotation command budget. The scroll correction has been applied by
+			// then; further settling is cosmetic.
+			const deadline = Date.now() + 1500;
 			for (let attempt = 0; attempt < 6; attempt += 1) {
 				const rect = element.getBoundingClientRect();
 				if (rect.top >= margin && rect.bottom <= window.innerHeight - margin && rect.left >= 0 && rect.right <= window.innerWidth) return;
@@ -7904,6 +7919,7 @@ const createPageToolkit = (options = {}) => {
 					scroller.scrollTop += deltaY;
 					scroller.scrollLeft += deltaX;
 				}
+				if (Date.now() >= deadline) return;
 				await waitForLayout(500);
 			}
 		} finally {
@@ -14782,17 +14798,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const runtime = getOnhandBrowserRuntime();
 			const settings = await runtime.updateSettings({
 				learningMode: Boolean(message.learningMode),
-			});
-			sendResponse({
-				ok: true,
-				settings,
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:set-speed-mode") {
-			const runtime = getOnhandBrowserRuntime();
-			const settings = await runtime.updateSettings({
 			});
 			sendResponse({
 				ok: true,

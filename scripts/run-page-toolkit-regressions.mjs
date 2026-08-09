@@ -1545,6 +1545,35 @@ async function createToolkitAtUrl(html, url, toolkitOptions = {}) {
 	};
 }
 
+async function assertHiddenTabAnnotationCommandsSkipThrottledWaits() {
+	const { dom, toolkit } = await createToolkit(
+		`<main><p>Hidden tab throttling target sentence for the note placement path.</p></main>`,
+	);
+	const { window } = dom;
+	const highlight = await toolkit.highlightText("Hidden tab throttling target sentence for the note placement path.", {
+		scrollIntoView: false,
+	});
+	assert.ok(highlight?.annotationId, "highlight lands before throttling begins");
+	// Simulate an occluded/background tab: rAF never fires and timers clamp to
+	// one-second ticks. The annotation path must not stack throttled layout
+	// waits — pre-fix each waitForLayout cost ~1s and a non-converging settle
+	// loop stacked 6+ of them, blowing the 6s annotation command budget.
+	Object.defineProperty(window.document, "visibilityState", { configurable: true, get: () => "hidden" });
+	window.requestAnimationFrame = () => 0;
+	const nativeSetTimeout = window.setTimeout.bind(window);
+	window.setTimeout = (handler, delay = 0, ...rest) => nativeSetTimeout(handler, Math.max(Number(delay) || 0, 1000), ...rest);
+	const startedAt = Date.now();
+	const note = await toolkit.showNote(highlight.annotationId, "Throttled-tab note must land without waiting on paint.", {
+		scrollIntoView: true,
+	});
+	const scrolled = await toolkit.scrollToAnnotation(highlight.annotationId, { target: "note" });
+	const elapsedMs = Date.now() - startedAt;
+	assert.ok(note?.noteId, "showNote lands on a hidden tab");
+	assert.equal(scrolled?.annotationId, highlight.annotationId, "scrollToAnnotation succeeds on a hidden tab");
+	assert.ok(elapsedMs < 900, `hidden-tab note/scroll must not stack throttled waits (took ${elapsedMs}ms)`);
+	window.close();
+}
+
 async function assertHighlight({ name, html, query, expectedText, expectedFallback, options = {} }) {
 	const { toolkit } = await createToolkit(html);
 	const result = await toolkit.highlightText(query, { scrollIntoView: false, ...options });
@@ -3622,6 +3651,7 @@ async function main() {
 	await assertDetachedPdfViewerOpenRouting();
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
+	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();
 	await assertGoogleDocsReadableContentUsesTextExport();

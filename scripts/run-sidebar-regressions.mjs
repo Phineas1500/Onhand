@@ -2328,6 +2328,33 @@ async function assertRealtimeLearningModeReachesVoiceInstructions() {
 	assert.match(learningInstructions, /never speak or publish the final numeric, symbolic, or code answer/, "the homework gate must reach voice");
 	assert.match(learningInstructions, /turning Learning mode off gives the direct answer/, "the \u00a75.3 escape must be named in voice");
 	assert.match(learningInstructions, /don't tell me the answer/, "the quiz-me/don't-tell request must be honored in voice");
+
+	// Mid-session flip: the change handler re-sends session.update from a
+	// microtask that fires before updateLearningMode's async round trip lands
+	// in currentState, so the re-send must read the live toggle, not the state.
+	const sentEvents = [];
+	hooks.setRealtimeDataChannel({ readyState: "open", send: (raw) => sentEvents.push(JSON.parse(raw)) });
+	hooks.setRealtimeConnected(true);
+	const learningToggle = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("learningModeToggle");
+	learningToggle.checked = false;
+	learningToggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	const offUpdate = sentEvents.filter((event) => event?.type === "session.update").at(-1);
+	assert.ok(offUpdate, "flipping Learning Mode off mid-session must re-send session.update");
+	assert.doesNotMatch(
+		String(offUpdate.session?.instructions || ""),
+		/Learning Mode is ON/,
+		"the mid-session re-send after flipping OFF must not carry the pre-toggle learning gates",
+	);
+	learningToggle.checked = true;
+	learningToggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	const onUpdate = sentEvents.filter((event) => event?.type === "session.update").at(-1);
+	assert.match(
+		String(onUpdate?.session?.instructions || ""),
+		/never speak or publish the final numeric, symbolic, or code answer/,
+		"the mid-session re-send after flipping ON must carry the homework gate immediately",
+	);
 	dom.window.close();
 
 	const answerState = createState();
