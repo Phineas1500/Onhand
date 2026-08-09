@@ -974,7 +974,7 @@ const RECORD_LEARNING_EVENT_SCHEMA = Type.Object({
 	promptText: Type.Optional(Type.String({ description: "The exact prediction or retrieval prompt shown to the user" })),
 	assessment: Type.Optional(Type.String({ description: "Assessment when resolving a check: correct, partial, incorrect, or skipped" })),
 	evidence: Type.Optional(Type.String({ description: "Brief model-visible rationale for the assessment" })),
-	annotationId: Type.Optional(Type.String({ description: "Annotation id for the source highlight tied to this learning event" })),
+	annotationId: Type.Optional(Type.String({ description: "Annotation id for the source highlight tied to this learning event. When opening a check about a mark placed this turn, always pass that mark's annotationId so grading can reuse the anchor instead of re-highlighting" })),
 	artifactId: Type.Optional(Type.String({ description: "Artifact id for the source material tied to this learning event" })),
 	url: Type.Optional(Type.String({ description: "Source page URL for the learning event" })),
 	tabTitle: Type.Optional(Type.String({ description: "Source tab title for the learning event" })),
@@ -10321,6 +10321,7 @@ export const __browserRuntimeTest = {
 		promptAllowsPageSourceHighlightsForTest: promptAllowsPageSourceHighlights,
 		shouldRequirePageSourceMarkerRetryForTest: shouldRequirePageSourceMarkerRetry,
 		shouldBufferAssistantDraftUntilSettledForTest: shouldBufferAssistantDraftUntilSettled,
+		attachTurnAnchorToLearningCheckEventForTest: attachTurnAnchorToLearningCheckEvent,
 		buildPageSourceMarkerRetryPromptForTest: buildPageSourceMarkerRetryPrompt,
 		shouldRequirePdfAnchorRetryForTest: shouldRequirePdfAnchorRetry,
 		buildPdfAnchorRetryPromptForTest: buildPdfAnchorRetryPrompt,
@@ -10607,6 +10608,26 @@ function withOnhandFreeTierTelemetryOptions(model: any, streamOptions: any, tele
 			...(sessionId ? { [ONHAND_FREE_SESSION_ID_HEADER]: sessionId } : {}),
 		},
 	};
+}
+
+// A check opened without its anchor forfeits tool-verified anchor reuse at
+// grading time: the graded answer re-highlights the passage instead of
+// scrolling to the existing mark, stacking duplicates over a session. When the
+// model omits the annotationId but the turn already placed marks, attach the
+// most recent one.
+function attachTurnAnchorToLearningCheckEvent(event: LearningEvent, pageActions: unknown): LearningEvent {
+	if (!event || typeof event !== "object") return event;
+	if ((event as any).kind !== "check_opened") return event;
+	if (String((event as any).annotationId || "").trim()) return event;
+	const actions = Array.isArray(pageActions) ? pageActions : [];
+	for (let index = actions.length - 1; index >= 0; index -= 1) {
+		const action: any = actions[index];
+		if (action?.type !== "annotation") continue;
+		const annotationId = String(action.annotationId || "").trim();
+		if (!annotationId) continue;
+		return { ...event, annotationId } as LearningEvent;
+	}
+	return event;
 }
 
 function createRecordLearningEventTool(recordLearningEvent: (event: LearningEvent) => Promise<LearnerState>): AgentTool {
@@ -12769,7 +12790,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				host,
 				artifactHooks,
 				withRequestBrowserContext,
-				(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+				(event) =>
+					recordLearningEventForSession(
+						session,
+						attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+						learningMode ? "learning" : "answer",
+					),
 				(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 				(toolName, commandName, effectiveParams) =>
 					buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
@@ -15519,7 +15545,12 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						host,
 						artifactHooks,
 						withRequestBrowserContext,
-						(event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+						(event) =>
+							recordLearningEventForSession(
+								session,
+								attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+								learningMode ? "learning" : "answer",
+							),
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 						(toolName, commandName, effectiveParams) =>
 							buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||

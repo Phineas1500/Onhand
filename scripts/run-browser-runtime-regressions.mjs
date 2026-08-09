@@ -5142,6 +5142,35 @@ async function assertLearnerStateUpdates() {
 		/browser_scroll_to_annotation on that annotationId/,
 		"an anchored check re-grounds by scrolling to its saved annotation",
 	);
+	{
+		const { attachTurnAnchorToLearningCheckEventForTest } = __browserRuntimeTest || {};
+		assert.equal(typeof attachTurnAnchorToLearningCheckEventForTest, "function", "learning check anchor attachment export is missing");
+		const turnActions = [
+			{ type: "annotation", annotationId: "ann-early", detail: "First highlight" },
+			{ type: "navigation", url: "https://example.test" },
+			{ type: "annotation", annotationId: "ann-latest", detail: "Latest highlight" },
+		];
+		assert.equal(
+			attachTurnAnchorToLearningCheckEventForTest({ kind: "check_opened", checkId: "check-1" }, turnActions).annotationId,
+			"ann-latest",
+			"an unanchored check_opened must attach the turn's most recent mark",
+		);
+		assert.equal(
+			attachTurnAnchorToLearningCheckEventForTest({ kind: "check_opened", checkId: "check-1", annotationId: "ann-explicit" }, turnActions).annotationId,
+			"ann-explicit",
+			"an explicit annotationId must never be overridden",
+		);
+		assert.equal(
+			attachTurnAnchorToLearningCheckEventForTest({ kind: "concept_introduced", conceptId: "c1" }, turnActions).annotationId,
+			undefined,
+			"non-check events are left untouched",
+		);
+		assert.equal(
+			attachTurnAnchorToLearningCheckEventForTest({ kind: "check_opened", checkId: "check-1" }, []).annotationId,
+			undefined,
+			"a markless turn leaves the check unanchored for the fallback grading branch",
+		);
+	}
 	const metaFollowupSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "Didn't I already answer that?");
 	assert.doesNotMatch(metaFollowupSummary, /Grade it on the page/, "a repeat complaint must not be graded as a new answer");
 	assert.match(metaFollowupSummary, /Do not grade this message as a new answer/, "the meta-followup gets the acknowledgement directive");

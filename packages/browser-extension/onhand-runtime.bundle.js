@@ -149449,7 +149449,7 @@ var RECORD_LEARNING_EVENT_SCHEMA = typebox_exports.Object({
   promptText: typebox_exports.Optional(typebox_exports.String({ description: "The exact prediction or retrieval prompt shown to the user" })),
   assessment: typebox_exports.Optional(typebox_exports.String({ description: "Assessment when resolving a check: correct, partial, incorrect, or skipped" })),
   evidence: typebox_exports.Optional(typebox_exports.String({ description: "Brief model-visible rationale for the assessment" })),
-  annotationId: typebox_exports.Optional(typebox_exports.String({ description: "Annotation id for the source highlight tied to this learning event" })),
+  annotationId: typebox_exports.Optional(typebox_exports.String({ description: "Annotation id for the source highlight tied to this learning event. When opening a check about a mark placed this turn, always pass that mark's annotationId so grading can reuse the anchor instead of re-highlighting" })),
   artifactId: typebox_exports.Optional(typebox_exports.String({ description: "Artifact id for the source material tied to this learning event" })),
   url: typebox_exports.Optional(typebox_exports.String({ description: "Source page URL for the learning event" })),
   tabTitle: typebox_exports.Optional(typebox_exports.String({ description: "Source tab title for the learning event" }))
@@ -156158,6 +156158,7 @@ var __browserRuntimeTest = {
   promptAllowsPageSourceHighlightsForTest: promptAllowsPageSourceHighlights,
   shouldRequirePageSourceMarkerRetryForTest: shouldRequirePageSourceMarkerRetry,
   shouldBufferAssistantDraftUntilSettledForTest: shouldBufferAssistantDraftUntilSettled,
+  attachTurnAnchorToLearningCheckEventForTest: attachTurnAnchorToLearningCheckEvent,
   buildPageSourceMarkerRetryPromptForTest: buildPageSourceMarkerRetryPrompt,
   shouldRequirePdfAnchorRetryForTest: shouldRequirePdfAnchorRetry,
   buildPdfAnchorRetryPromptForTest: buildPdfAnchorRetryPrompt,
@@ -156413,6 +156414,20 @@ function withOnhandFreeTierTelemetryOptions(model, streamOptions, telemetry) {
       ...sessionId ? { [ONHAND_FREE_SESSION_ID_HEADER]: sessionId } : {}
     }
   };
+}
+function attachTurnAnchorToLearningCheckEvent(event, pageActions) {
+  if (!event || typeof event !== "object") return event;
+  if (event.kind !== "check_opened") return event;
+  if (String(event.annotationId || "").trim()) return event;
+  const actions = Array.isArray(pageActions) ? pageActions : [];
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    const action = actions[index];
+    if (action?.type !== "annotation") continue;
+    const annotationId = String(action.annotationId || "").trim();
+    if (!annotationId) continue;
+    return { ...event, annotationId };
+  }
+  return event;
 }
 function createRecordLearningEventTool(recordLearningEvent) {
   return {
@@ -158354,7 +158369,11 @@ function createOnhandBrowserRuntime(host) {
         host,
         artifactHooks,
         withRequestBrowserContext,
-        (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+        (event) => recordLearningEventForSession(
+          session,
+          attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+          learningMode ? "learning" : "answer"
+        ),
         (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
         (toolName, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
         async (effectiveParams) => {
@@ -160809,7 +160828,11 @@ function createOnhandBrowserRuntime(host) {
             host,
             artifactHooks,
             withRequestBrowserContext,
-            (event) => recordLearningEventForSession(session, event, learningMode ? "learning" : "answer"),
+            (event) => recordLearningEventForSession(
+              session,
+              attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+              learningMode ? "learning" : "answer"
+            ),
             (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
             (toolName, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
             async (effectiveParams) => {
