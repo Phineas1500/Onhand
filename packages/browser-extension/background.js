@@ -49,6 +49,10 @@ const FONT_ASSET_PATHS = Object.freeze({
 let creatingOffscreenDocument = null;
 let onhandBrowserRuntime = null;
 let lastFetchStatePageCapture = null;
+// The sidebar polls fetch-state every 900ms while the panel is open; a fresh
+// full-page capture per poll costs 50-700ms of renderer work on the active
+// tab. Idle polls reuse a short-lived capture instead.
+const FETCH_STATE_PAGE_CAPTURE_TTL_MS = 2500;
 const debuggerTaskChains = new Map();
 const tabCommandTaskChains = new Map();
 let operaToolbarHintTimer = null;
@@ -3989,9 +3993,19 @@ async function withDebuggerTarget(target, fn) {
 }
 
 async function withTabCommand(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS) {
+	const enqueuedAt = Date.now();
 	const previousTask = tabCommandTaskChains.get(tabId) || Promise.resolve();
 	const scheduledTask = withOperationTimeout(
-		previousTask.catch(() => {}).then(() => Promise.resolve().then(fn)),
+		previousTask
+			.catch(() => {})
+			.then(() => {
+				// Command budgets start at enqueue, so queue congestion is
+				// indistinguishable from slow execution in tool traces. Log the
+				// wait separately to make the signature unmistakable.
+				const queueWaitMs = Date.now() - enqueuedAt;
+				if (queueWaitMs > 500) log("slow queue wait", `tab ${tabId}`, `${queueWaitMs}ms`);
+				return Promise.resolve().then(fn);
+			}),
 		timeoutMs,
 		`Timed out waiting for page command on tab ${tabId}`,
 	);
@@ -14713,15 +14727,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					// stacked capture_state behind slow tool work, and every later
 					// command's budget paid for the pileup (timeouts start at
 					// enqueue). While a request is active, serve the last capture
-					// instead of queueing a new one.
+					// instead of queueing a new one; idle polls reuse a capture
+					// younger than the TTL. A cached capture is only served for the
+					// tab it was taken on.
+					const resolvedTabId = typeof state.tab?.id === "number" ? state.tab.id : null;
+					const cachedTabId = typeof lastFetchStatePageCapture?.tab?.id === "number" ? lastFetchStatePageCapture.tab.id : null;
+					const cacheMatchesTab =
+						Boolean(lastFetchStatePageCapture) && (cachedTabId == null || resolvedTabId == null || cachedTabId === resolvedTabId);
+					const cacheFresh = cacheMatchesTab && Date.now() - (lastFetchStatePageCapture.capturedAt || 0) < FETCH_STATE_PAGE_CAPTURE_TTL_MS;
 					if (state.activeRequestId) {
-						if (lastFetchStatePageCapture) {
+						if (cacheMatchesTab) {
 							state.tab = lastFetchStatePageCapture.tab || state.tab || null;
 							state.page = lastFetchStatePageCapture.page || null;
 						}
+					} else if (cacheFresh) {
+						state.tab = lastFetchStatePageCapture.tab || state.tab || null;
+						state.page = lastFetchStatePageCapture.page || null;
 					} else {
 						const captured = await handleCommand("capture_state", { windowId: message.windowId });
-						lastFetchStatePageCapture = { tab: captured?.tab || null, page: captured?.page || null };
+						lastFetchStatePageCapture = { tab: captured?.tab || null, page: captured?.page || null, capturedAt: Date.now() };
 						state.tab = captured?.tab || state.tab || null;
 						state.page = captured?.page || null;
 					}

@@ -158546,6 +158546,7 @@ function createOnhandBrowserRuntime(host) {
       finalError = new Error("The model returned an empty answer after reading page context.");
     }
     const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
+    updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
     const uncitedMarkRemovals = !finalError && !activeRequest.aborted ? collectUncitedTurnMarkRemovals(activeRequest, reply) : [];
     if (uncitedMarkRemovals.length) {
       const removedIds = new Set(uncitedMarkRemovals.flatMap((entry) => entry.annotationIds));
@@ -158574,7 +158575,6 @@ function createOnhandBrowserRuntime(host) {
     const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
     const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
     const startedAtMs = Date.parse(activeRequest.createdAt || "");
-    updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
     const turn = {
       id: requestId,
       userPrompt: activeRequest.displayPrompt,

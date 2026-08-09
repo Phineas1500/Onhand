@@ -2240,7 +2240,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	);
 	assert.match(
 		background,
-		/async function withTabCommand\(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS\) \{[\s\S]*?const scheduledTask = withOperationTimeout\(\s*previousTask\.catch\(\(\) => \{\}\)\.then\(\(\) => Promise\.resolve\(\)\.then\(fn\)\),\s*timeoutMs,/,
+		/async function withTabCommand\(tabId, fn, timeoutMs = TAB_COMMAND_TIMEOUT_MS\) \{[\s\S]*?const scheduledTask = withOperationTimeout\(\s*previousTask\s*\.catch\(\(\) => \{\}\)\s*\.then\(\(\) => \{[\s\S]*?return Promise\.resolve\(\)\.then\(fn\);\s*\}\),\s*timeoutMs,/,
 		"tab command queues should time out the wait behind a prior page command, not only the command body",
 	);
 	const corpusCommandCase = background.match(/case "search_linked_pdf_corpus": \{[\s\S]*?(?=\n\t\tcase "activate_tab")/)?.[0] || "";

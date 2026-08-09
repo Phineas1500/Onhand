@@ -13004,6 +13004,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			finalError = new Error("The model returned an empty answer after reading page context.");
 			}
 		const reply = buildFinalAssistantReply(assistantText, finalError, activeRequest);
+		// Render the settled answer before the finalize bookkeeping: uncited mark
+		// removals (up to 3s per tab) and the review snapshot (full-DOM
+		// serialization + screenshot) are invisible to the user and must not hold
+		// the reply hostage. Both still run before the turn record is built, so
+		// the recorded pageActions stay accurate.
+		updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
 		const uncitedMarkRemovals =
 			!finalError && !activeRequest.aborted ? collectUncitedTurnMarkRemovals(activeRequest, reply) : [];
 		if (uncitedMarkRemovals.length) {
@@ -13036,7 +13042,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const toolReliability = summarizeToolReliability(publicActivities, activeRequest.pageActions || []);
 		const errorReport = finalError ? buildErrorReportSnapshot(finalError, activeRequest, publicActivities) : null;
 		const startedAtMs = Date.parse(activeRequest.createdAt || "");
-		updateAssistantDraft(requestId, reply, { pending: false, error: Boolean(finalError) });
 		const turn: UiTurn = {
 			id: requestId,
 			userPrompt: activeRequest.displayPrompt,
