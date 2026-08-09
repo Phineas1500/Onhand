@@ -667,6 +667,7 @@ async function assertSelectionFormatting() {
 		summarizeRestoredArtifact,
 		buildRepeatedHighlightFailureGuardResultForTest,
 		buildPostHighlightFailureAnswerNowGuardResultForTest,
+		ensurePdfAbsenceReviewScopeForTest,
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof buildHighlightRetryCandidates, "function", "browser runtime highlight retry export is missing");
 	assert.equal(
@@ -696,6 +697,7 @@ async function assertSelectionFormatting() {
 	assert.equal(typeof normalizeOptionalBrowserTargetNumbersForTest, "function", "browser runtime browser-target normalizer export is missing");
 	assert.equal(typeof normalizePlannerMove, "function", "browser runtime planner normalizer export is missing");
 	assert.equal(typeof summarizeRestoredArtifact, "function", "browser runtime restore summary export is missing");
+	assert.equal(typeof ensurePdfAbsenceReviewScopeForTest, "function", "browser runtime PDF review-scope enforcer export is missing");
 
 	assert.deepEqual(
 		normalizeOptionalBrowserTargetNumbersForTest({ query: "x", tabId: "undefined", windowId: "null", maxResults: 5 }),
@@ -784,6 +786,14 @@ async function assertSelectionFormatting() {
 	});
 	assert.match(openedPdfWithSelection, /Opened PDF in Onhand viewer/);
 	assert.match(openedPdfWithSelection, /Transferred selected text \(p\. 2\):\nScaled dot-product attention/);
+	const failedPdfViewer = formatToolResultForModel("browser_open_pdf_in_onhand_viewer", {
+		tab: { id: 88, title: "Onhand PDF Viewer", url: "chrome-extension://onhand-test/pdf-viewer.html" },
+		pdfUrl: "https://example.test/protected.pdf",
+		viewerReady: { ok: false, error: "Unexpected server response (403)" },
+	});
+	assert.match(failedPdfViewer, /viewer failed to load the PDF/i, "a failed viewer readiness check must be visible to the model");
+	assert.match(failedPdfViewer, /Do not claim the viewer opened successfully/, "viewer failures should explicitly prevent a false success claim");
+	assert.doesNotMatch(failedPdfViewer, /^Opened PDF in Onhand viewer/, "a failed viewer must not be formatted as opened");
 
 	const blockedPdfSelection = formatToolResultForModel("browser_get_selection", {
 		selection: {
@@ -891,7 +901,11 @@ async function assertSelectionFormatting() {
 		formatToolResultForModel("browser_pdf_search", {
 			search: {
 				query: "perceptron",
-				matchCount: 1,
+				matchCount: 3,
+				totalMatchCount: 3,
+				returnedMatchCount: 1,
+				truncated: true,
+				coverage: { searchedPageCount: 35, totalPageCount: 35, searchedAllPages: true },
 				matches: [
 					{
 						pageNumber: 8,
@@ -902,7 +916,45 @@ async function assertSelectionFormatting() {
 				],
 			},
 		}),
-		/PDF search for "perceptron": 1 match/,
+		/PDF search for "perceptron": 3 match/,
+	);
+	const coveredPdfSearch = formatToolResultForModel("browser_pdf_search", {
+		query: "waiting period",
+		matchCount: 0,
+		matches: [],
+		coverage: { searchedPageCount: 35, totalPageCount: 35, searchedAllPages: true },
+	});
+	assert.match(coveredPdfSearch, /Exact-text coverage: 35\/35 PDF pages \(complete\)/);
+	assert.match(coveredPdfSearch, /rules out only this exact wording/i);
+	assert.match(coveredPdfSearch, /search multiple conceptually distinct phrasings/i);
+	const scopedPdfAbsenceReply = ensurePdfAbsenceReviewScopeForTest(
+		"No specific waiting period is stated for loans.",
+		{
+			toolTraces: [
+				...Array.from({ length: 3 }, (_, index) => ({
+					state: "complete",
+					toolName: "browser_pdf_search",
+					resultDetails: {
+						search: {
+							query: ["waiting period", "months of service", "date of employment"][index],
+							coverage: { searchedPageCount: 35, totalPageCount: 35, searchedAllPages: true },
+						},
+					},
+				})),
+				{ state: "complete", toolName: "browser_pdf_read_pages", resultDetails: { pages: { pageNumbers: [14, 15, 16] } } },
+				{ state: "complete", toolName: "browser_pdf_read_pages", resultDetails: { pages: { pageNumbers: [5] } } },
+			],
+		},
+	);
+	assert.match(scopedPdfAbsenceReply, /Review scope: 3 exact-text searches each covered 35\/35 extracted PDF pages/);
+	assert.match(scopedPdfAbsenceReply, /pages 5, 14–16/);
+	assert.match(scopedPdfAbsenceReply, /not the same as reading all 35 pages/);
+	assert.equal(
+		ensurePdfAbsenceReviewScopeForTest("The loan section states a $1,000 minimum.", {
+			toolTraces: [],
+		}),
+		"The loan section states a $1,000 minimum.",
+		"affirmative PDF answers should not receive an absence-review scope footer",
 	);
 	const pdfReadPagesText = formatToolResultForModel("browser_pdf_read_pages", {
 		pages: {

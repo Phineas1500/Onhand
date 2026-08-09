@@ -617,6 +617,7 @@ Default answer mode:
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
 - For PDFs, keep the same user-facing flow as normal pages. For selected/highlighted PDF text, use exact selected text from browser_get_selection, copied selection, or captured context first. Chrome's native PDF viewer is usually supported through selection, clipboard, or debugger fallbacks; do not claim it blocks selection merely because a fallback failed. If tool output says the reader is Google Scholar PDF Reader, describe it as Google Scholar PDF Reader even when the top-level tab URL is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open browser_open_pdf_in_onhand_viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open browser_open_pdf_in_onhand_viewer whenever analysis, offscreen/deeper PDF reading, full-PDF search, durable PDF source markers, highlights, or notes would help; skip it only for quick one-sentence or yes/no selected-text answers when selected text is already available in a supported reader. For visual PDF questions about the current figure, slide, equation, diagram, screenshot, or visible page, capture the current PDF page image and answer in the sidebar first; do not automatically search/read/highlight/note just because the user says "try here" or asks what the visible figure shows. Add PDF highlights/notes for visual questions only when the user asks to mark/save/review it, asks where supporting evidence is, needs durable learning context, or the answer depends on a specific text passage. Do not treat a selected named concept, term, section heading, formula label, or paper mechanism as a quick selected-text answer: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. When opening the viewer from another PDF reader, preserve the current selected text/page whenever available. If you use browser_pdf_search or browser_pdf_read_pages to answer from offscreen/deeper PDF pages, add a durable source highlight on the most important supporting passage with browser_highlight_text and a short browser_show_note under 280 characters unless the user asked for no page changes or this is only a quick visual explanation. If the user accepts an offer to go deeper in a PDF with "yes", "please", or similar, complete the offered search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before highlighting; use that viewer only when annotation is needed instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to mark important supporting passages. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient. If the viewer reports the PDF is a scanned image without extractable text, say so plainly, ground the answer from captured page images, and when a durable mark is warranted place a region mark: browser_highlight_text with a short descriptive label as the text and pdfAnchor { pageNumber, regionRect } in 0-1 page fractions from the captured image. Region marks are only for scanned pages; pages with extractable text must anchor to exact quotes.
+- For negative, absence, or whole-document PDF claims such as saying a rule is not stated anywhere, do not infer from the open section or one exact search. Search multiple conceptually distinct phrasings, check the tool's page-coverage and truncation metadata, and read the governing section plus every materially relevant matched page, eligibility/definitions section, and cross-reference. A complete exact-text search proves only that wording was not found. Never say you read or verified the entire PDF unless you actually read every page; otherwise state precisely that you searched the full extracted text and name the sections/pages you read. If coverage is incomplete or results are truncated, refine the query or read the remaining relevant pages before answering.
 - When the user asks about a cited work ("what does [14] say?", "open this reference", "what paper is that from?"), use browser_pdf_find_citation to look up the bibliography entry instead of searching manually. Highlight the entry in the current paper, then open the suggested URL with browser_navigate (newTab: true) so the user's paper stays open, hand a PDF result to the Onhand viewer, and highlight the passage in the cited work that answers the question. Ground the answer in the cited work itself, noting where both highlights are.
 - When an answer draws on another open tab, another named source, or multiple open documents — whether the user asked to compare them ("compare with the other paper", "how does this differ from the other open source?", "do these papers agree?") or you found the clearly related tab yourself — use the workspace scan's tabIds or browser_list_tabs to identify the other source, read it with explicit tabId parameters (browser_get_visible_text, browser_extract_content, or the PDF tools) instead of switching the user away from their page, and anchor each source separately: browser_highlight_text and browser_show_note accept the same explicit tabId or titleContains after browser_list_tabs, so place a highlight on the key passage in each source tab — including background tabs — and say which tab supports which claim. Never call browser_activate_tab just to place a highlight or note; pass the tab selector to the annotation tool instead. Comparison, agreement, or verification wording does not need to name tabs before you use them; auto-use clearly related open tabs without asking first.
 - When an answer draws on more than one tab or document, highlight or cite each substantive claim in the source that supports it and name that source (by title) next to the claim in chat. Never attribute a claim to a source it was not grounded in; if no open source supports a claim, say so rather than borrowing a nearby highlight.
@@ -5210,9 +5211,100 @@ function humanizeProviderErrorMessage(rawMessage: unknown) {
 	return raw;
 }
 
+function replyMakesPdfAbsenceClaim(value: unknown) {
+	const text = String(value || "").replace(/\s+/g, " ").trim();
+	if (!text) return false;
+	return (
+		/(?:^|[.!?]\s+)(?:there\s+(?:is|are)\s+no\b|no\b|none\b|not\b|(?:does|do|did|is|are|was|were|can|could)\s+not\b)/i.test(text) ||
+		/\b(?:not|never)\s+(?:stated|listed|specified|mentioned|found|shown|provided|required|allowed|present)\b/i.test(text)
+	);
+}
+
+function compactPdfPageRanges(values: unknown[]) {
+	const pages = Array.from(
+		new Set(
+			values
+				.map((value) => Number(value))
+				.filter((value) => Number.isInteger(value) && value > 0),
+		),
+	).sort((left, right) => left - right);
+	const ranges: string[] = [];
+	for (let index = 0; index < pages.length; index += 1) {
+		const start = pages[index];
+		let end = start;
+		while (index + 1 < pages.length && pages[index + 1] === end + 1) {
+			index += 1;
+			end = pages[index];
+		}
+		ranges.push(start === end ? String(start) : `${start}–${end}`);
+	}
+	return ranges.join(", ");
+}
+
+function deterministicPdfReviewScope(request: any) {
+	const traces = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(
+		(trace: any) => trace?.state === "complete",
+	);
+	const searches = traces
+		.filter((trace: any) => trace?.toolName === "browser_pdf_search")
+		.map((trace: any) => {
+			const details = trace?.resultDetails || {};
+			const search = details?.search || details;
+			const coverage = search?.coverage || {};
+			return {
+				query: String(search?.query || (trace?.effectiveArgs as any)?.query || (trace?.args as any)?.query || "").trim().toLowerCase(),
+				searchedPageCount: Number(coverage.searchedPageCount || 0),
+				totalPageCount: Number(coverage.totalPageCount || 0),
+				searchedAllPages: coverage.searchedAllPages === true,
+			};
+		})
+		.filter((search: any) => search.totalPageCount > 0);
+	const uniqueQueries = new Set(searches.map((search: any) => search.query).filter(Boolean));
+	if (uniqueQueries.size < 2 || searches.length < 2) return null;
+	const totalPageCount = Math.max(...searches.map((search: any) => search.totalPageCount));
+	if (
+		!searches.every(
+			(search: any) =>
+				search.searchedAllPages &&
+				search.totalPageCount === totalPageCount &&
+				search.searchedPageCount >= totalPageCount,
+		)
+	) {
+		return null;
+	}
+	const readPages = traces
+		.filter((trace: any) => trace?.toolName === "browser_pdf_read_pages")
+		.flatMap((trace: any) => {
+			const details = trace?.resultDetails || {};
+			const pages = details?.pages || details;
+			return Array.isArray(pages?.pageNumbers) ? pages.pageNumbers : [];
+		});
+	const pageRanges = compactPdfPageRanges(readPages);
+	if (!pageRanges) return null;
+	const readPageCount = new Set(readPages.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0)).size;
+	return {
+		searchCount: uniqueQueries.size,
+		totalPageCount,
+		pageRanges,
+		readEveryPage: readPageCount >= totalPageCount,
+	};
+}
+
+function ensurePdfAbsenceReviewScope(assistantText: string, request: any) {
+	const text = String(assistantText || "").trim();
+	if (!text || !replyMakesPdfAbsenceClaim(text)) return text;
+	if (/\b\d+\/\d+\b/.test(text) && /\bread\s+(?:all\s+)?(?:the\s+)?(?:PDF\s+)?pages?\b/i.test(text)) return text;
+	const scope = deterministicPdfReviewScope(request);
+	if (!scope) return text;
+	const readSentence = scope.readEveryPage
+		? `Separate PDF page reads also covered all ${scope.totalPageCount} pages.`
+		: `Separate PDF page reads covered pages ${scope.pageRanges}; that is not the same as reading all ${scope.totalPageCount} pages.`;
+	return `${text}\n\nReview scope: ${scope.searchCount} exact-text searches each covered ${scope.totalPageCount}/${scope.totalPageCount} extracted PDF pages. ${readSentence}`;
+}
+
 function buildFinalAssistantReply(assistantText: string, finalError: Error | null, request: any = null) {
 	const text = sanitizeAssistantVisibleReply(assistantText, request);
-	if (!finalError) return text || "(No reply generated.)";
+	if (!finalError) return ensurePdfAbsenceReviewScope(text, request) || "(No reply generated.)";
 	const errorReply = `Error: ${humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
 	const automatedRetryFailedBeforeFreshText =
 		Boolean(request?.pdfAnchorRetry || request?.pageSourceMarkerRetry || request?.blankReplyRetry) && !String(request?.reply || "").trim();
@@ -8347,16 +8439,35 @@ function formatPdfSearchForModel(details: any) {
 	const search = details.search || details || {};
 	const query = String(search.query || "").trim();
 	const matches = Array.isArray(search.matches) ? search.matches : [];
+	const coverage = search.coverage || {};
+	const totalMatches =
+		typeof search.totalMatchCount === "number"
+			? search.totalMatchCount
+			: typeof search.matchCount === "number"
+				? search.matchCount
+				: matches.length;
+	const searchedPageCount = Number(coverage.searchedPageCount || 0);
+	const totalPageCount = Number(coverage.totalPageCount || 0);
+	const hasCoverage = searchedPageCount > 0 || totalPageCount > 0;
+	const searchedAllPages = coverage.searchedAllPages === true;
+	const coverageLine = hasCoverage
+		? `Exact-text coverage: ${searchedPageCount}/${totalPageCount || "?"} PDF pages${searchedAllPages ? " (complete)" : " (incomplete)"}.`
+		: "Exact-text coverage was not reported; do not describe this as a whole-document verification.";
 	if (!matches.length) {
 		const miss = `No PDF matches found${query ? ` for "${truncate(query, 120)}"` : ""}.`;
 		if (search.textLayer?.likelyScanned) {
 			return [
 				miss,
+				coverageLine,
 				"This PDF appears to be a scanned image without an extractable text layer, so text search and exact-text highlights cannot work here.",
 				"Tell the user it is a scan, ground the answer visually with browser_pdf_capture_page_image, and if a durable mark is warranted place a region mark: browser_highlight_text with a short descriptive label as text and pdfAnchor { pageNumber, regionRect: { left, top, width, height } } in 0-1 page fractions measured from the captured image.",
 			].join(" ");
 		}
-		return miss;
+		return [
+			miss,
+			coverageLine,
+			"This rules out only this exact wording, not synonymous wording or a concept stated elsewhere. For an absence or whole-document claim, search multiple conceptually distinct phrasings and read the governing sections plus relevant matches/cross-references before answering.",
+		].join(" ");
 	}
 	const lines = matches.slice(0, 12).map((match: any, index: number) => {
 		const page = match.pageNumber || "?";
@@ -8365,9 +8476,9 @@ function formatPdfSearchForModel(details: any) {
 		const occurrence = typeof match.occurrence === "number" ? ` occurrence ${match.occurrence}` : "";
 		return `${index + 1}. [p. ${page}${occurrence}] ${anchorText}${snippet ? `\n   ${snippet}` : ""}`;
 	});
-	const count = typeof search.matchCount === "number" ? search.matchCount : matches.length;
-	const suffix = count > lines.length ? `\n${count - lines.length} more match(es) omitted.` : "";
-	return `PDF search${query ? ` for "${truncate(query, 120)}"` : ""}: ${count} match(es)\n${lines.join("\n")}${suffix}`;
+	const omitted = Math.max(0, totalMatches - lines.length);
+	const suffix = omitted > 0 ? `\n${omitted} more match(es) omitted. Refine the query or read the relevant pages before making a broad claim.` : "";
+	return `PDF search${query ? ` for "${truncate(query, 120)}"` : ""}: ${totalMatches} match(es)\n${coverageLine}\n${lines.join("\n")}${suffix}`;
 }
 
 function isPrivateIpv4Address(hostname: string) {
@@ -8504,6 +8615,10 @@ function toolResultTextForModel(toolName: string, result: any) {
 				return `Navigated to: ${formatCompactTab(tab)}`;
 			}
 			case "browser_open_pdf_in_onhand_viewer": {
+				if (details.viewerReady?.ok === false) {
+					const failure = truncate(String(details.viewerReady.error || "The PDF did not finish loading."), 500);
+					return `Onhand PDF viewer failed to load the PDF: ${failure}${details.pdfUrl ? `\nPDF source: ${details.pdfUrl}` : ""}\nDo not claim the viewer opened successfully or continue with viewer-only PDF tools. Tell the user the source could not be loaded and use another accessible copy only if available.`;
+				}
 				const alreadyOpen = details.alreadyOpen ? "Already open" : "Opened";
 				const pdfUrl = details.pdfUrl ? `\nPDF source: ${details.pdfUrl}` : "";
 				const selection = details.selectionHandoff || {};
@@ -10045,6 +10160,7 @@ export const __browserRuntimeTest = {
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
+	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
 	describeToolStatusForTargetTabForTest: describeToolStatusForTargetTab,
@@ -11067,13 +11183,14 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 		}
 		case "browser_open_pdf_in_onhand_viewer": {
 			const detail = truncate(details.pdfUrl || tab?.title || tab?.url || "PDF", 72);
+			const viewerFailed = details.viewerReady?.ok === false;
 			return {
 				key: `tab:${tab?.id || detail}:pdf-viewer`,
 				type: "tab",
 				tabId: tab?.id || null,
 				windowId: tab?.windowId || null,
 				...pageActionTabFields(tab),
-				label: details.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
+				label: viewerFailed ? "PDF viewer failed" : details.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
 				detail,
 			};
 		}

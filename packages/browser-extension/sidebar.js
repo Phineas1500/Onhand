@@ -7551,6 +7551,7 @@
 				"After reading page/PDF text for a page-material question, call browser_highlight_text with one short exact source span that supports a claim you actually explain before speaking the final answer. Add browser_show_note when a short marginal note would help.",
 				"For comparative questions, anchor the specific sentence or list item that names the comparison.",
 				"For PDFs, use browser_open_pdf_in_onhand_viewer when the PDF surface is unsupported or when you need full-document tools. For offscreen PDF questions, use browser_pdf_search and browser_pdf_read_pages before answering, then browser_pdf_jump_to_page when showing the student where it is.",
+				"For negative, absence, or whole-document PDF claims, do not infer from the open section or one exact search. Search multiple conceptually distinct phrasings, check page-coverage and truncation metadata, and read the governing section plus every materially relevant matched page, eligibility/definitions section, and cross-reference. A complete exact-text search proves only that wording was not found. Never say you read or verified the entire PDF unless you actually read every page; otherwise say you searched the full extracted text and name the sections/pages you read. If coverage is incomplete or results are truncated, refine the query or read the remaining relevant pages before answering.",
 				"When the user asks to show, mark up, highlight, annotate, point to, cite, source, or find where something is discussed, call browser_highlight_text with exact page/PDF wording before saying it is highlighted.",
 				"When the user explicitly asks to search online, use Google/web sources, open URLs, find external sources, or take them to another source, treat that as permission to navigate. Use browser_navigate first, inspect the destination page, then highlight exact source text on that destination page before publishing.",
 				"When the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, treat that as permission to navigate within those linked pages. If the current tab is already a destination note, use browser_list_tabs to find the already-open course/index/master page before asking the student for it, then use browser_activate_tab, browser_find_elements, browser_click_text/browser_click, or browser_navigate to open the relevant linked pages, inspect them, then anchor useful passages on the destination pages before publishing.",
@@ -8063,16 +8064,25 @@
 			case "browser_navigate":
 				return `Navigated to: ${tabLabel}.`;
 			case "browser_open_pdf_in_onhand_viewer":
+				if (result?.viewerReady?.ok === false) {
+					return `Onhand PDF viewer failed to load the PDF: ${compactRealtimeTutorText(result.viewerReady.error || "The PDF did not finish loading.", 500)} Do not claim it opened successfully or continue with viewer-only PDF tools.`;
+				}
 				return `${result?.alreadyOpen ? "Using existing" : "Opened"} PDF in Onhand viewer: ${tabLabel}.`;
 			case "browser_pdf_search": {
 				const search = result?.search || {};
 				const matches = Array.isArray(search.matches) ? search.matches : [];
+				const coverage = search.coverage || {};
+				const totalMatches = Number(search.totalMatchCount ?? search.matchCount ?? matches.length);
+				const coverageText =
+					Number(coverage.searchedPageCount || 0) || Number(coverage.totalPageCount || 0)
+						? `Exact-text coverage: ${Number(coverage.searchedPageCount || 0)}/${Number(coverage.totalPageCount || 0) || "?"} pages${coverage.searchedAllPages === true ? " (complete)" : " (incomplete)"}.`
+						: "Exact-text coverage was not reported; do not describe this as a whole-document verification.";
 				return matches.length
-					? `PDF search results for "${search.query || ""}":\n${matches
+					? `PDF search results for "${search.query || ""}" (${totalMatches} total):\n${coverageText}\n${matches
 							.slice(0, 8)
 							.map((match, index) => `${index + 1}. p. ${match.pageNumber || match.page || "?"}: ${compactRealtimeTutorText(match.context || match.text || match.matchedText, 260)}`)
-							.join("\n")}`
-					: `No PDF search results returned for "${search.query || result?.query || ""}".`;
+							.join("\n")}${search.truncated || totalMatches > matches.length ? "\nSome match snippets were omitted; refine the query or read relevant pages before a broad claim." : ""}`
+					: `No PDF search results returned for "${search.query || result?.query || ""}". ${coverageText} This rules out only that exact wording, not synonymous language. For an absence claim, search multiple phrasings and read the governing and cross-referenced sections.`;
 			}
 			case "browser_pdf_read_pages": {
 				const pages = result?.pages || {};
@@ -8425,11 +8435,12 @@
 		};
 		switch (name) {
 			case "browser_open_pdf_in_onhand_viewer":
+				const viewerFailed = result?.viewerReady?.ok === false;
 				return {
 					key: `tab:${tab.id || result?.pdfUrl || "pdf"}:pdf-viewer`,
 					type: "tab",
 					...base,
-					label: result?.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
+					label: viewerFailed ? "PDF viewer failed" : result?.alreadyOpen ? "Using PDF viewer" : "Opened PDF viewer",
 					detail: compactRealtimeTutorText(result?.pdfUrl || tab.title || tab.url || "PDF", 72),
 				};
 			case "browser_pdf_search": {

@@ -12,7 +12,7 @@ const VIEWPORT_RENDER_DELAY_MS = 100;
 const MAX_CANVAS_PIXELS = 32 * 1024 * 1024;
 const MAX_CANVAS_DIMENSION = 8192;
 const PDF_LOAD_TIMEOUT_MS = 20000;
-const GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS = 12000;
+const CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS = 12000;
 const PDF_VIEWER_ANNOTATION_THEME = "light";
 
 const viewer = document.getElementById("viewer") as HTMLElement;
@@ -1852,11 +1852,11 @@ function pdfGetSelectionInfo() {
 	};
 }
 
-function snippetForMatch(pageText: string, matchedText: string, maxContextChars: number) {
+function snippetForMatch(pageText: string, matchedText: string, maxContextChars: number, matchIndex: number | null = null) {
 	const text = normalizeText(pageText);
 	const match = normalizeText(matchedText);
 	if (!text) return { before: "", text: match, after: "", snippet: match };
-	const index = match ? text.toLowerCase().indexOf(match.toLowerCase()) : -1;
+	const index = Number.isInteger(matchIndex) && Number(matchIndex) >= 0 ? Number(matchIndex) : match ? text.toLowerCase().indexOf(match.toLowerCase()) : -1;
 	if (index === -1) {
 		const snippet = text.slice(0, Math.max(0, maxContextChars * 2));
 		return { before: "", text: match, after: snippet, snippet };
@@ -1931,77 +1931,89 @@ async function pdfSearch(options: Record<string, any> = {}) {
 	if (!query) throw new Error("PDF search requires a non-empty query.");
 	const maxMatches = Math.max(1, Math.min(50, Number(options.maxMatches || options.limit || 8) || 8));
 	const maxContextChars = Math.max(40, Math.min(1000, Number(options.maxContextChars || 220) || 220));
-	const matches: any[] = [];
-	for (const page of getPdfPages()) {
-		if (matches.length >= maxMatches) break;
-		const textLayer = page.querySelector<HTMLElement>(".textLayer");
-		if (!textLayer) continue;
-		const pageNumber = getPageNumber(page);
-		const pageText = pdfPageText(page);
-		for (let occurrence = 1; occurrence <= 100 && matches.length < maxMatches; occurrence += 1) {
-			const match = findMappedTextRange(textLayer, query, occurrence);
-			if (!match) break;
-			const anchor = buildPdfAnchor(page, match, occurrence);
-			const snippet = snippetForMatch(pageText, match.matchedText || query, maxContextChars);
-			const pageRect = page.getBoundingClientRect();
-			matches.push({
-				pageNumber,
-				occurrence,
-				matchedText: match.matchedText,
-				before: snippet.before,
-				after: snippet.after,
-				snippet: snippet.snippet,
-				visible: visibleEnough(pageRect),
-				pdfAnchor: anchor,
-			});
-		}
-	}
-	// Pages without a text layer yet are searched through their PDF.js
-	// text content so results stay complete while rendering is in flight.
+	const pages = getPdfPages();
+	const totalPageCount = Math.max(Number(pdfDocument?.numPages || 0), pages.length);
 	const normalizedQuery = normalizeText(query).toLowerCase();
-	for (const page of getPdfPages()) {
-		if (matches.length >= maxMatches) break;
-		if (!isPendingPage(page)) continue;
+	const matches: any[] = [];
+	const searchedPageNumbers: number[] = [];
+	const failedPageNumbers: number[] = [];
+	const matchedPageNumbers = new Set<number>();
+	let totalMatchCount = 0;
+	for (const page of pages) {
 		const pageNumber = getPageNumber(page);
 		if (!pageNumber) continue;
-		const pageText = await getPageTextContent(pageNumber);
+		const textLayer = page.querySelector<HTMLElement>(".textLayer");
+		let pageText = "";
+		try {
+			// Rendered pages already have normalized text in the DOM. Pending or
+			// otherwise unrendered pages use PDF.js text content, so every page is
+			// searched even after the returned-snippet limit is reached.
+			pageText = textLayer ? pdfPageText(page) : await getPageTextContent(pageNumber);
+			searchedPageNumbers.push(pageNumber);
+		} catch {
+			failedPageNumbers.push(pageNumber);
+			continue;
+		}
 		const lowerText = pageText.toLowerCase();
 		let fromIndex = 0;
-		for (let occurrence = 1; occurrence <= 100 && matches.length < maxMatches; occurrence += 1) {
+		for (let occurrence = 1; ; occurrence += 1) {
 			const index = normalizedQuery ? lowerText.indexOf(normalizedQuery, fromIndex) : -1;
 			if (index === -1) break;
 			fromIndex = index + Math.max(1, normalizedQuery.length);
+			totalMatchCount += 1;
+			matchedPageNumbers.add(pageNumber);
+			if (matches.length >= maxMatches) continue;
 			const matchedText = pageText.slice(index, index + normalizedQuery.length);
-			const snippet = snippetForMatch(pageText, matchedText, maxContextChars);
-			matches.push({
-				pageNumber,
-				occurrence,
-				matchedText,
-				before: snippet.before,
-				after: snippet.after,
-				snippet: snippet.snippet,
-				visible: false,
-				pendingRender: true,
-				pdfAnchor: {
+			const mappedMatch = textLayer ? findMappedTextRange(textLayer, query, occurrence) : null;
+			const anchoredText = mappedMatch?.matchedText || matchedText;
+			const snippet = snippetForMatch(pageText, anchoredText, maxContextChars, index);
+			const pendingRender = !textLayer;
+			const pdfAnchor = mappedMatch
+				? buildPdfAnchor(page, mappedMatch, occurrence)
+				: {
 					surface: "pdf",
 					viewer: "onhand-pdf-viewer",
 					document: { url: sourceUrl, title: document.title },
 					pageNumber,
-					matchedText,
-					textQuote: { exact: matchedText },
+					matchedText: anchoredText,
+					textQuote: { exact: anchoredText },
 					occurrence,
-				},
+				};
+			matches.push({
+				pageNumber,
+				occurrence,
+				matchedText: anchoredText,
+				before: snippet.before,
+				after: snippet.after,
+				snippet: snippet.snippet,
+				visible: textLayer ? visibleEnough(page.getBoundingClientRect()) : false,
+				...(pendingRender ? { pendingRender: true } : {}),
+				pdfAnchor,
 			});
 		}
 	}
-	const textLayer = matches.length === 0 ? await describePdfTextLayer() : null;
+	const searchedAllPages = totalPageCount > 0 && searchedPageNumbers.length === totalPageCount && failedPageNumbers.length === 0;
+	const truncated = totalMatchCount > matches.length;
+	const textLayer = totalMatchCount === 0 ? await describePdfTextLayer() : null;
 	return {
 		surface: "pdf",
 		viewer: "onhand-pdf-viewer",
 		url: sourceUrl,
 		title: document.title,
 		query,
-		matchCount: matches.length,
+		matchCount: totalMatchCount,
+		totalMatchCount,
+		returnedMatchCount: matches.length,
+		truncated,
+		coverage: {
+			searchKind: "exact-text",
+			searchedPageCount: searchedPageNumbers.length,
+			totalPageCount,
+			searchedAllPages,
+			searchedPageNumbers,
+			failedPageNumbers,
+			matchedPageNumbers: [...matchedPageNumbers].sort((left, right) => left - right),
+		},
 		matches,
 		...(textLayer ? { textLayer } : {}),
 	};
@@ -2484,14 +2496,9 @@ function parseSourceUrl() {
 	}
 }
 
-function isGoogleDocsPdfExportUrl(value: string) {
+function isHttpsUrl(value: string) {
 	try {
-		const url = new URL(String(value || ""));
-		return (
-			url.hostname === "docs.google.com" &&
-			/^\/document\/d\/[^/]+\/export$/i.test(url.pathname) &&
-			String(url.searchParams.get("format") || "").toLowerCase() === "pdf"
-		);
+		return new URL(String(value || "")).protocol === "https:";
 	} catch {
 		return false;
 	}
@@ -2533,6 +2540,13 @@ async function loadLocalFilePdfBytes(value: string): Promise<ArrayBuffer> {
 	});
 }
 
+function decodeBase64PdfBytes(value: string) {
+	const binary = atob(value);
+	const bytes = new Uint8Array(binary.length);
+	for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+	return bytes;
+}
+
 async function loadPdfDocumentFromUrl(value: string) {
 	const baseOptions = {
 		url: value,
@@ -2566,14 +2580,37 @@ async function loadPdfDocumentFromUrl(value: string) {
 			);
 		}
 	}
-	if (!isGoogleDocsPdfExportUrl(value)) {
-		return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
-	}
 	try {
 		return await getPdfDocumentWithTimeout(baseOptions, PDF_LOAD_TIMEOUT_MS);
-	} catch {
+	} catch (initialError) {
+		if (!isHttpsUrl(value)) throw initialError;
+		let authorized = false;
+		try {
+			const auth = await chrome.runtime.sendMessage({ type: "pdf-viewer:authorize-credentialed-source", url: value });
+			authorized = Boolean((auth as any)?.ok);
+		} catch {}
+		if (!authorized) throw initialError;
 		setStatus("Retrying with browser credentials...");
-		return await getPdfDocumentWithTimeout({ ...baseOptions, withCredentials: true }, GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS);
+		try {
+			return await getPdfDocumentWithTimeout(
+				{ ...baseOptions, withCredentials: true },
+				CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS,
+			);
+		} catch (credentialError: any) {
+			setStatus("Retrying through the authenticated browser tab...");
+			let browserLoad: any = null;
+			try {
+				browserLoad = await chrome.runtime.sendMessage({ type: "pdf-viewer:load-authorized-source", url: value });
+			} catch {}
+			if (!browserLoad?.ok || !browserLoad?.dataBase64) {
+				throw new Error(
+					browserLoad?.error || credentialError?.message || initialError?.message || "Could not load the protected PDF.",
+				);
+			}
+			const data = decodeBase64PdfBytes(String(browserLoad.dataBase64));
+			const { url: _url, ...optionsWithoutUrl } = baseOptions;
+			return await getPdfDocumentWithTimeout({ ...optionsWithoutUrl, data }, PDF_LOAD_TIMEOUT_MS);
+		}
 	}
 }
 

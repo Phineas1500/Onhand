@@ -443,6 +443,11 @@ async function assertPdfViewerHandoffHelpers() {
 		"PDF handoff should prefer Chrome's native PDF page number before DOM fallbacks",
 	);
 	assert.match(backgroundSource, /installInlineOnhandPdfViewer\(finalTab\.id,\s*pdfUrl,\s*viewerOptions\)/, "Inline PDF handoff should pass the inferred page into the viewer URL");
+	assert.match(
+		backgroundSource,
+		/frame && frame\.getAttribute\("src"\) === targetViewerUrl[\s\S]*frame\.remove\(\)/,
+		"a failed inline PDF viewer should be recreated when the next handoff retries the same URL",
+	);
 	assert.match(backgroundSource, /function runPdfPageLocationDetector/, "PDF handoff should record per-detector page inference diagnostics");
 	assert.match(backgroundSource, /PDF page detector timed out: \$\{label\}/, "PDF page inference detectors should be time-bounded");
 	assert.match(backgroundSource, /pageLocationDiagnostics:\s*diagnostics/, "PDF handoff results should include page-location diagnostics when requested");
@@ -465,6 +470,24 @@ async function assertPdfViewerHandoffHelpers() {
 		backgroundSource,
 		/function safeWaitForInlineOnhandPdfViewerReady[\s\S]*pdfViewerReadyFailure/,
 		"Inline PDF handoff should report viewer-ready failures instead of aborting the open command",
+	);
+	assert.match(backgroundSource, /function loadAuthorizedPdfBytesFromTab/, "protected PDF handoff should have a browser-context byte fallback");
+	assert.match(
+		backgroundSource,
+		/Network\.loadNetworkResource[\s\S]*includeCredentials:\s*true/,
+		"protected PDF fallback should load through the authenticated source tab instead of hardcoded site logic",
+	);
+	assert.match(
+		backgroundSource,
+		/trustedSourceUrl[\s\S]*stripUrlHash\(trustedSourceUrl\) !== stripUrlHash\(pdfUrl\)/,
+		"protected PDF fallback should stay bound to the exact viewer tab and source URL",
+	);
+	assert.match(backgroundSource, /looksLikePdfBytes/, "protected PDF fallback should reject login pages and other non-PDF responses");
+	const pdfViewerSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/src/pdf-viewer.ts"), "utf8");
+	assert.match(
+		pdfViewerSource,
+		/pdf-viewer:load-authorized-source/,
+		"the PDF viewer should request a browser-context fallback only after its credentialed load fails",
 	);
 	assert.match(
 		backgroundSource,
@@ -550,6 +573,11 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /findExistingPdfHighlight/, "PDF viewer highlight replay should find existing PDF annotations before creating new ones");
 	assert.match(source, /removeDuplicatePdfHighlights/, "PDF viewer highlight replay should consolidate duplicate saved-artifact overlays");
 	assert.match(source, /function pdfSearch/, "PDF viewer should expose full-document text search");
+	assert.match(source, /for \(const page of pages\)/, "PDF search should inspect every PDF page instead of stopping at the returned-snippet limit");
+	assert.doesNotMatch(source, /if \(matches\.length >= maxMatches\) break;/, "PDF search must not stop document coverage when its snippet limit is reached");
+	assert.match(source, /searchedAllPages/, "PDF search should report whether full-page coverage completed");
+	assert.match(source, /failedPageNumbers/, "PDF search should disclose pages whose text could not be searched");
+	assert.match(source, /totalMatchCount/, "PDF search should count omitted matches separately from returned snippets");
 	assert.match(source, /function pdfReadPages/, "PDF viewer should expose page-specific text reads");
 	assert.match(source, /function pdfJumpToPage/, "PDF viewer should expose page navigation for found PDF matches");
 	assert.match(source, /function pdfCapturePageImage/, "PDF viewer should expose page image capture for visual PDF grounding");
@@ -1316,6 +1344,8 @@ async function assertTextbookHighlightPrefersBodyFrameOverSearchUi() {
 async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	const pdfViewerSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/src/pdf-viewer.ts"), "utf8");
+	const browserRuntimeSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/src/browser-runtime.ts"), "utf8");
+	const sidebarSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/sidebar.js"), "utf8");
 	assert.match(
 		backgroundSource,
 		/isGoogleDocsDocumentUrl\(tabUrl\)[\s\S]*buildGoogleDocsPdfExportUrl\(tabUrl\)/,
@@ -1342,21 +1372,44 @@ async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 		/handoff:\s*{[\s\S]*surface:\s*"google-docs"[\s\S]*mode:\s*"pdf-export"/,
 		"Google Docs PDF highlights should report the handoff surface and mode",
 	);
-	assert.match(
+	assert.doesNotMatch(
 		pdfViewerSource,
 		/function isGoogleDocsPdfExportUrl/,
-		"Onhand PDF viewer should detect Google Docs PDF exports",
+		"Authenticated PDF loading should not be hard-coded to Google Docs",
 	);
 	assert.match(
 		pdfViewerSource,
-		/getPdfDocumentWithTimeout\(\{\s*\.\.\.baseOptions,\s*withCredentials:\s*true\s*\},\s*GOOGLE_DOCS_CREDENTIAL_RETRY_TIMEOUT_MS\)/,
-		"Onhand PDF viewer should retry Google Docs PDF exports with credentials",
+		/pdf-viewer:authorize-credentialed-source/,
+		"Onhand PDF viewer should request a scoped authorization before retrying an HTTPS PDF with credentials",
+	);
+	assert.match(
+		pdfViewerSource,
+		/withCredentials:\s*true[\s\S]*CREDENTIALED_PDF_LOAD_RETRY_TIMEOUT_MS/,
+		"Onhand PDF viewer should retry an authorized HTTPS PDF with browser credentials",
+	);
+	assert.match(
+		backgroundSource,
+		/function grantOnhandPdfViewerCredentialedSource[\s\S]*onhandPdfViewerCredentialGrantKey\(tabId, pdfUrl\)/,
+		"Authenticated PDF retries should be granted to an exact tab and source pair",
+	);
+	assert.match(
+		backgroundSource,
+		/message\?\.type === "pdf-viewer:authorize-credentialed-source"[\s\S]*authorizeOnhandPdfViewerCredentialedSource\(_sender, message\.url\)/,
+		"The background should enforce the scoped authenticated-PDF authorization",
 	);
 	assert.match(
 		pdfViewerSource,
 		/Timed out loading the PDF\./,
 		"Onhand PDF viewer should not leave failed Google Docs exports spinning silently",
 	);
+	for (const [source, label] of [
+		[browserRuntimeSource, "typed agent"],
+		[sidebarSource, "Realtime voice agent"],
+	]) {
+		assert.match(source, /negative, absence, or whole-document PDF claims/i, `${label} should treat broad PDF absence claims as a distinct verification task`);
+		assert.match(source, /multiple conceptually distinct phrasings/i, `${label} should require semantic query variation for PDF absence claims`);
+		assert.match(source, /Never say you read or verified the entire PDF unless you actually read every page/i, `${label} should not overclaim whole-document reading`);
+	}
 }
 
 async function assertGoogleDocsSelectionUsesTextEventClipboardFallback() {

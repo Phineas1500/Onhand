@@ -510,6 +510,181 @@ const ONHAND_PDF_VIEWER_FILE_GRANT_TTL_MS = 2 * 60 * 1000;
 const ONHAND_PDF_VIEWER_FILE_AUTH_STORAGE_KEY = "onhand:pdf-viewer-file-auth";
 const pendingOnhandPdfViewerFileGrants = new Map();
 
+// Credentialed retries need the same trust boundary as local-file reads.
+// pdf-viewer.html is web-accessible, so never let an arbitrary page turn it
+// into an authenticated cross-origin fetcher. A retry is allowed only for the
+// exact HTTPS source + tab pair that this background explicitly handed off,
+// and the authorization is remembered only for that viewer tab's reloads.
+const ONHAND_PDF_VIEWER_CREDENTIAL_GRANT_TTL_MS = 2 * 60 * 1000;
+const ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY = "onhand:pdf-viewer-credential-auth";
+const pendingOnhandPdfViewerCredentialGrants = new Map();
+const ONHAND_AUTHENTICATED_PDF_MAX_BYTES = 24 * 1024 * 1024;
+const ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS = 10000;
+const ONHAND_AUTHENTICATED_PDF_STREAM_CHUNK_BYTES = 4 * 1024 * 1024;
+
+function isHttpsUrl(value) {
+	try {
+		return new URL(String(value || "")).protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+function onhandPdfViewerCredentialGrantKey(tabId, pdfUrl) {
+	const key = stripUrlHash(String(pdfUrl || ""));
+	return typeof tabId === "number" && key && isHttpsUrl(key) ? `${tabId}:${key}` : "";
+}
+
+function grantOnhandPdfViewerCredentialedSource(tabId, pdfUrl) {
+	const grantKey = onhandPdfViewerCredentialGrantKey(tabId, pdfUrl);
+	if (!grantKey) return;
+	pendingOnhandPdfViewerCredentialGrants.set(grantKey, Date.now() + ONHAND_PDF_VIEWER_CREDENTIAL_GRANT_TTL_MS);
+	if (pendingOnhandPdfViewerCredentialGrants.size > 32) {
+		const now = Date.now();
+		for (const [key, expiresAt] of pendingOnhandPdfViewerCredentialGrants) {
+			if (expiresAt < now) pendingOnhandPdfViewerCredentialGrants.delete(key);
+		}
+	}
+}
+
+async function authorizeOnhandPdfViewerCredentialedSource(sender, pdfUrl) {
+	const senderUrl = String(sender?.url || "");
+	if (!isOwnExtensionPdfViewerUrl(senderUrl)) return false;
+	const grantKey = onhandPdfViewerCredentialGrantKey(sender?.tab?.id, pdfUrl);
+	if (!grantKey) return false;
+	let remembered = {};
+	try {
+		remembered =
+			(await chrome.storage.session.get(ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY))?.[
+				ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY
+			] || {};
+	} catch {}
+	const rememberedAt = Number(remembered[grantKey] || 0);
+	if (rememberedAt && Date.now() - rememberedAt <= ONHAND_PDF_VIEWER_CREDENTIAL_GRANT_TTL_MS) return true;
+	if (rememberedAt) {
+		delete remembered[grantKey];
+		try {
+			await chrome.storage.session.set({ [ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY]: remembered });
+		} catch {}
+	}
+	const expiresAt = pendingOnhandPdfViewerCredentialGrants.get(grantKey);
+	if (!expiresAt || expiresAt < Date.now()) return false;
+	pendingOnhandPdfViewerCredentialGrants.delete(grantKey);
+	remembered[grantKey] = Date.now();
+	try {
+		await chrome.storage.session.set({ [ONHAND_PDF_VIEWER_CREDENTIAL_AUTH_STORAGE_KEY]: remembered });
+	} catch {}
+	return true;
+}
+
+function pdfUrlForAuthorizedViewerTab(tab) {
+	const tabUrl = String(tab?.url || "");
+	return isOnhandPdfViewerLikeUrl(tabUrl) ? extractPdfSourceUrlFromViewerLikeUrl(tabUrl) : stripUrlHash(tabUrl);
+}
+
+function decodeDebuggerStreamChunk(payload) {
+	const data = String(payload?.data || "");
+	if (!data) return new Uint8Array();
+	if (payload?.base64Encoded) {
+		const binary = atob(data);
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+		return bytes;
+	}
+	return new TextEncoder().encode(data);
+}
+
+function encodeBytesAsBase64(bytes) {
+	let binary = "";
+	const chunkSize = 0x8000;
+	for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+		binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.byteLength, offset + chunkSize)));
+	}
+	return btoa(binary);
+}
+
+function looksLikePdfBytes(bytes) {
+	const header = new TextDecoder("latin1").decode(bytes.subarray(0, Math.min(1024, bytes.byteLength)));
+	return header.includes("%PDF-");
+}
+
+async function readDebuggerStream(send, handle) {
+	const chunks = [];
+	let byteLength = 0;
+	try {
+		while (true) {
+			const payload = await send("IO.read", {
+				handle,
+				size: ONHAND_AUTHENTICATED_PDF_STREAM_CHUNK_BYTES,
+			});
+			const chunk = decodeDebuggerStreamChunk(payload);
+			byteLength += chunk.byteLength;
+			if (byteLength > ONHAND_AUTHENTICATED_PDF_MAX_BYTES) {
+				throw new Error(`The protected PDF is larger than Onhand's ${Math.floor(ONHAND_AUTHENTICATED_PDF_MAX_BYTES / 1024 / 1024)} MB browser-context limit.`);
+			}
+			if (chunk.byteLength) chunks.push(chunk);
+			if (payload?.eof) break;
+		}
+	} finally {
+		try {
+			await send("IO.close", { handle });
+		} catch {}
+	}
+	const bytes = new Uint8Array(byteLength);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
+}
+
+async function loadAuthorizedPdfBytesFromTab(sender, pdfUrl) {
+	if (!(await authorizeOnhandPdfViewerCredentialedSource(sender, pdfUrl))) {
+		throw new Error("The authenticated PDF retry was not authorized for this viewer tab.");
+	}
+	const tabId = sender?.tab?.id;
+	if (typeof tabId !== "number") throw new Error("The authenticated PDF retry has no source tab.");
+	const tab = await chrome.tabs.get(tabId);
+	const trustedSourceUrl = pdfUrlForAuthorizedViewerTab(tab);
+	if (stripUrlHash(trustedSourceUrl) !== stripUrlHash(pdfUrl)) {
+		throw new Error("The authenticated PDF retry no longer matches the source tab.");
+	}
+
+	const bytes = await withDebugger(tabId, async ({ target, send }) => {
+		await send("Page.enable");
+		const frameTree = await send("Page.getFrameTree");
+		const frameId = frameTree?.frameTree?.frame?.id;
+		if (!frameId) throw new Error("Could not resolve the PDF tab's browser frame.");
+		const loaded = await withOperationTimeout(
+			chrome.debugger.sendCommand(target, "Network.loadNetworkResource", {
+				frameId,
+				url: pdfUrl,
+				options: {
+					disableCache: false,
+					includeCredentials: true,
+				},
+			}),
+			ONHAND_AUTHENTICATED_PDF_LOAD_TIMEOUT_MS,
+			"Timed out loading the PDF through its authenticated browser tab.",
+		);
+		const resource = loaded?.resource || {};
+		if (!resource.success || !resource.stream) {
+			throw new Error(
+				`The authenticated browser tab could not load the PDF${resource.httpStatusCode ? ` (HTTP ${resource.httpStatusCode})` : resource.netErrorName ? ` (${resource.netErrorName})` : ""}.`,
+			);
+		}
+		return await readDebuggerStream(send, resource.stream);
+	});
+	if (!bytes.byteLength || !looksLikePdfBytes(bytes)) {
+		throw new Error("The authenticated browser tab returned a non-PDF response.");
+	}
+	return {
+		dataBase64: encodeBytesAsBase64(bytes),
+		byteLength: bytes.byteLength,
+	};
+}
+
 function grantOnhandPdfViewerFileSource(fileUrl) {
 	const key = stripUrlHash(String(fileUrl || ""));
 	if (!key || !isFileUrl(key)) return;
@@ -967,6 +1142,13 @@ async function installInlineOnhandPdfViewer(tabId, pdfUrl, options = {}) {
 			});
 
 			let frame = document.getElementById(frameId);
+			// Reaching the installer means the background did not accept this
+			// iframe as a healthy reusable viewer. Recreate an existing frame whose
+			// URL is unchanged so a prior PDF.js error cannot poison every retry.
+			if (frame && frame.getAttribute("src") === targetViewerUrl) {
+				frame.remove();
+				frame = null;
+			}
 			if (!frame) {
 				frame = document.createElement("iframe");
 				frame.id = frameId;
@@ -11001,6 +11183,7 @@ async function openPdfInOnhandViewer(args = {}) {
 		}
 		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
+		grantOnhandPdfViewerCredentialedSource(finalTab.id, pdfUrl);
 		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
 		const viewerReady = waitForLoad ? await safeWaitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl) : null;
 		const selectionHandoff = await getSelectionHandoffResult(finalTab.id);
@@ -11023,7 +11206,7 @@ async function openPdfInOnhandViewer(args = {}) {
 			};
 		}
 
-	if (isOnhandPdfViewerLikeUrl(sourceTab.url) && extractPdfSourceUrlFromViewerLikeUrl(sourceTab.url) === pdfUrl) {
+	if (args.forceReload !== true && isOnhandPdfViewerLikeUrl(sourceTab.url) && extractPdfSourceUrlFromViewerLikeUrl(sourceTab.url) === pdfUrl) {
 		const focusedTab = args.active === false ? sourceTab : await focusTab(sourceTab.id);
 		const viewerReady = waitForLoad && isOwnExtensionPdfViewerUrl(focusedTab.url) ? await safeWaitForOnhandPdfViewerReady(focusedTab.id, timeoutMs) : null;
 		const selectionHandoff = await getReuseSelectionHandoffResult(focusedTab.id);
@@ -11047,11 +11230,16 @@ async function openPdfInOnhandViewer(args = {}) {
 	let targetTab;
 	if (shouldOpenViewerInNewTab) {
 		targetTab = await chrome.tabs.create({
-			url: viewerUrl,
+			url: isHttpsUrl(pdfUrl) ? "about:blank" : viewerUrl,
 			active: args.active !== false,
 			windowId: typeof sourceTab.windowId === "number" ? sourceTab.windowId : undefined,
 		});
+		if (isHttpsUrl(pdfUrl)) {
+			grantOnhandPdfViewerCredentialedSource(targetTab.id, pdfUrl);
+			targetTab = await chrome.tabs.update(targetTab.id, { url: viewerUrl });
+		}
 	} else {
+		grantOnhandPdfViewerCredentialedSource(sourceTab.id, pdfUrl);
 		targetTab = await chrome.tabs.update(sourceTab.id, {
 			url: viewerUrl,
 			active: args.active === false ? undefined : true,
@@ -13334,7 +13522,14 @@ async function handleCommand(name, args = {}) {
 				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
 			}
 			if (isFileUrl(sourcePdfUrl)) grantOnhandPdfViewerFileSource(sourcePdfUrl);
-			const created = await chrome.tabs.create({ url: viewerUrl, active: args.active !== false });
+			let created = await chrome.tabs.create({
+				url: isHttpsUrl(sourcePdfUrl) ? "about:blank" : viewerUrl,
+				active: args.active !== false,
+			});
+			if (isHttpsUrl(sourcePdfUrl)) {
+				grantOnhandPdfViewerCredentialedSource(created.id, sourcePdfUrl);
+				created = await chrome.tabs.update(created.id, { url: viewerUrl });
+			}
 			const timeoutMs = clampNumber(args.timeoutMs, 20000, { min: 100, max: 120000 });
 			const viewerReady = await safeWaitForInlineOnhandPdfViewerReady(created.id, timeoutMs, sourcePdfUrl);
 			return {
@@ -14318,6 +14513,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "pdf-viewer:authorize-file-source") {
 			sendResponse({ ok: await authorizeOnhandPdfViewerFileSource(_sender, message.url) });
+			return;
+		}
+
+		if (message?.type === "pdf-viewer:authorize-credentialed-source") {
+			sendResponse({ ok: await authorizeOnhandPdfViewerCredentialedSource(_sender, message.url) });
+			return;
+		}
+
+		if (message?.type === "pdf-viewer:load-authorized-source") {
+			sendResponse({ ok: true, ...(await loadAuthorizedPdfBytesFromTab(_sender, message.url)) });
 			return;
 		}
 
