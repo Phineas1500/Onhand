@@ -2390,7 +2390,37 @@ async function assertRealtimeSocraticPublishAllowsGuidingQuestions() {
 		false,
 		"ordinary short publishes are still rejected as incomplete",
 	);
+
+	// Pin the routing split that contains the publish-gate surface: only
+	// explicit Socratic requests in Learning mode take the realtime path (where
+	// the guiding-question carve-out applies); everything else page-material
+	// goes through the typed Onhand backend and never meets these gates.
+	const routesThroughOnhand = hooks.getShouldRouteRealtimePromptThroughOnhand;
+	assert.equal(typeof routesThroughOnhand, "function", "routing test hook is missing");
+	assert.equal(
+		routesThroughOnhand("Don’t tell me the answer — quiz me on problem two instead."),
+		false,
+		"Learning-mode Socratic requests stay on the realtime path",
+	);
+	assert.equal(
+		routesThroughOnhand("What's the answer to problem one?"),
+		true,
+		"ordinary page-material questions route through the typed Onhand backend",
+	);
 	dom.window.close();
+
+	const answerState = createState();
+	answerState.preferences = { ...answerState.preferences, realtimeVoiceEnabled: true, learningMode: false };
+	answerState.tab = { url: "https://example.test/bayesian-dl", title: "BayesianDL" };
+	answerState.page = { url: "https://example.test/bayesian-dl", title: "BayesianDL", text: "Practice problems for derivatives." };
+	const dom2 = await renderSidebar(answerState, []);
+	const hooks2 = dom2.window.__onhandSidebarTestHooks;
+	assert.equal(
+		hooks2.getShouldRouteRealtimePromptThroughOnhand("Don’t tell me the answer — quiz me on problem two instead."),
+		true,
+		"with Learning off, Socratic phrasing routes through the typed backend like any page question",
+	);
+	dom2.window.close();
 }
 
 async function assertRealtimeRejectedResponseReplaysWithOptions() {

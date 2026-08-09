@@ -10302,6 +10302,7 @@
 					getRealtimeToolDefinitions: realtimeToolDefinitions,
 					getRealtimeTutorInstructions: realtimeTutorInstructions,
 					getRealtimePublishedAnswerLooksSubstantive: realtimePublishedAnswerLooksSubstantive,
+					getShouldRouteRealtimePromptThroughOnhand: shouldRouteRealtimePromptThroughOnhand,
 					getRealtimeInitialGroundedResponseOptions: realtimeInitialGroundedResponseOptions,
 					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
 				sendRealtimeSessionUpdate,
