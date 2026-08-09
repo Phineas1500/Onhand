@@ -48,6 +48,7 @@ const FONT_ASSET_PATHS = Object.freeze({
 
 let creatingOffscreenDocument = null;
 let onhandBrowserRuntime = null;
+let lastFetchStatePageCapture = null;
 const debuggerTaskChains = new Map();
 const tabCommandTaskChains = new Map();
 let operaToolbarHintTimer = null;
@@ -13237,6 +13238,16 @@ async function collectNetworkEvents(tabId, options = {}) {
 }
 
 async function handleCommand(name, args = {}) {
+	const commandStartedAt = Date.now();
+	try {
+		return await handleCommandInner(name, args);
+	} finally {
+		const elapsedMs = Date.now() - commandStartedAt;
+		if (elapsedMs > 500) log("slow command", name, `${elapsedMs}ms`);
+	}
+}
+
+async function handleCommandInner(name, args = {}) {
 	switch (name) {
 		case "ping": {
 			return {
@@ -14697,9 +14708,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					state.tabCaptureError = error?.message || String(error);
 				}
 				try {
-					const captured = await handleCommand("capture_state", { windowId: message.windowId });
-					state.tab = captured?.tab || state.tab || null;
-					state.page = captured?.page || null;
+					// A fresh page capture shares the tab's serialized command queue
+					// with the active turn's tool calls: state polling during a turn
+					// stacked capture_state behind slow tool work, and every later
+					// command's budget paid for the pileup (timeouts start at
+					// enqueue). While a request is active, serve the last capture
+					// instead of queueing a new one.
+					if (state.activeRequestId) {
+						if (lastFetchStatePageCapture) {
+							state.tab = lastFetchStatePageCapture.tab || state.tab || null;
+							state.page = lastFetchStatePageCapture.page || null;
+						}
+					} else {
+						const captured = await handleCommand("capture_state", { windowId: message.windowId });
+						lastFetchStatePageCapture = { tab: captured?.tab || null, page: captured?.page || null };
+						state.tab = captured?.tab || state.tab || null;
+						state.page = captured?.page || null;
+					}
 				} catch (error) {
 					state.pageCaptureError = error?.message || String(error);
 				}

@@ -5717,6 +5717,23 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 	);
 }
 
+async function assertFetchStateSkipsPageCaptureDuringActiveRequest() {
+	const { readFile } = await import("node:fs/promises");
+	const source = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	const handlerStart = source.indexOf('message?.type === "sidebar:fetch-state"');
+	assert.notEqual(handlerStart, -1, "fetch-state handler not found in background.js");
+	const handlerBlock = source.slice(handlerStart, handlerStart + 2600);
+	const gateIndex = handlerBlock.indexOf("if (state.activeRequestId)");
+	const captureIndex = handlerBlock.indexOf('handleCommand("capture_state"');
+	assert.notEqual(
+		gateIndex,
+		-1,
+		"fetch-state must gate its page capture on state.activeRequestId: state polling during a turn queues capture_state behind the turn's tool calls on the per-tab command chain, and every later command's budget pays for the pileup",
+	);
+	assert.notEqual(captureIndex, -1, "fetch-state page capture not found");
+	assert.ok(gateIndex < captureIndex, "the active-request gate must come before the capture_state call");
+}
+
 async function assertGateAwareDraftBuffering() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -10591,6 +10608,7 @@ async function main() {
 	await assertLearningModeToolLoopPersistsAgentEvents();
 	await assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding();
 	await assertGateAwareDraftBuffering();
+	await assertFetchStateSkipsPageCaptureDuringActiveRequest();
 	await assertReplayHighlightCandidateGeneration();
 	await assertSessionBoundaryClearsActivePageAnnotations();
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
