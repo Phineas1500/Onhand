@@ -2365,6 +2365,38 @@ async function assertRealtimeLearningModeReachesVoiceInstructions() {
 	dom2.window.close();
 }
 
+async function assertRealtimeRejectedResponseReplaysWithOptions() {
+	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), []);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	const sent = [];
+	hooks.setRealtimeDataChannel({ readyState: "open", send: (raw) => sent.push(JSON.parse(raw)) });
+	hooks.setRealtimeConnected(true);
+	hooks.setRealtimeResponseInProgress(false);
+
+	// Local flag says idle, server still has an active response: the create is
+	// sent, then rejected. The rejected request must replay with its grounded
+	// options on the next response.done — a bare replay loses the per-turn
+	// instructions and tool choice, and the resulting ungrounded turn never
+	// persists (the "my question vanished" live voice failure).
+	hooks.requestRealtimeResponse("grounded_test", { instructions: "GROUNDED-MARKER", tool_choice: "auto" }, {});
+	const firstCreate = sent.filter((event) => event?.type === "response.create").at(-1);
+	assert.equal(firstCreate?.response?.instructions, "GROUNDED-MARKER", "the initial create carries its grounded instructions");
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({ type: "error", error: { message: "Conversation already has an active response in progress" } }),
+	);
+	await hooks.handleRealtimeServerEvent(JSON.stringify({ type: "response.done", response: {} }));
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	const replayCreate = sent.filter((event) => event?.type === "response.create").at(-1);
+	assert.notEqual(replayCreate, firstCreate, "a replacement response.create must be sent after the rejection");
+	assert.equal(
+		replayCreate?.response?.instructions,
+		"GROUNDED-MARKER",
+		"the replayed response must keep the rejected request's grounded instructions",
+	);
+	dom.window.close();
+}
+
 async function assertRealtimeLocalBargeIn() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), runtimeMessages);
@@ -4867,6 +4899,7 @@ await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeBargeInClearsOutputAudio();
 await assertRealtimeLearningModeReachesVoiceInstructions();
+await assertRealtimeRejectedResponseReplaysWithOptions();
 await assertRealtimeLocalBargeIn();
 await assertRealtimeVoiceDisabledState();
 await assertRealtimeApiKeyErrorOpensOptions();

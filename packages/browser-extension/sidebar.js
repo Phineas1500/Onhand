@@ -211,6 +211,7 @@
 	let realtimeOutputAudioPlaying = false;
 	let realtimeResponseCreateQueued = false;
 	let realtimeQueuedResponseRequest = null;
+	let realtimeLastSentResponseRequest = null;
 	let realtimeResponseVoiceTurnId = "";
 	let realtimeSuppressTranscriptForResponse = false;
 	let realtimeResponseOutputModalities = ["audio"];
@@ -7198,6 +7199,13 @@
 		realtimeDataChannel.send(JSON.stringify(event));
 	}
 
+	function logRealtimeVoiceDiagnostic(...args) {
+		// Voice failures used to be silent, which made live incidents
+		// unreconstructable after the fact. Cheap, always on, and readable from
+		// the sidepanel console (or a CDP console-history dump).
+		console.error("[onhand-voice]", ...args);
+	}
+
 	function requestRealtimeResponse(reason = "response", responseOptions = {}, controlOptions = {}) {
 		if (!realtimeDataChannel || realtimeDataChannel.readyState !== "open") return;
 		if (realtimeResponseInProgress) {
@@ -7214,6 +7222,7 @@
 		realtimeResponseInProgress = true;
 		realtimeResponseCreateQueued = false;
 		realtimeQueuedResponseRequest = null;
+		realtimeLastSentResponseRequest = { reason, responseOptions, controlOptions };
 		realtimeResponseVoiceTurnId =
 			controlOptions.trackVoiceTurn === false ? "" : String(controlOptions.voiceTurnId || realtimeActiveVoiceTurn?.id || "");
 		realtimeSuppressTranscriptForResponse = Boolean(controlOptions.suppressTranscript);
@@ -9141,7 +9150,18 @@
 		if (event.type === "error") {
 			const message = event.error?.message || event.message || "Realtime API error";
 			if (/active response in progress/i.test(message)) {
+				// The server rejected our response.create because a response was
+				// still active — the local flag was out of sync. Resync it and keep
+				// the rejected request so the flush replays it with its grounded
+				// instructions and tool choice; a bare replay produced ungrounded
+				// answers whose turns never persisted (the "my question vanished"
+				// live voice failure).
 				realtimeResponseCreateQueued = true;
+				if (!realtimeQueuedResponseRequest && realtimeLastSentResponseRequest) {
+					realtimeQueuedResponseRequest = realtimeLastSentResponseRequest;
+				}
+				realtimeResponseInProgress = true;
+				logRealtimeVoiceDiagnostic("response.create rejected (active response in progress); queued for replay");
 				setRealtimeStatus("Waiting for response to finish...");
 				return;
 			}
@@ -9160,6 +9180,7 @@
 				// tear down the whole voice session.
 				return;
 			}
+			logRealtimeVoiceDiagnostic("session-ending realtime error", message);
 			stopRealtimeVoice();
 			setRealtimeStatus("Voice error", message);
 			return;
@@ -9336,6 +9357,14 @@
 				if (!finalText && realtimeVoiceTurnHasAnchor(activeTurn)) {
 					if (retryRealtimePublishSidebarAnswer(activeTurn, "missing_sidebar_answer")) return;
 				}
+				if (!finalText) {
+					// An empty finalText here means the turn will not persist and the
+					// user's question leaves no sidebar trace.
+					logRealtimeVoiceDiagnostic(
+						"voice turn completed without persistable answer",
+						JSON.stringify({ voiceTurnId: activeTurn.id || "", prompt: String(activeTurn.prompt || "").slice(0, 140) }),
+					);
+				}
 				await persistRealtimeVoiceTurn(activeTurn, finalText, {
 					status: "Voice answer",
 					pageActions: activeTurn.pageActions,
@@ -9411,7 +9440,10 @@
 				if (!realtimeConnecting && !realtimeError) setRealtimeStatus("Voice idle");
 			};
 			dc.onmessage = (event) => {
-				void handleRealtimeServerEvent(event).catch((error) => setRealtimeStatus("Voice error", error?.message || String(error)));
+				void handleRealtimeServerEvent(event).catch((error) => {
+				logRealtimeVoiceDiagnostic("realtime event handling failed", event?.type || "", error?.message || String(error));
+				setRealtimeStatus("Voice error", error?.message || String(error));
+			});
 			};
 
 			for (const track of audioTracks) {
