@@ -2365,6 +2365,34 @@ async function assertRealtimeLearningModeReachesVoiceInstructions() {
 	dom2.window.close();
 }
 
+async function assertRealtimeSocraticPublishAllowsGuidingQuestions() {
+	const learningState = createState();
+	learningState.preferences = { ...learningState.preferences, realtimeVoiceEnabled: true, learningMode: true };
+	learningState.tab = { url: "https://example.test/bayesian-dl", title: "BayesianDL" };
+	learningState.page = { url: "https://example.test/bayesian-dl", title: "BayesianDL", text: "Practice problems for derivatives." };
+	const dom = await renderSidebar(learningState, []);
+	const hooks = dom.window.__onhandSidebarTestHooks;
+	const looksSubstantive = hooks.getRealtimePublishedAnswerLooksSubstantive;
+	assert.equal(typeof looksSubstantive, "function", "substantive-answer test hook is missing");
+	assert.equal(
+		looksSubstantive("What do you predict the derivative of 2t^4 is?", {
+			kind: "realtime_response",
+			prompt: "Don’t tell me the answer — quiz me on problem two instead.",
+		}),
+		true,
+		"a Learning-mode Socratic turn may publish a short guiding question (the completeness gate must not fight the never-reveal gate)",
+	);
+	assert.equal(
+		looksSubstantive("Short text.", {
+			kind: "realtime_response",
+			prompt: "What is problem one asking me to do?",
+		}),
+		false,
+		"ordinary short publishes are still rejected as incomplete",
+	);
+	dom.window.close();
+}
+
 async function assertRealtimeRejectedResponseReplaysWithOptions() {
 	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), []);
 	const hooks = dom.window.__onhandSidebarTestHooks;
@@ -4899,6 +4927,7 @@ await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeBargeInClearsOutputAudio();
 await assertRealtimeLearningModeReachesVoiceInstructions();
+await assertRealtimeSocraticPublishAllowsGuidingQuestions();
 await assertRealtimeRejectedResponseReplaysWithOptions();
 await assertRealtimeLocalBargeIn();
 await assertRealtimeVoiceDisabledState();

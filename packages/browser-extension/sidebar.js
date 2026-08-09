@@ -7736,7 +7736,9 @@
 	}
 
 	function isExplicitRealtimeSocraticRequest(prompt) {
-		const text = String(prompt || "").trim().toLowerCase();
+		// Voice transcription produces curly apostrophes ("don’t"); normalize so
+		// the phrase patterns match either form.
+		const text = String(prompt || "").trim().toLowerCase().replace(/[‘’]/g, "'");
 		if (!text) return false;
 		return /\b(quiz me|test me|ask me (?:a|some|one) question|give me (?:a|some|one) (?:quiz|practice|retrieval|prediction|check)|check my understanding|practice (?:with me|questions?)|socratic|coach me through|walk me through with questions|make me think|don't tell me the answer|do not tell me the answer)\b/.test(
 			text,
@@ -7790,6 +7792,14 @@
 		if (!text) return false;
 		const prompt = normalizeRealtimeTranscriptText(turn?.prompt || "");
 		if (!prompt || /^voice question$/i.test(prompt)) return false;
+		// Learning-mode Socratic turns ("quiz me", "don't tell me the answer")
+		// publish a short guiding question, not a complete answer. The
+		// completeness gate must not trap the model between itself and the
+		// never-reveal gate — that dead end published empty text, narrated "no
+		// content to read aloud", and dropped the turn from the sidebar.
+		if (Boolean(currentState?.preferences?.learningMode) && isExplicitRealtimeSocraticRequest(turn?.prompt || "") && text.length >= 12) {
+			return true;
+		}
 		const lower = text.toLowerCase();
 		if (text.length < 70) return false;
 		if (/^let me\b|^i(?:'|’)ll\b|^i will\b/i.test(text) && text.length < 160) return false;
@@ -9042,6 +9052,19 @@
 						};
 					}
 				}
+				if (!markdown) {
+					// After the retry budget an empty publish used to fall through:
+					// nothing persisted and the narrate prompt carried empty text, so
+					// the model announced "no content to read aloud" and the turn
+					// vanished. Reject it back to the model instead.
+					logRealtimeVoiceDiagnostic("publish_sidebar_answer empty after retries; skipping publish and narrate");
+					return {
+						published: false,
+						rejected: true,
+						reason: "empty_answer",
+						message: "publish_sidebar_answer markdown was empty. Publish the guiding question or answer text itself.",
+					};
+				}
 				if (Array.isArray(args?.anchors) && args.anchors.length) {
 					await applyRealtimeAnnotations(args.anchors);
 				}
@@ -10278,6 +10301,7 @@
 				expireRealtimeIdleTimeout,
 					getRealtimeToolDefinitions: realtimeToolDefinitions,
 					getRealtimeTutorInstructions: realtimeTutorInstructions,
+					getRealtimePublishedAnswerLooksSubstantive: realtimePublishedAnswerLooksSubstantive,
 					getRealtimeInitialGroundedResponseOptions: realtimeInitialGroundedResponseOptions,
 					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
 				sendRealtimeSessionUpdate,
