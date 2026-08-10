@@ -1963,6 +1963,25 @@ async function assertLanePolicyProseMatchesEnforcedBudgets() {
 	assert.match(teaching.promptPolicy, new RegExp(`at most ${budgets.TEACHING_SOURCE_HIGHLIGHT_MAX}\\b`), "teaching policy prose must quote the enforced highlight cap");
 	assert.doesNotMatch(teaching.promptPolicy, /about six/, "the stale six-highlight promise must be gone");
 	assert.equal(budgets.TEACHING_SOURCE_NOTE_MAX >= 1, true);
+	{
+		// The shared mark-policy fragments must quote the same numbers the
+		// guards enforce; a budget change must land in both or fail here.
+		const { markPolicyForTest } = __browserRuntimeTest || {};
+		assert.ok(markPolicyForTest && typeof markPolicyForTest === "object", "mark-policy fragment export is missing");
+		const numberWords = { 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight" };
+		assert.ok(
+			markPolicyForTest.teachBudgetPhrase.endsWith(numberWords[budgets.TEACHING_SOURCE_HIGHLIGHT_MAX]),
+			`teach budget phrase "${markPolicyForTest.teachBudgetPhrase}" must end with the enforced cap (${budgets.TEACHING_SOURCE_HIGHLIGHT_MAX})`,
+		);
+		assert.ok(
+			markPolicyForTest.noteShapePhrase.includes(String(budgets.ON_PAGE_NOTE_MAX_CHARS)),
+			`note shape phrase must quote the enforced character cap (${budgets.ON_PAGE_NOTE_MAX_CHARS})`,
+		);
+		assert.ok(
+			markPolicyForTest.perMarkNotes.includes(String(budgets.ON_PAGE_NOTE_MAX_CHARS)),
+			"the per-mark note rule must quote the enforced character cap",
+		);
+	}
 
 	const review = buildProfile(
 		settings,
@@ -2434,8 +2453,8 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.systemPrompt, /Do not add notes that merely paraphrase the highlight/);
 	assert.match(contract.systemPrompt, /under ~280 characters/);
 	assert.match(contract.systemPrompt, /Only successful highlight\/note tool results count as source markers/);
-	assert.match(contract.systemPrompt, /never the page title, course title, or a generic heading/);
-	assert.match(contract.systemPrompt, /For compare\/contrast prompts, usually use two concise source highlights/);
+	assert.match(contract.systemPrompt, /Do not use the page title, course title, reading list, or a generic heading as a source marker/);
+	assert.match(contract.systemPrompt, /For compare\/contrast prompts, usually create two concise source highlights, one for each side, each with a short note on its side of the difference/);
 	assert.match(contract.systemPrompt, /Chat should be brief and tied to the page context/);
 	assert.match(contract.systemPrompt, /A visible-text-only read is not enough to rule out offscreen page content/);
 	assert.match(contract.systemPrompt, /Roadmap\/list\/navigation questions are not simple/);
@@ -2545,7 +2564,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /do not paraphrase the highlight/);
 	assert.match(contract.answerPrompt, /Failed highlight attempts are not source markers/);
 	assert.match(contract.answerPrompt, /Source-thorough path: if the question has distinct subclaims/);
-	assert.match(contract.answerPrompt, /For comparison prompts, usually create two concise source highlights/);
+	assert.match(contract.answerPrompt, /For compare\/contrast prompts, usually create two concise source highlights/);
 	assert.match(contract.answerPrompt, /Roadmap\/list\/navigation answers need the actual supporting list/);
 	assert.match(contract.answerPrompt, /Each named step\/item in chat needs its own source highlight/);
 	assert.match(contract.answerPrompt, /literally contains every named item/);
@@ -2569,7 +2588,12 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /do not substitute a nearby unrelated formula/);
 	assert.match(contract.answerPrompt, /block formula highlight/);
 	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
-	const runtimeSourceForHighlightPolicy = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	const runtimeSourceForHighlightPolicy = [
+		await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8"),
+		// Policy wording shared by multiple prompt surfaces lives in the
+		// mark-policy fragment module; source-level policy pins must see both.
+		await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/agent/mark-policy.ts", import.meta.url), "utf8"),
+	].join("\n");
 	assert.match(
 		runtimeSourceForHighlightPolicy,
 		/reuseExisting:\s*targetedParams\?\.reuseExisting !== false/,
@@ -2673,8 +2697,8 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
-		/one short marginal note on the passage that captures the practical difference or takeaway/,
-		"comparison prompts should usually create one concise takeaway note after source highlights",
+		/one for each side, each with a short note on its side of the difference/,
+		"comparison prompts get a support highlight and note per side (v3.0 marks-carry-the-depth)",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
