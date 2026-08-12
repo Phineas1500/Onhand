@@ -27436,7 +27436,16 @@ async function renderPageContent(pageElement, pageNumber, sequence) {
   await page.render({
     canvasContext: context,
     viewport,
-    transform: outputScale === 1 ? void 0 : [outputScale, 0, 0, outputScale, 0, 0]
+    transform: outputScale === 1 ? void 0 : [outputScale, 0, 0, outputScale, 0, 0],
+    // Display-intent rendering schedules every paint chunk on
+    // requestAnimationFrame, which never fires while this document is
+    // hidden (background tab or occluded window) — the render promise
+    // stalls forever, the viewer never reports ready, and background
+    // viewer opens die on the page-command budget ("Timed out waiting for
+    // page command"). Print intent paints through microtasks instead;
+    // rasters are equivalent for reading, and visible tabs keep the
+    // cooperative display scheduling.
+    intent: document.visibilityState === "hidden" ? "print" : "display"
   }).promise;
   if (sequence !== renderSequence) return;
   const oldCanvasWrapper = pageElement.querySelector(".canvasWrapper");
