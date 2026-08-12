@@ -51,7 +51,6 @@
           }
         ],
         "requiredToolGroups": [
-          { "id": "read-current-page", "anyOf": ["browser_extract_content", "browser_capture_page"] },
           { "id": "anchor-evidence", "anyOf": ["browser_highlight_text"] }
         ],
         "minAnnotations": 1,

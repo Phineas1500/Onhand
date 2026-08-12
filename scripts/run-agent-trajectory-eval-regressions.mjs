@@ -297,6 +297,47 @@ async function main() {
 			"viewer-wrapped PDF annotation actions must normalize into counted annotations",
 		);
 
+		// PDF text layers glue words across line boundaries, so the recorded
+		// quote may read "...compared with the samereference window." — the
+		// matcher must still map it to its passage (space-free fallback).
+		const gluedShaped = normalizeLiveTrajectoryTrace(
+			currentPageCase,
+			{
+				turn: {
+					reply: "It stays stable because each reading uses the same reference window. [1]",
+					pending: false,
+					error: false,
+					modelCalls: 2,
+					durationMs: 1400,
+					provisionalAnswerExposed: false,
+					toolTraces: [
+						{
+							toolName: "browser_pdf_read_pages",
+							state: "complete",
+							resultDetails: {
+								tab: { url: viewerWrappedUrl },
+								content: { text: "The calibration remains stable because every reading is compared with the same reference window." },
+							},
+						},
+					],
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "fixture-glued-highlight",
+							url: viewerWrappedUrl,
+							citationText: "Calibration notes - page 2The calibration remains stable because every reading iscompared with the samereference window.",
+						},
+					],
+				},
+			},
+			{ profile: "legacy", model: "fixture-model", iteration: 1, catalog },
+		);
+		assert.equal(
+			gluedShaped.annotations[0]?.annotationId,
+			"fixture-glued-highlight",
+			"glued PDF text-layer quotes must still map to their passage",
+		);
+
 		const splitHighlight = normalizeLiveTrajectoryTrace(
 			currentPageCase,
 			{

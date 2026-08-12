@@ -133,3 +133,46 @@ Re-run of the three-case isolated matrix against the deployed Luna worker
 
 - Fix `evidenceReceipt()` PDF action mapping, then re-score the two PDF cases;
   only after that are latency/call budgets worth tuning for Luna.
+
+## Matrix refresh — 2026-08-11 (Luna free tier, post-v3.x runtime)
+
+Re-run of the three-case isolated matrix (extension 0.4.5, legacy profile,
+Onhand Free `openai/gpt-5.6-luna`) after the v3.0–v3.4 behavior arc, with the
+evaluator receipt fixes below. Scores are honest measurements now, not floors.
+
+| Case | Score | July 31 | Latency | Model calls | Annotations counted |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| current-page-grounded-answer | **1.000 (pass)** | 1.000 (contract fail) | 12.0 s | 3 | 1 |
+| two-paper-comparison | 0.617 | 0.383 | 72.9 s | 10 | 1 |
+| selected-homework-workspace-research | 0.867 | 0.467 | 117.9 s | 16 | 3 |
+
+### Fixed this round
+
+- **New P0, found by the matrix and fixed in product:** background-tab PDF
+  viewer opens hung until the command budget expired ("Timed out waiting for
+  page command") — pdf.js display-intent rendering schedules every paint chunk
+  on requestAnimationFrame, which never fires while the viewer document is
+  hidden. Hidden documents now render with print intent (equivalent rasters).
+  This affected real Learning-mode background PDF reads, not just fixtures,
+  and explains the first refresh attempt scoring 0.517 with both PDF cases
+  concluding "the PDF is unreadable".
+- **P0 annotation receipts: closed.** `catalog.resolve` unwraps Onhand-viewer
+  URLs (the fixture URL rides the `url` query parameter), and passage matching
+  reads `pdfAnchor.textQuote.exact`/`matchedText` with a space-free fallback
+  for PDF text layers that glue words across line breaks. The homework case
+  went 0 → 3 annotations counted.
+- **current-page contract modernized:** the `read-current-page` tool group
+  predated capture-context answering; the runtime now legitimately answers
+  from the submit-time capture with a cited anchor, so the group is removed
+  (the annotation and evidence-slot requirements already prove grounding).
+
+### Remaining
+
+- P1 bounded execution on the free route is now the dominant deduction:
+  10–16 model calls, 23–32 tool calls, duplicate sources, and 73–118 s against
+  40–45 s budgets. One genuine model misquote (the paper-a anchor drops a
+  letter, so the recorded quote does not match the passage) costs the
+  remaining two-paper evidence slot.
+- Note for future reads: regression-suite smoke runs also emit Workshop spans
+  while the pilot bundle is loaded; filter by fixture URLs when querying the
+  database.

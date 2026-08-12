@@ -331,7 +331,16 @@ function actionMatchesPassage(action, passageText) {
 	]
 		.map(normalizedEvidenceText)
 		.filter((candidate) => candidate.length >= 8);
-	return candidates.some((candidate) => passage.includes(candidate) || candidate.includes(passage));
+	if (candidates.some((candidate) => passage.includes(candidate) || candidate.includes(passage))) return true;
+	// PDF text layers glue words across line and label boundaries ("with a" +
+	// "approximate" records as "aapproximate"), so space-sensitive containment
+	// misses genuine PDF quotes. Compare space-free forms as a fallback.
+	const passageCompact = passage.replace(/ /g, "");
+	if (passageCompact.length < 12) return false;
+	return candidates
+		.map((candidate) => candidate.replace(/ /g, ""))
+		.filter((candidate) => candidate.length >= 12)
+		.some((candidate) => passageCompact.includes(candidate) || candidate.includes(passageCompact));
 }
 
 function urlsInValue(value) {
