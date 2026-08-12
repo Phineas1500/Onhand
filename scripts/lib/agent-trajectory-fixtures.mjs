@@ -114,7 +114,7 @@ export function createTrajectoryFixtureCatalog(suite, baseUrl) {
 		return `${prefix}/${slug(testCase.id)}/tab/${slug(tab.id)}${extension}`;
 	};
 	const resourceUrl = (testCase, resource) => `${prefix}/${slug(testCase.id)}/resource/${slug(resource.id)}.pdf`;
-	return {
+	const catalog = {
 		baseUrl: prefix,
 		caseMap,
 		tabUrl,
@@ -128,7 +128,15 @@ export function createTrajectoryFixtureCatalog(suite, baseUrl) {
 			}
 			const marker = "/agent-trajectory/";
 			const markerIndex = url.pathname.indexOf(marker);
-			if (markerIndex < 0) return null;
+			if (markerIndex < 0) {
+				// PDF annotations recorded in the Onhand viewer carry the viewer URL
+				// (chrome-extension://.../pdf-viewer.html?url=<fixture pdf>), with the
+				// real fixture URL in the `url` query parameter. Unwrap and retry so
+				// PDF receipts map to their source instead of normalizing to zero
+				// annotations (the July pilot's P0 evaluator gap).
+				const wrapped = url.searchParams.get("url") || url.searchParams.get("pdfUrl") || "";
+				return wrapped && wrapped !== String(urlValue || "") ? catalog.resolve(wrapped) : null;
+			}
 			const parts = url.pathname.slice(markerIndex + marker.length).split("/").map((part) => decodeURIComponent(part.replace(/\.(?:html|pdf)$/i, "")));
 			const [caseId, kind, id] = parts;
 			const testCase = caseMap.get(caseId);
@@ -144,6 +152,7 @@ export function createTrajectoryFixtureCatalog(suite, baseUrl) {
 			return null;
 		},
 	};
+	return catalog;
 }
 
 function renderInteractionFixture(testCase) {
@@ -315,6 +324,10 @@ function actionMatchesPassage(action, passageText) {
 		action?.detail,
 		action?.noteText,
 		action?.anchor?.textQuote?.exact,
+		// PDF-viewer annotation actions carry their exact quote under pdfAnchor
+		// (and learning-enriched actions under matchedText), not anchor.
+		action?.pdfAnchor?.textQuote?.exact,
+		action?.matchedText,
 	]
 		.map(normalizedEvidenceText)
 		.filter((candidate) => candidate.length >= 8);

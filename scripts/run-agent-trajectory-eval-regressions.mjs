@@ -180,6 +180,16 @@ async function main() {
 		const tab = currentPageCase.workspace.tabs[0];
 		const tabUrl = catalog.tabUrl(currentPageCase, tab);
 		assert.equal(catalog.resolve(tabUrl)?.sourceId, "calibration-article");
+		// PDF annotations recorded in the Onhand viewer carry the viewer URL with
+		// the fixture URL wrapped in its `url` query parameter; resolve() must
+		// unwrap it (July pilot P0: PDF receipts normalized to zero annotations).
+		const viewerWrappedUrl = `chrome-extension://hpjpjeehgbloadhdidmecpijppodibim/pdf-viewer.html?url=${encodeURIComponent(tabUrl)}&page=3`;
+		assert.equal(
+			catalog.resolve(viewerWrappedUrl)?.sourceId,
+			"calibration-article",
+			"viewer-wrapped fixture URLs must resolve to their source",
+		);
+		assert.equal(catalog.resolve("chrome-extension://hpjpjeehgbloadhdidmecpijppodibim/pdf-viewer.html"), null, "a viewer URL without a wrapped fixture stays unresolved");
 		const selectedHomeworkCase = suite.cases.find((testCase) => testCase.id === "selected-homework-workspace-research");
 		const pruningResource = selectedHomeworkCase.workspace.resources.find((resource) => resource.id === "pruning-slides");
 		const pdf = buildTrajectoryPdf(pruningResource);
@@ -233,6 +243,59 @@ async function main() {
 		assert.equal(normalized.evidenceUses[0].passageId, "calibration-anchor");
 		assert.equal(normalized.annotations[0].annotationId, "fixture-highlight");
 		assert.equal(scoreTrajectory(currentPageCase, normalized).status, "pass");
+
+		// PDF-shaped receipts: the action's URL is the Onhand viewer URL wrapping
+		// the fixture, and the exact quote lives under pdfAnchor.textQuote.exact
+		// rather than citationText. Pre-fix these normalized to zero annotations
+		// (the July pilot's P0 evaluator gap), so PDF-case scores were floors.
+		const pdfShaped = normalizeLiveTrajectoryTrace(
+			currentPageCase,
+			{
+				turn: {
+					reply: "It stays stable because each reading uses the same reference window. [1]",
+					pending: false,
+					error: false,
+					modelCalls: 2,
+					durationMs: 1400,
+					provisionalAnswerExposed: false,
+					toolTraces: [
+						{
+							toolName: "browser_pdf_read_pages",
+							state: "complete",
+							resultDetails: {
+								tab: { url: viewerWrappedUrl },
+								content: { text: "The calibration remains stable because every reading is compared with the same reference window." },
+							},
+						},
+						{
+							toolName: "browser_highlight_text",
+							state: "complete",
+							resultDetails: {
+								tab: { url: viewerWrappedUrl },
+								annotation: { annotationId: "fixture-pdf-highlight" },
+							},
+						},
+					],
+					pageActions: [
+						{
+							type: "annotation",
+							annotationId: "fixture-pdf-highlight",
+							url: viewerWrappedUrl,
+							pdfAnchor: {
+								textQuote: { exact: "The calibration remains stable because every reading is compared with the same reference window." },
+							},
+						},
+					],
+				},
+			},
+			{ profile: "legacy", model: "fixture-model", iteration: 1, catalog },
+		);
+		validateTrajectoryTrace(pdfShaped);
+		assert.equal(
+			pdfShaped.annotations[0]?.annotationId,
+			"fixture-pdf-highlight",
+			"viewer-wrapped PDF annotation actions must normalize into counted annotations",
+		);
 
 		const splitHighlight = normalizeLiveTrajectoryTrace(
 			currentPageCase,
