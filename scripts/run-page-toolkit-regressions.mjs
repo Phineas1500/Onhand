@@ -1563,6 +1563,7 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 		},
 	);
 	const document = dom.window.document;
+	const collapsedStorageKey = "onhand-pr-review-gate-collapsed";
 	const approveButton = document.querySelector("#native-approve-button");
 	const approveButtonMarkup = approveButton.outerHTML;
 	let approveClicks = 0;
@@ -1632,6 +1633,7 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	assert.equal(collapseButton.getAttribute("aria-expanded"), "false");
 	assert.equal(collapsedTab.getAttribute("aria-expanded"), "false");
 	assert.strictEqual(gateRoot.activeElement, collapsedTab, "collapse should move focus to the restore tab");
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), "true", "collapse should persist across refreshes");
 
 	const repeated = toolkit.setPrReviewGate("locked", { detail: lockedDetail });
 	assert.equal(repeated?.state, "locked");
@@ -1668,12 +1670,31 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	assert.equal(host.hasAttribute("data-onhand-pr-gate-collapsed"), false, "the compact tab should restore the full gate");
 	assert.equal(collapseButton.getAttribute("aria-expanded"), "true");
 	assert.strictEqual(gateRoot.activeElement, collapseButton, "restoring should return focus to the collapse control");
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), null, "restoring should clear the collapsed preference");
 	collapseButton.click();
 	const ordinaryRelock = toolkit.setPrReviewGate("locked", { detail: "Try the saved check again." });
 	assert.equal(ordinaryRelock?.collapsed, true, "wrong-answer relocks should preserve collapse");
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), "true");
+
+	const hiddenForRefresh = toolkit.setPrReviewGate("hidden");
+	assert.equal(hiddenForRefresh?.removed, true, "refresh setup should remove the mounted gate");
+	const restored = toolkit.setPrReviewGate("locked", { detail: lockedDetail });
+	const restoredHost = document.querySelector("#onhand-pr-review-gate-host");
+	assert.equal(restored?.created, true, "a refresh should mount a new gate host");
+	assert.equal(restored?.collapsed, true, "the remounted gate should restore the collapsed preference");
+	assert.equal(restoredHost?.getAttribute("data-onhand-pr-gate-collapsed"), "true");
+	const restoredRoot = restoredHost?.shadowRoot || restoredHost;
+	const restoredCollapsedTab = restoredRoot?.querySelector(".collapsed-tab");
+	const restoredCollapseButton = restoredRoot?.querySelector(".collapse-button");
+	restoredCollapsedTab?.click();
+	assert.equal(restoredHost?.hasAttribute("data-onhand-pr-gate-collapsed"), false);
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), null, "expanding after refresh should clear the preference");
+	restoredCollapseButton?.click();
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), "true");
 	const newReviewLock = toolkit.setPrReviewGate("locked", { detail: lockedDetail, expand: true });
 	assert.equal(newReviewLock?.collapsed, false, "a new walkthrough should explicitly expand the gate");
-	assert.equal(host.hasAttribute("data-onhand-pr-gate-collapsed"), false);
+	assert.equal(restoredHost?.hasAttribute("data-onhand-pr-gate-collapsed"), false);
+	assert.equal(dom.window.localStorage.getItem(collapsedStorageKey), null, "a new walkthrough should clear stale collapse state");
 
 	assert.strictEqual(document.querySelector("#native-approve-button"), approveButton, "the gate should preserve GitHub's Approve button node");
 	assert.equal(approveButton.outerHTML, approveButtonMarkup, "the gate should not mutate GitHub's Approve button");
