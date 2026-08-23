@@ -1552,6 +1552,15 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 			<button id="native-approve-button" type="button">Approve</button>
 		</main>`,
 		"https://github.com/Phineas1500/Onhand/pull/77/changes",
+		{
+			fontUrls: {
+				newYorkRegular: "chrome-extension://onhand/fonts/NewYork.woff2",
+				newYorkItalic: "chrome-extension://onhand/fonts/NewYorkItalic.woff2",
+				ioskeleyRegular: "chrome-extension://onhand/fonts/IoskeleyMono-Regular.woff2",
+				ioskeleyBold: "chrome-extension://onhand/fonts/IoskeleyMono-Bold.woff2",
+				ioskeleyItalic: "chrome-extension://onhand/fonts/IoskeleyMono-Italic.woff2",
+			},
+		},
 	);
 	const document = dom.window.document;
 	const approveButton = document.querySelector("#native-approve-button");
@@ -1571,6 +1580,10 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 		"the PR review gate should mount only one host",
 	);
 	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "locked");
+	assert.equal(host.getAttribute("data-onhand-theme"), "light", "the gate should follow Onhand's explicit theme");
+	assert.equal(host.getAttribute("role"), "status");
+	assert.equal(host.getAttribute("aria-live"), "polite");
+	assert.equal(host.getAttribute("aria-atomic"), "true");
 	assert.equal(locked?.state, "locked", "setPrReviewGate should report the applied state");
 	const gateRoot = host.shadowRoot || host;
 	assert.ok(
@@ -1578,8 +1591,16 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 		"the locked gate should render the exact demo label",
 	);
 	assert.ok(gateRoot.textContent.includes(lockedDetail), "the locked gate should render the exact supplied detail");
+	assert.ok(gateRoot.textContent.includes("☞"), "the PR review gate should carry Onhand's hand mark");
 
 	const gateCss = [...gateRoot.querySelectorAll("style")].map((style) => style.textContent || "").join("\n");
+	assert.match(gateCss, /New York/, "the gate should use Onhand's editorial serif");
+	assert.match(gateCss, /Ioskeley Mono/, "the gate should use Onhand's utility mono");
+	assert.match(gateCss, /@font-face/, "the gate should load Onhand's bundled fonts");
+	assert.match(gateCss, /#ea9d34/i, "the locked state should use Onhand's gold learning color");
+	assert.match(gateCss, /#286983/i, "the unlocked state should use Onhand's pine success color");
+	assert.match(gateCss, /data-onhand-theme="dark"/, "the gate should support Onhand's explicit dark theme");
+	assert.match(gateCss, /prefers-reduced-motion:\s*reduce/, "the gate should respect reduced-motion preferences");
 	const hostRule = gateCss.match(/:host\s*\{(?<declarations>[^}]*)\}/s)?.groups?.declarations || "";
 	assert.ok(
 		host.style.position === "fixed" || /position\s*:\s*fixed/i.test(hostRule),

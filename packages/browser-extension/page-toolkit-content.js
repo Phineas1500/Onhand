@@ -4974,32 +4974,120 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			const shadow = host.attachShadow({ mode: "open" });
 			const style = document.createElement("style");
 			style.textContent = `
-				:host { all: initial; color-scheme: dark; }
+				${annotationFontFaces()}
+				:host {
+					all: initial;
+					color-scheme: light;
+					--onhand-base: #eee6dd;
+					--onhand-mantle: #e6dbd1;
+					--onhand-surface-2: #cac1b9;
+					--onhand-text: #575279;
+					--onhand-subtext: #797593;
+					--onhand-gold: #ea9d34;
+					--onhand-success: #286983;
+					--onhand-font-serif: "New York", "Iowan Old Style", Charter, Georgia, serif;
+					--onhand-font-mono: "Ioskeley Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+					--gate-accent: var(--onhand-gold);
+					--gate-tint: color-mix(in srgb, var(--onhand-gold) 9%, var(--onhand-mantle));
+					--gate-shadow: rgba(87, 82, 121, 0.14);
+				}
+				@media (prefers-color-scheme: dark) {
+					:host {
+						color-scheme: dark;
+						--onhand-base: #191724;
+						--onhand-mantle: #1f1d2e;
+						--onhand-surface-2: #44415a;
+						--onhand-text: #e0def4;
+						--onhand-subtext: #908caa;
+						--onhand-gold: #f6c177;
+						--onhand-success: #9ccfd8;
+						--gate-shadow: rgba(0, 0, 0, 0.3);
+					}
+				}
+				:host([data-onhand-theme="light"]) {
+					color-scheme: light;
+					--onhand-base: #eee6dd;
+					--onhand-mantle: #e6dbd1;
+					--onhand-surface-2: #cac1b9;
+					--onhand-text: #575279;
+					--onhand-subtext: #797593;
+					--onhand-gold: #ea9d34;
+					--onhand-success: #286983;
+					--gate-shadow: rgba(87, 82, 121, 0.14);
+				}
+				:host([data-onhand-theme="dark"]) {
+					color-scheme: dark;
+					--onhand-base: #191724;
+					--onhand-mantle: #1f1d2e;
+					--onhand-surface-2: #44415a;
+					--onhand-text: #e0def4;
+					--onhand-subtext: #908caa;
+					--onhand-gold: #f6c177;
+					--onhand-success: #9ccfd8;
+					--gate-shadow: rgba(0, 0, 0, 0.3);
+				}
+				:host([data-onhand-pr-gate-state="unlocked"]) {
+					--gate-accent: var(--onhand-success);
+					--gate-tint: color-mix(in srgb, var(--onhand-success) 9%, var(--onhand-mantle));
+				}
 				.gate {
 					box-sizing: border-box;
-					width: min(390px, calc(100vw - 48px));
-					padding: 11px 14px 10px 16px;
-					border: 1px solid #30363d;
-					border-left: 4px solid #f85149;
-					border-radius: 8px;
-					background: #0d1117;
-					box-shadow: 0 8px 24px rgba(1, 4, 9, 0.28);
-					color: #f0f6fc;
-					font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-					letter-spacing: -0.01em;
+					width: min(360px, calc(100vw - 48px));
+					display: grid;
+					grid-template-columns: 28px minmax(0, 1fr);
+					gap: 10px;
+					align-items: start;
+					padding: 11px 13px 12px 11px;
+					border: 1px solid var(--onhand-surface-2);
+					border-left: 3px solid var(--gate-accent);
+					border-radius: 0 4px 4px 0;
+					background: var(--gate-tint);
+					box-shadow: 0 2px 8px var(--gate-shadow);
+					color: var(--onhand-text);
 					opacity: 0;
-					transform: translateY(-6px);
+					transform: translateY(-4px);
 					animation: onhand-gate-enter 160ms ease-out forwards;
-					transition: border-color 160ms ease, box-shadow 160ms ease;
+					transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 				}
-				:host([data-onhand-pr-gate-state="unlocked"]) .gate {
-					border-left-color: #3fb950;
-					box-shadow: 0 8px 24px rgba(1, 4, 9, 0.28), 0 0 0 1px rgba(63, 185, 80, 0.14);
+				.mark {
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					width: 28px;
+					height: 28px;
+					color: var(--gate-accent);
+					font: 26px/1 "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", serif;
+					transform: translateY(-1px);
+					transition: color 160ms ease;
+				}
+				.content { min-width: 0; }
+				.eyebrow {
+					display: flex;
+					align-items: center;
+					gap: 6px;
+					margin-bottom: 4px;
+					color: var(--gate-accent);
+					font: 700 10px/1.2 var(--onhand-font-mono);
+					letter-spacing: 0.08em;
+					text-transform: uppercase;
+					transition: color 160ms ease;
+				}
+				.state-dot {
+					width: 5px;
+					height: 5px;
+					border-radius: 50%;
+					background: var(--gate-accent);
+					transition: background-color 160ms ease;
+				}
+				.label {
+					color: var(--onhand-text);
+					font: 620 14px/1.3 var(--onhand-font-serif);
+					letter-spacing: -0.01em;
 				}
 				.detail {
-					margin-top: 3px;
-					color: #8b949e;
-					font: 500 11px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+					margin-top: 2px;
+					color: color-mix(in srgb, var(--onhand-subtext) 45%, var(--onhand-text));
+					font: 400 12px/1.4 var(--onhand-font-serif);
 				}
 				.detail:empty { display: none; }
 				@keyframes onhand-gate-enter { to { opacity: 1; transform: translateY(0); } }
@@ -5010,17 +5098,34 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			`;
 			const gate = document.createElement("div");
 			gate.className = "gate";
+			const markNode = document.createElement("div");
+			markNode.className = "mark";
+			markNode.setAttribute("aria-hidden", "true");
+			markNode.textContent = "☞";
+			const contentNode = document.createElement("div");
+			contentNode.className = "content";
+			const eyebrowNode = document.createElement("div");
+			eyebrowNode.className = "eyebrow";
+			const stateDotNode = document.createElement("span");
+			stateDotNode.className = "state-dot";
+			stateDotNode.setAttribute("aria-hidden", "true");
+			const eyebrowTextNode = document.createElement("span");
+			eyebrowTextNode.textContent = "Onhand · PR review";
+			eyebrowNode.append(stateDotNode, eyebrowTextNode);
 			const labelNode = document.createElement("div");
 			labelNode.className = "label";
 			const detailNode = document.createElement("div");
 			detailNode.className = "detail";
-			gate.append(labelNode, detailNode);
+			contentNode.append(eyebrowNode, labelNode, detailNode);
+			gate.append(markNode, contentNode);
 			shadow.append(style, gate);
 			(document.documentElement || document.body).appendChild(host);
 		}
+		applyAnnotationThemeToElement(host);
 		host.setAttribute("data-onhand-pr-gate-state", normalizedState);
 		host.setAttribute("role", "status");
 		host.setAttribute("aria-live", "polite");
+		host.setAttribute("aria-atomic", "true");
 		host.setAttribute("aria-label", label);
 		const shadow = host.shadowRoot;
 		const labelNode = shadow?.querySelector(".label");
