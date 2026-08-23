@@ -13,8 +13,8 @@ binding = "ONHAND_ANALYTICS"
 dataset = "onhand_events"
 
 [vars]
-# A turn is roughly 3-6 model calls; 80 requests is ~15-25 turns/day.
-DAILY_REQUEST_CAP = "80"
+# A turn is roughly 3-6 model calls; 250 requests is ~40-80 turns/day.
+DAILY_REQUEST_CAP = "250"
 # Shared daily hosted-model spend cap. Set higher/lower in production as needed.
 DAILY_COST_CAP_USD = "5"
 # Stops runaway single turns while still allowing complex pages/PDFs.

@@ -30,7 +30,7 @@ completions to OpenRouter with Onhand's key.
 - client-visible model allowlist: `openai/gpt-5.6-luna`; requests
   whose message history contains image content are rewritten upstream to
   `mistralai/mistral-small-3.2-24b-instruct`
-- `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
+- `DAILY_REQUEST_CAP` (default 250 model calls ≈ 40-80 turns/day)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
 - `TURN_MODEL_CALL_CAP` (default 50 model calls in one Onhand UI turn)
 - `HEAVY_TURN_MODEL_CALLS`, `HEAVY_TURN_COST_USD`, and
@@ -53,8 +53,10 @@ After deploying, use [`FREE_TIER_OPS.md`](FREE_TIER_OPS.md) to query the
 Cloudflare Analytics Engine dataset for cost, latency, failures, quota pressure,
 and advanced runtime-inspection usage.
 
-At the measured ~1¢/turn, a maxed-out free device costs roughly
-$0.15-0.25/day; typical usage is far below that.
+In the 14-day operations sample ending August 20, 2026, completions averaged
+about `$0.00056` per model call. At that rate, a device using all 250 calls
+would cost about `$0.14/day`; typical usage is far below that, and the shared
+daily cost cap remains the backstop.
 
 ## Deploying
 

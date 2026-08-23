@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { __freeTierTest } from "../workers/free-tier/src/index.mjs";
+import worker, { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 
 const {
+	DEFAULT_DAILY_REQUEST_CAP,
 	FREE_TIER_TEXT_MODEL,
 	FREE_TIER_VISUAL_MODEL,
 	MAX_BODY_BYTES,
@@ -15,6 +16,7 @@ const {
 	valueContainsImage,
 } = __freeTierTest;
 
+assert.equal(DEFAULT_DAILY_REQUEST_CAP, 250, "the free tier should allow roughly 40-80 ordinary agent turns per device each day");
 assert.equal(MAX_BODY_BYTES, 2_500_000, "free-tier visual requests should have room for compressed image payloads");
 
 const textOnlyBody = { messages: [{ role: "user", content: "hello" }] };
@@ -101,5 +103,65 @@ assert.equal(quotaBypassAuthorized(requestWithBypass(""), bypassEnv, bypassDevic
 assert.equal(quotaBypassAuthorized(requestWithBypass(bypassSecret), { ...bypassEnv, ONHAND_FREE_QUOTA_BYPASS_DEVICE_HASHES: "" }, bypassDeviceHash), false);
 assert.equal(quotaBypassAuthorized(requestWithBypass(bypassSecret), bypassEnv, "other-device"), false);
 assert.equal(quotaBypassAuthorized(requestWithBypass(bypassSecret), { ...bypassEnv, ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT: String(Date.now() - 60_000) }, bypassDeviceHash), false);
+
+class MemoryKv {
+	constructor(entries = []) {
+		this.values = new Map(entries);
+		this.writes = [];
+	}
+
+	async get(key) {
+		return this.values.get(key) ?? null;
+	}
+
+	async put(key, value, options = {}) {
+		this.values.set(key, String(value));
+		this.writes.push({ key, value: String(value), options });
+	}
+}
+
+const quotaToken = "oft_quota_boundary_regression";
+const quotaKey = `use:${quotaToken}:${new Date().toISOString().slice(0, 10)}`;
+const quotaKv = new MemoryKv([
+	[`token:${quotaToken}`, JSON.stringify({ createdAt: new Date().toISOString() })],
+	[quotaKey, "249"],
+]);
+const quotaEnv = {
+	DAILY_COST_CAP_USD: "5",
+	DAILY_REQUEST_CAP: "250",
+	FREE_TIER_KV: quotaKv,
+	OPENROUTER_API_KEY: "unused-in-quota-boundary-test",
+	TURN_MODEL_CALL_CAP: "50",
+};
+const invalidQuotaRequest = () =>
+	new Request("https://example.test/v1/chat/completions", {
+		method: "POST",
+		headers: { Authorization: `Bearer ${quotaToken}` },
+		body: "not-json",
+	});
+
+quotaKv.values.set(quotaKey, "80");
+const previouslyCappedResponse = await worker.fetch(invalidQuotaRequest(), quotaEnv, {});
+assert.equal(previouslyCappedResponse.status, 400, "a device at the former cap of 80 should pass the raised quota gate");
+assert.equal(quotaKv.values.get(quotaKey), "81", "the first request after raising the cap should resume at 81");
+
+quotaKv.values.set(quotaKey, "249");
+const finalAllowedResponse = await worker.fetch(invalidQuotaRequest(), quotaEnv, {});
+assert.equal(finalAllowedResponse.status, 400, "request 250 should pass the daily quota gate and reach body validation");
+assert.equal(quotaKv.values.get(quotaKey), "250", "request 250 should consume the final daily quota slot");
+assert.deepEqual(
+	quotaKv.writes.at(-1),
+	{ key: quotaKey, value: "250", options: { expirationTtl: 60 * 60 * 48 } },
+	"the final allowed request should persist the counter with the normal daily-counter TTL",
+);
+
+const deniedResponse = await worker.fetch(invalidQuotaRequest(), quotaEnv, {});
+assert.equal(deniedResponse.status, 429, "request 251 should be rejected by the daily quota gate");
+assert.equal(quotaKv.values.get(quotaKey), "250", "a rejected request should not increment beyond the cap");
+assert.deepEqual(await deniedResponse.json(), {
+	error: {
+		message: "You've reached today's Onhand Free limit. It resets tomorrow — or switch to your own API key in options for unlimited use.",
+	},
+});
 
 console.log("Free-tier worker regressions: PASS");

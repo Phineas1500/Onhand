@@ -33,7 +33,7 @@ const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 const DEFAULT_DAILY_COST_CAP_USD = 5;
-const DEFAULT_DAILY_REQUEST_CAP = 80;
+const DEFAULT_DAILY_REQUEST_CAP = 250;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 // Tuned for Luna pricing (~2x DeepSeek per-turn realized cost); env-overridable.
@@ -1040,6 +1040,7 @@ export default {
 };
 
 export const __freeTierTest = {
+	DEFAULT_DAILY_REQUEST_CAP,
 	FREE_TIER_TEXT_MODEL,
 	FREE_TIER_VISUAL_MODEL,
 	MAX_BODY_BYTES,
