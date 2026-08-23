@@ -7723,6 +7723,20 @@
 		}
 	}
 
+	const GITHUB_PR_FILES_CHANGED_PATH_PATTERN = /\/pull\/\d+\/(?:files|changes)(?:\/|$)/;
+
+	function isRealtimePrModeContext(state = currentState) {
+		if (state?.preferences?.prMode !== true) return false;
+		return [state?.page?.url, state?.tab?.url].some((candidate) => {
+			try {
+				const url = new URL(String(candidate || ""));
+				return /(^|\.)github\.com$/i.test(url.hostname) && GITHUB_PR_FILES_CHANGED_PATH_PATTERN.test(url.pathname);
+			} catch {
+				return false;
+			}
+		});
+	}
+
 	function isRealtimeCalendarRequest(prompt) {
 		return /\b(calendar|schedule|appointment|available|availability|book|meeting|slot)\b/i.test(String(prompt || ""));
 	}
@@ -7731,6 +7745,11 @@
 		const text = String(prompt || "").trim();
 		if (!text) return false;
 		if (isRealtimeCalendarRequest(text)) return false;
+		// PR Mode owns its walkthrough, learner-state check, and review gate in the
+		// shared browser runtime. Keep every PR review utterance on that path even
+		// when explicit Socratic wording would normally use the standalone
+		// Realtime tutor.
+		if (isRealtimePrModeContext(state)) return true;
 		if (shouldRouteRealtimePromptThroughSocraticPlan(text, state)) return false;
 		return hasRealtimePageMaterialContext(state);
 	}
@@ -7786,6 +7805,26 @@
 		].join("\n\n");
 	}
 
+	function buildPrReviewRealtimeSpeechPrompt(label, value) {
+		const text = canonicalRealtimeSpeechText(value);
+		return [
+			`Speak this ${label} as an interactive PR review. The complete cited response is already visible in the sidebar.`,
+			"For an initial walkthrough, briefly explain every numbered risk in order, using one short sentence per risk.",
+			"If the response contains choices A, B, and C, speak all three choices in order, preserve what each choice means, and then ask the final comprehension question last.",
+			"For an incorrect or partial answer, speak the verdict and correction before the revised choices and question. For a correct answer, speak the verdict and mechanism concisely.",
+			"Never answer the comprehension question, omit one of its choices, add a closing summary after it, or introduce claims not present below.",
+			"Do not read headings, bullet markers, citations, DOIs, or URLs aloud.",
+			"Text:",
+			text,
+		].join("\n\n");
+	}
+
+	function buildRealtimeSpeechPrompt(label, value, state = currentState) {
+		return isRealtimePrModeContext(state)
+			? buildPrReviewRealtimeSpeechPrompt(label, value)
+			: buildConciseRealtimeSpeechPrompt(label, value);
+	}
+
 	function realtimePublishedAnswerLooksSubstantive(markdown, turn = realtimeActiveVoiceTurn) {
 		if (turn?.kind !== "realtime_response" || !hasRealtimePageMaterialContext(currentState)) return true;
 		const text = normalizeRealtimeTranscriptText(canonicalRealtimeSpeechText(markdown));
@@ -7822,7 +7861,7 @@
 
 	function narratePublishedRealtimeAnswer(markdown) {
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") return false;
-		const voicePrompt = buildConciseRealtimeSpeechPrompt("Onhand voice answer", markdown);
+		const voicePrompt = buildRealtimeSpeechPrompt("Onhand voice answer", markdown);
 		// The prompt must land as a conversation item, not only as response
 		// instructions: if the last user message is still a preamble's "say
 		// exactly this sentence", an instructions-only response repeats the
@@ -10303,6 +10342,7 @@
 					getRealtimeTutorInstructions: realtimeTutorInstructions,
 					getRealtimePublishedAnswerLooksSubstantive: realtimePublishedAnswerLooksSubstantive,
 					getShouldRouteRealtimePromptThroughOnhand: shouldRouteRealtimePromptThroughOnhand,
+					getRealtimeSpeechPrompt: (markdown, state = currentState) => buildRealtimeSpeechPrompt("Onhand voice answer", markdown, state),
 					getRealtimeInitialGroundedResponseOptions: realtimeInitialGroundedResponseOptions,
 					getRealtimeInputAudioConfig: realtimeInputAudioConfig,
 				sendRealtimeSessionUpdate,

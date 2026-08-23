@@ -2423,6 +2423,119 @@ async function assertRealtimeSocraticPublishAllowsGuidingQuestions() {
 	dom2.window.close();
 }
 
+async function assertRealtimePrModeRoutesExplicitSocraticVoiceThroughOnhand() {
+	const runtimeMessages = [];
+	const events = [];
+	const state = createLearningState();
+	state.preferences = {
+		...state.preferences,
+		prMode: true,
+		realtimeVoiceEnabled: true,
+	};
+	state.tab = {
+		id: 77,
+		title: "Files changed · Phineas1500/Onhand #77",
+		url: "https://github.com/Phineas1500/Onhand/pull/77/changes",
+	};
+	state.page = {
+		title: state.tab.title,
+		url: state.tab.url,
+		text: "Unified diff for Onhand PR 77.",
+	};
+	const dom = await renderSidebar(state, runtimeMessages, { submitPromptRequestId: "request-pr-mode-voice" });
+	const hooks = getRealtimeTestHooks(dom);
+	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
+	hooks.setRealtimeConnected(true);
+
+	assert.equal(
+		hooks.getShouldRouteRealtimePromptThroughOnhand("Quiz me on this PR."),
+		true,
+		"PR Mode must override the ordinary Learning-mode Socratic split so the persisted PR walkthrough and gate own the voice turn",
+	);
+
+	await hooks.handleRealtimeServerEvent(
+		JSON.stringify({
+			type: "conversation.item.input_audio_transcription.completed",
+			item_id: "item-pr-mode-voice",
+			transcript: "Quiz me on this PR.",
+		}),
+	);
+	await flushRealtimeTranscript(hooks, dom);
+
+	const submitMessage = runtimeMessages.find((message) => message?.type === "sidebar:submit-prompt");
+	assert.ok(submitMessage, "an explicit Socratic voice request on a PR changes page must use Onhand's persisted runtime");
+	assert.equal(submitMessage.prompt, "Quiz me on this PR.");
+	assert.equal(submitMessage.displayPrompt, "[Voice] Quiz me on this PR.");
+	assert.equal(submitMessage.learningMode, true);
+	assert.equal(submitMessage.source, "realtime-voice-direct-answer");
+	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-pr-mode-voice");
+	assert.equal(
+		events.some((event) => event.type === "response.create" && event.event_id?.includes("response_for_audio_transcript")),
+		false,
+		"Realtime must narrate the PR runtime's result rather than independently running the Socratic turn",
+	);
+
+	dom.window.close();
+}
+
+async function assertRealtimePrNarrationPreservesComprehensionGate() {
+	const state = createLearningState();
+	state.preferences = {
+		...state.preferences,
+		prMode: true,
+		realtimeVoiceEnabled: true,
+	};
+	state.tab = {
+		id: 77,
+		title: "Files changed · Phineas1500/Onhand #77",
+		url: "https://github.com/Phineas1500/Onhand/pull/77/changes",
+	};
+	state.page = {
+		title: state.tab.title,
+		url: state.tab.url,
+		text: "Unified diff for Onhand PR 77.",
+	};
+	const dom = await renderSidebar(state, []);
+	const hooks = getRealtimeTestHooks(dom);
+	assert.equal(typeof hooks.getRealtimeSpeechPrompt, "function", "the PR narration contract must be exposed to regressions");
+
+	const walkthrough = [
+		"The authorization fallback is the load-bearing change.",
+		"A. A missing token now always rejects the request.",
+		"B. A failed profile lookup can fall back to an unverified identity.",
+		"C. The retry loop can make one extra network request.",
+		'Which option best captures the risk, and why—answer as "LETTER, because REASON"?',
+	].join("\n");
+	const speechPrompt = hooks.getRealtimeSpeechPrompt(walkthrough);
+
+	assert.match(
+		speechPrompt,
+		/(?:preserve|read|speak)[\s\S]{0,160}(?:A\s*[\/,]\s*B\s*[\/,]\s*C|A, B, and C|all three (?:answer )?choices)/i,
+		"PR narration must explicitly preserve all three answer choices instead of summarizing them away",
+	);
+	assert.match(
+		speechPrompt,
+		/(?:final|comprehension)[\s\S]{0,100}question[\s\S]{0,100}(?:last|end)/i,
+		"PR narration must explicitly make the comprehension question the final spoken sentence",
+	);
+	assert.match(
+		speechPrompt,
+		/(?:do not|don't|never)[\s\S]{0,60}answer/i,
+		"PR narration must forbid the voice model from answering its own comprehension question",
+	);
+
+	const nonPrState = createLearningState();
+	const ordinarySpeechPrompt = hooks.getRealtimeSpeechPrompt("The ordinary answer is complete.", nonPrState);
+	assert.match(ordinarySpeechPrompt, /around fifteen seconds of speech/i, "non-PR narration should retain the existing concise voice contract");
+	assert.doesNotMatch(
+		ordinarySpeechPrompt,
+		/all three (?:answer )?choices|A\s*[\/,]\s*B\s*[\/,]\s*C/i,
+		"the PR comprehension narration contract must not leak into ordinary page answers",
+	);
+
+	dom.window.close();
+}
+
 async function assertRealtimeRejectedResponseReplaysWithOptions() {
 	const dom = await renderSidebar(createState({ preferences: { realtimeVoiceEnabled: true } }), []);
 	const hooks = dom.window.__onhandSidebarTestHooks;
@@ -3535,8 +3648,13 @@ async function assertRealtimeDirectAnswerPreambleQueuesFinalNarration() {
 	const conciseVoiceSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/sidebar.js", import.meta.url), "utf8");
 	assert.match(
 		conciseVoiceSource,
-		/buildConciseRealtimeSpeechPrompt\("Onhand voice answer", markdown\)/,
-		"published answers must narrate through the concise speech prompt",
+		/buildRealtimeSpeechPrompt\("Onhand voice answer", markdown\)/,
+		"published answers must narrate through the context-aware speech prompt",
+	);
+	assert.match(
+		conciseVoiceSource,
+		/buildRealtimeSpeechPrompt[\s\S]{0,300}buildConciseRealtimeSpeechPrompt/,
+		"ordinary published answers must retain the concise speech prompt as the non-PR fallback",
 	);
 	assert.doesNotMatch(
 		conciseVoiceSource,
@@ -4958,6 +5076,8 @@ await assertRealtimeMicMuteControl();
 await assertRealtimeBargeInClearsOutputAudio();
 await assertRealtimeLearningModeReachesVoiceInstructions();
 await assertRealtimeSocraticPublishAllowsGuidingQuestions();
+await assertRealtimePrModeRoutesExplicitSocraticVoiceThroughOnhand();
+await assertRealtimePrNarrationPreservesComprehensionGate();
 await assertRealtimeRejectedResponseReplaysWithOptions();
 await assertRealtimeLocalBargeIn();
 await assertRealtimeVoiceDisabledState();
