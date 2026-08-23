@@ -67,6 +67,7 @@ const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
 const codexFastModeEnabledInput = document.getElementById("codexFastModeEnabled");
 const experimentalModelLaneClassifierInput = document.getElementById("experimentalModelLaneClassifier");
+const prModeInput = document.getElementById("prMode");
 const statusEl = document.getElementById("status");
 const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
@@ -357,6 +358,7 @@ async function loadForm() {
 	// first-run Options save (e.g. adding an API key) would write an explicit
 	// false and silently opt the user out before their first turn.
 	experimentalModelLaneClassifierInput.checked = runtimeSettings.experimentalModelLaneClassifier !== false;
+	prModeInput.checked = runtimeSettings.prMode === true;
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
 	syncAuthModeFields();
@@ -407,6 +409,7 @@ async function save() {
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
 		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
 		experimentalModelLaneClassifier: Boolean(experimentalModelLaneClassifierInput.checked),
+		prMode: Boolean(prModeInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});

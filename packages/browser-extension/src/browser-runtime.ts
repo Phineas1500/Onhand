@@ -114,9 +114,12 @@ interface RuntimeSettings {
 	// Hidden experiment flag. Searchable source content is still persisted only
 	// when a capture explicitly opts in with includeSourceContent=true.
 	sourceMemoryEnabled: boolean;
+	// Hackathon demo flag. When enabled, GitHub PR Files changed pages use the
+	// guided PR walkthrough profile and its Socratic completion check.
+	prMode: boolean;
 }
 
-type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching";
+type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching" | "pr-walkthrough";
 type ReasoningEffort = "none" | "low" | "medium";
 type TextVerbosity = "low" | "medium";
 
@@ -592,7 +595,19 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	modelLaneClassifierDefaultMigrated: false,
 	codexFastModeEnabled: false,
 	sourceMemoryEnabled: false,
+	prMode: false,
 };
+
+const GITHUB_PR_FILES_CHANGED_PATH_PATTERN = /\/pull\/\d+\/(?:files|changes)(?:\/|$)/;
+
+function isGithubPrFilesChangedUrl(value: unknown) {
+	try {
+		const url = new URL(String(value || ""));
+		return /(^|\.)github\.com$/i.test(url.hostname) && GITHUB_PR_FILES_CHANGED_PATH_PATTERN.test(url.pathname);
+	} catch {
+		return false;
+	}
+}
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 const ACTIVE_EXECUTION_PROFILE = resolveExecutionProfile({ legacyOnly: true }).profile;
@@ -2572,6 +2587,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		experimentalModelLaneClassifier: settings.experimentalModelLaneClassifier,
 		codexFastModeEnabled: settings.codexFastModeEnabled,
 		sourceMemoryEnabled: settings.sourceMemoryEnabled,
+		prMode: settings.prMode,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -6535,9 +6551,34 @@ function assistantMessageTextContent(message: any) {
 }
 
 
-function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfile {
+const PR_MODE_FINAL_DIRECTIVE = `PR Mode overrides the generic Learning instructions for this request.
+- Complete the walkthrough before asking anything. Do not use a question mark in the walkthrough or offer optional follow-up work.
+- Stay on the initial GitHub PR Files changed tab. Do not open, activate, or read other tabs; do not navigate to .diff, .patch, raw files, GitHub APIs, saved sources, or fallback pages.
+- Read the current page once with browser_extract_content. Use the PR title, any description actually exposed on this surface, and the complete small unified diff. Do not claim the PR description was read if this surface does not expose it.
+- Choose exactly four distinct risky or load-bearing changed hunks. For each hunk, call browser_highlight_text on one exact changed line, then call browser_show_note on that annotation with one short explanation of what changed and why it matters. Keep all four highlights and all four notes on this initial tab.
+- Give a compact four-item walkthrough and cite every highlight with its returned annotation id. Do not leave uncited marks.
+- After the walkthrough, ask exactly one short comprehension question about the most important highlighted hunk. The question must be the final sentence and the only question in the reply. Do not answer it.
+- Call onhand_record_learning_event exactly once with kind "check_opened", a stable conceptId and conceptLabel, the exact final question as promptText, and the annotationId returned for the hunk being tested.`;
+
+function buildReasoningProfile(
+	settings: RuntimeSettings,
+	prompt: string,
+	attachments: any[] = [],
+	learningMode = false,
+	activeUrl = "",
+): ReasoningProfile {
 	void attachments;
 	void learningMode;
+	if (settings.prMode === true && isGithubPrFilesChangedUrl(activeUrl)) {
+		return {
+			mode: "pr-walkthrough",
+			reason: "PR Mode is enabled on a GitHub Files changed page.",
+			reasoningEffort: "low",
+			textVerbosity: "low",
+			maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
+			promptPolicy: PR_MODE_FINAL_DIRECTIVE,
+		};
+	}
 	if (promptAsksForDocumentReviewMarkup(prompt)) {
 		// Checked before compact teaching: long pasted feedback routinely trips
 		// the teaching/structured keyword predicates ("summary", "approach"),
@@ -8269,6 +8310,7 @@ function buildLauncherPrompt(
 		...(toolInventory ? ["", "Available browser tools for this request:", toolInventory] : []),
 		"Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Use a small table only for a genuine multi-dimension comparison or an explicit request.",
 		...(learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []),
+		...(reasoningProfile.mode === "pr-walkthrough" ? ["", PR_MODE_FINAL_DIRECTIVE] : []),
 	]
 		.filter((line, index, lines) => {
 			if (typeof line !== "string") return true;
@@ -10450,10 +10492,12 @@ export const __browserRuntimeTest = {
 	buildLearningWorkspaceEvidenceRetryPromptForTest: buildLearningWorkspaceEvidenceRetryPrompt,
 	hasCompletedNonActiveWorkspaceReadForTest: hasCompletedNonActiveWorkspaceRead,
 	promptAsksForDocumentReviewMarkupForTest: promptAsksForDocumentReviewMarkup,
+	isGithubPrFilesChangedUrlForTest: isGithubPrFilesChangedUrl,
 	buildReviewExtractionFirstGuardResultForTest: buildReviewExtractionFirstGuardResult,
 	buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
 	buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
 	buildReasoningProfileForTest: buildReasoningProfile,
+	buildLauncherPromptForTest: buildLauncherPrompt,
 	ownWordsPromptTextForTest: ownWordsPromptText,
 	promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
 	promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
@@ -11951,6 +11995,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
 				sourceMemoryEnabled: rawSettings.sourceMemoryEnabled === true,
+				prMode: rawSettings.prMode === true,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
@@ -15359,6 +15404,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 				sourceMemoryEnabled: (nextPartial.sourceMemoryEnabled ?? store.settings.sourceMemoryEnabled) === true,
+				prMode: (nextPartial.prMode ?? store.settings.prMode) === true,
 			};
 			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
@@ -15722,7 +15768,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			const targetWindowId =
 				typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : undefined;
 			const recentConversation = buildRecentConversationContext(session);
-			const learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
+			let learningMode = Boolean(request?.learningMode ?? store.settings.learningMode);
 			const rawSource = String(request?.source || "sidebar").trim() || "sidebar";
 			const promptEvalEnabled = isPromptEvalSource(rawSource);
 			const promptEvalVariant = promptEvalEnabled ? String(request?.evalVariant || "").trim().slice(0, 80) : "";
@@ -15837,6 +15883,19 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						learningMode,
 					});
 				}
+				const prModeActive =
+					requestSettings.prMode === true && isGithubPrFilesChangedUrl(browserContextDetails.activeTab?.url);
+				if (prModeActive) {
+					// PR Mode is intrinsically Socratic: its final walkthrough question must
+					// enter the existing learner-state pipeline even when the global Learning
+					// toggle is off. Do not persistently change the user's global preference.
+					learningMode = true;
+					requestSettings.learningMode = true;
+					session.learnerState = setLearnerStateMode(session.learnerState, "learning");
+					activeRequest.learningMode = true;
+					activeRequest.settings = requestSettings;
+				}
+				activeRequest.prModeActive = prModeActive;
 				if (modelIntentClassificationPromise) {
 					await modelIntentClassificationPromise;
 					activeRequest.modelIntentClassification = modelIntentClassification;
@@ -15848,7 +15907,13 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					activeRequest.learningResearchPlan = learningResearchPlan;
 					activeRequest.suppressAssistantDraftUntilResearchComplete = Boolean(learningResearchPlan?.requiresWorkspaceResearch);
 				}
-				const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
+				const reasoningProfile = buildReasoningProfile(
+					requestSettings,
+					prompt,
+					attachments,
+					learningMode,
+					browserContextDetails.activeTab?.url || "",
+				);
 				const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
 				const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl
 					? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.`

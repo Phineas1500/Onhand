@@ -1923,6 +1923,69 @@ async function assertDocumentReviewMarkupLane() {
 	assert.equal(surplusTeachingGuard("browser_highlight_text", "highlight_text", realPhrasing, marks(4)), null, "teaching highlight cap must not apply to review markup");
 }
 
+async function assertPrModeWalkthroughProfile() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const {
+		buildLauncherPromptForTest: buildLauncherPrompt,
+		buildReasoningProfileForTest: buildProfile,
+		createEmptyLearnerState,
+		isGithubPrFilesChangedUrlForTest: isPrFilesChangedUrl,
+	} = __browserRuntimeTest;
+	const changesUrl = "https://github.com/Phineas1500/Onhand/pull/77/changes";
+	const filesUrl = "https://github.com/Phineas1500/Onhand/pull/77/files";
+	const prompt = "Walk me through this PR.";
+	const enabledSettings = { prMode: true };
+
+	assert.equal(isPrFilesChangedUrl(changesUrl), true);
+	assert.equal(isPrFilesChangedUrl(`${changesUrl}/293cd4fe26890fc1518c06b216638ad14dfbcece`), true);
+	assert.equal(isPrFilesChangedUrl(`${filesUrl}?diff=unified`), true);
+	assert.equal(isPrFilesChangedUrl("https://github.com/Phineas1500/Onhand/pull/77"), false);
+	assert.equal(isPrFilesChangedUrl("https://github.com/Phineas1500/Onhand/pull/77/commits"), false);
+	assert.equal(isPrFilesChangedUrl("https://github.com/Phineas1500/Onhand/pull/77.diff"), false);
+	assert.equal(isPrFilesChangedUrl("https://github.example.test/Phineas1500/Onhand/pull/77/changes"), false);
+	assert.equal(isPrFilesChangedUrl("https://example.test/pull/77/changes"), false);
+
+	const profile = buildProfile(enabledSettings, prompt, [], false, changesUrl);
+	assert.equal(profile.mode, "pr-walkthrough");
+	assert.match(profile.reason, /PR Mode is enabled/i);
+	assert.match(profile.promptPolicy, /browser_extract_content/);
+	assert.match(profile.promptPolicy, /exactly four distinct risky or load-bearing changed hunks/);
+	assert.match(profile.promptPolicy, /all four highlights and all four notes/);
+	assert.match(profile.promptPolicy, /Do not open, activate, or read other tabs/);
+	assert.match(profile.promptPolicy, /final sentence and the only question/);
+	assert.match(profile.promptPolicy, /kind "check_opened"/);
+	assert.notEqual(buildProfile({ prMode: false }, prompt, [], false, changesUrl).mode, "pr-walkthrough", "flag-off must preserve normal routing");
+	assert.notEqual(buildProfile(enabledSettings, prompt, [], false, "https://github.com/Phineas1500/Onhand/pull/77").mode, "pr-walkthrough");
+
+	const launcher = buildLauncherPrompt(
+		prompt,
+		`Active tab title: Prepare Onhand v0.4.3\nActive tab URL: ${changesUrl}`,
+		[],
+		true,
+		profile,
+		[],
+		"",
+		createEmptyLearnerState("learning"),
+	);
+	const learningAppendIndex = launcher.lastIndexOf("Learning is enabled for this request.");
+	const finalPrDirectiveIndex = launcher.lastIndexOf("PR Mode overrides the generic Learning instructions");
+	assert.ok(learningAppendIndex >= 0, "PR Mode should use the existing Learning event pipeline");
+	assert.ok(finalPrDirectiveIndex > learningAppendIndex, "the PR-specific tour-then-question rule must follow and override generic ask-first guidance");
+
+	const { readFile } = await import("node:fs/promises");
+	const [runtimeSource, backgroundSource, optionsHtml, optionsJs] = await Promise.all([
+		readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8"),
+		readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8"),
+		readFile(new URL("../packages/browser-extension/options.html", import.meta.url), "utf8"),
+		readFile(new URL("../packages/browser-extension/options.js", import.meta.url), "utf8"),
+	]);
+	assert.match(runtimeSource, /prMode:\s*rawSettings\.prMode === true/, "stored PR Mode must load as an explicit opt-in");
+	assert.match(runtimeSource, /prMode:\s*\(nextPartial\.prMode \?\? store\.settings\.prMode\) === true/, "unrelated settings saves must preserve PR Mode");
+	assert.match(backgroundSource, /prMode:\s*message\.prMode/, "background settings forwarding must include PR Mode");
+	assert.match(optionsHtml, /id="prMode"/, "Options must expose the hackathon PR Mode flag");
+	assert.match(optionsJs, /prMode:\s*Boolean\(prModeInput\.checked\)/, "Options must persist the PR Mode flag");
+}
+
 async function assertLanePredicatesClassifyOnOwnWords() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const {
@@ -10822,6 +10885,7 @@ async function main() {
 	await assertSentryDiagnosticsGateAndScrub();
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();
+	await assertPrModeWalkthroughProfile();
 	await assertLanePredicatesClassifyOnOwnWords();
 	await assertLanePolicyProseMatchesEnforcedBudgets();
 	await assertBlankReplyRetryWaitsForAgentIdle();

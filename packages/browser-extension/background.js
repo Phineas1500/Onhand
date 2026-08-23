@@ -14665,6 +14665,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				codexFastModeEnabled: message.codexFastModeEnabled,
 				sourceMemoryEnabled: message.sourceMemoryEnabled,
+				prMode: message.prMode,
 			});
 			sendResponse({
 				ok: true,

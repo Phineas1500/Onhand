@@ -149465,8 +149465,18 @@ var DEFAULT_SETTINGS = {
   experimentalModelLaneClassifier: true,
   modelLaneClassifierDefaultMigrated: false,
   codexFastModeEnabled: false,
-  sourceMemoryEnabled: false
+  sourceMemoryEnabled: false,
+  prMode: false
 };
+var GITHUB_PR_FILES_CHANGED_PATH_PATTERN = /\/pull\/\d+\/(?:files|changes)(?:\/|$)/;
+function isGithubPrFilesChangedUrl(value) {
+  try {
+    const url2 = new URL(String(value || ""));
+    return /(^|\.)github\.com$/i.test(url2.hostname) && GITHUB_PR_FILES_CHANGED_PATH_PATTERN.test(url2.pathname);
+  } catch {
+    return false;
+  }
+}
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var ACTIVE_EXECUTION_PROFILE = resolveExecutionProfile({ legacyOnly: true }).profile;
 var smokeModelRegistration = null;
@@ -151120,6 +151130,7 @@ function buildPublicSettings(settings2) {
     experimentalModelLaneClassifier: settings2.experimentalModelLaneClassifier,
     codexFastModeEnabled: settings2.codexFastModeEnabled,
     sourceMemoryEnabled: settings2.sourceMemoryEnabled,
+    prMode: settings2.prMode,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
@@ -153525,9 +153536,27 @@ function assistantMessageTextContent(message) {
   if (typeof message.content === "string") return message.content;
   return (Array.isArray(message.content) ? message.content : []).filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n");
 }
-function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false) {
+var PR_MODE_FINAL_DIRECTIVE = `PR Mode overrides the generic Learning instructions for this request.
+- Complete the walkthrough before asking anything. Do not use a question mark in the walkthrough or offer optional follow-up work.
+- Stay on the initial GitHub PR Files changed tab. Do not open, activate, or read other tabs; do not navigate to .diff, .patch, raw files, GitHub APIs, saved sources, or fallback pages.
+- Read the current page once with browser_extract_content. Use the PR title, any description actually exposed on this surface, and the complete small unified diff. Do not claim the PR description was read if this surface does not expose it.
+- Choose exactly four distinct risky or load-bearing changed hunks. For each hunk, call browser_highlight_text on one exact changed line, then call browser_show_note on that annotation with one short explanation of what changed and why it matters. Keep all four highlights and all four notes on this initial tab.
+- Give a compact four-item walkthrough and cite every highlight with its returned annotation id. Do not leave uncited marks.
+- After the walkthrough, ask exactly one short comprehension question about the most important highlighted hunk. The question must be the final sentence and the only question in the reply. Do not answer it.
+- Call onhand_record_learning_event exactly once with kind "check_opened", a stable conceptId and conceptLabel, the exact final question as promptText, and the annotationId returned for the hunk being tested.`;
+function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false, activeUrl = "") {
   void attachments;
   void learningMode;
+  if (settings2.prMode === true && isGithubPrFilesChangedUrl(activeUrl)) {
+    return {
+      mode: "pr-walkthrough",
+      reason: "PR Mode is enabled on a GitHub Files changed page.",
+      reasoningEffort: "low",
+      textVerbosity: "low",
+      maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
+      promptPolicy: PR_MODE_FINAL_DIRECTIVE
+    };
+  }
   if (promptAsksForDocumentReviewMarkup(prompt)) {
     return {
       mode: "document-review",
@@ -154917,7 +154946,8 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     ...evalLauncherAppend ? ["", "Temporary prompt-eval launcher policy candidate:", evalLauncherAppend] : [],
     ...toolInventory ? ["", "Available browser tools for this request:", toolInventory] : [],
     "Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Use a small table only for a genuine multi-dimension comparison or an explicit request.",
-    ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []
+    ...learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : [],
+    ...reasoningProfile.mode === "pr-walkthrough" ? ["", PR_MODE_FINAL_DIRECTIVE] : []
   ].filter((line, index, lines) => {
     if (typeof line !== "string") return true;
     if (toolSpecificPolicyLines.includes(line)) return lines.lastIndexOf(line) === index;
@@ -156615,10 +156645,12 @@ var __browserRuntimeTest = {
   buildLearningWorkspaceEvidenceRetryPromptForTest: buildLearningWorkspaceEvidenceRetryPrompt,
   hasCompletedNonActiveWorkspaceReadForTest: hasCompletedNonActiveWorkspaceRead,
   promptAsksForDocumentReviewMarkupForTest: promptAsksForDocumentReviewMarkup,
+  isGithubPrFilesChangedUrlForTest: isGithubPrFilesChangedUrl,
   buildReviewExtractionFirstGuardResultForTest: buildReviewExtractionFirstGuardResult,
   buildSurplusReviewHighlightGuardResultForTest: buildSurplusReviewHighlightGuardResult,
   buildSurplusReviewNoteGuardResultForTest: buildSurplusReviewNoteGuardResult,
   buildReasoningProfileForTest: buildReasoningProfile,
+  buildLauncherPromptForTest: buildLauncherPrompt,
   ownWordsPromptTextForTest: ownWordsPromptText,
   promptAsksForSinglePageComparisonForTest: promptAsksForSinglePageComparison,
   promptAsksForCompactPageTeachingForTest: promptAsksForCompactPageTeaching,
@@ -157991,7 +158023,8 @@ function createOnhandBrowserRuntime(host) {
         experimentalModelLaneClassifier: classifierPreviouslyMigrated ? rawSettings.experimentalModelLaneClassifier !== false : DEFAULT_SETTINGS.experimentalModelLaneClassifier,
         modelLaneClassifierDefaultMigrated: true,
         codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
-        sourceMemoryEnabled: rawSettings.sourceMemoryEnabled === true
+        sourceMemoryEnabled: rawSettings.sourceMemoryEnabled === true,
+        prMode: rawSettings.prMode === true
       };
       const sessions = {};
       for (const record2 of await getAllSessionRecords()) {
@@ -161003,7 +161036,8 @@ function createOnhandBrowserRuntime(host) {
         // now an authoritative opt-out, not a legacy artifact.
         modelLaneClassifierDefaultMigrated: true,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true,
-        sourceMemoryEnabled: (nextPartial.sourceMemoryEnabled ?? store2.settings.sourceMemoryEnabled) === true
+        sourceMemoryEnabled: (nextPartial.sourceMemoryEnabled ?? store2.settings.sourceMemoryEnabled) === true,
+        prMode: (nextPartial.prMode ?? store2.settings.prMode) === true
       };
       sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
       const session = store2.sessions[store2.currentSessionId];
@@ -161332,7 +161366,7 @@ function createOnhandBrowserRuntime(host) {
       const requestId = crypto.randomUUID();
       const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
       const recentConversation = buildRecentConversationContext(session);
-      const learningMode = Boolean(request?.learningMode ?? store2.settings.learningMode);
+      let learningMode = Boolean(request?.learningMode ?? store2.settings.learningMode);
       const rawSource = String(request?.source || "sidebar").trim() || "sidebar";
       const promptEvalEnabled = isPromptEvalSource(rawSource);
       const promptEvalVariant = promptEvalEnabled ? String(request?.evalVariant || "").trim().slice(0, 80) : "";
@@ -161433,6 +161467,15 @@ function createOnhandBrowserRuntime(host) {
             learningMode
           });
         }
+        const prModeActive = requestSettings.prMode === true && isGithubPrFilesChangedUrl(browserContextDetails.activeTab?.url);
+        if (prModeActive) {
+          learningMode = true;
+          requestSettings.learningMode = true;
+          session.learnerState = setLearnerStateMode(session.learnerState, "learning");
+          activeRequest.learningMode = true;
+          activeRequest.settings = requestSettings;
+        }
+        activeRequest.prModeActive = prModeActive;
         if (modelIntentClassificationPromise) {
           await modelIntentClassificationPromise;
           activeRequest.modelIntentClassification = modelIntentClassification;
@@ -161444,7 +161487,13 @@ function createOnhandBrowserRuntime(host) {
           activeRequest.learningResearchPlan = learningResearchPlan;
           activeRequest.suppressAssistantDraftUntilResearchComplete = Boolean(learningResearchPlan?.requiresWorkspaceResearch);
         }
-        const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
+        const reasoningProfile = buildReasoningProfile(
+          requestSettings,
+          prompt,
+          attachments,
+          learningMode,
+          browserContextDetails.activeTab?.url || ""
+        );
         const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
         const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl ? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.` : "";
         const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
