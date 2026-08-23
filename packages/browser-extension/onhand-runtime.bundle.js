@@ -157955,11 +157955,16 @@ function createOnhandBrowserRuntime(host) {
   let activeAgent = null;
   let activeDevelopmentAgentObserver = null;
   let activeRequest = null;
-  async function syncActivePrReviewGate(state, detail = "") {
+  async function syncActivePrReviewGate(state, detail = "", options = {}) {
     const tabId = Number(activeRequest?.initialActiveTab?.id || 0);
     if (!activeRequest?.prModeActive || !Number.isFinite(tabId) || tabId <= 0) return null;
     try {
-      return await host.runCommand("set_pr_review_gate", { tabId, state, detail });
+      return await host.runCommand("set_pr_review_gate", {
+        tabId,
+        state,
+        detail,
+        expand: options.expand === true
+      });
     } catch (error52) {
       host.log?.("PR review gate update failed", state, error52 instanceof Error ? error52.message : String(error52));
       return null;
@@ -161558,7 +161563,8 @@ function createOnhandBrowserRuntime(host) {
         if (prModeActive) {
           await syncActivePrReviewGate(
             "locked",
-            existingPrCheck ? "Explain the highlighted risk to unlock." : "Complete the walkthrough check to unlock."
+            existingPrCheck ? "Explain the highlighted risk to unlock." : "Complete the walkthrough check to unlock.",
+            { expand: !existingPrCheck }
           );
         }
         if (modelIntentClassificationPromise) {

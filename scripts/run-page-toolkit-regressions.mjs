@@ -1581,11 +1581,12 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	);
 	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "locked");
 	assert.equal(host.getAttribute("data-onhand-theme"), "light", "the gate should follow Onhand's explicit theme");
-	assert.equal(host.getAttribute("role"), "status");
-	assert.equal(host.getAttribute("aria-live"), "polite");
-	assert.equal(host.getAttribute("aria-atomic"), "true");
 	assert.equal(locked?.state, "locked", "setPrReviewGate should report the applied state");
 	const gateRoot = host.shadowRoot || host;
+	const statusNode = gateRoot.querySelector(".status-announcer");
+	assert.equal(statusNode?.getAttribute("role"), "status");
+	assert.equal(statusNode?.getAttribute("aria-live"), "polite");
+	assert.equal(statusNode?.getAttribute("aria-atomic"), "true");
 	assert.ok(
 		gateRoot.textContent.includes("Onhand Review Gate — 🔒 LOCKED"),
 		"the locked gate should render the exact demo label",
@@ -1610,9 +1611,31 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 		host.style.pointerEvents === "none" || /pointer-events\s*:\s*none/i.test(hostRule),
 		"the PR review gate host should not intercept GitHub controls",
 	);
+	assert.match(
+		gateCss,
+		/\.collapse-button[\s\S]*?pointer-events\s*:\s*auto/i,
+		"only the gate controls should opt back into pointer interaction",
+	);
+
+	const collapseButton = gateRoot.querySelector(".collapse-button");
+	const collapsedTab = gateRoot.querySelector(".collapsed-tab");
+	assert.ok(collapseButton, "the expanded gate should expose a collapse control");
+	assert.ok(collapsedTab, "the gate should retain a compact restore tab");
+	assert.equal(host.hasAttribute("data-onhand-pr-gate-collapsed"), false, "the initial gate should be expanded");
+	assert.equal(collapseButton.getAttribute("aria-expanded"), "true");
+	assert.match(collapsedTab.getAttribute("aria-label") || "", /locked/i);
+	assert.ok(statusNode.textContent.includes(lockedDetail), "the live status should announce the locked detail");
+
+	collapseButton.click();
+	assert.equal(host.getAttribute("data-onhand-pr-gate-collapsed"), "true", "collapse should hide only the full gate");
+	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "locked", "collapse must not change gate state");
+	assert.equal(collapseButton.getAttribute("aria-expanded"), "false");
+	assert.equal(collapsedTab.getAttribute("aria-expanded"), "false");
+	assert.strictEqual(gateRoot.activeElement, collapsedTab, "collapse should move focus to the restore tab");
 
 	const repeated = toolkit.setPrReviewGate("locked", { detail: lockedDetail });
 	assert.equal(repeated?.state, "locked");
+	assert.equal(repeated?.collapsed, true, "ordinary locked updates should preserve a user's collapsed choice");
 	assert.strictEqual(
 		document.querySelector("#onhand-pr-review-gate-host"),
 		host,
@@ -1627,6 +1650,7 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	const unlockedDetail = "You correctly explained the authorization fallback.";
 	const unlocked = toolkit.setPrReviewGate("unlocked", { detail: unlockedDetail });
 	assert.equal(unlocked?.state, "unlocked", "setPrReviewGate should report the unlocked state");
+	assert.equal(unlocked?.collapsed, true, "unlocking should update the compact tab without forcing it open");
 	assert.strictEqual(document.querySelector("#onhand-pr-review-gate-host"), host, "unlocking should reuse the gate host");
 	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "unlocked");
 	assert.ok(
@@ -1636,6 +1660,20 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	assert.ok(gateRoot.textContent.includes(unlockedDetail), "the unlocked gate should render the exact supplied detail");
 	assert.ok(!gateRoot.textContent.includes("🔒 LOCKED"), "unlocking should replace the locked label");
 	assert.ok(!gateRoot.textContent.includes(lockedDetail), "unlocking should replace the locked detail");
+	assert.match(collapsedTab.getAttribute("aria-label") || "", /unlocked/i);
+	assert.ok(collapsedTab.textContent.includes("🔓"), "the compact tab should expose unlocked state without color alone");
+	assert.ok(statusNode.textContent.includes(unlockedDetail), "the live status should announce unlock while collapsed");
+
+	collapsedTab.click();
+	assert.equal(host.hasAttribute("data-onhand-pr-gate-collapsed"), false, "the compact tab should restore the full gate");
+	assert.equal(collapseButton.getAttribute("aria-expanded"), "true");
+	assert.strictEqual(gateRoot.activeElement, collapseButton, "restoring should return focus to the collapse control");
+	collapseButton.click();
+	const ordinaryRelock = toolkit.setPrReviewGate("locked", { detail: "Try the saved check again." });
+	assert.equal(ordinaryRelock?.collapsed, true, "wrong-answer relocks should preserve collapse");
+	const newReviewLock = toolkit.setPrReviewGate("locked", { detail: lockedDetail, expand: true });
+	assert.equal(newReviewLock?.collapsed, false, "a new walkthrough should explicitly expand the gate");
+	assert.equal(host.hasAttribute("data-onhand-pr-gate-collapsed"), false);
 
 	assert.strictEqual(document.querySelector("#native-approve-button"), approveButton, "the gate should preserve GitHub's Approve button node");
 	assert.equal(approveButton.outerHTML, approveButtonMarkup, "the gate should not mutate GitHub's Approve button");

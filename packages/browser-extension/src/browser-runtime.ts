@@ -11919,11 +11919,20 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let activeDevelopmentAgentObserver: DevelopmentAgentObserver | null = null;
 	let activeRequest: any | null = null;
 
-	async function syncActivePrReviewGate(state: "locked" | "unlocked", detail = "") {
+	async function syncActivePrReviewGate(
+		state: "locked" | "unlocked",
+		detail = "",
+		options: { expand?: boolean } = {},
+	) {
 		const tabId = Number(activeRequest?.initialActiveTab?.id || 0);
 		if (!activeRequest?.prModeActive || !Number.isFinite(tabId) || tabId <= 0) return null;
 		try {
-			return await host.runCommand("set_pr_review_gate", { tabId, state, detail });
+			return await host.runCommand("set_pr_review_gate", {
+				tabId,
+				state,
+				detail,
+				expand: options.expand === true,
+			});
 		} catch (error) {
 			host.log?.("PR review gate update failed", state, error instanceof Error ? error.message : String(error));
 			return null;
@@ -15992,6 +16001,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					await syncActivePrReviewGate(
 						"locked",
 						existingPrCheck ? "Explain the highlighted risk to unlock." : "Complete the walkthrough check to unlock.",
+						{ expand: !existingPrCheck },
 					);
 				}
 				if (modelIntentClassificationPromise) {

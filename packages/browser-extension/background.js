@@ -9293,6 +9293,7 @@ const createPageToolkit = (options = {}) => {
 				? "🔓 UNLOCKED — you understand this PR"
 				: "Onhand Review Gate — 🔒 LOCKED";
 		const detail = normalizeText(options?.detail || "").slice(0, 160);
+		const shouldExpand = options?.expand === true;
 		let host = document.getElementById("onhand-pr-review-gate-host");
 		const created = !host;
 		if (!host) {
@@ -9365,6 +9366,7 @@ const createPageToolkit = (options = {}) => {
 				}
 				.gate {
 					box-sizing: border-box;
+					position: relative;
 					width: min(360px, calc(100vw - 48px));
 					display: grid;
 					grid-template-columns: 28px minmax(0, 1fr);
@@ -9382,6 +9384,70 @@ const createPageToolkit = (options = {}) => {
 					animation: onhand-gate-enter 160ms ease-out forwards;
 					transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 				}
+				.collapse-button {
+					position: absolute;
+					top: 6px;
+					right: 6px;
+					width: 22px;
+					height: 22px;
+					display: grid;
+					place-items: center;
+					padding: 0;
+					border: 1px solid transparent;
+					border-radius: 3px;
+					background: transparent;
+					color: var(--onhand-subtext);
+					font: 15px/1 var(--onhand-font-mono);
+					cursor: pointer;
+					pointer-events: auto;
+				}
+				.collapse-button:hover {
+					border-color: var(--onhand-surface-2);
+					background: color-mix(in srgb, var(--onhand-surface-2) 42%, transparent);
+					color: var(--onhand-text);
+				}
+				.collapse-button:focus-visible,
+				.collapsed-tab:focus-visible {
+					outline: 2px solid var(--gate-accent);
+					outline-offset: 2px;
+				}
+				.collapsed-tab {
+					box-sizing: border-box;
+					display: none;
+					align-items: center;
+					gap: 6px;
+					min-width: 64px;
+					height: 36px;
+					padding: 4px 9px 4px 7px;
+					border: 1px solid var(--onhand-surface-2);
+					border-left: 3px solid var(--gate-accent);
+					border-radius: 0 4px 4px 0;
+					background: var(--gate-tint);
+					box-shadow: 0 2px 8px var(--gate-shadow);
+					color: var(--gate-accent);
+					cursor: pointer;
+					pointer-events: auto;
+					transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+				}
+				.collapsed-mark {
+					font: 23px/1 "Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", serif;
+					transform: translateY(-1px);
+				}
+				.collapsed-tab .state-dot { flex: 0 0 auto; }
+				.collapsed-state-icon { font: 12px/1 var(--onhand-font-mono); }
+				.status-announcer {
+					position: absolute;
+					width: 1px;
+					height: 1px;
+					padding: 0;
+					margin: -1px;
+					overflow: hidden;
+					clip: rect(0, 0, 0, 0);
+					white-space: nowrap;
+					border: 0;
+				}
+				:host([data-onhand-pr-gate-collapsed="true"]) .gate { display: none; }
+				:host([data-onhand-pr-gate-collapsed="true"]) .collapsed-tab { display: inline-flex; }
 				.mark {
 					display: inline-flex;
 					align-items: center;
@@ -9427,6 +9493,7 @@ const createPageToolkit = (options = {}) => {
 				@media (max-width: 520px) { .gate { width: calc(100vw - 24px); } }
 				@media (prefers-reduced-motion: reduce) {
 					.gate { animation: none; opacity: 1; transform: none; transition: none; }
+					.collapse-button, .collapsed-tab { transition: none; }
 				}
 			`;
 			const gate = document.createElement("div");
@@ -9449,23 +9516,97 @@ const createPageToolkit = (options = {}) => {
 			labelNode.className = "label";
 			const detailNode = document.createElement("div");
 			detailNode.className = "detail";
+			const collapseButton = document.createElement("button");
+			collapseButton.className = "collapse-button";
+			collapseButton.type = "button";
+			collapseButton.setAttribute("aria-label", "Collapse Onhand Review Gate");
+			collapseButton.setAttribute("aria-controls", "onhand-pr-review-gate-panel");
+			collapseButton.setAttribute("aria-expanded", "true");
+			collapseButton.title = "Collapse review gate";
+			collapseButton.textContent = "×";
+			gate.id = "onhand-pr-review-gate-panel";
 			contentNode.append(eyebrowNode, labelNode, detailNode);
-			gate.append(markNode, contentNode);
-			shadow.append(style, gate);
+			gate.append(markNode, contentNode, collapseButton);
+			const collapsedTab = document.createElement("button");
+			collapsedTab.className = "collapsed-tab";
+			collapsedTab.type = "button";
+			collapsedTab.setAttribute("aria-controls", "onhand-pr-review-gate-panel");
+			collapsedTab.setAttribute("aria-expanded", "false");
+			const collapsedMarkNode = document.createElement("span");
+			collapsedMarkNode.className = "collapsed-mark";
+			collapsedMarkNode.setAttribute("aria-hidden", "true");
+			collapsedMarkNode.textContent = "☞";
+			const collapsedStateDotNode = document.createElement("span");
+			collapsedStateDotNode.className = "state-dot";
+			collapsedStateDotNode.setAttribute("aria-hidden", "true");
+			const collapsedStateIconNode = document.createElement("span");
+			collapsedStateIconNode.className = "collapsed-state-icon";
+			collapsedStateIconNode.setAttribute("aria-hidden", "true");
+			collapsedTab.append(collapsedMarkNode, collapsedStateDotNode, collapsedStateIconNode);
+			const statusNode = document.createElement("div");
+			statusNode.className = "status-announcer";
+			statusNode.setAttribute("role", "status");
+			statusNode.setAttribute("aria-live", "polite");
+			statusNode.setAttribute("aria-atomic", "true");
+			const syncCollapsedPresentation = (collapsed) => {
+				if (collapsed) host.setAttribute("data-onhand-pr-gate-collapsed", "true");
+				else host.removeAttribute("data-onhand-pr-gate-collapsed");
+				const expanded = collapsed ? "false" : "true";
+				collapseButton.setAttribute("aria-expanded", expanded);
+				collapsedTab.setAttribute("aria-expanded", expanded);
+			};
+			collapseButton.addEventListener("pointerdown", (event) => event.stopPropagation());
+			collapsedTab.addEventListener("pointerdown", (event) => event.stopPropagation());
+			collapseButton.addEventListener("click", (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				syncCollapsedPresentation(true);
+				collapsedTab.focus({ preventScroll: true });
+			});
+			collapsedTab.addEventListener("click", (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				syncCollapsedPresentation(false);
+				collapseButton.focus({ preventScroll: true });
+			});
+			syncCollapsedPresentation(false);
+			shadow.append(style, gate, collapsedTab, statusNode);
 			(document.documentElement || document.body).appendChild(host);
 		}
 		applyAnnotationThemeToElement(host);
+		if (shouldExpand) host.removeAttribute("data-onhand-pr-gate-collapsed");
 		host.setAttribute("data-onhand-pr-gate-state", normalizedState);
-		host.setAttribute("role", "status");
-		host.setAttribute("aria-live", "polite");
-		host.setAttribute("aria-atomic", "true");
-		host.setAttribute("aria-label", label);
+		host.removeAttribute("role");
+		host.removeAttribute("aria-live");
+		host.removeAttribute("aria-atomic");
+		host.removeAttribute("aria-label");
 		const shadow = host.shadowRoot;
 		const labelNode = shadow?.querySelector(".label");
 		const detailNode = shadow?.querySelector(".detail");
+		const collapseButton = shadow?.querySelector(".collapse-button");
+		const collapsedTab = shadow?.querySelector(".collapsed-tab");
+		const collapsedStateIconNode = shadow?.querySelector(".collapsed-state-icon");
+		const statusNode = shadow?.querySelector(".status-announcer");
 		if (labelNode) labelNode.textContent = label;
 		if (detailNode) detailNode.textContent = detail;
-		return { state: normalizedState, label, detail, created };
+		const collapsed = host.getAttribute("data-onhand-pr-gate-collapsed") === "true";
+		const expanded = collapsed ? "false" : "true";
+		if (collapseButton) collapseButton.setAttribute("aria-expanded", expanded);
+		if (collapsedTab) {
+			const collapsedLabel = `Expand Onhand Review Gate — ${normalizedState === "unlocked" ? "unlocked" : "locked"}`;
+			collapsedTab.setAttribute("aria-label", collapsedLabel);
+			collapsedTab.setAttribute("aria-expanded", expanded);
+			collapsedTab.title = collapsedLabel;
+		}
+		if (collapsedStateIconNode) collapsedStateIconNode.textContent = normalizedState === "unlocked" ? "🔓" : "🔒";
+		if (statusNode) statusNode.textContent = [label, detail].filter(Boolean).join(". ");
+		return {
+			state: normalizedState,
+			label,
+			detail,
+			created,
+			collapsed,
+		};
 	};
 
 	const pickElements = async (message) => {
@@ -13851,7 +13992,10 @@ async function handleCommandInner(name, args = {}) {
 				throw new Error("Onhand Review Gate only runs on a GitHub PR Files changed page");
 			}
 			return await withTabCommand(tab.id, async () => {
-				const gate = await runPageToolkitMethod(tab.id, "setPrReviewGate", args.state, { detail: args.detail });
+				const gate = await runPageToolkitMethod(tab.id, "setPrReviewGate", args.state, {
+					detail: args.detail,
+					expand: args.expand === true,
+				});
 				return {
 					tab: simplifyTab(tab),
 					gate,

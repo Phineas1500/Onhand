@@ -2031,7 +2031,9 @@ async function assertPrModeApproveGateContract() {
 		readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8"),
 	]);
 	assert.match(runtimeSource, /runCommand\(["']set_pr_review_gate["']/, "the runtime must expose the PR review gate through its browser host");
+	assert.match(runtimeSource, /expand:\s*!existingPrCheck/, "only a new walkthrough should explicitly expand the gate");
 	assert.match(backgroundSource, /case ["']set_pr_review_gate["']/, "the background command router must handle PR review gate updates");
+	assert.match(backgroundSource, /expand:\s*args\.expand\s*===\s*true/, "the background command must forward explicit gate expansion");
 	assert.match(
 		backgroundSource,
 		/runPageToolkitMethod\([\s\S]{0,300}["']setPrReviewGate["']/,
