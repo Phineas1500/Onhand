@@ -48,6 +48,7 @@
     "test:pdf-toolkit-sweep": "node ./scripts/run-pdf-toolkit-sweep.mjs",
     "test:sidebar-regressions": "node ./scripts/run-sidebar-regressions.mjs",
     "test:browser-runtime-regressions": "node ./scripts/run-browser-runtime-regressions.mjs",
+    "test:source-memory": "node ./scripts/run-source-memory-regressions.mjs",
     "test:agent-runtime-modules": "node ./scripts/run-agent-runtime-module-regressions.mjs",
     "test:raindrop-pilot": "node ./scripts/run-raindrop-development-pilot-regressions.mjs",
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
@@ -62,6 +63,8 @@
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",
     "eval:agent-trajectories": "node ./scripts/run-agent-trajectory-eval.mjs",
     "eval:agent-trajectories:live": "node ./scripts/run-agent-trajectory-baseline.mjs",
+    "eval:source-memory": "node ./scripts/run-agent-trajectory-baseline.mjs --suite ./evals/source-memory/cases.json --case saved-article-recall --case saved-pdf-recall --case saved-cross-source-comparison",
+    "eval:source-memory:real": "node ./scripts/run-agent-trajectory-baseline.mjs --suite ./evals/source-memory/real-world-cases.json --case real-cs231n-course-notes-web --case real-lilian-weng-agent-blog --case real-transformer-research-paper-pdf --case real-cs229-class-notes-pdf",
     "eval:intent-classifier": "node ./scripts/run-lane-classifier-eval.mjs",
     "test:agent-trajectory-eval": "node ./scripts/run-agent-trajectory-eval-regressions.mjs"
   },

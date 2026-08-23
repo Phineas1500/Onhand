@@ -32,6 +32,16 @@
           "items": { "enum": ["legacy", "full-agent", "guided-agent"] }
         },
         "turn": { "$ref": "#/$defs/turn" },
+        "setupTurns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/setupTurn" }
+        },
+        "finalTabIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
         "workspace": { "$ref": "#/$defs/workspace" },
         "expectations": { "$ref": "#/$defs/expectations" }
       }
@@ -44,6 +54,21 @@
         "prompt": { "$ref": "#/$defs/nonEmptyString" },
         "selectedText": { "type": "string" },
         "learnerState": { "type": "object" }
+      }
+    },
+    "setupTurn": {
+      "type": "object",
+      "required": ["turn", "activeTabId", "tabIds"],
+      "properties": {
+        "turn": { "$ref": "#/$defs/turn" },
+        "activeTabId": { "$ref": "#/$defs/nonEmptyString" },
+        "tabIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "requireSourceCapture": { "type": "boolean" }
       }
     },
     "workspace": {
@@ -68,7 +93,13 @@
       "properties": {
         "id": { "$ref": "#/$defs/nonEmptyString" },
         "title": { "$ref": "#/$defs/nonEmptyString" },
-        "url": { "$ref": "#/$defs/nonEmptyString" }
+        "url": { "$ref": "#/$defs/nonEmptyString" },
+        "externalUrl": { "$ref": "#/$defs/nonEmptyString" },
+        "urlAliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        }
       }
     },
     "resource": {

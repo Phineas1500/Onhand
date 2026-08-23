@@ -73,6 +73,26 @@ export function validateTrajectoryCase(testCase, index = 0) {
 		requireString(tab.title, `${path}.workspace.tabs[${tabIndex}].title`);
 		requireString(tab.url, `${path}.workspace.tabs[${tabIndex}].url`);
 	}
+	if (testCase.finalTabIds != null) {
+		assert(Array.isArray(testCase.finalTabIds) && testCase.finalTabIds.length, `${path}.finalTabIds must be a non-empty array`);
+		assert(new Set(testCase.finalTabIds).size === testCase.finalTabIds.length, `${path}.finalTabIds cannot contain duplicates`);
+		for (const tabId of testCase.finalTabIds) assert(tabIds.has(tabId), `${path}.finalTabIds references unknown tab ${tabId}`);
+		assert(testCase.finalTabIds.includes(testCase.workspace.activeTabId), `${path}.finalTabIds must include workspace.activeTabId`);
+	}
+	const setupTurns = Array.isArray(testCase.setupTurns) ? testCase.setupTurns : [];
+	for (const [setupIndex, setup] of setupTurns.entries()) {
+		const setupPath = `${path}.setupTurns[${setupIndex}]`;
+		assert(isObject(setup), `${setupPath} must be an object`);
+		assert(isObject(setup.turn), `${setupPath}.turn must be an object`);
+		requireString(setup.turn.prompt, `${setupPath}.turn.prompt`);
+		assert(setup.turn.mode === "answer" || setup.turn.mode === "learning", `${setupPath}.turn.mode must be answer or learning`);
+		requireString(setup.activeTabId, `${setupPath}.activeTabId`);
+		assert(tabIds.has(setup.activeTabId), `${setupPath}.activeTabId must reference a workspace tab`);
+		assert(Array.isArray(setup.tabIds) && setup.tabIds.length, `${setupPath}.tabIds must be a non-empty array`);
+		for (const tabId of setup.tabIds) assert(tabIds.has(tabId), `${setupPath}.tabIds references unknown tab ${tabId}`);
+		assert(setup.tabIds.includes(setup.activeTabId), `${setupPath}.tabIds must include activeTabId`);
+		if (setup.requireSourceCapture != null) assert(typeof setup.requireSourceCapture === "boolean", `${setupPath}.requireSourceCapture must be boolean`);
+	}
 
 	const resources = Array.isArray(testCase.workspace.resources) ? testCase.workspace.resources : [];
 	const resourceIds = uniqueIds(resources, `${path}.workspace.resources`);

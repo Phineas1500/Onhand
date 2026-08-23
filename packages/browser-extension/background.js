@@ -1,6 +1,6 @@
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
-import { searchPdfCorpus } from "./pdf-corpus-search.bundle.js";
+import { extractPdfSource, searchPdfCorpus } from "./pdf-corpus-search.bundle.js";
 
 const SCREENSHOT_DELAY_MS = 150;
 const SCRIPT_EXECUTION_TIMEOUT_MS = 2500;
@@ -13455,6 +13455,62 @@ async function handleCommandInner(name, args = {}) {
 				};
 			});
 		}
+		case "extract_source_content": {
+			const tab = await resolveReadTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				let pdfUrl = "";
+				try {
+					pdfUrl = resolvePdfSourceUrlForViewer({}, tab);
+				} catch {}
+				if (pdfUrl && isHttpLikeUrl(pdfUrl)) {
+					const extracted = await extractPdfSource({
+						url: pdfUrl,
+						title: tab.title,
+						maxPages: args.maxPages,
+						maxChars: args.maxChars,
+						fetchTimeoutMs: args.fetchTimeoutMs,
+						maxPdfBytes: args.maxPdfBytes,
+					});
+					const blocks = extracted.pages.map((page) => ({
+						tag: "pdf-page",
+						pageNumber: page.pageNumber,
+						selector: `.page[data-page-number="${page.pageNumber}"]`,
+						text: page.text,
+					}));
+					return {
+						tab: simplifyTab(tab),
+						content: {
+							surface: "pdf",
+							source: "pdf-source-capture",
+							url: extracted.url,
+							title: extracted.title || tab.title,
+							blockCount: blocks.length,
+							charCount: extracted.charCount,
+							truncated: extracted.truncated,
+							blocks,
+							text: blocks.map((block) => `[p. ${block.pageNumber}] ${block.text}`).join("\n\n"),
+						},
+					};
+				}
+				let content;
+				try {
+					content =
+						(await extractGoogleDocsTextExportForTab(tab, { maxChars: args.maxChars })) ||
+						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars, query: args.query })})`));
+					content = await maybeGetDebuggerFrameReadableContent(tab, content, {
+						maxChars: args.maxChars,
+						query: args.query,
+					});
+				} catch (error) {
+					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
+					else throw error;
+				}
+				return {
+					tab: simplifyTab(tab),
+					content,
+				};
+			}, 60000);
+		}
 		case "textbook_search": {
 			if (typeof args.query !== "string" || !args.query.trim()) {
 				throw new Error("textbook_search requires a non-empty 'query'");
@@ -14500,9 +14556,20 @@ function normalizeRealtimeBrowserToolArgs(args = {}) {
 	return raw;
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	if (message?.target === "offscreen" || message?.target === "sidebar") return false;
 	(async () => {
+		if (message?.type === "browser-runtime:clear-artifacts-eval") {
+			let allowed = false;
+			try {
+				const senderUrl = new URL(String(sender?.url || ""));
+				allowed = senderUrl.protocol === "chrome-extension:" && senderUrl.pathname.endsWith("/sidepanel.html") && senderUrl.searchParams.get("agent-trajectory-control") === "1";
+			} catch {}
+			if (!allowed) throw new Error("Artifact reset is restricted to the isolated trajectory control page.");
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({ ok: true, result: await runtime.clearArtifactsForEval() });
+			return;
+		}
 		if (message?.type === "get-status") {
 			const runtime = getOnhandBrowserRuntime();
 			const browserRuntime = await runtime.getSettings().catch((error) => ({
@@ -14597,6 +14664,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				codexFastModeEnabled: message.codexFastModeEnabled,
+				sourceMemoryEnabled: message.sourceMemoryEnabled,
 			});
 			sendResponse({
 				ok: true,

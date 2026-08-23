@@ -84888,7 +84888,7 @@ async function readResponseBytes(response, controller, maxPdfBytes) {
   }
   return data;
 }
-async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController, corpusDeadlineAt = 0) {
+async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusController, corpusDeadlineAt = 0, limits = {}) {
   const controller = new AbortController();
   let timeoutTriggered = false;
   let corpusDeadlineTriggered = false;
@@ -84932,15 +84932,23 @@ async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusControlle
     const document2 = await loadingTask.promise;
     enforceCorpusDeadline();
     const pages = [];
-    for (let pageNumber = 1; pageNumber <= document2.numPages; pageNumber += 1) {
+    const maxPages = Number.isFinite(Number(limits.maxPages)) ? Math.max(1, Math.min(document2.numPages, Number(limits.maxPages))) : document2.numPages;
+    const maxChars = Number.isFinite(Number(limits.maxChars)) ? Math.max(1e3, Number(limits.maxChars)) : Number.POSITIVE_INFINITY;
+    let usedChars = 0;
+    for (let pageNumber = 1; pageNumber <= maxPages && usedChars < maxChars; pageNumber += 1) {
       enforceCorpusDeadline();
       const page = await document2.getPage(pageNumber);
       try {
         enforceCorpusDeadline();
         const content = await page.getTextContent();
         enforceCorpusDeadline();
-        const text = content.items.map((item) => String(item?.str || "")).filter(Boolean).join(" ");
-        pages.push({ pageNumber, text: compactText(text, 24e3) });
+        const rawText = content.items.map((item) => String(item?.str || "")).filter(Boolean).join(" ");
+        const remaining = maxChars - usedChars;
+        const text = compactText(rawText, Math.min(24e3, remaining));
+        if (text) {
+          pages.push({ pageNumber, text });
+          usedChars += text.length + 2;
+        }
       } finally {
         page.cleanup();
       }
@@ -84955,6 +84963,31 @@ async function readPdfPages(source, fetchTimeoutMs, maxPdfBytes, corpusControlle
     corpusSignal?.removeEventListener("abort", abortForCorpusDeadline);
     await destroyLoadingTask();
   }
+}
+async function extractPdfSource(options) {
+  __webpack_exports__GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
+  const url = String(options.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error("Saved PDF extraction requires an HTTP(S) source URL");
+  const maxPages = Math.max(1, Math.min(240, Number(options.maxPages) || 240));
+  const maxChars = Math.max(1e3, Math.min(5e4, Number(options.maxChars) || 5e4));
+  const fetchTimeoutMs = Math.max(100, Math.min(6e4, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
+  const maxPdfBytes = Math.max(1024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
+  const pages = await readPdfPages(
+    { title: compactText(options.title || url, 240), url },
+    fetchTimeoutMs,
+    maxPdfBytes,
+    void 0,
+    0,
+    { maxPages, maxChars }
+  );
+  const charCount = pages.reduce((total, page) => total + page.text.length, 0);
+  return {
+    title: compactText(options.title || url, 240),
+    url,
+    pages,
+    charCount,
+    truncated: pages.length >= maxPages || charCount >= maxChars
+  };
 }
 async function searchPdfCorpus(options) {
   __webpack_exports__GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
@@ -85012,6 +85045,7 @@ async function searchPdfCorpus(options) {
   };
 }
 export {
+  extractPdfSource,
   rankPdfCorpusTextPages,
   searchPdfCorpus
 };

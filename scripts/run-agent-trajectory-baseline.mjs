@@ -48,10 +48,12 @@ function parseArgs(argv) {
 		keepTabs: false,
 		launchIsolated: false,
 		keepProfile: false,
+		openRouter: false,
 		outDir: "",
 		port: DEFAULT_PORT,
 		portExplicit: false,
 		profile: "legacy",
+		sourceMemory: "unchanged",
 		suitePath: DEFAULT_SUITE,
 		timeout: "180s",
 	};
@@ -76,6 +78,7 @@ function parseArgs(argv) {
 		}
 		else if (value === "--iterations" || value.startsWith("--iterations=")) args.iterations = Number(readValue("--iterations"));
 		else if (value === "--profile" || value.startsWith("--profile=")) args.profile = readValue("--profile");
+		else if (value === "--source-memory" || value.startsWith("--source-memory=")) args.sourceMemory = readValue("--source-memory");
 		else if (value === "--suite" || value.startsWith("--suite=")) args.suitePath = resolve(readValue("--suite"));
 		else if (value === "--out" || value.startsWith("--out=")) args.outDir = resolve(readValue("--out"));
 		else if (value === "--timeout" || value.startsWith("--timeout=")) args.timeout = readValue("--timeout");
@@ -84,6 +87,7 @@ function parseArgs(argv) {
 		else if (value === "--launch-isolated") args.launchIsolated = true;
 		else if (value === "--keep-profile") args.keepProfile = true;
 		else if (value === "--free-tier") args.freeTier = true;
+		else if (value === "--openrouter") args.openRouter = true;
 		else if (value === "-h" || value === "--help") {
 			console.log(`Usage: npm run eval:agent-trajectories:live -- [options]
 
@@ -103,6 +107,10 @@ Options:
   --keep-browser       Leave an isolated browser running after the evaluation
   --free-tier          Configure the isolated profile for Onhand Free using
                        ONHAND_FREE_TIER_BASE_URL (environment or repository .env)
+  --openrouter         Configure the isolated profile for GPT-5.6 Luna using
+                       OPENROUTER_API_KEY (environment or repository .env)
+  --source-memory <on|off>
+                       Enable or disable the experimental saved-source layer
   --cancel-after-ms <n>
                        Stop n milliseconds after the request becomes active (one case only)
   --timeout <duration> Per-turn timeout passed to debug:sessions. Default: 180s
@@ -117,6 +125,10 @@ Options:
 	if (!Number.isFinite(args.port) || args.port <= 0) throw new Error("--port must be a positive number");
 	if (!Number.isFinite(args.cancelAfterMs) || args.cancelAfterMs < 0) throw new Error("--cancel-after-ms must be zero or a positive number");
 	if (args.freeTier && !args.launchIsolated) throw new Error("--free-tier requires --launch-isolated to avoid changing a personal browser profile");
+	if (args.openRouter && !args.launchIsolated) throw new Error("--openrouter requires --launch-isolated to avoid changing a personal browser profile");
+	if (args.freeTier && args.openRouter) throw new Error("--free-tier and --openrouter are mutually exclusive");
+	if (!new Set(["unchanged", "on", "off"]).has(args.sourceMemory)) throw new Error("--source-memory must be on or off");
+	if (args.sourceMemory !== "unchanged" && !args.launchIsolated) throw new Error("--source-memory requires --launch-isolated to avoid changing a personal browser profile");
 	if (args.cancelAfterMs > 0 && (args.caseIds.length !== 1 || args.iterations !== 1)) {
 		throw new Error("--cancel-after-ms requires exactly one case and one iteration");
 	}
@@ -287,6 +299,56 @@ async function configureIsolatedFreeTier(cdp) {
 	}
 }
 
+async function resolveOpenRouterApiKey() {
+	let value = String(process.env.OPENROUTER_API_KEY || "").trim();
+	if (!value) {
+		try {
+			value = parseEnvValue(await readFile(join(ROOT, ".env"), "utf8"), "OPENROUTER_API_KEY");
+		} catch {}
+	}
+	if (!value) throw new Error("--openrouter requires OPENROUTER_API_KEY in the environment or repository .env");
+	return value;
+}
+
+async function configureIsolatedOpenRouter(cdp) {
+	const apiKey = await resolveOpenRouterApiKey();
+	const { targetId } = await cdp.send("Target.createTarget", {
+		url: `chrome-extension://${EXTENSION_ID}/options.html`,
+		background: true,
+	});
+	const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
+	try {
+		let ready = false;
+		for (let attempt = 0; attempt < 40; attempt += 1) {
+			const probe = await cdp.send(
+				"Runtime.evaluate",
+				{ expression: `Boolean(globalThis.chrome?.storage?.local && globalThis.chrome?.runtime?.sendMessage)`, returnByValue: true },
+				sessionId,
+			);
+			if (probe?.result?.value === true) {
+				ready = true;
+				break;
+			}
+			await sleep(250);
+		}
+		if (!ready) throw new Error("Onhand options page did not expose extension storage/runtime APIs");
+		const expression = `(async () => await chrome.runtime.sendMessage({
+			type: "browser-runtime:update-settings",
+			aiProvider: "openrouter",
+			aiModel: "openai/gpt-5.6-luna",
+			aiApiKeys: { openrouter: ${JSON.stringify(apiKey)} },
+			authMode: "api-key",
+			diagnosticsEnabled: true
+		}))()`;
+		const result = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+		if (result?.exceptionDetails) throw new Error(result.exceptionDetails?.exception?.description || result.exceptionDetails.text || "OpenRouter configuration failed");
+		if (!result?.result?.value?.ok) throw new Error(result?.result?.value?.error || "Onhand rejected OpenRouter configuration");
+	} finally {
+		await cdp.send("Target.detachFromTarget", { sessionId }).catch(() => {});
+		await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+	}
+}
+
 async function connect(url) {
 	return await new Promise((resolvePromise, reject) => {
 		const socket = new WebSocket(url);
@@ -424,11 +486,65 @@ async function openWorkspace(cdp, testCase, catalog) {
 	}
 	const activeTargetId = await createTarget(cdp, catalog.tabUrl(testCase, active), false);
 	targets.push(activeTargetId);
-	await sleep(1200);
+	const hasExternalSource = testCase.workspace.tabs.some((tab) => Boolean(tab.externalUrl));
+	await sleep(hasExternalSource ? 5000 : 1200);
 	if (!(await selectText(cdp, activeTargetId, testCase.turn.selectedText || ""))) {
 		throw new Error(`${testCase.id}: could not establish the fixture text selection`);
 	}
 	return targets;
+}
+
+function setupPhaseCase(testCase, setup) {
+	const tabIds = new Set(setup.tabIds || []);
+	return {
+		...testCase,
+		turn: setup.turn,
+		workspace: {
+			...testCase.workspace,
+			activeTabId: setup.activeTabId,
+			tabs: testCase.workspace.tabs.filter((tab) => tabIds.has(tab.id)),
+		},
+	};
+}
+
+function finalPhaseCase(testCase) {
+	if (!Array.isArray(testCase.finalTabIds) || !testCase.finalTabIds.length) return testCase;
+	const tabIds = new Set(testCase.finalTabIds);
+	return {
+		...testCase,
+		workspace: {
+			...testCase.workspace,
+			tabs: testCase.workspace.tabs.filter((tab) => tabIds.has(tab.id)),
+		},
+	};
+}
+
+function assertSuccessfulSetupTurn(testCase, setup, result, options) {
+	const turn = result?.turn || null;
+	if (!turn || turn.pending || turn.error || !String(turn.reply || "").trim()) {
+		const details = turn
+			? `pending=${Boolean(turn.pending)} error=${JSON.stringify(turn.error || null)} reply=${JSON.stringify(String(turn.reply || "").slice(0, 240))}`
+			: `missing turn; result keys=${Object.keys(result || {}).join(",") || "none"}`;
+		const error = new Error(`${testCase.id}: source-memory setup turn did not complete (${details})`);
+		error.setupTurn = turn;
+		throw error;
+	}
+	if (!setup.requireSourceCapture) return;
+	const capture = (turn.toolTraces || []).find((trace) => {
+		if (trace?.toolName !== "browser_capture_state" || !["complete", "recovered"].includes(trace.state)) return false;
+		const params = trace.effectiveArgs || trace.args || {};
+		return params.persist === true && params.includeSourceContent === true;
+	});
+	if (!capture) {
+		throw new Error(`${testCase.id}: setup turn did not explicitly capture searchable source content`);
+	}
+	if (options?.sourceMemory === "on") {
+		const details = capture.resultDetails || capture.details || {};
+		const artifact = details.persistedArtifact || details.artifact || {};
+		if (artifact.hasSourceContent !== true) {
+			throw new Error(`${testCase.id}: explicit capture completed without a searchable source representation`);
+		}
+	}
 }
 
 async function closeFixtureTargets(cdp, catalog) {
@@ -436,6 +552,13 @@ async function closeFixtureTargets(cdp, catalog) {
 	for (const target of targetInfos) {
 		if (!String(target.url || "").startsWith(catalog.baseUrl)) continue;
 		await cdp.send("Target.closeTarget", { targetId: target.targetId }).catch(() => {});
+	}
+}
+
+async function closeOpenedTargets(cdp, targetIds) {
+	for (const targetId of Array.isArray(targetIds) ? targetIds : []) {
+		if (!targetId) continue;
+		await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
 	}
 }
 
@@ -480,6 +603,23 @@ async function stopActiveRequest(cdp) {
 		}
 	}
 	throw new Error(`Cancellation did not reach Onhand: ${lastError?.message || String(lastError)}`);
+}
+
+async function configureSourceMemory(cdp, enabled) {
+	const response = await sendExtensionMessage(cdp, {
+		type: "browser-runtime:update-settings",
+		sourceMemoryEnabled: enabled,
+	});
+	if (!response?.ok) throw new Error(response?.error || "Onhand rejected source-memory configuration");
+	if (Boolean(response?.settings?.sourceMemoryEnabled) !== Boolean(enabled)) {
+		throw new Error("Onhand did not persist the requested source-memory setting");
+	}
+}
+
+async function clearArtifactsForTrajectoryIteration(cdp) {
+	const response = await sendExtensionMessage(cdp, { type: "browser-runtime:clear-artifacts-eval" });
+	if (!response?.ok) throw new Error(response?.error || "Onhand rejected the trajectory artifact reset");
+	return response?.result || { cleared: 0 };
 }
 
 async function waitForActiveRequestAndCancel(cdp, delayMs, shouldContinue) {
@@ -567,6 +707,7 @@ function reportMarkdown(metadata, results, summary) {
 		`- Runtime revision: ${metadata.runtimeRevision || "unknown"}`,
 		`- Provider/model: ${metadata.provider} / ${metadata.model}`,
 		`- Profile: ${metadata.profile}`,
+		`- Source memory: ${metadata.sourceMemory || "unchanged"}`,
 		"",
 		"| Case | Iteration | Status | Score | Latency | Model calls | Tool calls | Failures |",
 		"| --- | ---: | --- | ---: | ---: | ---: | ---: | --- |",
@@ -632,19 +773,28 @@ async function main() {
 			if (!testCase.profiles.includes(options.profile)) throw new Error(`${id} does not support profile ${options.profile}`);
 			return testCase;
 		});
+		if (selected.some((testCase) => Array.isArray(testCase.setupTurns) && testCase.setupTurns.length) && !options.launchIsolated) {
+			throw new Error("Multi-phase source-memory cases require --launch-isolated");
+		}
 		const outDir = options.outDir || join(ROOT, "tmp", "agent-trajectories", timestampSlug());
 		await mkdir(outDir, { recursive: true });
 		fixture = await startAgentTrajectoryFixtureServer(suite);
 		cdp = await openBrowserCdp(options);
 		if (options.freeTier) await configureIsolatedFreeTier(cdp);
+		if (options.openRouter) await configureIsolatedOpenRouter(cdp);
+		if (options.sourceMemory !== "unchanged") await configureSourceMemory(cdp, options.sourceMemory === "on");
 		const runtime = await waitForConfiguredRuntime(options);
 		if (options.freeTier && runtime.provider !== "onhand-free") {
 			throw new Error(`Isolated free-tier setup did not take effect; configured provider is ${runtime.provider}`);
+		}
+		if (options.openRouter && runtime.provider !== "openrouter") {
+			throw new Error(`Isolated OpenRouter setup did not take effect; configured provider is ${runtime.provider}`);
 		}
 		const metadata = {
 			createdAt: new Date().toISOString(),
 			suiteId: suite.suiteId,
 			profile: options.profile,
+			sourceMemory: options.sourceMemory,
 			...(options.cancelAfterMs > 0 ? { cancelAfterMs: options.cancelAfterMs } : {}),
 			...runtime,
 		};
@@ -654,12 +804,54 @@ async function main() {
 		trajectoryCases: for (const testCase of selected) {
 			for (let iteration = 1; iteration <= options.iterations; iteration += 1) {
 				await waitForIdle(options);
+				if (Array.isArray(testCase.setupTurns) && testCase.setupTurns.length) {
+					await clearArtifactsForTrajectoryIteration(cdp);
+				}
+				let setupFailed = null;
+				for (const [setupIndex, setup] of (testCase.setupTurns || []).entries()) {
+					let setupTargetIds = [];
+					try {
+						const phase = setupPhaseCase(testCase, setup);
+						process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: running setup ${setupIndex + 1}\n`);
+						setupTargetIds = await openWorkspace(cdp, phase, fixture.catalog);
+						const result = await ask(phase, options, cdp);
+						assertSuccessfulSetupTurn(testCase, setup, result, options);
+					} catch (error) {
+						setupFailed = error;
+						break;
+					} finally {
+						// Setup sources must be closed even in visual-QA mode; persistence
+						// is the behavior under test, not an accidentally still-open tab.
+						await closeOpenedTargets(cdp, setupTargetIds);
+						await closeFixtureTargets(cdp, fixture.catalog);
+					}
+				}
+				if (setupFailed) {
+					const trace = failedTrajectoryTrace(testCase, options, runtime, iteration, 0);
+					const setupTurn = setupFailed.setupTurn || null;
+					if (setupTurn) {
+						trace.reply = String(setupTurn.reply || "");
+						trace.modelCalls = Number(setupTurn.modelCalls || 0);
+						trace.latencyMs = Math.max(0, Number(setupTurn.durationMs || 0));
+					}
+					traces.push(trace);
+					process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: setup error: ${setupFailed.message || String(setupFailed)}\n`);
+					await persistBaselineArtifacts(outDir, metadata, traces, caseMap);
+					if (isFreeTierQuotaTrace(trace, runtime)) {
+						metadata.stoppedReason = "free-tier-quota-exhausted-during-setup";
+						process.stderr.write("[trajectory] Onhand Free daily quota exhausted during setup; stopping before additional runs are misclassified.\n");
+						await persistBaselineArtifacts(outDir, metadata, traces, caseMap);
+						break trajectoryCases;
+					}
+					continue;
+				}
+				const finalPhase = finalPhaseCase(testCase);
 				process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: opening fixture workspace\n`);
-				await openWorkspace(cdp, testCase, fixture.catalog);
+				const finalTargetIds = await openWorkspace(cdp, finalPhase, fixture.catalog);
 				const startedAt = Date.now();
 				let trace;
 				try {
-					const result = await ask(testCase, options, cdp);
+					const result = await ask(finalPhase, options, cdp);
 					trace = normalizeLiveTrajectoryTrace(testCase, result, {
 						profile: options.profile,
 						model: runtime.model,
@@ -679,7 +871,10 @@ async function main() {
 				const scored = scoreTrajectory(testCase, trace);
 				process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: ${scored.status} (${scored.score.toFixed(3)})\n`);
 				await persistBaselineArtifacts(outDir, metadata, traces, caseMap);
-				if (!options.keepTabs) await closeFixtureTargets(cdp, fixture.catalog);
+				if (!options.keepTabs) {
+					await closeOpenedTargets(cdp, finalTargetIds);
+					await closeFixtureTargets(cdp, fixture.catalog);
+				}
 				if (isFreeTierQuotaTrace(trace, runtime)) {
 					metadata.stoppedReason = "free-tier-quota-exhausted";
 					process.stderr.write("[trajectory] Onhand Free daily quota exhausted; stopping before additional runs are misclassified.\n");

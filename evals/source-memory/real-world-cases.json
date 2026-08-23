@@ -1,0 +1,455 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "onhand-source-memory-real-world-v1",
+  "description": "Public-source saved-memory evaluations using real university notes, an author blog, and research-paper PDFs.",
+  "cases": [
+    {
+      "id": "real-cs231n-course-notes-web",
+      "description": "Recall a technical explanation from Stanford CS231n's public convolutional-network course notes after closing the page.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "cs231n-notes",
+          "tabIds": ["cs231n-notes"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save these CS231n course notes so I can study them later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize or annotate the page."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "In the CS231n notes I saved, why does parameter sharing dramatically reduce the first convolutional layer's parameter count, and what count does the worked example end up with? Answer from the saved notes only."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "cs231n-notes",
+            "title": "CS231n Convolutional Neural Networks",
+            "url": "https://cs231n.github.io/convolutional-networks/",
+            "externalUrl": "https://cs231n.github.io/convolutional-networks/",
+            "urlAliases": ["https://cs231n.github.io/convolutional-networks"]
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "cs231n-notes-source",
+            "tabId": "cs231n-notes",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "parameter-sharing-assumption",
+                "location": "section: Parameter Sharing",
+                "text": "That if one feature is useful to compute at some spatial position (x,y), then it should also be useful to compute at a different position (x2,y2)."
+              },
+              {
+                "id": "parameter-sharing-count",
+                "location": "section: Parameter Sharing",
+                "text": "With this parameter sharing scheme, the first Conv Layer in our example would now have only 96 unique set of weights (one for each depth slice), for a total of 96*11*11*3 = 34,848 unique weights, or 34,944 parameters (+96 biases)."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no course-note evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "assumption",
+            "description": "The spatial-reuse assumption behind parameter sharing.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "cs231n-notes-source",
+                "passageIds": ["parameter-sharing-assumption"]
+              }
+            ]
+          },
+          {
+            "id": "count",
+            "description": "The worked example's reduced parameter count.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "cs231n-notes-source",
+                "passageIds": ["parameter-sharing-count"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 8,
+        "maxToolCalls": 12,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 60000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "real-lilian-weng-agent-blog",
+      "description": "Recall the author's account of long-term agent memory from a long technical blog post after closing it.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "agent-blog",
+          "tabIds": ["agent-blog"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save Lilian Weng's agent article so I can refer to it later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize or annotate the page."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "In Lilian Weng's agent article that I saved, what does she map long-term memory to, and what retrieval tradeoff does she describe for external memory? Use only the saved article."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "agent-blog",
+            "title": "LLM Powered Autonomous Agents",
+            "url": "https://lilianweng.github.io/posts/2023-06-23-agent/",
+            "externalUrl": "https://lilianweng.github.io/posts/2023-06-23-agent/",
+            "urlAliases": ["https://lilianweng.github.io/posts/2023-06-23-agent"]
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "agent-blog-source",
+            "tabId": "agent-blog",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "long-term-mapping",
+                "location": "section: Types of Memory",
+                "text": "Long-term memory as the external vector store that the agent can attend to at query time, accessible via fast retrieval."
+              },
+              {
+                "id": "ann-tradeoff",
+                "location": "section: Maximum Inner Product Search",
+                "text": "To optimize the retrieval speed, the common choice is the approximate nearest neighbors (ANN)​ algorithm to return approximately top k nearest neighbors to trade off a little accuracy lost for a huge speedup."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no agent-memory evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "mapping",
+            "description": "The author's mapping from long-term memory to an external vector store.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "agent-blog-source",
+                "passageIds": ["long-term-mapping"]
+              }
+            ]
+          },
+          {
+            "id": "tradeoff",
+            "description": "The ANN speed-versus-accuracy retrieval tradeoff.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "agent-blog-source",
+                "passageIds": ["ann-tradeoff"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 8,
+        "maxToolCalls": 12,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 60000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "real-transformer-research-paper-pdf",
+      "description": "Recall two related design details from the public Attention Is All You Need research-paper PDF after closing it.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "transformer-paper",
+          "tabIds": ["transformer-paper"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this research-paper PDF for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize or annotate the PDF."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "In the Transformer paper I saved, why did the authors use multi-head attention instead of one head, and how many heads and dimensions per head did their main model use? Answer only from the saved paper."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "transformer-paper",
+            "title": "Attention Is All You Need",
+            "url": "https://arxiv.org/pdf/1706.03762",
+            "externalUrl": "https://arxiv.org/pdf/1706.03762",
+            "urlAliases": ["https://arxiv.org/pdf/1706.03762.pdf"]
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "transformer-paper-source",
+            "tabId": "transformer-paper",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "multi-head-benefit",
+                "location": "page:4",
+                "text": "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions. With a single attention head, averaging inhibits this."
+              },
+              {
+                "id": "multi-head-dimensions",
+                "location": "page:4",
+                "text": "In this work we employ h = 8 parallel attention layers, or heads. For each of these we use dk = dv = dmodel/h = 64."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no Transformer-paper evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "benefit",
+            "description": "The paper's explanation of what multiple heads enable.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "transformer-paper-source",
+                "passageIds": ["multi-head-benefit"]
+              }
+            ]
+          },
+          {
+            "id": "dimensions",
+            "description": "The paper's number of heads and dimensions per head.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "transformer-paper-source",
+                "passageIds": ["multi-head-dimensions"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 8,
+        "maxToolCalls": 12,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 60000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "real-cs229-class-notes-pdf",
+      "description": "Recall regularization guidance from Stanford CS229's public decision-tree lecture-note PDF after closing it.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "cs229-pdf",
+          "tabIds": ["cs229-pdf"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index these CS229 lecture notes for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize or annotate the PDF."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "According to the CS229 decision-tree notes I saved, what problems arise when a tree grows too deep, and what do the notes say pruning evaluates and does? Use only the saved PDF."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "cs229-pdf",
+            "title": "CS229 Lecture Notes: Decision Trees",
+            "url": "https://cs229.stanford.edu/summer2023/cs229-notes-decision_trees.pdf",
+            "externalUrl": "https://cs229.stanford.edu/summer2023/cs229-notes-decision_trees.pdf",
+            "urlAliases": ["https://cs229.stanford.edu/notes_archive/cs229-notes-dt.pdf"]
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "cs229-pdf-source",
+            "tabId": "cs229-pdf",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "deep-tree-problems",
+                "location": "page:5",
+                "text": "However, allowing the tree to reach such depths often invites the twin problems of overfitting to our training set and creating an undesirably large model."
+              },
+              {
+                "id": "pruning-method",
+                "location": "page:5",
+                "text": "Pruning generally involves creating another function that evaluates whether the increased performance associated with a node (or set of nodes) is worth the extra model size and reduced generalization. If not, one can “prune” the node (nodes) by merging it (them) back into tree."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no decision-tree evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "problems",
+            "description": "The two problems caused by an overly deep tree.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "cs229-pdf-source",
+                "passageIds": ["deep-tree-problems"]
+              }
+            ]
+          },
+          {
+            "id": "pruning",
+            "description": "What pruning evaluates and how it modifies the tree.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "cs229-pdf-source",
+                "passageIds": ["pruning-method"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 8,
+        "maxToolCalls": 12,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 60000,
+        "requireNoProvisionalAnswer": true
+      }
+    }
+  ]
+}

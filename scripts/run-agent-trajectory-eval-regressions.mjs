@@ -21,6 +21,7 @@ import {
 } from "./lib/agent-trajectory-fixtures.mjs";
 
 const SUITE_PATH = fileURLToPath(new URL("../evals/agent-trajectories/cases.json", import.meta.url));
+const SOURCE_MEMORY_SUITE_PATH = fileURLToPath(new URL("../evals/source-memory/cases.json", import.meta.url));
 
 function passingCurrentPageTrace() {
 	return {
@@ -57,6 +58,56 @@ async function main() {
 	assert.equal(suite.schemaVersion, 1);
 	assert.equal(suite.cases.length, 11);
 	assert.equal(new Set(suite.cases.map((testCase) => testCase.id)).size, suite.cases.length);
+	const sourceMemorySuite = await loadTrajectorySuite(SOURCE_MEMORY_SUITE_PATH);
+	assert.equal(sourceMemorySuite.cases.length, 3);
+	for (const testCase of sourceMemorySuite.cases) {
+		assert.deepEqual(testCase.finalTabIds, ["blank-workspace"]);
+		assert.ok(testCase.setupTurns.length >= 1);
+	}
+	const savedPdfCase = sourceMemorySuite.cases.find((testCase) => testCase.id === "saved-pdf-recall");
+	const savedPdfResource = savedPdfCase.workspace.resources.find((resource) => resource.id === "archival-pdf-source");
+	const savedPdfFixture = buildTrajectoryPdf(savedPdfResource);
+	assert.equal(savedPdfFixture.subarray(0, 8).toString("utf8"), "%PDF-1.4");
+	assert.match(savedPdfFixture.toString("utf8"), /extractor version and content fingerprint/);
+	const savedPdfCatalog = createTrajectoryFixtureCatalog(sourceMemorySuite, "http://127.0.0.1:8122");
+	const savedPdfTab = savedPdfCase.workspace.tabs.find((tab) => tab.id === "archival-pdf");
+	const savedPdfUrl = savedPdfCatalog.tabUrl(savedPdfCase, savedPdfTab);
+	const pdfWhitespaceTrace = normalizeLiveTrajectoryTrace(
+		savedPdfCase,
+		{
+			turn: {
+				reply: "The extractor version and content fingerprint make it reproducible.",
+				pending: false,
+				error: false,
+				modelCalls: 2,
+				durationMs: 500,
+				toolTraces: [
+					{
+						toolName: "browser_search_saved_sources",
+						state: "complete",
+						resultDetails: {
+							url: savedPdfUrl,
+							text: "The archive remains reproducible because each exported result records the extrac tor version and content finger print.",
+						},
+					},
+				],
+				pageActions: [],
+			},
+		},
+		{ profile: "legacy", model: "fixture-model", iteration: 1, catalog: savedPdfCatalog },
+	);
+	assert.equal(pdfWhitespaceTrace.evidenceUses[0]?.passageId, "archival-metadata", "PDF glyph-spacing differences must not hide saved-source evidence");
+	const externalSuite = structuredClone(sourceMemorySuite);
+	const externalCase = externalSuite.cases[0];
+	const externalTab = externalCase.workspace.tabs.find((tab) => tab.id === "calibration-article");
+	externalTab.externalUrl = "https://notes.example.edu/calibration";
+	externalTab.urlAliases = ["https://notes.example.edu/calibration/"];
+	const externalCatalog = createTrajectoryFixtureCatalog(externalSuite, "http://127.0.0.1:8123");
+	assert.equal(externalCatalog.tabUrl(externalCase, externalTab), externalTab.externalUrl);
+	assert.equal(externalCatalog.resolve("https://notes.example.edu/calibration/")?.sourceId, "calibration-source");
+	const invalidFinalTabsSuite = structuredClone(sourceMemorySuite);
+	invalidFinalTabsSuite.cases[0].finalTabIds = ["calibration-article"];
+	assert.throws(() => validateTrajectorySuite(invalidFinalTabsSuite), /must include workspace.activeTabId/);
 
 	const currentPageCase = suite.cases.find((testCase) => testCase.id === "current-page-grounded-answer");
 	assert.ok(currentPageCase);

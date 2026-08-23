@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "onhand-source-memory-v1",
+  "description": "Multi-phase fixtures comparing saved-source retrieval with the current artifact-only path.",
+  "cases": [
+    {
+      "id": "saved-article-recall",
+      "description": "Save an article, close it, start a new session, and recover its exact evidence from the saved source.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "calibration-article",
+          "tabIds": ["calibration-article"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this source for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize it or add page annotations."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "According to the calibration source I explicitly saved earlier, why does the calibration remain stable? Use only that saved source, not general knowledge."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "calibration-article",
+            "title": "Calibration field notes",
+            "url": "https://fixtures.onhand.test/calibration"
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "calibration-source",
+            "tabId": "calibration-article",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "calibration-mechanism",
+                "location": "section: Results",
+                "text": "The calibration remains stable because every reading is compared with the same reference window."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no calibration evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "mechanism",
+            "description": "The saved article's stated stability mechanism.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "calibration-source",
+                "passageIds": ["calibration-mechanism"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 4,
+        "maxToolCalls": 10,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 45000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "saved-pdf-recall",
+      "description": "Save a PDF, close it, start a new session, and recover page-level evidence from the normalized saved source.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "archival-pdf",
+          "tabIds": ["archival-pdf"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this PDF for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize it or add page annotations."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "According to the archival PDF I explicitly saved earlier, what metadata makes its exported results reproducible? Use only that saved PDF, not general knowledge."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "archival-pdf",
+            "title": "Archival extraction study",
+            "url": "https://fixtures.onhand.test/archive/study.pdf"
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "archival-pdf-source",
+            "tabId": "archival-pdf",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "archival-metadata",
+                "location": "page:7",
+                "text": "The archive remains reproducible because each exported result records the extractor version and content fingerprint."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no archival extraction evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "metadata",
+            "description": "The PDF's stated reproducibility metadata.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "archival-pdf-source",
+                "passageIds": ["archival-metadata"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 2,
+        "maxModelCalls": 4,
+        "maxToolCalls": 10,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 1,
+        "maxLatencyMs": 45000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "saved-cross-source-comparison",
+      "description": "Save two relevant articles and a distractor in separate sessions, then compare the relevant evidence after every source tab is closed.",
+      "profiles": ["legacy"],
+      "setupTurns": [
+        {
+          "activeTabId": "paper-a",
+          "tabIds": ["paper-a"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this source for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize it or add page annotations."
+          }
+        },
+        {
+          "activeTabId": "paper-b",
+          "tabIds": ["paper-b"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this source for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize it or add page annotations."
+          }
+        },
+        {
+          "activeTabId": "billing-distractor",
+          "tabIds": ["billing-distractor"],
+          "requireSourceCapture": true,
+          "turn": {
+            "mode": "answer",
+            "prompt": "Save and index this source for later. Call browser_capture_state with persist=true and includeSourceContent=true. Do not summarize it or add page annotations."
+          }
+        }
+      ],
+      "finalTabIds": ["blank-workspace"],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Using only the research sources I explicitly saved earlier, compare how Paper A and Paper B reduce retrieval latency. Ignore unrelated saved material."
+      },
+      "workspace": {
+        "activeTabId": "blank-workspace",
+        "tabs": [
+          {
+            "id": "paper-a",
+            "title": "Paper A notes",
+            "url": "https://fixtures.onhand.test/paper-a"
+          },
+          {
+            "id": "paper-b",
+            "title": "Paper B notes",
+            "url": "https://fixtures.onhand.test/paper-b"
+          },
+          {
+            "id": "billing-distractor",
+            "title": "Billing dashboard notes",
+            "url": "https://fixtures.onhand.test/billing"
+          },
+          {
+            "id": "blank-workspace",
+            "title": "Empty research workspace",
+            "url": "https://fixtures.onhand.test/empty"
+          }
+        ],
+        "resources": [
+          {
+            "id": "paper-a-source",
+            "tabId": "paper-a",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "paper-a-method",
+                "location": "section: Method",
+                "text": "Paper A precomputes compressed document vectors and searches them with an approximate index."
+              }
+            ]
+          },
+          {
+            "id": "paper-b-source",
+            "tabId": "paper-b",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "paper-b-method",
+                "location": "section: Method",
+                "text": "Paper B caches query-independent attention states and reranks a small exact candidate set."
+              }
+            ]
+          },
+          {
+            "id": "billing-source",
+            "tabId": "billing-distractor",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "billing-detail",
+                "location": "section: Dashboard",
+                "text": "The billing dashboard caches monthly summaries for invoice review."
+              }
+            ]
+          },
+          {
+            "id": "blank-source",
+            "tabId": "blank-workspace",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "blank-notice",
+                "location": "section: Workspace",
+                "text": "This workspace intentionally contains no retrieval research evidence."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "paper-a",
+            "description": "Paper A's latency reduction method.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "paper-a-source",
+                "passageIds": ["paper-a-method"]
+              }
+            ]
+          },
+          {
+            "id": "paper-b",
+            "description": "Paper B's latency reduction method.",
+            "requireCitation": false,
+            "acceptableEvidence": [
+              {
+                "sourceId": "paper-b-source",
+                "passageIds": ["paper-b-method"]
+              }
+            ]
+          }
+        ],
+        "requiredToolGroups": [
+          {
+            "id": "saved-source-access",
+            "anyOf": ["browser_search_saved_sources", "browser_list_artifacts", "browser_restore_state"]
+          }
+        ],
+        "minAnnotations": 0,
+        "maxAnnotations": 3,
+        "maxModelCalls": 5,
+        "maxToolCalls": 14,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 2,
+        "maxLatencyMs": 60000,
+        "requireNoProvisionalAnswer": true
+      }
+    }
+  ]
+}

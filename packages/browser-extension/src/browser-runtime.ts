@@ -26,6 +26,13 @@ import {
 } from "./browser-oauth";
 import type { LearningEvidenceAssessment, LearningResearchPlan } from "./research/evidence-types";
 import {
+	buildSavedArtifactEvidenceRepresentation,
+	buildSavedSourceRepresentation,
+	searchSavedSourceArtifacts,
+	type SavedSourceRepresentation,
+	type SavedSourceSearchResult,
+} from "./source-memory";
+import {
 	ARTIFACT_TOOL_NAMES,
 	BROAD_SOURCE_TOOL_NAMES,
 	CORE_READ_TOOL_NAMES,
@@ -104,6 +111,9 @@ interface RuntimeSettings {
 	// the same model on faster inference. Off by default because the plan's
 	// usage is consumed faster (2.5x on gpt-5.5). Ignored by other providers.
 	codexFastModeEnabled: boolean;
+	// Hidden experiment flag. Searchable source content is still persisted only
+	// when a capture explicitly opts in with includeSourceContent=true.
+	sourceMemoryEnabled: boolean;
 }
 
 type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching";
@@ -324,6 +334,7 @@ interface BrowserArtifact {
 	page: any;
 	outerHTML?: string | null;
 	screenshotDataUrl?: string | null;
+	source?: SavedSourceRepresentation | null;
 }
 
 interface ReplayAnnotation {
@@ -345,6 +356,8 @@ interface RuntimeArtifactHooks {
 	captureArtifact: (params: any) => Promise<any>;
 	listArtifacts: (params: any) => Promise<BrowserArtifact[]>;
 	restoreArtifact: (params: any) => Promise<any>;
+	searchSavedSources: (params: any) => Promise<SavedSourceSearchResult[]>;
+	deleteArtifact: (params: any) => Promise<any>;
 }
 
 const STORAGE_KEY = "onhandBrowserRuntime";
@@ -534,6 +547,7 @@ const SMOKE_PROVIDER = "onhand-smoke";
 const SMOKE_MODEL = "onhand-smoke-1";
 const SMOKE_PORTS_MODEL = "onhand-smoke-ports-1";
 const SMOKE_LEARNING_MODEL = "onhand-smoke-learning-1";
+const SMOKE_SOURCE_MEMORY_MODEL = "onhand-smoke-source-memory-1";
 const BROWSER_CONTEXT_MAX_CHARS = 1800;
 const BROWSER_CONTEXT_MAX_BLOCKS = 8;
 const BROWSER_CONTEXT_COMMAND_TIMEOUT_MS = 5000;
@@ -577,6 +591,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	experimentalModelLaneClassifier: true,
 	modelLaneClassifierDefaultMigrated: false,
 	codexFastModeEnabled: false,
+	sourceMemoryEnabled: false,
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -586,7 +601,7 @@ let smokeModelRegistration: ReturnType<typeof registerFauxProvider> | null = nul
 const ONHAND_SYSTEM_PROMPT = assertConstitutionPrompt(`You are Onhand, a contextual tutor running inside a Chromium extension side panel.
 
 Onhand's constitution:
-- The page is the canvas. Read the page before answering when page context matters; anchor every answer drawn from the page with a source highlight on the supporting text, and add short marginal notes where they add interpretation. Keep the page unmarked only when the user asks for no page changes or the page does not support the claim.
+- The page is the canvas. Read the page before answering when page context matters; anchor every answer drawn from the live page with a source highlight on the supporting text, and add short marginal notes where they add interpretation. A matching browser_search_saved_sources result is already a durable snapshot provenance marker: for an explicitly saved-snapshot question, answer from that result without reopening or annotating the live page. Keep the page unmarked when the user asks for no page changes, the page does not support the claim, or the answer comes from that saved snapshot.
 - Every material page claim must be grounded in visible/readable page context. If you cannot point to a specific location on a specific open page, do not present the claim as coming from that page.
 - Prefer sources the user can see over your own model knowledge. Before answering from memory, check every substantive claim: does the current page or a clearly related open tab support it? If yes, read that source and anchor the claim there with a highlight or citation. If no open source supports a claim the answer needs, open or search for one that does — in a background tab, without switching the user's focus — and anchor the claim there. If fetching is clearly inappropriate for the request or fails, say plainly that the claim comes from general knowledge rather than the user's pages. Never present model knowledge as if it came from the page. A claim that corrects or contradicts the current page must be grounded in a source the user can see. Web search is never the first move while open material can answer, and a claim check that the current page plus clearly related open tabs already support needs no fetching at all.
 - Teach, don't tell. Help the user see how the page answers the question instead of replacing the page with a detached summary.
@@ -601,11 +616,11 @@ Onhand's constitution:
 - Math formatting: when writing LaTeX symbols or equations, wrap inline math in $...$ and display equations in $$...$$. Never leave raw LaTeX commands such as \\cdot, \\sqrt, \\frac, or \\text{} outside math delimiters, including inside bullets and numbered steps. If extracted page math is fragmented or missing operators, do not copy it verbatim into chat or source highlights; either rewrite a clean formula only when the intended formula is clear from context, or explain the relationship in words.
 
 Default answer mode:
-- For every question you answer from page material, create one durable source highlight on the exact visible/readable text that supports the answer, then answer in chat referencing that highlight. This applies to ordinary factual questions too: do not answer chat-only when the page supports the claim. Exceptions: if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when the highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
+- For every question you answer from live page material, create one durable source highlight on the exact visible/readable text that supports the answer, then answer in chat referencing that highlight. This applies to ordinary factual questions too: do not answer chat-only when the live page supports the claim. Exceptions: a matching browser_search_saved_sources result already supplies durable snapshot provenance, so an explicitly saved-snapshot question must be answered directly without new highlights or notes; if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when a live-page highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a live page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
 - For follow-up questions that refer to an already-highlighted idea, reuse the existing session source when it supports the answer: call browser_scroll_to_annotation on that anchor once before answering — the scroll shows which mark backs the answer and counts as the turn's source marker. Do not try to highlight a paraphrase of your own explanation; browser_highlight_text text must be copied from visible/readable page text.
-- Grounding budget: simple questions still anchor on one strong highlight of the supporting text plus a short answer. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight the central concepts — ${MARK_POLICY.teachBudgetPhrase}. ${MARK_POLICY.noHeadingMarkers} Prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. ${MARK_POLICY.perMarkNotes} If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
+- Grounding budget: simple live-page questions still anchor on one strong highlight of the supporting text plus a short answer. Explicit saved-snapshot questions are excluded because the matching saved passage is already their durable grounding; do not add live-page marks after a successful saved-source search. If the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary, use one strong highlight and at most one short note for a simple claim. Do not annotate examples, side effects, or reuse details unless the user asked about those distinct points. For broad page teaching/review, highlight the central concepts — ${MARK_POLICY.teachBudgetPhrase}. ${MARK_POLICY.noHeadingMarkers} Prefer definitions, mechanisms, or conclusions over motivation-only contrasts unless a contrast is the whole answer. ${MARK_POLICY.perMarkNotes} If you do not have successful highlights for later sections, keep the chat answer scoped to the highlighted source instead of writing a detached whole-page lecture. Roadmap/list/navigation questions are not simple if the answer names multiple steps or items, but notes should still be sparse.
 - Quick visual questions such as "what does this figure show?", "what is this diagram?", or "try here" should usually be sidebar-only after capturing the visible region or PDF page image. Do not automatically add a note for a quick visual explanation. If a durable source marker is useful, prefer a caption/supporting-text highlight; add a note only when it adds future replay value beyond a label. This does not limit notes for learning, review, evidence-location, source-navigation, comparison, or deeper conceptual workflows.
 - Add a short interpretive note (${MARK_POLICY.noteShapePhrase}) only on highlights that carry explanatory weight: name the role of the passage or explain a hard step. Do not add notes that merely paraphrase the highlight; most confirmatory source highlights should stand without a note.
 - Only successful highlight/note tool results count as source markers. If a highlight attempt fails, retry once with a smaller exact visible span, then omit/qualify that claim in chat.
@@ -799,6 +814,12 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 	persist: Type.Optional(Type.Boolean({ description: "Persist this page capture as a browser-only Onhand artifact" })),
 	includeHtml: Type.Optional(Type.Boolean({ description: "Persist a full HTML snapshot when persist=true" })),
 	includeScreenshot: Type.Optional(Type.Boolean({ description: "Persist a screenshot when persist=true" })),
+	includeSourceContent: Type.Optional(
+		Type.Boolean({
+			description:
+				"Experimental: persist normalized searchable source text when persist=true. Set this only when the user explicitly asks to save or index the source for later questions.",
+		}),
+	),
 	label: Type.Optional(Type.String({ description: "Optional artifact label" })),
 });
 
@@ -956,6 +977,19 @@ const VISIBLE_REGION_IMAGE_SCHEMA = Type.Object({
 const LIST_ARTIFACTS_SCHEMA = Type.Object({
 	query: Type.Optional(Type.String({ description: "Search artifact id, label, title, or URL" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum artifacts to return" })),
+});
+
+const SEARCH_SAVED_SOURCES_SCHEMA = Type.Object({
+	query: Type.String({ description: "Words or phrase to search across saved session evidence and explicitly indexed source content" }),
+	limit: Type.Optional(Type.Number({ description: "Maximum matching source passages to return; defaults to 8" })),
+	artifactIds: Type.Optional(Type.Array(Type.String(), { description: "Optional saved artifact ids to restrict the search" })),
+	sourceKinds: Type.Optional(
+		Type.Array(Type.String(), { description: "Optional source kinds to search: html, pdf, or upload" }),
+	),
+});
+
+const DELETE_ARTIFACT_SCHEMA = Type.Object({
+	artifactId: Type.String({ description: "Saved artifact id to delete" }),
 });
 
 const RESTORE_ARTIFACT_SCHEMA = Type.Object({
@@ -2537,6 +2571,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		advancedRuntimeInspectionEnabled: settings.advancedRuntimeInspectionEnabled,
 		experimentalModelLaneClassifier: settings.experimentalModelLaneClassifier,
 		codexFastModeEnabled: settings.codexFastModeEnabled,
+		sourceMemoryEnabled: settings.sourceMemoryEnabled,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -2569,10 +2604,52 @@ function getSmokeModel(modelId: string) {
 			{ id: SMOKE_MODEL, name: "Onhand Smoke Model", reasoning: false },
 			{ id: SMOKE_PORTS_MODEL, name: "Onhand Ports Smoke Model", reasoning: false },
 			{ id: SMOKE_LEARNING_MODEL, name: "Onhand Learning Smoke Model", reasoning: false },
+			{ id: SMOKE_SOURCE_MEMORY_MODEL, name: "Onhand Source Memory Smoke Model", reasoning: false },
 		],
 		tokenSize: { min: 8, max: 16 },
 	});
-	if (modelId === SMOKE_LEARNING_MODEL) {
+	if (modelId === SMOKE_SOURCE_MEMORY_MODEL) {
+		const contextText = (context: unknown) => {
+			try {
+				return JSON.stringify(context || {});
+			} catch {
+				return "";
+			}
+		};
+		const first = (context: unknown) => {
+			const text = contextText(context);
+			if (text.includes("source-memory save")) {
+				return fauxAssistantMessage([
+					fauxToolCall("browser_capture_state", {
+						persist: true,
+						includeSourceContent: true,
+						label: "Source memory smoke",
+					}),
+				]);
+			}
+			if (text.includes("source-memory search")) {
+				const query = text.includes("source-memory search alpha") ? "Alpha smoke content" : "stable reference window";
+				return fauxAssistantMessage([fauxToolCall("browser_search_saved_sources", { query, limit: 5 })]);
+			}
+			if (text.includes("source-memory delete")) {
+				return fauxAssistantMessage([fauxToolCall("browser_list_artifacts", { query: "Source memory smoke", limit: 5 })]);
+			}
+			return fauxAssistantMessage(fauxText("Source memory smoke idle"));
+		};
+		const second = (context: unknown) => {
+			const text = contextText(context);
+			if (text.includes("source-memory delete")) {
+				const artifactId = text.match(/artifact_[a-zA-Z0-9_-]+/)?.[0] || "artifact_missing";
+				return fauxAssistantMessage([fauxToolCall("browser_delete_artifact", { artifactId })]);
+			}
+			return fauxAssistantMessage(fauxText(text.includes("source-memory search") ? "Saved source evidence retrieved." : "Saved source captured."));
+		};
+		smokeModelRegistration.setResponses([
+			first,
+			second,
+			fauxAssistantMessage(fauxText("Saved source deleted.")),
+		]);
+	} else if (modelId === SMOKE_LEARNING_MODEL) {
 		// Context-aware learning script: when the runtime injects the
 		// check-grading directive, a directive-following model re-grounds on the
 		// existing annotation instead of replaying the teaching pass (which would
@@ -3015,18 +3092,69 @@ async function getBrowserArtifact(artifactId: string): Promise<BrowserArtifact |
 	return artifacts[id] || null;
 }
 
-async function listBrowserArtifacts(params: any = {}): Promise<BrowserArtifact[]> {
-	const limit = Math.max(1, Math.min(100, Number(params.limit || 20) || 20));
-	const query = String(params.query || "").trim().toLowerCase();
-	let artifacts: BrowserArtifact[] = [];
+async function getAllBrowserArtifacts(): Promise<BrowserArtifact[]> {
 	if (canUseIndexedDb()) {
-		artifacts = await withArtifactStore("readonly", async (store) => {
+		return await withArtifactStore("readonly", async (store) => {
 			const all = await requestToPromise<BrowserArtifact[]>(store.getAll());
 			return Array.isArray(all) ? all : [];
 		});
-	} else {
-		artifacts = Object.values(await readFallbackArtifacts());
 	}
+	return Object.values(await readFallbackArtifacts());
+}
+
+async function deleteBrowserArtifact(artifactId: string): Promise<BrowserArtifact | null> {
+	const id = String(artifactId || "").trim();
+	if (!id) return null;
+	const artifact = await getBrowserArtifact(id);
+	if (!artifact) return null;
+	if (canUseIndexedDb()) {
+		await withArtifactStore("readwrite", async (store) => {
+			await requestToPromise(store.delete(id));
+		});
+		return artifact;
+	}
+	const artifacts = await readFallbackArtifacts();
+	delete artifacts[id];
+	await writeFallbackArtifacts(artifacts);
+	return artifact;
+}
+
+async function clearAllBrowserArtifacts() {
+	const artifacts = await getAllBrowserArtifacts();
+	if (canUseIndexedDb()) {
+		await withArtifactStore("readwrite", async (store) => {
+			await requestToPromise(store.clear());
+		});
+	} else {
+		await writeFallbackArtifacts({});
+	}
+	return artifacts.length;
+}
+
+async function deleteUnreferencedSessionEvidenceArtifacts(
+	deletedSession: RuntimeSession,
+	remainingSessions: RuntimeSession[],
+) {
+	const stillReferenced = new Set(remainingSessions.flatMap((session) => Array.isArray(session.artifactIds) ? session.artifactIds : []));
+	const deletedArtifactIds: string[] = [];
+	for (const artifactId of Array.isArray(deletedSession.artifactIds) ? deletedSession.artifactIds : []) {
+		if (!artifactId || stillReferenced.has(artifactId)) continue;
+		const artifact = await getBrowserArtifact(artifactId);
+		if (!artifact) continue;
+		// Full-source artifacts were explicitly indexed and remain independent of
+		// the session that created them. Evidence-only review snapshots follow the
+		// lifecycle of their last referencing session.
+		if (artifact.source?.blocks?.length) continue;
+		await deleteBrowserArtifact(artifactId);
+		deletedArtifactIds.push(artifactId);
+	}
+	return deletedArtifactIds;
+}
+
+async function listBrowserArtifacts(params: any = {}): Promise<BrowserArtifact[]> {
+	const limit = Math.max(1, Math.min(100, Number(params.limit || 20) || 20));
+	const query = String(params.query || "").trim().toLowerCase();
+	let artifacts = await getAllBrowserArtifacts();
 	if (query) {
 		artifacts = artifacts.filter((artifact) =>
 			[
@@ -3047,6 +3175,14 @@ async function listBrowserArtifacts(params: any = {}): Promise<BrowserArtifact[]
 		.slice(0, limit);
 }
 
+async function searchBrowserSavedSources(params: any = {}) {
+	return searchSavedSourceArtifacts(await getAllBrowserArtifacts(), params.query, {
+		limit: params.limit,
+		artifactIds: Array.isArray(params.artifactIds) ? params.artifactIds : [],
+		sourceKinds: Array.isArray(params.sourceKinds) ? params.sourceKinds : [],
+	});
+}
+
 function artifactSummary(artifact: BrowserArtifact) {
 	return {
 		artifactId: artifact.id,
@@ -3059,6 +3195,11 @@ function artifactSummary(artifact: BrowserArtifact) {
 		annotationCount: artifact.page?.annotationCount ?? (Array.isArray(artifact.page?.annotations) ? artifact.page.annotations.length : 0),
 		hasHtml: Boolean(artifact.outerHTML),
 		hasScreenshot: Boolean(artifact.screenshotDataUrl),
+		hasSourceContent: Boolean(artifact.source?.blocks?.length),
+		sourceKind: artifact.source?.sourceKind || null,
+		contentFingerprint: artifact.source?.contentFingerprint || null,
+		sourceCapturedAt: artifact.source?.capturedAt || null,
+		sourceCharCount: Number(artifact.source?.charCount || 0),
 	};
 }
 
@@ -7985,6 +8126,14 @@ function browserContextLooksLikePdf(details: any) {
 	);
 }
 
+function promptRequiresSavedSnapshotOnly(prompt: unknown) {
+	const text = String(prompt || "").toLowerCase().replace(/\s+/g, " ").trim();
+	if (!text || !/\bonly\b/.test(text)) return false;
+	if (!/\b(?:saved|indexed|previously captured)\b/.test(text)) return false;
+	if (/\b(?:delete|remove|forget|clear)\b/.test(text)) return false;
+	return /\b(?:according|answer|compare|explain|how|use|what|which|why)\b/.test(text);
+}
+
 function selectToolsForPrompt(
 	allTools: AgentTool[],
 	prompt: string,
@@ -7994,6 +8143,7 @@ function selectToolsForPrompt(
 	options: {
 		forcePdfTools?: boolean;
 		advancedRuntimeInspectionEnabled?: boolean;
+		sourceMemoryEnabled?: boolean;
 		suppressExtractContent?: boolean;
 		selectionFirstPdfQuestion?: boolean;
 		forceToolNames?: string[];
@@ -8001,14 +8151,15 @@ function selectToolsForPrompt(
 ) {
 	// Tool availability is deliberately not gated on prompt wording: the model
 	// sees the full registry and decides what to use. Behavioral constraints
-	// live in the system/launcher prompts and the runtime guards. The only
-	// exclusions are non-prompt-shaped gates — the advanced runtime inspection
-	// setting (browser_run_js) and the Learning Mode toggle (learning-event
-	// tools).
-	void prompt;
+	// live in the system/launcher prompts and the runtime guards. The one
+	// prompt-shaped exception is an explicit "only the saved source" request:
+	// exposing live-page and annotation tools would let the older annotation
+	// policy override the user's source constraint after retrieval succeeds.
+	const savedSnapshotOnly = options.sourceMemoryEnabled === true && promptRequiresSavedSnapshotOnly(prompt);
 	void learnerState;
 	const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
 	return allTools.filter((tool) => {
+		if (savedSnapshotOnly && tool.name !== "browser_search_saved_sources") return false;
 		if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
 		if (!learningMode && LEARNING_TOOL_NAMES.includes(tool.name)) return false;
 		return true;
@@ -8052,11 +8203,14 @@ function buildLauncherPrompt(
 			? "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, recover an already-open index/master tab when needed, then use available tab/navigation/link tools to open the relevant linked pages before answering. Highlight the useful passages on the destination pages, not just the index/master page."
 			: "- Linked-note/resource requests are navigation tasks. If the user asks to open, check, or inspect notes, readings, links, resources, papers, or pages listed on the current page or a page used earlier in the session, use available tab/navigation and element-discovery tools to open or inspect the relevant linked pages before answering. Highlight the useful passages on the destination pages, not just the index/master page.";
 	const toolSpecificPolicyLines = [
+		hasTool("browser_search_saved_sources")
+			? "- Saved-source memory is snapshot-based. browser_search_saved_sources covers exact evidence already preserved in restorable session artifacts plus full source text the user explicitly asked to save or index. Use it when the user refers to saved/indexed/previous sources or evidence from an earlier session, asks across saved sources, or the original source is no longer open. A session-evidence result covers only the passage Onhand previously marked, not the rest of that page or document. When a matching source is currently open or freshness matters, read the live page before relying on a saved passage. When the user explicitly asks to use only a saved snapshot and freshness does not matter, the saved passage is sufficient grounding, including for PDFs: answer directly from a relevant saved PDF passage and its page number without restoring, reopening, searching, highlighting, or annotating the live PDF. Fall back to the live PDF workflow only when saved-source search has no relevant passage or the user requests fresh/live verification. Identify the saved source and capture time in the answer. Never imply that a saved snapshot reflects the current website. Set browser_capture_state includeSourceContent=true only when the user explicitly asks to save or index the full source for later. Use browser_delete_artifact only after an explicit deletion request."
+			: "",
 		hasTool("browser_textbook_search")
 			? "- For online textbook/ebook/reader pages where the current loaded section does not contain the requested topic, or the user asks about another part/the whole book, use browser_textbook_search first to search through the reader's own book-search UI. Do not manually click/type through the reader search UI unless browser_textbook_search is unavailable or reports unsupported. Read results first; open a result only when navigation is needed to answer. If browser_textbook_search returns openedResult.navigated=true, immediately use browser_extract_content once with the same or focused query on the opened page, then answer, highlight, and note from that opened content. Do not switch tabs, close search panels, call generic click/find/wait tools, or repeat book search just to verify this opened result. Use browser_navigate only to reload the current reader URL once if the reader itself is blank, stuck loading, or reports an error. For one explanatory textbook passage, prefer one contiguous highlight spanning the key supporting sentences and one note; do not split nearby sentences into multiple highlights unless the user asks for multiple source highlights."
 			: "",
-		hasAnyTool(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES])
-			? "- For selected/highlighted PDF questions, use selected text from captured context first. Chrome's native PDF viewer usually exposes selection through browser_get_selection, copy fallback, or debugger fallback, so do not blame Chrome's native viewer unless that is truly the active reader and those fallbacks failed. If tool output names Google Scholar PDF Reader, call it Google Scholar PDF Reader even when the tab URL itself is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open the Onhand PDF viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open the Onhand PDF viewer when analysis, full-PDF search, offscreen context, exact page marking, or durable highlights/notes would improve the answer, and preserve the current page/selection when opening it. For current visible PDF figures/slides/equations/diagrams, use browser_pdf_capture_page_image and answer first; do not automatically search/read/highlight/note for a lightweight prompt such as 'try here' unless the user asks to mark/save/review it, asks where evidence is, or the answer needs a specific text passage. Do not treat selected named concepts, terms, section headings, formulas, or paper mechanisms as quick answers: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. If the user accepts an offer to go deeper in a PDF with yes/please/similar, finish the search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded."
+			hasAnyTool(["browser_open_pdf_in_onhand_viewer", ...PDF_TOOL_NAMES])
+			? "- For selected/highlighted PDF questions, use selected text from captured context first. This live-PDF workflow does not apply when the user explicitly asks about a saved PDF snapshot and browser_search_saved_sources returns a relevant passage; in that case answer directly from the saved passage and page number without reopening or annotating the PDF. Chrome's native PDF viewer usually exposes selection through browser_get_selection, copy fallback, or debugger fallback, so do not blame Chrome's native viewer unless that is truly the active reader and those fallbacks failed. If tool output names Google Scholar PDF Reader, call it Google Scholar PDF Reader even when the tab URL itself is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open the Onhand PDF viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open the Onhand PDF viewer when analysis, full-PDF search, offscreen context, exact page marking, or durable highlights/notes would improve the answer, and preserve the current page/selection when opening it. For current visible PDF figures/slides/equations/diagrams, use browser_pdf_capture_page_image and answer first; do not automatically search/read/highlight/note for a lightweight prompt such as 'try here' unless the user asks to mark/save/review it, asks where evidence is, or the answer needs a specific text passage. Do not treat selected named concepts, terms, section headings, formulas, or paper mechanisms as quick answers: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. If the user accepts an offer to go deeper in a PDF with yes/please/similar, finish the search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded."
 			: "",
 		hasAnyTool(VISUAL_CONTEXT_TOOL_NAMES)
 			? "- For equations, charts, diagrams, figures, screenshots, or weak text extraction, use browser_get_visible_region_image or browser_pdf_capture_page_image to inspect the visible region. Visual claims must name the captured region and still use exact text highlights when text sources are needed or requested. If the user explicitly asks to highlight a formula/equation, call browser_highlight_text with the selected formula text or closest visible formula label; the page tool will use a block formula highlight when rendered math is involved. For explicit named formula/equation/theorem requests, locate that named formula or section first; do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula. For ordinary source grounding where rendered math extraction is collapsed or fragmented, prefer the nearby explanatory sentence, label, or caption instead of copying broken formula text."
@@ -8493,10 +8647,39 @@ function formatArtifactList(artifacts: BrowserArtifact[]) {
 				`${summary.annotationCount} annotations`,
 				summary.hasHtml ? "html" : "",
 				summary.hasScreenshot ? "screenshot" : "",
+				summary.hasSourceContent ? `${summary.sourceKind || "source"} text (${summary.sourceCharCount} chars)` : "",
 			].filter(Boolean);
 			return `${index + 1}. ${summary.artifactId}${bits.length ? ` [${bits.join(", ")}]` : ""}\n   ${summary.title || "(untitled)"}\n   ${summary.url || "(no url)"}`;
 		})
 		.join("\n");
+}
+
+function formatSavedSourceSearchForModel(details: any) {
+	const query = String(details?.query || "").trim();
+	const results = Array.isArray(details?.results) ? details.results : [];
+	if (!results.length) return `No saved session evidence or explicitly indexed source passages matched ${JSON.stringify(query)}.`;
+	const hasPdfResult = results.some((result: SavedSourceSearchResult) => result.sourceKind === "pdf");
+	const hasSessionEvidence = results.some((result: SavedSourceSearchResult) => result.captureScope === "session-evidence");
+	const lines = results.slice(0, 20).map((result: SavedSourceSearchResult, index: number) => {
+		const location = result.pageNumber ? `p. ${result.pageNumber}` : result.selector || result.blockId;
+		return [
+			`${index + 1}. ${result.title || "Saved source"} [artifactId=${result.artifactId}; ${result.sourceKind}; ${result.captureScope}; ${location}; captured ${result.capturedAt}]`,
+			result.url ? `   Source URL: ${result.url}` : "",
+			`   ${truncateStructuredText(result.text, result.sourceKind === "pdf" ? 1_300 : 900)}`,
+		].filter(Boolean).join("\n");
+	});
+	return [
+		`Saved-source matches for ${JSON.stringify(query)}:`,
+		...lines,
+		"These are saved snapshots, not proof of the current live page. If the source is open or the answer depends on current information, read the live source before relying on it.",
+		hasSessionEvidence
+			? "A session-evidence match contains only source text Onhand previously marked in that session, with already-saved anchor context. It is evidence for that passage only; do not imply that it represents or exhaustively searches the full page or document."
+			: "",
+		hasPdfResult
+			? "A matching saved PDF passage and its saved page number are sufficient evidence for a saved-snapshot question. The saved result is already the durable provenance marker. Answer from it directly; do not restore, reopen, search again, highlight, annotate, or add notes to the live PDF unless the user requests that or freshness matters."
+			: "",
+		"If the user explicitly asked to use only saved sources and freshness does not matter, stop using browser tools and answer from these passages now. Do not search again, navigate to, reopen, highlight, annotate, or add notes to the live pages unless the user asked you to do so.",
+	].filter(Boolean).join("\n");
 }
 
 function formatPdfSearchForModel(details: any) {
@@ -8857,6 +9040,12 @@ function toolResultTextForModel(toolName: string, result: any) {
 		}
 		case "browser_list_artifacts":
 			return formatArtifactList(Array.isArray(details.artifacts) ? details.artifacts : []);
+		case "browser_search_saved_sources":
+			return formatSavedSourceSearchForModel(details);
+		case "browser_delete_artifact":
+			return details.deleted
+				? `Deleted saved artifact ${details.artifactId}. Its stored source representation is no longer searchable. This does not delete separate chat history or live page annotations.`
+				: `No saved artifact found for ${details.artifactId || "(blank id)"}.`;
 		case "browser_restore_state":
 			return `Restored artifact ${details.artifactId || details.artifact?.id || ""}: ${details.restoredAnnotations || 0} annotation(s), ${details.restoredNotes || 0} note(s).`;
 		case "browser_find_elements": {
@@ -10212,6 +10401,10 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	buildSavedArtifactEvidenceRepresentationForTest: buildSavedArtifactEvidenceRepresentation,
+	buildSavedSourceRepresentationForTest: buildSavedSourceRepresentation,
+	searchSavedSourceArtifactsForTest: searchSavedSourceArtifacts,
+	formatSavedSourceSearchForModelForTest: formatSavedSourceSearchForModel,
 	onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
 	isRestorablePageUrlForTest: isRestorablePageUrl,
 	onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
@@ -10496,6 +10689,7 @@ export const __browserRuntimeTest = {
 		options: {
 			forcePdfTools?: boolean;
 			advancedRuntimeInspectionEnabled?: boolean;
+			sourceMemoryEnabled?: boolean;
 			suppressExtractContent?: boolean;
 			selectionFirstPdfQuestion?: boolean;
 			forceToolNames?: string[];
@@ -10519,8 +10713,23 @@ export const __browserRuntimeTest = {
 			async restoreArtifact() {
 				return {};
 			},
+			async searchSavedSources() {
+				return [];
+			},
+			async deleteArtifact(params) {
+				return { artifactId: params?.artifactId || "", deleted: false };
+			},
 		};
-		return selectToolsForPrompt(createTools(host, artifactHooks), prompt, [], learningMode, learnerState, options).map((tool) => tool.name);
+		return selectToolsForPrompt(
+			createTools(host, artifactHooks, undefined, undefined, undefined, undefined, undefined, {
+				sourceMemoryEnabled: options.sourceMemoryEnabled === true,
+			}),
+			prompt,
+			[],
+			learningMode,
+			learnerState,
+			options,
+		).map((tool) => tool.name);
 	},
 	missingToolRetryToolNamesForTest: missingToolRetryToolNamesForPrompt,
 	findMissingKnownBrowserToolTraceForTest: findMissingKnownBrowserToolTrace,
@@ -10652,6 +10861,41 @@ function createRecordLearningEventTool(recordLearningEvent: (event: LearningEven
 	};
 }
 
+function createSourceMemoryTools(artifactHooks: RuntimeArtifactHooks): AgentTool[] {
+	return [
+		{
+			name: "browser_search_saved_sources",
+			label: "Browser Search Saved Sources",
+			description:
+				"Search exact evidence already preserved in restorable sessions and normalized text from webpages or PDFs the user explicitly indexed. Use this for earlier-session evidence, saved sources, and cross-source comparisons. Session-evidence results cover only previously marked passages; full-source results cover explicitly indexed content. A relevant saved PDF passage, including its page number, is sufficient evidence when the user explicitly asks to use the saved snapshot; do not reopen the PDF unless search misses or freshness matters. Results are snapshots; prefer a live open source whenever freshness matters.",
+			parameters: SEARCH_SAVED_SOURCES_SCHEMA,
+			async execute(_toolCallId, params: any) {
+				const results = await artifactHooks.searchSavedSources(params);
+				const details = { query: String(params?.query || ""), resultCount: results.length, results };
+				return {
+					content: [{ type: "text", text: toolResultTextForModel("browser_search_saved_sources", details) }],
+					details,
+				};
+			},
+		},
+		{
+			name: "browser_delete_artifact",
+			label: "Browser Delete Artifact",
+			description:
+				"Delete a saved browser artifact, including its normalized searchable source representation. Use only when the user explicitly asks to delete that saved artifact or source. This does not delete separate chat history or live page annotations.",
+			parameters: DELETE_ARTIFACT_SCHEMA,
+			executionMode: "sequential",
+			async execute(_toolCallId, params: any) {
+				const details = await artifactHooks.deleteArtifact(params);
+				return {
+					content: [{ type: "text", text: toolResultTextForModel("browser_delete_artifact", details) }],
+					details,
+				};
+			},
+		},
+	];
+}
+
 function createTools(
 	host: RuntimeHost,
 	artifactHooks: RuntimeArtifactHooks,
@@ -10667,6 +10911,7 @@ function createTools(
 	) => void = () => {},
 	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
 	runHighlightScanFallback: (effectiveParams: Record<string, unknown>, lastError: unknown) => Promise<any | null> = async () => null,
+	options: { sourceMemoryEnabled?: boolean } = {},
 ): AgentTool[] {
 	const commandTool = (
 		name: string,
@@ -10787,6 +11032,7 @@ function createTools(
 
 	return [
 		createRecordLearningEventTool(recordLearningEvent),
+		...(options.sourceMemoryEnabled ? createSourceMemoryTools(artifactHooks) : []),
 		{
 			name: "browser_list_tabs",
 			label: "Browser List Tabs",
@@ -11183,6 +11429,10 @@ function getToolStatusMessage(toolName: string) {
 			return "Restoring saved page state...";
 		case "browser_list_artifacts":
 			return "Checking saved page states...";
+		case "browser_search_saved_sources":
+			return "Searching saved session evidence and sources...";
+		case "browser_delete_artifact":
+			return "Deleting the saved source...";
 		case "browser_find_elements":
 			return "Finding page elements...";
 		case "browser_wait_for_selector":
@@ -11700,6 +11950,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					: DEFAULT_SETTINGS.experimentalModelLaneClassifier,
 				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
+				sourceMemoryEnabled: rawSettings.sourceMemoryEnabled === true,
 			};
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
@@ -12782,6 +13033,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		options: {
 			forcePdfTools?: boolean;
 			advancedRuntimeInspectionEnabled?: boolean;
+			sourceMemoryEnabled?: boolean;
 			suppressExtractContent?: boolean;
 			selectionFirstPdfQuestion?: boolean;
 			visiblePdfSelectionFirstPass?: boolean;
@@ -12844,6 +13096,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						pdfAnchor: (effectiveParams as any)?.pdfAnchor,
 					});
 				},
+				{ sourceMemoryEnabled: options.sourceMemoryEnabled === true },
 			),
 			prompt,
 			attachments,
@@ -13587,6 +13840,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (params?.persist) {
 			let outerHTML: string | null = null;
 			let screenshotDataUrl: string | null = null;
+			let source: SavedSourceRepresentation | null = null;
 			if (params.includeHtml === true) {
 				try {
 					const dom = await host.runCommand("get_dom", { ...captureParams, tabId: tab?.id || captureParams.tabId });
@@ -13603,6 +13857,35 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					host.log?.("artifact screenshot capture failed", error);
 				}
 			}
+			if (params.includeSourceContent === true && (await loadStore()).settings.sourceMemoryEnabled === true) {
+				try {
+					let extraction = await host.runCommand("extract_source_content", {
+						...captureParams,
+						tabId: tab?.id || captureParams.tabId,
+						maxChars: 50_000,
+					});
+					const extracted = extraction?.content || extraction;
+					if (
+						!extracted ||
+						extracted.unsupported === true ||
+						(!Array.isArray(extracted.blocks) && !String(extracted.markdown || extracted.text || "").trim())
+					) {
+						extraction = await host.runCommand("extract_content", {
+							...captureParams,
+							tabId: tab?.id || captureParams.tabId,
+							maxChars: 50_000,
+						});
+					}
+					source = buildSavedSourceRepresentation({
+						tab,
+						page,
+						extraction: extraction?.content || extraction,
+						capturedAt: page?.capturedAt || nowIso(),
+					});
+				} catch (error) {
+					host.log?.("artifact source-content capture failed", error);
+				}
+			}
 			const now = nowIso();
 			const artifact: BrowserArtifact = {
 				id: buildArtifactId(tab, page),
@@ -13614,6 +13897,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				page,
 				outerHTML,
 				screenshotDataUrl,
+				source,
 			};
 			await putBrowserArtifact(artifact);
 			if (activeRequest) {
@@ -13628,6 +13912,28 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			tab,
 			page,
 			persistedArtifact,
+		};
+	}
+
+	async function deleteArtifact(params: any = {}) {
+		const artifactId = String(params?.artifactId || "").trim();
+		if (!artifactId) throw new Error("Deleting a saved artifact requires artifactId.");
+		const artifact = await deleteBrowserArtifact(artifactId);
+		if (!artifact) return { artifactId, deleted: false };
+		const store = await loadStore();
+		const changedSessions: RuntimeSession[] = [];
+		for (const session of Object.values(store.sessions) as RuntimeSession[]) {
+			const nextIds = (Array.isArray(session.artifactIds) ? session.artifactIds : []).filter((id) => id !== artifactId);
+			if (nextIds.length === session.artifactIds.length) continue;
+			session.artifactIds = nextIds;
+			changedSessions.push(session);
+		}
+		if (changedSessions.length) await saveStore(store, { sessions: changedSessions });
+		if (activeRequest) activeRequest.artifactIds = (activeRequest.artifactIds || []).filter((id: string) => id !== artifactId);
+		return {
+			artifactId,
+			deleted: true,
+			hadSourceContent: Boolean(artifact.source?.blocks?.length),
 		};
 	}
 
@@ -14840,9 +15146,23 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		captureArtifact,
 		listArtifacts: listBrowserArtifacts,
 		restoreArtifact,
+		searchSavedSources: searchBrowserSavedSources,
+		deleteArtifact,
 	};
 
 	return {
+		async clearArtifactsForEval() {
+			const cleared = await clearAllBrowserArtifacts();
+			const store = await loadStore();
+			const changedSessions: RuntimeSession[] = [];
+			for (const session of Object.values(store.sessions) as RuntimeSession[]) {
+				if (!Array.isArray(session.artifactIds) || !session.artifactIds.length) continue;
+				session.artifactIds = [];
+				changedSessions.push(session);
+			}
+			if (changedSessions.length) await saveStore(store, { sessions: changedSessions });
+			return { cleared };
+		},
 		async getDebugTraces(limit?: number) {
 			// Merge the in-memory ring (holds the freshest turn — persist is async
 			// and may not have flushed) with the durable storage ring (survives
@@ -15038,6 +15358,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				// now an authoritative opt-out, not a legacy artifact.
 				modelLaneClassifierDefaultMigrated: true,
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
+				sourceMemoryEnabled: (nextPartial.sourceMemoryEnabled ?? store.settings.sourceMemoryEnabled) === true,
 			};
 			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
@@ -15254,6 +15575,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				await clearActivePageAnnotations(targetWindowId);
 			}
 			delete store.sessions[targetSessionId];
+			const deletedArtifactIds = await deleteUnreferencedSessionEvidenceArtifacts(
+				targetSession,
+				Object.values(store.sessions) as RuntimeSession[],
+			);
 			let currentSession = store.sessions[store.currentSessionId] as RuntimeSession | undefined;
 			if (wasCurrentSession || !currentSession) {
 				currentSession = Object.values(store.sessions)
@@ -15274,6 +15599,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			}
 			return {
 				deletedSessionId: targetSessionId,
+				deletedArtifactIds,
 				currentSession: buildSessionState(currentSession),
 			};
 		},
@@ -15546,6 +15872,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					forcePdfTools,
 					visiblePdfSelectionFirstPass: firstPassPdfSelectionQuestion,
 					advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
+					sourceMemoryEnabled: requestSettings.sourceMemoryEnabled,
 					...(learningResearchPlan?.requiresWorkspaceResearch ? { forceToolNames: LEARNING_RESEARCH_FORCE_TOOL_NAMES } : {}),
 				};
 				activeRequest.toolSelectionOptions = toolSelectionOptions;
@@ -15604,6 +15931,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								pdfAnchor: (effectiveParams as any)?.pdfAnchor,
 							});
 						},
+						{ sourceMemoryEnabled: requestSettings.sourceMemoryEnabled },
 					),
 					prompt,
 					attachments,

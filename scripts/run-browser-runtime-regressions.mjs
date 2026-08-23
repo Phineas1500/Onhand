@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
-import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
+import { extractPdfSource, rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
 
 const GOOGLE_DOCS_FIXTURE_PDF_EXPORT_URL = "https://docs.google.com/document/d/onhand-fixture-doc-id/export?format=pdf";
 
@@ -199,10 +199,10 @@ function createReplayHost(options = {}) {
 					},
 				};
 			}
-			if (name === "extract_content") {
+			if (name === "extract_source_content" || name === "extract_content") {
 				return {
 					tab,
-					content: {
+					content: options.sourceExtraction || {
 						markdown: options.extractedMarkdown || "Replay smoke page with Alpha smoke content available for highlighting.",
 						text: options.extractedText || options.extractedMarkdown || "Replay smoke page with Alpha smoke content available for highlighting.",
 					},
@@ -5924,6 +5924,61 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 	const withSecondSession = getStoredStore();
 	const secondSessionId = withSecondSession.currentSessionId;
 	assert.notEqual(secondSessionId, firstSessionId, "starting a new session should create a second session before delete regression");
+	withSecondSession.sessions[firstSessionId].artifactIds = ["artifact_shared_evidence"];
+	withSecondSession.sessions[secondSessionId].artifactIds = ["artifact_session_evidence_gc", "artifact_shared_evidence", "artifact_explicit_source_keep"];
+	await globalThis.chrome.storage.local.set(storedStoreEntries(withSecondSession));
+	globalThis.chrome.storage.local.data.onhandBrowserArtifacts = {
+		artifact_shared_evidence: {
+			id: "artifact_shared_evidence",
+			sessionId: firstSessionId,
+			createdAt: "2026-05-12T10:30:00.000Z",
+			updatedAt: "2026-05-12T10:30:00.000Z",
+			label: "Review snapshot: shared evidence",
+			tab: { title: "Shared evidence", url: "https://example.test/shared" },
+			page: {
+				title: "Shared evidence",
+				url: "https://example.test/shared",
+				annotations: [{ annotationId: "shared", matchedText: "Evidence referenced by both sessions" }],
+			},
+			source: null,
+		},
+		artifact_session_evidence_gc: {
+			id: "artifact_session_evidence_gc",
+			sessionId: secondSessionId,
+			createdAt: "2026-05-12T11:00:00.000Z",
+			updatedAt: "2026-05-12T11:00:00.000Z",
+			label: "Review snapshot: disposable evidence",
+			tab: { title: "Disposable evidence", url: "https://example.test/disposable" },
+			page: {
+				title: "Disposable evidence",
+				url: "https://example.test/disposable",
+				annotations: [{ annotationId: "disposable", matchedText: "Evidence owned only by the deleted session" }],
+			},
+			source: null,
+		},
+		artifact_explicit_source_keep: {
+			id: "artifact_explicit_source_keep",
+			sessionId: secondSessionId,
+			createdAt: "2026-05-12T11:00:00.000Z",
+			updatedAt: "2026-05-12T11:00:00.000Z",
+			label: "Explicitly indexed source",
+			tab: { title: "Explicit source", url: "https://example.test/explicit" },
+			page: { title: "Explicit source", url: "https://example.test/explicit", annotations: [] },
+			source: {
+				schemaVersion: 1,
+				extractorVersion: "onhand-source-memory-v1",
+				captureScope: "full-source",
+				sourceKind: "html",
+				capturedAt: "2026-05-12T11:00:00.000Z",
+				sourceUrl: "https://example.test/explicit",
+				title: "Explicit source",
+				contentFingerprint: "fnv1a-test",
+				truncated: false,
+				charCount: 28,
+				blocks: [{ id: "b1", ordinal: 1, tag: "p", text: "Explicitly saved source text" }],
+			},
+		},
+	};
 
 	const callCountBeforeDelete = host.calls.length;
 	const deletedSecond = await runtime.deleteSession(secondSessionId, { targetWindowId: 4 });
@@ -5932,6 +5987,10 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 	assert.equal(afterDeletingSecond.sessions[secondSessionId], undefined, "expected deleted current session to be removed from storage");
 	assert.equal(afterDeletingSecond.currentSessionId, firstSessionId, "expected delete to switch to the remaining session");
 	assert.equal(deletedSecond.deletedSessionId, secondSessionId);
+	assert.deepEqual(deletedSecond.deletedArtifactIds, ["artifact_session_evidence_gc"]);
+	assert.equal(globalThis.chrome.storage.local.data.onhandBrowserArtifacts.artifact_session_evidence_gc, undefined, "deleting the last referencing session should garbage-collect its evidence-only artifact");
+	assert.ok(globalThis.chrome.storage.local.data.onhandBrowserArtifacts.artifact_shared_evidence, "evidence still referenced by another session must not be garbage-collected");
+	assert.ok(globalThis.chrome.storage.local.data.onhandBrowserArtifacts.artifact_explicit_source_keep, "an explicitly indexed full source should survive deletion of its originating session");
 	assert.equal(deletedSecond.currentSession.sessionId, firstSessionId);
 	assert.equal(deleteCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 8), true);
 	assert.equal(deleteCalls.some((call) => call.name === "clear_annotations" && call.args.tabId === 7), false);
@@ -5945,6 +6004,8 @@ async function assertDeleteSessionSwitchesToRemainingOrFreshSession() {
 	assert.equal(remainingSessionIds.length, 1, "deleting the final saved session should create one fresh session");
 	assert.notEqual(afterDeletingLast.currentSessionId, firstSessionId);
 	assert.equal(deletedLast.deletedSessionId, firstSessionId);
+	assert.deepEqual(deletedLast.deletedArtifactIds, ["artifact_shared_evidence"]);
+	assert.equal(globalThis.chrome.storage.local.data.onhandBrowserArtifacts.artifact_shared_evidence, undefined, "the shared evidence artifact should be collected after its final referencing session is deleted");
 	assert.equal(deletedLast.currentSession.sessionId, afterDeletingLast.currentSessionId);
 	const freshState = await runtime.getState();
 	assert.equal(freshState.currentSession.sessionId, afterDeletingLast.currentSessionId);
@@ -8776,6 +8837,7 @@ async function assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot() {
 		aiModel: "onhand-smoke-1",
 		aiApiKey: "test",
 		authMode: "api-key",
+		sourceMemoryEnabled: true,
 	});
 	await runtime.submitPrompt({
 		prompt: "Highlight Alpha smoke content and answer briefly.",
@@ -8803,6 +8865,7 @@ async function assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot() {
 	assert.match(artifact.label, /^Review snapshot:/);
 	assert.equal(artifact.outerHTML.includes("Replay smoke page"), true);
 	assert.equal(artifact.screenshotDataUrl, "data:image/png;base64,UkVQTEFZ");
+	assert.equal(artifact.source ?? null, null, "automatic review snapshots must not duplicate or expand their already-saved evidence");
 
 	const replay = await runtime.getSessionReplay(session.id);
 	assert.equal(replay.selectedArtifactId, session.artifactIds[0]);
@@ -8810,6 +8873,145 @@ async function assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot() {
 	assert.equal(replay.artifacts[0].hasHtml, true);
 	assert.equal(replay.artifacts[0].hasScreenshot, true);
 	assert.equal(replay.session.artifactCount, 1);
+
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-source-memory-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		sourceMemoryEnabled: true,
+	});
+	await runtime.startNewSession({ targetWindowId: 3 });
+	await runtime.submitPrompt({
+		prompt: "source-memory search alpha",
+		displayPrompt: "source-memory search alpha",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	await waitForRuntimeCompletion(runtime);
+	const searchStore = getStoredStore();
+	const searchSession = searchStore.sessions[searchStore.currentSessionId];
+	const searchTrace = searchSession.turns.at(-1).toolTraces.find(
+		(trace) => trace.toolName === "browser_search_saved_sources" && trace.state === "complete",
+	);
+	assert.ok(searchTrace, "existing review-snapshot evidence should be searchable from a later session");
+	assert.match(searchTrace.resultSummary, /Alpha smoke content/);
+	assert.match(searchTrace.resultSummary, /session-evidence/);
+	assert.match(searchTrace.resultSummary, /only source text Onhand previously marked/i);
+}
+
+async function assertExplicitSourceMemoryCaptureSearchAndDeletion() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		extractedMarkdown:
+			"## Results\n\nThe calibration remains stable because every reading is compared with the same reference window.",
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-source-memory-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		sourceMemoryEnabled: true,
+	});
+
+	await runtime.submitPrompt({
+		prompt: "source-memory save",
+		displayPrompt: "source-memory save",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	await waitForRuntimeCompletion(runtime);
+
+	let artifacts = globalThis.chrome.storage.local.data.onhandBrowserArtifacts;
+	let artifactIds = Object.keys(artifacts || {});
+	assert.equal(artifactIds.length, 1, "explicit source-memory capture should persist one artifact");
+	const saved = artifacts[artifactIds[0]];
+	assert.equal(saved.source?.sourceKind, "html");
+	assert.match(saved.source?.contentFingerprint || "", /^fnv1a-/);
+	assert.match(saved.source?.blocks?.map((block) => block.text).join("\n") || "", /same reference window/);
+	assert.equal(host.calls.some((call) => call.name === "extract_source_content"), true, "explicit source capture should use the source-aware extractor");
+
+	await runtime.startNewSession({ targetWindowId: 3 });
+	await runtime.submitPrompt({
+		prompt: "source-memory search",
+		displayPrompt: "source-memory search",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	await waitForRuntimeCompletion(runtime);
+	let store = getStoredStore();
+	let session = store.sessions[store.currentSessionId];
+	let turn = session.turns.at(-1);
+	const searchTrace = turn.toolTraces.find((trace) => trace.toolName === "browser_search_saved_sources" && trace.state === "complete");
+	assert.ok(searchTrace, "source-memory search tool should complete in a new session");
+	assert.match(searchTrace.resultSummary, /same reference window/);
+	assert.match(searchTrace.resultSummary, /saved snapshots, not proof of the current live page/i);
+
+	await runtime.submitPrompt({
+		prompt: "source-memory delete",
+		displayPrompt: "source-memory delete",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	await waitForRuntimeCompletion(runtime);
+	artifacts = globalThis.chrome.storage.local.data.onhandBrowserArtifacts;
+	artifactIds = Object.keys(artifacts || {});
+	assert.equal(artifactIds.length, 0, "deleting the artifact must remove its searchable source representation");
+	store = getStoredStore();
+	assert.equal(
+		Object.values(store.sessions).some((candidate) => (candidate.artifactIds || []).includes(saved.id)),
+		false,
+		"artifact deletion should remove stale session references",
+	);
+}
+
+async function assertExplicitPdfSourceMemoryCaptureUsesPageBlocks() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ title: "Archival extraction study", url: "https://example.test/archive/study.pdf" })],
+		sourceExtraction: {
+			surface: "pdf",
+			source: "pdf-source-capture",
+			title: "Archival extraction study",
+			url: "https://example.test/archive/study.pdf",
+			blocks: [
+				{
+					tag: "pdf-page",
+					pageNumber: 7,
+					text: "The archive remains reproducible because each exported result records the extractor version and content fingerprint.",
+				},
+			],
+		},
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({
+		aiProvider: "onhand-smoke",
+		aiModel: "onhand-smoke-source-memory-1",
+		aiApiKey: "test",
+		authMode: "api-key",
+		sourceMemoryEnabled: true,
+	});
+	await runtime.submitPrompt({
+		prompt: "source-memory save",
+		displayPrompt: "source-memory save",
+		attachments: [],
+		learningMode: false,
+		targetWindowId: 3,
+	});
+	await waitForRuntimeCompletion(runtime);
+	const artifacts = globalThis.chrome.storage.local.data.onhandBrowserArtifacts;
+	const saved = artifacts[Object.keys(artifacts || {})[0]];
+	assert.equal(saved.source?.sourceKind, "pdf");
+	assert.equal(saved.source?.blocks?.[0]?.pageNumber, 7);
+	assert.equal(saved.source?.blocks?.[0]?.id, "p7-b1");
+	assert.match(saved.source?.blocks?.[0]?.text || "", /extractor version and content fingerprint/);
 }
 
 async function assertReplayActionActivationCanTargetSavedSession() {
@@ -10566,6 +10768,16 @@ async function assertFixtureResponses() {
 		const samplePdfBytes = new Uint8Array(await samplePdfResponse.arrayBuffer());
 		assert.equal(new TextDecoder().decode(samplePdfBytes.slice(0, 8)), "%PDF-1.4");
 		assert.ok(samplePdfBytes.length > 500, "expected a non-empty generated PDF fixture");
+		const extractedPdf = await extractPdfSource({
+			url: new URL("/fixtures/onhand-viewer.pdf", fixture.url).href,
+			title: "Onhand PDF Viewer Fixture",
+			maxPages: 10,
+			maxChars: 5000,
+			fetchTimeoutMs: 2000,
+		});
+		assert.equal(extractedPdf.pages.length, 1);
+		assert.equal(extractedPdf.pages[0].pageNumber, 1);
+		assert.match(extractedPdf.pages[0].text, /Sequence models preserve state across tokens/);
 
 		const routePdfResponse = await fetch(new URL("/pdf/onhand-viewer", fixture.url), {
 			headers: { "Cache-Control": "no-store" },
@@ -10675,6 +10887,8 @@ async function main() {
 	await assertRestoreSessionFallsBackToReplayWhenArtifactRestoreFails();
 	await assertSessionReplaySnapshotPayload();
 	await assertSuccessfulAnnotatedTurnAutoPersistsReviewSnapshot();
+	await assertExplicitSourceMemoryCaptureSearchAndDeletion();
+	await assertExplicitPdfSourceMemoryCaptureUsesPageBlocks();
 	await assertReplayActionActivationCanTargetSavedSession();
 	await assertLocalFileCitationActivationReusesOpenFileTab();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();

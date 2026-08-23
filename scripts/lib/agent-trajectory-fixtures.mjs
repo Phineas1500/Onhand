@@ -108,12 +108,40 @@ export function createTrajectoryFixtureCatalog(suite, baseUrl) {
 	const caseMap = new Map(suite.cases.map((testCase) => [testCase.id, testCase]));
 	const prefix = `${String(baseUrl).replace(/\/$/, "")}/agent-trajectory`;
 	const tabUrl = (testCase, tab) => {
+		if (tab.externalUrl) return String(tab.externalUrl);
 		const resource = directResourceForTab(testCase, tab.id);
 		const selectionNeedsHtml = tab.id === testCase.workspace.activeTabId && Boolean(testCase.turn.selectedText);
 		const extension = resource?.kind === "pdf" && !selectionNeedsHtml ? ".pdf" : ".html";
 		return `${prefix}/${slug(testCase.id)}/tab/${slug(tab.id)}${extension}`;
 	};
 	const resourceUrl = (testCase, resource) => `${prefix}/${slug(testCase.id)}/resource/${slug(resource.id)}.pdf`;
+	const comparableExternalUrl = (value) => {
+		try {
+			const url = new URL(String(value || ""));
+			if (!/^https?:$/.test(url.protocol)) return "";
+			url.hash = "";
+			url.hostname = url.hostname.toLowerCase();
+			if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/$/, "");
+			return url.toString();
+		} catch {
+			return "";
+		}
+	};
+	const resolveExternal = (urlValue) => {
+		const target = comparableExternalUrl(urlValue);
+		if (!target) return null;
+		for (const testCase of suite.cases) {
+			for (const tab of testCase.workspace.tabs || []) {
+				const aliases = [tab.externalUrl, ...(Array.isArray(tab.urlAliases) ? tab.urlAliases : [])].filter(Boolean);
+				if (!aliases.some((alias) => comparableExternalUrl(alias) === target)) continue;
+				const resource = directResourceForTab(testCase, tab.id);
+				return resource
+					? { caseId: testCase.id, tabId: tab.id, sourceId: resource.id, resource }
+					: { caseId: testCase.id, tabId: tab.id, sourceId: "", resource: null };
+			}
+		}
+		return null;
+	};
 	const catalog = {
 		baseUrl: prefix,
 		caseMap,
@@ -135,7 +163,8 @@ export function createTrajectoryFixtureCatalog(suite, baseUrl) {
 				// PDF receipts map to their source instead of normalizing to zero
 				// annotations (the July pilot's P0 evaluator gap).
 				const wrapped = url.searchParams.get("url") || url.searchParams.get("pdfUrl") || "";
-				return wrapped && wrapped !== String(urlValue || "") ? catalog.resolve(wrapped) : null;
+				if (wrapped && wrapped !== String(urlValue || "")) return catalog.resolve(wrapped);
+				return resolveExternal(urlValue);
 			}
 			const parts = url.pathname.slice(markerIndex + marker.length).split("/").map((part) => decodeURIComponent(part.replace(/\.(?:html|pdf)$/i, "")));
 			const [caseId, kind, id] = parts;
@@ -316,9 +345,21 @@ function normalizedEvidenceText(value) {
 		.trim();
 }
 
-function actionMatchesPassage(action, passageText) {
+function textMatchesPassage(candidateText, passageText) {
 	const passage = normalizedEvidenceText(passageText);
-	if (!passage) return false;
+	const candidate = normalizedEvidenceText(candidateText);
+	if (!passage || !candidate) return false;
+	if (passage.includes(candidate) || candidate.includes(passage)) return true;
+	// PDF.js preserves glyph ordering but often inserts spaces inside math
+	// identifiers (for example, `dmodel` becomes `d model`). Treat that as a
+	// formatting difference, just as we already do for glued text-layer quotes.
+	const passageCompact = passage.replace(/ /g, "");
+	const candidateCompact = candidate.replace(/ /g, "");
+	if (passageCompact.length < 12 || candidateCompact.length < 12) return false;
+	return passageCompact.includes(candidateCompact) || candidateCompact.includes(passageCompact);
+}
+
+function actionMatchesPassage(action, passageText) {
 	const candidates = [
 		action?.citationText,
 		action?.detail,
@@ -329,18 +370,8 @@ function actionMatchesPassage(action, passageText) {
 		action?.pdfAnchor?.textQuote?.exact,
 		action?.matchedText,
 	]
-		.map(normalizedEvidenceText)
-		.filter((candidate) => candidate.length >= 8);
-	if (candidates.some((candidate) => passage.includes(candidate) || candidate.includes(passage))) return true;
-	// PDF text layers glue words across line and label boundaries ("with a" +
-	// "approximate" records as "aapproximate"), so space-sensitive containment
-	// misses genuine PDF quotes. Compare space-free forms as a fallback.
-	const passageCompact = passage.replace(/ /g, "");
-	if (passageCompact.length < 12) return false;
-	return candidates
-		.map((candidate) => candidate.replace(/ /g, ""))
-		.filter((candidate) => candidate.length >= 12)
-		.some((candidate) => passageCompact.includes(candidate) || candidate.includes(passageCompact));
+		.filter((candidate) => normalizedEvidenceText(candidate).length >= 8);
+	return candidates.some((candidate) => textMatchesPassage(candidate, passageText));
 }
 
 function urlsInValue(value) {
@@ -354,7 +385,7 @@ function evidenceReceipt(testCase, sourceId, passageId, turn, catalog) {
 	if (!resource || !passage) return { read: false, cited: false, annotated: false, annotationId: "" };
 	const completed = (turn.toolTraces || []).filter(successfulTrace);
 	const actions = Array.isArray(turn.pageActions) ? turn.pageActions : [];
-	const passageInTrace = completed.some((trace) => traceText(trace).includes(passage.text));
+	const passageInTrace = completed.some((trace) => textMatchesPassage(traceText(trace), passage.text));
 	const sourceInTrace = completed.some((trace) => {
 		const text = traceText(trace);
 		return urlsInValue(text).some((url) => catalog.resolve(url)?.sourceId === sourceId);

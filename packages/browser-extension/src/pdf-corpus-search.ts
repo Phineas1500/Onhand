@@ -154,6 +154,7 @@ async function readPdfPages(
 	maxPdfBytes: number,
 	corpusController?: AbortController,
 	corpusDeadlineAt = 0,
+	limits: { maxPages?: number; maxChars?: number } = {},
 ) {
 	// Corpus candidates are normally public course/paper PDFs. Cross-origin
 	// credentialed fetches from an extension worker are rejected by many servers
@@ -206,15 +207,27 @@ async function readPdfPages(
 		const document = await loadingTask.promise;
 		enforceCorpusDeadline();
 		const pages: PdfCorpusPage[] = [];
-		for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+		const maxPages = Number.isFinite(Number(limits.maxPages))
+			? Math.max(1, Math.min(document.numPages, Number(limits.maxPages)))
+			: document.numPages;
+		const maxChars = Number.isFinite(Number(limits.maxChars))
+			? Math.max(1_000, Number(limits.maxChars))
+			: Number.POSITIVE_INFINITY;
+		let usedChars = 0;
+		for (let pageNumber = 1; pageNumber <= maxPages && usedChars < maxChars; pageNumber += 1) {
 			enforceCorpusDeadline();
 			const page = await document.getPage(pageNumber);
 			try {
 				enforceCorpusDeadline();
 				const content = await page.getTextContent();
 				enforceCorpusDeadline();
-				const text = (content.items as any[]).map((item) => String(item?.str || "")).filter(Boolean).join(" ");
-				pages.push({ pageNumber, text: compactText(text, 24000) });
+				const rawText = (content.items as any[]).map((item) => String(item?.str || "")).filter(Boolean).join(" ");
+				const remaining = maxChars - usedChars;
+				const text = compactText(rawText, Math.min(24_000, remaining));
+				if (text) {
+					pages.push({ pageNumber, text });
+					usedChars += text.length + 2;
+				}
 			} finally {
 				page.cleanup();
 			}
@@ -229,6 +242,39 @@ async function readPdfPages(
 		corpusSignal?.removeEventListener("abort", abortForCorpusDeadline);
 		await destroyLoadingTask();
 	}
+}
+
+export async function extractPdfSource(options: {
+	url: string;
+	title?: string;
+	maxPages?: number;
+	maxChars?: number;
+	fetchTimeoutMs?: number;
+	maxPdfBytes?: number;
+}) {
+	GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.mjs", import.meta.url).href;
+	const url = String(options.url || "").trim();
+	if (!/^https?:\/\//i.test(url)) throw new Error("Saved PDF extraction requires an HTTP(S) source URL");
+	const maxPages = Math.max(1, Math.min(240, Number(options.maxPages) || 240));
+	const maxChars = Math.max(1_000, Math.min(50_000, Number(options.maxChars) || 50_000));
+	const fetchTimeoutMs = Math.max(100, Math.min(60_000, Number(options.fetchTimeoutMs) || DEFAULT_PDF_FETCH_TIMEOUT_MS));
+	const maxPdfBytes = Math.max(1_024, Math.min(DEFAULT_MAX_PDF_BYTES, Number(options.maxPdfBytes) || DEFAULT_MAX_PDF_BYTES));
+	const pages = await readPdfPages(
+		{ title: compactText(options.title || url, 240), url },
+		fetchTimeoutMs,
+		maxPdfBytes,
+		undefined,
+		0,
+		{ maxPages, maxChars },
+	);
+	const charCount = pages.reduce((total, page) => total + page.text.length, 0);
+	return {
+		title: compactText(options.title || url, 240),
+		url,
+		pages,
+		charCount,
+		truncated: pages.length >= maxPages || charCount >= maxChars,
+	};
 }
 
 export async function searchPdfCorpus(options: {

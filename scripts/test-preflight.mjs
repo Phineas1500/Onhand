@@ -23,6 +23,7 @@ const REQUIRED_FILES = [
 	"docs/ONHAND_CONSTITUTION.md",
 	"scripts/build-browser-runtime.mjs",
 	"scripts/run-browser-runtime-regressions.mjs",
+	"scripts/run-source-memory-regressions.mjs",
 	"scripts/run-agent-runtime-module-regressions.mjs",
 	"scripts/run-agent-trajectory-eval.mjs",
 	"scripts/run-agent-trajectory-baseline.mjs",
@@ -39,6 +40,9 @@ const REQUIRED_FILES = [
 	"evals/agent-trajectories/cases.json",
 	"evals/agent-trajectories/schema.json",
 	"evals/agent-trajectories/trace-schema.json",
+	"evals/source-memory/cases.json",
+	"evals/source-memory/real-world-cases.json",
+	"docs/SOURCE_MEMORY_EXPERIMENT.md",
 ];
 
 const REMOVED_PATHS = [
@@ -61,9 +65,12 @@ const REQUIRED_SCRIPTS = [
 	"website:check-tools",
 	"test:sidebar-regressions",
 	"test:browser-runtime-regressions",
+	"test:source-memory",
 	"test:agent-runtime-modules",
 	"eval:agent-trajectories",
 	"eval:agent-trajectories:live",
+	"eval:source-memory",
+	"eval:source-memory:real",
 	"serve:agent-trajectories",
 	"test:agent-trajectory-eval",
 	"smoke:browser-runtime",
