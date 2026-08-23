@@ -2002,6 +2002,7 @@ async function assertPrModeApproveGateContract() {
 		applyLearningEvent,
 		buildReasoningProfileForTest: buildProfile,
 		createEmptyLearnerState,
+		multipleChoiceLearningAnswerHasRationaleForTest: answerHasRationale,
 		prGateReplyHasExplicitCorrectVerdictForTest: hasExplicitCorrectVerdict,
 		shouldRecoverPrGateUnlockFromReplyForTest: shouldRecoverUnlock,
 	} = __browserRuntimeTest;
@@ -2062,6 +2063,16 @@ async function assertPrModeApproveGateContract() {
 	assert.equal(hasExplicitCorrectVerdict("**Correct** — choice A, for the quota-boundary reason."), true, "a formatted correct verdict should be recognized");
 	assert.equal(hasExplicitCorrectVerdict("Incorrect—choice A misses the retry behavior."), false, "an incorrect verdict must never unlock");
 	assert.equal(hasExplicitCorrectVerdict("The correct choice is B, not A."), false, "a correction that merely mentions the correct choice must not unlock");
+	assert.equal(
+		answerHasRationale("[Voice] It's A. Missing required exact substring triggers a runtime error."),
+		true,
+		"a conversational voice answer must retain its rationale for the PR gate",
+	);
+	assert.equal(
+		answerHasRationale("[Voice] Would it be choice B?"),
+		false,
+		"a tentative bare voice choice should enter grading but remain partial",
+	);
 	assert.equal(
 		shouldRecoverUnlock(openPrCheckState, "check-pr-quota-boundary", spokenCorrectReply, {
 			requiresRationale: true,
@@ -5330,6 +5341,11 @@ async function assertLearnerStateUpdates() {
 	for (const answer of [
 		"B, because scoring errors can block a good release.",
 		"Option B — scoring errors may permit a broken profile.",
+		"Choice B, because scoring errors may permit a broken profile.",
+		"It's B. Scoring errors can block a good release.",
+		"It's choice B, because scoring errors may permit a broken profile.",
+		"I think it's option B because scoring errors can block a good release.",
+		"Would it be choice B?",
 		"B",
 	]) {
 		assert.equal(

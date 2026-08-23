@@ -151410,7 +151410,9 @@ function multipleChoiceLearningCheckOptions(check2) {
 }
 function multipleChoiceLearningAnswer(prompt) {
   const text = stripVoicePromptPrefix(prompt);
-  const match2 = text.match(/^\s*(?:option\s+)?([ABC])(?=\s|[).,:;\-—]|$)[\s).,:;\-—]*/i);
+  const match2 = text.match(
+    /^\s*(?:(?:(?:i\s+(?:think|believe|guess)\s+)?(?:it(?:'|’)s|it is)|(?:the|my)\s+answer\s+is|(?:i(?:'|’)d|i would)\s+(?:say|choose)|would\s+it\s+be|is\s+it)\s+)?(?:(?:option|choice)\s+)?([ABC])(?=\s|[).,:;?!\-—]|$)[\s).,:;?!\-—]*/i
+  );
   if (!match2) return null;
   return {
     choice: String(match2[1] || "").toUpperCase(),
@@ -156984,6 +156986,7 @@ var __browserRuntimeTest = {
   findAnsweredOpenLearningCheckForTest(learnerState, prompt) {
     return findAnsweredOpenLearningCheck(normalizeLearnerState(learnerState, "learning"), prompt);
   },
+  multipleChoiceLearningAnswerHasRationaleForTest: multipleChoiceLearningAnswerHasRationale,
   prGateReplyHasExplicitCorrectVerdictForTest: prGateReplyHasExplicitCorrectVerdict,
   shouldRecoverPrGateUnlockFromReplyForTest: shouldRecoverPrGateUnlockFromReply,
   setLearnerStateMode,
