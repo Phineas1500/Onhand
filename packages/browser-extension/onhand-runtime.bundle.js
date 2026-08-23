@@ -151489,6 +151489,17 @@ function findAnsweredOpenLearningCheck(state, prompt) {
   if (!learningCheckAnswerMatchesOpenCheck(prompt, check2, state)) return null;
   return check2;
 }
+function prGateReplyHasExplicitCorrectVerdict(reply) {
+  const opening = String(reply || "").trim().replace(/^[\s>*#_`~✅☞]+/, "").replace(/^(?:\*\*|__)/, "").slice(0, 80);
+  return /^(?:correct|that(?:'|’)s correct|that is correct|exactly|right)(?:\*\*|__)?(?=$|[\s,.:;!—–-])/i.test(opening);
+}
+function shouldRecoverPrGateUnlockFromReply(rawState, checkId, reply, options = {}) {
+  const targetCheckId = String(checkId || "").trim();
+  if (!targetCheckId || !prGateReplyHasExplicitCorrectVerdict(reply)) return false;
+  if (options.requiresRationale === true && options.answerHasRationale !== true) return false;
+  const state = normalizeLearnerState(rawState, "learning");
+  return state.openChecks.some((check2) => check2.checkId === targetCheckId);
+}
 function createSession(name = null) {
   const timestamp2 = nowIso();
   const id = `session_${crypto.randomUUID()}`;
@@ -156973,6 +156984,8 @@ var __browserRuntimeTest = {
   findAnsweredOpenLearningCheckForTest(learnerState, prompt) {
     return findAnsweredOpenLearningCheck(normalizeLearnerState(learnerState, "learning"), prompt);
   },
+  prGateReplyHasExplicitCorrectVerdictForTest: prGateReplyHasExplicitCorrectVerdict,
+  shouldRecoverPrGateUnlockFromReplyForTest: shouldRecoverPrGateUnlockFromReply,
   setLearnerStateMode,
   summarizeRestoredArtifact
 };
@@ -159275,6 +159288,22 @@ function createOnhandBrowserRuntime(host) {
     session.messages = createStoredConversationMessages(session.turns);
     session.pageActions = [...activeRequest.pageActions];
     session.artifactIds = Array.from(/* @__PURE__ */ new Set([...session.artifactIds || [], ...activeRequest.artifactIds || []]));
+    if (!finalError && !activeRequest.aborted && activeRequest.prModeActive && shouldRecoverPrGateUnlockFromReply(session.learnerState, activeRequest.prModeAnsweredCheckId, assistantText, {
+      requiresRationale: activeRequest.prModeAnsweredCheckRequiresRationale,
+      answerHasRationale: activeRequest.prModeAnswerHasRationale
+    })) {
+      await recordLearningEventForSession(
+        session,
+        {
+          kind: "check_resolved",
+          checkId: activeRequest.prModeAnsweredCheckId,
+          assessment: "correct",
+          evidence: "The settled PR gate response explicitly graded the saved answer as correct."
+        },
+        "learning"
+      );
+      activeRequest.prModeGateUnlocked = true;
+    }
     if (!finalError && !activeRequest.aborted && shouldRecordFallbackOpenCheckForRequest(activeRequest, reply)) {
       session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
     }
@@ -159286,6 +159315,8 @@ function createOnhandBrowserRuntime(host) {
           "locked",
           replacementCheckOpen ? "Explain the highlighted risk to unlock." : "Complete the review check to unlock."
         );
+      } else {
+        await syncActivePrReviewGate("unlocked", "Review complete.");
       }
     }
     await replaceCurrentSession(session);

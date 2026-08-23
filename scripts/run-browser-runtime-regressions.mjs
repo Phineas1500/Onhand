@@ -1998,7 +1998,13 @@ async function assertPrModeWalkthroughProfile() {
 
 async function assertPrModeApproveGateContract() {
 	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
-	const { buildReasoningProfileForTest: buildProfile } = __browserRuntimeTest;
+	const {
+		applyLearningEvent,
+		buildReasoningProfileForTest: buildProfile,
+		createEmptyLearnerState,
+		prGateReplyHasExplicitCorrectVerdictForTest: hasExplicitCorrectVerdict,
+		shouldRecoverPrGateUnlockFromReplyForTest: shouldRecoverUnlock,
+	} = __browserRuntimeTest;
 	const changesUrl = "https://github.com/Phineas1500/Onhand/pull/77/changes";
 	const followupProfile = buildProfile(
 		{ prMode: true },
@@ -2038,6 +2044,52 @@ async function assertPrModeApproveGateContract() {
 		backgroundSource,
 		/runPageToolkitMethod\([\s\S]{0,300}["']setPrReviewGate["']/,
 		"the background command must project review-gate state into the page toolkit",
+	);
+
+	let openPrCheckState = createEmptyLearnerState("learning");
+	openPrCheckState = applyLearningEvent(openPrCheckState, {
+		kind: "check_opened",
+		checkId: "check-pr-quota-boundary",
+		checkKind: "retrieval",
+		conceptId: "concept-pr-quota-boundary",
+		conceptLabel: "Quota boundary handling",
+		promptText:
+			"A. The runner stops explicitly at the quota boundary. B. It retries forever. C. It ignores HTTP 429. Which choice is correct, and why?",
+		annotationId: "ann-pr-quota-boundary",
+	});
+	const spokenCorrectReply = "Correct—choice A. Onhand stops explicitly at the quota boundary, so later 429s are not misclassified.";
+	assert.equal(hasExplicitCorrectVerdict(spokenCorrectReply), true, "the visible voice verdict should be recognizable as explicitly correct");
+	assert.equal(hasExplicitCorrectVerdict("**Correct** — choice A, for the quota-boundary reason."), true, "a formatted correct verdict should be recognized");
+	assert.equal(hasExplicitCorrectVerdict("Incorrect—choice A misses the retry behavior."), false, "an incorrect verdict must never unlock");
+	assert.equal(hasExplicitCorrectVerdict("The correct choice is B, not A."), false, "a correction that merely mentions the correct choice must not unlock");
+	assert.equal(
+		shouldRecoverUnlock(openPrCheckState, "check-pr-quota-boundary", spokenCorrectReply, {
+			requiresRationale: true,
+			answerHasRationale: true,
+		}),
+		true,
+		"an explicit correct verdict should recover the exact still-open PR check when the hidden resolution call is omitted",
+	);
+	assert.equal(
+		shouldRecoverUnlock(openPrCheckState, "check-pr-quota-boundary", spokenCorrectReply, {
+			requiresRationale: true,
+			answerHasRationale: false,
+		}),
+		false,
+		"a bare choice cannot recover an unlock when the PR check requires reasoning",
+	);
+	assert.equal(
+		shouldRecoverUnlock(openPrCheckState, "another-check", spokenCorrectReply, {
+			requiresRationale: true,
+			answerHasRationale: true,
+		}),
+		false,
+		"a correct verdict cannot resolve a different saved check",
+	);
+	assert.match(
+		runtimeSource,
+		/syncActivePrReviewGate\("unlocked",\s*"Review complete\."\)/,
+		"request finalization must re-project the authoritative unlocked state",
 	);
 }
 
