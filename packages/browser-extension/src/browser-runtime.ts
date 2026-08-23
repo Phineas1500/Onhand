@@ -119,7 +119,7 @@ interface RuntimeSettings {
 	prMode: boolean;
 }
 
-type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching" | "pr-walkthrough";
+type ReasoningProfileName = "grounded" | "document-review" | "compact-teaching" | "pr-walkthrough" | "pr-gate-followup";
 type ReasoningEffort = "none" | "low" | "medium";
 type TextVerbosity = "low" | "medium";
 
@@ -2180,16 +2180,25 @@ function withFallbackOpenCheck(rawState: unknown, reply: string, requestStartedA
 	if (state.openChecks.some((check) => String(check.askedAt || "") >= startedAt)) return state;
 	const promptText = extractTrailingCheckQuestion(reply);
 	if (!promptText) return state;
+	const recentResponse = [...state.responses].reverse().find((response) => String(response.resolvedAt || "") >= startedAt) || null;
+	const responseConcept = recentResponse?.conceptId
+		? state.conceptsIntroduced.find((concept) => concept.conceptId === recentResponse.conceptId) || null
+		: null;
 	const recentConcept =
 		[...state.conceptsIntroduced].reverse().find((concept) => String(concept.firstSeenAt || "") >= startedAt) ||
+		responseConcept ||
 		state.conceptsIntroduced[state.conceptsIntroduced.length - 1] ||
 		null;
+	const recentSource = recentConcept ? latestLearnerConceptSource(recentConcept) : null;
 	return applyLearningEvent(
 		state,
 		{
 			kind: "check_opened",
 			promptText,
 			...(recentConcept ? { conceptId: recentConcept.conceptId, conceptLabel: recentConcept.label } : { conceptLabel: promptText }),
+			...(recentSource?.annotationId ? { annotationId: recentSource.annotationId } : {}),
+			...(recentSource?.url ? { url: recentSource.url } : {}),
+			...(recentSource?.tabTitle ? { tabTitle: recentSource.tabTitle } : {}),
 		},
 		{ mode: "learning" },
 	);
@@ -2870,7 +2879,34 @@ function isLearningCheckMetaFollowup(prompt: string) {
 	);
 }
 
-function isLikelyLearningCheckAnswer(prompt: string) {
+function multipleChoiceLearningCheckOptions(check: LearnerCheck | null | undefined) {
+	const options = new Set<string>();
+	const text = String(check?.promptText || "");
+	for (const match of text.matchAll(/(?:^|\s)([ABC])\s*[.)]\s*\S/gi)) {
+		options.add(String(match[1] || "").toUpperCase());
+	}
+	return options;
+}
+
+function multipleChoiceLearningAnswer(prompt: string) {
+	const text = stripVoicePromptPrefix(prompt);
+	const match = text.match(/^\s*(?:option\s+)?([ABC])(?=\s|[).,:;\-—]|$)[\s).,:;\-—]*/i);
+	if (!match) return null;
+	return {
+		choice: String(match[1] || "").toUpperCase(),
+		rationale: text.slice(match[0].length).trim(),
+	};
+}
+
+function multipleChoiceLearningAnswerHasRationale(prompt: string) {
+	const answer = multipleChoiceLearningAnswer(prompt);
+	if (!answer || answer.rationale.length < 12) return false;
+	return (answer.rationale.match(/[a-z][a-z0-9'-]*/gi) || []).length >= 3;
+}
+
+function isLikelyLearningCheckAnswer(prompt: string, check: LearnerCheck | null = null) {
+	const multipleChoiceAnswer = multipleChoiceLearningAnswer(prompt);
+	if (check && multipleChoiceLearningCheckOptions(check).size >= 3 && multipleChoiceAnswer) return true;
 	const text = stripVoicePromptPrefix(prompt).toLowerCase();
 	if (!text || text.length < 12) return false;
 	if (/[?？]\s*$/.test(text) && !/\b(i think|my answer|by saying|what i meant)\b/.test(text)) return false;
@@ -2920,6 +2956,11 @@ function learningCheckMatchTokens(value: unknown) {
 }
 
 function learningCheckAnswerMatchesOpenCheck(prompt: string, check: LearnerCheck, state: LearnerState) {
+	const multipleChoiceAnswer = multipleChoiceLearningAnswer(prompt);
+	const multipleChoiceOptions = multipleChoiceLearningCheckOptions(check);
+	if (multipleChoiceOptions.size >= 3 && multipleChoiceAnswer) {
+		return multipleChoiceOptions.has(multipleChoiceAnswer.choice);
+	}
 	const answerTokens = learningCheckMatchTokens(prompt);
 	// An all-stopword reply carries no signal about the check; do not resolve.
 	if (!answerTokens.size) return false;
@@ -2935,7 +2976,7 @@ function findAnsweredOpenLearningCheck(state: LearnerState, prompt: string) {
 	const check = getLatestOpenLearningCheck(state);
 	if (!check || !String(prompt || "").trim()) return null;
 	if (isLearningCheckMetaFollowup(prompt)) return check;
-	if (!isLikelyLearningCheckAnswer(prompt)) return null;
+	if (!isLikelyLearningCheckAnswer(prompt, check)) return null;
 	if (!learningCheckAnswerMatchesOpenCheck(prompt, check, state)) return null;
 	return check;
 }
@@ -6557,8 +6598,16 @@ const PR_MODE_FINAL_DIRECTIVE = `PR Mode overrides the generic Learning instruct
 - Read the current page once with browser_extract_content. Use the PR title, any description actually exposed on this surface, and the complete small unified diff. Do not claim the PR description was read if this surface does not expose it.
 - Choose exactly four distinct risky or load-bearing changed hunks. For each hunk, call browser_highlight_text on one exact changed line, then call browser_show_note on that annotation with one short explanation of what changed and why it matters. Keep all four highlights and all four notes on this initial tab.
 - Give a compact four-item walkthrough and cite every highlight with its returned annotation id. Do not leave uncited marks.
-- After the walkthrough, ask exactly one short comprehension question about the most important highlighted hunk. The question must be the final sentence and the only question in the reply. Do not answer it.
-- Call onhand_record_learning_event exactly once with kind "check_opened", a stable conceptId and conceptLabel, the exact final question as promptText, and the annotationId returned for the hunk being tested.`;
+- After the walkthrough, write exactly three plausible choices labeled A, B, and C about the most important highlighted hunk. Only one choice should be defensible from the changed code. Then ask: Which option best captures the risk, and why—answer as "LETTER, because REASON"? The question must be the final sentence and the only question in the reply. Do not answer it.
+- Call onhand_record_learning_event exactly once with kind "check_opened", a stable conceptId and conceptLabel, the complete A/B/C choice block plus the final question as promptText (keep it under 260 characters), and the annotationId returned for the hunk being tested.`;
+
+const PR_MODE_GATE_FOLLOWUP_DIRECTIVE = `PR Gate follow-up overrides the generic Learning and walkthrough instructions for this request.
+- Stay on the initial GitHub PR Files changed tab. Do not open, activate, navigate, extract the page again, create new highlights, or create new notes. Reuse the saved open check and its annotation.
+- If the latest message is not an answer to the saved A/B/C check, restate that same choice block and its one final question. Do not resolve or replace the check, and do not repeat the walkthrough.
+- If it is an answer, call browser_scroll_to_annotation on the saved annotationId before responding. Grade both the selected choice and the explanation against the highlighted changed line. A bare letter is partial, never correct.
+- Call onhand_record_learning_event exactly once with kind "check_resolved" for the saved checkId and an honest assessment of correct, partial, or incorrect.
+- If correct, confirm the mechanism concisely and end without another question or check. The correct resolution is the hook that unlocks the Onhand Review Gate.
+- If partial or incorrect, briefly teach why the selected reasoning misses the highlighted code, then ask one revised A/B/C check about the same mechanism. Call onhand_record_learning_event once more with kind "check_opened", a new checkId, the same conceptId and same annotationId, and the complete revised choice block plus final question as promptText. End on exactly that one question.`;
 
 function buildReasoningProfile(
 	settings: RuntimeSettings,
@@ -6566,10 +6615,21 @@ function buildReasoningProfile(
 	attachments: any[] = [],
 	learningMode = false,
 	activeUrl = "",
+	prGateFollowup = false,
 ): ReasoningProfile {
 	void attachments;
 	void learningMode;
 	if (settings.prMode === true && isGithubPrFilesChangedUrl(activeUrl)) {
+		if (prGateFollowup) {
+			return {
+				mode: "pr-gate-followup",
+				reason: "PR Mode is grading an existing walkthrough check.",
+				reasoningEffort: "low",
+				textVerbosity: "low",
+				maxTokens: ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS,
+				promptPolicy: PR_MODE_GATE_FOLLOWUP_DIRECTIVE,
+			};
+		}
 		return {
 			mode: "pr-walkthrough",
 			reason: "PR Mode is enabled on a GitHub Files changed page.",
@@ -8310,7 +8370,11 @@ function buildLauncherPrompt(
 		...(toolInventory ? ["", "Available browser tools for this request:", toolInventory] : []),
 		"Use Markdown structure when it improves sidebar readability; keep emphasis itself sparse and meaningful. Use a small table only for a genuine multi-dimension comparison or an explicit request.",
 		...(learningMode ? ["", ONHAND_LEARNING_MODE_APPEND] : []),
-		...(reasoningProfile.mode === "pr-walkthrough" ? ["", PR_MODE_FINAL_DIRECTIVE] : []),
+		...(reasoningProfile.mode === "pr-walkthrough"
+			? ["", PR_MODE_FINAL_DIRECTIVE]
+			: reasoningProfile.mode === "pr-gate-followup"
+				? ["", PR_MODE_GATE_FOLLOWUP_DIRECTIVE]
+				: []),
 	]
 		.filter((line, index, lines) => {
 			if (typeof line !== "string") return true;
@@ -11855,6 +11919,17 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let activeDevelopmentAgentObserver: DevelopmentAgentObserver | null = null;
 	let activeRequest: any | null = null;
 
+	async function syncActivePrReviewGate(state: "locked" | "unlocked", detail = "") {
+		const tabId = Number(activeRequest?.initialActiveTab?.id || 0);
+		if (!activeRequest?.prModeActive || !Number.isFinite(tabId) || tabId <= 0) return null;
+		try {
+			return await host.runCommand("set_pr_review_gate", { tabId, state, detail });
+		} catch (error) {
+			host.log?.("PR review gate update failed", state, error instanceof Error ? error.message : String(error));
+			return null;
+		}
+	}
+
 	// Advanced runtime inspection: retain a compact, redacted decision trace per
 	// turn — routing classification and each tool call's args/state/guardrail — so
 	// a failing turn can be inspected after the fact (via getDebugTraces, exposed
@@ -13368,6 +13443,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		session.artifactIds = Array.from(new Set([...(session.artifactIds || []), ...(activeRequest.artifactIds || [])]));
 		if (!finalError && !activeRequest.aborted && shouldRecordFallbackOpenCheckForRequest(activeRequest, reply)) {
 			session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
+		}
+		if (!finalError && !activeRequest.aborted && activeRequest.prModeActive) {
+			const replacementCheckOpen = Boolean(getLatestOpenLearningCheck(session.learnerState));
+			if (replacementCheckOpen || !activeRequest.prModeGateUnlocked) {
+				activeRequest.prModeGateUnlocked = false;
+				await syncActivePrReviewGate(
+					"locked",
+					replacementCheckOpen ? "Explain the highlighted risk to unlock." : "Complete the review check to unlock.",
+				);
+			}
 		}
 		await replaceCurrentSession(session);
 		const developmentAgentObserver = activeDevelopmentAgentObserver;
@@ -15780,7 +15865,6 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				...store.settings,
 				learningMode,
 			};
-			session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
 			let modelIntentClassification: ModelIntentClassification | null = null;
 			let modelIntentClassifierError = "";
 			let learningResearchPlan: LearningResearchPlan | null = null;
@@ -15885,17 +15969,31 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				}
 				const prModeActive =
 					requestSettings.prMode === true && isGithubPrFilesChangedUrl(browserContextDetails.activeTab?.url);
+				const existingPrCheck = prModeActive ? getLatestOpenLearningCheck(session.learnerState) : null;
+				const answeredPrCheck = existingPrCheck ? findAnsweredOpenLearningCheck(session.learnerState, displayPrompt) : null;
 				if (prModeActive) {
 					// PR Mode is intrinsically Socratic: its final walkthrough question must
 					// enter the existing learner-state pipeline even when the global Learning
 					// toggle is off. Do not persistently change the user's global preference.
 					learningMode = true;
 					requestSettings.learningMode = true;
-					session.learnerState = setLearnerStateMode(session.learnerState, "learning");
 					activeRequest.learningMode = true;
 					activeRequest.settings = requestSettings;
 				}
+				session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
 				activeRequest.prModeActive = prModeActive;
+				activeRequest.prModeAnsweredCheckId = String(answeredPrCheck?.checkId || "");
+				activeRequest.prModeAnsweredCheckRequiresRationale = multipleChoiceLearningCheckOptions(answeredPrCheck).size >= 3;
+				activeRequest.prModeAnswerHasRationale = multipleChoiceLearningAnswerHasRationale(displayPrompt);
+				activeRequest.prModeGateUnlocked = false;
+				activeRequest.initialActiveTab = browserContextDetails.activeTab || null;
+				activeRequest.initialActiveUrl = String(browserContextDetails.activeTab?.url || "");
+				if (prModeActive) {
+					await syncActivePrReviewGate(
+						"locked",
+						existingPrCheck ? "Explain the highlighted risk to unlock." : "Complete the walkthrough check to unlock.",
+					);
+				}
 				if (modelIntentClassificationPromise) {
 					await modelIntentClassificationPromise;
 					activeRequest.modelIntentClassification = modelIntentClassification;
@@ -15913,6 +16011,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					attachments,
 					learningMode,
 					browserContextDetails.activeTab?.url || "",
+					Boolean(existingPrCheck),
 				);
 				const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
 				const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl
@@ -15946,12 +16045,52 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						host,
 						artifactHooks,
 						withRequestBrowserContext,
-						(event) =>
-							recordLearningEventForSession(
+						async (event) => {
+							let anchoredEvent = attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions);
+							const resolvedCheckId = String(
+								anchoredEvent?.kind === "check_resolved" ? (anchoredEvent as any).checkId || (anchoredEvent as any).itemId || "" : "",
+							);
+							const resolvesAnsweredPrCheck = Boolean(
+								activeRequest?.prModeActive &&
+								activeRequest?.prModeAnsweredCheckId &&
+								resolvedCheckId === activeRequest.prModeAnsweredCheckId,
+							);
+							if (activeRequest?.prModeActive && anchoredEvent?.kind === "check_resolved" && !resolvesAnsweredPrCheck) {
+								activeRequest.prModeGateUnlocked = false;
+								await syncActivePrReviewGate("locked", "Answer the saved review check before grading.");
+								return session.learnerState;
+							}
+							if (
+								resolvesAnsweredPrCheck &&
+								normalizeLearnerAssessment((anchoredEvent as any).assessment) === "correct" &&
+								activeRequest?.prModeAnsweredCheckRequiresRationale &&
+								!activeRequest?.prModeAnswerHasRationale
+							) {
+								anchoredEvent = {
+									...anchoredEvent,
+									assessment: "partial",
+									evidence: "The selected option still needs a brief explanation of the code mechanism.",
+								};
+							}
+							const learnerState = await recordLearningEventForSession(
 								session,
-								attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+								anchoredEvent,
 								learningMode ? "learning" : "answer",
-							),
+							);
+							if (activeRequest?.prModeActive) {
+								const assessment =
+									anchoredEvent?.kind === "check_resolved"
+										? normalizeLearnerAssessment((anchoredEvent as any).assessment)
+										: null;
+								const shouldUnlock = resolvesAnsweredPrCheck && assessment === "correct";
+								activeRequest.prModeGateUnlocked = shouldUnlock;
+								await syncActivePrReviewGate(
+									shouldUnlock ? "unlocked" : "locked",
+									shouldUnlock ? "Review complete." : "Review the highlighted risk, then try again.",
+								);
+							}
+							return learnerState;
+						},
 						(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 						(toolName, commandName, effectiveParams) =>
 							buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||

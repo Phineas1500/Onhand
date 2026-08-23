@@ -535,6 +535,15 @@ function isHttpsUrl(value) {
 	}
 }
 
+function isGithubPrFilesChangedTabUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		return /(^|\.)github\.com$/i.test(url.hostname) && /\/pull\/\d+\/(?:files|changes)(?:\/|$)/.test(url.pathname);
+	} catch {
+		return false;
+	}
+}
+
 function onhandPdfViewerCredentialGrantKey(tabId, pdfUrl) {
 	const key = stripUrlHash(String(pdfUrl || ""));
 	return typeof tabId === "number" && key && isHttpsUrl(key) ? `${tabId}:${key}` : "";
@@ -9277,6 +9286,83 @@ const createPageToolkit = (options = {}) => {
 		return result;
 	};
 
+	const setPrReviewGate = (state, options = {}) => {
+		const normalizedState = String(state || "").toLowerCase() === "unlocked" ? "unlocked" : "locked";
+		const label =
+			normalizedState === "unlocked"
+				? "🔓 UNLOCKED — you understand this PR"
+				: "Onhand Review Gate — 🔒 LOCKED";
+		const detail = normalizeText(options?.detail || "").slice(0, 160);
+		let host = document.getElementById("onhand-pr-review-gate-host");
+		const created = !host;
+		if (!host) {
+			host = document.createElement("div");
+			host.id = "onhand-pr-review-gate-host";
+			host.setAttribute("data-onhand-pr-review-gate", "true");
+			host.style.setProperty("pointer-events", "none", "important");
+			host.style.setProperty("position", "fixed", "important");
+			host.style.setProperty("top", "72px", "important");
+			host.style.setProperty("right", "24px", "important");
+			host.style.setProperty("z-index", "2147483647", "important");
+			const shadow = host.attachShadow({ mode: "open" });
+			const style = document.createElement("style");
+			style.textContent = `
+				:host { all: initial; color-scheme: dark; }
+				.gate {
+					box-sizing: border-box;
+					width: min(390px, calc(100vw - 48px));
+					padding: 11px 14px 10px 16px;
+					border: 1px solid #30363d;
+					border-left: 4px solid #f85149;
+					border-radius: 8px;
+					background: #0d1117;
+					box-shadow: 0 8px 24px rgba(1, 4, 9, 0.28);
+					color: #f0f6fc;
+					font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+					letter-spacing: -0.01em;
+					opacity: 0;
+					transform: translateY(-6px);
+					animation: onhand-gate-enter 160ms ease-out forwards;
+					transition: border-color 160ms ease, box-shadow 160ms ease;
+				}
+				:host([data-onhand-pr-gate-state="unlocked"]) .gate {
+					border-left-color: #3fb950;
+					box-shadow: 0 8px 24px rgba(1, 4, 9, 0.28), 0 0 0 1px rgba(63, 185, 80, 0.14);
+				}
+				.detail {
+					margin-top: 3px;
+					color: #8b949e;
+					font: 500 11px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				}
+				.detail:empty { display: none; }
+				@keyframes onhand-gate-enter { to { opacity: 1; transform: translateY(0); } }
+				@media (max-width: 520px) { .gate { width: calc(100vw - 24px); } }
+				@media (prefers-reduced-motion: reduce) {
+					.gate { animation: none; opacity: 1; transform: none; transition: none; }
+				}
+			`;
+			const gate = document.createElement("div");
+			gate.className = "gate";
+			const labelNode = document.createElement("div");
+			labelNode.className = "label";
+			const detailNode = document.createElement("div");
+			detailNode.className = "detail";
+			gate.append(labelNode, detailNode);
+			shadow.append(style, gate);
+			(document.documentElement || document.body).appendChild(host);
+		}
+		host.setAttribute("data-onhand-pr-gate-state", normalizedState);
+		host.setAttribute("role", "status");
+		host.setAttribute("aria-live", "polite");
+		host.setAttribute("aria-label", label);
+		const shadow = host.shadowRoot;
+		const labelNode = shadow?.querySelector(".label");
+		const detailNode = shadow?.querySelector(".detail");
+		if (labelNode) labelNode.textContent = label;
+		if (detailNode) detailNode.textContent = detail;
+		return { state: normalizedState, label, detail, created };
+	};
+
 	const pickElements = async (message) => {
 		if (!message) throw new Error("pickElements requires a message");
 		return await new Promise((resolve) => {
@@ -9389,6 +9475,7 @@ const createPageToolkit = (options = {}) => {
 		clearAnnotations,
 		removeAnnotations,
 		syncAnnotationTheme,
+		setPrReviewGate,
 		pickElements,
 	};
 };
@@ -13650,6 +13737,19 @@ async function handleCommandInner(name, args = {}) {
 				return {
 					tab: simplifyTab(tab),
 					annotation,
+				};
+			});
+		}
+		case "set_pr_review_gate": {
+			const tab = await resolveTargetTab(args);
+			if (!isGithubPrFilesChangedTabUrl(tab.url)) {
+				throw new Error("Onhand Review Gate only runs on a GitHub PR Files changed page");
+			}
+			return await withTabCommand(tab.id, async () => {
+				const gate = await runPageToolkitMethod(tab.id, "setPrReviewGate", args.state, { detail: args.detail });
+				return {
+					tab: simplifyTab(tab),
+					gate,
 				};
 			});
 		}

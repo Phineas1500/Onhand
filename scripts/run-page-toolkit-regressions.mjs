@@ -1545,6 +1545,84 @@ async function createToolkitAtUrl(html, url, toolkitOptions = {}) {
 	};
 }
 
+async function assertPrReviewGatePreservesNativeApproveControl() {
+	const { dom, toolkit } = await createToolkitAtUrl(
+		`<main>
+			<div id="diff">Small unified diff fixture</div>
+			<button id="native-approve-button" type="button">Approve</button>
+		</main>`,
+		"https://github.com/Phineas1500/Onhand/pull/77/changes",
+	);
+	const document = dom.window.document;
+	const approveButton = document.querySelector("#native-approve-button");
+	const approveButtonMarkup = approveButton.outerHTML;
+	let approveClicks = 0;
+	approveButton.addEventListener("click", () => {
+		approveClicks += 1;
+	});
+
+	const lockedDetail = "Answer the review check to unlock.";
+	const locked = toolkit.setPrReviewGate("locked", { detail: lockedDetail });
+	const host = document.querySelector("#onhand-pr-review-gate-host");
+	assert.ok(host, "locking the PR review gate should mount its host");
+	assert.equal(
+		document.querySelectorAll("#onhand-pr-review-gate-host").length,
+		1,
+		"the PR review gate should mount only one host",
+	);
+	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "locked");
+	assert.equal(locked?.state, "locked", "setPrReviewGate should report the applied state");
+	const gateRoot = host.shadowRoot || host;
+	assert.ok(
+		gateRoot.textContent.includes("Onhand Review Gate — 🔒 LOCKED"),
+		"the locked gate should render the exact demo label",
+	);
+	assert.ok(gateRoot.textContent.includes(lockedDetail), "the locked gate should render the exact supplied detail");
+
+	const gateCss = [...gateRoot.querySelectorAll("style")].map((style) => style.textContent || "").join("\n");
+	const hostRule = gateCss.match(/:host\s*\{(?<declarations>[^}]*)\}/s)?.groups?.declarations || "";
+	assert.ok(
+		host.style.position === "fixed" || /position\s*:\s*fixed/i.test(hostRule),
+		"the PR review gate host should be fixed-position product chrome",
+	);
+	assert.ok(
+		host.style.pointerEvents === "none" || /pointer-events\s*:\s*none/i.test(hostRule),
+		"the PR review gate host should not intercept GitHub controls",
+	);
+
+	const repeated = toolkit.setPrReviewGate("locked", { detail: lockedDetail });
+	assert.equal(repeated?.state, "locked");
+	assert.strictEqual(
+		document.querySelector("#onhand-pr-review-gate-host"),
+		host,
+		"re-locking should update the existing gate host rather than replace it",
+	);
+	assert.equal(
+		document.querySelectorAll("#onhand-pr-review-gate-host").length,
+		1,
+		"re-locking should remain idempotent",
+	);
+
+	const unlockedDetail = "You correctly explained the authorization fallback.";
+	const unlocked = toolkit.setPrReviewGate("unlocked", { detail: unlockedDetail });
+	assert.equal(unlocked?.state, "unlocked", "setPrReviewGate should report the unlocked state");
+	assert.strictEqual(document.querySelector("#onhand-pr-review-gate-host"), host, "unlocking should reuse the gate host");
+	assert.equal(host.getAttribute("data-onhand-pr-gate-state"), "unlocked");
+	assert.ok(
+		gateRoot.textContent.includes("🔓 UNLOCKED — you understand this PR"),
+		"the unlocked gate should render the exact demo label",
+	);
+	assert.ok(gateRoot.textContent.includes(unlockedDetail), "the unlocked gate should render the exact supplied detail");
+	assert.ok(!gateRoot.textContent.includes("🔒 LOCKED"), "unlocking should replace the locked label");
+	assert.ok(!gateRoot.textContent.includes(lockedDetail), "unlocking should replace the locked detail");
+
+	assert.strictEqual(document.querySelector("#native-approve-button"), approveButton, "the gate should preserve GitHub's Approve button node");
+	assert.equal(approveButton.outerHTML, approveButtonMarkup, "the gate should not mutate GitHub's Approve button");
+	assert.equal(approveButton.disabled, false, "the gate should not disable GitHub's Approve button");
+	approveButton.click();
+	assert.equal(approveClicks, 1, "GitHub's Approve button should remain clickable while the demo gate is present");
+}
+
 async function assertHiddenTabAnnotationCommandsSkipThrottledWaits() {
 	const { dom, toolkit } = await createToolkit(
 		`<main><p>Hidden tab throttling target sentence for the note placement path.</p></main>`,
@@ -3650,6 +3728,7 @@ async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertDetachedPdfViewerOpenRouting();
 	await assertRemoveAnnotationsTargetsSingleMarks();
+	await assertPrReviewGatePreservesNativeApproveControl();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertNativeChromePdfViewerSelectionFallback();

@@ -1954,6 +1954,16 @@ async function assertPrModeWalkthroughProfile() {
 	assert.match(profile.promptPolicy, /Do not open, activate, or read other tabs/);
 	assert.match(profile.promptPolicy, /final sentence and the only question/);
 	assert.match(profile.promptPolicy, /kind "check_opened"/);
+	assert.match(
+		profile.promptPolicy,
+		/A\s*(?:,|\/)\s*B\s*(?:(?:,\s*)?(?:and|or)|\/)\s*C/i,
+		"the PR check should present three labeled answer choices",
+	);
+	assert.match(
+		profile.promptPolicy,
+		/(?:LETTER|choice)\s*,?\s*because(?:\s+(?:REASON|a short reason|your reason))?/i,
+		"the PR check should ask for a choice plus a short rationale",
+	);
 	assert.notEqual(buildProfile({ prMode: false }, prompt, [], false, changesUrl).mode, "pr-walkthrough", "flag-off must preserve normal routing");
 	assert.notEqual(buildProfile(enabledSettings, prompt, [], false, "https://github.com/Phineas1500/Onhand/pull/77").mode, "pr-walkthrough");
 
@@ -1984,6 +1994,49 @@ async function assertPrModeWalkthroughProfile() {
 	assert.match(backgroundSource, /prMode:\s*message\.prMode/, "background settings forwarding must include PR Mode");
 	assert.match(optionsHtml, /id="prMode"/, "Options must expose the hackathon PR Mode flag");
 	assert.match(optionsJs, /prMode:\s*Boolean\(prModeInput\.checked\)/, "Options must persist the PR Mode flag");
+}
+
+async function assertPrModeApproveGateContract() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { buildReasoningProfileForTest: buildProfile } = __browserRuntimeTest;
+	const changesUrl = "https://github.com/Phineas1500/Onhand/pull/77/changes";
+	const followupProfile = buildProfile(
+		{ prMode: true },
+		"Option B — a scoring error could permit a broken profile.",
+		[],
+		true,
+		changesUrl,
+		true,
+	);
+
+	assert.equal(followupProfile.mode, "pr-gate-followup", "an answer to the PR check must use the gate follow-up profile");
+	assert.doesNotMatch(
+		followupProfile.promptPolicy,
+		/browser_extract_content|exactly four distinct risky or load-bearing changed hunks/i,
+		"a gate answer must not restart the four-hunk walkthrough",
+	);
+	assert.match(followupProfile.promptPolicy, /browser_scroll_to_annotation/, "grading must return to the saved source mark");
+	assert.match(followupProfile.promptPolicy, /check_resolved/, "grading must resolve the answered check");
+	assert.match(followupProfile.promptPolicy, /incorrect|partial/i, "the follow-up policy must define the wrong-answer branch");
+	assert.match(followupProfile.promptPolicy, /teach|coach/i, "a wrong answer must trigger focused teaching");
+	assert.match(followupProfile.promptPolicy, /revised|replacement|re-ask/i, "a wrong answer must trigger a revised check");
+	assert.match(followupProfile.promptPolicy, /(?:same|reuse(?: the)?(?: original)?)\s+conceptId/i, "the revised check must stay on the same concept");
+	assert.match(followupProfile.promptPolicy, /(?:same|reuse(?: the)?(?: original)?)\s+annotationId/i, "the revised check must reuse the same source mark");
+	assert.match(followupProfile.promptPolicy, /correct/i, "the follow-up policy must define the correct-answer branch");
+	assert.match(followupProfile.promptPolicy, /unlock|UNLOCKED/i, "a correct answer must unlock the review gate");
+
+	const { readFile } = await import("node:fs/promises");
+	const [runtimeSource, backgroundSource] = await Promise.all([
+		readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8"),
+		readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8"),
+	]);
+	assert.match(runtimeSource, /runCommand\(["']set_pr_review_gate["']/, "the runtime must expose the PR review gate through its browser host");
+	assert.match(backgroundSource, /case ["']set_pr_review_gate["']/, "the background command router must handle PR review gate updates");
+	assert.match(
+		backgroundSource,
+		/runPageToolkitMethod\([\s\S]{0,300}["']setPrReviewGate["']/,
+		"the background command must project review-gate state into the page toolkit",
+	);
 }
 
 async function assertLanePredicatesClassifyOnOwnWords() {
@@ -5204,6 +5257,38 @@ async function assertLearnerStateUpdates() {
 	assert.equal(relatedMdnFollowup?.checkId, "check-mdn-reason", "related answer-shaped prompt should detect the matching open check");
 	const stopwordOnlyFollowup = findAnsweredOpenLearningCheckForTest(staleMdnCheckState, "I think that is what it means.");
 	assert.equal(stopwordOnlyFollowup, null, "an all-stopword reply carries no signal and must not read as a check answer");
+	assert.equal(
+		findAnsweredOpenLearningCheckForTest(staleMdnCheckState, "B"),
+		null,
+		"a bare choice letter must not answer an ordinary open-ended check",
+	);
+	let prMultipleChoiceState = createEmptyLearnerState("learning");
+	prMultipleChoiceState = applyLearningEvent(prMultipleChoiceState, {
+		kind: "check_opened",
+		checkId: "check-pr-release-gate",
+		checkKind: "retrieval",
+		conceptId: "concept_pr_release_gate_scoring",
+		conceptLabel: "PR release gate scoring risk",
+		promptText:
+			"A. It changes bundle size. B. Scoring errors can block good releases or permit broken profiles. C. It changes GitHub rendering. Which choice is correct, and why?",
+		annotationId: "ann-pr-release-gate",
+	});
+	for (const answer of [
+		"B, because scoring errors can block a good release.",
+		"Option B — scoring errors may permit a broken profile.",
+		"B",
+	]) {
+		assert.equal(
+			findAnsweredOpenLearningCheckForTest(prMultipleChoiceState, answer)?.checkId,
+			"check-pr-release-gate",
+			`multiple-choice answer should enter grading: ${answer}`,
+		);
+	}
+	assert.equal(
+		findAnsweredOpenLearningCheckForTest(prMultipleChoiceState, "Can you summarize the next file?"),
+		null,
+		"unrelated prose must not be mistaken for a multiple-choice answer",
+	);
 	const gradingSummary = buildLearnerStatePromptSummary(staleMdnCheckState, "I think it would contain reason.");
 	assert.match(gradingSummary, /Grade it on the page/, "an answered check must inject the page-grading directive");
 	assert.match(gradingSummary, /checkId check-mdn-reason/, "the grading directive names the check being graded");
@@ -10886,6 +10971,7 @@ async function main() {
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();
 	await assertPrModeWalkthroughProfile();
+	await assertPrModeApproveGateContract();
 	await assertLanePredicatesClassifyOnOwnWords();
 	await assertLanePolicyProseMatchesEnforcedBudgets();
 	await assertBlankReplyRetryWaitsForAgentIdle();
