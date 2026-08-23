@@ -153599,6 +153599,10 @@ var PR_MODE_GATE_FOLLOWUP_DIRECTIVE = `PR Gate follow-up overrides the generic L
 - Call onhand_record_learning_event exactly once with kind "check_resolved" for the saved checkId and an honest assessment of correct, partial, or incorrect.
 - If correct, confirm the mechanism concisely and end without another question or check. The correct resolution is the hook that unlocks the Onhand Review Gate.
 - If partial or incorrect, briefly teach why the selected reasoning misses the highlighted code, then ask one revised A/B/C check about the same mechanism. Call onhand_record_learning_event once more with kind "check_opened", a new checkId, the same conceptId and same annotationId, and the complete revised choice block plus final question as promptText. End on exactly that one question.`;
+var PR_REVIEW_GATE_UI_ENABLED = false;
+function projectPrReviewGateState(state) {
+  return PR_REVIEW_GATE_UI_ENABLED ? state : "hidden";
+}
 function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false, activeUrl = "", prGateFollowup = false) {
   void attachments;
   void learningMode;
@@ -156982,6 +156986,7 @@ var __browserRuntimeTest = {
     ).map((tool) => tool.name);
   },
   missingToolRetryToolNamesForTest: missingToolRetryToolNamesForPrompt,
+  projectPrReviewGateStateForTest: projectPrReviewGateState,
   findMissingKnownBrowserToolTraceForTest: findMissingKnownBrowserToolTrace,
   findAnsweredOpenLearningCheckForTest(learnerState, prompt) {
     return findAnsweredOpenLearningCheck(normalizeLearnerState(learnerState, "learning"), prompt);
@@ -157977,7 +157982,7 @@ function createOnhandBrowserRuntime(host) {
     try {
       return await host.runCommand("set_pr_review_gate", {
         tabId,
-        state,
+        state: projectPrReviewGateState(state),
         detail,
         expand: options.expand === true
       });

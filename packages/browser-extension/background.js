@@ -9287,14 +9287,27 @@ const createPageToolkit = (options = {}) => {
 	};
 
 	const setPrReviewGate = (state, options = {}) => {
-		const normalizedState = String(state || "").toLowerCase() === "unlocked" ? "unlocked" : "locked";
+		const requestedState = String(state || "").toLowerCase();
+		let host = document.getElementById("onhand-pr-review-gate-host");
+		if (requestedState === "hidden") {
+			const removed = Boolean(host);
+			host?.remove();
+			return {
+				state: "hidden",
+				label: "",
+				detail: "",
+				created: false,
+				collapsed: false,
+				removed,
+			};
+		}
+		const normalizedState = requestedState === "unlocked" ? "unlocked" : "locked";
 		const label =
 			normalizedState === "unlocked"
 				? "🔓 UNLOCKED — you understand this PR"
 				: "Onhand Review Gate — 🔒 LOCKED";
 		const detail = normalizeText(options?.detail || "").slice(0, 160);
 		const shouldExpand = options?.expand === true;
-		let host = document.getElementById("onhand-pr-review-gate-host");
 		const created = !host;
 		if (!host) {
 			host = document.createElement("div");

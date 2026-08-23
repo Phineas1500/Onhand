@@ -1680,6 +1680,13 @@ async function assertPrReviewGatePreservesNativeApproveControl() {
 	assert.equal(approveButton.disabled, false, "the gate should not disable GitHub's Approve button");
 	approveButton.click();
 	assert.equal(approveClicks, 1, "GitHub's Approve button should remain clickable while the demo gate is present");
+
+	const hidden = toolkit.setPrReviewGate("hidden");
+	assert.equal(hidden?.state, "hidden", "the PR review gate should support a non-rendering state");
+	assert.equal(hidden?.removed, true, "hiding should remove an existing PR review popup");
+	assert.equal(document.querySelector("#onhand-pr-review-gate-host"), null, "the hidden state must leave no popup or collapsed tab behind");
+	const hiddenAgain = toolkit.setPrReviewGate("hidden");
+	assert.equal(hiddenAgain?.removed, false, "repeated hidden updates should stay idempotent without recreating the popup");
 }
 
 async function assertHiddenTabAnnotationCommandsSkipThrottledWaits() {

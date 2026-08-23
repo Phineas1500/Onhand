@@ -2004,6 +2004,7 @@ async function assertPrModeApproveGateContract() {
 		createEmptyLearnerState,
 		multipleChoiceLearningAnswerHasRationaleForTest: answerHasRationale,
 		prGateReplyHasExplicitCorrectVerdictForTest: hasExplicitCorrectVerdict,
+		projectPrReviewGateStateForTest: projectGateState,
 		shouldRecoverPrGateUnlockFromReplyForTest: shouldRecoverUnlock,
 	} = __browserRuntimeTest;
 	const changesUrl = "https://github.com/Phineas1500/Onhand/pull/77/changes";
@@ -2031,6 +2032,8 @@ async function assertPrModeApproveGateContract() {
 	assert.match(followupProfile.promptPolicy, /(?:same|reuse(?: the)?(?: original)?)\s+annotationId/i, "the revised check must reuse the same source mark");
 	assert.match(followupProfile.promptPolicy, /correct/i, "the follow-up policy must define the correct-answer branch");
 	assert.match(followupProfile.promptPolicy, /unlock|UNLOCKED/i, "a correct answer must unlock the review gate");
+	assert.equal(projectGateState("locked"), "hidden", "PR review questions should not render the floating locked popup");
+	assert.equal(projectGateState("unlocked"), "hidden", "correct answers should not render a floating unlocked popup");
 
 	const { readFile } = await import("node:fs/promises");
 	const [runtimeSource, backgroundSource] = await Promise.all([
