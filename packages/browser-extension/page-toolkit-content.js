@@ -4953,6 +4953,23 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		return result;
 	};
 
+	const PR_REVIEW_GATE_COLLAPSED_STORAGE_KEY = "onhand-pr-review-gate-collapsed";
+	const readPrReviewGateCollapsed = () => {
+		try {
+			return window.localStorage.getItem(PR_REVIEW_GATE_COLLAPSED_STORAGE_KEY) === "true";
+		} catch {
+			return false;
+		}
+	};
+	const persistPrReviewGateCollapsed = (collapsed) => {
+		try {
+			if (collapsed) window.localStorage.setItem(PR_REVIEW_GATE_COLLAPSED_STORAGE_KEY, "true");
+			else window.localStorage.removeItem(PR_REVIEW_GATE_COLLAPSED_STORAGE_KEY);
+		} catch {
+			// Storage can be unavailable on restricted pages; the in-page control still works.
+		}
+	};
+
 	const setPrReviewGate = (state, options = {}) => {
 		const requestedState = String(state || "").toLowerCase();
 		let host = document.getElementById("onhand-pr-review-gate-host");
@@ -5241,20 +5258,25 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				event.preventDefault();
 				event.stopPropagation();
 				syncCollapsedPresentation(true);
+				persistPrReviewGateCollapsed(true);
 				collapsedTab.focus({ preventScroll: true });
 			});
 			collapsedTab.addEventListener("click", (event) => {
 				event.preventDefault();
 				event.stopPropagation();
 				syncCollapsedPresentation(false);
+				persistPrReviewGateCollapsed(false);
 				collapseButton.focus({ preventScroll: true });
 			});
-			syncCollapsedPresentation(false);
+			syncCollapsedPresentation(readPrReviewGateCollapsed());
 			shadow.append(style, gate, collapsedTab, statusNode);
 			(document.documentElement || document.body).appendChild(host);
 		}
 		applyAnnotationThemeToElement(host);
-		if (shouldExpand) host.removeAttribute("data-onhand-pr-gate-collapsed");
+		if (shouldExpand) {
+			host.removeAttribute("data-onhand-pr-gate-collapsed");
+			persistPrReviewGateCollapsed(false);
+		}
 		host.setAttribute("data-onhand-pr-gate-state", normalizedState);
 		host.removeAttribute("role");
 		host.removeAttribute("aria-live");

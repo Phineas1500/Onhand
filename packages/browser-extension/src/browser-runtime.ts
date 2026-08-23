@@ -6633,10 +6633,9 @@ const PR_MODE_GATE_FOLLOWUP_DIRECTIVE = `PR Gate follow-up overrides the generic
 - If correct, confirm the mechanism concisely and end without another question or check. The correct resolution is the hook that unlocks the Onhand Review Gate.
 - If partial or incorrect, briefly teach why the selected reasoning misses the highlighted code, then ask one revised A/B/C check about the same mechanism. Call onhand_record_learning_event once more with kind "check_opened", a new checkId, the same conceptId and same annotationId, and the complete revised choice block plus final question as promptText. End on exactly that one question.`;
 
-// The Socratic PR flow remains active, but the floating demo banner is disabled
-// for now. Keep the projection centralized so the UI can be restored without
-// changing the learner-state or grading contract.
-const PR_REVIEW_GATE_UI_ENABLED = false;
+// Keep the presentation independently switchable from the learner-state and
+// grading contract while the PR review gate is still experimental.
+const PR_REVIEW_GATE_UI_ENABLED = true;
 
 function projectPrReviewGateState(state: "locked" | "unlocked") {
 	return PR_REVIEW_GATE_UI_ENABLED ? state : "hidden";
