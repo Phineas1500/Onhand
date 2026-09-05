@@ -20,6 +20,8 @@
 // Usage:   node scripts/run-real-browser-anchoring.mjs
 // Browser: ONHAND_TEST_BROWSER=/path/to/chromium (defaults to Helium; branded
 //          Chrome dropped --load-extension). SKIPS (exit 0) when none is found.
+// Optional: ONHAND_TEST_CLIPBOARD=1 also checks native PDF selection recovery.
+// This opt-in group replaces the system clipboard with harmless fixture text.
 import WebSocket from "ws";
 import http from "node:http";
 import assert from "node:assert/strict";
@@ -512,6 +514,60 @@ async function runRestoreCycleGroup(pdfUrl, profile, port) {
 	}
 }
 
+async function runNativePdfClipboardGroup(pdfUrl, profile, port) {
+	const child = launchBrowser(profile, port);
+	let ctx;
+	try {
+		ctx = await openContext(port);
+		const clipboardFixture = "Onhand clipboard regression fixture";
+		// Seed known data before any read; never print pre-existing clipboard data.
+		assert.equal((await ctx.sendMessage({ target: "offscreen", type: "offscreen:clipboard-write", text: clipboardFixture }))?.ok, true);
+		const assertClipboardRestored = async () => {
+			const clipboard = await ctx.sendMessage({ target: "offscreen", type: "offscreen:clipboard-read" });
+			assert.equal(clipboard?.ok, true, clipboard?.error);
+			assert.equal(clipboard.text === clipboardFixture, true, "selection capture must restore the clipboard fixture");
+		};
+		await assertClipboardRestored();
+		const tab = await createSourceTab(ctx, pdfUrl);
+		const empty = (await ctx.tool("browser_get_selection", { tabId: tab.id })).result.selection;
+		assert.equal(empty.hasSelection, false);
+		assert.match(empty.browserClipboardSelectionFallback?.error || "", /did not expose selected PDF text/, "empty selection should reach the copy probe without focus/permission errors");
+		await assertClipboardRestored();
+
+		const pageTarget = (await ctx.cdp.send("Target.getTargets")).targetInfos.find((target) => target.type === "page" && target.url === pdfUrl);
+		assert.ok(pageTarget, "native PDF fixture should have a page target");
+		const { sessionId } = await ctx.cdp.send("Target.attachToTarget", { targetId: pageTarget.targetId, flatten: true });
+		const permission = () => ctx.evalIn(sessionId, `navigator.permissions.query({name:"clipboard-read"}).then(p=>p.state)`);
+		assert.equal(await permission(), "prompt", "test must run without granting the PDF site clipboard permission");
+		try {
+			// Select the generated PDF through the real plugin's keyboard handling.
+			await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: 600, y: 300, button: "left", clickCount: 1 }, sessionId);
+			await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 600, y: 300, button: "left", clickCount: 1 }, sessionId);
+			const modifiers = process.platform === "darwin" ? 4 : 2;
+			await ctx.cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", modifiers, key: "a", code: "KeyA", windowsVirtualKeyCode: 65, commands: ["selectAll"] }, sessionId);
+			await ctx.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, key: "a", code: "KeyA", windowsVirtualKeyCode: 65 }, sessionId);
+		} finally {
+			await ctx.cdp.send("Target.detachFromTarget", { sessionId });
+		}
+		const selected = (await ctx.tool("browser_get_selection", { tabId: tab.id })).result.selection;
+		assert.equal(selected.source, "browser-selection-keyboard-copy", "exercise actual clipboard recovery, not a DOM selection shortcut");
+		assert.equal(selected.browserClipboardSelectionFallback.ok, true);
+		assert.equal(selected.hasSelection, true);
+		assert.match(selected.text, /Section alpha introduces the GAMMA marker/);
+		assert.equal((selected.text.match(/GAMMA marker/g) || []).length, 3);
+		assert.match(selected.text, /UNIQUESENTINEL phrase/);
+		assert.equal(selected.pdfAnchor.textQuote.exact, selected.text);
+		await assertClipboardRestored();
+	} finally {
+		ctx?.cdp.ws.close();
+		if (child.exitCode === null && child.signalCode === null) {
+			const exited = new Promise((resolve) => child.once("exit", resolve));
+			child.kill("SIGKILL");
+			await exited;
+		}
+	}
+}
+
 async function run() {
 	if (!findBrowser()) {
 		console.log("SKIPPED: no Chromium-based browser found (set ONHAND_TEST_BROWSER). Real-browser anchoring test not run.");
@@ -535,6 +591,10 @@ async function run() {
 	try {
 		const anchoringPort = await pickAvailablePort();
 		const restorePort = await pickAvailablePort();
+		if (process.env.ONHAND_TEST_CLIPBOARD === "1") {
+			await runNativePdfClipboardGroup(pdfUrl, anchoringProfile, anchoringPort);
+			console.log("Real-browser native PDF clipboard group: PASS");
+		}
 		await runAnchoringGroup(pdfUrl, anchoringProfile, anchoringPort);
 		console.log("Real-browser anchoring group: PASS");
 		await runRestoreCycleGroup(pdfUrl, restoreProfile, restorePort);

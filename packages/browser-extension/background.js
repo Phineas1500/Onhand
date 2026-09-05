@@ -2434,46 +2434,6 @@ async function dispatchCopyShortcutToTab(tab) {
 	}
 }
 
-async function readTextFromFocusedBrowserClipboard(tab) {
-	if (!tab?.id) throw new Error("No tab available for browser clipboard read.");
-	const expression = `(() => {
-		return Promise.resolve()
-			.then(() => navigator.clipboard && typeof navigator.clipboard.readText === "function" ? navigator.clipboard.readText() : "")
-			.catch((error) => ({ error: error?.message || String(error) }));
-	})()`;
-	const pageTarget = await getDebuggerPageTargetForTab(tab).catch(() => null);
-	const googleScholarTargets = await getGoogleScholarReaderDebuggerTargets(tab).catch(() => []);
-	const nativePdfTargets = await getNativeChromePdfViewerDebuggerTargets(tab).catch(() => []);
-	const targetIds = [
-		...googleScholarTargets,
-		pageTarget,
-		...nativePdfTargets,
-	]
-		.map((targetInfo) => debuggerTargetId(targetInfo))
-		.filter(Boolean);
-	const uniqueTargetIds = [...new Set(targetIds)];
-	let lastError = null;
-	const readWithSend = async (send) => {
-		await send("Runtime.enable");
-		const value = await evaluateDebuggerExpression(send, expression, undefined, "Could not read focused tab clipboard text");
-		if (value && typeof value === "object" && value.error) throw new Error(value.error);
-		return String(value || "");
-	};
-	for (const targetId of uniqueTargetIds) {
-		try {
-			const text = await withDebuggerTarget({ targetId }, async ({ send }) => await readWithSend(send));
-			if (text) return text;
-		} catch (error) {
-			lastError = error;
-		}
-	}
-	try {
-		return await withDebugger(tab.id, async ({ send }) => await readWithSend(send));
-	} catch (error) {
-		throw lastError || error;
-	}
-}
-
 async function maybeGetBrowserClipboardPdfSelection(tab, currentSelection) {
 	if (selectionPayloadHasText(currentSelection)) return currentSelection;
 	if (!tab?.id || !isLikelyPdfResourceUrl(tab?.url)) return currentSelection;
@@ -2481,49 +2441,31 @@ async function maybeGetBrowserClipboardPdfSelection(tab, currentSelection) {
 	let originalClipboard = "";
 	let marker = "";
 	let canRestoreClipboard = false;
-	let setupError = null;
 	const fallback = {
 		attempted: true,
 		ok: false,
 		source: "browser-selection-keyboard-copy",
 	};
 	try {
-		try {
-			originalClipboard = await readTextFromExtensionClipboard();
-			marker = `${BROWSER_SELECTION_CLIPBOARD_MARKER_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2)}`;
-			await writeTextToExtensionClipboard(marker);
-			canRestoreClipboard = true;
-		} catch (error) {
-			setupError = error;
-		}
+		// Keep reads in extension contexts with clipboardRead permission. Reading
+		// through the PDF page asks for site permission, even with no selection.
+		// Abort if setup fails: without the marker, old clipboard text could be
+		// mistaken for a selection, and Copy could overwrite data we cannot restore.
+		originalClipboard = await readTextFromExtensionClipboard();
+		marker = `${BROWSER_SELECTION_CLIPBOARD_MARKER_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2)}`;
+		await writeTextToExtensionClipboard(marker);
+		canRestoreClipboard = true;
 		await focusTab(tab.id);
 		await dispatchCopyShortcutToTab(tab);
 		await delay(180);
-		let readError = null;
-		let copiedRawText = "";
-		try {
-			copiedRawText = await readTextFromFocusedBrowserClipboard(tab);
-		} catch (error) {
-			readError = error;
-		}
-		if (!copiedRawText) {
-			try {
-				copiedRawText = await readTextFromExtensionClipboard();
-			} catch (error) {
-				readError = readError || error;
-			}
-		}
+		const copiedRawText = await readTextFromExtensionClipboard();
 		const copiedText = normalizeClipboardSelectionText(copiedRawText);
 		if (!copiedText || copiedText === marker) {
-			const reasons = [
-				setupError ? `clipboard setup: ${setupError?.message || String(setupError)}` : "",
-				readError ? `clipboard read: ${readError?.message || String(readError)}` : "",
-			].filter(Boolean);
 			return {
 				...(currentSelection || {}),
 				browserClipboardSelectionFallback: {
 					...fallback,
-					error: `Browser copy did not expose selected PDF text on the clipboard.${reasons.length ? ` ${reasons.join("; ")}` : ""}`,
+					error: "Browser copy did not expose selected PDF text on the clipboard.",
 				},
 			};
 		}

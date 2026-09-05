@@ -705,9 +705,10 @@ async function assertNativeChromePdfViewerSelectionFallback() {
 	);
 	assert.match(
 		source,
-		/focusTab\(tab\.id\)[\s\S]*dispatchCopyShortcutToTab\(tab\)[\s\S]*readTextFromFocusedBrowserClipboard\(tab\)/,
-		"browser-level PDF copy fallback should focus the source tab, send Copy, then read from the focused browser target",
+		/focusTab\(tab\.id\)[\s\S]*dispatchCopyShortcutToTab\(tab\)[\s\S]*readTextFromExtensionClipboard\(\)/,
+		"PDF copy fallback should focus the source tab, send Copy, then read through the extension",
 	);
+	assert.doesNotMatch(source, /readTextFromFocusedBrowserClipboard|navigator\.clipboard.*readText/, "background must not inject page clipboard reads that can prompt for site permission");
 	assert.match(
 		source,
 		/case "get_selection":\s*{[\s\S]*runPageToolkitMethod\(tab\.id,\s*"getSelectionInfo"\)[\s\S]*maybeGetGoogleScholarReaderSelection\(tab,\s*pageSelection\)[\s\S]*maybeGetNativeChromePdfViewerSelection\(tab,\s*selection\)[\s\S]*maybeGetBrowserClipboardPdfSelection\(tab,\s*selection\)/,
@@ -1483,6 +1484,142 @@ async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 		assert.match(source, /negative, absence, or whole-document PDF claims/i, `${label} should treat broad PDF absence claims as a distinct verification task`);
 		assert.match(source, /multiple conceptually distinct phrasings/i, `${label} should require semantic query variation for PDF absence claims`);
 		assert.match(source, /Never say you read or verified the entire PDF unless you actually read every page/i, `${label} should not overclaim whole-document reading`);
+	}
+}
+
+async function assertPdfClipboardSelectionUsesExtensionOnly() {
+	const declaration = await loadBackgroundFunction("maybeGetBrowserClipboardPdfSelection");
+	const tab = { id: 7, url: "https://example.test/selection.pdf", title: "PDF selection fixture" };
+	const emptySelection = { hasSelection: false, isCollapsed: true, text: "", pageNumber: 3 };
+	const existingSelection = { ...emptySelection, hasSelection: true, isCollapsed: false, text: "Already selected" };
+	for (const scenario of ["existing", "not-pdf", "copied", "unchanged", "empty", "initial-read-error", "marker-write-error", "copy-error", "copied-read-error"]) {
+		let clipboard = "Unrelated original clipboard text";
+		let reads = 0;
+		let copies = 0;
+		const writes = [];
+		const dependencies = {
+			selectionPayloadHasText: (selection) => Boolean(selection?.text?.trim()),
+			isLikelyPdfResourceUrl: (url) => url?.endsWith(".pdf"),
+			BROWSER_SELECTION_CLIPBOARD_MARKER_PREFIX: "__ONHAND_TEST_MARKER__",
+			readTextFromExtensionClipboard: async () => {
+				reads++;
+				if (scenario === "initial-read-error" || (scenario === "copied-read-error" && reads === 2)) throw new Error("Extension clipboard read unavailable");
+				return clipboard;
+			},
+			writeTextToExtensionClipboard: async (text) => {
+				if (scenario === "marker-write-error") throw new Error("Extension clipboard write unavailable");
+				writes.push(text);
+				clipboard = text;
+			},
+			focusTab: async (id) => assert.equal(id, tab.id),
+			dispatchCopyShortcutToTab: async () => {
+				copies++;
+				if (scenario === "copy-error") throw new Error("Copy unavailable");
+				if (scenario === "copied" || scenario === "copied-read-error") clipboard = "  Selected PDF passage\nwith context. ";
+				if (scenario === "empty") clipboard = "";
+			},
+			delay: async () => {},
+			normalizeClipboardSelectionText: (text) => String(text).replace(/\s+/g, " ").trim(),
+			normalizePdfPageNumber: (page) => Number(page) || null,
+			// These must never be used, even if extension clipboard access fails.
+			readTextFromFocusedBrowserClipboard: () => assert.fail("PDF page clipboard reads can trigger a permission prompt"),
+		};
+		const capture = new Function(...Object.keys(dependencies), `${declaration}\nreturn maybeGetBrowserClipboardPdfSelection;`)(...Object.values(dependencies));
+		const result = await capture(scenario === "not-pdf" ? { ...tab, url: "https://example.test/" } : tab, scenario === "existing" ? existingSelection : emptySelection);
+		assert.equal(clipboard, "Unrelated original clipboard text", `${scenario}: preserve the original clipboard text`);
+		if (scenario === "existing" || scenario === "not-pdf") {
+			assert.equal(result, scenario === "existing" ? existingSelection : emptySelection);
+			assert.equal(reads, 0, `${scenario}: skip clipboard access`);
+			assert.equal(writes.length, 0);
+			assert.equal(copies, 0);
+			continue;
+		}
+		if (scenario === "initial-read-error" || scenario === "marker-write-error") {
+			assert.equal(copies, 0, `${scenario}: do not copy without a usable marker and backup`);
+			assert.equal(writes.length, 0);
+		} else {
+			assert.equal(copies, 1);
+			assert.match(writes[0], /^__ONHAND_TEST_MARKER__/);
+			assert.equal(writes.at(-1), "Unrelated original clipboard text");
+		}
+		if (scenario === "copied") {
+			assert.equal(result.text, "Selected PDF passage with context.");
+			assert.equal(result.hasSelection, true);
+			assert.equal(result.isCollapsed, false);
+			assert.equal(result.pdfAnchor.pageNumber, 3);
+			assert.equal(result.pdfAnchor.textQuote.exact, result.text);
+			assert.equal(result.browserClipboardSelectionFallback.ok, true);
+		} else {
+			assert.equal(result.hasSelection, false, `${scenario}: never present stale or missing clipboard data as selected text`);
+			assert.equal(result.text, "");
+			assert.equal(result.browserClipboardSelectionFallback.ok, false);
+			assert.ok(result.browserClipboardSelectionFallback.error);
+		}
+	}
+}
+
+async function assertOffscreenClipboardWithoutDocumentFocus() {
+	const declarations = await Promise.all(["readClipboardText", "writeClipboardText"].map((name) => loadFunctionFromFile("packages/browser-extension/offscreen.js", name)));
+	for (const mode of ["async-api", "unfocused", "missing-api", "empty", "paste-denied", "paste-timeout", "copy-denied"]) {
+		const dom = new JSDOM("<!doctype html><body></body>");
+		const { document } = dom.window;
+		let clipboard = mode === "empty" ? "" : "Known clipboard text";
+		const commands = [];
+		const navigator = mode === "missing-api" ? {} : {
+			clipboard: {
+				readText: async () => {
+					if (mode !== "async-api") throw new Error("Document is not focused.");
+					return clipboard;
+				},
+				writeText: async (text) => {
+					if (mode !== "async-api") throw new Error("Document is not focused.");
+					clipboard = text;
+				},
+			},
+		};
+		document.execCommand = (command) => {
+			commands.push(command);
+			const textarea = document.querySelector("textarea");
+			assert.ok(textarea, "legacy clipboard commands need a temporary text field");
+			if (command === "copy") {
+				if (mode === "copy-denied") return false;
+				clipboard = textarea.value;
+				return true;
+			}
+			assert.equal(command, "paste");
+			if (mode === "paste-denied") return false;
+			if (mode === "paste-timeout") return true;
+			// Delivery may be asynchronous; do not inspect the text field before Paste.
+			queueMicrotask(() => {
+				const event = new dom.window.Event("paste", { cancelable: true });
+				Object.defineProperty(event, "clipboardData", { value: { getData: (type) => {
+					assert.equal(type, "text/plain");
+					return clipboard;
+				} } });
+				textarea.dispatchEvent(event);
+				assert.equal(event.defaultPrevented, true);
+			});
+			return true;
+		};
+		const helpers = new Function("document", "navigator", "setTimeout", "clearTimeout", `${declarations.join("\n")}\nreturn { readClipboardText, writeClipboardText };`)(document, navigator, (callback) => setTimeout(callback, 0), clearTimeout);
+		try {
+			if (mode === "paste-denied" || mode === "paste-timeout") {
+				await assert.rejects(helpers.readClipboardText(), mode === "paste-denied" ? /returned false/ : /timed out/);
+			} else {
+				assert.equal(await helpers.readClipboardText(), clipboard, mode);
+			}
+			assert.equal(document.querySelector("textarea"), null, `${mode}: clean up after clipboard reads`);
+			if (mode === "copy-denied") await assert.rejects(helpers.writeClipboardText("New test text"), /returned false/);
+			else {
+				await helpers.writeClipboardText("New test text");
+				assert.equal(clipboard, "New test text", mode);
+			}
+			assert.equal(document.querySelector("textarea"), null, `${mode}: clean up after clipboard writes`);
+			if (mode === "async-api") assert.deepEqual(commands, [], "working async clipboard calls need no legacy fallback");
+			else assert.deepEqual(commands, ["paste", "copy"]);
+		} finally {
+			dom.window.close();
+		}
 	}
 }
 
@@ -3728,6 +3865,8 @@ async function main() {
 	await assertPdfViewerCitationNavigationAndRebuild();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertNativeChromePdfViewerSelectionFallback();
+	await assertPdfClipboardSelectionUsesExtensionOnly();
+	await assertOffscreenClipboardWithoutDocumentFocus();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();

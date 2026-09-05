@@ -27,6 +27,18 @@ If native clicks stop taking effect or report `noWindowsAvailable` while the win
 
 If a browser automation tool explicitly rejects a local-file URL, stop that operation; do not retry it through CDP, AppleScript, or another surface. Report the personal-document check as incomplete and let the user reopen it through Onhand. Keep automated validation on generated fixtures. A debug port helps normal development automation but does not remove the tool's URL policy.
 
+### PDF clipboard regression
+
+PDF selection recovery must read the clipboard through the extension's sidebar/offscreen document, never through a debugger expression in the PDF page. A page-level `navigator.clipboard.readText()` can request site permission even when nothing is selected. Offscreen clipboard reads and writes also need the extension-permitted Paste/Copy fallback because Chromium's async Clipboard API requires document focus.
+
+`npm run test:page-toolkit-regressions` covers empty selections, captured text, clipboard setup/read/copy failures, restoration, and offscreen focus failures. To additionally exercise the real native PDF plugin in an isolated browser profile:
+
+```sh
+ONHAND_TEST_CLIPBOARD=1 ONHAND_TEST_BROWSER_FLAGS=--headless=new npm run test:real-browser-anchoring
+```
+
+The clipboard group is opt-in because it **replaces the system clipboard with harmless fixture text**. Preserve anything needed from the clipboard before running it. It seeds known data before reading, runs with the PDF site's clipboard permission ungranted, captures text via the actual Copy shortcut and extension clipboard route, and verifies the fixture clipboard is restored. The normal anchoring/restore groups then run as usual.
+
 ## Inspect Sessions
 
 Use the CLI through the npm wrapper:
