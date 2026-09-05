@@ -350,6 +350,54 @@ async function runAnchoringGroup(pdfUrl, profile, port) {
 		const occ2 = await highlight("GAMMA marker", { occurrence: 2 });
 		assert.ok(occ2.ok, "second occurrence should highlight without context");
 		assert.ok(compact(occ2.annotation.pdfAnchor?.textQuote?.prefix).includes("revisits"), "no-context highlight should honor the Nth occurrence");
+
+		// Exercise saved citation identity and missing-note recovery through the
+		// real runtime, PDF.js DOM, and sidebar, with no model/network service.
+		await clearAnnotations();
+		const first = await highlight("GAMMA marker", { occurrence: 1 });
+		const third = await highlight("GAMMA marker", { occurrence: 3, clearExisting: false });
+		const marks = [first.annotation, third.annotation];
+		const actions = marks.flatMap((mark, index) => ["annotation", "note"].map((type) => ({
+			key: `${type === "note" ? "note" : "highlight"}:${mark.annotationId}`, type,
+			annotationId: mark.annotationId, tabId, url: pdfUrl, title: "fixture",
+			label: type === "note" ? "Note" : "Highlighted text",
+			citationText: type === "note" ? `Explanation for occurrence ${index ? 3 : 1}.` : "GAMMA marker",
+			pdfAnchor: mark.pdfAnchor,
+		})));
+		const recorded = await ctx.sendMessage({
+			type: "sidebar:realtime-record-turn", voiceTurnId: "live-repeated-citations",
+			userPrompt: "Compare the two repeated passages.",
+			reply: marks.map((mark, i) => `Occurrence ${i ? 3 : 1}. [[cite:${mark.annotationId}]]`).join("\n\n"), pageActions: actions,
+		});
+		assert.equal(recorded.ok, true, "fixture turn should save");
+		const restored = await ctx.sendMessage({ type: "sidebar:restore-session" });
+		assert.equal(restored.ok, true, "repeated passages should restore");
+		const state = (await ctx.sendMessage({ type: "sidebar:fetch-state" })).state;
+		const restoredActions = state.turns.find((turn) => turn.id === "live-repeated-citations").pageActions;
+		const restoredHighlights = restoredActions.filter((action) => action.type === "annotation");
+		assert.equal(new Set(restoredHighlights.map((action) => action.annotationId)).size, 2, "restored links must remain distinct");
+		const liveViewer = await waitForViewerSession(ctx);
+		for (let index = 0; index < restoredHighlights.length; index++) {
+			const action = restoredHighlights[index];
+			const actual = await ctx.evalIn(liveViewer, `JSON.parse(document.querySelector('[data-onhand-annotation-id="${action.annotationId}"]').getAttribute('data-onhand-pdf-anchor'))`);
+			assert.ok(compact(actual.textQuote.prefix).includes(index ? "shows" : "introduces"), "saved id must point to its own physical occurrence");
+		}
+		const noteAction = restoredActions.find((action) => action.type === "note");
+		await ctx.evalIn(liveViewer, `document.querySelector('[data-onhand-note-for="${noteAction.annotationId}"]').remove()`);
+		const activated = await ctx.sendMessage({ type: "sidebar:activate-action", key: noteAction.key });
+		assert.equal(activated.ok, true, "missing-note activation should succeed");
+		const noteText = await ctx.evalIn(liveViewer, `document.querySelector('[data-onhand-note-for="${noteAction.annotationId}"]')?.textContent`);
+		assert.match(noteText || "", /Explanation for occurrence 1/, "activation must recreate the real note card");
+		const { targetId } = await ctx.cdp.send("Target.createTarget", { url: `chrome-extension://${ctx.extId}/sidepanel.html`, background: true });
+		const { sessionId: sidebarSession } = await ctx.cdp.send("Target.attachToTarget", { targetId, flatten: true });
+		let chips = [];
+		for (let attempt = 0; attempt < 40; attempt++) {
+			chips = await ctx.evalIn(sidebarSession, `Array.from(document.querySelector('#onhand-extension-sidebar-host')?.shadowRoot?.querySelectorAll('.onhand-cite') || []).map(e=>[e.textContent.trim(),e.dataset.actionKey])`);
+			if (chips.length === 2) break;
+			await delay(100);
+		}
+		assert.deepEqual(chips, marks.map((mark, i) => [`[${i + 1}]`, `note:${mark.annotationId}`]), "live sidebar must keep repeated passages independently clickable");
+		console.log("Real-browser repeated citations and missing-note recovery: PASS");
 	} finally {
 		try {
 			child.kill("SIGKILL");

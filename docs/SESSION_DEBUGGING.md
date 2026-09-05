@@ -12,6 +12,21 @@ Launch Helium or another Chromium browser with remote debugging enabled, then lo
 
 After changing `packages/browser-extension/` or rebuilding `packages/browser-extension/onhand-runtime.bundle.js`, reload the unpacked extension from `chrome://extensions` before live validation.
 
+### Reloading when local PDFs are open
+
+Run automated PDF checks with generated fixtures in an isolated browser profile first. `npm run test:real-browser-anchoring` already uses temporary Helium profiles. Launching the user's normal browser with a debug port is not required for these checks.
+
+For a live check in the user's Helium profile:
+
+1. Record the current Onhand session and PDF page/zoom before reloading. An extension reload can close its PDF-viewer tabs.
+2. Close the Onhand side panel, open a fresh `chrome://extensions` tab, and use Computer Use to click Reload on the Onhand card. Confirm the **Reloaded** toast, then close that temporary tab. Refresh the accessibility snapshot after each UI change.
+3. Reopen Onhand and recover the saved document using its citation or **Restore pages** control. The internal session-restore path issues a new local-file grant before opening the viewer. Pasting a saved `pdf-viewer.html?url=file...` address into a new tab does not issue that grant and can produce the handoff error.
+4. Verify the restored document, annotations, and citation numbers before reporting that the personal-document check passed. Fixture results alone do not establish this.
+
+If native clicks stop taking effect or report `noWindowsAvailable` while the window remains readable, ask the user to bring Helium to the foreground and click inside the existing PDF, then fetch a fresh accessibility snapshot before resuming. This recovered input during the September 4 verification; it is not a guaranteed remedy. Preserve the working viewer instead of reloading it again to address an input-tool failure.
+
+If a browser automation tool explicitly rejects a local-file URL, stop that operation; do not retry it through CDP, AppleScript, or another surface. Report the personal-document check as incomplete and let the user reopen it through Onhand. Keep automated validation on generated fixtures. A debug port helps normal development automation but does not remove the tool's URL policy.
+
 ## Inspect Sessions
 
 Use the CLI through the npm wrapper:

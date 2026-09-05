@@ -609,6 +609,80 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
 }
 
+async function assertPdfViewerCitationNavigationAndRebuild() {
+	const { transform } = await import("esbuild");
+	const declarations = await Promise.all(["pdfScrollToAnnotation", "restorePdfAnnotationSnapshots"].map(
+		(name) => loadFunctionFromFile("packages/browser-extension/src/pdf-viewer.ts", name),
+	));
+	const { code } = await transform(declarations.join("\n"), { loader: "ts", target: "es2022" });
+	const dom = new JSDOM("<body></body>");
+	const { document } = dom.window;
+	const scrolled = [];
+	const expanded = [];
+	let serial = 0;
+	const findAnnotation = (id) => {
+		const mark = [...document.querySelectorAll("[data-onhand-annotation-id]")].find((node) => node.getAttribute("data-onhand-annotation-id") === id);
+		if (!mark) throw new Error(`Missing mark: ${id}`);
+		return mark;
+	};
+	const findNoteForAnnotation = (id) => [...document.querySelectorAll("[data-onhand-note-for]")].find((node) => node.getAttribute("data-onhand-note-for") === id);
+	const dependencies = {
+		findAnnotation,
+		findNoteForAnnotation,
+		expandPdfNoteForAnnotation: (id) => expanded.push(id),
+		waitForNextFrame: async () => {},
+		updatePageFromScroll: () => {},
+		buildAnnotationResult: (mark, _query, extra) => ({ annotationId: mark.getAttribute("data-onhand-annotation-id"), ...extra }),
+		rectToObject: (rect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }),
+		renderSequence: 4,
+		async pdfHighlightText(text, options) {
+			const existing = [...document.querySelectorAll("[data-onhand-annotation-id]")].find((node) => node.textContent === text);
+			if (options.reuseExisting && existing) return { annotationId: existing.getAttribute("data-onhand-annotation-id"), reusedExisting: true };
+			const mark = document.createElement("div");
+			const annotationId = `new-dom-id-${++serial}`;
+			mark.setAttribute("data-onhand-annotation-id", annotationId);
+			mark.textContent = text;
+			mark.scrollIntoView = () => scrolled.push(mark);
+			document.body.append(mark);
+			return { annotationId };
+		},
+		async pdfShowNote(id, text) {
+			findAnnotation(id);
+			const note = document.createElement("aside");
+			note.setAttribute("data-onhand-note-for", id);
+			note.textContent = text;
+			note.scrollIntoView = () => scrolled.push(note);
+			document.body.append(note);
+		},
+		setPdfNoteCollapsed: (note, collapsed) => note.setAttribute("data-collapsed", String(collapsed)),
+	};
+	const viewer = new Function(...Object.keys(dependencies), `${code}\nreturn { pdfScrollToAnnotation, restorePdfAnnotationSnapshots };`)(...Object.values(dependencies));
+	const snapshots = Array.from({ length: 6 }, (_, i) => ({ annotationId: `saved-${i}`, text: `Passage ${Math.floor(i / 2)}`, note: { text: `Note ${i}`, collapsed: true } }));
+	for (let rebuild = 0; rebuild < 2; rebuild++) {
+		document.body.replaceChildren();
+		await viewer.restorePdfAnnotationSnapshots(snapshots, 4);
+		assert.deepEqual([...document.querySelectorAll("[data-onhand-annotation-id]")].map((mark) => mark.getAttribute("data-onhand-annotation-id")), snapshots.map((snapshot) => snapshot.annotationId), "PDF zoom/layout rebuilds must preserve saved citation ids");
+		for (const snapshot of snapshots) {
+			const note = findNoteForAnnotation(snapshot.annotationId);
+			assert.equal(note.textContent, snapshot.note.text);
+			assert.equal(note.getAttribute("data-collapsed"), "true");
+			const result = await viewer.pdfScrollToAnnotation(snapshot.annotationId, { target: "note" });
+			assert.equal(result.targetKind, "note", "a successful note jump must stop runtime recovery");
+			assert.ok(result.noteRect);
+			assert.equal(scrolled.at(-1), note);
+			assert.equal(expanded.at(-1), snapshot.annotationId);
+		}
+	}
+	const highlightResult = await viewer.pdfScrollToAnnotation("saved-0", { target: "annotation" });
+	assert.equal(highlightResult.targetKind, "annotation");
+	assert.equal(scrolled.at(-1), findAnnotation("saved-0"));
+	findNoteForAnnotation("saved-0").remove();
+	const missingNoteResult = await viewer.pdfScrollToAnnotation("saved-0", { target: "note" });
+	assert.equal(missingNoteResult.targetKind, "annotation");
+	assert.equal(missingNoteResult.noteRect, null, "a missing note must still allow runtime recovery");
+	dom.window.close();
+}
+
 async function assertNativeChromePdfViewerSelectionFallback() {
 	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	assert.match(source, /function getNativeChromePdfViewerSelectionExpression\(\)/, "Native Chrome PDF selected text should have a debugger expression");
@@ -3651,6 +3725,7 @@ async function main() {
 	await assertDetachedPdfViewerOpenRouting();
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
+	await assertPdfViewerCitationNavigationAndRebuild();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();

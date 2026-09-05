@@ -217,6 +217,8 @@ interface PageAction {
 	title?: string;
 	url?: string;
 	annotationId?: string | null;
+	// Saved answer markers remain valid when replay replaces the live DOM id.
+	citationAnnotationIds?: string[];
 	artifactId?: string | null;
 	label: string;
 	detail: string;
@@ -14506,11 +14508,28 @@ function replayTargetSamePage(action: PageAction | null | undefined, target: Rep
 
 function actionMatchesReplayTarget(action: PageAction | null | undefined, target: ReplayAnnotation | null | undefined) {
 	if (!action || !target) return false;
+	if (documentKeysOverlap(pageActionDocumentKeys(action), replayAnnotationDocumentKeys(target)) === false) return false;
+	if (!replayLocationsCompatible(action, target)) return false;
 	const oldAnnotationId = compactActionText(target.annotationId);
 	if (oldAnnotationId && compactActionText(action.annotationId) === oldAnnotationId) return true;
 	const targetText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
 	const actionText = stripReplayCitationMarkers(compactActionText(action.citationText || action.detail)).toLowerCase();
 	return Boolean(targetText && actionText && targetText === actionText && replayTargetSamePage(action, target));
+}
+
+function replayLocationsCompatible(left: any, right: any) {
+	const a = left?.pdfAnchor || left?.anchor;
+	const b = right?.pdfAnchor || right?.anchor;
+	if (!a || !b) return true; // Legacy records may have only an id and quote.
+	if (a.pageNumber && b.pageNumber && Number(a.pageNumber) !== Number(b.pageNumber)) return false;
+	if (Number(a.occurrence || 1) !== Number(b.occurrence || 1)) return false;
+	for (const part of ["prefix", "suffix"]) {
+		const x = compactActionText(a.textQuote?.[part]);
+		const y = compactActionText(b.textQuote?.[part]);
+		if (x && y && x !== y) return false;
+	}
+	if (a.regionRect && b.regionRect && JSON.stringify(a.regionRect) !== JSON.stringify(b.regionRect)) return false;
+	return true;
 }
 
 function findPairedHighlightAction(action: PageAction, actions: PageAction[] = []) {
@@ -14557,22 +14576,26 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			return pdfAnchorSource || compactActionText(paired?.citationText || paired?.detail) || compactActionText(action.citationText || action.detail);
 		}
 
-	function updateReplayActionArray(actions: PageAction[] | undefined, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any) {
+	function rebindPageActionAnnotation(action: PageAction, annotationId: string) {
+		if (action.annotationId && action.annotationId !== annotationId) {
+			action.citationAnnotationIds = Array.from(new Set([...(action.citationAnnotationIds || []), action.annotationId]));
+		}
+		action.annotationId = annotationId;
+	}
+
+	function updateReplayActionArray(actions: PageAction[] | undefined, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any, targetKeys: Set<string>) {
 		if (!Array.isArray(actions)) return false;
-		const actionKeys = new Set(annotation.actionKeys || []);
 		const oldAnnotationId = annotation.annotationId || "";
 		const newAnnotationId = restoredAnnotation?.annotationId || oldAnnotationId;
 		let changed = false;
 		for (const action of actions) {
-			const matchesKey = Boolean(action.key && actionKeys.has(action.key));
-			const matchesAnnotation = actionMatchesReplayTarget(action, annotation);
-			if (!matchesKey && !matchesAnnotation) continue;
+			if (!targetKeys.has(action.key)) continue;
 			if (typeof tab?.id === "number") action.tabId = tab.id;
 			if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
 			if (tab?.title) action.title = tab.title;
 			if (tab?.url) action.url = tab.url;
 			if (newAnnotationId && (action.annotationId || action.type === "annotation" || action.type === "note")) {
-				action.annotationId = newAnnotationId;
+				rebindPageActionAnnotation(action, newAnnotationId);
 			}
 			changed = true;
 		}
@@ -14604,10 +14627,21 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	}
 
 	function updateSessionReplayActionTargets(session: RuntimeSession, annotation: ReplayAnnotation, tab: any, restoredAnnotation: any) {
-		let changed = updateReplayActionArray(session.pageActions, annotation, tab, restoredAnnotation);
+		// Choose targets across the whole session before mutating any copy. An
+		// identical quote in another turn must not override explicit source ids.
+		const actions = collectSessionPageActions(session);
+		const explicit = actions.filter((action) =>
+			(annotation.actionKeys || []).includes(action.key) ||
+			Boolean(annotation.annotationId && action.annotationId === annotation.annotationId && actionMatchesReplayTarget(action, annotation)),
+		);
+		const candidates = explicit.length ? explicit : actions.filter((action) => actionMatchesReplayTarget(action, annotation));
+		const identities = new Set(candidates.map((action) => action.annotationId || action.key));
+		const targets = explicit.length || identities.size === 1 ? candidates : [];
+		const targetKeys = new Set(targets.map((action) => action.key));
+		let changed = updateReplayActionArray(session.pageActions, annotation, tab, restoredAnnotation, targetKeys);
 		if (Array.isArray(session.turns)) {
 			for (const turn of session.turns) {
-				changed = updateReplayActionArray(turn.pageActions, annotation, tab, restoredAnnotation) || changed;
+				changed = updateReplayActionArray(turn.pageActions, annotation, tab, restoredAnnotation, targetKeys) || changed;
 			}
 		}
 		changed = updateLearnerStateAnnotationTargets(session.learnerState, annotation, tab, restoredAnnotation) || changed;
@@ -14788,6 +14822,8 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 	}
 
 	function replayAnnotationMatchesRestoredTarget(annotation: ReplayAnnotation, target: ReplayAnnotation) {
+		if (documentKeysOverlap(replayAnnotationDocumentKeys(annotation), replayAnnotationDocumentKeys(target)) === false) return false;
+		if (!replayLocationsCompatible(annotation, target)) return false;
 		if (annotation.annotationId && target.annotationId && annotation.annotationId === target.annotationId) return true;
 		const leftText = stripReplayCitationMarkers(compactActionText(annotation.matchedText)).toLowerCase();
 		const rightText = stripReplayCitationMarkers(compactActionText(target.matchedText)).toLowerCase();
@@ -15718,6 +15754,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				action.type === "note" && pairedHighlight?.annotationId ? compactActionText(pairedHighlight.annotationId) : compactActionText(action.annotationId);
 			const targetKind = action.type === "note" ? "note" : "annotation";
 			let directScrollMissed = false;
+			let liveAnnotationFound = false;
 			if (targetAnnotationId && typeof tabId === "number") {
 				try {
 					const scrolled = await host.runCommand("scroll_to_annotation", {
@@ -15726,6 +15763,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						target: targetKind,
 					});
 					const scrolledAnnotation = scrolled?.annotation || scrolled;
+					liveAnnotationFound = true;
 					if (action.type !== "note" || scrolledAnnotation?.targetKind === "note" || scrolledAnnotation?.noteRect) {
 						return action;
 					}
@@ -15752,8 +15790,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						// actually scrolls; otherwise fall through to the restore/replay below,
 						// which re-creates the highlight before scrolling.
 						try {
-							await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
-							return action;
+							const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+							const target = scrolled?.annotation || scrolled;
+							liveAnnotationFound = true;
+							if (action.type !== "note" || target?.targetKind === "note" || target?.noteRect) return action;
 						} catch {}
 					} catch {
 						try {
@@ -15774,8 +15814,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							// actually scrolls; otherwise fall through to the restore/replay below,
 							// which re-creates the highlight before scrolling.
 							try {
-								await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
-								return action;
+								const scrolled = await host.runCommand("scroll_to_annotation", { tabId, annotationId: targetAnnotationId || action.annotationId, target: targetKind });
+								const target = scrolled?.annotation || scrolled;
+								liveAnnotationFound = true;
+								if (action.type !== "note" || target?.targetKind === "note" || target?.noteRect) return action;
 							} catch {}
 						} catch {
 							// If the viewer cannot jump by anchor yet, continue into the
@@ -15784,10 +15826,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					}
 				}
 			}
-			if (action.artifactId) {
+			if (action.artifactId && !liveAnnotationFound) {
 				await restoreArtifact({ artifactId: action.artifactId, tabId, openIfNeeded: true, clearExisting: false });
 			}
-			if (actionPdfAnchor && typeof tabId === "number") {
+			if (actionPdfAnchor && typeof tabId === "number" && !liveAnnotationFound) {
 				const matchedText = activationSourceText(action, allActions) || actionPdfAnchor.matchedText || actionPdfAnchor.textQuote?.exact || "";
 				await waitForPdfRestoreSurface(
 					tabId,
@@ -15805,7 +15847,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				if (action.annotationId || (action.type === "note" && pairedHighlight?.annotationId)) {
 					if (typeof tabId !== "number") throw new Error("No matching browser tab is open for that citation.");
 					if (action.type === "note" && targetAnnotationId && targetAnnotationId !== action.annotationId) {
-						action.annotationId = targetAnnotationId;
+						rebindPageActionAnnotation(action, targetAnnotationId);
 						changed = true;
 				}
 				let noteShown = false;
@@ -15834,7 +15876,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					if (actionBelongsToSession) {
 						changed = updateSessionReplayActionTargets(session, replayTarget, tab, highlighted?.annotation) || changed;
 					}
-					action.annotationId = annotationId;
+					rebindPageActionAnnotation(action, annotationId);
 					action.tabId = tabId;
 					if (typeof tab?.windowId === "number") action.windowId = tab.windowId;
 					if (tab?.title) action.title = tab.title;

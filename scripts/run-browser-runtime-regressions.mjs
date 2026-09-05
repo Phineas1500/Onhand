@@ -1,3 +1,4 @@
+import { runRuntimeReviewRegressions } from "./lib/onhand-review-regressions.mjs";
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
@@ -7390,6 +7391,7 @@ async function assertPdfActionActivationHandsOffBeforeSourceFallback() {
 	assert.equal("text" in staleNoteHost.calls[noteJumpIndex].args, false, "stale Onhand PDF note jumps should use page anchors, not slow exact text matching");
 	assert.equal(staleNoteHost.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), false);
 	assert.equal(staleNoteHost.calls.some((call) => call.name === "highlight_text"), false);
+	assert.equal(staleNoteHost.calls.filter((call) => call.name === "show_note").length, 1, "the missing PDF note must be recreated");
 
 	const invalidatedViewerHost = createReplayHost({
 		tabs: [replaySmokeTab({ title: "Lecture PDF", url: "https://example.test/lecture.pdf" })],
@@ -8999,6 +9001,7 @@ async function assertReplayActionActivationRepairsStaleAnnotationWithExactSource
 
 	const savedAction = getStoredSessions()[session.id].pageActions[0];
 	assert.equal(savedAction.annotationId, "replay-highlight");
+	assert.deepEqual(savedAction.citationAnnotationIds, ["old-ann"], "repair must preserve the id referenced by saved answers");
 }
 
 async function assertReplayNoteActivationUsesPairedHighlightSource() {
@@ -9091,8 +9094,48 @@ async function assertReplayNoteActivationUsesPairedHighlightSource() {
 	const savedActions = savedSession.pageActions;
 	assert.equal(savedActions.find((action) => action.key === "highlight:old-ann").annotationId, "replay-highlight");
 	assert.equal(savedActions.find((action) => action.key === "note:old-ann").annotationId, "replay-highlight");
+	for (const action of savedActions) assert.deepEqual(action.citationAnnotationIds, ["old-ann"]);
 	assert.equal(savedSession.learnerState.conceptsIntroduced[0].sources[0].annotationId, "replay-highlight");
 	assert.equal(savedSession.learnerState.openChecks[0].annotationId, "replay-highlight");
+}
+
+async function assertRepeatedCitationRecoveryPreservesAnswerIds() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	let generation = 0;
+	const host = createReplayHost({
+		rejectScrollToAnnotation: () => true,
+		highlightAnnotationId: () => `recovered-${++generation}`,
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	const store = getStoredStore();
+	const session = store.sessions[store.currentSessionId];
+	session.pageActions = ["original", "neighbor"].flatMap((id) => ["annotation", "note"].map((type) => ({
+		key: `${type === "note" ? "note" : "highlight"}:${id}`, type, annotationId: id,
+		url: "https://example.test/replay-smoke", title: "Replay smoke page", tabId: 7,
+		label: type === "note" ? "Added note" : "Highlighted text",
+		detail: `${type} source for ${id}`, citationText: `${type} source for ${id}`,
+	})));
+	const reply = "Two findings. [[cite:original,neighbor]]";
+	session.turns = [{ id: "saved-answer", reply, pageActions: structuredClone(session.pageActions), pending: false }];
+	await globalThis.chrome.storage.local.set(storedStoreEntries(store));
+	for (let recovery = 1; recovery <= 2; recovery++) {
+		await runtime.activateAction("note:original");
+		const saved = getStoredSessions()[session.id];
+		assert.equal(saved.turns[0].reply, reply, "navigation must not rewrite the answer");
+		for (const actions of [saved.pageActions, saved.turns[0].pageActions]) {
+			for (const action of actions) {
+				if (action.key.endsWith(":original")) {
+					assert.equal(action.annotationId, `recovered-${recovery}`);
+					assert.deepEqual(action.citationAnnotationIds, recovery === 1 ? ["original"] : ["original", "recovered-1"]);
+				} else {
+					assert.equal(action.annotationId, "neighbor", "recovering a citation must leave adjacent sources intact");
+					assert.equal(action.citationAnnotationIds, undefined);
+				}
+			}
+		}
+	}
 }
 
 async function assertReplayNoteActivationDoesNotRegenerateExistingNote() {
@@ -10638,6 +10681,7 @@ async function main() {
 	await assertDeleteSessionSwitchesToRemainingOrFreshSession();
 	await assertLegacySessionBlobMigratesToSessionRecords();
 	await assertListSessionsReturnsAllSessionsByDefault();
+	await runRuntimeReviewRegressions({ createOnhandBrowserRuntime: (await import("../packages/browser-extension/onhand-runtime.bundle.js")).createOnhandBrowserRuntime, installChromeStorageStub, createReplayHost, replaySmokeTab, getStoredStore, storedStoreEntries });
 	await assertSessionReplayRestore();
 	await assertFailedToolTraceSummarizesError();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
@@ -10678,6 +10722,7 @@ async function main() {
 	await assertReplayActionActivationCanTargetSavedSession();
 	await assertLocalFileCitationActivationReusesOpenFileTab();
 	await assertReplayActionActivationRepairsStaleAnnotationWithExactSource();
+	await assertRepeatedCitationRecoveryPreservesAnswerIds();
 	await assertReplayNoteActivationUsesPairedHighlightSource();
 	await assertReplayNoteActivationDoesNotRegenerateExistingNote();
 	await assertReplayNoteActivationRegeneratesMissingNote();

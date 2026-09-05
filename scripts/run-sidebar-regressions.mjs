@@ -1,3 +1,4 @@
+import { runSidebarReviewRegressions } from "./lib/onhand-review-regressions.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
@@ -657,6 +658,62 @@ async function assertSessionWideCitationNumbers() {
 	);
 
 	dom.window.close();
+}
+
+async function assertCitationLinksSurviveAnnotationRecovery() {
+	const state = createState();
+	const actions = Array.from({ length: 6 }, (_, index) => {
+		const id = `pdf-mark-${index + 1}`;
+		return ["annotation", "note"].map((type) => ({
+			key: `${type === "note" ? "note" : "highlight"}:${id}`,
+			type,
+			annotationId: id,
+			url: "https://example.test/paper.pdf",
+			label: type === "note" ? "Added note" : "Highlighted text",
+			citationText: `Source passage ${index + 1}`,
+		}));
+	}).flat();
+	state.turns = [{ ...state.turns[0], pageActions: actions,
+		reply: "First finding. [[cite:pdf-mark-1,pdf-mark-2,pdf-mark-3]]\n\nSecond finding. [[cite:pdf-mark-4,pdf-mark-5,pdf-mark-6]]" }];
+	const runtimeMessages = [];
+	const dom = await renderSidebar(state, runtimeMessages, {
+		activateActionResponse(message) {
+			const id = actions.find((action) => action.key === message.key).annotationId;
+			for (const action of actions.filter((item) => item.annotationId === id)) {
+				action.citationAnnotationIds = [...new Set([...(action.citationAnnotationIds || []), id])];
+				action.annotationId = `restored-${id}`;
+			}
+			return { ok: true };
+		},
+	});
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	const chips = () => [...shadow.querySelectorAll(".onhand-cite")].map((button) => [button.textContent.trim(), button.dataset.actionKey]);
+	const expected = Array.from({ length: 6 }, (_, i) => [`[${i + 1}]`, `note:pdf-mark-${i + 1}`]);
+	assert.deepEqual(chips(), expected);
+	shadow.querySelector('[data-action-key="note:pdf-mark-2"]').click();
+	await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.deepEqual(chips(), expected, "recovering one PDF mark must retain every explicit citation and its number");
+	// Existing saved sessions have already lost their old ids; the immutable
+	// action keys still identify the original citations without a migration.
+	for (const action of actions) delete action.citationAnnotationIds;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.deepEqual(chips(), expected, "legacy repaired citations must resolve from their original action keys");
+	// A later answer may cite the first recovered id. Both generations must
+	// resolve to the same source after another recovery, including after reopen.
+	state.turns.push({ ...state.turns[0], id: "follow-up", reply: "Related finding. [[cite:restored-pdf-mark-2]]" });
+	for (const action of actions.filter((item) => item.annotationId === "restored-pdf-mark-2")) {
+		action.citationAnnotationIds = ["restored-pdf-mark-2"];
+		action.annotationId = "recovered-again";
+	}
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.deepEqual(chips(), [...expected, ["[2]", "note:pdf-mark-2"]]);
+	assert.equal(runtimeMessages.filter((message) => message.type === "sidebar:activate-action").length, 1);
+	dom.window.close();
+	const reopened = await renderSidebar(structuredClone(state), []);
+	const reopenedShadow = reopened.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	assert.deepEqual([...reopenedShadow.querySelectorAll(".onhand-cite")].map((button) => [button.textContent.trim(), button.dataset.actionKey]), [...expected, ["[2]", "note:pdf-mark-2"]]);
+	reopened.window.close();
 }
 
 async function assertReplyTokenPrefixCannotInjectHtml() {
@@ -4910,8 +4967,10 @@ async function assertCitationTokenFoldingBridgesInflection() {
 	assert.equal(uncited.length, 0, "unrelated prose must never be chipped");
 }
 
+await runSidebarReviewRegressions({ renderSidebar, createState });
 await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
+await assertCitationLinksSurviveAnnotationRecovery();
 await assertCitationTokenFoldingBridgesInflection();
 await assertReplyTokenPrefixCannotInjectHtml();
 await assertMarkdownTablesRenderAsTables();

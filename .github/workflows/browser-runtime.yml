@@ -28,6 +28,12 @@ jobs:
       - name: Run browser runtime regressions
         run: npm run test:browser-runtime-regressions
 
+      - name: Run sidebar regressions
+        run: npm run test:sidebar-regressions
+
+      - name: Run page toolkit regressions
+        run: npm run test:page-toolkit-regressions
+
       - name: Run free-tier worker regressions
         run: npm run test:free-tier-worker-regressions
 

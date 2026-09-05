@@ -1530,7 +1530,10 @@ async function pdfScrollToAnnotation(annotationId: string, options: Record<strin
 	target.scrollIntoView({ behavior: "auto", block: options.block || "center", inline: "nearest" });
 	await waitForNextFrame();
 	updatePageFromScroll();
-	return buildAnnotationResult(annotation);
+	return buildAnnotationResult(annotation, "", {
+		targetKind: target === note ? "note" : "annotation",
+		noteRect: note ? rectToObject(note.getBoundingClientRect()) : null,
+	});
 }
 
 function pdfClearAnnotations() {
@@ -1611,9 +1614,15 @@ async function restorePdfAnnotationSnapshots(annotations: PdfAnnotationSnapshot[
 				pdfAnchor: snapshot.pdfAnchor,
 				occurrence: snapshot.occurrence,
 				scrollIntoView: false,
-				reuseExisting: true,
+				// Each snapshot owns its id and note, even for repeated passages.
+				reuseExisting: false,
 			});
 			if (sequence !== renderSequence) return;
+			// A layout/zoom rebuild must not invalidate the ids in saved citations.
+			if (snapshot.annotationId && highlighted.annotationId !== snapshot.annotationId) {
+				findAnnotation(highlighted.annotationId).setAttribute("data-onhand-annotation-id", snapshot.annotationId);
+				highlighted.annotationId = snapshot.annotationId;
+			}
 			if (snapshot.note?.text && highlighted.annotationId) {
 				await pdfShowNote(highlighted.annotationId, snapshot.note.text, {
 					label: snapshot.note.label || "Onhand",

@@ -139,6 +139,8 @@
 	let open = false;
 	let currentState = null;
 	let pollingTimer = null;
+	let stateRequestSequence = 0;
+	let stateRequestsInFlight = 0;
 	let sending = false;
 	let progressExpanded = null;
 	let lastActiveRequestId = null;
@@ -161,6 +163,8 @@
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
 	let lastMessagesMarkup = "";
+	let lastMessagesInput = "";
+	let messageRenderCount = 0;
 	let lastReplyMarkup = "";
 	const sourceDisclosureOpenKeys = new Set();
 	let quickOpenFocusGeneration = 0;
@@ -540,7 +544,14 @@
 	function getCitationEvidenceKey(action) {
 		const citationText = normalizeCitationText(action?.citationText || action?.detail || "");
 		if (!citationText) return "";
-		return `${getCitationTargetKey(action)}:${citationText}`;
+		const anchor = action?.pdfAnchor || action?.anchor;
+		// Quote equality alone does not identify an occurrence in a document.
+		const location = anchor ? JSON.stringify([
+			anchor.pageNumber || null, anchor.occurrence || 1,
+			anchor.textQuote?.prefix || "", anchor.textQuote?.suffix || "",
+			anchor.regionRect || null,
+		]) : "";
+		return `${getCitationTargetKey(action)}:${location}:${citationText}`;
 	}
 
 	function createCitationRegistry() {
@@ -551,15 +562,24 @@
 		};
 	}
 
+	function getCitationAnnotationIds(action) {
+		// Action keys retain the generation-time id even in older sessions whose
+		// live annotationId was replaced by replay. Keep those answer markers valid.
+		const prefix = action.type === "note" ? "note:" : "highlight:";
+		const originalId = action.annotationId && String(action.key || "").startsWith(prefix) ? action.key.slice(prefix.length) : "";
+		return [...new Set([originalId, ...(Array.isArray(action.citationAnnotationIds) ? action.citationAnnotationIds : []), action.annotationId]
+			.map((id) => String(id || "").trim()).filter(Boolean))];
+	}
+
 	function ensureCitationGroup(registry, action) {
 		if (!action || typeof action !== "object") return null;
 		if (action.type !== "annotation" && action.type !== "note") return null;
 		const targetKey = getCitationTargetKey(action);
-		const annotationGroupId = action.annotationId ? `annotation:${targetKey}:${action.annotationId}` : "";
+		const annotationGroupIds = getCitationAnnotationIds(action).map((id) => `annotation:${targetKey}:${id}`);
 		const evidenceKey = getCitationEvidenceKey(action);
-		let group = (annotationGroupId && registry.groupMap.get(annotationGroupId)) || (evidenceKey && registry.evidenceMap.get(evidenceKey)) || null;
+		let group = annotationGroupIds.map((id) => registry.groupMap.get(id)).find(Boolean) || (evidenceKey && registry.evidenceMap.get(evidenceKey)) || null;
 		if (!group) {
-			const groupId = annotationGroupId || evidenceKey || action.key;
+			const groupId = annotationGroupIds[0] || evidenceKey || action.key;
 			group = {
 				groupId,
 				sourceIndex: registry.groups.length,
@@ -574,7 +594,7 @@
 			registry.groupMap.set(groupId, group);
 			registry.groups.push(group);
 		}
-		if (annotationGroupId) registry.groupMap.set(annotationGroupId, group);
+		for (const id of annotationGroupIds) registry.groupMap.set(id, group);
 		if (evidenceKey) registry.evidenceMap.set(evidenceKey, group);
 		return group;
 	}
@@ -582,8 +602,7 @@
 	function addCitationActionToRegistry(registry, action) {
 		const group = ensureCitationGroup(registry, action);
 		if (!group) return null;
-		const annotationId = String(action.annotationId || "").trim();
-		if (annotationId) group.annotationIds.add(annotationId);
+		for (const id of getCitationAnnotationIds(action)) group.annotationIds.add(id);
 		const citationText = String(action.citationText || action.detail || "").trim();
 		for (const token of tokenizeCitationText(citationText)) {
 			group.matchTokens.add(token);
@@ -3670,6 +3689,7 @@
 	themeSelect.value = sidebarTheme;
 
 	function setOpen(nextOpen) {
+		if (!nextOpen) stateRequestSequence += 1;
 		const wasOpen = open;
 		open = Boolean(nextOpen);
 		if (IS_NATIVE_SIDE_PANEL) {
@@ -3700,7 +3720,7 @@
 	function startPolling() {
 		stopPolling();
 		pollingTimer = setInterval(() => {
-			void requestState();
+			void requestState({ poll: true });
 		}, POLL_INTERVAL_MS);
 	}
 
@@ -3936,6 +3956,7 @@
 
 	async function createNewSession() {
 		if (isFreshCurrentSession(currentState)) return;
+		stateRequestSequence += 1;
 		creatingSession = true;
 		lastRestoreResult = null;
 		resetReplayState();
@@ -3948,7 +3969,7 @@
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not create a new session.");
 			}
-			await Promise.all([requestState(), requestSessions()]);
+			await Promise.all([requestState({ afterSessionChange: true }), requestSessions()]);
 		} finally {
 			creatingSession = false;
 			renderState(currentState || {});
@@ -3960,6 +3981,7 @@
 		if (!sessionPath) return;
 		const currentPath = getCurrentSessionPath(currentState);
 		if (sessionPath === currentPath && !pendingSessionPath) return;
+		stateRequestSequence += 1;
 		pendingSessionPath = sessionPath;
 		sessionSwitching = true;
 		lastRestoreResult = null;
@@ -3974,7 +3996,7 @@
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not switch sessions.");
 			}
-			await Promise.all([requestState(), requestSessions()]);
+			await Promise.all([requestState({ afterSessionChange: true }), requestSessions()]);
 		} finally {
 			sessionSwitching = false;
 			if (pendingSessionPath === sessionPath) {
@@ -4041,6 +4063,7 @@
 			typeof globalThis.confirm !== "function" ||
 			globalThis.confirm(`Delete "${sessionLabel}"? This cannot be undone.`);
 		if (!confirmed) return;
+		stateRequestSequence += 1;
 		deletingSession = true;
 		lastRestoreResult = null;
 		resetReplayState();
@@ -4055,7 +4078,7 @@
 				throw new Error(response?.error || "Could not delete that session.");
 			}
 			setMenuOpen(false);
-			await Promise.all([requestState(), requestSessions()]);
+			await Promise.all([requestState({ afterSessionChange: true }), requestSessions()]);
 		} finally {
 			deletingSession = false;
 			renderState(currentState || {});
@@ -5680,6 +5703,15 @@
 	}
 
 	function renderMessages(turns, annotationCount = 0) {
+		// Compare serialized inputs before citation matching and Markdown work.
+		// Chrome messages are cloned, so object identity cannot detect idle polls.
+		const input = JSON.stringify([
+			getStateSessionPath(currentState), turns, Boolean(annotationCount),
+			progressExpanded, [...sourceDisclosureOpenKeys], Boolean(katexModule),
+		]);
+		if (input === lastMessagesInput) return;
+		lastMessagesInput = input;
+		messageRenderCount += 1;
 			const emptyMarkup = annotationCount
 				? ""
 				: `
@@ -6008,12 +6040,23 @@
 		}
 	}
 
-	async function requestState() {
-		if (!open) return;
-		const response = await chrome.runtime.sendMessage({
-			type: "sidebar:fetch-state",
-			windowId: await ensureCurrentWindowId(),
-		});
+	async function requestState({ poll = false, afterSessionChange = false } = {}) {
+		if (!open || (!afterSessionChange && (creatingSession || sessionSwitching || deletingSession))) return;
+		if (poll && stateRequestsInFlight) return;
+		const sequence = ++stateRequestSequence;
+		stateRequestsInFlight += 1;
+		let response;
+		try {
+			response = await chrome.runtime.sendMessage({
+				type: "sidebar:fetch-state",
+				windowId: await ensureCurrentWindowId(),
+			});
+		} catch (error) {
+			response = { ok: false, error: error?.message || String(error) };
+		} finally {
+			stateRequestsInFlight -= 1;
+		}
+		if (!open || sequence !== stateRequestSequence) return;
 		if (!response?.ok) {
 			renderState({
 				currentSession: { sessionName: "Onhand unavailable" },
@@ -10263,6 +10306,7 @@
 
 	if (globalThis.__onhandSidebarExposeTestHooks) {
 		globalThis.__onhandSidebarTestHooks = {
+			getMessageRenderCount: () => messageRenderCount,
 			buildSpacedReviewPrompt,
 			formatRealtimeBrowserToolResult,
 			setRealtimeDataChannel(channel) {
