@@ -53,6 +53,8 @@
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
+    "test:real-runtime-review": "node ./scripts/run-real-runtime-review-regressions.mjs",
+    "test:pdf-viewer-review": "node ./scripts/run-pdf-viewer-review-regressions.mjs",
     "test:real-online-pdfs": "node ./scripts/run-real-online-pdf-regressions.mjs",
     "test:real-pdf-zoom": "node ./scripts/run-real-pdf-zoom-regressions.mjs",
     "test:live-acceptance": "node ./scripts/run-onhand-live-acceptance.mjs",

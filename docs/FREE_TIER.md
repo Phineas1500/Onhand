@@ -23,7 +23,8 @@ completions to OpenRouter with Onhand's key.
   with validated tool-call behavior serve requests.
 - Devices are identified by an anonymous token issued at first use; no
   accounts, emails, or page content are stored. The worker keeps only
-  daily request counters.
+  daily request counters and a seven-day charge ledger containing generation
+  IDs and aggregate usage metadata.
 
 ## Cost controls
 
@@ -57,6 +58,29 @@ At the measured ~1¢/turn, a maxed-out free device costs roughly
 $0.15-0.25/day; typical usage is far below that.
 
 ## Deploying
+
+The daily cost ledger requires the `FREE_TIER_COST_LEDGER` Durable Object
+binding and `v1-daily-cost-ledger` SQLite migration in `wrangler.toml`.
+
+Keep the `enable_request_signal` compatibility flag enabled. The Worker listens
+to the incoming request's abort signal because a real client disconnect can
+skip the response stream's `cancel()` callback in workerd. Both notifications
+share one idempotent accounting finalizer.
+Deploy the configured `src/worker.mjs` entrypoint, which exports both the HTTP
+Worker and the Durable Object. Chat requests fail with 503 if the binding is
+missing; they do not silently fall back to non-atomic KV accounting.
+
+For the first rollout from KV accounting, pause new hosted requests (set the
+old Worker's `DAILY_COST_CAP_USD` to `0`), wait for its active model requests and
+background accounting to finish, then allow at least 60 seconds for KV changes
+to propagate before deploying this version with the intended cap restored.
+The first ledger access imports that day's existing `cost:YYYY-MM-DD` value
+once. Old and new accounting versions must not serve traffic simultaneously:
+late writes by the old version after import would not reach the new ledger.
+A UTC-day boundary deployment after draining traffic is another clean cutover.
+If historical KV undercounting is known, reconcile the old total against
+provider charges before the first import; the migration cannot reconstruct
+already lost charges. Keep this migration tag in subsequent deployments.
 
 ```sh
 cd workers/free-tier
@@ -128,6 +152,10 @@ Worker-side events:
 - `chat_stream_complete`
 - `chat_stream_error`
 - `chat_stream_cancelled`
+- `chat_response_complete`
+- `free_tier_cost_adjustment`
+- `free_tier_accounting_failed`
+- `free_tier_accounting_unresolved`
 - `free_tier_heavy_turn`
 - `telemetry_rate_limited`
 - `telemetry_rejected`
@@ -227,9 +255,11 @@ GROUP BY event
 SELECT
   sum(double10) AS cost,
   sum(double9) AS tokens,
-  count() AS completions
+  countIf(blob1 != 'free_tier_cost_adjustment') AS completions
 FROM onhand_events
-WHERE blob1 = 'chat_stream_complete'
+WHERE blob1 IN ('chat_stream_complete', 'chat_response_complete',
+                'chat_stream_cancelled', 'chat_stream_error',
+                'free_tier_cost_adjustment')
   AND timestamp >= NOW() - INTERVAL '1' DAY
 ```
 
@@ -240,6 +270,24 @@ WHERE blob1 = 'chat_stream_complete'
   `token:<id>` KV entry to revoke it.
 - Cost response: lower `DAILY_COST_CAP_USD` to cap shared daily spend, or lower
   `TURN_MODEL_CALL_CAP` to stop unusually complex single turns earlier.
-- The cap counters are best-effort (KV get+put), which can leak a couple
-  of requests under parallel load; that is acceptable for these free-tier
-  guardrails.
+- Shared daily cost uses one strongly consistent Durable Object per UTC
+  request-start day. Completed charges use generation IDs for deduplication;
+  a later, larger cost updates only the difference. Streaming, JSON,
+  cancellation, and stream-error paths all finalize usage. The deliberate
+  quota bypass remains excluded from shared spending.
+- The cap stops new admissions after recorded cost reaches the limit. Calls
+  already in flight and charges awaiting provider metadata can exceed the cap;
+  it is not a reservation-based hard dollar ceiling. Per-device request and
+  turn counters remain best-effort KV counters.
+- When final generation metadata is unavailable, a Durable Object alarm
+  retries it up to twelve times (normally about twelve minutes). Known usage
+  is retained even if the initial metadata lookup fails; any later increase emits `free_tier_cost_adjustment`
+  containing only the added dollars and zero extra token/call counts. Pending
+  generations are retained as `unresolved:*` after retries are exhausted, and
+  `free_tier_accounting_unresolved` appears in Worker logs. The ledger expires
+  seven days after its UTC day starts.
+- If a response ends before exposing either usage or a generation ID, the
+  Worker emits `free_tier_accounting_unresolved`; there is no provider handle
+  from which to recover a charge automatically. Check provider billing when
+  these events or `free_tier_accounting_failed` appear. Analytics are optional
+  and are not the authoritative cost ledger.

@@ -271,6 +271,9 @@ function buildQueries({ dataset, days, limit }) {
 		"chat_stream_complete",
 		"chat_stream_error",
 		"chat_stream_cancelled",
+		"chat_response_complete",
+		"free_tier_accounting_failed",
+		"free_tier_accounting_unresolved",
 		"chat_request_rejected",
 		"chat_quota_denied",
 		"chat_turn_quota_denied",
@@ -337,20 +340,20 @@ ORDER BY source, event, result`,
 		},
 		{
 			name: "chat_cost",
-			description: "Completion tokens and OpenRouter reported/forwarded cost.",
+			description: "Terminal response tokens and cost, including cancellation, errors, JSON, and late cost adjustments.",
 			sql: `
 SELECT
   ${sourceExpr} AS source,
-  SUM(_sample_interval) AS completions,
+  SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)) AS completions,
   SUM(_sample_interval * double7) AS prompt_tokens,
   SUM(_sample_interval * double8) AS completion_tokens,
   SUM(_sample_interval * double9) AS total_tokens,
   SUM(_sample_interval * double10) AS total_cost,
-  SUM(_sample_interval * double10) / SUM(_sample_interval) AS avg_cost,
-  SUM(_sample_interval * double9) / SUM(_sample_interval) AS avg_tokens
+  if(SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)) > 0, SUM(_sample_interval * double10) / SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)), 0.0) AS avg_cost,
+  if(SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)) > 0, SUM(_sample_interval * double9) / SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)), 0.0) AS avg_tokens
 FROM ${dataset}
 WHERE ${where}
-  AND blob1 = 'chat_stream_complete'
+  AND blob1 IN ('chat_stream_complete', 'chat_response_complete', 'chat_stream_cancelled', 'chat_stream_error', 'free_tier_cost_adjustment')
 GROUP BY source
 ORDER BY completions DESC`,
 		},
@@ -375,6 +378,7 @@ WHERE ${where}
   AND blob14 != ''
   AND blob1 IN (
     'chat_stream_complete',
+    'chat_response_complete',
     'chat_quota_denied',
     'prompt_submitted',
     'prompt_succeeded',
@@ -439,7 +443,7 @@ SELECT
   blob17 AS session_id,
   blob4 AS model,
   blob5 AS provider,
-  SUM(_sample_interval) AS model_calls,
+  SUM(if(blob1 = 'free_tier_cost_adjustment', 0, _sample_interval)) AS model_calls,
   SUM(_sample_interval * double10) AS cost,
   SUM(_sample_interval * double9) AS total_tokens,
   SUM(_sample_interval * double7) AS prompt_tokens,
@@ -448,7 +452,7 @@ SELECT
   MAX(timestamp) AS last_seen
 FROM ${dataset}
 WHERE ${where}
-  AND blob1 = 'chat_stream_complete'
+  AND blob1 IN ('chat_stream_complete', 'chat_response_complete', 'chat_stream_cancelled', 'chat_stream_error', 'free_tier_cost_adjustment')
 GROUP BY source, turn_id, session_id, model, provider
 ORDER BY cost DESC, model_calls DESC
 LIMIT ${limit}`,
@@ -1078,7 +1082,7 @@ function rowAiModel(row) {
 function isFreeTierUsageRow(row) {
 	const source = rowSource(row);
 	const event = String(row?.event || "");
-	if (source === "free-tier" && (event === "chat_stream_complete" || isQuotaDenial(row))) return true;
+	if (source === "free-tier" && (["chat_stream_complete", "chat_response_complete"].includes(event) || isQuotaDenial(row))) return true;
 	if (source === "extension" && rowAiProvider(row) === "onhand-free") {
 		return ["prompt_submitted", "prompt_succeeded", "prompt_failed", "prompt_stopped", "session_started", "register_success"].includes(event);
 	}
@@ -1086,7 +1090,7 @@ function isFreeTierUsageRow(row) {
 }
 
 function isWorkerChatCompletionUsageRow(row) {
-	return rowSource(row) === "free-tier" && String(row?.event || "") === "chat_stream_complete";
+	return rowSource(row) === "free-tier" && ["chat_stream_complete", "chat_response_complete"].includes(String(row?.event || ""));
 }
 
 function isExtensionPromptSucceededUsageRow(row) {

@@ -363,7 +363,9 @@ async function assertCenteredZoom(viewer, pageNumber) {
 }
 
 async function assertAnchoredOverflowZoom(viewer, pageNumber) {
-	let state = await readGeometry(viewer, pageNumber);
+	// The preceding centered case may leave a different-sized page in view.
+	// Put the asserted page under the pointer before measuring its zoom anchor.
+	let state = await selectPageAndFit(viewer, pageNumber);
 	for (let attempt = 0; attempt < 4 && state.width <= state.viewportWidth - 48; attempt += 1) {
 		const enlarged = await traceWheel(viewer, pageNumber, { deltaY: -50, clientX: state.viewportCenter });
 		state = enlarged.settled;
@@ -377,10 +379,107 @@ async function assertAnchoredOverflowZoom(viewer, pageNumber) {
 	const settledAnchorX = trace.settled.left + trace.settled.width * xRatio;
 	const previewAnchorOffset = Math.abs(previewAnchorX - clientX);
 	const settledAnchorOffset = Math.abs(settledAnchorX - clientX);
+	log("overflow zoom trace", { trace, clientX, previewAnchorOffset, settledAnchorOffset });
 	assert.ok(previewAnchorOffset <= ANCHOR_TOLERANCE_PX, `page ${pageNumber}: preview anchor offset ${previewAnchorOffset.toFixed(3)}px`);
 	assert.ok(settledAnchorOffset <= ANCHOR_TOLERANCE_PX, `page ${pageNumber}: settled anchor offset ${settledAnchorOffset.toFixed(3)}px`);
 	assertRasterStayedVisible(trace, `page ${pageNumber} overflow zoom`);
 	return { trace, clientX, previewAnchorOffset, settledAnchorOffset };
+}
+
+async function pdfToolkit(viewer, methodName, args = []) {
+	return await viewer.evaluate(`(async () => {
+		const sourceUrl = new URL(location.href).searchParams.get('url');
+		const key = 'onhandInlinePdfViewerBridge:' + encodeURIComponent(sourceUrl);
+		const stored = await chrome.storage.session.get(key);
+		const token = stored[key] || crypto.randomUUID();
+		if (!stored[key]) await chrome.storage.session.set({ [key]: token });
+		return await new Promise((resolve, reject) => {
+			const channel = new MessageChannel();
+			const timeout = setTimeout(() => { channel.port1.close(); reject(new Error('PDF toolkit timed out')); }, 8000);
+			channel.port1.onmessage = ({ data }) => {
+				clearTimeout(timeout);
+				channel.port1.close();
+				if (data.ok) resolve(data.value);
+				else reject(new Error(data.error));
+			};
+			window.postMessage({ type: 'onhand-pdf-viewer-bridge-command', token, sourceUrl,
+				command: 'page-toolkit-method', methodName: ${JSON.stringify(methodName)}, args: ${JSON.stringify(args)}
+			}, '*', [channel.port2]);
+		});
+	})()`);
+}
+
+async function waitForViewerCondition(viewer, expression, message) {
+	for (let attempt = 0; attempt < 100; attempt += 1) {
+		if (await viewer.evaluate(expression)) return;
+		await delay(50);
+	}
+	throw new Error(message);
+}
+
+async function assertAnnotationsDuringSharpening(viewer) {
+	await selectPageAndFit(viewer, 1);
+	await waitForViewerCondition(viewer,
+		`document.querySelector('#onhand-pdf-status')?.textContent === 'Ready' && !document.querySelector('[data-onhand-pdf-pending="true"]')`,
+		"All scanned pages should finish rendering before annotation race setup");
+	const region = (pageNumber, left) => ({ scrollIntoView: false, pdfAnchor: {
+		pageNumber, regionRect: { left, top: 0.25, width: 0.18, height: 0.1 },
+	} });
+	const deleted = await pdfToolkit(viewer, "highlightText", ["Delete while sharpening", region(1, 0.15)]);
+	const retained = await pdfToolkit(viewer, "highlightText", ["Keep the edited note", region(3, 0.15)]);
+	await pdfToolkit(viewer, "showNote", [retained.annotationId, "Original note", { scrollIntoView: false }]);
+	const retainedBefore = await viewer.evaluate(`(() => {
+		const mark = document.querySelector('[data-onhand-annotation-id="${retained.annotationId}"]');
+		const page = mark.closest('.page');
+		return { widthRatio: mark.getBoundingClientRect().width / page.getBoundingClientRect().width };
+	})()`);
+
+	// Pause PDF.js's actual display-render frame, after zoom has committed its
+	// layout and before raster sharpening completes. Other toolkit commands keep
+	// running, reproducing edits made while a slow scanned page is repainting.
+	await viewer.evaluate(`(() => {
+		const original = window.requestAnimationFrame;
+		window.__onhandZoomRaceRaf = { original, queued: [] };
+		window.requestAnimationFrame = (callback) => {
+			if (document.querySelector('#onhand-pdf-status')?.textContent?.startsWith('Sharpening visible pages')) {
+				window.__onhandZoomRaceRaf.queued.push(callback);
+				return -window.__onhandZoomRaceRaf.queued.length;
+			}
+			return original.call(window, callback);
+		};
+		document.querySelector('#onhand-pdf-zoom-in').click();
+	})()`);
+	let added;
+	try {
+		await waitForViewerCondition(viewer, `window.__onhandZoomRaceRaf.queued.length > 0`, "PDF.js should reach the held sharpening frame");
+		await pdfToolkit(viewer, "removeAnnotations", [[deleted.annotationId]]);
+		added = await pdfToolkit(viewer, "highlightText", ["Created while sharpening", region(3, 0.55)]);
+		await pdfToolkit(viewer, "showNote", [retained.annotationId, "Edited while sharpening", { scrollIntoView: false }]);
+		await viewer.evaluate(`document.querySelector('[data-onhand-note-for="${retained.annotationId}"] [data-onhand-note-toggle]').click()`);
+	} finally {
+		await viewer.evaluate(`(() => {
+			const held = window.__onhandZoomRaceRaf;
+			window.requestAnimationFrame = held.original;
+			delete window.__onhandZoomRaceRaf;
+			for (const callback of held.queued) held.original.call(window, callback);
+		})()`);
+	}
+	await waitForViewerCondition(viewer, `document.querySelector('#onhand-pdf-status')?.textContent === 'Ready'`, "Sharpening should finish after the held frame is released");
+	const state = await pdfToolkit(viewer, "captureState");
+	assert.deepEqual(state.annotations.map((mark) => mark.annotationId).sort(), [retained.annotationId, added.annotationId].sort(),
+		"a mark created during sharpening must survive, and a deleted mark must stay deleted");
+	assert.equal(state.annotations.find((mark) => mark.annotationId === retained.annotationId)?.note?.text, "Edited while sharpening");
+	const retainedAfter = await viewer.evaluate(`(() => {
+		const mark = document.querySelector('[data-onhand-annotation-id="${retained.annotationId}"]');
+		const page = mark.closest('.page');
+		const note = document.querySelector('[data-onhand-note-for="${retained.annotationId}"]');
+		return { widthRatio: mark.getBoundingClientRect().width / page.getBoundingClientRect().width,
+			collapsed: note.getAttribute('data-onhand-note-collapsed') };
+	})()`);
+	assert.ok(Math.abs(retainedBefore.widthRatio - retainedAfter.widthRatio) < 0.002, "existing highlight geometry should track the page scale");
+	assert.equal(retainedAfter.collapsed, "true", "note collapse edits made during sharpening must survive");
+	await pdfToolkit(viewer, "clearAnnotations");
+	console.log("Real PDF annotation edits during sharpening: PASS");
 }
 
 async function main() {
@@ -409,6 +508,7 @@ async function main() {
 		viewer = await openViewer(port, fixtureUrl);
 		const ready = await waitForViewer(viewer);
 		log("viewer ready", ready);
+		await assertAnnotationsDuringSharpening(viewer);
 		const wideCentered = await assertCenteredZoom(viewer, 1);
 		const narrowCentered = await assertCenteredZoom(viewer, 2);
 		const anchored = await assertAnchoredOverflowZoom(viewer, 1);

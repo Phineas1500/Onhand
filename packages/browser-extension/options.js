@@ -261,7 +261,8 @@ function syncAuthModeFields() {
 		aiModelInput.disabled = true;
 		aiModelInput.value = getProviderDefaultModel(FREE_TIER_PROVIDER);
 		populateModelSelect(FREE_TIER_PROVIDER, aiModelInput.value);
-		modelHelpEl.textContent = "Onhand Free runs DeepSeek V4 Flash through Onhand's hosted endpoint — no API key or account needed. Daily usage is capped; switch to Provider API key or Codex sign-in any time for unlimited use.";
+		const freeModel = providerModels(FREE_TIER_PROVIDER).find((model) => model.id === aiModelInput.value);
+		modelHelpEl.textContent = `Onhand Free uses ${freeModel?.name || aiModelInput.value} for text through Onhand's hosted endpoint. No API key or account needed. Daily usage is capped; switch to Provider API key or Codex sign-in to use your own access.`;
 	} else {
 		providerFieldEl.hidden = false;
 		modelSelectEl.disabled = false;

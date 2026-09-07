@@ -2256,6 +2256,14 @@ async function writeTextToOffscreenClipboard(text) {
 	await sendOffscreenClipboardMessage("offscreen:clipboard-write", { text: String(text ?? "") });
 }
 
+async function readClipboardTextForRestore() {
+	const snapshot = await sendOffscreenClipboardMessage("offscreen:clipboard-snapshot");
+	if (snapshot.canRestoreTextOnly !== true) {
+		throw new Error("Selection copy skipped to preserve non-text or unknown clipboard formats.");
+	}
+	return String(snapshot.text ?? "");
+}
+
 async function readTextFromExtensionClipboard() {
 	const errors = [];
 	try {
@@ -2311,15 +2319,17 @@ async function maybeGetGoogleDocsClipboardSelection(tab, currentSelection) {
 
 	let originalClipboard = "";
 	let marker = "";
+	let canRestoreClipboard = false;
 	const fallback = {
 		attempted: true,
 		ok: false,
 		source: "google-docs-text-event-iframe-copy",
 	};
 	try {
-		originalClipboard = await readTextFromExtensionClipboard();
+		originalClipboard = await readClipboardTextForRestore();
 		marker = `${GOOGLE_DOCS_CLIPBOARD_MARKER_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2)}`;
 		await writeTextToExtensionClipboard(marker);
+		canRestoreClipboard = true;
 		const copyResult = await copyGoogleDocsSelectionThroughTextEventIframe(tab);
 		await delay(80);
 		const copiedText = normalizeClipboardSelectionText(await readTextFromExtensionClipboard());
@@ -2373,7 +2383,7 @@ async function maybeGetGoogleDocsClipboardSelection(tab, currentSelection) {
 			},
 		};
 	} finally {
-		if (marker) {
+		if (canRestoreClipboard) {
 			try {
 				await writeTextToExtensionClipboard(originalClipboard);
 			} catch {}
@@ -2451,7 +2461,7 @@ async function maybeGetBrowserClipboardPdfSelection(tab, currentSelection) {
 		// through the PDF page asks for site permission, even with no selection.
 		// Abort if setup fails: without the marker, old clipboard text could be
 		// mistaken for a selection, and Copy could overwrite data we cannot restore.
-		originalClipboard = await readTextFromExtensionClipboard();
+		originalClipboard = await readClipboardTextForRestore();
 		marker = `${BROWSER_SELECTION_CLIPBOARD_MARKER_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2)}`;
 		await writeTextToExtensionClipboard(marker);
 		canRestoreClipboard = true;
@@ -13576,6 +13586,23 @@ async function handleCommandInner(name, args = {}) {
 					tab: simplifyTab(tab),
 					visible,
 				};
+			});
+		}
+		case "pdf_restore_scroll": {
+			const tab = await resolveTargetTab(args);
+			return await withTabCommand(tab.id, async () => {
+				const payload = {
+					command: "page-toolkit-method",
+					methodName: "restoreScrollPosition",
+					args: [{ scrollX: args.scrollX, scrollY: args.scrollY }],
+				};
+				let scroll;
+				try {
+					scroll = await callOnhandPdfViewerFrameViaRuntimePort(tab.id, payload, "No Onhand PDF viewer runtime port found");
+				} catch {
+					scroll = await callOnhandPdfViewerFrameViaBridge(tab.id, payload, "Could not restore the Onhand PDF viewer reading position.");
+				}
+				return { tab: simplifyTab(tab), scroll };
 			});
 		}
 		case "pdf_search": {

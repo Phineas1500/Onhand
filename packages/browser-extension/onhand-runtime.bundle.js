@@ -148965,6 +148965,7 @@ var OPENROUTER_API_PROVIDER = "openrouter";
 var OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 var ONHAND_FREE_PROVIDER = "onhand-free";
 var ONHAND_FREE_MODEL = "openai/gpt-5.6-luna";
+var ONHAND_FREE_MODEL_LABEL = "Onhand Free (GPT-5.6 Luna + Mistral Vision)";
 var ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1048576;
 var ONHAND_FREE_VISUAL_CONTEXT_WINDOW = 131072;
 var ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT = 2;
@@ -150495,7 +150496,7 @@ async function buildFreeTierModel() {
   const quotaBypassSecret = await getFreeTierQuotaBypassSecret();
   return {
     id: ONHAND_FREE_MODEL,
-    name: "Onhand Free (GPT-5.6 Luna + Mistral Vision)",
+    name: ONHAND_FREE_MODEL_LABEL,
     api: "openai-completions",
     provider: ONHAND_FREE_PROVIDER,
     baseUrl,
@@ -150679,7 +150680,7 @@ function getProviderModelOptions(providerId) {
     return [
       {
         id: ONHAND_FREE_MODEL,
-        name: "DeepSeek V4 Flash + Mistral Vision (Onhand Free)",
+        name: ONHAND_FREE_MODEL_LABEL,
         api: "openai-completions",
         input: ["text", "image"],
         tools: true,
@@ -151090,18 +151091,35 @@ async function withRuntimeStore(storeName, mode, callback) {
   try {
     return await new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, mode);
-      const store2 = transaction.objectStore(storeName);
-      let settled = false;
-      Promise.resolve(callback(store2)).then((value) => {
-        settled = true;
-        resolve(value);
-      }).catch((error52) => {
-        settled = true;
-        reject(error52);
-      });
-      transaction.onerror = () => {
-        if (!settled) reject(transaction.error || new Error("Onhand storage transaction failed."));
+      const store2 = transaction.objectStore(Array.isArray(storeName) ? storeName[0] : storeName);
+      let callbackComplete = false;
+      let committed = false;
+      let result;
+      const finish = () => {
+        if (callbackComplete && committed) resolve(result);
       };
+      transaction.oncomplete = () => {
+        committed = true;
+        finish();
+      };
+      transaction.onerror = () => reject(transaction.error || new Error("Onhand storage transaction failed."));
+      transaction.onabort = () => reject(transaction.error || new Error("Onhand storage transaction was aborted."));
+      const callbackFailed = (error52) => {
+        try {
+          transaction.abort();
+        } catch {
+        }
+        reject(error52);
+      };
+      try {
+        Promise.resolve(callback(store2, transaction)).then((value) => {
+          result = value;
+          callbackComplete = true;
+          finish();
+        }, callbackFailed);
+      } catch (error52) {
+        callbackFailed(error52);
+      }
     });
   } finally {
     db.close?.();
@@ -151144,18 +151162,60 @@ async function putSessionRecords(sessions) {
   for (const session of records) stored[session.id] = session;
   await writeFallbackSessions(stored);
 }
+function sessionArtifactReferences(session) {
+  return Array.from(new Set([
+    ...Array.isArray(session?.artifactIds) ? session.artifactIds : [],
+    ...(Array.isArray(session?.pageActions) ? session.pageActions : []).map((action) => action?.artifactId),
+    ...(Array.isArray(session?.turns) ? session.turns : []).flatMap((turn) => (Array.isArray(turn?.pageActions) ? turn.pageActions : []).map((action) => action?.artifactId))
+  ].filter((id) => typeof id === "string" && Boolean(id))));
+}
 async function deleteSessionRecords(sessionIds) {
-  const ids = (Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || "").trim()).filter(Boolean);
-  if (!ids.length) return;
+  const ids = new Set((Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+  if (!ids.size) return;
+  const deletionContext = (sessions) => {
+    const surviving = sessions.filter((session) => !ids.has(session.id));
+    return {
+      survivingIds: new Set(surviving.map((session) => session.id)),
+      retainedArtifacts: new Set(surviving.flatMap(sessionArtifactReferences)),
+      candidateArtifacts: new Set(sessions.filter((session) => ids.has(session.id)).flatMap(sessionArtifactReferences))
+    };
+  };
   if (canUseIndexedDb()) {
-    await withRuntimeStore(SESSION_STORE_NAME, "readwrite", async (store2) => {
-      await Promise.all(ids.map((id) => requestToPromise(store2.delete(id))));
+    await withRuntimeStore([SESSION_STORE_NAME, ARTIFACT_STORE_NAME], "readwrite", async (store2, transaction) => {
+      const sessions = await requestToPromise(store2.getAll());
+      const { survivingIds: survivingIds2, retainedArtifacts: retainedArtifacts2, candidateArtifacts: candidateArtifacts2 } = deletionContext(sessions);
+      const artifacts2 = transaction.objectStore(ARTIFACT_STORE_NAME);
+      for (const sessionId of ids) {
+        await new Promise((resolve, reject) => {
+          const request = artifacts2.index("sessionId").openKeyCursor(IDBKeyRange.only(sessionId));
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) {
+              resolve();
+              return;
+            }
+            candidateArtifacts2.add(String(cursor.primaryKey));
+            cursor.continue();
+          };
+        });
+      }
+      await Promise.all([...candidateArtifacts2].filter((id) => !retainedArtifacts2.has(id)).map(async (id) => {
+        const artifact = await requestToPromise(artifacts2.get(id));
+        if (artifact && !survivingIds2.has(artifact.sessionId)) await requestToPromise(artifacts2.delete(id));
+      }));
+      await Promise.all([...ids].map((id) => requestToPromise(store2.delete(id))));
     });
     return;
   }
   const stored = await readFallbackSessions();
+  const { survivingIds, retainedArtifacts, candidateArtifacts } = deletionContext(Object.values(stored));
+  const artifacts = await readFallbackArtifacts();
+  for (const artifact of Object.values(artifacts)) {
+    if ((ids.has(artifact.sessionId || "") || candidateArtifacts.has(artifact.id)) && !retainedArtifacts.has(artifact.id) && !survivingIds.has(artifact.sessionId)) delete artifacts[artifact.id];
+  }
   for (const id of ids) delete stored[id];
-  await writeFallbackSessions(stored);
+  await chrome.storage.local.set({ [SESSIONS_FALLBACK_STORAGE_KEY]: stored, [ARTIFACTS_STORAGE_KEY]: artifacts });
 }
 async function readFallbackArtifacts() {
   const stored = await chrome.storage.local.get({ [ARTIFACTS_STORAGE_KEY]: {} });
@@ -151186,30 +151246,37 @@ async function getBrowserArtifact(artifactId) {
   return artifacts[id] || null;
 }
 async function listBrowserArtifacts(params = {}) {
-  const limit2 = Math.max(1, Math.min(100, Number(params.limit || 20) || 20));
+  const limit2 = Math.floor(Math.max(1, Math.min(100, Number(params.limit || 20) || 20)));
   const query = String(params.query || "").trim().toLowerCase();
-  let artifacts = [];
+  const matches = (artifact) => !query || [
+    artifact.id,
+    artifact.label,
+    artifact.tab?.title,
+    artifact.tab?.url,
+    artifact.page?.title,
+    artifact.page?.url
+  ].join(" ").toLowerCase().includes(query);
   if (canUseIndexedDb()) {
-    artifacts = await withArtifactStore("readonly", async (store2) => {
-      const all = await requestToPromise(store2.getAll());
-      return Array.isArray(all) ? all : [];
-    });
-  } else {
-    artifacts = Object.values(await readFallbackArtifacts());
+    return await withArtifactStore("readonly", (store2) => new Promise((resolve, reject) => {
+      const results = [];
+      const request = store2.index("createdAt").openCursor(null, "prev");
+      request.onerror = () => reject(request.error || new Error("Could not list saved artifacts."));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve(results);
+          return;
+        }
+        if (matches(cursor.value)) results.push(cursor.value);
+        if (results.length >= limit2) {
+          resolve(results);
+          return;
+        }
+        cursor.continue();
+      };
+    }));
   }
-  if (query) {
-    artifacts = artifacts.filter(
-      (artifact) => [
-        artifact.id,
-        artifact.label,
-        artifact.tab?.title,
-        artifact.tab?.url,
-        artifact.page?.title,
-        artifact.page?.url
-      ].join(" ").toLowerCase().includes(query)
-    );
-  }
-  return artifacts.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))).slice(0, limit2);
+  return Object.values(await readFallbackArtifacts()).filter(matches).sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))).slice(0, limit2);
 }
 function artifactSummary(artifact) {
   return {
@@ -152384,7 +152451,13 @@ function buildMissingToolRetryPrompt(request, toolName) {
     `Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || request?.prompt || "")}`
   ].join("\n\n");
 }
-function queueBlankReplyRetry(agent, prompt, onError) {
+function queueBlankReplyRetry(agent, prompt, onError, signal) {
+  const cancelled = () => {
+    if (!signal?.aborted) return false;
+    onError(signal.reason || new Error("Request was aborted."));
+    return true;
+  };
+  if (cancelled()) return;
   if (typeof agent.followUp === "function" && typeof agent.waitForIdle === "function" && typeof agent.continue === "function") {
     agent.followUp({
       role: "user",
@@ -152393,6 +152466,7 @@ function queueBlankReplyRetry(agent, prompt, onError) {
     });
     void agent.waitForIdle().then(
       () => {
+        if (cancelled()) return;
         void agent.continue().catch((retryError) => {
           onError(retryError instanceof Error ? retryError : new Error(String(retryError)));
         });
@@ -153890,14 +153964,15 @@ function promptAsksAboutPdfPagePosition(prompt) {
 function promptReferencesVisiblePdfSelectionOrPage(prompt) {
   const text = String(prompt || "").toLowerCase();
   if (promptAsksAboutPdfPagePosition(text)) return true;
-  if (/\b(?:selected|selection|highlighted|highlight|marked|cursor|text\s+i\s+selected|passage\s+i\s+selected)\b/.test(text)) return true;
+  if (promptExplicitlyMentionsVisibleSelection(text) || /\bcursor\b/.test(text)) return true;
   if (/\b(?:what\s+does|explain|can\s+you\s+explain|what\s+is|tell\s+me\s+what)\s+(?:this|that|it)\s+(?:mean|means|say|says|refer\s+to|show|shows|represent|represents)\b/.test(text)) {
     return true;
   }
   return false;
 }
 function promptExplicitlyMentionsVisibleSelection(prompt) {
-  return /\b(?:selected|selection|highlighted|highlight|marked|text\s+i\s+selected|passage\s+i\s+selected)\b/i.test(String(prompt || ""));
+  const text = String(prompt || "");
+  return /\b(?:selected|selection|highlighted|marked|text\s+i\s+selected|passage\s+i\s+selected)\b/i.test(text) || /\b(?:this|that|the|my|these|those|your)\s+highlights?\b/i.test(text);
 }
 function promptCouldReferToHighlightedPdfText(prompt) {
   const text = String(prompt || "");
@@ -153920,7 +153995,7 @@ function promptPageChangePolicy(prompt) {
 }
 function promptExplicitlyRequestsNote(prompt) {
   const text = String(prompt || "").toLowerCase();
-  return /\b(?:add|make|create|write|leave|show|attach|put)\b[^.?!\n]{0,80}\bnotes?\b/.test(text) || /\bnotes?\b[^.?!\n]{0,80}\b(?:on|for|about|near|next to|beside)\b/.test(text);
+  return /\b(?:add|make|create|write|leave|show|attach|put)\b[^.?!\n]{0,80}\bnotes?\b/.test(text) || /\b(?:highlight|mark|annotate)\b[^.?!\n]{0,160}\bwith\s+(?:(?:a|an|one|short|brief|explanatory|interpretive|margin|marginal|on-page)\s+){0,4}notes?\b/.test(text) || /\bnotes?\b[^.?!\n]{0,80}\b(?:on|for|about|near|next to|beside)\b/.test(text);
 }
 function promptForbidsPageChanges(prompt) {
   const policy = promptPageChangePolicy(prompt);
@@ -156068,6 +156143,9 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  withRuntimeStoreForTest: withRuntimeStore,
+  deleteSessionRecordsForTest: deleteSessionRecords,
+  listBrowserArtifactsForTest: listBrowserArtifacts,
   onhandPdfViewerSourceUrlForTest: onhandPdfViewerSourceUrl,
   isRestorablePageUrlForTest: isRestorablePageUrl,
   onhandPdfViewerOpenUrlForTest: onhandPdfViewerOpenUrl,
@@ -157311,12 +157389,53 @@ function applyNavigateNewTabDefault(params = {}, request = null) {
   }
   return normalized;
 }
+async function withAbortSignal(signal, run) {
+  if (!signal) return await run();
+  signal.throwIfAborted();
+  let onAbort = () => {
+  };
+  const aborted2 = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason || new Error("Request was aborted."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    const result = await Promise.race([run(), aborted2]);
+    signal.throwIfAborted();
+    return result;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 function createOnhandBrowserRuntime(host) {
   let storePromise = null;
   let uiState = null;
   let activeAgent = null;
   let activeDevelopmentAgentObserver = null;
   let activeRequest = null;
+  let submissionInProgress = false;
+  let sessionTransitionInProgress = false;
+  async function runSessionTransition(run) {
+    if (activeRequest || activeAgent || submissionInProgress || sessionTransitionInProgress) {
+      throw new Error("Wait for the current Onhand operation to finish before changing sessions.");
+    }
+    sessionTransitionInProgress = true;
+    try {
+      return await run();
+    } finally {
+      sessionTransitionInProgress = false;
+    }
+  }
+  function requestHostFor(request) {
+    const run = (operation) => {
+      if (activeRequest !== request) return Promise.reject(new Error("Onhand request is no longer active."));
+      return withAbortSignal(request.abortController?.signal, operation);
+    };
+    return {
+      ...host,
+      runCommand: (name, args) => run(() => host.runCommand(name, args)),
+      snapshotState: (args) => run(() => host.snapshotState(args))
+    };
+  }
   const DEBUG_TURN_TRACE_MAX = 12;
   const DEBUG_TURN_TRACE_STORAGE_KEY = "onhand:debug-turn-traces";
   const debugTurnTraces = [];
@@ -157481,7 +157600,13 @@ function createOnhandBrowserRuntime(host) {
       }
       return { settings: settings2, sessions, currentSessionId };
     })();
-    return await storePromise;
+    const loading = storePromise;
+    try {
+      return await loading;
+    } catch (error52) {
+      if (storePromise === loading) storePromise = null;
+      throw error52;
+    }
   }
   async function saveStore(store2, changed) {
     storePromise = Promise.resolve(store2);
@@ -157940,8 +158065,10 @@ function createOnhandBrowserRuntime(host) {
     };
   }
   async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = []) {
-    const model = await getConfiguredModel(settings2);
-    const currentSession = await getCurrentSession().catch(() => null);
+    const request = activeRequest;
+    const signal = request?.abortController?.signal;
+    const model = await withAbortSignal(signal, () => getConfiguredModel(settings2));
+    const currentSession = await withAbortSignal(signal, () => getCurrentSession().catch(() => null));
     if (activeRequest) activeRequest.internalModelCallCount = Number(activeRequest.internalModelCallCount || 0) + 1;
     const telemetry = {
       turnId: activeRequest?.id || crypto.randomUUID(),
@@ -157984,15 +158111,21 @@ function createOnhandBrowserRuntime(host) {
         resolve();
       }, timeoutMs);
     });
-    await Promise.race([agent.prompt(prompt, images), timeout]);
-    if (timer) clearTimeout(timer);
+    const abortAgent = () => agent.abort();
+    signal?.addEventListener("abort", abortAgent, { once: true });
+    try {
+      await withAbortSignal(signal, () => Promise.race([agent.prompt(prompt, images), timeout]));
+    } finally {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortAgent);
+    }
     if (timedOut) throw new Error("Internal realtime tutor planner timed out.");
     const failure = extractAssistantFailure(agent.state.messages);
     if (failure) throw failure;
     return extractAssistantText(agent.state.messages);
   }
-  async function runLearningCorpusPreflightCommand(params) {
-    if (!activeRequest) return await host.runCommand("search_linked_pdf_corpus", params);
+  async function runLearningCorpusPreflightCommand(params, requestHost = host) {
+    if (!activeRequest) return await requestHost.runCommand("search_linked_pdf_corpus", params);
     const toolName = "browser_search_linked_pdf_corpus";
     const tabId = Number(params?.tabId || 0);
     const activityId = `tool:preflight:${toolName}:${tabId || crypto.randomUUID()}`;
@@ -158006,7 +158139,7 @@ function createOnhandBrowserRuntime(host) {
     recordToolTraceStart(toolName, activityId, params);
     await publishState({ status: describeToolStatusForTargetTab(toolName, activeRequest, params) });
     try {
-      const result = await host.runCommand("search_linked_pdf_corpus", params);
+      const result = await requestHost.runCommand("search_linked_pdf_corpus", params);
       recordToolTraceEnd(toolName, activityId, { details: result }, false);
       appendActivity({
         id: activityId,
@@ -158035,7 +158168,7 @@ function createOnhandBrowserRuntime(host) {
       throw error52;
     }
   }
-  async function planLearningResearch(prompt, browserContextDetails, settings2) {
+  async function planLearningResearch(prompt, browserContextDetails, settings2, requestHost = host) {
     try {
       const raw = await runInternalTutorJsonPrompt(
         buildLearningResearchPlannerPrompt(prompt, browserContextDetails),
@@ -158047,8 +158180,8 @@ function createOnhandBrowserRuntime(host) {
       const hydratedPlan = await hydrateLearningResearchPlanWithCorpus(
         plan,
         browserContextDetails,
-        host,
-        runLearningCorpusPreflightCommand
+        requestHost,
+        (params) => runLearningCorpusPreflightCommand(params, requestHost)
       );
       if (!hydratedPlan?.corpusResults?.length) return hydratedPlan;
       try {
@@ -158201,7 +158334,7 @@ function createOnhandBrowserRuntime(host) {
       host.log?.("automatic review snapshot capture failed", error52);
     }
   }
-  async function runPdfHandoffPreflight(params, targetWindowId, options = { activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer" }) {
+  async function runPdfHandoffPreflight(params, targetWindowId, options = { activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer" }, requestHost = host) {
     if (!activeRequest) return null;
     const commandName = "open_pdf_in_onhand_viewer";
     const toolName = "browser_open_pdf_in_onhand_viewer";
@@ -158216,7 +158349,7 @@ function createOnhandBrowserRuntime(host) {
     recordToolTraceStart(toolName, activityId, params);
     await publishState({ status: getToolStatusMessage(toolName) });
     try {
-      const result = await host.runCommand(commandName, withTargetWindowId(params, targetWindowId));
+      const result = await requestHost.runCommand(commandName, withTargetWindowId(params, targetWindowId));
       recordToolTraceEnd(toolName, activityId, { details: result }, false);
       appendActivity({
         id: activityId,
@@ -158245,19 +158378,19 @@ function createOnhandBrowserRuntime(host) {
       throw error52;
     }
   }
-  async function runExplicitPdfHandoffIfRequested(prompt, targetWindowId) {
+  async function runExplicitPdfHandoffIfRequested(prompt, targetWindowId, requestHost = host) {
     const params = parseExplicitPdfHandoffParams(prompt);
     if (!params || !activeRequest) return null;
     return await runPdfHandoffPreflight(params, targetWindowId, {
       activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer:explicit",
       failRequest: true
-    });
+    }, requestHost);
   }
-  async function runAutomaticPdfHandoffIfNeeded(targetWindowId) {
+  async function runAutomaticPdfHandoffIfNeeded(targetWindowId, requestHost = host) {
     if (!activeRequest) return null;
     let activeTab = null;
     try {
-      const state = await runBrowserContextSnapshot(host);
+      const state = await runBrowserContextSnapshot(requestHost);
       activeTab = pickActiveTab(state, targetWindowId);
     } catch (error52) {
       host.log?.("automatic PDF handoff snapshot failed", error52);
@@ -158276,7 +158409,8 @@ function createOnhandBrowserRuntime(host) {
         {
           activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer:auto",
           failRequest: false
-        }
+        },
+        requestHost
       );
     } catch (error52) {
       host.log?.("automatic PDF handoff failed", error52);
@@ -158284,7 +158418,7 @@ function createOnhandBrowserRuntime(host) {
       return null;
     }
   }
-  async function runUnknownPdfSelectionHandoffIfNeeded(prompt, details, targetWindowId) {
+  async function runUnknownPdfSelectionHandoffIfNeeded(prompt, details, targetWindowId, requestHost = host) {
     if (!activeRequest || !shouldOpenPdfViewerForUnknownPdfSelection(prompt, details)) return null;
     const pageLocation = inferPdfPageNumberFromBrowserContextDetails(details);
     try {
@@ -158301,7 +158435,8 @@ function createOnhandBrowserRuntime(host) {
         {
           activityId: "tool:preflight:browser_open_pdf_in_onhand_viewer:unknown-selection",
           failRequest: false
-        }
+        },
+        requestHost
       );
     } catch (error52) {
       host.log?.("unknown PDF selection handoff failed", error52);
@@ -158309,7 +158444,7 @@ function createOnhandBrowserRuntime(host) {
       return null;
     }
   }
-  async function runPdfVisualCapturePreflight(prompt, details, targetWindowId, pdfHandoff) {
+  async function runPdfVisualCapturePreflight(prompt, details, targetWindowId, pdfHandoff, requestHost = host) {
     if (!activeRequest || !promptAsksAboutVisualRegion(prompt)) return null;
     if (!browserContextLooksLikePdf(details) && !pdfHandoff) return null;
     const pageLocation = inferPdfVisualPageNumberFromBrowserContextDetails(details) || inferPdfVisualPageNumberFromPdfHandoffResult(pdfHandoff);
@@ -158331,7 +158466,7 @@ function createOnhandBrowserRuntime(host) {
     recordToolTraceStart(toolName, activityId, { ...params, pageSource: pageLocation.source });
     await publishState({ status: getToolStatusMessage(toolName) });
     try {
-      const result = await host.runCommand(commandName, withTargetWindowId(params, targetWindowId));
+      const result = await requestHost.runCommand(commandName, withTargetWindowId(params, targetWindowId));
       recordToolTraceEnd(toolName, activityId, { details: result }, false);
       appendActivity({
         id: activityId,
@@ -158445,7 +158580,7 @@ function createOnhandBrowserRuntime(host) {
     if (!activeRequest || activeRequest.id !== requestId) return;
     await restoreLearningRequestFocus(activeRequest);
     const agentMessages = messagesOverride || activeAgent?.state.messages || [];
-    let finalError = error52 || extractAssistantFailure(agentMessages, Boolean(activeRequest.aborted));
+    let finalError = activeRequest.aborted ? null : error52 || extractAssistantFailure(agentMessages);
     let assistantText = activeRequest.reply.trim() || extractAssistantText(agentMessages).trim();
     if (finalError && !activeRequest.aborted && !activeRequest.transientProviderRetry && activeAgent && isTransientProviderError(finalError)) {
       activeRequest.transientProviderRetry = true;
@@ -158453,10 +158588,13 @@ function createOnhandBrowserRuntime(host) {
       blankSupersededAssistantDraft(requestId);
       await publishState({ status: "Model provider is busy \u2014 retrying..." });
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      queueBlankReplyRetry(activeAgent, "The previous model call failed with a temporary provider error. Continue now and answer the user's question.", (retryError) => {
-        void finalizeRequest(session, requestId, retryError);
-      });
-      return;
+      if (!activeRequest.aborted) {
+        queueBlankReplyRetry(activeAgent, "The previous model call failed with a temporary provider error. Continue now and answer the user's question.", (retryError) => {
+          void finalizeRequest(session, requestId, retryError);
+        }, activeRequest.abortController?.signal);
+        return;
+      }
+      finalError = null;
     }
     const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry ? findMissingKnownBrowserToolTrace(activeRequest) : null;
     if (missingToolTrace && activeAgent) {
@@ -158490,7 +158628,7 @@ function createOnhandBrowserRuntime(host) {
         await publishState({ status: "Retrying with needed browser tool..." });
         queueBlankReplyRetry(activeAgent, buildMissingToolRetryPrompt(activeRequest, missingToolName), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
-        });
+        }, activeRequest.abortController?.signal);
         return;
       }
     }
@@ -158502,7 +158640,7 @@ function createOnhandBrowserRuntime(host) {
       if (!sufficient) {
         const retryCount = Number(activeRequest.learningResearchPlanRetryCount || 0);
         const retryLimit = Math.max(1, Math.min(3, Number(activeRequest.learningResearchPlan.maxSources || 3) - 1));
-        if (activeAgent && retryCount < retryLimit) {
+        if (activeAgent && !activeRequest.aborted && retryCount < retryLimit) {
           activeRequest.learningResearchPlanRetryCount = retryCount + 1;
           resetAssistantDraftText(activeRequest);
           await publishState({ status: "Checking the next relevant source..." });
@@ -158515,11 +158653,12 @@ function createOnhandBrowserRuntime(host) {
           queueBlankReplyRetry(
             activeAgent,
             buildLearningResearchContinuationPrompt(activeRequest, continuationAssessment, assistantText),
-            (retryError) => void finalizeRequest(session, requestId, retryError)
+            (retryError) => void finalizeRequest(session, requestId, retryError),
+            activeRequest.abortController?.signal
           );
           return;
         }
-        if (!hasCompletedNonActiveWorkspaceRead(activeRequest)) assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
+        if (!activeRequest.aborted && !hasCompletedNonActiveWorkspaceRead(activeRequest)) assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
       }
     }
     if (!finalError && !activeRequest.aborted && !activeRequest.learningResearchPlan?.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence(activeRequest)) {
@@ -158531,7 +158670,7 @@ function createOnhandBrowserRuntime(host) {
         await publishState({ status: retryCount === 0 ? "Checking related learning sources..." : "Reading a related learning source..." });
         queueBlankReplyRetry(activeAgent, buildLearningWorkspaceEvidenceRetryPrompt(activeRequest, assistantText), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
-        });
+        }, activeRequest.abortController?.signal);
         return;
       }
       assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
@@ -158543,7 +158682,7 @@ function createOnhandBrowserRuntime(host) {
       await publishState({ status: "Adding source marks..." });
       queueBlankReplyRetry(activeAgent, buildPageSourceMarkerRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
-      });
+      }, activeRequest.abortController?.signal);
       return;
     }
     if (!finalError && !activeRequest.aborted && shouldRequirePdfAnchorRetry(activeRequest) && activeAgent) {
@@ -158553,7 +158692,7 @@ function createOnhandBrowserRuntime(host) {
       await publishState({ status: "Adding PDF source marks..." });
       queueBlankReplyRetry(activeAgent, buildPdfAnchorRetryPrompt(activeRequest, assistantText), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
-      });
+      }, activeRequest.abortController?.signal);
       return;
     }
     if (!finalError && !activeRequest.aborted && !assistantText && hasCompletedUserToolTrace(activeRequest)) {
@@ -158562,7 +158701,7 @@ function createOnhandBrowserRuntime(host) {
         await publishState({ status: "Writing answer..." });
         queueBlankReplyRetry(activeAgent, buildBlankReplyRetryPrompt(activeRequest), (retryError) => {
           void finalizeRequest(session, requestId, retryError);
-        });
+        }, activeRequest.abortController?.signal);
         return;
       }
       finalError = new Error("The model returned an empty answer after reading page context.");
@@ -158622,7 +158761,12 @@ function createOnhandBrowserRuntime(host) {
     if (!finalError && !activeRequest.aborted && shouldRecordFallbackOpenCheckForRequest(activeRequest, reply)) {
       session.learnerState = withFallbackOpenCheck(session.learnerState, reply, activeRequest.createdAt);
     }
-    await replaceCurrentSession(session);
+    let persistenceError = null;
+    try {
+      await replaceCurrentSession(session);
+    } catch (error53) {
+      persistenceError = error53;
+    }
     const developmentAgentObserver = activeDevelopmentAgentObserver;
     activeDevelopmentAgentObserver = null;
     await closeDevelopmentAgentObserver(developmentAgentObserver);
@@ -158634,7 +158778,7 @@ function createOnhandBrowserRuntime(host) {
       activities: [...turn.activities],
       pageActions: [...activeRequest.pageActions],
       learnerState: session.learnerState,
-      status: finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
+      status: persistenceError ? `Onhand could not save this session: ${persistenceError?.message || persistenceError}` : finalError ? "Prompt failed" : activeRequest.aborted ? "Stopped" : "Reply ready",
       activeRequestId: null
     });
     const telemetryEventName = activeRequest.aborted ? "prompt_stopped" : finalError ? "prompt_failed" : "prompt_succeeded";
@@ -158872,13 +159016,14 @@ function createOnhandBrowserRuntime(host) {
     }
     return result.apiKey;
   }
-  async function classifyPromptIntentWithModel(model, prompt) {
+  async function classifyPromptIntentWithModel(model, prompt, signal) {
     if (!model || !String(prompt || "").trim()) return null;
     const classify = async () => {
-      const apiKey = await resolveApiKey3(model.provider);
+      const apiKey = await withAbortSignal(signal, () => resolveApiKey3(model.provider));
       const store2 = await loadStore();
       const stream11 = streamOnhandFast(model, buildModelIntentClassifierContext(prompt), {
         apiKey,
+        signal,
         onhandCodexFastMode: Boolean(store2.settings.codexFastModeEnabled),
         onhandReasoningProfile: {
           maxTokens: MODEL_INTENT_CLASSIFIER_MAX_TOKENS,
@@ -158889,12 +159034,17 @@ function createOnhandBrowserRuntime(host) {
       const message = await stream11.result();
       return parseModelIntentClassification(assistantMessageTextContent(message));
     };
-    return await Promise.race([
-      classify(),
-      new Promise(
-        (_, reject) => setTimeout(() => reject(new Error("Model intent classification timed out")), MODEL_INTENT_CLASSIFIER_TIMEOUT_MS)
-      )
-    ]);
+    let timer;
+    try {
+      return await withAbortSignal(signal, () => Promise.race([
+        classify(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Model intent classification timed out")), MODEL_INTENT_CLASSIFIER_TIMEOUT_MS);
+        })
+      ]));
+    } finally {
+      clearTimeout(timer);
+    }
   }
   function withDefaultBrowserTarget(params = {}, commandName = "") {
     const normalizedParams = normalizeOptionalBrowserTargetNumbers(params);
@@ -159006,11 +159156,12 @@ function createOnhandBrowserRuntime(host) {
     };
   }
   async function restoreLearningRequestFocus(request) {
-    if (!request?.learningMode || promptExplicitlyRequestsSourceFocus(request?.displayPrompt)) return false;
+    if (activeRequest !== request || request?.aborted || !request?.learningMode || promptExplicitlyRequestsSourceFocus(request?.displayPrompt)) return false;
     const initialTabId = Number(request?.initialActiveTab?.id || 0);
     if (!(initialTabId > 0)) return false;
     try {
       const state = await host.snapshotState();
+      if (activeRequest !== request || request.aborted) return false;
       const activeTab = pickActiveTab(state, request?.targetWindowId);
       if (Number(activeTab?.id || 0) === initialTabId) return false;
       const initialTabStillOpen = flattenTabs(state).some((tab) => Number(tab?.id || 0) === initialTabId);
@@ -159252,10 +159403,11 @@ function createOnhandBrowserRuntime(host) {
     const tabId = tab?.id;
     if (typeof tabId !== "number") throw new Error("Could not resolve a tab for artifact restore.");
     const annotations = Array.isArray(artifact.page?.annotations) ? artifact.page.annotations : [];
+    const pdfScroll = artifactHasPdfAnnotations(artifact, annotations) || artifactLooksLikePdfViewer(artifact);
     const failures = [];
     await waitForPdfRestoreSurface(tabId, artifact, annotations);
     if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number" || artifact.page?.scrollContainer)) {
-      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer).catch((error52) => {
+      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer, pdfScroll).catch((error52) => {
         host.log?.("artifact pre-highlight scroll restore failed", error52);
       });
     }
@@ -159324,7 +159476,7 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     if (annotations.length > 0 && (typeof artifact.page?.scrollY === "number" || typeof artifact.page?.scrollX === "number" || artifact.page?.scrollContainer)) {
-      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer).catch((error52) => {
+      await restoreReplayScrollPosition(tabId, artifact.page?.scrollX, artifact.page?.scrollY, artifact.page?.scrollContainer, pdfScroll).catch((error52) => {
         host.log?.("artifact scroll restore failed", error52);
         if (isOnhandPdfViewerAccessError(error52)) return;
         failures.push(error52?.message || String(error52));
@@ -159513,17 +159665,33 @@ function createOnhandBrowserRuntime(host) {
 					}
 				} catch {}
 			}
-			requestAnimationFrame(() => setTimeout(() => resolve({
+			let settled = false;
+			let fallbackTimer;
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(fallbackTimer);
+				resolve({
 				scrollX: Math.max(window.scrollX || 0, ...roots.map((root) => Number(root.element?.scrollLeft || root.scrollLeft || 0))),
 				scrollY: Math.max(window.scrollY || 0, ...roots.map((root) => Number(root.element?.scrollTop || root.scrollTop || 0))),
 				scrollHeight: Math.max(0, ...roots.map((root) => Number(root.scrollHeight || 0))),
 				innerHeight: Math.max(window.innerHeight || 0, ...roots.map((root) => Number(root.clientHeight || 0))),
 				maxY: Math.max(0, ...roots.map((root) => Number(root.maxY || 0)))
-			}), 120));
+				});
+			};
+			fallbackTimer = setTimeout(finish, 250);
+			requestAnimationFrame(() => setTimeout(finish, 120));
 		}))()`;
   }
-  async function restoreReplayScrollPosition(tabId, scrollX, scrollY, scrollContainer) {
+  async function restoreReplayScrollPosition(tabId, scrollX, scrollY, scrollContainer, pdfScroll = false) {
     if (!Number.isFinite(Number(scrollX)) && !Number.isFinite(Number(scrollY)) && !scrollContainer) return null;
+    if (pdfScroll) {
+      return await host.runCommand("pdf_restore_scroll", {
+        tabId,
+        scrollX: Number.isFinite(Number(scrollX)) ? Math.max(0, Number(scrollX)) : 0,
+        scrollY: Number.isFinite(Number(scrollY)) ? Math.max(0, Number(scrollY)) : 0
+      });
+    }
     return await host.runCommand("run_js", {
       tabId,
       expression: replayScrollPositionExpression(scrollX, scrollY, scrollContainer)
@@ -160572,76 +160740,91 @@ function createOnhandBrowserRuntime(host) {
       };
     },
     async startNewSession(options = {}) {
-      if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
-      const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
-      await clearActivePageAnnotations(targetWindowId);
-      const store2 = await loadStore();
-      const session = createSession();
-      session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
-      store2.sessions[session.id] = session;
-      store2.currentSessionId = session.id;
-      await saveStore(store2, { sessions: [session] });
-      uiState = createEmptyState(session, store2.settings);
-      void trackExtensionEvent("session_started", { result: "ok" }).catch(() => {
-      });
-      return {
-        created: { cancelled: false },
-        currentSession: buildSessionState(session)
-      };
-    },
-    async switchSession(sessionId, options = {}) {
-      if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
-      const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
-      await clearActivePageAnnotations(targetWindowId);
-      const store2 = await loadStore();
-      await ensureSessionLoaded(store2, sessionId);
-      if (!store2.sessions[sessionId]) throw new Error("Session not found.");
-      store2.currentSessionId = sessionId;
-      const session = store2.sessions[sessionId];
-      session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
-      store2.sessions[session.id] = session;
-      await saveStore(store2, { sessions: [session] });
-      uiState = createEmptyState(session, store2.settings);
-      uiState.messages = buildConversationMessages(session.messages);
-      return {
-        switched: { cancelled: false },
-        currentSession: buildSessionState(session)
-      };
-    },
-    async deleteSession(sessionId, options = {}) {
-      if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
-      const store2 = await loadStore();
-      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
-      await ensureSessionLoaded(store2, targetSessionId);
-      const targetSession = store2.sessions[targetSessionId];
-      if (!targetSession) throw new Error("Session not found.");
-      const wasCurrentSession = targetSessionId === store2.currentSessionId;
-      if (wasCurrentSession) {
+      return await runSessionTransition(async () => {
+        if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before starting a new session.");
         const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
         await clearActivePageAnnotations(targetWindowId);
-      }
-      delete store2.sessions[targetSessionId];
-      let currentSession = store2.sessions[store2.currentSessionId];
-      if (wasCurrentSession || !currentSession) {
-        currentSession = Object.values(store2.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
-        if (!currentSession) {
-          currentSession = createSession();
-          store2.sessions[currentSession.id] = currentSession;
+        const store2 = await loadStore();
+        const session = createSession();
+        session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+        store2.sessions[session.id] = session;
+        store2.currentSessionId = session.id;
+        await saveStore(store2, { sessions: [session] });
+        uiState = createEmptyState(session, store2.settings);
+        void trackExtensionEvent("session_started", { result: "ok" }).catch(() => {
+        });
+        return {
+          created: { cancelled: false },
+          currentSession: buildSessionState(session)
+        };
+      });
+    },
+    async switchSession(sessionId, options = {}) {
+      return await runSessionTransition(async () => {
+        if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before switching sessions.");
+        const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
+        await clearActivePageAnnotations(targetWindowId);
+        const store2 = await loadStore();
+        await ensureSessionLoaded(store2, sessionId);
+        if (!store2.sessions[sessionId]) throw new Error("Session not found.");
+        store2.currentSessionId = sessionId;
+        const session = store2.sessions[sessionId];
+        session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
+        store2.sessions[session.id] = session;
+        await saveStore(store2, { sessions: [session] });
+        uiState = createEmptyState(session, store2.settings);
+        uiState.messages = buildConversationMessages(session.messages);
+        return {
+          switched: { cancelled: false },
+          currentSession: buildSessionState(session)
+        };
+      });
+    },
+    async deleteSession(sessionId, options = {}) {
+      return await runSessionTransition(async () => {
+        if (activeRequest) throw new Error("Wait for the current Onhand reply to finish before deleting a session.");
+        const loadedStore = await loadStore();
+        const store2 = { ...loadedStore, sessions: { ...loadedStore.sessions } };
+        const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+        await ensureSessionLoaded(store2, targetSessionId);
+        const targetSession = store2.sessions[targetSessionId];
+        if (!targetSession) throw new Error("Session not found.");
+        const wasCurrentSession = targetSessionId === store2.currentSessionId;
+        if (wasCurrentSession) {
+          const targetWindowId = typeof options?.targetWindowId === "number" && Number.isFinite(options.targetWindowId) ? options.targetWindowId : void 0;
+          await clearActivePageAnnotations(targetWindowId);
         }
-        currentSession.learnerState = setLearnerStateMode(currentSession.learnerState, store2.settings.learningMode ? "learning" : "answer");
-        store2.sessions[currentSession.id] = currentSession;
-        store2.currentSessionId = currentSession.id;
-        uiState = createEmptyState(currentSession, store2.settings);
-        uiState.messages = buildConversationMessages(currentSession.messages);
-      }
-      await saveStore(store2, { sessions: currentSession ? [currentSession] : [], deletedSessionIds: [targetSessionId] });
-      if (!wasCurrentSession) {
-        await publishState({ status: "Deleted session." });
-      }
-      return {
-        deletedSessionId: targetSessionId,
-        currentSession: buildSessionState(currentSession)
-      };
+        delete store2.sessions[targetSessionId];
+        let currentSession = store2.sessions[store2.currentSessionId];
+        if (wasCurrentSession || !currentSession) {
+          currentSession = Object.values(store2.sessions).sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))[0];
+          if (!currentSession) {
+            currentSession = createSession();
+            store2.sessions[currentSession.id] = currentSession;
+          }
+          currentSession.learnerState = setLearnerStateMode(currentSession.learnerState, store2.settings.learningMode ? "learning" : "answer");
+          store2.sessions[currentSession.id] = currentSession;
+          store2.currentSessionId = currentSession.id;
+        }
+        try {
+          await saveStore(store2, { sessions: currentSession ? [currentSession] : [], deletedSessionIds: [targetSessionId] });
+        } catch (error52) {
+          storePromise = null;
+          uiState = null;
+          throw error52;
+        }
+        if (wasCurrentSession) {
+          uiState = createEmptyState(currentSession, store2.settings);
+          uiState.messages = buildConversationMessages(currentSession.messages);
+        }
+        if (!wasCurrentSession) {
+          await publishState({ status: "Deleted session." });
+        }
+        return {
+          deletedSessionId: targetSessionId,
+          currentSession: buildSessionState(currentSession)
+        };
+      });
     },
     async renameSession(sessionName) {
       const session = await getCurrentSession();
@@ -160651,332 +160834,359 @@ function createOnhandBrowserRuntime(host) {
       return { currentSession: buildSessionState(session) };
     },
     async restoreSession(sessionId) {
-      const store2 = await loadStore();
-      const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
-      await ensureSessionLoaded(store2, targetSessionId);
-      const session = store2.sessions[targetSessionId];
-      if (!session) throw new Error("Session not found.");
-      const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
-      const pageActions = collectSessionPageActions(session);
-      const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
-      const restored = [];
-      const artifactIdsToRestore = await latestArtifactIdsByTarget(artifactIds);
-      for (const artifactId of artifactIdsToRestore) {
-        try {
-          const result = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true });
-          rebindSessionTargetsFromArtifactRestore(session, result, replayableAnnotations);
-          restored.push(result);
-        } catch (error52) {
-          const artifact = await getBrowserArtifact(artifactId);
-          restored.push({
-            tab: null,
-            artifact,
-            artifactId,
-            restoredAnnotations: 0,
-            restoredNotes: 0,
-            failures: [error52?.message || String(error52)]
-          });
+      return await runSessionTransition(async () => {
+        const store2 = await loadStore();
+        const targetSessionId = String(sessionId || store2.currentSessionId || "").trim();
+        await ensureSessionLoaded(store2, targetSessionId);
+        const session = store2.sessions[targetSessionId];
+        if (!session) throw new Error("Session not found.");
+        const artifactIds = Array.isArray(session.artifactIds) ? session.artifactIds : [];
+        const pageActions = collectSessionPageActions(session);
+        const replayableAnnotations = buildReplayAnnotationsFromPageActions(pageActions);
+        const restored = [];
+        const artifactIdsToRestore = await latestArtifactIdsByTarget(artifactIds);
+        for (const artifactId of artifactIdsToRestore) {
+          try {
+            const result = await restoreArtifact({ artifactId, openIfNeeded: true, clearExisting: true });
+            rebindSessionTargetsFromArtifactRestore(session, result, replayableAnnotations);
+            restored.push(result);
+          } catch (error52) {
+            const artifact = await getBrowserArtifact(artifactId);
+            restored.push({
+              tab: null,
+              artifact,
+              artifactId,
+              restoredAnnotations: 0,
+              restoredNotes: 0,
+              failures: [error52?.message || String(error52)]
+            });
+          }
         }
-      }
-      const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
-      const annotationCoveredBySnapshot = (annotation) => snapshotResults.some((result) => {
-        if (replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId)) return true;
-        const annotationUrl = String(annotation.url || "").trim();
-        return Boolean(annotationUrl) && restorablePageUrlsMatchRelaxed(annotationUrl, artifactEffectiveUrl(result.artifact));
+        const snapshotResults = restored.filter((result) => result?.snapshotFallback && result?.artifact);
+        const annotationCoveredBySnapshot = (annotation) => snapshotResults.some((result) => {
+          if (replayTargetKey(annotation) === artifactRestoreTargetKey(result.artifact, result.artifactId)) return true;
+          const annotationUrl = String(annotation.url || "").trim();
+          return Boolean(annotationUrl) && restorablePageUrlsMatchRelaxed(annotationUrl, artifactEffectiveUrl(result.artifact));
+        });
+        const replayCandidates = snapshotResults.length ? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation)) : replayableAnnotations;
+        const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayCandidates.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayCandidates);
+        const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayCandidates.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);
+        if (needsReplayRestore && (!snapshotResults.length || replayCandidates.length > 0)) {
+          const restoredTargets = restored.flatMap(
+            (result) => (Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation)
+          );
+          const uncoveredAnnotations = replayCandidates.filter(
+            (annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target))
+          );
+          const explicitAnnotations = uncoveredAnnotations.length ? uncoveredAnnotations : snapshotResults.length ? replayCandidates : null;
+          restored.push(
+            ...await restoreSessionPageActions(session, {
+              openIfNeeded: true,
+              clearExisting: !artifactIds.length,
+              ...explicitAnnotations?.length ? { annotations: explicitAnnotations } : {}
+            })
+          );
+        }
+        const restoredPages = coalesceRestoredPagesByTab(restored.map(summarizeRestoredArtifact));
+        const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
+        const replayPages = restored.filter((page) => page?.source === "browser-replay");
+        const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
+        const status = artifactPages.length && replayPages.length ? `Restored ${artifactPages.length} saved page state${artifactPages.length === 1 ? "" : "s"} and replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"}.` : artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
+        session.updatedAt = nowIso();
+        store2.sessions[targetSessionId] = session;
+        await saveStore(store2, { sessions: [session] });
+        await publishState(
+          targetSessionId === store2.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
+        );
+        void trackExtensionEvent("session_restored", {
+          result: restored.some((page) => Array.isArray(page?.failures) && page.failures.length) ? "partial" : "ok",
+          action_count: restoredAnnotations,
+          artifact_count: restoredPages.length
+        }).catch(() => {
+        });
+        return {
+          restored,
+          restoredPages,
+          restoredCount: restoredPages.length,
+          currentSession: buildSessionState(session)
+        };
       });
-      const replayCandidates = snapshotResults.length ? replayableAnnotations.filter((annotation) => !annotationCoveredBySnapshot(annotation)) : replayableAnnotations;
-      const artifactRestoreMissesReplayTargets = artifactIds.length > 0 && replayCandidates.length > 0 && !restoredResultsCoverReplayAnnotations(restored, replayCandidates);
-      const needsReplayRestore = !artifactIds.length || artifactRestoreMissesReplayTargets || replayCandidates.length > 0 && restored.some(restoredArtifactNeedsReplayFallback);
-      if (needsReplayRestore && (!snapshotResults.length || replayCandidates.length > 0)) {
-        const restoredTargets = restored.flatMap(
-          (result) => (Array.isArray(result?.restoredTargets) ? result.restoredTargets : []).map(restoredTargetToReplayAnnotation)
-        );
-        const uncoveredAnnotations = replayCandidates.filter(
-          (annotation) => !restoredTargets.some((target) => replayAnnotationMatchesRestoredTarget(annotation, target))
-        );
-        const explicitAnnotations = uncoveredAnnotations.length ? uncoveredAnnotations : snapshotResults.length ? replayCandidates : null;
-        restored.push(
-          ...await restoreSessionPageActions(session, {
-            openIfNeeded: true,
-            clearExisting: !artifactIds.length,
-            ...explicitAnnotations?.length ? { annotations: explicitAnnotations } : {}
-          })
-        );
-      }
-      const restoredPages = coalesceRestoredPagesByTab(restored.map(summarizeRestoredArtifact));
-      const restoredAnnotations = restored.reduce((total, page) => total + Number(page?.restoredAnnotations || 0), 0);
-      const replayPages = restored.filter((page) => page?.source === "browser-replay");
-      const artifactPages = restored.filter((page) => page?.source !== "browser-replay");
-      const status = artifactPages.length && replayPages.length ? `Restored ${artifactPages.length} saved page state${artifactPages.length === 1 ? "" : "s"} and replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"}.` : artifactIds.length ? `Restored ${restored.length} saved page state${restored.length === 1 ? "" : "s"}.` : `Replayed ${restoredAnnotations} browser highlight${restoredAnnotations === 1 ? "" : "s"} from this session.`;
-      session.updatedAt = nowIso();
-      store2.sessions[targetSessionId] = session;
-      await saveStore(store2, { sessions: [session] });
-      await publishState(
-        targetSessionId === store2.currentSessionId ? { status, currentSession: buildSessionState(session), turns: session.turns || [], pageActions: session.pageActions || [] } : { status }
-      );
-      void trackExtensionEvent("session_restored", {
-        result: restored.some((page) => Array.isArray(page?.failures) && page.failures.length) ? "partial" : "ok",
-        action_count: restoredAnnotations,
-        artifact_count: restoredPages.length
-      }).catch(() => {
-      });
-      return {
-        restored,
-        restoredPages,
-        restoredCount: restoredPages.length,
-        currentSession: buildSessionState(session)
-      };
     },
     async submitPrompt(request) {
-      if (activeRequest || activeAgent) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
-      const store2 = await loadStore();
-      const session = store2.sessions[store2.currentSessionId];
-      const prompt = String(request?.prompt || "").trim();
-      const displayPrompt = String(request?.displayPrompt || prompt || "").trim() || "Attached files";
-      const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
-      const requestId = crypto.randomUUID();
-      const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
-      const recentConversation = buildRecentConversationContext(session);
-      const learningMode = Boolean(request?.learningMode ?? store2.settings.learningMode);
-      const rawSource = String(request?.source || "sidebar").trim() || "sidebar";
-      const promptEvalEnabled = isPromptEvalSource(rawSource);
-      const promptEvalVariant = promptEvalEnabled ? String(request?.evalVariant || "").trim().slice(0, 80) : "";
-      const promptEvalSystemAppend = promptEvalEnabled ? normalizePromptEvalAppend(request?.evalSystemPromptAppend) : "";
-      const promptEvalLauncherAppend = promptEvalEnabled ? normalizePromptEvalAppend(request?.evalLauncherPromptAppend ?? request?.evalPolicyAppend) : "";
-      const requestSettings = {
-        ...store2.settings,
-        learningMode
-      };
-      session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
-      let modelIntentClassification = null;
-      let modelIntentClassifierError = "";
-      let learningResearchPlan = null;
-      clearModelIntentClassifications();
-      const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier ? (async () => {
-        try {
-          const classifierModel = await getConfiguredModel(requestSettings);
-          modelIntentClassification = await classifyPromptIntentWithModel(classifierModel, displayPrompt);
-          if (modelIntentClassification) {
-            setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
-            if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
-          } else {
-            modelIntentClassifierError = "unparseable classification; regex routing in effect";
-          }
-        } catch (error52) {
-          modelIntentClassifierError = `${error52 instanceof Error ? error52.message : String(error52)}; regex routing in effect`;
-        }
-      })() : null;
-      if (!session.name && session.messages.length === 0) {
-        session.name = buildSessionTitleFromPrompt(displayPrompt);
-      }
-      beginRequest(session, requestSettings, requestId, displayPrompt);
-      activeRequest = {
-        id: requestId,
-        prompt,
-        displayPrompt,
-        attachments,
-        modelIntentClassification,
-        modelIntentClassifierError: modelIntentClassifierError || void 0,
-        source: compactTelemetryValue(rawSource, 32),
-        reply: "",
-        replyBlocks: [],
-        pageActions: [],
-        toolTraces: [],
-        artifactIds: [],
-        createdAt: nowIso(),
-        aborted: false,
-        targetWindowId,
-        initialSelection: null,
-        initialActiveTab: null,
-        initialActiveUrl: "",
-        learningMode,
-        settings: requestSettings,
-        executionProfile: ACTIVE_EXECUTION_PROFILE,
-        modelCallCount: 0,
-        provisionalAnswerExposed: false
-      };
-      await publishState({ status: "Starting Onhand..." });
-      void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {
-      });
+      if (activeRequest || activeAgent || submissionInProgress || sessionTransitionInProgress) throw new Error("Onhand is already responding. Please wait for the current reply to finish.");
+      submissionInProgress = true;
       try {
-        const model = await getConfiguredModel(store2.settings);
-        const selectionFirstPdfQuestion = promptReferencesVisiblePdfSelectionOrPage(prompt);
-        let browserContextDetails = await renderBrowserContextDetails(host, {
-          targetWindowId,
-          includeVisualRegionImage: promptAsksAboutVisualRegion(prompt),
-          prompt,
+        const store2 = await loadStore();
+        const session = store2.sessions[store2.currentSessionId];
+        const prompt = String(request?.prompt || "").trim();
+        const displayPrompt = String(request?.displayPrompt || prompt || "").trim() || "Attached files";
+        const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
+        const requestId = crypto.randomUUID();
+        const targetWindowId = typeof request?.targetWindowId === "number" && Number.isFinite(request.targetWindowId) ? request.targetWindowId : void 0;
+        const recentConversation = buildRecentConversationContext(session);
+        const learningMode = Boolean(request?.learningMode ?? store2.settings.learningMode);
+        const rawSource = String(request?.source || "sidebar").trim() || "sidebar";
+        const promptEvalEnabled = isPromptEvalSource(rawSource);
+        const promptEvalVariant = promptEvalEnabled ? String(request?.evalVariant || "").trim().slice(0, 80) : "";
+        const promptEvalSystemAppend = promptEvalEnabled ? normalizePromptEvalAppend(request?.evalSystemPromptAppend) : "";
+        const promptEvalLauncherAppend = promptEvalEnabled ? normalizePromptEvalAppend(request?.evalLauncherPromptAppend ?? request?.evalPolicyAppend) : "";
+        const requestSettings = {
+          ...store2.settings,
           learningMode
-        });
-        let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId);
-        if (!pdfHandoff && !selectionFirstPdfQuestion) {
-          pdfHandoff = await runAutomaticPdfHandoffIfNeeded(targetWindowId);
+        };
+        session.learnerState = setLearnerStateMode(session.learnerState, learningMode ? "learning" : "answer");
+        let modelIntentClassification = null;
+        let modelIntentClassifierError = "";
+        let learningResearchPlan = null;
+        clearModelIntentClassifications();
+        if (!session.name && session.messages.length === 0) {
+          session.name = buildSessionTitleFromPrompt(displayPrompt);
         }
-        if (!pdfHandoff) {
-          const unknownSelectionHandoff = await runUnknownPdfSelectionHandoffIfNeeded(prompt, browserContextDetails, targetWindowId);
-          if (unknownSelectionHandoff) {
-            pdfHandoff = unknownSelectionHandoff;
-            const originalBrowserContextDetails = browserContextDetails;
-            browserContextDetails = await renderBrowserContextDetails(host, {
-              targetWindowId,
-              includeVisualRegionImage: promptAsksAboutVisualRegion(prompt),
-              prompt,
-              learningMode
-            });
-            if (unknownPdfSelectionHandoffNeedsReselect(unknownSelectionHandoff, browserContextDetails)) {
-              activeRequest.reply = buildUnknownPdfSelectionHandoffReply(unknownSelectionHandoff, originalBrowserContextDetails);
-              activeRequest.initialSelection = browserContextDetails.selection;
-              await finalizeRequest(session, requestId, null, []);
-              return { requestId };
+        beginRequest(session, requestSettings, requestId, displayPrompt);
+        activeRequest = {
+          id: requestId,
+          prompt,
+          displayPrompt,
+          attachments,
+          modelIntentClassification,
+          modelIntentClassifierError: modelIntentClassifierError || void 0,
+          source: compactTelemetryValue(rawSource, 32),
+          reply: "",
+          replyBlocks: [],
+          pageActions: [],
+          toolTraces: [],
+          artifactIds: [],
+          createdAt: nowIso(),
+          aborted: false,
+          abortController: new AbortController(),
+          targetWindowId,
+          initialSelection: null,
+          initialActiveTab: null,
+          initialActiveUrl: "",
+          learningMode,
+          settings: requestSettings,
+          executionProfile: ACTIVE_EXECUTION_PROFILE,
+          modelCallCount: 0,
+          provisionalAnswerExposed: false
+        };
+        const requestContext = activeRequest;
+        const preparationHost = requestHostFor(requestContext);
+        const prepare = (run) => withAbortSignal(requestContext.abortController.signal, run);
+        const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier ? (async () => {
+          try {
+            const classifierModel = await getConfiguredModel(requestSettings);
+            modelIntentClassification = await classifyPromptIntentWithModel(classifierModel, displayPrompt, requestContext.abortController.signal);
+            if (modelIntentClassification && activeRequest === requestContext && !requestContext.aborted) {
+              setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
+              if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
+            } else {
+              modelIntentClassifierError = "unparseable classification; regex routing in effect";
             }
+          } catch (error52) {
+            modelIntentClassifierError = `${error52 instanceof Error ? error52.message : String(error52)}; regex routing in effect`;
           }
-        }
-        if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(prompt, browserContextDetails)) {
-          browserContextDetails = await renderBrowserContextDetails(host, {
+        })() : null;
+        await publishState({ status: "Starting Onhand..." });
+        void trackExtensionEvent("prompt_submitted", { result: "started" }).catch(() => {
+        });
+        try {
+          const model = await prepare(() => getConfiguredModel(store2.settings));
+          const selectionFirstPdfQuestion = promptReferencesVisiblePdfSelectionOrPage(prompt);
+          let browserContextDetails = await renderBrowserContextDetails(preparationHost, {
             targetWindowId,
-            includeVisualRegionImage: true,
+            includeVisualRegionImage: promptAsksAboutVisualRegion(prompt),
             prompt,
             learningMode
           });
-        }
-        if (modelIntentClassificationPromise) {
-          await modelIntentClassificationPromise;
-          activeRequest.modelIntentClassification = modelIntentClassification;
-          if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
-        }
-        if (learningMode && shouldPlanLearningResearch(displayPrompt, modelIntentClassification, browserContextDetails)) {
-          await publishState({ status: "Planning from your selection and open workspace..." });
-          learningResearchPlan = await planLearningResearch(displayPrompt, browserContextDetails, requestSettings);
-          activeRequest.learningResearchPlan = learningResearchPlan;
-          activeRequest.suppressAssistantDraftUntilResearchComplete = Boolean(learningResearchPlan?.requiresWorkspaceResearch);
-        }
-        const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
-        const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff);
-        const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl ? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.` : "";
-        const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
-        const browserContext = [browserContextDetails.text, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
-        const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
-        const existingAnchorContext = buildExistingAnchorContext(session);
-        const sessionContext = [recentConversation, priorPageContext].filter(Boolean).join("\n\n");
-        activeRequest.initialSelection = browserContextDetails.selection;
-        activeRequest.initialActiveTab = browserContextDetails.activeTab || null;
-        activeRequest.initialActiveUrl = String(browserContextDetails.activeTab?.url || "");
-        activeRequest.openTabSummary = browserContextDetails.openTabSummary || { totalCount: 0, shownTabs: [], omittedCount: 0 };
-        activeRequest.initialBrowserContextText = truncateStructuredText(browserContextDetails.text || "", 9e3);
-        const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
-        const firstPassPdfSelectionQuestion = selectionFirstPdfQuestion && browserContextLooksLikePdf(browserContextDetails);
-        const toolSelectionOptions = {
-          // Tool selection itself is ungated; forcePdfTools/forceToolNames
-          // only steer the missing-tool retry heuristics, and
-          // visiblePdfSelectionFirstPass reaches the retry guard chain.
-          forcePdfTools,
-          visiblePdfSelectionFirstPass: firstPassPdfSelectionQuestion,
-          advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
-          ...learningResearchPlan?.requiresWorkspaceResearch ? { forceToolNames: LEARNING_RESEARCH_FORCE_TOOL_NAMES } : {}
-        };
-        activeRequest.toolSelectionOptions = toolSelectionOptions;
-        const tools = selectToolsForPrompt(
-          createTools(
-            host,
-            artifactHooks,
-            withRequestBrowserContext,
-            (event) => recordLearningEventForSession(
-              session,
-              attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
-              learningMode ? "learning" : "answer"
-            ),
-            (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
-            (toolName, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
-            async (effectiveParams) => {
-              if (!effectiveParams?.scanPage) return null;
-              const text = compactActionText(effectiveParams?.text);
-              if (!text) return null;
-              let tabId = Number(effectiveParams?.tabId || activeRequest?.initialActiveTab?.id || 0);
-              if (!Number.isFinite(tabId) || tabId <= 0) {
-                const state = await host.snapshotState();
-                tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
-              }
-              if (!Number.isFinite(tabId) || tabId <= 0) return null;
-              return await highlightTextWithReplayCandidates(tabId, text, {
-                ...effectiveParams || {},
-                scanPage: true,
-                skipInitialAttempt: true,
-                scrollIntoView: effectiveParams?.scrollIntoView !== false,
-                pdfAnchor: effectiveParams?.pdfAnchor
+          requestContext.abortController.signal.throwIfAborted();
+          let pdfHandoff = await runExplicitPdfHandoffIfRequested(prompt, targetWindowId, preparationHost);
+          requestContext.abortController.signal.throwIfAborted();
+          if (!pdfHandoff && !selectionFirstPdfQuestion) {
+            pdfHandoff = await runAutomaticPdfHandoffIfNeeded(targetWindowId, preparationHost);
+            requestContext.abortController.signal.throwIfAborted();
+          }
+          if (!pdfHandoff) {
+            const unknownSelectionHandoff = await runUnknownPdfSelectionHandoffIfNeeded(prompt, browserContextDetails, targetWindowId, preparationHost);
+            requestContext.abortController.signal.throwIfAborted();
+            if (unknownSelectionHandoff) {
+              pdfHandoff = unknownSelectionHandoff;
+              const originalBrowserContextDetails = browserContextDetails;
+              browserContextDetails = await renderBrowserContextDetails(preparationHost, {
+                targetWindowId,
+                includeVisualRegionImage: promptAsksAboutVisualRegion(prompt),
+                prompt,
+                learningMode
               });
+              requestContext.abortController.signal.throwIfAborted();
+              if (unknownPdfSelectionHandoffNeedsReselect(unknownSelectionHandoff, browserContextDetails)) {
+                activeRequest.reply = buildUnknownPdfSelectionHandoffReply(unknownSelectionHandoff, originalBrowserContextDetails);
+                activeRequest.initialSelection = browserContextDetails.selection;
+                await finalizeRequest(session, requestId, null, []);
+                return { requestId };
+              }
             }
-          ),
-          prompt,
-          attachments,
-          learningMode,
-          session.learnerState,
-          toolSelectionOptions
-        );
-        activeAgent = new Agent({
-          initialState: {
-            systemPrompt: buildPromptEvalSystemPrompt(ONHAND_SYSTEM_PROMPT, promptEvalSystemAppend, promptEvalVariant),
-            model,
-            tools,
-            messages: [],
-            thinkingLevel: "off"
-          },
-          sessionId: session.id,
-          transformContext: (messages) => transformFreeTierContextForModel(model, messages),
-          getApiKey: (provider) => resolveApiKey3(provider),
-          streamFn: (streamModel, streamContext, streamOptions = {}) => {
-            activeRequest.modelCallCount = Number(activeRequest.modelCallCount || 0) + 1;
-            return streamOnhandFast(streamModel, streamContext, {
-              ...streamOptions,
-              onhandTelemetry: {
-                turnId: requestId,
-                sessionId: session.id
-              },
-              onhandReasoningProfile: reasoningProfile,
-              onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled)
+          }
+          if (!browserContextDetails.visualRegion && shouldCaptureVisualRegionForPrompt(prompt, browserContextDetails)) {
+            browserContextDetails = await renderBrowserContextDetails(preparationHost, {
+              targetWindowId,
+              includeVisualRegionImage: true,
+              prompt,
+              learningMode
             });
-          },
-          toolExecution: "parallel"
-        });
-        activeDevelopmentAgentObserver = await attachDevelopmentAgentObserver(activeAgent, {
-          turnId: requestId,
-          sessionId: session.id,
-          extensionVersion: host.extensionVersion,
-          provider: requestSettings.aiProvider,
-          model: requestSettings.aiModel,
-          executionProfile: activeRequest.executionProfile || "legacy",
-          learningMode
-        });
-        activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
-        void activeAgent.prompt(
-          buildLauncherPrompt(
+          }
+          if (modelIntentClassificationPromise) {
+            await prepare(() => modelIntentClassificationPromise);
+            activeRequest.modelIntentClassification = modelIntentClassification;
+            if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
+          }
+          if (learningMode && shouldPlanLearningResearch(displayPrompt, modelIntentClassification, browserContextDetails)) {
+            await publishState({ status: "Planning from your selection and open workspace..." });
+            learningResearchPlan = await planLearningResearch(displayPrompt, browserContextDetails, requestSettings, preparationHost);
+            requestContext.abortController.signal.throwIfAborted();
+            activeRequest.learningResearchPlan = learningResearchPlan;
+            activeRequest.suppressAssistantDraftUntilResearchComplete = Boolean(learningResearchPlan?.requiresWorkspaceResearch);
+          }
+          requestContext.abortController.signal.throwIfAborted();
+          const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
+          const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff, preparationHost);
+          requestContext.abortController.signal.throwIfAborted();
+          const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl ? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.` : "";
+          const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
+          const browserContext = [browserContextDetails.text, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
+          const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
+          const existingAnchorContext = buildExistingAnchorContext(session);
+          const sessionContext = [recentConversation, priorPageContext].filter(Boolean).join("\n\n");
+          activeRequest.initialSelection = browserContextDetails.selection;
+          activeRequest.initialActiveTab = browserContextDetails.activeTab || null;
+          activeRequest.initialActiveUrl = String(browserContextDetails.activeTab?.url || "");
+          activeRequest.openTabSummary = browserContextDetails.openTabSummary || { totalCount: 0, shownTabs: [], omittedCount: 0 };
+          activeRequest.initialBrowserContextText = truncateStructuredText(browserContextDetails.text || "", 9e3);
+          const forcePdfTools = Boolean(pdfHandoff || browserContextLooksLikePdf(browserContextDetails));
+          const firstPassPdfSelectionQuestion = selectionFirstPdfQuestion && browserContextLooksLikePdf(browserContextDetails);
+          const toolSelectionOptions = {
+            // Tool selection itself is ungated; forcePdfTools/forceToolNames
+            // only steer the missing-tool retry heuristics, and
+            // visiblePdfSelectionFirstPass reaches the retry guard chain.
+            forcePdfTools,
+            visiblePdfSelectionFirstPass: firstPassPdfSelectionQuestion,
+            advancedRuntimeInspectionEnabled: requestSettings.advancedRuntimeInspectionEnabled,
+            ...learningResearchPlan?.requiresWorkspaceResearch ? { forceToolNames: LEARNING_RESEARCH_FORCE_TOOL_NAMES } : {}
+          };
+          activeRequest.toolSelectionOptions = toolSelectionOptions;
+          const tools = selectToolsForPrompt(
+            createTools(
+              host,
+              artifactHooks,
+              withRequestBrowserContext,
+              (event) => recordLearningEventForSession(
+                session,
+                attachTurnAnchorToLearningCheckEvent(event, activeRequest?.pageActions),
+                learningMode ? "learning" : "answer"
+              ),
+              (toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
+              (toolName, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName, commandName, prompt, activeRequest),
+              async (effectiveParams) => {
+                if (!effectiveParams?.scanPage) return null;
+                const text = compactActionText(effectiveParams?.text);
+                if (!text) return null;
+                let tabId = Number(effectiveParams?.tabId || activeRequest?.initialActiveTab?.id || 0);
+                if (!Number.isFinite(tabId) || tabId <= 0) {
+                  const state = await host.snapshotState();
+                  tabId = Number(pickActiveTab(state, activeRequest?.targetWindowId)?.id || 0);
+                }
+                if (!Number.isFinite(tabId) || tabId <= 0) return null;
+                return await highlightTextWithReplayCandidates(tabId, text, {
+                  ...effectiveParams || {},
+                  scanPage: true,
+                  skipInitialAttempt: true,
+                  scrollIntoView: effectiveParams?.scrollIntoView !== false,
+                  pdfAnchor: effectiveParams?.pdfAnchor
+                });
+              }
+            ),
             prompt,
-            browserContext,
             attachments,
             learningMode,
-            reasoningProfile,
-            tools,
-            sessionContext,
             session.learnerState,
-            existingAnchorContext,
-            responseFormatRequirement,
-            learningResearchPlan,
-            promptEvalLauncherAppend
-          ),
-          [
-            ...buildPromptImages(attachments),
-            ...buildVisualRegionPromptImages(browserContextDetails.visualRegion),
-            ...buildPdfPageImagePromptImages(pdfVisualCapture)
-          ]
-        ).catch((error52) => finalizeRequest(session, requestId, error52 instanceof Error ? error52 : new Error(String(error52))));
-      } catch (error52) {
-        await finalizeRequest(session, requestId, error52 instanceof Error ? error52 : new Error(String(error52)));
+            toolSelectionOptions
+          );
+          activeAgent = new Agent({
+            initialState: {
+              systemPrompt: buildPromptEvalSystemPrompt(ONHAND_SYSTEM_PROMPT, promptEvalSystemAppend, promptEvalVariant),
+              model,
+              tools,
+              messages: [],
+              thinkingLevel: "off"
+            },
+            sessionId: session.id,
+            transformContext: (messages) => transformFreeTierContextForModel(model, messages),
+            getApiKey: (provider) => resolveApiKey3(provider),
+            streamFn: (streamModel, streamContext, streamOptions = {}) => {
+              activeRequest.modelCallCount = Number(activeRequest.modelCallCount || 0) + 1;
+              return streamOnhandFast(streamModel, streamContext, {
+                ...streamOptions,
+                onhandTelemetry: {
+                  turnId: requestId,
+                  sessionId: session.id
+                },
+                onhandReasoningProfile: reasoningProfile,
+                onhandCodexFastMode: Boolean(requestSettings.codexFastModeEnabled)
+              });
+            },
+            toolExecution: "parallel"
+          });
+          const observer = await attachDevelopmentAgentObserver(activeAgent, {
+            turnId: requestId,
+            sessionId: session.id,
+            extensionVersion: host.extensionVersion,
+            provider: requestSettings.aiProvider,
+            model: requestSettings.aiModel,
+            executionProfile: activeRequest.executionProfile || "legacy",
+            learningMode
+          });
+          if (requestContext.aborted) {
+            await closeDevelopmentAgentObserver(observer);
+            requestContext.abortController.signal.throwIfAborted();
+          }
+          activeDevelopmentAgentObserver = observer;
+          activeAgent.subscribe((event) => handleAgentEvent(session, requestId, event));
+          void activeAgent.prompt(
+            buildLauncherPrompt(
+              prompt,
+              browserContext,
+              attachments,
+              learningMode,
+              reasoningProfile,
+              tools,
+              sessionContext,
+              session.learnerState,
+              existingAnchorContext,
+              responseFormatRequirement,
+              learningResearchPlan,
+              promptEvalLauncherAppend
+            ),
+            [
+              ...buildPromptImages(attachments),
+              ...buildVisualRegionPromptImages(browserContextDetails.visualRegion),
+              ...buildPdfPageImagePromptImages(pdfVisualCapture)
+            ]
+          ).catch((error52) => finalizeRequest(session, requestId, error52 instanceof Error ? error52 : new Error(String(error52))));
+        } catch (error52) {
+          await finalizeRequest(session, requestId, requestContext.aborted ? null : error52 instanceof Error ? error52 : new Error(String(error52)), requestContext.aborted ? [] : null);
+        }
+        return { requestId };
+      } finally {
+        submissionInProgress = false;
       }
-      return { requestId };
     },
     async stop() {
-      if (!activeAgent || !activeRequest) throw new Error("Onhand is not currently responding.");
-      activeRequest.aborted = true;
+      if (!activeRequest) throw new Error("Onhand is not currently responding.");
+      const request = activeRequest;
+      const agent = activeAgent;
+      request.aborted = true;
       await publishState({ status: "Stopping..." });
-      activeAgent.abort();
+      request.abortController?.abort();
+      agent?.abort();
       return {
         stopped: true,
         currentSession: buildSessionState(await getCurrentSession())

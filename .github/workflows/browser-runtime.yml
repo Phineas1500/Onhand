@@ -34,6 +34,9 @@ jobs:
       - name: Run page toolkit regressions
         run: npm run test:page-toolkit-regressions
 
+      - name: Run PDF viewer regressions
+        run: npm run test:pdf-viewer-review
+
       - name: Run free-tier worker regressions
         run: npm run test:free-tier-worker-regressions
 

@@ -25616,7 +25616,7 @@ function ensureAnnotationLayer(page) {
   if (layer) return layer;
   layer = document.createElement("div");
   layer.className = "onhand-pdf-annotation-layer";
-  layer.setAttribute("data-onhand-pdf-coordinate-scale", String(currentScale));
+  layer.setAttribute("data-onhand-pdf-coordinate-scale", String(committedScale));
   Object.assign(layer.style, {
     position: "absolute",
     left: "0",
@@ -25999,14 +25999,21 @@ async function pdfHighlightText(query, options = {}) {
     const result = await applyHighlightToPage(page);
     if (result) return result;
   }
-  const pendingPageNumber = await findPendingPageWithText(rawQuery);
+  const failedPageNumbers = [];
+  const pendingPageNumber = await findPendingPageWithText(rawQuery, failedPageNumbers);
   if (pendingPageNumber) {
     await ensurePageRendered(pendingPageNumber);
     const pendingPage = getPdfPageByNumber(pendingPageNumber);
     if (pendingPage) {
       const result = await applyHighlightToPage(pendingPage);
-      if (result) return result;
+      if (result) return {
+        ...result,
+        ...failedPageNumbers.length ? { coverage: { failedPageNumbers, incomplete: true } } : {}
+      };
     }
+  }
+  if (failedPageNumbers.length) {
+    throw new Error(`PDF text search is incomplete: could not read pages ${failedPageNumbers.join(", ")}. No readable text matched: ${rawQuery}`);
   }
   throw new Error(`No visible text matched: ${rawQuery}`);
 }
@@ -26443,10 +26450,34 @@ async function restorePdfAnnotationSnapshots(annotations, sequence) {
     }
   }
 }
-async function rebuildPdfAnnotationLayers(annotations, sequence) {
-  if (!annotations.length) return;
-  for (const layer of Array.from(document.querySelectorAll(".onhand-pdf-annotation-layer"))) layer.remove();
-  await restorePdfAnnotationSnapshots(annotations, sequence);
+function refreshPdfAnnotationLayers() {
+  for (const page of getPdfPages()) {
+    const layer = page.querySelector(".onhand-pdf-annotation-layer");
+    if (!layer) continue;
+    const coordinateScale = Number(layer.getAttribute("data-onhand-pdf-coordinate-scale") || currentScale) || currentScale;
+    const ratio = currentScale / Math.max(1e-3, coordinateScale);
+    const size = getPageLayoutSize(page);
+    layer.style.transform = "none";
+    layer.style.width = `${size.width}px`;
+    layer.style.height = `${size.height}px`;
+    layer.setAttribute("data-onhand-pdf-coordinate-scale", String(currentScale));
+    for (const annotation of Array.from(layer.querySelectorAll("[data-onhand-highlight-kind='pdf']"))) {
+      const anchor = parsePdfAnchor(annotation);
+      if (!Array.isArray(anchor?.rects)) continue;
+      const rects = anchor.rects.map((rect) => clampPdfRectToPageSize({
+        left: rect.left * ratio,
+        top: rect.top * ratio,
+        width: rect.width * ratio,
+        height: rect.height * ratio
+      }, size)).filter((rect) => Boolean(rect));
+      if (!rects.length) continue;
+      annotation.replaceChildren();
+      applyHighlightStyles(annotation, rects, unionRects(rects));
+      annotation.setAttribute("data-onhand-pdf-anchor", JSON.stringify({ ...anchor, rects }));
+      const note = findNoteForAnnotation(annotation.getAttribute("data-onhand-annotation-id") || "");
+      if (note) positionPdfNote(note, annotation, page);
+    }
+  }
 }
 async function restorePdfViewSnapshot(snapshot, sequence) {
   if (!snapshot) {
@@ -26700,16 +26731,18 @@ async function describePdfTextLayer() {
   const maxPages = Math.min(pageCount, 30);
   let extractableChars = 0;
   let checkedPages = 0;
+  const failedPageNumbers = [];
   for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
     try {
       extractableChars += normalizeText(await getPageTextContent(pageNumber)).length;
+      checkedPages += 1;
     } catch {
+      failedPageNumbers.push(pageNumber);
     }
-    checkedPages += 1;
     if (extractableChars >= 400) break;
   }
-  const info2 = { extractableChars, checkedPages, likelyScanned: extractableChars < 40 };
-  cachedPdfTextLayerInfo = info2;
+  const info2 = { extractableChars, checkedPages, failedPageNumbers, likelyScanned: extractableChars >= 40 ? false : failedPageNumbers.length ? null : true };
+  if (!failedPageNumbers.length) cachedPdfTextLayerInfo = info2;
   return info2;
 }
 async function pdfSearch(options = {}) {
@@ -26728,7 +26761,7 @@ async function pdfSearch(options = {}) {
   for (const page of pages) {
     const pageNumber = getPageNumber(page);
     if (!pageNumber) continue;
-    const textLayer2 = page.querySelector(".textLayer");
+    const textLayer2 = page.querySelector('.textLayer[data-onhand-pdf-text-ready="true"]');
     let pageText = "";
     try {
       pageText = textLayer2 ? pdfPageText(page) : await getPageTextContent(pageNumber);
@@ -26803,11 +26836,21 @@ async function pdfReadPages(options = {}) {
   const maxChars = Math.max(500, Math.min(5e4, Number(options.maxChars || 12e3) || 12e3));
   const pageNumbers = parsePdfPageNumbers(options).slice(0, Math.max(1, Math.min(30, Number(options.maxPages || 12) || 12)));
   const blocks = [];
+  const readPageNumbers = [];
+  const failedPageNumbers = [];
   let usedChars = 0;
   for (const pageNumber of pageNumbers) {
+    if (usedChars >= maxChars) break;
     const page = getPdfPageByNumber(pageNumber);
-    if (!page) continue;
-    const text = isPendingPage(page) ? await getPageTextContent(pageNumber) : pdfPageText(page);
+    let text;
+    try {
+      if (!page) throw new Error("PDF page is not available.");
+      text = page.querySelector('.textLayer[data-onhand-pdf-text-ready="true"]') ? pdfPageText(page) : await getPageTextContent(pageNumber);
+      readPageNumbers.push(pageNumber);
+    } catch {
+      failedPageNumbers.push(pageNumber);
+      continue;
+    }
     if (!text) continue;
     const remaining = maxChars - usedChars;
     if (remaining <= 0) break;
@@ -26827,6 +26870,9 @@ async function pdfReadPages(options = {}) {
     url: sourceUrl,
     title: document.title,
     pageNumbers,
+    readPageNumbers,
+    failedPageNumbers,
+    incomplete: failedPageNumbers.length > 0,
     blockCount: blocks.length,
     charCount: blocks.reduce((total, block) => total + String(block.text || "").length, 0),
     truncated: usedChars >= maxChars,
@@ -26883,9 +26929,28 @@ async function pdfFindCitation(options = {}) {
   const pageCount = Number(pdfDocument?.numPages || 0);
   if (!pageCount) throw new Error("No PDF document is loaded.");
   const bracketNumber = rawReference.match(/^\[?(\d{1,3})\]?$/)?.[1] || "";
+  const searchedPageNumbers = /* @__PURE__ */ new Set();
+  const failedPageNumbers = /* @__PURE__ */ new Set();
+  const readPage = async (pageNumber) => {
+    if (failedPageNumbers.has(pageNumber)) return null;
+    try {
+      const text = await getPageTextContent(pageNumber);
+      searchedPageNumbers.add(pageNumber);
+      return text;
+    } catch {
+      failedPageNumbers.add(pageNumber);
+      return null;
+    }
+  };
+  const coverage = () => ({
+    searchedPageNumbers: [...searchedPageNumbers].sort((a, b) => a - b),
+    failedPageNumbers: [...failedPageNumbers].sort((a, b) => a - b),
+    incomplete: failedPageNumbers.size > 0
+  });
   let referencesStartPage = 0;
   for (let pageNumber = pageCount; pageNumber >= 1; pageNumber -= 1) {
-    const text = await getPageTextContent(pageNumber);
+    const text = await readPage(pageNumber);
+    if (text === null) continue;
     if (/\b(references|bibliography)\b/i.test(text)) {
       referencesStartPage = pageNumber;
       break;
@@ -26898,7 +26963,8 @@ async function pdfFindCitation(options = {}) {
     const entryPattern = new RegExp(`\\[${bracketNumber}\\]\\s`);
     const nextEntryPattern = /\[\d{1,3}\]\s/g;
     for (let pageNumber = searchStartPage; pageNumber <= pageCount; pageNumber += 1) {
-      const text = await getPageTextContent(pageNumber);
+      const text = await readPage(pageNumber);
+      if (text === null) continue;
       const match = entryPattern.exec(text);
       if (!match) continue;
       const start = match.index;
@@ -26911,7 +26977,8 @@ async function pdfFindCitation(options = {}) {
   } else {
     const needle = normalizeText(rawReference).toLowerCase();
     for (let pageNumber = searchStartPage; pageNumber <= pageCount; pageNumber += 1) {
-      const text = await getPageTextContent(pageNumber);
+      const text = await readPage(pageNumber);
+      if (text === null) continue;
       const index = text.toLowerCase().indexOf(needle);
       if (index === -1) continue;
       entryText = normalizeText(text.slice(index, index + 600)).slice(0, 600);
@@ -26927,7 +26994,8 @@ async function pdfFindCitation(options = {}) {
       found: false,
       reference: rawReference,
       referencesStartPage: referencesStartPage || null,
-      message: referencesStartPage ? `No bibliography entry matched "${rawReference}" from page ${referencesStartPage} onward.` : `No references section was found, and nothing matched "${rawReference}".`
+      coverage: coverage(),
+      message: failedPageNumbers.size ? `Bibliography lookup is incomplete: could not read pages ${[...failedPageNumbers].sort((a, b) => a - b).join(", ")}. No readable entry matched "${rawReference}".` : referencesStartPage ? `No bibliography entry matched "${rawReference}" from page ${referencesStartPage} onward.` : `No references section was found, and nothing matched "${rawReference}".`
     };
   }
   const anchorQuote = entryText.slice(0, 110);
@@ -26939,6 +27007,7 @@ async function pdfFindCitation(options = {}) {
     reference: rawReference,
     pageNumber: entryPageNumber,
     referencesStartPage: referencesStartPage || null,
+    coverage: coverage(),
     entryText,
     identifiers: extractCitationIdentifiers(entryText),
     highlightAnchor: {
@@ -27043,8 +27112,22 @@ function pdfCaptureState() {
     viewport: { width: window.innerWidth, height: window.innerHeight }
   };
 }
+async function pdfRestoreScrollPosition(options = {}) {
+  const scrollX = Number(options.scrollX);
+  const scrollY = Number(options.scrollY);
+  window.scrollTo({
+    left: Number.isFinite(scrollX) ? Math.max(0, scrollX) : 0,
+    top: Number.isFinite(scrollY) ? Math.max(0, scrollY) : 0,
+    behavior: "auto"
+  });
+  await waitForNextFrame();
+  updatePageFromScroll();
+  return { surface: "pdf", viewer: "onhand-pdf-viewer", scrollX: window.scrollX, scrollY: window.scrollY };
+}
 async function runPdfToolkitMethod(methodName, args = []) {
   switch (methodName) {
+    case "restoreScrollPosition":
+      return await pdfRestoreScrollPosition(args[0] || {});
     case "getVisibleText":
       return pdfGetVisibleText(args[0] || {});
     case "searchPdf":
@@ -27492,17 +27575,13 @@ function compactPendingSearchText(value) {
 async function getPageTextContent(pageNumber) {
   const cached = pageTextContentCache.get(pageNumber);
   if (cached !== void 0) return cached;
-  try {
-    const page = await pdfDocument.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = normalizeText(
-      content.items.map((item) => `${typeof item?.str === "string" ? item.str : ""}${item?.hasEOL ? "\n" : ""}`).join("")
-    );
-    pageTextContentCache.set(pageNumber, text);
-    return text;
-  } catch {
-    return "";
-  }
+  const page = await pdfDocument.getPage(pageNumber);
+  const content = await page.getTextContent();
+  const text = normalizeText(
+    content.items.map((item) => `${typeof item?.str === "string" ? item.str : ""}${item?.hasEOL ? "\n" : ""}`).join("")
+  );
+  pageTextContentCache.set(pageNumber, text);
+  return text;
 }
 async function createPageShells(sequence) {
   const firstPage = await pdfDocument.getPage(1);
@@ -27574,7 +27653,7 @@ async function renderRemainingPages(sequence) {
     scheduleViewportRender();
   }
 }
-async function findPendingPageWithText(query) {
+async function findPendingPageWithText(query, failedPageNumbers = []) {
   const normalizedQuery = normalizeText(query).toLowerCase();
   const compactQuery = compactPendingSearchText(query);
   if (!normalizedQuery) return null;
@@ -27582,7 +27661,13 @@ async function findPendingPageWithText(query) {
     if (!isPendingPage(pageElement)) continue;
     const pageNumber = getPageNumber(pageElement);
     if (!pageNumber) continue;
-    const text = (await getPageTextContent(pageNumber)).toLowerCase();
+    let text;
+    try {
+      text = (await getPageTextContent(pageNumber)).toLowerCase();
+    } catch {
+      failedPageNumbers.push(pageNumber);
+      continue;
+    }
     if (text.includes(normalizedQuery) || compactPendingSearchText(text).includes(compactQuery)) return pageNumber;
   }
   return null;
@@ -27648,11 +27733,9 @@ function settleZoomRender(sequence, expectedZoomRevision) {
     zoomRenderTimer = null;
     if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
     commitTransientZoom();
-    const annotations = capturePdfAnnotationSnapshots();
+    refreshPdfAnnotationLayers();
     const pendingCountBeforeSharpen = countPendingPages();
     if (pendingCountBeforeSharpen) {
-      await rebuildPdfAnnotationLayers(annotations, sequence);
-      if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
       setStatus(`Rendered ${Number(pdfDocument?.numPages || 0) - pendingCountBeforeSharpen}/${pdfDocument?.numPages || 0}`);
       return;
     }
@@ -27660,8 +27743,6 @@ function settleZoomRender(sequence, expectedZoomRevision) {
       setStatus(`Sharpening visible pages at ${Math.round(currentScale * 100)}%...`);
     }
     await renderSharpPagesNearViewport(sequence, expectedZoomRevision);
-    if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
-    await rebuildPdfAnnotationLayers(annotations, sequence);
     if (sequence !== renderSequence || expectedZoomRevision !== zoomRevision) return;
     const pendingCount = countPendingPages();
     setStatus(pendingCount ? `Rendered ${Number(pdfDocument?.numPages || 0) - pendingCount}/${pdfDocument?.numPages || 0}` : "Ready");

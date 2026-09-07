@@ -192,6 +192,7 @@ function createReplayHost(options = {}) {
 					return { tab, result: runJsResult ?? true };
 			}
 			if (name === "get_selection") return { selection: options.selection || { text: "" } };
+			if (name === "pdf_restore_scroll") return { tab, scroll: { surface: "pdf", viewer: "onhand-pdf-viewer", scrollX: args.scrollX, scrollY: args.scrollY } };
 			if (name === "get_visible_text") {
 				return {
 					tab,
@@ -2195,7 +2196,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 		assert.match(source, /transientZoomCentersHorizontally/, `${path} should center transient zoom while the current page fits the viewport`);
 		assert.match(source, /`translate3d\([^`]+\) scale\(\$\{ratio\}\)`/, `${path} should keep compositor-preview translation in viewport pixels`);
 		assert.match(source, /pendingCountBeforeSharpen/, `${path} should not compete with the initial background render queue when sharpening scans`);
-		assert.match(source, /rebuildPdfAnnotationLayers/, `${path} should rebuild annotations at committed geometry even when sharpening is deferred`);
+		assert.match(source, /refreshPdfAnnotationLayers/, `${path} should refresh existing annotation geometry at committed zoom without recreating highlight DOM`);
 		assert.match(source, /return Math\.min\(requested, dimensionLimit, pixelLimit\)/, `${path} should honor canvas dimension and pixel caps at every zoom level`);
 		assert.doesNotMatch(source, /Math\.max\(0\.25, Math\.min\(requested, dimensionLimit, pixelLimit\)\)/, `${path} should not override canvas safety caps with a minimum output scale`);
 		assert.match(source, /event\.ctrlKey/, `${path} should support Chromium trackpad pinch zoom`);
@@ -2345,7 +2346,7 @@ async function assertBrowserContextSnapshotHasTimeoutFallback() {
 	);
 	assert.match(
 		runtimeSource,
-		/async function runAutomaticPdfHandoffIfNeeded[\s\S]*const state = await runBrowserContextSnapshot\(host\);/,
+		/async function runAutomaticPdfHandoffIfNeeded[\s\S]*const state = await runBrowserContextSnapshot\(requestHost\);/,
 		"automatic PDF handoff should not hang indefinitely on snapshotState",
 	);
 }
@@ -7758,16 +7759,14 @@ async function assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport() {
 	assert.equal(restoreCalls.some((call) => call.name === "show_note" && call.args.annotationId === "google-docs-pdf-restored-anchor"), true);
 }
 
-async function assertScrollRestoreAccessErrorDoesNotFailRestore() {
+async function assertPdfScrollRestoreUsesViewerCoordinates() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const pdfUrl = "https://www-cdn.example.test/doc.pdf";
 	const pdfAnchor = { surface: "pdf", pageNumber: 1, occurrence: 1, matchedText: "alpha", textQuote: { exact: "alpha" } };
 	const sourceTab = replaySmokeTab({ id: 73, title: "doc.pdf", url: pdfUrl });
-	// Restoring the scroll position scripts the tab; on a PDF whose main frame
-	// is the browser's native viewer that throws "Cannot access a
-	// chrome-extension:// URL of different extension". The annotations still
-	// restore, so this must not be surfaced as a restore failure.
+	// The native wrapper must never be used to restore the Onhand viewer's
+	// scroll coordinates, even when marks themselves are already restoring.
 	const host = createReplayHost({
 		tabs: [sourceTab],
 		highlightAnnotationId: () => "scroll-test-anchor",
@@ -7801,6 +7800,19 @@ async function assertScrollRestoreAccessErrorDoesNotFailRestore() {
 	assert.equal(restored.restoredPages.length, 1, "the pdf artifact should restore");
 	assert.equal(restored.restoredPages[0].restoredAnnotations, 1, "its annotation should restore despite the scroll error");
 	assert.equal(restored.restoredPages[0].failedCount || 0, 0, "a benign scroll-position access error must not count as a restore failure");
+	assert.equal(host.calls.some((call) => call.name === "run_js"), false, "PDF saved scroll must not evaluate the native top frame");
+	const scrollCalls = host.calls.filter((call) => call.name === "pdf_restore_scroll");
+	assert.equal(scrollCalls.length, 2, "PDF restore positions the viewer before and after restoring marks");
+	assert.ok(scrollCalls.every((call) => call.args.tabId === 73 && call.args.scrollX === 0 && call.args.scrollY === 1200),
+		"PDF restore forwards the captured viewer coordinates to the viewer transport");
+	const runCommand = host.runCommand.bind(host);
+	host.runCommand = async (name, args) => {
+		if (name === "pdf_restore_scroll") throw new Error("PDF viewer scroll timed out");
+		return runCommand(name, args);
+	};
+	const failedScroll = await runtime.restoreSession();
+	assert.equal(failedScroll.restoredPages[0].restoredAnnotations, 1);
+	assert.deepEqual(failedScroll.restoredPages[0].failures, ["PDF viewer scroll timed out"], "real viewer failures remain visible");
 }
 
 async function assertForeignViewerUrlArtifactRestoresAgainstSourceTab() {
@@ -8125,7 +8137,8 @@ async function assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback() {
 	assert.equal(restored.restoredPages[0].restoredNotes, 1);
 	assert.equal(restored.restoredPages[0].failedCount, 0);
 	assert.equal(restoreCalls.filter((call) => call.name === "highlight_text").length, 1);
-	assert.equal(restoreCalls.some((call) => call.name === "run_js"), true);
+	assert.equal(restoreCalls.some((call) => call.name === "pdf_restore_scroll"), true);
+	assert.equal(restoreCalls.some((call) => call.name === "run_js"), false, "fully restored PDFs keep scroll restoration inside their viewer");
 }
 
 async function assertRestoreSessionUsesLatestArtifactPerPageAndRefreshesSourceTargets() {
@@ -9605,6 +9618,65 @@ async function assertExactExtractContentPromptsInjectQuery() {
 	assert.equal(extractTrace.effectiveArgs.maxChars >= 30000, true);
 }
 
+async function assertMarkupWithMarginNotesBypassesOptionalNoteBudget() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const prompts = [
+		"Read this document in full. Mark six recommendations, two per page, with brief margin notes and give six cited bullets.",
+		"Highlight each key finding with a short explanatory note.",
+		"Using only this PDF, highlight two recommendations on each page and add a note to every highlight.",
+	];
+	const classification = { pageScoped: true, teaching: false, enumerableCoverage: true, comparison: false,
+		crossTabComparison: false, documentReviewMarkup: false, problemSolvingHelp: false };
+	try {
+		for (const prompt of prompts) {
+			test.setModelIntentClassificationForPromptForTest(prompt, classification);
+			const request = { toolTraces: Array.from({ length: 5 }, () => ({ toolName: "browser_show_note", state: "complete" })) };
+			assert.equal(test.buildStructuredNoteBudgetGuardResultForTest("browser_show_note", "show_note", prompt, request), null,
+				"explicit markup-with-notes requests must permit a note for every requested highlight");
+		}
+		const prompt = "List the six recommendations from this PDF.";
+		test.setModelIntentClassificationForPromptForTest(prompt, classification);
+		const request = { toolTraces: Array.from({ length: 3 }, () => ({ toolName: "browser_show_note", state: "complete" })) };
+		assert.equal(test.buildStructuredNoteBudgetGuardResultForTest("browser_show_note", "show_note", prompt, request)?.guardrail?.kind,
+			"structured_note_budget", "optional notes retain their default cap");
+	} finally { test.clearModelIntentClassificationsForTest(); }
+}
+
+async function assertPdfMarkupRequestDoesNotRequireExistingSelection() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const prompt = "Using only this PDF, highlight two specific recommendations on each of its three pages and add a short explanatory note to every highlight. Then summarize the six recommendations with clickable citations.";
+	const selection = {
+		surface: "pdf", viewer: "chrome-pdf-viewer", hasSelection: false, text: "",
+		browserClipboardSelectionFallback: { attempted: true, ok: false, error: "PDF selection handoff capture timed out." },
+	};
+	const details = { activeTab: { url: "https://example.test/recommendations.pdf" }, selection };
+	for (const request of [prompt, "Highlight the main findings in this PDF.", "Please highlight three passages and add notes.", "Highlight this recommendation and explain it."]) {
+		assert.equal(test.promptReferencesVisiblePdfSelectionOrPage(request), false, `Creating new highlights is not an existing-selection request: ${request}`);
+		assert.equal(test.promptCouldReferToHighlightedPdfText(request), false, request);
+		assert.equal(test.shouldOpenPdfViewerForUnknownPdfSelection(request, details), false, request);
+	}
+	for (const request of ["Explain the highlighted text.", "What does this highlight mean?", "Summarize my highlights.", "Add a note to the highlight.", "What does the selected passage mean?"]) {
+		assert.equal(test.promptReferencesVisiblePdfSelectionOrPage(request), true, request);
+		assert.equal(test.promptCouldReferToHighlightedPdfText(request), true, request);
+		assert.equal(test.shouldOpenPdfViewerForUnknownPdfSelection(request, details), true, request);
+	}
+	const host = createReplayHost({
+		tabs: [replaySmokeTab({ url: details.activeTab.url, title: "Recommendations PDF" })],
+		selection, visibleText: "PDF viewer page 2 / 3",
+		pdfViewerInitialPageNumber: 2,
+		pdfViewerSelectionHandoff: { ok: false, error: "PDF selection handoff capture timed out." },
+	});
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	await runtime.submitPrompt({ prompt, targetWindowId: 3 });
+	const state = await waitForRuntimeCompletion(runtime);
+	assert.equal(state.activeRequestId, null);
+	assert.ok(host.calls.some((call) => call.name === "open_pdf_in_onhand_viewer"), "markup still opens the PDF viewer normally");
+	assert.ok(state.turns.at(-1)?.modelCalls > 0, "markup must reach the answering model when no selection exists");
+	assert.doesNotMatch(state.turns.at(-1)?.reply || "", /could not transfer selected or highlighted text|highlight it once in the Onhand viewer/i);
+}
+
 async function assertUnknownPdfSelectionOpensViewerAndAsksForReselect() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -10645,7 +10717,322 @@ async function assertFixtureResponses() {
 	}
 }
 
+function deferred() {
+	let resolve;
+	const promise = new Promise((done) => { resolve = done; });
+	return { promise, resolve };
+}
+
+async function configureSmokeRuntime(host = createReplayHost()) {
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key", diagnosticsEnabled: false });
+	return runtime;
+}
+
+async function assertPreparationCanBeStoppedWithoutLateContinuation() {
+	installChromeStorageStub();
+	const entered = deferred();
+	const release = deferred();
+	const host = createReplayHost();
+	const runCommand = host.runCommand.bind(host);
+	let firstSelection = true;
+	host.runCommand = async (name, args) => {
+		if (name === "get_selection" && firstSelection) {
+			firstSelection = false;
+			entered.resolve();
+			await release.promise;
+		}
+		return await runCommand(name, args);
+	};
+	const runtime = await configureSmokeRuntime(host);
+	const first = runtime.submitPrompt({ prompt: "First preparation request", targetWindowId: 3 });
+	await entered.promise;
+	assert.ok((await runtime.getState()).activeRequestId);
+	assert.equal((await runtime.stop()).stopped, true);
+	await first;
+	let state = await waitForRuntimeCompletion(runtime);
+	assert.equal(state.status, "Stopped");
+	assert.equal(state.turns[0].error, false);
+	assert.equal(state.turns[0].modelCalls, 0, "stopping preparation must not start the main model");
+	assert.equal(host.calls.some((call) => call.name === "highlight_text"), false);
+	await runtime.submitPrompt({ prompt: "Second preparation request", targetWindowId: 3 });
+	state = await waitForRuntimeCompletion(runtime);
+	assert.deepEqual(state.turns.map((turn) => turn.userPrompt), ["First preparation request", "Second preparation request"]);
+	const settled = JSON.stringify(state.turns);
+	const callCount = host.calls.length;
+	release.resolve();
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.equal(host.calls.length, callCount + 1, "only the already-running original read may finish after Stop");
+	assert.equal(JSON.stringify((await runtime.getState()).turns), settled, "late cancelled read must not replace a newer turn");
+}
+
+async function assertColdSubmissionAndSessionTransitionsAreExclusive() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	await configureSmokeRuntime();
+	const host = createReplayHost();
+	const runtime = createOnhandBrowserRuntime(host);
+	const storage = chrome.storage.local;
+	const originalGet = storage.get.bind(storage);
+	const storageEntered = deferred();
+	const releaseStorage = deferred();
+	storage.get = async (defaults) => { storageEntered.resolve(); await releaseStorage.promise; return originalGet(defaults); };
+	const first = runtime.submitPrompt({ prompt: "Keep the first cold-start prompt", targetWindowId: 3 });
+	await storageEntered.promise;
+	await assert.rejects(runtime.submitPrompt({ prompt: "Do not replace the first prompt" }), /already responding/);
+	await assert.rejects(runtime.startNewSession(), /current Onhand operation/);
+	await assert.rejects(runtime.switchSession("missing"), /current Onhand operation/);
+	await assert.rejects(runtime.deleteSession(), /current Onhand operation/);
+	await assert.rejects(runtime.restoreSession(), /current Onhand operation/);
+	releaseStorage.resolve();
+	await first;
+	assert.deepEqual((await waitForRuntimeCompletion(runtime)).turns.map((turn) => turn.userPrompt), ["Keep the first cold-start prompt"]);
+	storage.get = originalGet;
+
+	const clearing = deferred();
+	const releaseClear = deferred();
+	const originalRun = host.runCommand.bind(host);
+	host.runCommand = async (name, args) => {
+		if (name === "clear_annotations") { clearing.resolve(); await releaseClear.promise; }
+		return originalRun(name, args);
+	};
+	const transition = runtime.startNewSession();
+	await clearing.promise;
+	await assert.rejects(runtime.submitPrompt({ prompt: "Must wait for session transition" }), /already responding/);
+	await assert.rejects(runtime.deleteSession(), /current Onhand operation/);
+	releaseClear.resolve();
+	await transition;
+	host.runCommand = originalRun;
+	await runtime.submitPrompt({ prompt: "Submission after transition", targetWindowId: 3 });
+	assert.equal((await waitForRuntimeCompletion(runtime)).turns[0].userPrompt, "Submission after transition");
+	const stored = getStoredStore();
+	const session = stored.sessions[stored.currentSessionId];
+	session.artifactIds = [];
+	session.pageActions = [{ key: "highlight:restore-race", type: "annotation", tabId: 7, url: "https://example.test/replay-smoke", title: "Replay smoke page", annotationId: "restore-race", detail: "Alpha smoke content", citationText: "Alpha smoke content" }];
+	const restoreEntered = deferred();
+	const releaseRestore = deferred();
+	host.runCommand = async (name, args) => {
+		if (name === "clear_annotations") { restoreEntered.resolve(); await releaseRestore.promise; }
+		return originalRun(name, args);
+	};
+	const restoring = runtime.restoreSession(session.id);
+	await restoreEntered.promise;
+	await assert.rejects(runtime.submitPrompt({ prompt: "Must wait for saved source restoration" }), /already responding/);
+	await assert.rejects(runtime.startNewSession(), /current Onhand operation/);
+	releaseRestore.resolve();
+	await restoring;
+	host.runCommand = originalRun;
+	await runtime.submitPrompt({ prompt: "Submission after restore", targetWindowId: 3 });
+	assert.equal((await waitForRuntimeCompletion(runtime)).turns.at(-1).userPrompt, "Submission after restore");
+}
+
+async function assertLateLearningFocusRestoreDoesNotStealFocus() {
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const release = deferred();
+	let delayedSnapshot = false;
+	const snapshot = host.snapshotState.bind(host);
+	host.snapshotState = async (args) => {
+		const result = await snapshot(args);
+		if (!delayedSnapshot && host.calls.some((call) => call.name === "highlight_text")) {
+			delayedSnapshot = true;
+			await release.promise;
+			// The learner has moved to a different tab while this old
+			// tool-completion snapshot was outstanding.
+			for (const window of result.windows) for (const tab of window.tabs) tab.active = false;
+			result.windows[0].tabs.push({ id: 8, windowId: 3, active: true, url: "https://example.test/new-tab", title: "New tab" });
+		}
+		return result;
+	};
+	await runtime.submitPrompt({ prompt: "Highlight Alpha smoke content.", targetWindowId: 3, learningMode: true });
+	const state = await waitForRuntimeCompletion(runtime);
+	assert.equal(delayedSnapshot, true);
+	assert.equal(state.activeRequestId, null);
+	const activations = host.calls.filter((call) => call.name === "activate_tab").length;
+	release.resolve();
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	assert.equal(host.calls.filter((call) => call.name === "activate_tab").length, activations, "a finished request must not refocus its old tab from a late tool callback");
+}
+
+async function assertStorageFailuresDoNotWedgeRequests() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	await configureSmokeRuntime();
+	const storage = chrome.storage.local;
+	const originalGet = storage.get.bind(storage);
+	let failRead = true;
+	storage.get = async (defaults) => {
+		if (failRead) { failRead = false; throw new Error("Temporary storage read failure"); }
+		return originalGet(defaults);
+	};
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await assert.rejects(runtime.submitPrompt({ prompt: "Failed initial load" }), /Temporary storage read failure/);
+	await runtime.submitPrompt({ prompt: "Retry after initial load failure" });
+	assert.equal((await waitForRuntimeCompletion(runtime)).turns.length, 1);
+	storage.get = originalGet;
+	const originalSet = storage.set.bind(storage);
+	let failWrite = true;
+	storage.set = async (values) => {
+		const sessions = Object.values(values.onhandBrowserSessions || {});
+		if (failWrite && sessions.some((session) => session.turns?.length >= 2)) {
+			failWrite = false;
+			throw new Error("Transaction commit failed");
+		}
+		return originalSet(values);
+	};
+	await runtime.submitPrompt({ prompt: "Keep answer when save fails" });
+	const failedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(failedState.activeRequestId, null);
+	assert.match(failedState.status, /could not save this session: Transaction commit failed/);
+	assert.equal(failedState.turns.length, 2, "completed answer remains available in memory after a failed save");
+	await runtime.submitPrompt({ prompt: "Recover after save failure" });
+	assert.equal((await waitForRuntimeCompletion(runtime)).turns.length, 3);
+	storage.set = originalSet;
+}
+
+async function assertQueuedRetryDoesNotResumeAfterStop() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const idle = deferred();
+	const controller = new AbortController();
+	let continued = false;
+	let failure;
+	test.queueBlankReplyRetryForTest({ followUp() {}, waitForIdle: () => idle.promise, async continue() { continued = true; } },
+		"retry", (error) => { failure = error; }, controller.signal);
+	controller.abort();
+	idle.resolve();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(continued, false);
+	assert.equal(failure?.name, "AbortError");
+}
+
+async function assertStorageWaitsForCommitAndRejectsAbort() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const originalIndexedDb = globalThis.indexedDB;
+	try {
+		for (const outcome of ["complete", "abort", "error", "callback-reject", "callback-throw"]) {
+			const opened = deferred();
+			let transaction;
+			let closed = false;
+			let aborted = false;
+			globalThis.indexedDB = { open() {
+				const request = {};
+				queueMicrotask(() => {
+					request.result = { close() { closed = true; }, transaction() {
+						transaction = { objectStore: () => ({}), abort() { aborted = true; } };
+						opened.resolve(); return transaction;
+					} };
+					request.onsuccess();
+				});
+				return request;
+			} };
+			const callbackFailure = new Error("Callback failed");
+			const pending = test.withRuntimeStoreForTest("sessions", "readwrite", () => {
+				if (outcome === "callback-throw") throw callbackFailure;
+				if (outcome === "callback-reject") return Promise.reject(callbackFailure);
+				return Promise.resolve("saved");
+			});
+			let settled = false;
+			pending.then(() => { settled = true; }, () => { settled = true; });
+			await opened.promise;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			if (outcome.startsWith("callback")) {
+				await assert.rejects(pending, /Callback failed/);
+				assert.equal(aborted, true, "callback failure must abort partial writes");
+			} else {
+				assert.equal(settled, false, "request success is not transaction commit");
+				assert.equal(closed, false);
+				if (outcome === "complete") { transaction.oncomplete(); assert.equal(await pending, "saved"); }
+				else {
+					transaction.error = new Error(`commit ${outcome}`);
+					transaction[`on${outcome}`]();
+					await assert.rejects(pending, new RegExp(`commit ${outcome}`));
+				}
+			}
+			assert.equal(closed, true);
+		}
+	} finally {
+		if (originalIndexedDb === undefined) delete globalThis.indexedDB; else globalThis.indexedDB = originalIndexedDb;
+	}
+}
+
+async function assertArtifactCursorStopsAtRequestedLimit() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const originalIndexedDb = globalThis.indexedDB;
+	const fixtures = Array.from({ length: 200 }, (_, index) => ({ id: `artifact-${index}`, label: index % 2 ? "other" : "match", createdAt: String(200 - index), outerHTML: "x".repeat(1000) }));
+	try {
+		for (const [params, expectedRows, expectedIds] of [[{ limit: 3 }, 3, [0, 1, 2]], [{ query: "match", limit: 3 }, 5, [0, 2, 4]], [{ query: "absent", limit: 3 }, 200, []]]) {
+			let visited = 0;
+			globalThis.indexedDB = { open() {
+				const request = {};
+				queueMicrotask(() => {
+					request.result = { close() {}, transaction() {
+						const transaction = { objectStore() { return { index(name) {
+							assert.equal(name, "createdAt");
+							return { openCursor(range, direction) {
+								assert.equal(direction, "prev");
+								const cursorRequest = {};
+								let position = 0;
+								const advance = () => queueMicrotask(() => {
+									let continued = false;
+									if (position < fixtures.length) {
+										visited++;
+										cursorRequest.result = { value: fixtures[position++], continue() { continued = true; advance(); } };
+									} else cursorRequest.result = null;
+									cursorRequest.onsuccess();
+									if (!continued) queueMicrotask(() => transaction.oncomplete());
+								});
+								advance(); return cursorRequest;
+							} };
+						} }; } };
+						return transaction;
+					} };
+					request.onsuccess();
+				}); return request;
+			} };
+			const artifacts = await test.listBrowserArtifactsForTest(params);
+			assert.equal(visited, expectedRows, "listing must stop reading heavy records as soon as the limit is satisfied");
+			assert.deepEqual(artifacts.map((artifact) => artifact.id), expectedIds.map((index) => `artifact-${index}`));
+		}
+	} finally {
+		if (originalIndexedDb === undefined) delete globalThis.indexedDB; else globalThis.indexedDB = originalIndexedDb;
+	}
+}
+
+async function assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources() {
+	installChromeStorageStub();
+	const runtime = await configureSmokeRuntime();
+	const first = getStoredStore();
+	const deletedId = first.currentSessionId;
+	const deleted = first.sessions[deletedId];
+	const kept = { ...structuredClone(deleted), id: "kept-session", artifactIds: ["shared"], pageActions: [{ type: "artifact", artifactId: "kept-action-ref" }], turns: [{ pageActions: [{ type: "artifact", artifactId: "kept-turn-ref" }] }] };
+	deleted.artifactIds = ["private", "shared", "legacy", "owned-by-kept"];
+	const artifacts = Object.fromEntries([
+		["private", deletedId], ["shared", deletedId], ["legacy", null], ["kept-action-ref", deletedId], ["kept-turn-ref", deletedId], ["owned-by-kept", kept.id], ["unrelated", kept.id], ["capture-before-turn-saved", deletedId],
+	].map(([id, sessionId]) => [id, { id, sessionId, createdAt: "2026-09-01T00:00:00Z", outerHTML: "private HTML", screenshotDataUrl: "data:image/png;base64,fixture", page: {} }]));
+	await chrome.storage.local.set({ ...storedStoreEntries({ ...first, sessions: { ...first.sessions, [kept.id]: kept } }), onhandBrowserArtifacts: artifacts });
+	await runtime.deleteSession(deletedId);
+	for (const id of ["private", "legacy", "capture-before-turn-saved"]) await assert.rejects(runtime.getReplayArtifact(id), /Could not find/);
+	for (const id of ["shared", "kept-action-ref", "kept-turn-ref", "owned-by-kept", "unrelated"]) assert.ok((await runtime.getReplayArtifact(id)).artifact);
+	assert.equal((await runtime.listSessions()).sessions.some((session) => session.id === deletedId), false);
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	await test.deleteSessionRecordsForTest([kept.id]);
+	assert.deepEqual(Object.keys(chrome.storage.local.data.onhandBrowserArtifacts), [], "last surviving references must release shared artifacts too");
+}
+
 async function main() {
+	await assertPdfScrollRestoreUsesViewerCoordinates();
+	await assertMarkupWithMarginNotesBypassesOptionalNoteBudget();
+	await assertPdfMarkupRequestDoesNotRequireExistingSelection();
+	await assertPreparationCanBeStoppedWithoutLateContinuation();
+	await assertColdSubmissionAndSessionTransitionsAreExclusive();
+	await assertStorageFailuresDoNotWedgeRequests();
+	await assertLateLearningFocusRestoreDoesNotStealFocus();
+	await assertQueuedRetryDoesNotResumeAfterStop();
+	await assertStorageWaitsForCommitAndRejectsAbort();
+	await assertArtifactCursorStopsAtRequestedLimit();
+	await assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources();
 	await assertProviderApiKeyStorageAndRouting();
 	await assertAssistantStreamingTextBlocksStaySeparated();
 	await assertDestinationNavigationDefaultsToNewTab();
@@ -10707,7 +11094,6 @@ async function main() {
 	await assertOwnPdfViewerArtifactRestoreIsRestorable();
 	await assertGoogleDocsPdfViewerRestoreDoesNotNavigateRawExport();
 	await assertForeignViewerUrlArtifactRestoresAgainstSourceTab();
-	await assertScrollRestoreAccessErrorDoesNotFailRestore();
 	await assertDirectPdfArtifactRestoreInstallsInlineViewerBeforeHighlight();
 	await assertDirectPdfArtifactRestoreWithoutPdfAnchorStillHandsOff();
 	await assertFullyRestoredPdfArtifactDoesNotReplayDuplicateFallback();

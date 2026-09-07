@@ -9,6 +9,13 @@ async function readClipboardText() {
 			// document cannot receive. Extension clipboardRead permits Paste here.
 		}
 	}
+	return (await readClipboardSnapshot()).text;
+}
+
+async function readClipboardSnapshot() {
+	// A text read alone cannot distinguish an empty clipboard from an image.
+	// Paste exposes the formats without changing the system clipboard and works
+	// in this unfocused extension document with clipboardRead permission.
 	const textarea = document.createElement("textarea");
 	document.body.appendChild(textarea);
 	let timeoutId;
@@ -16,8 +23,16 @@ async function readClipboardText() {
 		return await new Promise((resolve, reject) => {
 			textarea.addEventListener("paste", (event) => {
 				event.preventDefault();
-				if (!event.clipboardData) reject(new Error("Clipboard paste did not expose data."));
-				else resolve(event.clipboardData.getData("text/plain"));
+				const data = event.clipboardData;
+				if (!data) {
+					reject(new Error("Clipboard paste did not expose data."));
+					return;
+				}
+				const types = Array.from(data.types || [], (type) => String(type).toLowerCase());
+				const text = data.getData("text/plain");
+				const canRestoreTextOnly = data.types != null && !data.files?.length &&
+					types.every((type) => type === "text/plain") && (!text || types.includes("text/plain"));
+				resolve({ text, types, canRestoreTextOnly });
 			}, { once: true });
 			timeoutId = setTimeout(() => reject(new Error("Clipboard paste timed out.")), 1500);
 			textarea.focus();
@@ -69,6 +84,10 @@ setInterval(sendHeartbeat, HEARTBEAT_MS);
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	if (message?.target !== "offscreen") return false;
 	(async () => {
+		if (message?.type === "offscreen:clipboard-snapshot") {
+			sendResponse({ ok: true, ...(await readClipboardSnapshot()) });
+			return;
+		}
 		if (message?.type === "offscreen:clipboard-read") {
 			sendResponse({ ok: true, text: await readClipboardText() });
 			return;

@@ -593,10 +593,10 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /function restorePdfViewSnapshot/, "PDF viewer should restore page position and annotations after re-rendering");
 	assert.match(source, /window\.addEventListener\("resize",\s*scheduleResizeRender/, "PDF viewer should handle resize without resetting the document");
 	assert.match(source, /anchor = captureZoomAnchor\(\)/, "PDF viewer zoom re-renders should anchor the current view before rescaling");
-	assert.match(source, /const annotations = capturePdfAnnotationSnapshots\(\)/, "PDF viewer zoom re-renders should snapshot annotations before rebuilding layers");
-	assert.match(source, /rebuildPdfAnnotationLayers\(annotations, sequence\)/, "PDF viewer zoom re-renders should restore annotations after the re-render");
+	assert.match(source, /commitTransientZoom\(\);\s*refreshPdfAnnotationLayers\(\);/, "PDF zoom should refresh the existing annotation geometry before asynchronous sharpening");
+	assert.doesNotMatch(source, /rebuildPdfAnnotationLayers\(annotations, sequence\)/, "PDF zoom must not replace live edits with a stale snapshot");
 	assert.match(source, /function describePdfTextLayer/, "the viewer must diagnose missing text layers instead of reporting bare no-match results");
-	assert.match(source, /likelyScanned: extractableChars < 40/, "scan detection should key on near-zero extractable text");
+	assert.match(source, /likelyScanned: extractableChars >= 40 \? false : failedPageNumbers\.length \? null : true/, "scan detection should distinguish near-zero text from failed extraction");
 	assert.match(source, /function pdfHighlightRegion/, "scanned pages need region marks (behavior doc §3.13)");
 	assert.match(source, /This page has extractable text; anchor with an exact text quote instead of a region\./, "region marks must be refused on text pages so citations stay verifiable");
 	assert.match(source, /if \(regionRect\) return await pdfHighlightRegion\(rawQuery, regionRect, options\);/, "region anchors must replay through the normal highlight path for zoom rebuilds and restores");
@@ -1501,6 +1501,11 @@ async function assertPdfClipboardSelectionUsesExtensionOnly() {
 			selectionPayloadHasText: (selection) => Boolean(selection?.text?.trim()),
 			isLikelyPdfResourceUrl: (url) => url?.endsWith(".pdf"),
 			BROWSER_SELECTION_CLIPBOARD_MARKER_PREFIX: "__ONHAND_TEST_MARKER__",
+			readClipboardTextForRestore: async () => {
+				reads++;
+				if (scenario === "initial-read-error") throw new Error("Clipboard formats unavailable");
+				return clipboard;
+			},
 			readTextFromExtensionClipboard: async () => {
 				reads++;
 				if (scenario === "initial-read-error" || (scenario === "copied-read-error" && reads === 2)) throw new Error("Extension clipboard read unavailable");
@@ -1559,7 +1564,7 @@ async function assertPdfClipboardSelectionUsesExtensionOnly() {
 }
 
 async function assertOffscreenClipboardWithoutDocumentFocus() {
-	const declarations = await Promise.all(["readClipboardText", "writeClipboardText"].map((name) => loadFunctionFromFile("packages/browser-extension/offscreen.js", name)));
+	const declarations = await Promise.all(["readClipboardText", "readClipboardSnapshot", "writeClipboardText"].map((name) => loadFunctionFromFile("packages/browser-extension/offscreen.js", name)));
 	for (const mode of ["async-api", "unfocused", "missing-api", "empty", "paste-denied", "paste-timeout", "copy-denied"]) {
 		const dom = new JSDOM("<!doctype html><body></body>");
 		const { document } = dom.window;
@@ -1592,7 +1597,7 @@ async function assertOffscreenClipboardWithoutDocumentFocus() {
 			// Delivery may be asynchronous; do not inspect the text field before Paste.
 			queueMicrotask(() => {
 				const event = new dom.window.Event("paste", { cancelable: true });
-				Object.defineProperty(event, "clipboardData", { value: { getData: (type) => {
+				Object.defineProperty(event, "clipboardData", { value: { types: ["text/plain"], files: [], getData: (type) => {
 					assert.equal(type, "text/plain");
 					return clipboard;
 				} } });
@@ -1620,6 +1625,58 @@ async function assertOffscreenClipboardWithoutDocumentFocus() {
 		} finally {
 			dom.window.close();
 		}
+	}
+}
+
+async function assertSelectionCopyPreservesClipboardFormats() {
+	const snapshotDeclaration = await loadFunctionFromFile("packages/browser-extension/offscreen.js", "readClipboardSnapshot");
+	const restoreDeclaration = await loadBackgroundFunction("readClipboardTextForRestore");
+	const captures = await Promise.all(["maybeGetBrowserClipboardPdfSelection", "maybeGetGoogleDocsClipboardSelection"].map(loadBackgroundFunction));
+	for (const fixture of [
+		{ name: "plain text", types: ["text/plain"], text: "Original text", safe: true },
+		{ name: "empty clipboard", types: [], text: "", safe: true },
+		{ name: "image", types: ["Files"], files: [{}], safe: false },
+		{ name: "png MIME", types: ["image/png"], safe: false },
+		{ name: "rich text", types: ["text/plain", "text/html"], text: "Formatted text", safe: false },
+		{ name: "custom format", types: ["text/plain", "application/x-custom"], text: "Custom text", safe: false },
+		{ name: "missing format metadata", text: "Unknown", safe: false },
+	]) {
+		const dom = new JSDOM("<!doctype html><body></body>");
+		try {
+			const { document } = dom.window;
+			const clipboard = { ...fixture };
+			const original = structuredClone(clipboard);
+			document.execCommand = (command) => {
+				assert.equal(command, "paste", "format inspection must never copy");
+				const event = new dom.window.Event("paste", { cancelable: true });
+				Object.defineProperty(event, "clipboardData", { value: {
+					types: clipboard.types, files: clipboard.files || [], getData: () => clipboard.text || "",
+				} });
+				document.querySelector("textarea").dispatchEvent(event);
+				assert.equal(event.defaultPrevented, true);
+				return true;
+			};
+			const snapshot = new Function("document", `${snapshotDeclaration}; return readClipboardSnapshot;`)(document);
+			const backup = new Function("sendOffscreenClipboardMessage", `${restoreDeclaration}; return readClipboardTextForRestore;`)(async () => snapshot());
+			assert.equal((await snapshot()).canRestoreTextOnly, fixture.safe, fixture.name);
+			if (fixture.safe) assert.equal(await backup(), fixture.text);
+			else {
+				await assert.rejects(backup(), /preserve/);
+				const dependencies = {
+					selectionPayloadHasText: () => false, isLikelyPdfResourceUrl: () => true, isGoogleDocsDocumentUrl: () => true,
+					readClipboardTextForRestore: backup,
+					writeTextToExtensionClipboard: () => assert.fail("Unsafe clipboard must not be overwritten"),
+				};
+				for (const [index, name] of ["maybeGetBrowserClipboardPdfSelection", "maybeGetGoogleDocsClipboardSelection"].entries()) {
+					const capture = new Function(...Object.keys(dependencies), `${captures[index]}; return ${name};`)(...Object.values(dependencies));
+					const result = await capture({ id: 7, url: "https://example.test/document.pdf" }, { hasSelection: false, text: "" });
+					assert.equal(result.hasSelection, false, fixture.name);
+					assert.match((result.browserClipboardSelectionFallback || result.googleDocsSelectionFallback).error, /preserve/);
+				}
+			}
+			assert.deepEqual(clipboard, original, fixture.name);
+			assert.equal(document.querySelector("textarea"), null);
+		} finally { dom.window.close(); }
 	}
 }
 
@@ -3867,6 +3924,7 @@ async function main() {
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();
 	await assertOffscreenClipboardWithoutDocumentFocus();
+	await assertSelectionCopyPreservesClipboardFormats();
 	await assertVisibleRegionCaptureFallsBackWhenDomIsRestricted();
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();

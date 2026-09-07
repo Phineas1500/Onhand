@@ -15,7 +15,9 @@
 // - per-IP daily registration cap
 // - request body size and max_tokens clamps
 //
-// Secrets/bindings: OPENROUTER_API_KEY (secret), FREE_TIER_KV (KV).
+// Secrets/bindings: OPENROUTER_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
+
+import { fetchOpenRouterGenerationMetadata, reportedGenerationCost } from "./generation-metadata.mjs";
 
 const FREE_TIER_TEXT_MODEL = "openai/gpt-5.6-luna";
 const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
@@ -42,7 +44,7 @@ const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
 const DAILY_COUNTER_TTL_SECONDS = 60 * 60 * 48;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_GENERATION_URL = "https://openrouter.ai/api/v1/generation";
+const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
 const QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const QUOTA_BYPASS_SOURCE = "free-tier-bypass";
 const TELEMETRY_EVENT_NAMES = new Set([
@@ -166,6 +168,7 @@ function quotaBypassAuthorized(request, env, deviceHash = "") {
 
 function firstFiniteNumber(...values) {
 	for (const value of values) {
+		if (value == null || value === "") continue;
 		const number = Number(value);
 		if (Number.isFinite(number)) return number;
 	}
@@ -251,20 +254,22 @@ function writeAnalytics(ctx, env, eventName, fields = {}, request = null) {
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
 }
 
-function writeCompletionAnalyticsAndAccounting(ctx, env, fields, request = null) {
+function writeCompletionAnalyticsAndAccounting(ctx, env, eventName, fields, request = null) {
 	const analytics = env?.ONHAND_ANALYTICS;
 	const context = analyticsContext(request);
-	const task = Promise.resolve()
-		.then(() => enrichCompletionFields(env, fields))
-		.then(async (enrichedFields) => {
-			if (analytics && typeof analytics.writeDataPoint === "function") {
-				analytics.writeDataPoint(analyticsDataPoint("chat_stream_complete", enrichedFields, context));
-			}
-			await recordCompletionAccounting(env, analytics, context, enrichedFields);
-		})
-		.catch(() => {});
+	const task = (async () => {
+		const enrichedFields = await enrichCompletionFields(env, fields);
+		// Accounting must not depend on the optional analytics binding succeeding.
+		await recordCompletionAccounting(env, analytics, context, enrichedFields);
+		if (analytics && typeof analytics.writeDataPoint === "function") {
+			try { analytics.writeDataPoint(analyticsDataPoint(eventName, enrichedFields, context)); } catch {}
+		}
+	})().catch((error) => {
+		console.error("free_tier_accounting_failed", fields.accountingId, String(error?.message || error));
+		writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...fields, result: "error", errorCode: "accounting_failed" }, request);
+	});
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
-	else void task;
+	return task;
 }
 
 async function hashIdentifier(value) {
@@ -296,17 +301,9 @@ async function writeKvNumber(env, key, value, expirationTtl = DAILY_COUNTER_TTL_
 	await env.FREE_TIER_KV.put(key, String(value), { expirationTtl });
 }
 
-async function addKvNumber(env, key, amount, expirationTtl = DAILY_COUNTER_TTL_SECONDS) {
-	const delta = finiteNumber(amount);
-	if (delta <= 0) return await readKvNumber(env, key);
-	const current = await readKvNumber(env, key);
-	const next = current + delta;
-	await writeKvNumber(env, key, next, expirationTtl);
-	return next;
-}
-
-function dailyCostKey() {
-	return `cost:${todayKey()}`;
+function dailyCostLedger(env, day) {
+	if (!env.FREE_TIER_COST_LEDGER) throw new Error("FREE_TIER_COST_LEDGER binding is required");
+	return env.FREE_TIER_COST_LEDGER.getByName(day);
 }
 
 function turnModelCallKey(deviceHash, telemetryIds) {
@@ -346,18 +343,37 @@ async function markHeavyTurnOnce(env, fields) {
 }
 
 async function recordCompletionAccounting(env, analytics, context, fields) {
-	if (!fields.quotaBypassed && finiteNumber(fields.cost) > 0) await addKvNumber(env, dailyCostKey(), fields.cost);
+	if (!fields.quotaBypassed) {
+		const entry = {
+			day: fields.accountingDay,
+			id: fields.generationId || fields.accountingId,
+			generationId: fields.generationId,
+			cost: firstFiniteNumber(fields.cost),
+			reconcile: Boolean(fields.generationId) && !fields.costResolved,
+			adjustmentPoint: analyticsDataPoint("free_tier_cost_adjustment", { ...fields, cost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, durationMs: 0, actionCount: 0, result: "reconciled" }, context),
+		};
+		for (let attempt = 1; ; attempt += 1) {
+			try {
+				await dailyCostLedger(env, fields.accountingDay).record(entry);
+				break;
+			} catch (error) {
+				if (attempt === 3) throw error;
+				await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+			}
+		}
+	}
 	const reasons = heavyTurnReasons(env, fields);
-	if (!reasons.length || !(await markHeavyTurnOnce(env, fields))) return;
+	if (!reasons.length) return;
+	try { if (!(await markHeavyTurnOnce(env, fields))) return; } catch { return; }
 	if (!analytics || typeof analytics.writeDataPoint !== "function") return;
 	const cap = envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP);
-	analytics.writeDataPoint(analyticsDataPoint("free_tier_heavy_turn", {
+	try { analytics.writeDataPoint(analyticsDataPoint("free_tier_heavy_turn", {
 		...fields,
 		result: "warn",
 		current: fields.actionCount,
 		cap,
 		errorCode: reasons.join(","),
-	}, context));
+	}, context)); } catch {}
 }
 
 function requestTelemetryIds(request) {
@@ -450,30 +466,6 @@ function providerFromPayload(payload) {
 	return compactString(provider || "", 80);
 }
 
-async function fetchOpenRouterGenerationMetadata(env, generationId) {
-	const id = compactIdentifier(generationId, 160);
-	if (!id || !env?.OPENROUTER_API_KEY) return null;
-	const url = new URL(OPENROUTER_GENERATION_URL);
-	url.searchParams.set("id", id);
-	for (let attempt = 1; attempt <= 2; attempt += 1) {
-		try {
-			const response = await fetch(url, {
-				headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}` },
-			});
-			if (!response.ok) {
-				if (attempt === 2 || ![404, 408, 429, 500, 502, 503].includes(response.status)) return null;
-				await new Promise((resolve) => setTimeout(resolve, 750));
-				continue;
-			}
-			const payload = await response.json().catch(() => null);
-			return payload?.data && typeof payload.data === "object" ? payload.data : null;
-		} catch {
-			if (attempt === 2) return null;
-			await new Promise((resolve) => setTimeout(resolve, 750));
-		}
-	}
-	return null;
-}
 
 async function enrichCompletionFields(env, fields) {
 	const metadata = await fetchOpenRouterGenerationMetadata(env, fields.generationId);
@@ -495,11 +487,12 @@ async function enrichCompletionFields(env, fields) {
 		promptTokens,
 		completionTokens,
 		totalTokens,
-		cost: firstFiniteNumber(metadata.total_cost, metadata.usage, fields.cost),
+		cost: reportedGenerationCost(metadata) ?? firstFiniteNumber(fields.cost),
+		costResolved: reportedGenerationCost(metadata) !== undefined,
 	};
 }
 
-function instrumentSseBody(body, env, ctx, baseFields, request) {
+function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 	if (!body) return body;
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
@@ -510,86 +503,127 @@ function instrumentSseBody(body, env, ctx, baseFields, request) {
 	let provider = compactString(baseFields.provider || "", 80);
 	let providerRequestId = "";
 	let streamedBytes = 0;
-
-	function readPayloads(text) {
-		buffered += text;
-		const lines = buffered.split(/\r?\n/);
-		buffered = lines.pop() || "";
-		for (const line of lines) {
-			readPayload(extractSsePayload(line));
-		}
-	}
+	let finished = false;
+	let cancelled = false;
+	let jsonTooLarge = false;
+	let activeRead = null;
+	let cancelTask = null;
+	const onRequestAbort = () => { cancel(request.signal.reason); };
 
 	function readPayload(payload) {
 		if (!payload || typeof payload !== "object") return;
-		if (payload?.usage && typeof payload.usage === "object") usage = payload.usage;
-		if (payload?.id) generationId = compactIdentifier(payload.id, 120) || generationId;
-		if (payload?.model) upstreamModel = compactString(payload.model, 160) || upstreamModel;
-		if (payload?.request_id) providerRequestId = compactIdentifier(payload.request_id, 120) || providerRequestId;
+		if (payload.usage && typeof payload.usage === "object") usage = { ...usage, ...payload.usage };
+		if (payload.id) generationId = compactIdentifier(payload.id, 120) || generationId;
+		if (payload.model) upstreamModel = compactString(payload.model, 160) || upstreamModel;
+		if (payload.request_id) providerRequestId = compactIdentifier(payload.request_id, 120) || providerRequestId;
 		provider = providerFromPayload(payload) || provider;
 	}
 
-	function usageFields() {
-		return {
-			promptTokens: usage?.prompt_tokens,
-			completionTokens: usage?.completion_tokens,
-			totalTokens: usage?.total_tokens,
-			cost: usage?.cost,
-		};
+	function readChunk(bytes) {
+		streamedBytes += bytes.byteLength;
+		if (!isSse && streamedBytes > MAX_COMPLETION_BODY_BYTES) {
+			jsonTooLarge = true;
+			buffered = "";
+			return;
+		}
+		if (jsonTooLarge) return;
+		buffered += decoder.decode(bytes, { stream: true });
+		if (isSse) {
+			const lines = buffered.split(/\r?\n/);
+			buffered = lines.pop() || "";
+			for (const line of lines) readPayload(extractSsePayload(line));
+		}
 	}
 
-	function streamFields(result, overrides = {}) {
+	function finalize(result, errorCode = "") {
+		if (finished) return;
+		finished = true;
+		request?.signal?.removeEventListener("abort", onRequestAbort);
+		if (!jsonTooLarge) {
+			buffered += decoder.decode();
+			if (isSse) readPayload(extractSsePayload(buffered));
+			else { try { readPayload(JSON.parse(buffered)); } catch {} }
+		}
 		const startedAt = finiteNumber(baseFields.startedAtMs);
-		return {
-			...baseFields,
-			result,
-			bodyBytes: streamedBytes,
+		const fields = {
+			...baseFields, result, errorCode, bodyBytes: streamedBytes,
 			durationMs: startedAt > 0 ? Date.now() - startedAt : baseFields.durationMs,
-			provider,
-			generationId,
-			upstreamModel,
-			providerRequestId,
-			...usageFields(),
-			...overrides,
+			provider, generationId, upstreamModel, providerRequestId,
+			promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens,
+			totalTokens: usage?.total_tokens, cost: usage?.cost,
 		};
+		if (!generationId && firstFiniteNumber(fields.cost) === undefined && baseFields.status < 400) {
+			writeAnalytics(ctx, env, "free_tier_accounting_unresolved", { ...fields, errorCode: "missing_generation_usage" }, request);
+		}
+		const eventName = result === "cancelled" ? "chat_stream_cancelled"
+			: result === "error" ? "chat_stream_error"
+				: isSse ? "chat_stream_complete" : "chat_response_complete";
+		return writeCompletionAnalyticsAndAccounting(ctx, env, eventName, fields, request);
 	}
+
+	function cancel(reason) {
+		if (finished) return cancelTask;
+		if (cancelTask) return cancelTask;
+		cancelled = true;
+		cancelTask = (async () => {
+			if (isSse) {
+				await reader.cancel(reason).catch(() => {});
+				await activeRead?.catch(() => {});
+			} else {
+				// JSON may not expose its generation/usage until the very last byte.
+				// Finish reading this bounded model response after client disconnect.
+				try {
+					await activeRead;
+					while (!jsonTooLarge) {
+						const result = await reader.read();
+						if (result.done) break;
+						readChunk(result.value);
+					}
+				} catch {}
+				await reader.cancel(reason).catch(() => {});
+			}
+			await finalize("cancelled", "client_cancelled");
+		})();
+		if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(cancelTask);
+		return cancelTask;
+	}
+
+	// workerd can abandon its response pump on a real network disconnect without
+	// calling the ReadableStream source's cancel hook. The incoming request signal
+	// is the authoritative disconnect notification (enable_request_signal flag).
+	request?.signal?.addEventListener("abort", onRequestAbort, { once: true });
+	if (request?.signal?.aborted) cancel(request.signal.reason);
 
 	return new ReadableStream({
 		async pull(controller) {
-			try {
+			if (cancelled) return;
+			// cancel can run while this read is pending. Parse any returned bytes before
+			// it finalizes, and never enqueue/close an already cancelled controller.
+			activeRead = (async () => {
 				const result = await reader.read();
+				if (!result.done) readChunk(result.value);
+				return result;
+			})();
+			try {
+				const result = await activeRead;
+				if (cancelled) return;
 				if (result.done) {
-					const trailing = decoder.decode();
-					if (trailing) readPayloads(trailing);
-					if (buffered) {
-						readPayload(extractSsePayload(buffered));
-					}
-					const fields = streamFields("ok");
-					writeCompletionAnalyticsAndAccounting(ctx, env, fields, request);
+					finalize(baseFields.status >= 400 ? "error" : "ok");
 					controller.close();
-					return;
-				}
-				streamedBytes += result.value.byteLength;
-				readPayloads(decoder.decode(result.value, { stream: true }));
-				controller.enqueue(result.value);
+				} else controller.enqueue(result.value);
 			} catch (error) {
-				writeAnalytics(ctx, env, "chat_stream_error", streamFields("error", {
-					errorCode: "stream_read_error",
-				}), request);
+				if (cancelled) return;
+				finalize("error", "stream_read_error");
 				controller.error(error);
 			}
 		},
-		cancel(reason) {
-			writeAnalytics(ctx, env, "chat_stream_cancelled", streamFields("cancelled", {
-				errorCode: compactString(reason?.message || reason || "cancelled", 80),
-			}), request);
-			return reader.cancel(reason).catch(() => {});
-		},
+		cancel,
 	});
 }
 
 async function handleChatCompletions(request, env, ctx) {
 	const startedAt = Date.now();
+	const accountingDay = new Date(startedAt).toISOString().slice(0, 10);
 	const telemetryIds = requestTelemetryIds(request);
 	const auth = request.headers.get("Authorization") || "";
 	const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
@@ -620,7 +654,13 @@ async function handleChatCompletions(request, env, ctx) {
 	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
 	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";
 	const dailyCostCap = envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD);
-	const dailyCostUsed = await readKvNumber(env, dailyCostKey());
+	let dailyCostUsed = 0;
+	try {
+		if (!quotaBypassed) dailyCostUsed = await dailyCostLedger(env, accountingDay).total(accountingDay);
+	} catch {
+		writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...telemetryIds, result: "error", status: 503, errorCode: "ledger_unavailable" }, request);
+		return json(503, { error: { message: "Onhand Free usage accounting is temporarily unavailable. Please try again shortly." } });
+	}
 	if (!quotaBypassed && dailyCostUsed >= dailyCostCap) {
 		writeAnalytics(ctx, env, "chat_cost_quota_denied", {
 			...telemetryIds,
@@ -759,6 +799,8 @@ async function handleChatCompletions(request, env, ctx) {
 			...telemetryIds,
 			source,
 			quotaBypassed,
+			accountingDay,
+			accountingId: crypto.randomUUID(),
 			status: response.status,
 			durationMs: Date.now() - startedAt,
 			startedAtMs: startedAt,
@@ -797,9 +839,7 @@ async function handleChatCompletions(request, env, ctx) {
 	const headers = new Headers(CORS_HEADERS);
 	const contentType = upstream.headers.get("Content-Type");
 	if (contentType) headers.set("Content-Type", contentType);
-	const responseBody = contentType?.includes("text/event-stream")
-		? instrumentSseBody(upstream.body, env, ctx, metricBase, request)
-		: upstream.body;
+	const responseBody = instrumentCompletionBody(upstream.body, env, ctx, metricBase, request, Boolean(contentType?.includes("text/event-stream")));
 	return new Response(responseBody, { status: upstream.status, headers });
 }
 

@@ -1,12 +1,21 @@
 name = "onhand-free-tier"
-main = "src/index.mjs"
+main = "src/worker.mjs"
 compatibility_date = "2026-05-01"
+compatibility_flags = ["enable_request_signal"]
 
 # Create with: npx wrangler kv namespace create FREE_TIER_KV
 # then paste the returned id below before deploying.
 [[kv_namespaces]]
 binding = "FREE_TIER_KV"
 id = "7b951e234331464bb18b2d62c2d80266"
+
+[[durable_objects.bindings]]
+name = "FREE_TIER_COST_LEDGER"
+class_name = "FreeTierCostLedger"
+
+[[migrations]]
+tag = "v1-daily-cost-ledger"
+new_sqlite_classes = ["FreeTierCostLedger"]
 
 [[analytics_engine_datasets]]
 binding = "ONHAND_ANALYTICS"

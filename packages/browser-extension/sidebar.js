@@ -6018,15 +6018,16 @@
 		renderActions(state);
 
 		const activeRequest = Boolean(state?.activeRequestId);
+		const changingSession = creatingSession || sessionSwitching || deletingSession || restoringSession;
 		composer.hidden = false;
-		input.disabled = activeRequest || sending;
-		sendButton.disabled = activeRequest ? stoppingRequest : sending;
+		input.disabled = activeRequest || sending || changingSession;
+		sendButton.disabled = activeRequest ? stoppingRequest : sending || changingSession;
 		sendButton.classList.toggle("stop-button", activeRequest);
 		sendButton.title = activeRequest ? "Stop current Onhand response" : "Ask Onhand";
 		sendButton.setAttribute("aria-label", activeRequest ? "Stop current Onhand response" : "Ask Onhand");
 		sendButton.innerHTML = activeRequest ? (stoppingRequest ? "Stopping..." : "Stop") : 'Ask <span class="kbd">&#8617;</span>';
-		attachButton.disabled = activeRequest || sending;
-		fileInput.disabled = activeRequest || sending;
+		attachButton.disabled = activeRequest || sending || changingSession;
+		fileInput.disabled = activeRequest || sending || changingSession;
 		refocusQuickAskComposerAfterRender();
 		helper.textContent = activeRequest
 			? "Onhand is responding · press Stop to cancel"
@@ -6071,6 +6072,7 @@
 	}
 
 	async function submitPrompt(prompt) {
+		if (sending || creatingSession || sessionSwitching || deletingSession || restoringSession || currentState?.activeRequestId) return;
 		const trimmedPrompt = String(prompt || "").trim();
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
@@ -9829,6 +9831,7 @@
 		insertComposerText(event.key);
 	});
 
+	let cancellingSessionTitleEdit = false;
 	sessionTitleInput.addEventListener("keydown", (event) => {
 		if (event.key === "Enter") {
 			event.preventDefault();
@@ -9836,12 +9839,17 @@
 		}
 		if (event.key === "Escape") {
 			event.preventDefault();
-			renderMeta(currentState || {});
+			cancellingSessionTitleEdit = true;
 			sessionTitleInput.blur();
 		}
 	});
 
 	sessionTitleInput.addEventListener("blur", () => {
+		if (cancellingSessionTitleEdit) {
+			cancellingSessionTitleEdit = false;
+			renderMeta(currentState || {});
+			return;
+		}
 		const nextTitle = String(sessionTitleInput.value || "").trim();
 		if (nextTitle && currentState?.currentSession) {
 			sessionTitleDrafts.set(getSessionDraftKey(currentState), nextTitle);

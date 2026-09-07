@@ -53,11 +53,11 @@ through `FREE_TIER_ALERT_MAX_*` environment variables; run
 
 ## What To Watch
 
-- `chat_stream_complete` volume: normal successful free-tier model calls.
+- `chat_stream_complete` and `chat_response_complete` volume: successful streaming and JSON free-tier calls.
 - `chat_stream_error`, `chat_request_rejected`, `chat_quota_denied`,
   `chat_turn_quota_denied`, and `chat_cost_quota_denied`: user-visible failure
   pressure.
-- `total_cost` and `avg_cost`: whether DeepSeek V4 Flash is staying within the
+- `total_cost` and `avg_cost`: whether the configured hosted models are staying within the
   intended free-tier economics.
 - `Turn Costs`: model-call count, tokens, cost, and streamed duration grouped
   by the Onhand UI turn id; older completions before turn attribution show as
@@ -65,6 +65,11 @@ through `FREE_TIER_ALERT_MAX_*` environment variables; run
 - `Guardrail Events`: heavy-turn warnings plus per-turn and shared daily cost
   cap denials. `free_tier_heavy_turn` is warning-only; the two
   `*_quota_denied` rows are user-visible stops.
+- `free_tier_accounting_failed` / `free_tier_accounting_unresolved`: charges
+  requiring investigation. The daily Durable Object ledger is authoritative;
+  the sampled analytics report is an estimate. Its cost totals include terminal
+  JSON, cancelled, and errored responses plus late cost adjustments. Adjustments
+  do not add another call or repeat token usage.
 - `p95_ms`: whether OpenRouter/provider routing is creating slow responses.
 - `quota_and_rejections`: abuse pressure or overly strict caps.
 - `browser_run_js_*`: constrained advanced runtime-inspection usage. Unexpected
@@ -73,3 +78,26 @@ through `FREE_TIER_ALERT_MAX_*` environment variables; run
 The Worker records Analytics Engine fields as documented in `docs/FREE_TIER.md`.
 The ops script uses `_sample_interval` in aggregates because Workers Analytics
 Engine can sample high-volume datasets.
+
+## Local accounting verification
+
+`npm run test:free-tier-worker-regressions` uses synthetic provider responses
+and covers completed/cancelled/errored streams, JSON, concurrent updates,
+generation deduplication, midnight rollover, metadata reconciliation, and the
+intentional quota bypass. It makes no hosted model calls.
+
+To also run the SQLite Durable Object integration in Cloudflare's local
+`workerd` runtime, install Miniflare in a temporary directory (without changing
+project dependencies), then point the test at its module:
+
+```sh
+npm install --prefix /tmp/onhand-worker-test miniflare
+ONHAND_MINIFLARE_MODULE=/tmp/onhand-worker-test/node_modules/miniflare/dist/src/index.js npm run test:free-tier-worker-regressions
+```
+
+This optional integration requires localhost listeners, uses mocked outbound
+provider responses, and tests the real Worker-to-Durable-Object RPC/storage
+path. The integration also disconnects a real HTTP client from the Worker's own
+workerd socket and checks the cancellation event and ledger charge; cancelling
+a directly returned JavaScript response does not cover this runtime behavior.
+It does not use production bindings, API keys, or deploy anything.

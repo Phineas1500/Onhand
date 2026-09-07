@@ -1153,10 +1153,18 @@ async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
 		true,
 	);
 	assert.equal(sessionSelect.value, "session-beta", "expected focused picker to keep the intended selection while switching");
+	const composerInput = host.shadowRoot.getElementById("input");
+	const askButton = host.shadowRoot.getElementById("sendButton");
+	assert.equal(composerInput.disabled, true, "composer must wait for the destination session");
+	assert.equal(askButton.disabled, true, "Ask must not submit into the old session while switching");
+	askButton.click();
+	assert.equal(runtimeMessages.some((message) => message.type === "sidebar:submit-prompt"), false);
 
 	await new Promise((resolve) => dom.window.setTimeout(resolve, 80));
 	assert.equal(sessionSelect.disabled, false);
 	assert.equal(sessionSelect.value, "session-beta");
+	assert.equal(composerInput.disabled, false);
+	assert.equal(askButton.disabled, false);
 
 	assert.equal(host.shadowRoot.getElementById("replaySessionButton"), null, "expected review to be inline rather than a menu button");
 	const reviewToggle = host.shadowRoot.querySelector("[data-replay-toggle]");
@@ -1169,6 +1177,28 @@ async function assertSessionPickerSwitchesOnInputWithoutLosingSelection() {
 	);
 
 	dom.window.close();
+}
+
+async function assertEscapeCancelsSessionRename() {
+	const messages = [];
+	const state = createState();
+	const dom = await renderSidebar(state, messages);
+	try {
+		const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+		const title = shadow.getElementById("sessionTitleInput");
+		const originalTitle = title.value;
+		title.focus();
+		title.value = "This rename must be cancelled";
+		title.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+		await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+		assert.equal(title.value, originalTitle);
+		assert.equal(messages.some((message) => message.type === "sidebar:rename-session"), false);
+		title.focus();
+		title.value = "Confirmed session title";
+		title.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+		await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+		assert.equal(messages.filter((message) => message.type === "sidebar:rename-session").length, 1, "Enter still commits the edit after a cancellation");
+	} finally { dom.window.close(); }
 }
 
 async function assertSessionPickerRequestsAndRendersAllSessions() {
@@ -4992,6 +5022,7 @@ await assertTranscriptActionButtonsActivateDirectly();
 await assertTurnSourceButtonsExposeAllPageActions();
 await assertOpenPdfViewerMenuActionTargetsPdfTabs();
 await assertSessionPickerSwitchesOnInputWithoutLosingSelection();
+await assertEscapeCancelsSessionRename();
 await assertSessionPickerRequestsAndRendersAllSessions();
 await assertReviewViewRendersSavedSnapshot();
 await assertRestoreResultMergesPagesAndStaysQuietOnSuccess();

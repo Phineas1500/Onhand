@@ -31,7 +31,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const EXT_DIR = fileURLToPath(new URL("../packages/browser-extension", import.meta.url));
 const CDP_PORT_OVERRIDE = process.env.ONHAND_TEST_CDP_PORT ? Number(process.env.ONHAND_TEST_CDP_PORT) : null;
@@ -228,7 +228,7 @@ async function openContext(port) {
 		if (!response?.ok) throw new Error(response?.error || `Could not run ${name}`);
 		return response;
 	};
-	return { cdp, extId, evalIn, driverEval, sendMessage, tool };
+	return { cdp, extId, evalIn, driverEval, sendMessage, tool, driverTargetId: targetId, driverSessionId: sessionId };
 }
 
 async function createSourceTab(ctx, url) {
@@ -516,10 +516,10 @@ async function runRestoreCycleGroup(pdfUrl, profile, port) {
 
 async function runNativePdfClipboardGroup(pdfUrl, profile, port) {
 	const child = launchBrowser(profile, port);
+	const clipboardFixture = "Onhand clipboard regression fixture";
 	let ctx;
 	try {
 		ctx = await openContext(port);
-		const clipboardFixture = "Onhand clipboard regression fixture";
 		// Seed known data before any read; never print pre-existing clipboard data.
 		assert.equal((await ctx.sendMessage({ target: "offscreen", type: "offscreen:clipboard-write", text: clipboardFixture }))?.ok, true);
 		const assertClipboardRestored = async () => {
@@ -533,6 +533,35 @@ async function runNativePdfClipboardGroup(pdfUrl, profile, port) {
 		assert.equal(empty.hasSelection, false);
 		assert.match(empty.browserClipboardSelectionFallback?.error || "", /did not expose selected PDF text/, "empty selection should reach the copy probe without focus/permission errors");
 		await assertClipboardRestored();
+		for (const format of ["rich-text", "image"]) {
+			await ctx.cdp.send("Target.activateTarget", { targetId: ctx.driverTargetId });
+			await ctx.driverEval(`(async () => {
+				let item;
+				if (${JSON.stringify(format)} === "rich-text") {
+					item = new ClipboardItem({ "text/plain": new Blob(["Onhand formatted fixture"], {type:"text/plain"}), "text/html": new Blob(["<b>Onhand formatted fixture</b>"], {type:"text/html"}) });
+				} else {
+					const canvas=document.createElement("canvas");canvas.width=2;canvas.height=2;
+					canvas.getContext("2d").fillRect(0,0,2,2);
+					item=new ClipboardItem({"image/png":await new Promise(resolve=>canvas.toBlob(resolve,"image/png"))});
+				}
+				await navigator.clipboard.write([item]);
+			})()`);
+			const signature = () => ctx.driverEval(`(async () => {
+				const items=await navigator.clipboard.read();const signatures=[];
+				for(const item of items)for(const type of item.types){const bytes=await (await item.getType(type)).arrayBuffer();const hash=await crypto.subtle.digest("SHA-256",bytes);signatures.push({type,hash:Array.from(new Uint8Array(hash)).join(",")});}
+				return signatures.sort((a,b)=>a.type.localeCompare(b.type));
+			})()`);
+			const before = await signature();
+			assert.ok(before.some((item) => item.type === (format === "image" ? "image/png" : "text/html")), "seed the required clipboard format");
+			await ctx.driverEval(`chrome.tabs.update(${tab.id}, {active:true})`);
+			const preserved = (await ctx.tool("browser_get_selection", { tabId: tab.id })).result.selection;
+			assert.equal(preserved.hasSelection, false);
+			assert.match(preserved.browserClipboardSelectionFallback?.error || "", /preserve/, "unsafe formats should skip the destructive probe");
+			await ctx.cdp.send("Target.activateTarget", { targetId: ctx.driverTargetId });
+			assert.deepEqual(await signature(), before, `${format} clipboard bytes and formats must survive selection recovery`);
+		}
+		assert.equal((await ctx.sendMessage({ target:"offscreen", type:"offscreen:clipboard-write", text:clipboardFixture }))?.ok, true);
+		await ctx.driverEval(`chrome.tabs.update(${tab.id}, {active:true})`);
 
 		const pageTarget = (await ctx.cdp.send("Target.getTargets")).targetInfos.find((target) => target.type === "page" && target.url === pdfUrl);
 		assert.ok(pageTarget, "native PDF fixture should have a page target");
@@ -559,6 +588,7 @@ async function runNativePdfClipboardGroup(pdfUrl, profile, port) {
 		assert.equal(selected.pdfAnchor.textQuote.exact, selected.text);
 		await assertClipboardRestored();
 	} finally {
+		if (ctx) await ctx.sendMessage({ target: "offscreen", type: "offscreen:clipboard-write", text: clipboardFixture }).catch(() => {});
 		ctx?.cdp.ws.close();
 		if (child.exitCode === null && child.signalCode === null) {
 			const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -607,6 +637,9 @@ async function run() {
 	}
 }
 
+export { findBrowser, pickAvailablePort, launchBrowser, openContext };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 const OVERALL_TIMEOUT_MS = 240000;
 const timeout = setTimeout(() => {
 	console.error("Real-browser anchoring test: FAIL (overall timeout)");
@@ -623,3 +656,4 @@ run()
 		console.error(`Real-browser anchoring test: FAIL\n${error?.stack || error}`);
 		process.exit(1);
 	});
+}
