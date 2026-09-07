@@ -162,7 +162,9 @@
 	let authStatusKind = "";
 	let sidebarTheme = "system";
 	let attachmentDrafts = [];
-	let lastMessagesMarkup = "";
+	let messageTurnCache = [];
+	let messageRenderContext = "";
+	let lastEmptyMessagesMarkup = null;
 	let lastMessagesInput = "";
 	let messageRenderCount = 0;
 	let lastReplyMarkup = "";
@@ -674,7 +676,9 @@
 		const groupKey = getCitationGroupKey(citation);
 		if (!groupKey) return { ...citation, number: citation.number || numbering.nextNumber++ };
 		if (!numbering.groupNumbers.has(groupKey)) {
-			numbering.groupNumbers.set(groupKey, numbering.nextNumber++);
+			const number = numbering.nextNumber++;
+			numbering.groupNumbers.set(groupKey, number);
+			numbering.added?.push([groupKey, number]);
 		}
 		return { ...citation, number: numbering.groupNumbers.get(groupKey) };
 	}
@@ -5327,44 +5331,32 @@
 		`;
 	}
 
-		function renderTurnListMarkup(turns, emptyMarkup = "") {
-			const items = (Array.isArray(turns) ? turns : []).filter(Boolean);
-			if (!items.length) {
-				return emptyMarkup;
-		}
-
-		const citationGroupsByTurnId = buildTurnCitationGroups(items);
-		const citationNumbering = createCitationNumbering();
-		return items
-			.map((turn) => {
-				const citationGroups = citationGroupsByTurnId.get(turn?.id) || buildCitationGroups(turn?.pageActions);
-				const reply = String(turn?.reply || "").trim();
-				const sourceActions = getTurnSourceActions(turn);
-				const supportMarkup = renderProgressDetails(turn);
-				const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
-				return `
-					<article class="onhand-entry ${turn?.error ? "error" : ""}">
-						<div class="onhand-eyebrow">
-							<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
-							<span class="dot"></span>
-							<span>Onhand</span>
-							${Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
+	function renderTurnMarkup(turn, citationGroups, citationNumbering) {
+		const reply = String(turn?.reply || "").trim();
+		const sourceActions = getTurnSourceActions(turn);
+		const supportMarkup = renderProgressDetails(turn);
+		const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
+		return `
+			<article class="onhand-entry ${turn?.error ? "error" : ""}">
+				<div class="onhand-eyebrow">
+					<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
+					<span class="dot"></span>
+					<span>Onhand</span>
+					${Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
+				</div>
+				${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
+				<div class="onhand-a ${turn?.pending ? "pending" : ""}">
+					${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
+						<div class="onhand-response">
+							${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
+							${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
+							${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 						</div>
-						${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
-						<div class="onhand-a ${turn?.pending ? "pending" : ""}">
-							${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
-								<div class="onhand-response">
-									${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
-									${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
-									${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
-								</div>
-								${renderReplyCopyButton(turn, reply)}
-								${renderErrorReportButton(turn)}
-							</div>
-						</article>
-					`;
-			})
-			.join("");
+						${renderReplyCopyButton(turn, reply)}
+						${renderErrorReportButton(turn)}
+					</div>
+				</article>
+			`;
 	}
 
 	function bindProgressToggles(root) {
@@ -5703,29 +5695,94 @@
 	}
 
 	function renderMessages(turns, annotationCount = 0) {
-		// Compare serialized inputs before citation matching and Markdown work.
-		// Chrome messages are cloned, so object identity cannot detect idle polls.
-		const input = JSON.stringify([
-			getStateSessionPath(currentState), turns, Boolean(annotationCount),
-			progressExpanded, [...sourceDisclosureOpenKeys], Boolean(katexModule),
-		]);
+		// Chrome messages are cloned: compare content, not object identity.
+		const context = JSON.stringify([getStateSessionPath(currentState), Boolean(katexModule)]);
+		const input = JSON.stringify([context, turns, Boolean(annotationCount), progressExpanded, [...sourceDisclosureOpenKeys]]);
 		if (input === lastMessagesInput) return;
 		lastMessagesInput = input;
 		messageRenderCount += 1;
-			const emptyMarkup = annotationCount
-				? ""
-				: `
+		if (context !== messageRenderContext) {
+			messageTurnCache = [];
+			messagesEl.replaceChildren();
+			lastEmptyMessagesMarkup = null;
+			messageRenderContext = context;
+		}
+		const items = (Array.isArray(turns) ? turns : []).filter(Boolean);
+		if (!items.length) {
+			const markup = annotationCount ? "" : `
 				<div class="onhand-empty">
 					<div class="lede">Ask about this page.</div>
 					<div class="empty-body">Onhand answers by highlighting the exact passages it used, right on the page — with notes in the margins and citations you can click. Select text first to ask about a specific part.</div>
-					</div>
-			`;
-			const markup = renderTurnListMarkup(turns, emptyMarkup);
-			if (markup === lastMessagesMarkup) return;
-			lastMessagesMarkup = markup;
-			messagesEl.innerHTML = markup;
-			bindProgressToggles(messagesEl);
-			bindSourceDisclosures(messagesEl);
+				</div>`;
+			if (messageTurnCache.length || markup !== lastEmptyMessagesMarkup) messagesEl.innerHTML = markup;
+			messageTurnCache = [];
+			lastEmptyMessagesMarkup = markup;
+			return;
+		}
+		if (lastEmptyMessagesMarkup !== null) {
+			messagesEl.replaceChildren();
+			lastEmptyMessagesMarkup = null;
+		}
+
+		// Only keep the current transcript's cache. Rebuild the registry linearly,
+		// but skip cumulative source snapshots and Markdown for its unchanged prefix.
+		// A change to an earlier turn invalidates the suffix because both source
+		// aliases and first-use citation numbers depend on preceding turns.
+		const registry = createCitationRegistry();
+		const numbering = createCitationNumbering();
+		const ids = items.map((turn) => turn.id).filter(Boolean);
+		const duplicateIds = new Set(ids).size !== ids.length;
+		// Preserve legacy duplicate-ID snapshot semantics without caching them.
+		const legacyGroups = duplicateIds ? buildTurnCitationGroups(items) : null;
+		let reusePrefix = !duplicateIds;
+		const nextCache = [];
+		let inserted = false;
+		for (const [index, turn] of items.entries()) {
+			const signature = JSON.stringify(turn);
+			const cached = messageTurnCache[index];
+			const currentGroupIds = new Set();
+			for (const action of Array.isArray(turn.pageActions) ? turn.pageActions : []) {
+				const group = addCitationActionToRegistry(registry, action);
+				if (group) currentGroupIds.add(group.groupId);
+			}
+			reusePrefix = reusePrefix && cached?.cacheable && cached.signature === signature;
+			if (reusePrefix) {
+				for (const [key, number] of cached.numbers) numbering.groupNumbers.set(key, number);
+				numbering.nextNumber = cached.nextNumber;
+				nextCache.push(cached);
+				continue;
+			}
+			const groups = turn.id
+				? (legacyGroups?.get(turn.id) || getPublicCitationGroups(registry, currentGroupIds))
+				: buildCitationGroups(turn.pageActions);
+			numbering.added = [];
+			const markup = renderTurnMarkup(turn, groups, numbering);
+			let node = cached?.node;
+			if (!node || cached.markup !== markup) {
+				const template = document.createElement("template");
+				template.innerHTML = markup;
+				const replacement = template.content.firstElementChild;
+				if (node) node.replaceWith(replacement);
+				else messagesEl.appendChild(replacement);
+				node = replacement;
+				bindProgressToggles(node);
+				bindSourceDisclosures(node);
+				inserted = true;
+			}
+			nextCache.push({ signature, markup, node, cacheable: !duplicateIds, numbers: numbering.added, nextNumber: numbering.nextNumber });
+		}
+		for (const entry of messageTurnCache.slice(items.length)) entry.node.remove();
+		messageTurnCache = nextCache;
+		// Disclosure changes do not require re-parsing an answer or replacing its
+		// DOM (which would also discard selection and in-flight button feedback).
+		for (const [index, entry] of messageTurnCache.entries()) {
+			const progress = entry.node.querySelector(".onhand-progress");
+			if (progress) progress.open = progressExpanded == null ? Boolean(items[index].pending) : Boolean(progressExpanded);
+			for (const details of entry.node.querySelectorAll("[data-source-disclosure-key]")) {
+				details.open = sourceDisclosureOpenKeys.has(details.dataset.sourceDisclosureKey);
+			}
+		}
+		if (inserted) {
 			bindActionButtons(messagesEl, {
 				onError(error) {
 					showTransientMessageNotice(error?.message || "Could not jump to that mark — the page may have changed.");
@@ -5734,6 +5791,7 @@
 			bindCopyButtons(messagesEl);
 			bindErrorReportButtons(messagesEl);
 		}
+	}
 
 	function renderReplayAnnotations(annotations) {
 		const items = Array.isArray(annotations) ? annotations : [];
@@ -10315,6 +10373,10 @@
 	if (globalThis.__onhandSidebarExposeTestHooks) {
 		globalThis.__onhandSidebarTestHooks = {
 			getMessageRenderCount: () => messageRenderCount,
+			setKatexModule(module) {
+				katexModule = module;
+				renderState(currentState || {});
+			},
 			buildSpacedReviewPrompt,
 			formatRealtimeBrowserToolResult,
 			setRealtimeDataChannel(channel) {

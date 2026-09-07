@@ -1,3 +1,4 @@
+import { runSidebarIncrementalRegressions } from "./lib/sidebar-incremental-regressions.mjs";
 import { runSidebarReviewRegressions } from "./lib/onhand-review-regressions.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -4998,6 +4999,7 @@ async function assertCitationTokenFoldingBridgesInflection() {
 }
 
 await runSidebarReviewRegressions({ renderSidebar, createState });
+await runSidebarIncrementalRegressions({ renderSidebar, createState });
 await assertNativePanelAnnouncesOpened();
 await assertSessionWideCitationNumbers();
 await assertCitationLinksSurviveAnnotationRecovery();
