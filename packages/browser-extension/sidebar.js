@@ -142,6 +142,10 @@
 	let stateRequestSequence = 0;
 	let stateRequestsInFlight = 0;
 	let sidebarHistory = null;
+	let lastAcceptedSidebarState = null;
+	let sidebarConnectionError = "";
+	let manualReconnectPending = false;
+	let actionFeedbackSequence = 0;
 	let sending = false;
 	let progressExpanded = null;
 	let lastActiveRequestId = null;
@@ -2164,6 +2168,40 @@
 				display: flex;
 				flex-direction: column;
 			}
+			.onhand-connection-notice {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				padding: 8px 16px;
+				border-bottom: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				font: 11px/1.4 var(--rm-font-mono);
+			}
+			.onhand-connection-notice[hidden] { display: none; }
+			.onhand-connection-notice span { flex: 1; }
+			.onhand-connection-notice button,
+			.onhand-source-feedback button {
+				border: 1px solid var(--rm-pine);
+				border-radius: 4px;
+				padding: 3px 7px;
+				color: var(--rm-pine);
+				background: var(--rm-base);
+				cursor: pointer;
+			}
+			.onhand-source-feedback {
+				display: inline-flex;
+				align-items: center;
+				flex-wrap: wrap;
+				gap: 6px;
+				margin: 3px 5px;
+				padding: 4px 7px;
+				border: 1px solid var(--rm-love);
+				border-radius: 4px;
+				color: var(--rm-love);
+				background: var(--rm-base);
+				font: 11px/1.4 var(--rm-font-mono);
+			}
 			.onhand-jump-latest {
 				position: absolute;
 				bottom: 12px;
@@ -3616,6 +3654,10 @@
 						</div>
 					</div>
 					</header>
+					<div id="connectionNotice" class="onhand-connection-notice" hidden>
+						<span id="connectionStatus" role="status" aria-live="polite"></span>
+						<button id="reconnectButton" type="button">Reconnect</button>
+					</div>
 					<div class="onhand-scroll-wrap">
 					<div id="scroll" class="onhand-scroll" tabindex="-1" role="region" aria-label="Onhand conversation">
 					<section id="replayView" class="onhand-replay" hidden></section>
@@ -3684,6 +3726,9 @@
 	const meta = shadow.getElementById("meta");
 	const body = shadow.getElementById("scroll");
 	const jumpToLatestButton = shadow.getElementById("jumpToLatestButton");
+	const connectionNotice = shadow.getElementById("connectionNotice");
+	const connectionStatus = shadow.getElementById("connectionStatus");
+	const reconnectButton = shadow.getElementById("reconnectButton");
 	const menuButton = shadow.getElementById("menuButton");
 	const headerNewSessionButton = shadow.getElementById("headerNewSessionButton");
 	const menuPanel = shadow.getElementById("menuPanel");
@@ -3995,7 +4040,9 @@
 	}
 
 	async function createNewSession() {
+		assertSidebarConnected();
 		if (isFreshCurrentSession(currentState)) return;
+		invalidateSidebarSessionSnapshot();
 		stateRequestSequence += 1;
 		creatingSession = true;
 		lastRestoreResult = null;
@@ -4017,10 +4064,12 @@
 	}
 
 	async function switchSession(sessionPath) {
+		assertSidebarConnected();
 		sessionPath = String(sessionPath || "").trim();
 		if (!sessionPath) return;
 		const currentPath = getCurrentSessionPath(currentState);
 		if (sessionPath === currentPath && !pendingSessionPath) return;
+		invalidateSidebarSessionSnapshot();
 		stateRequestSequence += 1;
 		pendingSessionPath = sessionPath;
 		sessionSwitching = true;
@@ -4047,6 +4096,7 @@
 	}
 
 	async function restoreSessionPages(targetSessionPath = "") {
+		assertSidebarConnected();
 		const sessionPath = getSelectedSessionPath(targetSessionPath);
 		if (!sessionPath) {
 			throw new Error("Choose a session to restore first.");
@@ -4091,6 +4141,7 @@
 	}
 
 	async function deleteSelectedSession(targetSessionPath = "") {
+		assertSidebarConnected();
 		const sessionPath = getSelectedSessionPath(targetSessionPath);
 		if (!sessionPath) {
 			throw new Error("Choose a session to delete first.");
@@ -4103,6 +4154,7 @@
 			typeof globalThis.confirm !== "function" ||
 			globalThis.confirm(`Delete "${sessionLabel}"? This cannot be undone.`);
 		if (!confirmed) return;
+		invalidateSidebarSessionSnapshot();
 		stateRequestSequence += 1;
 		deletingSession = true;
 		lastRestoreResult = null;
@@ -4126,6 +4178,7 @@
 	}
 
 	async function openCurrentPdfInViewer() {
+		assertSidebarConnected();
 		openingPdfViewer = true;
 		lastRestoreResult = null;
 		renderState(currentState || {});
@@ -5373,7 +5426,7 @@
 		const supportMarkup = renderProgressDetails(turn);
 		const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
 		return `
-			<article class="onhand-entry ${turn?.error ? "error" : ""}">
+			<article class="onhand-entry ${turn?.error ? "error" : ""}" data-onhand-turn-id="${escapeAttribute(String(turn?.id || ""))}">
 				<div class="onhand-eyebrow">
 					<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
 					<span class="dot"></span>
@@ -5449,30 +5502,120 @@
 		return `${key}\u0000${sessionOptions.sessionPath || ""}`;
 	}
 
-	function activateActionButton(button, options = {}, root = null) {
-		const key = String(button?.dataset?.actionKey || "").trim();
+	function actionSessionOptions(options = {}) {
+		const requested = resolveActionSessionOptions(options);
+		const sessionPath = requested.sessionPath || getStateSessionPath(currentState);
+		return sessionPath ? { sessionPath } : {};
+	}
+
+	function actionIdentity(button, options, root, occurrence = null) {
+		const key = String(button.dataset.actionKey || "").trim();
+		const sessionOptions = actionSessionOptions(options);
+		const turnId = button.closest("[data-onhand-turn-id]")?.dataset.onhandTurnId || "";
+		const controlKind = button.classList[0] || button.tagName;
+		if (occurrence == null) {
+			const peers = actionControlsForIdentity(root, { key, turnId, controlKind });
+			occurrence = peers.indexOf(button);
+		}
+		return { key, sessionOptions, turnId, controlKind, occurrence,
+			failureKey: `${actionDedupeKey(key, sessionOptions)}\u0000${turnId}\u0000${controlKind}\u0000${occurrence}` };
+	}
+
+	function actionControlsForIdentity(root, identity) {
+		return Array.from(root.querySelectorAll("[data-action-key]")).filter((entry) =>
+			entry.dataset.actionKey === identity.key && (entry.classList[0] || entry.tagName) === identity.controlKind &&
+			(entry.closest("[data-onhand-turn-id]")?.dataset.onhandTurnId || "") === identity.turnId);
+	}
+
+	function currentActionControl(root, identity) {
+		if (!(root instanceof Element) || !root.isConnected) return null;
+		const sessionOptions = actionSessionOptions(root.__onhandActionOptions || {});
+		if ((sessionOptions.sessionPath || "") !== (identity.sessionOptions.sessionPath || "")) return null;
+		return actionControlsForIdentity(root, identity)[identity.occurrence] || null;
+	}
+
+	function clearActionFeedback(button) {
+		const notice = button?.__onhandActionFeedback;
+		if (!notice) return;
+		if (notice.contains(shadow.activeElement)) button.focus({ preventScroll: true });
+		const descriptions = String(button.getAttribute("aria-describedby") || "").split(/\s+/).filter((id) => id && id !== notice.id);
+		if (descriptions.length) button.setAttribute("aria-describedby", descriptions.join(" "));
+		else button.removeAttribute("aria-describedby");
+		notice.remove();
+		delete button.__onhandActionFeedback;
+	}
+
+	function renderActionFailure(button, identity, message, root) {
+		if (!(button instanceof HTMLElement) || !button.isConnected) return;
+		let notice = button.__onhandActionFeedback;
+		if (!notice?.isConnected) {
+			notice = document.createElement("span");
+			notice.className = "onhand-source-feedback";
+			notice.id = `onhand-source-feedback-${++actionFeedbackSequence}`;
+			notice.setAttribute("role", "status");
+			notice.setAttribute("aria-live", "polite");
+			const text = document.createElement("span");
+			const retry = document.createElement("button");
+			retry.type = "button";
+			retry.dataset.actionRetry = "true";
+			retry.setAttribute("aria-label", "Retry opening this source");
+			retry.addEventListener("click", (event) => {
+				consumeActionPointer(event);
+				const current = currentActionControl(root, identity);
+				if (current) activateActionButton(current, root.__onhandActionOptions || {}, root, identity);
+			});
+			notice.append(text, retry);
+			button.after(notice);
+			button.__onhandActionFeedback = notice;
+			button.setAttribute("aria-describedby", [button.getAttribute("aria-describedby"), notice.id].filter(Boolean).join(" "));
+		}
+		const pending = root.__onhandActionPendingKeys?.has(actionDedupeKey(identity.key, identity.sessionOptions));
+		const text = pending ? "Opening this source…" : String(message || "Could not open this source.").slice(0, 200);
+		if (notice.firstElementChild.textContent !== text) notice.firstElementChild.textContent = text;
+		const retry = notice.querySelector("button");
+		retry.textContent = pending ? "Retrying…" : "Retry";
+		retry.disabled = Boolean(pending || sidebarConnectionError);
+	}
+
+	function activateActionButton(button, options = {}, root = null, retryIdentity = null) {
+		if (sidebarConnectionError || button?.disabled || !(root instanceof Element)) return;
+		const identity = retryIdentity || actionIdentity(button, options, root);
+		const { key, sessionOptions, failureKey } = identity;
 		if (!key) {
 			handleActionActivationError(new Error("Could not activate that Onhand link."), options);
 			return;
 		}
-		const sessionOptions = resolveActionSessionOptions(options);
 		const dedupeKey = actionDedupeKey(key, sessionOptions);
 		const dedupeMap = getActionDedupeMap(root);
-		if (button.dataset.onhandActionPending === "true") return;
+		const pendingKeys = root.__onhandActionPendingKeys ||= new Set();
+		const failures = root.__onhandActionFailures ||= new Map();
+		if (pendingKeys.has(dedupeKey)) return;
 		const now = Date.now();
 		const lastActivatedAt = Number(button.dataset.onhandActionLastActivatedAt || 0);
-		if (Number.isFinite(lastActivatedAt) && now - lastActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
+		if (!retryIdentity && Number.isFinite(lastActivatedAt) && now - lastActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
 		const lastRootActivatedAt = Number(dedupeMap?.get(dedupeKey) || 0);
-		if (Number.isFinite(lastRootActivatedAt) && now - lastRootActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
+		if (!retryIdentity && Number.isFinite(lastRootActivatedAt) && now - lastRootActivatedAt < ACTION_ACTIVATION_DEDUP_MS) return;
 		button.dataset.onhandActionLastActivatedAt = String(now);
 		dedupeMap?.set(dedupeKey, now);
 		button.dataset.onhandActionPending = "true";
+		pendingKeys.add(dedupeKey);
+		if (failures.has(failureKey)) renderActionFailure(button, identity, failures.get(failureKey).message, root);
 		void activateAction(key, sessionOptions)
-			.catch((error) => handleActionActivationError(error, options))
+			.then(() => {
+				failures.delete(failureKey);
+				clearActionFeedback(currentActionControl(root, identity));
+			})
+			.catch((error) => {
+				const current = currentActionControl(root, identity);
+				if (!current) return;
+				failures.set(failureKey, { identity, message: error?.message || "Could not open this source. The page may have changed." });
+			})
 			.finally(() => {
-				if (button.dataset.onhandActionPending === "true") {
-					delete button.dataset.onhandActionPending;
-				}
+				pendingKeys.delete(dedupeKey);
+				delete button.dataset.onhandActionPending;
+				const current = currentActionControl(root, identity);
+				const failure = failures.get(failureKey);
+				if (current && failure) renderActionFailure(current, identity, failure.message, root);
 			});
 	}
 
@@ -5519,10 +5662,23 @@
 				);
 			}
 		}
+			const visibleFailureKeys = new Set();
+			const occurrences = new Map();
 			root.querySelectorAll("[data-action-key]").forEach((button) => {
-				if (!(button instanceof HTMLElement) || button.dataset.onhandActionBound === "true") return;
+				if (!(button instanceof HTMLElement)) return;
 				button.dataset.onhandActionBound = "true";
+				const key = button.dataset.actionKey || "";
+				const group = `${key}\u0000${button.closest("[data-onhand-turn-id]")?.dataset.onhandTurnId || ""}\u0000${button.classList[0] || button.tagName}`;
+				const occurrence = occurrences.get(group) || 0;
+				occurrences.set(group, occurrence + 1);
+				const identity = actionIdentity(button, options, root, occurrence);
+				visibleFailureKeys.add(identity.failureKey);
+				const failure = root.__onhandActionFailures?.get(identity.failureKey);
+				if (failure) renderActionFailure(button, identity, failure.message, root);
 			});
+			for (const key of root.__onhandActionFailures?.keys() || []) {
+				if (!visibleFailureKeys.has(key)) root.__onhandActionFailures.delete(key);
+			}
 		}
 
 		function renderErrorReportButton(turn) {
@@ -5664,6 +5820,7 @@
 		}
 
 		async function submitErrorReportFromButton(button) {
+			if (sidebarConnectionError) return;
 			const turnId = String(button.dataset.errorReportTurnId || "").trim();
 			if (!turnId || button.dataset.onhandErrorReportPending === "true") return;
 			button.dataset.onhandErrorReportPending = "true";
@@ -5719,16 +5876,6 @@
 				true,
 			);
 		}
-
-		function showTransientMessageNotice(text) {
-		const existing = messagesEl.querySelector(".onhand-action-notice");
-		if (existing) existing.remove();
-		const notice = document.createElement("div");
-		notice.className = "onhand-action-notice";
-		notice.textContent = String(text || "").slice(0, 200);
-		messagesEl.appendChild(notice);
-		setTimeout(() => notice.remove(), 6000);
-	}
 
 	function renderMessages(turns, annotationCount = 0) {
 		// Chrome messages are cloned: compare content, not object identity.
@@ -5819,11 +5966,7 @@
 			}
 		}
 		if (inserted) {
-			bindActionButtons(messagesEl, {
-				onError(error) {
-					showTransientMessageNotice(error?.message || "Could not jump to that mark — the page may have changed.");
-				},
-			});
+			bindActionButtons(messagesEl);
 			bindCopyButtons(messagesEl);
 			bindErrorReportButtons(messagesEl);
 		}
@@ -5982,13 +6125,6 @@
 		bindProgressToggles(replayViewEl);
 		bindActionButtons(replayViewEl, {
 			sessionPath: () => replayState.sessionPath || replayState.session?.path || replayState.session?.id || replayState.session?.sessionId || "",
-			onError(error) {
-				replayState = {
-					...replayState,
-					error: error?.message || String(error),
-				};
-				renderState(currentState || {});
-			},
 		});
 	}
 
@@ -6090,7 +6226,73 @@
 	body.addEventListener("scroll", updateJumpToLatestButton, { passive: true });
 	jumpToLatestButton.addEventListener("click", () => scrollToLatestAnswer({ focus: true }));
 
+	function invalidateSidebarSessionSnapshot() {
+		lastAcceptedSidebarState = null;
+		sidebarHistory = null;
+	}
+
+	function assertSidebarConnected() {
+		if (sidebarConnectionError) throw new Error("Reconnect to Onhand before using this action.");
+	}
+
+	function restoreOfflineDisabledControls() {
+		for (const control of shadow.querySelectorAll("[data-onhand-offline-disabled]")) {
+			control.disabled = control.dataset.onhandOfflineDisabled === "true";
+			delete control.dataset.onhandOfflineDisabled;
+		}
+	}
+
+	function renderConnectionNotice() {
+		connectionNotice.hidden = !sidebarConnectionError;
+		const text = !sidebarConnectionError ? "" : manualReconnectPending ? "Reconnecting to Onhand…"
+			: lastAcceptedSidebarState ? "Disconnected. Your last received conversation is shown; reconnect to continue."
+				: "Onhand is disconnected. Reconnect to continue.";
+		if (connectionStatus.textContent !== text) connectionStatus.textContent = text;
+		connectionNotice.title = sidebarConnectionError;
+		reconnectButton.disabled = manualReconnectPending;
+		reconnectButton.textContent = manualReconnectPending ? "Reconnecting…" : "Reconnect";
+		// A source may fail after the offline render. Its Retry button must be
+		// refreshed even when reconnect reuses the exact same transcript nodes.
+		for (const root of [messagesEl, replayViewEl, actionsEl, replyEl]) {
+			for (const failure of root.__onhandActionFailures?.values() || []) {
+				const control = currentActionControl(root, failure.identity);
+				if (control) renderActionFailure(control, failure.identity, failure.message, root);
+			}
+		}
+		if (!sidebarConnectionError) return;
+		// Reading, copying, opening disclosures and changing local presentation
+		// remain available. Actions that rely on the current runtime are paused.
+		for (const control of shadow.querySelectorAll([
+			"#input", "#sendButton", "#attachButton", "#fileInput", "#sessionTitleInput", "#sessionSelect",
+			"#headerNewSessionButton", "#newSessionButton", "#deleteSessionButton", "#restoreSessionButton",
+			"#openPdfViewerButton", "#learningModeToggle", "#realtimeVoiceButton", "[data-action-key]",
+			"[data-annotation-id]", "[data-learner-annotation-id]", "[data-error-report-turn-id]",
+			"[data-review-start]", "[data-review-snooze]", "[data-replay-restore]",
+		].join(","))) {
+			if (!("disabled" in control)) continue;
+			// A failed read must not remove the user's ability to stop paid work or
+			// end a separately connected microphone/WebRTC session.
+			if (control === sendButton && currentState?.activeRequestId) continue;
+			if (control === realtimeVoiceButton && (realtimeConnected || realtimeConnecting)) continue;
+			if (!Object.hasOwn(control.dataset, "onhandOfflineDisabled")) control.dataset.onhandOfflineDisabled = String(control.disabled);
+			control.disabled = true;
+		}
+	}
+
+	reconnectButton.addEventListener("click", async () => {
+		if (manualReconnectPending) return;
+		manualReconnectPending = true;
+		renderConnectionNotice();
+		try { await requestState({ forceFull: true }); }
+		finally {
+			manualReconnectPending = false;
+			renderConnectionNotice();
+			if (!sidebarConnectionError && shadow.activeElement === reconnectButton) body.focus({ preventScroll: true });
+		}
+	});
+
 	function renderState(state) {
+		restoreOfflineDisabledControls();
 		const wasNearBottom = isNearLatestAnswer();
 		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
 			progressExpanded = null;
@@ -6148,11 +6350,13 @@
 		// bottom. An active request must not override scrolling up to read or cite.
 		if (wasNearBottom || previousSessionPath !== nextSessionPath) scrollToLatestAnswer();
 		else updateJumpToLatestButton();
+		renderConnectionNotice();
 	}
 
 	async function requestState({ poll = false, afterSessionChange = false, forceFull = false } = {}) {
 		if (!open || (!afterSessionChange && (creatingSession || sessionSwitching || deletingSession))) return;
 		if (poll && stateRequestsInFlight) return;
+		if (afterSessionChange) invalidateSidebarSessionSnapshot();
 		const sequence = ++stateRequestSequence;
 		// Keep the accepted server history separate from local renderState calls
 		// (voice, status notices, and session controls can render interim state).
@@ -6175,6 +6379,7 @@
 			if (!historyBase || response.historyRevision !== historyBase.revision ||
 				getStateSessionPath(response.state) !== historyBase.sessionPath) {
 				sidebarHistory = null;
+				if (getStateSessionPath(response.state) !== getStateSessionPath(lastAcceptedSidebarState)) lastAcceptedSidebarState = null;
 				// A stale worker/client cache must recover with a full snapshot,
 				// never display another session's answers or retry indefinitely.
 				if (!forceFull) return await requestState({ poll, afterSessionChange, forceFull: true });
@@ -6185,15 +6390,21 @@
 		}
 		if (!response?.ok) {
 			sidebarHistory = null;
-			renderState({
+			sidebarConnectionError = response?.error || "Onhand's background runtime did not respond.";
+			const sameSessionSnapshot = lastAcceptedSidebarState && getStateSessionPath(lastAcceptedSidebarState) &&
+				getStateSessionPath(lastAcceptedSidebarState) === getStateSessionPath(currentState) ? lastAcceptedSidebarState : null;
+			if (!sameSessionSnapshot) lastAcceptedSidebarState = null;
+			renderState(sameSessionSnapshot || {
 				currentSession: { sessionName: "Onhand unavailable" },
-				status: response?.error || "Onhand's background runtime did not respond. Reload the extension and try again.",
+				status: sidebarConnectionError,
 				messages: [],
 				activities: [],
 				pageActions: [],
 			});
 			return;
 		}
+		sidebarConnectionError = "";
+		lastAcceptedSidebarState = response.state;
 		sidebarHistory = typeof response.historyRevision === "string" && response.historyRevision
 			? {
 				revision: response.historyRevision,
@@ -6206,6 +6417,7 @@
 	}
 
 	async function submitPrompt(prompt) {
+		if (sidebarConnectionError) return;
 		if (sending || creatingSession || sessionSwitching || deletingSession || restoringSession || currentState?.activeRequestId) return;
 		const trimmedPrompt = String(prompt || "").trim();
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
@@ -6246,6 +6458,7 @@
 	}
 
 	async function activateAction(key, options = {}) {
+		assertSidebarConnected();
 		const sessionPath = String(options?.sessionPath || "").trim();
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:activate-action",
@@ -6258,6 +6471,7 @@
 	}
 
 	async function scrollToAnnotation(annotationId, tabId = null, target = "annotation") {
+		assertSidebarConnected();
 		const payload = {
 			type: "sidebar:scroll-to-annotation",
 			annotationId,
@@ -6328,6 +6542,7 @@
 	}
 
 	async function resolveLearnerSourceViaRuntime(id, target, source) {
+		assertSidebarConnected();
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:jump-learner-source",
 			annotationId: id,
@@ -6400,6 +6615,7 @@
 	}
 
 	async function renameSessionTitle(sessionName) {
+		assertSidebarConnected();
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:rename-session",
 			sessionName,
@@ -6417,6 +6633,7 @@
 	}
 
 	async function updateLearningMode(learningMode) {
+		assertSidebarConnected();
 		const response = await chrome.runtime.sendMessage({
 			type: "sidebar:set-learning-mode",
 			learningMode,
@@ -7293,7 +7510,9 @@
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
 		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
-		realtimeVoiceButton.disabled = !voiceEnabled || realtimeConnecting;
+		realtimeVoiceButton.disabled = sidebarConnectionError
+			? !(realtimeConnected || realtimeConnecting)
+			: !voiceEnabled || realtimeConnecting;
 		realtimeStatusEl.textContent = !voiceEnabled ? "Voice disabled" : realtimeError || realtimeStatus;
 		realtimeStatusEl.setAttribute("aria-expanded", realtimeErrorExpanded && realtimeError ? "true" : "false");
 		realtimeStatusEl.setAttribute("aria-controls", "realtimeErrorBubble");
@@ -9585,6 +9804,7 @@
 	}
 
 	async function startRealtimeVoice() {
+		assertSidebarConnected();
 		if (!isRealtimeVoiceEnabledInPreferences()) {
 			throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
 		}

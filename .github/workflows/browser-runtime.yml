@@ -16,11 +16,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit
 
       - name: Build extension runtime
         run: npm run build:extension
@@ -40,6 +40,9 @@ jobs:
       - name: Run free-tier worker regressions
         run: npm run test:free-tier-worker-regressions
 
+      - name: Run workerd SQLite and cancellation integration tests
+        run: npm run test:free-tier-worker-runtime
+
       - name: Verify website analytics instrumentation
         run: npm run website:verify-analytics
 
@@ -54,3 +57,41 @@ jobs:
 
       - name: Emit Chrome acceptance plan
         run: npm run acceptance:chrome -- --suite=all --run-id=ci-${{ github.run_id }} --json
+
+  browser-workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit
+      - run: npm run build:extension
+
+      # Chrome for Testing retains unpacked-extension automation support.
+      # A headed browser under Xvfb also exercises the native side-panel UI.
+      - uses: browser-actions/setup-chrome@v2.1.2
+        id: chrome
+        with:
+          chrome-version: stable
+          install-dependencies: true
+
+      - name: Test native sidebar, PDF citations, scrolling, and restart
+        run: xvfb-run -a npm run test:real-sidebar-workflows
+        env:
+          ONHAND_TEST_BROWSER: ${{ steps.chrome.outputs.chrome-path }}
+          # Ubuntu's AppArmor restricts user namespaces for downloaded Chrome.
+          # Only this disposable runner with generated local fixtures uses this
+          # flag; normal/local browser launches retain their default sandbox.
+          ONHAND_TEST_BROWSER_FLAGS: --disable-dev-shm-usage --no-sandbox
+          ONHAND_TEST_ARTIFACT_DIR: tmp/browser-workflows
+
+      - name: Save browser validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-workflows-${{ github.run_id }}
+          path: tmp/browser-workflows
+          if-no-files-found: warn

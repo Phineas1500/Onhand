@@ -77,17 +77,29 @@ for the last KV counter updates to propagate, then deploy the new Worker with th
 intended cap restored. A quiet UTC-day boundary avoids importing the old day's
 quota counters. Do not run old and new Workers concurrently: the old version does
 not honor reservations and can continue changing KV after its one-time import.
-This change has been tested locally; deploying it is a separate operation.
+The initial production rollout completed on September 8, 2026 UTC; see the
+[validation report](../../docs/validation/2026-09-08-release-and-recovery.md).
+
+Before later deployments, read the live bindings and variables and preserve any
+intentional overrides. At this rollout, production's `DAILY_REQUEST_CAP` was 250,
+while the repository default remains 80. [`wrangler deploy --keep-vars`](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy) preserves
+variables absent from the configuration, but does not protect an existing value
+from a value explicitly supplied in the deployment configuration. Use a deployment
+configuration that retains the intended live limits, then verify them after
+deployment. Preserve secret bindings without writing their values into a config.
 
 ## Verification
 
 `npm run test:free-tier-worker-regressions` runs deterministic HTTP/stream tests and
 20-way burst tests for admission, daily/turn/IP counters, reservation accounting,
 metadata delays, failed settlement RPCs, cancellation, legacy import, and restart
-recovery. Set `ONHAND_MINIFLARE_MODULE` to an installed Miniflare module to additionally
-run actual workerd SQLite/RPC, HTTP disconnect, alarm, concurrent admission, and
-restart-persistence checks. Both suites mock OpenRouter; they spend no provider
-credits and do not prove a production deployment.
+recovery. `npm run test:free-tier-worker-runtime` uses the pinned Wrangler/Miniflare
+dependency to run actual workerd SQLite/RPC, HTTP disconnect, alarm, concurrent
+admission, and restart-persistence checks. It requires Node 22 or later and is a
+separate mandatory CI step. `ONHAND_MINIFLARE_MODULE` remains available for testing
+another installed Miniflare version through the deterministic suite. Both suites
+mock OpenRouter; they spend no provider credits and do not prove a production
+deployment.
 
 Storage design follows Cloudflare's [transactional SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 and [Durable Object alarms](https://developers.cloudflare.com/durable-objects/api/alarms/).

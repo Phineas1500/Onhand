@@ -35,7 +35,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const EXT_DIR = fileURLToPath(new URL("../packages/browser-extension", import.meta.url));
 const CDP_PORT_OVERRIDE = process.env.ONHAND_TEST_CDP_PORT ? Number(process.env.ONHAND_TEST_CDP_PORT) : null;
-const EXT_ID_FALLBACK = "hpjpjeehgbloadhdidmecpijppodibim";
 const VERBOSE = Boolean(process.env.ONHAND_TEST_VERBOSE);
 const RESTORE_TEST_SESSION_ID = "seed-session-anchor-test";
 
@@ -188,20 +187,29 @@ function pickAvailablePort() {
 async function openContext(port) {
 	const version = await waitForCdp(port);
 	const cdp = new Cdp(await connect(version.webSocketDebuggerUrl));
-	let extId = EXT_ID_FALLBACK;
+	let extId = null;
 	for (let attempt = 0; attempt < 40; attempt += 1) {
 		const targets = (await cdp.send("Target.getTargets")).targetInfos;
-		const target = targets.find((t) => {
-			const url = String(t.url || "");
-			const title = String(t.title || "");
-			return url.startsWith(`chrome-extension://${EXT_ID_FALLBACK}/`) || title.includes("Onhand");
-		});
-		if (target?.url) {
-			extId = new URL(target.url).host;
-			break;
+		// Unpacked IDs depend on the checkout path. Discover and verify the
+		// actual worker instead of assuming the developer machine's local ID.
+		for (const target of targets.filter((t) => t.type === "service_worker" && /^chrome-extension:\/\/[^/]+\/background\.js$/.test(String(t.url)))) {
+			let discoverySession;
+			try {
+				discoverySession = (await cdp.send("Target.attachToTarget", { targetId: target.targetId, flatten: true })).sessionId;
+				const result = await cdp.send("Runtime.evaluate", { expression: "chrome.runtime.getManifest()", returnByValue: true }, discoverySession);
+				const manifest = result.result?.value;
+				if (manifest?.name === "Onhand" && manifest.background?.service_worker === "background.js") extId = new URL(target.url).host;
+			} catch {
+				// The worker may be restarting while the extension loads.
+			} finally {
+				if (discoverySession) await cdp.send("Target.detachFromTarget", { sessionId: discoverySession }).catch(() => {});
+			}
+			if (extId) break;
 		}
+		if (extId) break;
 		await delay(250);
 	}
+	if (!extId) { cdp.ws.close(); throw new Error("Could not find the loaded Onhand extension service worker"); }
 	const driverUrl = `chrome-extension://${extId}/pdf-viewer.html?driver=1`;
 	const { targetId } = await cdp.send("Target.createTarget", { url: driverUrl, background: true });
 	const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });

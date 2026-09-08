@@ -74,6 +74,9 @@ Related docs:
 
 ### 1. Install dependencies
 
+Use Node.js 22 or later for development and CI; the pinned Wrangler/workerd test
+tooling requires it.
+
 ```bash
 npm install
 ```

@@ -43,3 +43,15 @@ TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 ERROR_REPORTS_PER_IP_PER_DAY = "50"
 
 # Secret (never in this file): npx wrangler secret put OPENROUTER_API_KEY
+
+# Sample runtime diagnostics without logging request bodies in application code.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.01

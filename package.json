@@ -52,6 +52,8 @@
     "test:raindrop-pilot": "node ./scripts/run-raindrop-development-pilot-regressions.mjs",
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
+    "test:free-tier-worker-runtime": "node ./scripts/run-free-tier-worker-runtime.mjs",
+    "test:real-sidebar-workflows": "node ./scripts/run-real-sidebar-workflows.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
     "test:real-runtime-review": "node ./scripts/run-real-runtime-review-regressions.mjs",
     "test:pdf-viewer-review": "node ./scripts/run-pdf-viewer-review-regressions.mjs",
@@ -85,6 +87,7 @@
     "@raindrop-ai/pi-agent": "0.1.0",
     "@sentry/cli": "^3.5.0",
     "esbuild": "^0.28.1",
+    "wrangler": "4.129.1",
     "ws": "^8.21.0"
   }
 }

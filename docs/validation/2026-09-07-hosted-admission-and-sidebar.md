@@ -21,7 +21,8 @@ provider deadline is four minutes and its durable lease is five minutes.
 The reservation is an estimate, not a guaranteed upper price bound. See
 [admission and rollout policy](../../workers/free-tier/admission.md) for unresolved
 holds, UTC-day boundaries, compatibility, and the required drain of the old Worker.
-No production deployment was performed for this change.
+Production deployment was performed in the follow-up rollout described in
+[the September 8 validation report](2026-09-08-release-and-recovery.md).
 
 ## Sidebar behavior
 
@@ -115,5 +116,7 @@ Local artifacts (ignored `tmp/`):
 The attempt to open Extensions in the normal Helium profile was rejected by Browser
 Use's URL policy. No alternate route was attempted after that rejection. The normal
 profile still needs its own manual reload; the successful reload and live checks
-above apply to the disposable profile. This work remains uncommitted and the hosted
-Worker remains undeployed.
+above apply to the disposable profile. This batch was committed and pushed as
+`b0dd57502dc62dff1151a60253dfc5434edfcf79`; its GitHub runtime workflow passed.
+The subsequent hosted rollout and additional recovery work are recorded in
+[the September 8 validation report](2026-09-08-release-and-recovery.md).

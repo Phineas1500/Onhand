@@ -156143,6 +156143,7 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  buildRecentConversationContextForTest: buildRecentConversationContext,
   withRuntimeStoreForTest: withRuntimeStore,
   deleteSessionRecordsForTest: deleteSessionRecords,
   listBrowserArtifactsForTest: listBrowserArtifacts,
@@ -158037,9 +158038,9 @@ function createOnhandBrowserRuntime(host) {
     const store2 = await loadStore();
     const session = store2.sessions[store2.currentSessionId];
     const voiceTurnId = String(request.voiceTurnId || crypto.randomUUID()).trim();
-    const userPrompt = truncate2(String(request.userPrompt || "").trim(), RECENT_CONTEXT_PROMPT_MAX_CHARS);
-    const reply = truncate2(String(request.reply || "").trim(), RECENT_CONTEXT_REPLY_MAX_CHARS);
-    if (!userPrompt && !reply) throw new Error("Voice turn needs a prompt or answer.");
+    const userPrompt = String(request.userPrompt || "");
+    const reply = String(request.reply || "");
+    if (!userPrompt.trim() && !reply.trim()) throw new Error("Voice turn needs a prompt or answer.");
     const createdAt = typeof request.createdAt === "string" && request.createdAt.trim() ? request.createdAt : nowIso();
     const pageActions = (Array.isArray(request.pageActions) ? request.pageActions : []).filter(
       (action) => action && typeof action === "object" && String(action.key || action.label || action.detail || "").trim()

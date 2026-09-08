@@ -3,6 +3,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 export async function runLocalWorkerRegressions(modulePath) {
+	const day = new Date().toISOString().slice(0, 10);
+	try {
+		await runLocalWorkerAttempt(modulePath, day);
+	} catch (error) {
+		const retryDay = new Date().toISOString().slice(0, 10);
+		if (retryDay === day) throw error;
+		// Chat accounting uses the real current UTC day, while assertions inspect
+		// the day's seeded ledger. If midnight split the attempt, rerun every
+		// assertion with fresh storage after disposal; keep real alarm timing.
+		console.warn(`Workerd integration crossed UTC midnight (${day} -> ${retryDay}); retrying once with a fresh ledger. Initial failure: ${error?.message || error}`);
+		await runLocalWorkerAttempt(modulePath, retryDay);
+	}
+}
+
+async function runLocalWorkerAttempt(modulePath, day) {
 	const { Miniflare, convertV4MiniflareOptions } = await import(pathToFileURL(modulePath).href);
 	const entry = fileURLToPath(new URL("../src/worker.mjs", import.meta.url));
 	const { outputFiles } = await build({
@@ -66,7 +81,6 @@ export async function runLocalWorkerRegressions(modulePath) {
 		return convertV4MiniflareOptions ? convertV4MiniflareOptions(v4) : v4;
 	};
 	const mf = new Miniflare(options());
-	const day = new Date().toISOString().slice(0, 10);
 	async function ledger(input = {}) {
 		const response = await mf.dispatchFetch("https://fixture.test/fixture-ledger", { method: "POST", body: JSON.stringify({ day, ...input }) });
 		assert.equal(response.status, 200, await response.clone().text());

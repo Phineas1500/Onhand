@@ -10273,6 +10273,7 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	buildRecentConversationContextForTest: buildRecentConversationContext,
 	withRuntimeStoreForTest: withRuntimeStore,
 	deleteSessionRecordsForTest: deleteSessionRecords,
 	listBrowserArtifactsForTest: listBrowserArtifacts,
@@ -12374,9 +12375,11 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const store = await loadStore();
 		const session = store.sessions[store.currentSessionId] as RuntimeSession;
 		const voiceTurnId = String(request.voiceTurnId || crypto.randomUUID()).trim();
-		const userPrompt = truncate(String(request.userPrompt || "").trim(), RECENT_CONTEXT_PROMPT_MAX_CHARS);
-		const reply = truncate(String(request.reply || "").trim(), RECENT_CONTEXT_REPLY_MAX_CHARS);
-		if (!userPrompt && !reply) throw new Error("Voice turn needs a prompt or answer.");
+		// Save the transcript intact, just like a typed turn. Compact model history
+		// is derived separately by createStoredConversationMessages/recent context.
+		const userPrompt = String(request.userPrompt || "");
+		const reply = String(request.reply || "");
+		if (!userPrompt.trim() && !reply.trim()) throw new Error("Voice turn needs a prompt or answer.");
 		const createdAt = typeof request.createdAt === "string" && request.createdAt.trim() ? request.createdAt : nowIso();
 		const pageActions = (Array.isArray(request.pageActions) ? request.pageActions : []).filter(
 			(action: any) => action && typeof action === "object" && String(action.key || action.label || action.detail || "").trim(),

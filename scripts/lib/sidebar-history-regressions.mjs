@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runSidebarRecoveryRegressions } from "./sidebar-recovery-regressions.mjs";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const full = (state, revision) => ({ ok: true, state: structuredClone(state), ...(revision ? { historyRevision: revision } : {}) });
@@ -146,12 +147,15 @@ async function assertRepeatedMalformedDeltaAndErrorsClearCache({ renderSidebar, 
 			});
 			await h.refresh();
 			assert.equal(h.requests.length - start, failure === "repeated-delta" ? 2 : 1, `${failure}: retrying must remain bounded`);
-			assert.equal(h.sessionName(), "Onhand unavailable", `${failure}: show a recoverable error instead of stale history`);
-			assert.doesNotMatch(h.text(), /Monte Carlo uses samples/);
+			assert.equal(h.sessionName(), state.currentSession.sessionName, `${failure}: preserve the last accepted same-session conversation`);
+			assert.match(h.text(), /Monte Carlo uses samples/);
+			assert.equal(h.shadow.getElementById("connectionNotice").hidden, false, `${failure}: explicitly mark the preserved conversation disconnected`);
+			assert.equal(h.shadow.getElementById("sendButton").disabled, true, `${failure}: do not act on stale runtime state`);
 			h.setResponse(() => full(state, "after-error"));
 			await h.refresh();
 			assert.equal(h.requests.at(-1).knownHistoryRevision, undefined, `${failure}: a later refresh must request a new full base`);
 			assert.match(h.text(), /Monte Carlo uses samples/);
+			assert.equal(h.shadow.getElementById("connectionNotice").hidden, true);
 		} finally { h.dom.window.close(); }
 	}
 }
@@ -239,4 +243,5 @@ export async function runSidebarHistoryRegressions(helpers) {
 	await assertRepeatedMalformedDeltaAndErrorsClearCache(helpers);
 	await assertStaleResponsesCannotPoisonHistory(helpers);
 	await assertExplicitSessionTransitionRequestsFullHistory(helpers);
+	await runSidebarRecoveryRegressions(helpers);
 }
