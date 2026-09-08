@@ -337,7 +337,21 @@ async function restartGroup(ctx, base, previous) {
 	assert.notEqual(persisted.historyRevision, previous.historyRevision);
 	assert.equal(persisted.state.turns.length, previous.expectedTurnCount, "browser restart must retain committed history in IndexedDB");
 	const { tab } = await openPdf(ctx, base);
-	const restored = checked(await ctx.sendMessage({ type: "sidebar:restore-session", sessionPath: HISTORY_ID }));
+	// Retain the restarted source tab alongside the newly opened viewer: replay
+	// must choose and prepare its actual target even when their PDF URLs match.
+	const snapshot = async () => {
+		const read = async (operation) => { try { return await operation(); } catch (error) { return { error: error.stack || String(error) }; } };
+		const [tabs, targets, state] = await Promise.all([
+			read(() => ctx.driverEval("chrome.tabs.query({})")),
+			read(() => ctx.cdp.send("Target.getTargets")),
+			read(() => ctx.sendMessage({ type: "sidebar:fetch-state", windowId: tab.windowId })),
+		]);
+		return { tabs, targets, state };
+	};
+	const beforeRestore = await snapshot();
+	const restored = await ctx.sendMessage({ type: "sidebar:restore-session", sessionPath: HISTORY_ID });
+	await writeFile(join(OUTPUT, "restart-restore-debug.json"), JSON.stringify({ fixturePdf: `${base}/fixture.pdf`, preparedTab: tab, previousActions: previous.actions, beforeRestore, restored, afterRestore: await snapshot() }, null, 2));
+	checked(restored);
 	assert.ok(restored.restoredPages?.length, "restoring the saved session must replay the generated PDF");
 	assert.equal(restored.restoredPages.reduce((sum, page) => sum + Number(page.failedCount || page.failures?.length || 0), 0), 0, "restoring the generated PDF must not fail");
 	assert.equal(restored.restoredPages.reduce((sum, page) => sum + Number(page.restoredAnnotations || 0), 0), 3, "all three generated PDF annotations must be restored");
