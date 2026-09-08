@@ -160340,6 +160340,7 @@ function createOnhandBrowserRuntime(host) {
       } catch (error52) {
         host.log?.("session replay tab activation failed", error52);
       }
+      await waitForPdfRestoreSurface(tabId, buildReplayArtifact(session, targetKey, tab, annotations), annotations);
       if (params.clearExisting !== false) {
         try {
           await host.runCommand("clear_annotations", { tabId });

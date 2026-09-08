@@ -236,13 +236,19 @@ async function connectionRecoveryGroup(ctx, panel, viewer, actions) {
 	// Add a later answer so the failing citation belongs to an older entry.
 	checked(await ctx.sendMessage({ type: "sidebar:realtime-record-turn", voiceTurnId: "ci-later-answer", userPrompt: "Continue after the garden answer.", reply: "A later fixture answer follows the cited voice response. ".repeat(16), pageActions: [] }));
 	await waitUntil(async () => (await state()).count === 102, "later answer after the cited response");
-	await ev(`(()=>{const s=${ROOT},send=chrome.runtime.sendMessage.bind(chrome.runtime);window.__ciDisconnect=false;window.__ciFailSource=false;window.__ciSourceCalls=[];chrome.runtime.sendMessage=async(message,...rest)=>{if(message?.type==='sidebar:activate-action')window.__ciSourceCalls.push({key:message.key,injectFailure:window.__ciFailSource});if(message?.type==='sidebar:fetch-state'&&window.__ciDisconnect)throw new Error('Fixture background connection unavailable');if(message?.type==='sidebar:activate-action'&&window.__ciFailSource){window.__ciFailSource=false;return{ok:false,error:'Fixture source could not be opened'}}return send(message,...rest)};window.__ciReaderNodes=[...s.querySelectorAll('#messages > .onhand-entry')];const source=s.querySelector('#messages .onhand-cite');source.scrollIntoView({block:'center'});window.__ciSource=source;return true})()`);
+	await ev(`(()=>{const s=${ROOT},send=chrome.runtime.sendMessage.bind(chrome.runtime);window.__ciDisconnect=false;window.__ciDisconnectHits=[];window.__ciFailSource=false;window.__ciSourceCalls=[];chrome.runtime.sendMessage=async(message,...rest)=>{if(message?.type==='sidebar:activate-action')window.__ciSourceCalls.push({key:message.key,injectFailure:window.__ciFailSource});if(message?.type==='sidebar:fetch-state'&&window.__ciDisconnect){window.__ciDisconnectHits.push(Date.now());throw new Error('Fixture background connection unavailable')}if(message?.type==='sidebar:activate-action'&&window.__ciFailSource){window.__ciFailSource=false;return{ok:false,error:'Fixture source could not be opened'}}return send(message,...rest)};window.__ciReaderNodes=[...s.querySelectorAll('#messages > .onhand-entry')];const source=s.querySelector('#messages .onhand-cite');source.scrollIntoView({block:'center'});window.__ciSource=source;return true})()`);
 	await delay(200);
 	const reading = () => ev(`(()=>{const s=${ROOT},b=s.querySelector('#scroll');return{top:b.scrollTop,away:b.scrollHeight-b.clientHeight-b.scrollTop>96,notice:!s.querySelector('#connectionNotice').hidden,inputDisabled:s.querySelector('#input').disabled,nodesRetained:window.__ciReaderNodes.every((n,i)=>s.querySelectorAll('#messages > .onhand-entry')[i]===n)}})()`);
 	const before = await reading();
 	assert.ok(before.away, "fault fixture must read an older answer above the latest output");
 	await ev("window.__ciDisconnect=true");
-	await waitUntil(async () => (await reading()).notice, "disconnected notice after actual polling failure");
+	try {
+		await waitUntil(async () => (await reading()).notice, "disconnected notice after actual polling failure");
+	} catch (error) {
+		const debug = await ev(`(()=>{const s=${ROOT};return{now:Date.now(),visibility:document.visibilityState,focused:document.hasFocus(),injected:window.__ciDisconnect,injectedFailures:window.__ciDisconnectHits,stateRequests:window.__ciStateRequests,polls:window.__ciPolls,notice:s.querySelector('#connectionNotice').outerHTML}})()`);
+		await writeFile(join(OUTPUT, "sidebar-disconnect-debug.json"), JSON.stringify({ before, after: await reading(), ...debug }, null, 2));
+		throw error;
+	}
 	const offline = await reading();
 	assert.equal(offline.nodesRetained, true, "disconnect must preserve the last accepted conversation DOM");
 	assert.equal(offline.inputDisabled, true, "disconnect must pause new runtime actions");
@@ -296,7 +302,21 @@ async function nativeGroup(ctx, base) {
 	const baseline = await state();
 	assert.equal(baseline.citations.length, 3);
 	assert.ok(baseline.citations.every((chip, index) => chip[0] === `[${index + 1}]`));
-	await ev(`(()=>{window.__ciPolls=[];const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=async(...args)=>{const r=await send(...args);if(args[0]?.type==='sidebar:fetch-state')window.__ciPolls.push({sent:args[0].knownHistoryRevision,revision:r.historyRevision,unchanged:r.historyUnchanged,bytes:JSON.stringify(r).length,turns:Object.hasOwn(r.state||{},'turns'),messages:Object.hasOwn(r.state||{},'messages'),status:Object.hasOwn(r.state||{},'status')});return r};window.__ciNodes=[...${ROOT}.querySelectorAll('#messages > .onhand-entry')];return true})()`);
+	await ev(`(()=>{
+		window.__ciPolls=[];window.__ciStateRequests=[];
+		const send=chrome.runtime.sendMessage.bind(chrome.runtime);
+		chrome.runtime.sendMessage=async(...args)=>{
+			const request=args[0]?.type==='sidebar:fetch-state'?{startedAt:Date.now()}:null;
+			if(request)window.__ciStateRequests.push(request);
+			try{
+				const r=await send(...args);
+				if(request)window.__ciPolls.push({sent:args[0].knownHistoryRevision,revision:r.historyRevision,unchanged:r.historyUnchanged,bytes:JSON.stringify(r).length,turns:Object.hasOwn(r.state||{},'turns'),messages:Object.hasOwn(r.state||{},'messages'),status:Object.hasOwn(r.state||{},'status')});
+				return r;
+			}catch(error){if(request)request.error=error.message;throw error;}
+			finally{if(request)request.finishedAt=Date.now();}
+		};
+		window.__ciNodes=[...${ROOT}.querySelectorAll('#messages > .onhand-entry')];return true;
+	})()`);
 	await waitUntil(() => ev("window.__ciPolls.slice(-3).length===3&&window.__ciPolls.slice(-3).every(p=>p.unchanged)"), "three unchanged native sidebar polls");
 	const idlePolls = await ev("window.__ciPolls.slice(-3)");
 	assert.ok(idlePolls.every((poll) => !poll.turns && !poll.messages && poll.status && poll.sent === poll.revision));

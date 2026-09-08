@@ -1,6 +1,7 @@
 import { runRuntimeReviewRegressions } from "./lib/onhand-review-regressions.mjs";
 import { runSidebarPollRegressions } from "./lib/onhand-sidebar-poll-regressions.mjs";
 import { runVoiceTranscriptRegressions } from "./lib/voice-transcript-regressions.mjs";
+import { runSessionPageActionRestoreRegressions } from "./lib/session-page-action-restore-regressions.mjs";
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
@@ -11034,6 +11035,7 @@ async function assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSourc
 
 async function main() {
 	const voiceRuntime = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	await runSessionPageActionRestoreRegressions({ createOnhandBrowserRuntime: voiceRuntime.createOnhandBrowserRuntime });
 	await runVoiceTranscriptRegressions({ createOnhandBrowserRuntime: voiceRuntime.createOnhandBrowserRuntime,
 		buildRecentConversationContext: voiceRuntime.__browserRuntimeTest.buildRecentConversationContextForTest });
 	await runSidebarPollRegressions({ createOnhandBrowserRuntime: (await import("../packages/browser-extension/onhand-runtime.bundle.js")).createOnhandBrowserRuntime });

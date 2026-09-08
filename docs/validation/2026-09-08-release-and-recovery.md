@@ -129,6 +129,31 @@ Final independent sidebar review found no remaining substantive blockers. The ne
 GitHub workflow runs both regression/workerd and real-browser jobs on pushes and
 pull requests. Its execution result is checked after pushing the resulting commit.
 
+### PDF replay issue caught by the new Linux gate
+
+The first Linux run of the new browser gate passed scrolling, voice saving,
+connection recovery, source Retry, and session switching, then failed all three
+PDF annotation restorations after restart. A diagnostic rerun preserved the same
+failure and recorded the actual tabs and viewer frames. Restoration selected the
+original matching PDF tab, which had reverted to Chrome's native viewer; a second
+tab for the same PDF already had Onhand's viewer. All three failures reported that
+the saved text was not loaded.
+
+`restoreSessionPageActions` now uses the existing PDF viewer-preparation helper
+once per resolved page, before clearing or restoring annotations. Saved-artifact
+restoration and citation recovery already used this helper. Tab matching is
+unchanged, and ordinary HTML pages skip the handoff.
+
+A focused regression fails on the old bundle (zero of three marks restored) and
+passes with the fix, including all notes, source anchors, stable citation aliases,
+and ownership of the selected tab. Independent review found no remaining issue
+with this change. The complete runtime regressions and local browser workflow
+passed again on the rebuilt extension: 102 saved turns, all three annotations and
+notes restored, zero failures, and all citation clicks successful. That Helium run
+retained no old PDF tab after restart, so the following Linux CI run is the
+decisive check of the duplicate-tab failure captured above. The harness keeps that
+scenario and all restoration assertions intact.
+
 Ignored local evidence: `tmp/browser-workflows/results.json`,
 `streaming-reading-position.png`, `sidebar-disconnected.png`,
 `sidebar-source-retry.png`, `native-sidebar.png`, `pdf-citation-note.png`, and

@@ -14962,6 +14962,8 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			} catch (error) {
 				host.log?.("session replay tab activation failed", error);
 			}
+			// A restored HTTP PDF tab may be using the native viewer again.
+			await waitForPdfRestoreSurface(tabId, buildReplayArtifact(session, targetKey, tab, annotations), annotations);
 			if (params.clearExisting !== false) {
 				try {
 					await host.runCommand("clear_annotations", { tabId });
