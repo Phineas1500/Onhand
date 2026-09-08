@@ -157409,6 +157409,18 @@ async function withAbortSignal(signal, run) {
 function createOnhandBrowserRuntime(host) {
   let storePromise = null;
   let uiState = null;
+  const sidebarHistoryEpoch = crypto.randomUUID();
+  let sidebarHistoryRevision = 0;
+  let sidebarHistoryInputs = null;
+  let persistedStateRevision = 0;
+  let assistantDraftRevision = 0;
+  let dueReviewRevision = 0;
+  const DUE_REVIEW_CACHE_TTL_MS = 6e4;
+  let dueReviewCache = null;
+  function invalidateDueReviewCache() {
+    dueReviewRevision += 1;
+    dueReviewCache = null;
+  }
   let activeAgent = null;
   let activeDevelopmentAgentObserver = null;
   let activeRequest = null;
@@ -157609,6 +157621,8 @@ function createOnhandBrowserRuntime(host) {
     }
   }
   async function saveStore(store2, changed) {
+    persistedStateRevision += 1;
+    invalidateDueReviewCache();
     storePromise = Promise.resolve(store2);
     try {
       await putSessionRecords(changed?.sessions || []);
@@ -158221,6 +158235,7 @@ function createOnhandBrowserRuntime(host) {
     if (!message) return;
     message.text = text;
     Object.assign(message, extra);
+    assistantDraftRevision += 1;
     uiState.updatedAt = Date.now();
   }
   function blankSupersededAssistantDraft(requestId) {
@@ -159189,22 +159204,50 @@ function createOnhandBrowserRuntime(host) {
     const store2 = await loadStore();
     return buildPublicSettings(store2.settings);
   }
-  async function getDueReviews(params = {}) {
+  async function getDueReviews(params = {}, useCache = false) {
     const store2 = await loadStore();
-    const snoozes = await readReviewSnoozes();
-    let activeUrl = "";
-    try {
-      const state = await host.snapshotState();
-      const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : void 0);
-      activeUrl = String(activeTab?.url || "");
-    } catch {
+    let activeUrl = typeof params.activeUrl === "string" ? params.activeUrl : "";
+    if (typeof params.activeUrl !== "string") {
+      try {
+        const state = await host.snapshotState();
+        const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : void 0);
+        activeUrl = String(activeTab?.url || "");
+      } catch {
+      }
     }
-    return computeDueReviews(Object.values(store2.sessions), {
+    const compute = async () => computeDueReviews(Object.values(store2.sessions), {
       now: params?.now,
       limit: params?.limit,
       activeUrl,
-      snoozes
+      snoozes: await readReviewSnoozes()
     });
+    if (!useCache || params.now != null) return await compute();
+    const key = `${dueReviewRevision}:${reviewUrlHost(activeUrl)}:${params.limit || REVIEW_DEFAULT_LIMIT}`;
+    if (dueReviewCache?.key === key && Date.now() < dueReviewCache.expiresAt) return await dueReviewCache.promise;
+    const cache = { key, expiresAt: Date.now() + DUE_REVIEW_CACHE_TTL_MS, promise: compute() };
+    dueReviewCache = cache;
+    try {
+      return await cache.promise;
+    } catch (error52) {
+      if (dueReviewCache === cache) dueReviewCache = null;
+      throw error52;
+    }
+  }
+  async function getPublicState(params = {}) {
+    const dueReviews = await getDueReviews(params, true).catch(() => []);
+    const store2 = await loadStore();
+    const state = await ensureUiState();
+    const session = store2.sessions[store2.currentSessionId];
+    return {
+      ...state,
+      currentSession: buildSessionState(session),
+      dueReviews,
+      preferences: {
+        ...state.preferences,
+        runtime: "browser-extension",
+        ...buildPublicSettings(store2.settings)
+      }
+    };
   }
   function buildArtifactId(tab, page) {
     const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -160415,20 +160458,25 @@ function createOnhandBrowserRuntime(host) {
       return { ok: true, traces: traces.slice(0, max) };
     },
     async getState() {
-      const store2 = await loadStore();
-      const session = store2.sessions[store2.currentSessionId];
-      const state = await ensureUiState();
-      const dueReviews = await getDueReviews().catch(() => []);
-      return {
-        ...state,
-        currentSession: buildSessionState(session),
-        dueReviews,
-        preferences: {
-          ...state.preferences,
-          runtime: "browser-extension",
-          ...buildPublicSettings(store2.settings)
-        }
-      };
+      return await getPublicState();
+    },
+    async getSidebarState(params = {}) {
+      const state = await getPublicState(params);
+      const inputs = [state.currentSession?.sessionId, state.turns, state.messages, persistedStateRevision, assistantDraftRevision];
+      if (!sidebarHistoryInputs || inputs.some((value, index) => value !== sidebarHistoryInputs[index])) {
+        sidebarHistoryInputs = inputs;
+        sidebarHistoryRevision += 1;
+      }
+      const historyRevision = `${sidebarHistoryEpoch}:${sidebarHistoryRevision}`;
+      const historyUnchanged = params.knownHistoryRevision === historyRevision;
+      if (historyUnchanged) {
+        const { turns: _turns, messages: _messages, ...partialState } = state;
+        return { state: partialState, historyRevision, historyUnchanged };
+      }
+      return { state, historyRevision, historyUnchanged };
+    },
+    invalidateReviewCache() {
+      invalidateDueReviewCache();
     },
     async recordLearningEvent(event) {
       const store2 = await loadStore();
@@ -160691,6 +160739,7 @@ function createOnhandBrowserRuntime(host) {
       const days = Math.max(0.5, Math.min(30, Number(params?.days || 3) || 3));
       const snoozedUntil = new Date(Date.now() + days * REVIEW_DAY_MS).toISOString();
       await writeReviewSnooze(conceptKey, snoozedUntil);
+      invalidateDueReviewCache();
       return { snoozedUntil, reviews: await getDueReviews(params) };
     },
     async listSessions(limit2) {

@@ -13987,6 +13987,7 @@ async function handleCommandInner(name, args = {}) {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
 	if (areaName !== "local") return;
+	if (changes.onhandReviewSnoozes) onhandBrowserRuntime?.invalidateReviewCache();
 	if (changes[ONHAND_THEME_STORAGE_KEY]) {
 		syncAnnotationThemeInOpenTabs().catch((error) => log("Annotation theme sync after settings change failed", error));
 	}
@@ -14676,7 +14677,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:fetch-state") {
 			const runtime = getOnhandBrowserRuntime();
-			const runtimeState = await runtime.getState();
+			let resolvedTab = null;
+			let tabCaptureError = "";
+			try {
+				resolvedTab = await resolveTargetTab({ windowId: message.windowId });
+			} catch (error) {
+				tabCaptureError = error?.message || String(error);
+			}
+			const { state: runtimeState, historyRevision, historyUnchanged } = await runtime.getSidebarState({
+				knownHistoryRevision: typeof message.knownHistoryRevision === "string" ? message.knownHistoryRevision : undefined,
+				activeUrl: resolvedTab?.url || "",
+			});
 			const state = runtimeState && typeof runtimeState === "object" ? { ...runtimeState } : runtimeState;
 			if (state && typeof state === "object") {
 				state.preferences = {
@@ -14684,12 +14695,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					extensionVersion: chrome.runtime.getManifest().version,
 					runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 				};
-				try {
-					const tab = await resolveTargetTab({ windowId: message.windowId });
-					state.tab = simplifyTab(tab);
-				} catch (error) {
-					state.tabCaptureError = error?.message || String(error);
-				}
+				if (resolvedTab) state.tab = simplifyTab(resolvedTab);
+				if (tabCaptureError) state.tabCaptureError = tabCaptureError;
 				try {
 					// A fresh page capture shares the tab's serialized command queue
 					// with the active turn's tool calls: state polling during a turn
@@ -14725,6 +14732,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			sendResponse({
 				ok: true,
 				state,
+				historyRevision,
+				historyUnchanged,
 			});
 			return;
 		}

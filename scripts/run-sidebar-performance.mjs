@@ -224,7 +224,9 @@ async function main() {
 				let type;
 				if (pathname === "/") {
 					type = "text/html";
-					content = '<!doctype html><html><head><meta charset="utf-8"><title>Onhand synthetic sidebar performance</title></head><body><p>Synthetic long-conversation fixture. Runtime APIs are mocked; production sidebar.js is used.</p><script src="/harness.js"></script><script src="/sidebar.js"></script></body></html>';
+					// The embedded sidebar sits inside a transformed body. A short body
+					// can paint its host but exclude it from pointer and wheel hit testing.
+					content = '<!doctype html><html><head><meta charset="utf-8"><title>Onhand synthetic sidebar performance</title><style>html, body { min-height: 100vh; }</style></head><body><p>Synthetic long-conversation fixture. Runtime APIs are mocked; production sidebar.js is used.</p><script src="/harness.js"></script><script src="/sidebar.js"></script></body></html>';
 				} else if (pathname === "/harness.js" || pathname === "/sidebar.js") {
 					type = "text/javascript";
 					content = pathname === "/harness.js" ? clientSource : source;

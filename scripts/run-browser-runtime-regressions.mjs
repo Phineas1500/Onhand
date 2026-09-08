@@ -1,4 +1,5 @@
 import { runRuntimeReviewRegressions } from "./lib/onhand-review-regressions.mjs";
+import { runSidebarPollRegressions } from "./lib/onhand-sidebar-poll-regressions.mjs";
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
@@ -10746,15 +10747,24 @@ async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 		return await runCommand(name, args);
 	};
 	const runtime = await configureSmokeRuntime(host);
+	const beforeHistory = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke" });
 	const first = runtime.submitPrompt({ prompt: "First preparation request", targetWindowId: 3 });
 	await entered.promise;
 	assert.ok((await runtime.getState()).activeRequestId);
+	const preparing = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke", knownHistoryRevision: beforeHistory.historyRevision });
+	assert.equal(preparing.historyUnchanged, false, "starting a request must send its new messages");
+	const unchangedPreparation = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke", knownHistoryRevision: preparing.historyRevision });
+	assert.equal(unchangedPreparation.historyUnchanged, true);
+	assert.ok(unchangedPreparation.state.activeRequestId, "history omission must retain live request state");
 	assert.equal((await runtime.stop()).stopped, true);
 	await first;
 	let state = await waitForRuntimeCompletion(runtime);
 	assert.equal(state.status, "Stopped");
 	assert.equal(state.turns[0].error, false);
 	assert.equal(state.turns[0].modelCalls, 0, "stopping preparation must not start the main model");
+	const stoppedHistory = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke", knownHistoryRevision: preparing.historyRevision });
+	assert.equal(stoppedHistory.historyUnchanged, false, "settling a turn must publish the completed history");
+	assert.equal(stoppedHistory.state.turns[0].userPrompt, "First preparation request");
 	assert.equal(host.calls.some((call) => call.name === "highlight_text"), false);
 	await runtime.submitPrompt({ prompt: "Second preparation request", targetWindowId: 3 });
 	state = await waitForRuntimeCompletion(runtime);
@@ -11022,6 +11032,7 @@ async function assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSourc
 }
 
 async function main() {
+	await runSidebarPollRegressions({ createOnhandBrowserRuntime: (await import("../packages/browser-extension/onhand-runtime.bundle.js")).createOnhandBrowserRuntime });
 	await assertPdfScrollRestoreUsesViewerCoordinates();
 	await assertMarkupWithMarginNotesBypassesOptionalNoteBudget();
 	await assertPdfMarkupRequestDoesNotRequireExistingSelection();

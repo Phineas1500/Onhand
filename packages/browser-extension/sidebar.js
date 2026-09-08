@@ -141,6 +141,7 @@
 	let pollingTimer = null;
 	let stateRequestSequence = 0;
 	let stateRequestsInFlight = 0;
+	let sidebarHistory = null;
 	let sending = false;
 	let progressExpanded = null;
 	let lastActiveRequestId = null;
@@ -2155,6 +2156,37 @@
 				border-top: 1px solid var(--rm-surface-1);
 				padding-top: 8px;
 			}
+			.onhand-scroll-wrap {
+				flex: 1;
+				min-height: 0;
+				position: relative;
+				z-index: 0;
+				display: flex;
+				flex-direction: column;
+			}
+			.onhand-jump-latest {
+				position: absolute;
+				bottom: 12px;
+				left: 50%;
+				transform: translateX(-50%);
+				z-index: 3;
+				padding: 7px 12px;
+				border: 1px solid var(--rm-pine);
+				border-radius: 16px;
+				background: var(--rm-base);
+				color: var(--rm-pine);
+				font: 11px var(--rm-font-mono);
+				white-space: nowrap;
+				cursor: pointer;
+				box-shadow: 0 3px 12px rgba(0, 0, 0, 0.2);
+			}
+			.onhand-jump-latest:hover,
+			.onhand-jump-latest:focus-visible {
+				background: var(--rm-surface-2);
+			}
+			.onhand-jump-latest[hidden] {
+				display: none;
+			}
 			.onhand-scroll {
 				flex: 1;
 				min-height: 0;
@@ -3584,7 +3616,8 @@
 						</div>
 					</div>
 					</header>
-					<div id="scroll" class="onhand-scroll">
+					<div class="onhand-scroll-wrap">
+					<div id="scroll" class="onhand-scroll" tabindex="-1" role="region" aria-label="Onhand conversation">
 					<section id="replayView" class="onhand-replay" hidden></section>
 					<section id="authPanel" class="onhand-auth-panel" hidden></section>
 					<section id="pageIndex" class="onhand-index" hidden></section>
@@ -3594,6 +3627,8 @@
 				<section id="replySection" hidden>
 					<div id="reply"></div>
 				</section>
+			</div>
+				<button id="jumpToLatestButton" class="onhand-jump-latest" type="button" aria-label="Jump to latest answer" hidden>Jump to latest ↓</button>
 			</div>
 			<section id="reviewNudge" class="onhand-review-nudge" hidden></section>
 			<section id="learnerPanel" class="onhand-learner-panel" hidden></section>
@@ -3648,6 +3683,7 @@
 	const closeButton = shadow.getElementById("closeButton");
 	const meta = shadow.getElementById("meta");
 	const body = shadow.getElementById("scroll");
+	const jumpToLatestButton = shadow.getElementById("jumpToLatestButton");
 	const menuButton = shadow.getElementById("menuButton");
 	const headerNewSessionButton = shadow.getElementById("headerNewSessionButton");
 	const menuPanel = shadow.getElementById("menuPanel");
@@ -6037,11 +6073,25 @@
 		actionsEl.innerHTML = "";
 	}
 
+	function isNearLatestAnswer() {
+		return body.scrollHeight - body.scrollTop - body.clientHeight < 96;
+	}
+
+	function updateJumpToLatestButton() {
+		jumpToLatestButton.hidden = isNearLatestAnswer() || !messageTurnCache.length;
+	}
+
+	function scrollToLatestAnswer({ focus = false } = {}) {
+		body.scrollTop = body.scrollHeight;
+		if (focus) body.focus({ preventScroll: true });
+		updateJumpToLatestButton();
+	}
+
+	body.addEventListener("scroll", updateJumpToLatestButton, { passive: true });
+	jumpToLatestButton.addEventListener("click", () => scrollToLatestAnswer({ focus: true }));
+
 	function renderState(state) {
-		const wasNearBottom =
-			body instanceof HTMLElement
-				? body.scrollHeight - body.scrollTop - body.clientHeight < 96
-				: false;
+		const wasNearBottom = isNearLatestAnswer();
 		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
 			progressExpanded = null;
 		}
@@ -6094,21 +6144,26 @@
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
 				: "esc dismiss · enter ask · shift+enter newline";
-		if (body instanceof HTMLElement && (activeRequest || wasNearBottom)) {
-			body.scrollTop = body.scrollHeight;
-		}
+		// Continue following an answer only while the reader is already at the
+		// bottom. An active request must not override scrolling up to read or cite.
+		if (wasNearBottom || previousSessionPath !== nextSessionPath) scrollToLatestAnswer();
+		else updateJumpToLatestButton();
 	}
 
-	async function requestState({ poll = false, afterSessionChange = false } = {}) {
+	async function requestState({ poll = false, afterSessionChange = false, forceFull = false } = {}) {
 		if (!open || (!afterSessionChange && (creatingSession || sessionSwitching || deletingSession))) return;
 		if (poll && stateRequestsInFlight) return;
 		const sequence = ++stateRequestSequence;
+		// Keep the accepted server history separate from local renderState calls
+		// (voice, status notices, and session controls can render interim state).
+		const historyBase = forceFull || afterSessionChange ? null : sidebarHistory;
 		stateRequestsInFlight += 1;
 		let response;
 		try {
 			response = await chrome.runtime.sendMessage({
 				type: "sidebar:fetch-state",
 				windowId: await ensureCurrentWindowId(),
+				...(historyBase ? { knownHistoryRevision: historyBase.revision } : {}),
 			});
 		} catch (error) {
 			response = { ok: false, error: error?.message || String(error) };
@@ -6116,7 +6171,20 @@
 			stateRequestsInFlight -= 1;
 		}
 		if (!open || sequence !== stateRequestSequence) return;
+		if (response?.ok && response.historyUnchanged) {
+			if (!historyBase || response.historyRevision !== historyBase.revision ||
+				getStateSessionPath(response.state) !== historyBase.sessionPath) {
+				sidebarHistory = null;
+				// A stale worker/client cache must recover with a full snapshot,
+				// never display another session's answers or retry indefinitely.
+				if (!forceFull) return await requestState({ poll, afterSessionChange, forceFull: true });
+				response = { ok: false, error: "Onhand could not refresh this conversation. Please reopen the side panel." };
+			} else {
+				response.state = { ...response.state, turns: historyBase.turns, messages: historyBase.messages };
+			}
+		}
 		if (!response?.ok) {
+			sidebarHistory = null;
 			renderState({
 				currentSession: { sessionName: "Onhand unavailable" },
 				status: response?.error || "Onhand's background runtime did not respond. Reload the extension and try again.",
@@ -6126,6 +6194,14 @@
 			});
 			return;
 		}
+		sidebarHistory = typeof response.historyRevision === "string" && response.historyRevision
+			? {
+				revision: response.historyRevision,
+				sessionPath: getStateSessionPath(response.state),
+				turns: Array.isArray(response.state?.turns) ? response.state.turns : [],
+				messages: Array.isArray(response.state?.messages) ? response.state.messages : [],
+			}
+			: null;
 		renderState(response.state);
 	}
 
@@ -6135,6 +6211,7 @@
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
+		scrollToLatestAnswer();
 		const learningMode =
 			learningModeToggle instanceof HTMLInputElement ? Boolean(learningModeToggle.checked) : Boolean(currentState?.preferences?.learningMode);
 		if (realtimeConnected && realtimeDataChannel?.readyState === "open" && trimmedPrompt && !attachments.length) {

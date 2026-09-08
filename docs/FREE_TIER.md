@@ -33,6 +33,9 @@ completions to OpenRouter with Onhand's key.
   `mistralai/mistral-small-3.2-24b-instruct`
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
+- `REQUEST_COST_RESERVATION_USD` (default `$0.25` estimated hold before dispatch)
+- `CONCURRENT_REQUEST_CAP` (default 4 active requests per UTC day)
+- `DEVICE_CONCURRENT_REQUEST_CAP` (default 2 active requests per device/day)
 - `TURN_MODEL_CALL_CAP` (default 50 model calls in one Onhand UI turn)
 - `HEAVY_TURN_MODEL_CALLS`, `HEAVY_TURN_COST_USD`, and
   `HEAVY_TURN_TOKENS` (warning-only ops thresholds)
@@ -61,6 +64,9 @@ $0.15-0.25/day; typical usage is far below that.
 
 The daily cost ledger requires the `FREE_TIER_COST_LEDGER` Durable Object
 binding and `v1-daily-cost-ledger` SQLite migration in `wrangler.toml`.
+The admission/atomic-quota upgrade reuses this class and migration. Read its
+[rollout and recovery notes](../workers/free-tier/admission.md) before deployment;
+old Workers must be drained because they do not honor reservations or new counters.
 
 Keep the `enable_request_signal` compatibility flag enabled. The Worker listens
 to the incoming request's abort signal because a real client disconnect can
@@ -275,10 +281,12 @@ WHERE blob1 IN ('chat_stream_complete', 'chat_response_complete',
   a later, larger cost updates only the difference. Streaming, JSON,
   cancellation, and stream-error paths all finalize usage. The deliberate
   quota bypass remains excluded from shared spending.
-- The cap stops new admissions after recorded cost reaches the limit. Calls
-  already in flight and charges awaiting provider metadata can exceed the cap;
-  it is not a reservation-based hard dollar ceiling. Per-device request and
-  turn counters remain best-effort KV counters.
+- Admission atomically reserves an estimated request cost and active capacity,
+  together with per-device and per-turn quota increments. IP counters use
+  sharded Durable Objects. The allowance checks recorded spend plus outstanding
+  holds; provider charges can exceed the estimate, so this remains an admission
+  control rather than a guaranteed hard dollar ceiling. See the
+  [reservation and recovery policy](../workers/free-tier/admission.md).
 - When final generation metadata is unavailable, a Durable Object alarm
   retries it up to twelve times (normally about twelve minutes). Known usage
   is retained even if the initial metadata lookup fails; any later increase emits `free_tier_cost_adjustment`
@@ -288,6 +296,9 @@ WHERE blob1 IN ('chat_stream_complete', 'chat_response_complete',
   seven days after its UTC day starts.
 - If a response ends before exposing either usage or a generation ID, the
   Worker emits `free_tier_accounting_unresolved`; there is no provider handle
-  from which to recover a charge automatically. Check provider billing when
+  from which to recover a charge automatically. Its reservation remains held
+  while capacity is released at settlement (or when its lease expires after a
+  crash); uncertain cost is not erased.
+  Check provider billing when
   these events or `free_tier_accounting_failed` appear. Analytics are optional
   and are not the authoritative cost ledger.

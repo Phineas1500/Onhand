@@ -17,6 +17,7 @@ export async function runLocalWorkerRegressions(modulePath) {
 					if (new URL(request.url).pathname === "/fixture-ledger") {
 						const input = await request.json();
 						const stub = env.FREE_TIER_COST_LEDGER.getByName(input.day);
+						if (["admit", "settle", "observe", "increment"].includes(input.op)) return Response.json((await stub[input.op](input)) ?? null);
 						return Response.json(input.id ? await stub.record(input) : { total: await stub.total(input.day) });
 					}
 					return worker.fetch(request, {
@@ -134,6 +135,26 @@ export async function runLocalWorkerRegressions(modulePath) {
 		await expectCost(6.10, 25_000);
 		await ledger({ id: "gen-alarm", cost: 0.25 });
 		await expectCost(6.10);
+
+		// Run admission against actual SQLite and RPC, not the Node storage mock.
+		const admissionDay = new Date(Date.now() + 24 * 60 * 60_000).toISOString().slice(0, 10);
+		const admission = (id, overrides = {}) => ({ day: admissionDay, op: "admit", id, deviceHash: id,
+			dailyKey: `daily-${id}`, turnKey: `turn-${id}`, dailyCap: 100, turnCap: 100,
+			costCap: 1, reserve: 0.25, concurrencyCap: 4, deviceConcurrencyCap: 2, ...overrides });
+		const admissions = await Promise.all(Array.from({ length: 20 }, (_, i) => ledger(admission(`runtime-${i}`))));
+		assert.equal(admissions.filter((result) => result.allowed).length, 4);
+		assert.equal((await ledger({ day: admissionDay })).total, 0, "reservations are distinct from actual cost");
+		await mf.setOptions(options("6"));
+		assert.equal((await ledger(admission("after-restart"))).allowed, false, "reservations survive a runtime restart");
+		const allowedIds = admissions.flatMap((result, i) => result.allowed ? [`runtime-${i}`] : []);
+		await Promise.all(allowedIds.map((id) => ledger({ day: admissionDay, op: "settle", id, noCharge: true })));
+		assert.equal((await ledger(admission("after-release"))).allowed, true);
+		const quotaResults = await Promise.all(Array.from({ length: 20 }, () => ledger({ day: admissionDay, op: "increment", key: "atomic-quota", cap: 3 })));
+		assert.equal(quotaResults.filter((result) => result.allowed).length, 3);
+		await ledger({ day: admissionDay, op: "settle", id: "after-release", cost: 0.1 });
+		await ledger({ day: admissionDay, op: "observe", id: "after-release", generationId: "gen-runtime-late" });
+		await ledger({ day: admissionDay, op: "settle", id: "after-release", generationId: "gen-runtime-late", cost: 0.25, resolved: true });
+		assert.equal((await ledger({ day: admissionDay })).total, 0.25, "late provider ID must not re-add provisional usage");
 		console.log("Local workerd SQLite Durable Object integration: PASS (parallel updates, idempotency, legacy import, restart persistence, RPC, cap enforcement, SSE/JSON accounting, HTTP disconnect accounting, alarm reconciliation)");
 	} finally {
 		await mf.dispose();

@@ -74,6 +74,15 @@ assert.equal(valueContainsImage({ nested: [{ data: "VklTVUFM", mimeType: "text/p
 const prepared = prepareOpenRouterRequestBody({ ...textOnlyBody, model: "bad/model", max_tokens: 999999, transforms: ["middle-out"] }, FREE_TIER_VISUAL_MODEL);
 assert.equal(prepared.model, FREE_TIER_VISUAL_MODEL);
 assert.equal(prepared.max_tokens, 16384);
+assert.equal(prepared.n, 1);
+for (const value of [-2, Infinity, "bogus", 50000]) {
+	const clamped = prepareOpenRouterRequestBody({ max_tokens: 20, max_completion_tokens: value, n: 100, models: ["unapproved/model"], route: "fallback" }, FREE_TIER_TEXT_MODEL);
+	assert.ok(clamped.max_tokens >= 1 && clamped.max_tokens <= 16384);
+	assert.equal(clamped.max_completion_tokens, clamped.max_tokens);
+	assert.equal(clamped.n, 1);
+	assert.equal(Object.hasOwn(clamped, "models"), false);
+	assert.equal(Object.hasOwn(clamped, "route"), false);
+}
 assert.deepEqual(prepared.provider, { only: ["deepinfra", "parasail", "novita", "wandb"] });
 assert.equal(Object.hasOwn(prepared, "transforms"), false);
 assert.equal(shouldRetryUpstreamResponse(new Response("missing", { status: 404 }), 0, [FREE_TIER_TEXT_MODEL, FREE_TIER_VISUAL_MODEL]), true);
@@ -258,7 +267,8 @@ try {
 		const responses = await Promise.all([handle(f), handle(f)]);
 		await Promise.all(responses.map((r) => r.text()));
 		await f.flush();
-		assert.ok(Math.abs(await f.cost() - 5.1) < 1e-10);
+		assert.deepEqual(responses.map((r) => r.status).sort(), [200, 429]);
+		assert.ok(Math.abs(await f.cost() - 4.85) < 1e-10);
 		globalThis.fetch = async () => { throw new Error("Quota-denied request must not contact provider"); };
 		assert.equal((await handle(f)).status, 429);
 		assert.equal(f.data.get(`cost:${day}`), "4.6", "legacy KV is imported once and never used as the live ledger");
@@ -340,15 +350,18 @@ try {
 		let attempts = 0;
 		f.env.FREE_TIER_COST_LEDGER.getByName = () => ({
 			total: (d) => ledger.total(d),
-			async record(entry) {
-				const result = await ledger.record(entry);
+			admit: (entry) => ledger.admit(entry),
+			observe: (entry) => ledger.observe(entry),
+			increment: (entry) => ledger.increment(entry),
+			async settle(entry) {
+				const result = await ledger.settle(entry);
 				if (++attempts === 1) throw new Error("fixture lost RPC reply after commit");
 				return result;
 			},
 		});
 		globalThis.fetch = providerMock(completionPayload());
 		await (await handle(f)).text(); await f.flush();
-		assert.equal(attempts, 2);
+		assert.equal(attempts, 3, "initial usage retries once, then metadata settles once");
 		assert.equal(await f.cost(), 0.25);
 	}
 
@@ -398,6 +411,9 @@ try {
 	Date.now = originalDateNow;
 	console.error = originalConsoleError;
 }
+
+const { runAdmissionRegressions } = await import("../workers/free-tier/tests/admission-regressions.mjs");
+await runAdmissionRegressions({ fixture, handle, providerMock, providerResponse, completionPayload, worker, day, token });
 
 if (process.env.ONHAND_MINIFLARE_MODULE) {
 	const { runLocalWorkerRegressions } = await import("../workers/free-tier/tests/runtime-regressions.mjs");

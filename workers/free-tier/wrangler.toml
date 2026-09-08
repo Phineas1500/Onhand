@@ -26,6 +26,11 @@ dataset = "onhand_events"
 DAILY_REQUEST_CAP = "80"
 # Shared daily hosted-model spend cap. Set higher/lower in production as needed.
 DAILY_COST_CAP_USD = "5"
+# Reserved before dispatch, reconciled against provider cost. This is an
+# estimate, not a guaranteed per-request upper price bound; see admission.md.
+REQUEST_COST_RESERVATION_USD = "0.25"
+CONCURRENT_REQUEST_CAP = "4"
+DEVICE_CONCURRENT_REQUEST_CAP = "2"
 # Stops runaway single turns while still allowing complex pages/PDFs.
 TURN_MODEL_CALL_CAP = "50"
 # Ops warnings for turns that are unusually expensive or tool-call heavy.

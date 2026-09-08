@@ -35,13 +35,17 @@ const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
 const MAX_OUTPUT_TOKENS = 16_384;
 const DEFAULT_DAILY_COST_CAP_USD = 5;
+const DEFAULT_REQUEST_COST_RESERVATION_USD = 0.25;
+const DEFAULT_CONCURRENT_REQUEST_CAP = 4;
+const DEFAULT_DEVICE_CONCURRENT_REQUEST_CAP = 2;
+// Shorter than the durable five-minute admission lease, including stream time.
+const UPSTREAM_REQUEST_TIMEOUT_MS = 4 * 60_000;
 const DEFAULT_DAILY_REQUEST_CAP = 80;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 // Tuned for Luna pricing (~2x DeepSeek per-turn realized cost); env-overridable.
 const DEFAULT_HEAVY_TURN_COST_USD = 0.01;
 const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
-const DAILY_COUNTER_TTL_SECONDS = 60 * 60 * 48;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
@@ -83,7 +87,7 @@ function json(status, body) {
 }
 
 function todayKey() {
-	return new Date().toISOString().slice(0, 10);
+	return new Date(Date.now()).toISOString().slice(0, 10);
 }
 
 function clientIp(request) {
@@ -257,7 +261,10 @@ function writeAnalytics(ctx, env, eventName, fields = {}, request = null) {
 function writeCompletionAnalyticsAndAccounting(ctx, env, eventName, fields, request = null) {
 	const analytics = env?.ONHAND_ANALYTICS;
 	const context = analyticsContext(request);
+	const durableUsage = recordCompletionAccounting(env, analytics, context, fields);
 	const task = (async () => {
+		// Persist terminal usage and recovery work before optional metadata I/O.
+		await durableUsage;
 		const enrichedFields = await enrichCompletionFields(env, fields);
 		// Accounting must not depend on the optional analytics binding succeeding.
 		await recordCompletionAccounting(env, analytics, context, enrichedFields);
@@ -269,7 +276,9 @@ function writeCompletionAnalyticsAndAccounting(ctx, env, eventName, fields, requ
 		writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...fields, result: "error", errorCode: "accounting_failed" }, request);
 	});
 	if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(task);
-	return task;
+	// Release the active slot before EOF reaches the client's next model call,
+	// without holding its response open for metadata retries.
+	return durableUsage.catch(() => {});
 }
 
 async function hashIdentifier(value) {
@@ -284,21 +293,24 @@ async function hashIdentifier(value) {
 }
 
 async function bumpDailyCounter(env, key, cap) {
-	const current = await readKvNumber(env, key);
-	if (current >= cap) return { allowed: false, current };
-	// get+put is racy under parallel requests; for a per-device daily cap
-	// the worst case is a couple of extra requests, which is fine.
-	await writeKvNumber(env, key, current + 1, DAILY_COUNTER_TTL_SECONDS);
-	return { allowed: true, current: current + 1 };
+	// IP quotas do not compete for the daily cost object: each key has its own
+	// small durable counter. The raw IP is not exposed in the object name.
+	const name = `quota:${await hashIdentifier(key)}`;
+	try { return await dailyCostLedger(env, name).increment({ day: todayKey(), key, cap }); }
+	catch {
+		console.error("free_tier_quota_unavailable", name);
+		return { allowed: false, current: 0, unavailable: true };
+	}
 }
 
-async function readKvNumber(env, key) {
-	const current = Number((await env.FREE_TIER_KV.get(key)) || 0);
-	return Number.isFinite(current) && current > 0 ? current : 0;
-}
-
-async function writeKvNumber(env, key, value, expirationTtl = DAILY_COUNTER_TTL_SECONDS) {
-	await env.FREE_TIER_KV.put(key, String(value), { expirationTtl });
+async function ledgerOperation(env, day, method, entry) {
+	for (let attempt = 1; ; attempt += 1) {
+		try { return await dailyCostLedger(env, day)[method](entry); }
+		catch (error) {
+			if (attempt === 3) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+		}
+	}
 }
 
 function dailyCostLedger(env, day) {
@@ -306,16 +318,10 @@ function dailyCostLedger(env, day) {
 	return env.FREE_TIER_COST_LEDGER.getByName(day);
 }
 
-function turnModelCallKey(deviceHash, telemetryIds) {
+function turnModelCallKey(deviceHash, telemetryIds, day) {
 	const turnKey = compactIdentifier(telemetryIds.turnId || telemetryIds.sessionId || "", 80);
 	if (!turnKey) return "";
-	return `turn-call:${deviceHash}:${todayKey()}:${turnKey}`;
-}
-
-async function bumpTurnModelCalls(env, deviceHash, telemetryIds, cap) {
-	const key = turnModelCallKey(deviceHash, telemetryIds);
-	if (!key) return { allowed: true, current: 0 };
-	return await bumpDailyCounter(env, key, cap);
+	return `turn-call:${deviceHash}:${day}:${turnKey}`;
 }
 
 function heavyTurnReasons(env, fields) {
@@ -337,30 +343,21 @@ async function markHeavyTurnOnce(env, fields) {
 	const deviceHash = compactIdentifier(fields.deviceHash || "", 80);
 	if (!turnKey || !deviceHash) return true;
 	const key = `heavy-turn:${deviceHash}:${todayKey()}:${turnKey}`;
-	if (await env.FREE_TIER_KV.get(key)) return false;
-	await env.FREE_TIER_KV.put(key, "1", { expirationTtl: DAILY_COUNTER_TTL_SECONDS });
-	return true;
+	return (await bumpDailyCounter(env, key, 1)).allowed;
 }
 
 async function recordCompletionAccounting(env, analytics, context, fields) {
 	if (!fields.quotaBypassed) {
 		const entry = {
 			day: fields.accountingDay,
-			id: fields.generationId || fields.accountingId,
+			id: fields.accountingId,
 			generationId: fields.generationId,
 			cost: firstFiniteNumber(fields.cost),
-			reconcile: Boolean(fields.generationId) && !fields.costResolved,
+			resolved: Boolean(fields.costResolved),
+			noCharge: Boolean(fields.noCharge) || (fields.status >= 400 && fields.status < 500 && fields.status !== 408 && !fields.generationId && firstFiniteNumber(fields.cost) === undefined),
 			adjustmentPoint: analyticsDataPoint("free_tier_cost_adjustment", { ...fields, cost: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, durationMs: 0, actionCount: 0, result: "reconciled" }, context),
 		};
-		for (let attempt = 1; ; attempt += 1) {
-			try {
-				await dailyCostLedger(env, fields.accountingDay).record(entry);
-				break;
-			} catch (error) {
-				if (attempt === 3) throw error;
-				await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
-			}
-		}
+		await ledgerOperation(env, fields.accountingDay, "settle", entry);
 	}
 	const reasons = heavyTurnReasons(env, fields);
 	if (!reasons.length) return;
@@ -410,9 +407,14 @@ function upstreamCandidateModelsForRequestBody(body) {
 function prepareOpenRouterRequestBody(body, model) {
 	const next = structuredClone(body || {});
 	next.model = model;
-	next.max_tokens = Math.min(Number(next.max_tokens || MAX_OUTPUT_TOKENS) || MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS);
+	const requested = firstFiniteNumber(next.max_completion_tokens, next.max_tokens);
+	next.max_tokens = requested > 0 ? Math.min(Math.floor(requested), MAX_OUTPUT_TOKENS) || 1 : MAX_OUTPUT_TOKENS;
+	if (Object.hasOwn(next, "max_completion_tokens")) next.max_completion_tokens = next.max_tokens;
+	next.n = 1;
 	// Server-side routing policy always wins over anything client-supplied.
 	next.provider = { only: ALLOWED_OPENROUTER_PROVIDERS_BY_MODEL[model] || ["openai"] };
+	delete next.models;
+	delete next.route;
 	delete next.transforms;
 	return next;
 }
@@ -423,9 +425,10 @@ function shouldRetryUpstreamResponse(response, candidateIndex, candidateModels) 
 
 async function handleRegister(request, env, ctx) {
 	const startedAt = Date.now();
-	const cap = Number(env.REGISTRATIONS_PER_IP_PER_DAY || 5);
+	const cap = envNumber(env, "REGISTRATIONS_PER_IP_PER_DAY", 5);
 	const ipKey = `reg:${clientIp(request)}:${todayKey()}`;
-	const { allowed, current } = await bumpDailyCounter(env, ipKey, cap);
+	const { allowed, current, unavailable } = await bumpDailyCounter(env, ipKey, cap);
+	if (unavailable) return json(503, { error: { message: "Onhand Free registration is temporarily unavailable. Please try again shortly." } });
 	if (!allowed) {
 		writeAnalytics(ctx, env, "register_rate_limited", {
 			result: "denied",
@@ -499,6 +502,7 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 	let buffered = "";
 	let usage = null;
 	let generationId = "";
+	let persistedGenerationId = "";
 	let upstreamModel = "";
 	let provider = compactString(baseFields.provider || "", 80);
 	let providerRequestId = "";
@@ -533,6 +537,12 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 			buffered = lines.pop() || "";
 			for (const line of lines) readPayload(extractSsePayload(line));
 		}
+	}
+
+	async function persistGeneration() {
+		if (baseFields.quotaBypassed || !generationId || persistedGenerationId === generationId) return;
+		await ledgerOperation(env, baseFields.accountingDay, "observe", { day: baseFields.accountingDay, id: baseFields.accountingId, generationId });
+		persistedGenerationId = generationId;
 	}
 
 	function finalize(result, errorCode = "") {
@@ -601,19 +611,23 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 			// it finalizes, and never enqueue/close an already cancelled controller.
 			activeRead = (async () => {
 				const result = await reader.read();
-				if (!result.done) readChunk(result.value);
+				if (!result.done) {
+					readChunk(result.value);
+					await persistGeneration();
+				}
 				return result;
 			})();
 			try {
 				const result = await activeRead;
 				if (cancelled) return;
 				if (result.done) {
-					finalize(baseFields.status >= 400 ? "error" : "ok");
+					await finalize(baseFields.status >= 400 ? "error" : "ok");
 					controller.close();
 				} else controller.enqueue(result.value);
 			} catch (error) {
 				if (cancelled) return;
-				finalize("error", "stream_read_error");
+				await reader.cancel(error).catch(() => {});
+				await finalize("error", "stream_read_error");
 				controller.error(error);
 			}
 		},
@@ -653,77 +667,9 @@ async function handleChatCompletions(request, env, ctx) {
 
 	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
 	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";
-	const dailyCostCap = envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD);
-	let dailyCostUsed = 0;
-	try {
-		if (!quotaBypassed) dailyCostUsed = await dailyCostLedger(env, accountingDay).total(accountingDay);
-	} catch {
-		writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...telemetryIds, result: "error", status: 503, errorCode: "ledger_unavailable" }, request);
-		return json(503, { error: { message: "Onhand Free usage accounting is temporarily unavailable. Please try again shortly." } });
-	}
-	if (!quotaBypassed && dailyCostUsed >= dailyCostCap) {
-		writeAnalytics(ctx, env, "chat_cost_quota_denied", {
-			...telemetryIds,
-			source,
-			result: "denied",
-			status: 429,
-			durationMs: Date.now() - startedAt,
-			deviceHash,
-			current: dailyCostUsed,
-			cap: dailyCostCap,
-			errorCode: "daily_cost_cap",
-		}, request);
-		return json(429, {
-			error: {
-				message: "Onhand Free is at today's shared compute limit. It resets tomorrow, or you can switch to your own API key in options.",
-			},
-		});
-	}
-
 	const dailyRequestCap = envNumber(env, "DAILY_REQUEST_CAP", DEFAULT_DAILY_REQUEST_CAP);
-	const usage = quotaBypassed
-		? { allowed: true, current: 0 }
-		: await bumpDailyCounter(env, `use:${token}:${todayKey()}`, dailyRequestCap);
-	if (!usage.allowed) {
-		writeAnalytics(ctx, env, "chat_quota_denied", {
-			...telemetryIds,
-			source,
-			result: "denied",
-			status: 429,
-			durationMs: Date.now() - startedAt,
-			deviceHash,
-			current: usage.current,
-			cap: dailyRequestCap,
-		}, request);
-		return json(429, {
-			error: {
-				message: "You've reached today's Onhand Free limit. It resets tomorrow — or switch to your own API key in options for unlimited use.",
-			},
-		});
-	}
-
-	const turnModelCallCap = envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP);
-	const turnUsage = quotaBypassed
-		? { allowed: true, current: 0 }
-		: await bumpTurnModelCalls(env, deviceHash, telemetryIds, turnModelCallCap);
-	if (!turnUsage.allowed) {
-		writeAnalytics(ctx, env, "chat_turn_quota_denied", {
-			...telemetryIds,
-			source,
-			result: "denied",
-			status: 429,
-			durationMs: Date.now() - startedAt,
-			deviceHash,
-			current: turnUsage.current,
-			cap: turnModelCallCap,
-			errorCode: "turn_model_call_cap",
-		}, request);
-		return json(429, {
-			error: {
-				message: "This Onhand Free turn needs more compute than the free tier can provide. Switch to your own API key in options to continue on this page.",
-			},
-		});
-	}
+	let usage = { current: 0 };
+	let turnUsage = { current: 0 };
 
 	const raw = await request.text();
 	if (raw.length > MAX_BODY_BYTES) {
@@ -779,12 +725,68 @@ async function handleChatCompletions(request, env, ctx) {
 		return json(400, { error: { message: `The free tier serves ${[...ALLOWED_MODELS].join(", ")} only.` } });
 	}
 
+	const accountingId = crypto.randomUUID();
+	let upstreamTimeoutMs = UPSTREAM_REQUEST_TIMEOUT_MS;
+	if (request.signal.aborted) return json(499, { error: { message: "Request cancelled." } });
+	if (!quotaBypassed) {
+		let admission;
+		try {
+			admission = await ledgerOperation(env, accountingDay, "admit", {
+				day: accountingDay, id: accountingId, deviceHash,
+				dailyKey: `use:${token}:${accountingDay}`,
+				turnKey: turnModelCallKey(deviceHash, telemetryIds, accountingDay),
+				dailyCap: dailyRequestCap,
+				turnCap: envNumber(env, "TURN_MODEL_CALL_CAP", DEFAULT_TURN_MODEL_CALL_CAP),
+				costCap: envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD),
+				reserve: envNumber(env, "REQUEST_COST_RESERVATION_USD", DEFAULT_REQUEST_COST_RESERVATION_USD),
+				concurrencyCap: envNumber(env, "CONCURRENT_REQUEST_CAP", DEFAULT_CONCURRENT_REQUEST_CAP),
+				deviceConcurrencyCap: envNumber(env, "DEVICE_CONCURRENT_REQUEST_CAP", DEFAULT_DEVICE_CONCURRENT_REQUEST_CAP),
+			});
+		} catch {
+			writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...telemetryIds, result: "error", status: 503, errorCode: "ledger_unavailable" }, request);
+			return json(503, { error: { message: "Onhand Free usage accounting is temporarily unavailable. Please try again shortly." } });
+		}
+		if (!admission.allowed) {
+			const messages = {
+				daily_cost_cap: "Onhand Free has reached today's shared compute allowance, including requests still running. Try again shortly, or switch to your own API key in options.",
+				daily_request_cap: "You've reached today's Onhand Free limit. It resets tomorrow, or switch to your own API key in options.",
+				turn_model_call_cap: "This Onhand Free turn needs more compute than the free tier can provide. Switch to your own API key in options to continue on this page.",
+				concurrency_cap: "Onhand Free is busy with requests already running. Wait for them to finish and try again.",
+				admission_expired: "The request took too long to start. Please try again.",
+			};
+			const event = admission.reason === "daily_cost_cap" ? "chat_cost_quota_denied" : admission.reason === "turn_model_call_cap" ? "chat_turn_quota_denied" : "chat_quota_denied";
+			writeAnalytics(ctx, env, event, { ...telemetryIds, ...admission, source, deviceHash, result: "denied", status: 429, errorCode: admission.reason }, request);
+			const response = json(429, { error: { message: messages[admission.reason], code: admission.reason } });
+			if (admission.reason === "concurrency_cap") response.headers.set("Retry-After", "5");
+			return response;
+		}
+		usage.current = admission.current;
+		turnUsage.current = admission.turnCurrent;
+		upstreamTimeoutMs = Math.min(UPSTREAM_REQUEST_TIMEOUT_MS, admission.expiresAt - Date.now() - 60_000);
+	}
+	const baseFields = { ...telemetryIds, source, quotaBypassed, accountingDay, accountingId, deviceHash,
+		startedAtMs: startedAt, current: usage.current, cap: dailyRequestCap, actionCount: turnUsage.current };
+	if (request.signal.aborted) {
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_cancelled", { ...baseFields, status: 499, noCharge: true, result: "cancelled" }, request);
+		return json(499, { error: { message: "Request cancelled." } });
+	}
+	if (upstreamTimeoutMs <= 0) {
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 503, noCharge: true, result: "error", errorCode: "admission_expired" }, request);
+		return json(503, { error: { message: "The request took too long to start. Please try again." } });
+	}
+	// Stop a request whose provider has not returned headers yet. Once headers
+	// arrive, the stream finalizer handles disconnects (and bounded JSON drain).
+	const preHeaderAbort = new AbortController();
+	const abortBeforeHeaders = () => preHeaderAbort.abort(request.signal.reason);
+	request.signal.addEventListener("abort", abortBeforeHeaders, { once: true });
+	const upstreamDeadline = AbortSignal.any([AbortSignal.timeout(Math.floor(upstreamTimeoutMs)), preHeaderAbort.signal]);
 	const candidateModels = upstreamCandidateModelsForRequestBody(body);
 	let upstream = null;
 	let metricBase = null;
 	for (const [candidateIndex, candidateModel] of candidateModels.entries()) {
 		const upstreamBody = prepareOpenRouterRequestBody(body, candidateModel);
-		const response = await fetch(OPENROUTER_URL, {
+		let response;
+		try { response = await fetch(OPENROUTER_URL, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -793,14 +795,18 @@ async function handleChatCompletions(request, env, ctx) {
 				"X-Title": "Onhand Free Tier",
 				"X-OpenRouter-Metadata": "enabled",
 			},
-			body: JSON.stringify(upstreamBody),
-		});
+			body: JSON.stringify(upstreamBody), signal: upstreamDeadline,
+		}); } catch {
+			request.signal.removeEventListener("abort", abortBeforeHeaders);
+			await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
+			return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
+		}
 		const candidateMetricBase = {
 			...telemetryIds,
 			source,
 			quotaBypassed,
 			accountingDay,
-			accountingId: crypto.randomUUID(),
+			accountingId,
 			status: response.status,
 			durationMs: Date.now() - startedAt,
 			startedAtMs: startedAt,
@@ -827,7 +833,9 @@ async function handleChatCompletions(request, env, ctx) {
 		metricBase = candidateMetricBase;
 		break;
 	}
+	request.signal.removeEventListener("abort", abortBeforeHeaders);
 	if (!upstream || !metricBase) {
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 502, noCharge: true, result: "error" }, request);
 		return json(502, { error: { message: "No upstream model was available for Onhand Free." } });
 	}
 	writeAnalytics(ctx, env, "chat_upstream_response", {
@@ -839,6 +847,9 @@ async function handleChatCompletions(request, env, ctx) {
 	const headers = new Headers(CORS_HEADERS);
 	const contentType = upstream.headers.get("Content-Type");
 	if (contentType) headers.set("Content-Type", contentType);
+	if (!upstream.body) {
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_response_complete", { ...metricBase, result: upstream.ok ? "ok" : "error" }, request);
+	}
 	const responseBody = instrumentCompletionBody(upstream.body, env, ctx, metricBase, request, Boolean(contentType?.includes("text/event-stream")));
 	return new Response(responseBody, { status: upstream.status, headers });
 }
@@ -910,9 +921,10 @@ function errorReportData(payload) {
 }
 
 async function handleTelemetry(request, env, ctx) {
-	const cap = Number(env.TELEMETRY_EVENTS_PER_IP_PER_DAY || 1000);
+	const cap = envNumber(env, "TELEMETRY_EVENTS_PER_IP_PER_DAY", 1000);
 	const ipKey = `telemetry:${clientIp(request)}:${todayKey()}`;
 	const quota = await bumpDailyCounter(env, ipKey, cap);
+	if (quota.unavailable) return json(202, { ok: true, accepted: false, reason: "temporarily_unavailable" });
 	if (!quota.allowed) {
 		writeAnalytics(ctx, env, "telemetry_rate_limited", {
 			source: "extension",
@@ -959,9 +971,10 @@ async function handleTelemetry(request, env, ctx) {
 
 async function handleErrorReport(request, env, ctx) {
 	const startedAt = Date.now();
-	const cap = Number(env.ERROR_REPORTS_PER_IP_PER_DAY || 50);
+	const cap = envNumber(env, "ERROR_REPORTS_PER_IP_PER_DAY", 50);
 	const ipKey = `error-report:${clientIp(request)}:${todayKey()}`;
 	const quota = await bumpDailyCounter(env, ipKey, cap);
+	if (quota.unavailable) return json(202, { ok: true, accepted: false, reason: "temporarily_unavailable" });
 	if (!quota.allowed) {
 		writeAnalytics(ctx, env, "error_report_rate_limited", {
 			source: "extension",

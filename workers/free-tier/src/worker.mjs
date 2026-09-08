@@ -11,5 +11,9 @@ export class FreeTierCostLedger extends DurableObject {
 
 	total(day) { return this.ledger.total(day); }
 	record(entry) { return this.ledger.record(entry); }
+	increment(entry) { return this.ledger.increment(entry); }
+	admit(entry) { return this.ledger.admit(entry); }
+	observe(entry) { return this.ledger.observe(entry); }
+	settle(entry) { return this.ledger.settle(entry); }
 	alarm() { return this.ledger.alarm(); }
 }

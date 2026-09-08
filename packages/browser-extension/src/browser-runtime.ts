@@ -11638,6 +11638,22 @@ async function withAbortSignal<T>(signal: AbortSignal | undefined, run: () => Pr
 export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let storePromise: Promise<any> | null = null;
 	let uiState: any | null = null;
+	// A worker-local epoch prevents a sidebar's cached history from matching a
+	// different runtime after MV3 suspension/restart. Only the most recent input
+	// references are retained; this cache does not grow with the number of polls.
+	const sidebarHistoryEpoch = crypto.randomUUID();
+	let sidebarHistoryRevision = 0;
+	let sidebarHistoryInputs: unknown[] | null = null;
+	let persistedStateRevision = 0;
+	let assistantDraftRevision = 0;
+	let dueReviewRevision = 0;
+	const DUE_REVIEW_CACHE_TTL_MS = 60_000;
+	let dueReviewCache: { key: string; expiresAt: number; promise: Promise<DueReview[]> } | null = null;
+
+	function invalidateDueReviewCache() {
+		dueReviewRevision += 1;
+		dueReviewCache = null;
+	}
 	let activeAgent: Agent | null = null;
 	let activeDevelopmentAgentObserver: DevelopmentAgentObserver | null = null;
 	let activeRequest: any | null = null;
@@ -11864,6 +11880,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	async function saveStore(store: any, changed: { sessions?: RuntimeSession[]; deletedSessionIds?: string[] }) {
+		// Invalidate before awaiting persistence: in-memory annotations and learner
+		// state may already have changed, even when a subsequent disk write fails.
+		persistedStateRevision += 1;
+		invalidateDueReviewCache();
 		storePromise = Promise.resolve(store);
 		try {
 			await putSessionRecords(changed?.sessions || []);
@@ -12559,6 +12579,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (!message) return;
 		message.text = text;
 		Object.assign(message, extra);
+		assistantDraftRevision += 1;
 		uiState.updatedAt = Date.now();
 	}
 
@@ -13685,21 +13706,54 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return buildPublicSettings(store.settings);
 	}
 
-	async function getDueReviews(params: any = {}) {
+	async function getDueReviews(params: any = {}, useCache = false) {
 		const store = await loadStore();
-		const snoozes = await readReviewSnoozes();
-		let activeUrl = "";
-		try {
-			const state = await host.snapshotState();
-			const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : undefined);
-			activeUrl = String(activeTab?.url || "");
-		} catch {}
-		return computeDueReviews(Object.values(store.sessions) as RuntimeSession[], {
+		let activeUrl = typeof params.activeUrl === "string" ? params.activeUrl : "";
+		if (typeof params.activeUrl !== "string") {
+			try {
+				const state = await host.snapshotState();
+				const activeTab = pickActiveTab(state, typeof params?.targetWindowId === "number" ? params.targetWindowId : undefined);
+				activeUrl = String(activeTab?.url || "");
+			} catch {}
+		}
+		const compute = async () => computeDueReviews(Object.values(store.sessions) as RuntimeSession[], {
 			now: params?.now,
 			limit: params?.limit,
 			activeUrl,
-			snoozes,
+			snoozes: await readReviewSnoozes(),
 		});
+		// Explicit review-list requests stay fresh. Sidebar polling tolerates at
+		// most one minute of lateness at a due/snooze expiry boundary; learning,
+		// session and snooze changes invalidate immediately. A new active host
+		// also recomputes ranking. Concurrent polls share the in-flight work.
+		if (!useCache || params.now != null) return await compute();
+		const key = `${dueReviewRevision}:${reviewUrlHost(activeUrl)}:${params.limit || REVIEW_DEFAULT_LIMIT}`;
+		if (dueReviewCache?.key === key && Date.now() < dueReviewCache.expiresAt) return await dueReviewCache.promise;
+		const cache = { key, expiresAt: Date.now() + DUE_REVIEW_CACHE_TTL_MS, promise: compute() };
+		dueReviewCache = cache;
+		try {
+			return await cache.promise;
+		} catch (error) {
+			if (dueReviewCache === cache) dueReviewCache = null;
+			throw error;
+		}
+	}
+
+	async function getPublicState(params: { activeUrl?: string } = {}) {
+		const dueReviews = await getDueReviews(params, true).catch(() => []);
+		const store = await loadStore();
+		const state = await ensureUiState();
+		const session = store.sessions[store.currentSessionId] as RuntimeSession;
+		return {
+			...state,
+			currentSession: buildSessionState(session),
+			dueReviews,
+			preferences: {
+				...state.preferences,
+				runtime: "browser-extension",
+				...buildPublicSettings(store.settings),
+			},
+		};
 	}
 
 	function buildArtifactId(tab: any, page: any) {
@@ -15043,20 +15097,29 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		},
 
 		async getState() {
-			const store = await loadStore();
-			const session = store.sessions[store.currentSessionId] as RuntimeSession;
-			const state = await ensureUiState();
-			const dueReviews = await getDueReviews().catch(() => []);
-			return {
-				...state,
-				currentSession: buildSessionState(session),
-				dueReviews,
-				preferences: {
-					...state.preferences,
-					runtime: "browser-extension",
-					...buildPublicSettings(store.settings),
-				},
-			};
+			return await getPublicState();
+		},
+
+		async getSidebarState(params: { knownHistoryRevision?: string; activeUrl?: string } = {}) {
+			const state = await getPublicState(params);
+			const inputs = [state.currentSession?.sessionId, state.turns, state.messages, persistedStateRevision, assistantDraftRevision];
+			if (!sidebarHistoryInputs || inputs.some((value, index) => value !== sidebarHistoryInputs![index])) {
+				sidebarHistoryInputs = inputs;
+				sidebarHistoryRevision += 1;
+			}
+			const historyRevision = `${sidebarHistoryEpoch}:${sidebarHistoryRevision}`;
+			const historyUnchanged = params.knownHistoryRevision === historyRevision;
+			if (historyUnchanged) {
+				// Keep all live context, page actions, settings and status fields.
+				// The caller may reuse only the two explicitly omitted history arrays.
+				const { turns: _turns, messages: _messages, ...partialState } = state;
+				return { state: partialState, historyRevision, historyUnchanged };
+			}
+			return { state, historyRevision, historyUnchanged };
+		},
+
+		invalidateReviewCache() {
+			invalidateDueReviewCache();
 		},
 
 		async recordLearningEvent(event: LearningEvent) {
@@ -15338,6 +15401,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			const days = Math.max(0.5, Math.min(30, Number(params?.days || 3) || 3));
 			const snoozedUntil = new Date(Date.now() + days * REVIEW_DAY_MS).toISOString();
 			await writeReviewSnooze(conceptKey, snoozedUntil);
+			invalidateDueReviewCache();
 			return { snoozedUntil, reviews: await getDueReviews(params) };
 		},
 
