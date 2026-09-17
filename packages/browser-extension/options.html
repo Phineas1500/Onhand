@@ -411,13 +411,45 @@
         <div class="field">
           <label class="toggle-row" for="realtimeVoiceEnabled">
             <input id="realtimeVoiceEnabled" type="checkbox" />
-            <span>Enable realtime voice</span>
+            <span>Enable voice</span>
           </label>
           <p id="realtimeVoiceHelp" class="help">Enable Realtime Voice to use <code>gpt-realtime-2.1</code> with an OpenAI platform API key.</p>
         </div>
 
+        <div class="field">
+          <label for="voiceEngine">Voice model</label>
+          <select id="voiceEngine">
+            <option value="realtime">GPT-Realtime 2.1</option>
+            <option value="live">GPT-Live 1 (experimental)</option>
+          </select>
+          <p class="help">Live keeps the conversation going while Onhand reads and uses tools. $0.05 per connected minute, including silence, plus backend model usage. Restart Voice after changing models.</p>
+        </div>
+
+        <div id="liveDelegationField" class="field" hidden>
+          <label for="liveDelegation">Live backend</label>
+          <select id="liveDelegation">
+            <option value="responses">Managed Responses (recommended)</option>
+            <option value="client">Onhand agent (client fallback)</option>
+          </select>
+          <p class="help">Managed Responses uses the OpenAI API key for both voice and reasoning. Your text-chat model and sign-in stay separate. Client fallback uses your selected Onhand agent. Restart Voice after changing this setting.</p>
+        </div>
+        <div id="liveResponsesModelField" class="field" hidden>
+          <label for="liveResponsesModel">Live reasoning model</label>
+          <select id="liveResponsesModel">
+            <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+            <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+          </select>
+          <p class="help">Terra is the starting choice; Luna is a lower-cost alternative. Stop ends a managed Voice session and blocks further tool calls. Typed corrections continue through the backend conversation.</p>
+          <p class="help">Images and large source results use temporary files in your OpenAI account that expire after one hour. If a long call reaches Live's source limit, Onhand finishes from the evidence already read and keeps Voice connected.</p>
+          <label class="toggle-row" for="liveInterruptionEnabled">
+            <input id="liveInterruptionEnabled" type="checkbox" />
+            <span>Pause page work for spoken corrections (experimental)</span>
+          </label>
+          <p class="help">Uses brief GPT-5.6 Luna checks of your question and new speech, billed separately through your voice API key. Managed Terra remains in charge of research. New page actions pause when a correction is detected; an action already running may finish. Once the correction is clear, Terra continues with the updated question. If paused by mistake, use Resume page work in the voice transcript. Restart Voice after changing this setting.</p>
+        </div>
+
         <div id="realtimeOpenAiKeyField" class="field" hidden>
-          <label for="realtimeOpenAiApiKey">OpenAI platform API key for realtime voice</label>
+          <label for="realtimeOpenAiApiKey">OpenAI platform API key for voice</label>
           <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
           <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2.1</code>. Text chat keeps using the selected authentication mode above.</p>
         </div>

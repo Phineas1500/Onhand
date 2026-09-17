@@ -57,6 +57,15 @@ const aiApiKeyInput = document.getElementById("aiApiKey");
 const apiKeyLabelEl = document.getElementById("apiKeyLabel");
 const apiKeyHelpEl = document.getElementById("apiKeyHelp");
 const capabilityStatusEl = document.getElementById("capabilityStatus");
+const voiceEngineInput = document.getElementById("voiceEngine");
+const liveDelegationInput = document.getElementById("liveDelegation");
+const liveInterruptionInput = document.getElementById("liveInterruptionEnabled");
+const liveResponsesModelInput = document.getElementById("liveResponsesModel");
+function syncLiveFields() {
+	document.getElementById("liveDelegationField").hidden = voiceEngineInput.value !== "live";
+	document.getElementById("liveResponsesModelField").hidden = voiceEngineInput.value !== "live" || liveDelegationInput.value === "client";
+}
+const voiceModelName = () => voiceEngineInput.value === "live" ? "gpt-live-1" : "gpt-realtime-2.1";
 const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
 const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
 const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField");
@@ -206,7 +215,7 @@ function syncCapabilityStatus() {
 	if (isCodexSignInMode()) {
 		const modelId = selectedModel();
 		capabilityStatusEl.textContent = isRealtimeVoiceEnabled()
-			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice uses an OpenAI platform API key for gpt-realtime-2.1.`
+			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Voice uses an OpenAI platform API key for ${voiceModelName()}.`
 			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice is disabled.`;
 		capabilityStatusEl.className = "ok";
 		return;
@@ -230,8 +239,8 @@ function syncCapabilityStatus() {
 	].filter(Boolean);
 	const realtimeText = isRealtimeVoiceEnabled()
 		? isOpenAiApiKeyMode()
-			? " The same OpenAI API key is also used for gpt-realtime-2.1."
-			: " Realtime Voice uses a separate OpenAI platform API key for gpt-realtime-2.1."
+			? ` The same OpenAI API key is also used for ${voiceModelName()}.`
+			: ` Voice uses a separate OpenAI platform API key for ${voiceModelName()}.`
 		: " Realtime Voice is disabled.";
 	capabilityStatusEl.textContent = unsupported.length
 		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.${realtimeText}`
@@ -318,18 +327,18 @@ function syncRealtimeVoiceFields() {
 	realtimeOpenAiKeyFieldEl.hidden = !showSeparateOpenAiKey;
 	realtimeOpenAiApiKeyInput.value = pendingApiKeys.openai || "";
 	const savedOpenAiKey = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === "openai")?.hasApiKey;
-	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for gpt-realtime-2.1; text chat keeps using the selected authentication mode above.`;
+	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for ${voiceModelName()}; text chat keeps using the selected authentication mode above.`;
 	if (!enabled) {
-		realtimeVoiceHelpEl.textContent = "Realtime Voice is disabled. Enable it to use gpt-realtime-2.1 with an OpenAI platform API key.";
+		realtimeVoiceHelpEl.textContent = `Voice is disabled. Enable it to use ${voiceModelName()} with an OpenAI platform API key.`;
 		return;
 	}
 	if (usingOpenAiApiKeyForText) {
-		realtimeVoiceHelpEl.textContent = "Realtime Voice will use the same OpenAI platform API key selected for Provider API key mode to start gpt-realtime-2.1.";
+		realtimeVoiceHelpEl.textContent = `Voice will use the same OpenAI platform API key selected for Provider API key mode to start ${voiceModelName()}.`;
 		return;
 	}
 	realtimeVoiceHelpEl.textContent = isCodexSignInMode()
-		? "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2.1. Text chat still uses OpenAI Codex sign-in."
-		: "Realtime Voice requires an OpenAI platform API key for gpt-realtime-2.1. Text chat still uses your selected provider API key.";
+		? `Voice requires an OpenAI platform API key for ${voiceModelName()}. Text chat still uses OpenAI Codex sign-in.`
+		: `Voice requires an OpenAI platform API key for ${voiceModelName()}. Text chat still uses your selected provider API key.`;
 }
 
 function collectApiKeys() {
@@ -351,6 +360,11 @@ async function loadForm() {
 		runtimeSettings.authMode === "api-key" ? (storedProvider === FREE_TIER_PROVIDER ? "free" : "api-key") : "oauth";
 	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
+	voiceEngineInput.value = runtimeSettings.voiceEngine === "live" ? "live" : "realtime";
+	liveDelegationInput.value = runtimeSettings.liveDelegation === "client" ? "client" : "responses";
+	liveInterruptionInput.checked = Boolean(runtimeSettings.liveInterruptionEnabled);
+	liveResponsesModelInput.value = runtimeSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra";
+	syncLiveFields();
 	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
 	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
@@ -404,6 +418,10 @@ async function save() {
 		aiModel: selectedModel(),
 		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
+		voiceEngine: voiceEngineInput.value,
+		liveDelegation: liveDelegationInput.value,
+		liveInterruptionEnabled: liveInterruptionInput.checked,
+		liveResponsesModel: liveResponsesModelInput.value,
 		diagnosticsEnabled: isFreeTierMode() || Boolean(diagnosticsEnabledInput.checked),
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
 		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
@@ -509,3 +527,6 @@ chrome.runtime.onMessage.addListener((message) => {
 await refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error"));
 await loadForm().catch((error) => renderStatus(error?.message || String(error), "error"));
 await trackOptionsOpened();
+
+liveDelegationInput.addEventListener("change", syncLiveFields);
+voiceEngineInput.addEventListener("change", () => { syncLiveFields(); syncRealtimeVoiceFields(); syncCapabilityStatus(); });

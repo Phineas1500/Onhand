@@ -31,7 +31,7 @@
 	const REALTIME_MIC_IDLE_STATUS_MS = 1200;
 	const REALTIME_MIC_SILENCE_DIAGNOSTIC_MS = 6500;
 	const REALTIME_API_KEY_SETUP_MESSAGE =
-		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
+		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with voice API access in the OpenAI platform API key field, then Save.";
 	const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
 		browser_list_tabs: "list_tabs",
 		browser_activate_tab: "activate_tab",
@@ -181,6 +181,23 @@
 	let learnerSourceFeedbackSequence = 0;
 	let learnerPanelCollapsed = false;
 	let learnerGridScrollTop = 0;
+	let liveVoice = null;
+	let liveClosePromise = null;
+	let liveCloseResolve = null;
+	let liveCloseTimer = null;
+	let liveStartTimer = null;
+	let livePlaybackContext = null;
+	let livePlaybackTimer = null;
+	let liveTranscript = [];
+	let liveTranscriptSession = "";
+	let liveTranscriptStorageKey = "";
+	let liveTranscriptSaveTimer = null;
+	let liveTranscriptSaveQueue = Promise.resolve();
+	let liveTurnSaveQueue = Promise.resolve();
+	let liveFlushTurns = null;
+	let liveUsage = null;
+	let liveDiagnostics = [];
+	let liveMuteEventId = null;
 	let realtimePeerConnection = null;
 	let realtimeDataChannel = null;
 	let realtimeMediaStream = null;
@@ -3702,6 +3719,17 @@
 					<span class="spacer"></span>
 					<button id="sendButton" class="onhand-send" type="submit">Ask <span class="kbd">&#8617;</span></button>
 				</div>
+				<details id="liveTranscriptPanel" hidden style="margin: 8px 14px; font-size: 12px;">
+					<summary>Voice transcript <span id="liveUsage"></span></summary>
+					<div id="liveTranscriptText" style="max-height: 180px; overflow: auto; white-space: pre-wrap; margin-top: 8px;"></div>
+					<button id="liveResumePageWork" type="button" hidden>Resume page work</button>
+					<details id="liveTimingPanel" hidden>
+						<summary>Voice timing diagnostics</summary>
+						<p>Saved locally without transcript or page text. Audio activity is an estimate, not exact speech timing.</p>
+						<button id="liveCopyTiming" type="button">Copy timing log</button>
+						<pre id="liveTimingText" style="max-height: 160px; overflow: auto; white-space: pre-wrap;"></pre>
+					</details>
+				</details>
 				<div id="realtimeErrorBubble" class="onhand-realtime-error-bubble" role="dialog" aria-label="Voice error details" hidden>
 					<div id="realtimeErrorText" class="onhand-realtime-error-text"></div>
 					<div class="onhand-realtime-error-actions">
@@ -3759,6 +3787,18 @@
 	const fileInput = shadow.getElementById("fileInput");
 	const realtimeVoiceButton = shadow.getElementById("realtimeVoiceButton");
 	const realtimeStatusEl = shadow.getElementById("realtimeStatus");
+	const liveTranscriptPanel = shadow.getElementById("liveTranscriptPanel");
+	const liveTranscriptText = shadow.getElementById("liveTranscriptText");
+	const liveUsageEl = shadow.getElementById("liveUsage");
+	const liveResumePageWork = shadow.getElementById("liveResumePageWork");
+	const liveTimingPanel = shadow.getElementById("liveTimingPanel");
+	const liveTimingText = shadow.getElementById("liveTimingText");
+	const liveCopyTiming = shadow.getElementById("liveCopyTiming");
+	liveResumePageWork.addEventListener("click", () => { liveVoice?.resumePageWork?.(); renderLiveTranscript(); });
+	liveCopyTiming.addEventListener("click", async () => {
+		try { await navigator.clipboard.writeText(JSON.stringify({ version: 1, events: liveDiagnostics }, null, 2)); liveCopyTiming.textContent = "Copied"; }
+		catch { liveCopyTiming.textContent = "Could not copy"; }
+	});
 	const realtimeMuteButtonEl = shadow.getElementById("realtimeMuteButton");
 	const realtimeErrorBubble = shadow.getElementById("realtimeErrorBubble");
 	const realtimeErrorText = shadow.getElementById("realtimeErrorText");
@@ -4154,6 +4194,10 @@
 			typeof globalThis.confirm !== "function" ||
 			globalThis.confirm(`Delete "${sessionLabel}"? This cannot be undone.`);
 		if (!confirmed) return;
+		if (liveVoice && sessionPath === liveTranscriptSession) {
+			await stopLiveVoice("Voice ended");
+			await liveTranscriptSaveQueue;
+		}
 		invalidateSidebarSessionSnapshot();
 		stateRequestSequence += 1;
 		deletingSession = true;
@@ -4311,10 +4355,13 @@
 
 	async function stopActiveRun() {
 		if (!currentState?.activeRequestId || stoppingRequest) return;
+		const requestId = currentState.activeRequestId;
+		if (liveVoice?.snapshot().delegation === "responses") { await stopLiveVoice(); return; }
+		if (liveVoice) liveVoice.cancel();
 		stoppingRequest = true;
 		renderState(currentState || {});
 		try {
-			const response = await chrome.runtime.sendMessage({ type: "sidebar:stop" });
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId });
 			if (!response?.ok) {
 				throw new Error(response?.error || "Could not stop the current run.");
 			}
@@ -5375,17 +5422,23 @@
 	function buildProgressSummary(turn, tools, actions) {
 		const running = tools.find((activity) => activity?.state === "running");
 		if (turn?.pending) return running ? `Working · ${trimProgressLabel(running.label || running.toolName)}` : "Working";
-		const parts = ["Done"];
+		const parts = [turn?.interrupted ? "Interrupted" : turn?.error ? "Failed" : "Done"];
 		if (tools.length) parts.push(pluralize(tools.length, "step"));
 		const recoveredCount = tools.filter((activity) => activity?.state === "recovered").length;
 		if (recoveredCount) parts.push(`recovered ${pluralize(recoveredCount, "retry")}`);
-		const highlightCount = actions.filter((action) => action?.type === "annotation").length;
+		const annotations = actions.filter((action) => action?.type === "annotation");
+		const sourceKey = (action) => action.annotationId || action.key;
+		const isReused = (action) => action.reusedExisting || String(action.key || "").startsWith("scroll:");
+		const newHighlights = new Set(annotations.filter((action) => !isReused(action)).map(sourceKey));
+		const reusedHighlights = new Set(annotations.filter((action) => isReused(action) && !newHighlights.has(sourceKey(action))).map(sourceKey));
+		const highlightCount = newHighlights.size;
 		const noteCount = actions.filter((action) => action?.type === "note").length;
 		const artifactCount = actions.filter((action) => action?.type === "artifact").length;
 		if (highlightCount) parts.push(`highlighted ${pluralize(highlightCount, "passage")}`);
+		if (reusedHighlights.size) parts.push(`reused ${pluralize(reusedHighlights.size, "source")}`);
 		if (noteCount) parts.push(`added ${pluralize(noteCount, "note")}`);
 		if (artifactCount) parts.push(pluralize(artifactCount, "artifact"));
-		if (!tools.length && actions.length && !highlightCount && !noteCount && !artifactCount) {
+		if (!tools.length && actions.length && !highlightCount && !reusedHighlights.size && !noteCount && !artifactCount) {
 			parts.push(pluralize(actions.length, "page action"));
 		}
 		return parts.join(" · ");
@@ -5422,6 +5475,9 @@
 
 	function renderTurnMarkup(turn, citationGroups, citationNumbering) {
 		const reply = String(turn?.reply || "").trim();
+		// A provider/transport failure is not evidence supported by a previous
+		// page annotation. Keep any completed actions visible in the Sources rail.
+		if (turn?.error || turn?.interrupted || turn?.voiceOrigin === "live") citationGroups = [];
 		const sourceActions = getTurnSourceActions(turn);
 		const supportMarkup = renderProgressDetails(turn);
 		const isVoiceTurn = /^\[Voice\]/i.test(String(turn?.userPrompt || "")) || /^realtime_|^socratic_/i.test(String(turn?.kind || ""));
@@ -5431,13 +5487,14 @@
 					<time>${escapeHtml(formatEntryTime(turn?.createdAt))}</time>
 					<span class="dot"></span>
 					<span>Onhand</span>
+					${turn?.voiceOrigin === "live" ? '<span class="dot"></span><span>Voice answer</span>' : ""}
 					${Array.isArray(turn?.pageActions) && turn.pageActions.length ? '<span class="dot"></span><span>Page-grounded</span>' : ""}
 				</div>
 				${turn?.userPrompt ? `<p class="onhand-q">${escapeHtml(turn.userPrompt)}</p>` : ""}
 				<div class="onhand-a ${turn?.pending ? "pending" : ""}">
 					${supportMarkup ? `<div class="onhand-support">${supportMarkup}</div>` : ""}
 						<div class="onhand-response">
-							${reply ? (isVoiceTurn ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
+							${reply ? (isVoiceTurn && !turn?.error ? renderReplyMarkdownWithCitationFallback(reply, citationGroups, citationNumbering) : renderReplyMarkdown(reply, citationGroups, citationNumbering)) : '<p class="reply-placeholder">Thinking…</p>'}
 							${turn?.pending ? '<span class="onhand-cursor"></span>' : ""}
 							${renderRealtimeSourceButtons(sourceActions, `turn:${getStateSessionPath(currentState)}:${turn?.id || ""}`)}
 						</div>
@@ -6300,6 +6357,7 @@
 		const previousSessionPath = getStateSessionPath(currentState);
 		const nextSessionPath = getStateSessionPath(state);
 		if (previousSessionPath && nextSessionPath && previousSessionPath !== nextSessionPath) {
+			if (liveVoice) void stopLiveVoice("Voice ended · conversation changed");
 			clearRealtimeSessionLocalState();
 		}
 		lastActiveRequestId = state?.activeRequestId || null;
@@ -6311,6 +6369,8 @@
 		}
 		currentState = state;
 		maybeSpeakCompletedRealtimeDirectAnswer(state);
+		if (liveVoice) liveVoice.updateState(state);
+		if (!liveVoice && liveTranscriptSession !== nextSessionPath) void loadLiveTranscript(nextSessionPath);
 		renderMeta(state);
 		renderSessionControls(state);
 		renderRealtimeControls();
@@ -6330,7 +6390,7 @@
 		const activeRequest = Boolean(state?.activeRequestId);
 		const changingSession = creatingSession || sessionSwitching || deletingSession || restoringSession;
 		composer.hidden = false;
-		input.disabled = activeRequest || sending || changingSession;
+		input.disabled = (activeRequest && !liveVoice) || sending || changingSession;
 		sendButton.disabled = activeRequest ? stoppingRequest : sending || changingSession;
 		sendButton.classList.toggle("stop-button", activeRequest);
 		sendButton.title = activeRequest ? "Stop current Onhand response" : "Ask Onhand";
@@ -6340,9 +6400,9 @@
 		fileInput.disabled = activeRequest || sending || changingSession;
 		refocusQuickAskComposerAfterRender();
 		helper.textContent = activeRequest
-			? "Onhand is responding · press Stop to cancel"
+			? liveVoice ? liveVoice.snapshot().delegation === "responses" ? "Speak or type a correction · Stop ends Voice" : "Speak or type a correction · Enter sends · Stop cancels" : "Onhand is responding · press Stop to cancel"
 			: realtimeConnected
-				? "voice is live · speak then pause, or type here"
+				? liveVoice ? "Live · speak naturally, or type here" : "voice is live · speak then pause, or type here"
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
 				: "esc dismiss · enter ask · shift+enter newline";
@@ -6418,11 +6478,15 @@
 
 	async function submitPrompt(prompt) {
 		if (sidebarConnectionError) return;
-		if (sending || creatingSession || sessionSwitching || deletingSession || restoringSession || currentState?.activeRequestId) return;
+		if (sending || creatingSession || sessionSwitching || deletingSession || restoringSession || (currentState?.activeRequestId && !liveVoice)) return;
 		const trimmedPrompt = String(prompt || "").trim();
 		if (!trimmedPrompt && !attachmentDrafts.length) return;
 		const attachments = attachmentDrafts.map((attachment) => ({ ...attachment }));
 		const displayPrompt = buildDisplayPrompt(trimmedPrompt, attachments);
+		if (liveVoice && realtimeConnected) {
+			liveVoice.text(trimmedPrompt || "Explain the attached material.", attachments);
+			input.value = ""; attachmentDrafts = []; renderAttachmentDrafts(); return;
+		}
 		scrollToLatestAnswer();
 		const learningMode =
 			learningModeToggle instanceof HTMLInputElement ? Boolean(learningModeToggle.checked) : Boolean(currentState?.preferences?.learningMode);
@@ -6763,6 +6827,7 @@
 	}
 
 	function setRealtimeMicMuted(muted) {
+		if (liveVoice) liveMuteEventId = liveVoice.mute(Boolean(muted));
 		realtimeMicMuted = Boolean(muted);
 		applyRealtimeMicMuted();
 		noteRealtimeActivity();
@@ -6771,11 +6836,13 @@
 			clearRealtimeOnlyVoiceResponse();
 		}
 		renderRealtimeMuteButton();
-		if (realtimeMicMuted) setRealtimeStatus("Mic muted — still speaking");
+		if (liveVoice) setRealtimeStatus(realtimeMicMuted ? "Mic muted locally · confirming Live" : "Mic enabled · confirming Live");
+		else if (realtimeMicMuted) setRealtimeStatus("Mic muted — still speaking");
 		else if (realtimeConnected) setRealtimeReadyStatus();
 	}
 
 	function setRealtimeReadyStatus(status = "Voice ready · ask, then pause") {
+		if (liveVoice) status = "Live · listening";
 		if (realtimeMicMuted && (realtimeConnected || realtimeConnecting)) {
 			setRealtimeStatus("Mic muted — still speaking");
 			return;
@@ -7014,7 +7081,7 @@
 		// spoken answer; ending the session now would deliver the answer as
 		// silent text. Muted sessions hit this hardest: room conversation no
 		// longer resets the timer via speech events.
-		if (realtimeResponseInProgress || realtimeActiveVoiceTurn?.pending) {
+		if (realtimeResponseInProgress || realtimeActiveVoiceTurn?.pending || liveVoice?.snapshot().activeRequestId) {
 			scheduleRealtimeIdleTimeout();
 			return false;
 		}
@@ -7390,6 +7457,19 @@
 			realtimeMicMonitorTimer = setInterval(() => {
 				if (!realtimeConnected) return;
 				const assistantSpeaking = realtimeResponseInProgress || realtimeOutputAudioPlaying;
+				if (liveVoice) {
+					analyser.getByteTimeDomainData(samples);
+					let energy = 0;
+					for (const sample of samples) energy += ((sample - 128) / 128) ** 2;
+					realtimeMicCurrentRms = Math.sqrt(energy / samples.length);
+					realtimeMicPeakRms = Math.max(realtimeMicCurrentRms, realtimeMicPeakRms * 0.94);
+					const microphoneActive = !realtimeMicMuted && realtimeMicCurrentRms > 0.02;
+					loudFrames = microphoneActive ? loudFrames + 1 : 0;
+					quietFrames = microphoneActive ? 0 : quietFrames + 1;
+					if (loudFrames === 2) liveVoice.noteInputActivity?.(true);
+					if (quietFrames === 3) liveVoice.noteInputActivity?.(false);
+					return; // Live owns turn timing and barge-in, including during playback.
+				}
 				if (assistantSpeaking !== wasAssistantSpeaking) {
 					// The tail of the user's own question must not carry into the
 					// answer window as instant barge-in credit.
@@ -7500,19 +7580,19 @@
 		const hiddenLabel = realtimeVoiceButton.querySelector(".onhand-sr-only");
 		if (hiddenLabel) hiddenLabel.textContent = buttonLabel;
 		realtimeVoiceButton.title = !voiceEnabled
-			? "Enable Realtime Voice in Onhand options."
-			: realtimeConnected
-			? "End realtime voice tutor"
+			? "Enable Voice in Onhand options."
+			: realtimeConnected || (liveVoice && realtimeConnecting)
+			? "End voice conversation"
 			: needsApiKeySetup
 				? "Open Onhand options to add an OpenAI platform API key for Voice."
-				: "Start realtime voice tutor.";
+				: currentState?.preferences?.voiceEngine === "live" ? "Start GPT-Live voice tutor." : "Start realtime voice tutor.";
 		realtimeVoiceButton.setAttribute("aria-label", realtimeVoiceButton.title);
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
 		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
 		realtimeVoiceButton.disabled = sidebarConnectionError
 			? !(realtimeConnected || realtimeConnecting)
-			: !voiceEnabled || realtimeConnecting;
+			: !voiceEnabled || (realtimeConnecting && !liveVoice);
 		realtimeStatusEl.textContent = !voiceEnabled ? "Voice disabled" : realtimeError || realtimeStatus;
 		realtimeStatusEl.setAttribute("aria-expanded", realtimeErrorExpanded && realtimeError ? "true" : "false");
 		realtimeStatusEl.setAttribute("aria-controls", "realtimeErrorBubble");
@@ -7524,7 +7604,7 @@
 						realtimeLocalSpeechThreshold(),
 					)}`
 				: "";
-		realtimeStatusEl.title = [!voiceEnabled ? "Enable Realtime Voice in Onhand options." : realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
+		realtimeStatusEl.title = [!voiceEnabled ? "Enable Voice in Onhand options." : realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
 			.filter(Boolean)
 			.join("\n");
 		realtimeStatusEl.classList.toggle("error", Boolean(realtimeError));
@@ -7996,6 +8076,7 @@
 	}
 
 	function sendRealtimeSessionUpdate() {
+		if (liveVoice) { liveVoice.updateState({ ...currentState, preferences: { ...currentState?.preferences, learningMode: Boolean(learningModeToggle.checked) } }); return; }
 		sendRealtimeEvent({
 			event_id: realtimeEventId("onhand_session_update"),
 			type: "session.update",
@@ -9803,8 +9884,277 @@
 		}
 	}
 
+	function renderLiveTranscript() {
+		liveTranscriptPanel.hidden = !liveVoice && !liveTranscript.length && !liveDiagnostics.length;
+		liveResumePageWork.hidden = !liveVoice?.snapshot().pageWorkPaused;
+		if (!liveResumePageWork.hidden) liveTranscriptPanel.open = true;
+		liveTimingPanel.hidden = !liveDiagnostics.length;
+		liveTimingText.textContent = liveDiagnostics.slice(-35).map(event => `${event.elapsed_ms}ms ${event.type}${event.action ? ` (${event.action})` : ""}`).join("\n");
+		const groups = [];
+		for (const entry of liveTranscript.slice(-160)) {
+			const last = groups.at(-1);
+			if (last?.role === entry.role && last.sessionId === entry.sessionId) last.text += entry.text;
+			else groups.push({ ...entry });
+		}
+		liveTranscriptText.textContent = groups.map((entry) => `${entry.role === "user" ? "You" : "Onhand"}: ${entry.text}`).join("\n\n");
+		if (liveUsage) liveUsageEl.textContent = `· ${liveUsage.seconds.toFixed(0)}s · ~$${(liveUsage.seconds / 60 * 0.05).toFixed(2)} voice${liveUsage.final ? "" : " (so far)"}${liveUsage.backendInputTokens || liveUsage.backendOutputTokens ? ` · backend ${(liveUsage.backendInputTokens || 0).toLocaleString()} in / ${(liveUsage.backendOutputTokens || 0).toLocaleString()} out tokens` : ""}`;
+		else liveUsageEl.textContent = "";
+		if (liveUsage?.checkInputTokens || liveUsage?.checkOutputTokens) liveUsageEl.textContent += ` · correction checks ${liveUsage.checkInputTokens || 0} in / ${liveUsage.checkOutputTokens || 0} out tokens`;
+	}
+
+	async function loadLiveTranscript(sessionPath) {
+		liveTranscriptSession = sessionPath;
+		liveTranscript = []; liveUsage = null; liveDiagnostics = [];
+		const key = `onhandLiveTranscript:${sessionPath}`;
+		try {
+			const saved = (await chrome.storage.local.get(key))[key];
+			if (liveTranscriptSession !== sessionPath || liveVoice) return;
+			liveTranscript = Array.isArray(saved?.segments) ? saved.segments : [];
+			liveUsage = saved?.usage || null;
+			liveDiagnostics = Array.isArray(saved?.diagnostics) ? saved.diagnostics.slice(-500) : [];
+		} catch { /* Voice history must not block opening the sidebar. */ }
+		renderLiveTranscript();
+	}
+
+	function saveLiveTranscript() {
+		clearTimeout(liveTranscriptSaveTimer); liveTranscriptSaveTimer = null;
+		const key = liveTranscriptStorageKey;
+		if (!key || (!liveTranscript.length && !liveDiagnostics.length)) return liveTranscriptSaveQueue;
+		const value = { segments: liveTranscript.map((entry) => ({ ...entry })), usage: liveUsage, diagnostics: liveDiagnostics.slice(-500), updatedAt: new Date().toISOString() };
+		liveTranscriptSaveQueue = liveTranscriptSaveQueue.then(() => chrome.storage.local.set({ [key]: value }))
+			.catch(() => { setRealtimeStatus("Voice history could not be saved"); });
+		return liveTranscriptSaveQueue;
+	}
+
+	function finishLiveVoice(status) {
+		clearTimeout(liveStartTimer); clearTimeout(liveCloseTimer);
+		clearInterval(livePlaybackTimer); livePlaybackTimer = null;
+		void livePlaybackContext?.close().catch(() => {}); livePlaybackContext = null;
+		void saveLiveTranscript();
+		liveFlushTurns?.(); liveFlushTurns = null;
+		const liveError = liveVoice?.snapshot().lastError || realtimeError;
+		liveVoice?.dispose(); liveVoice = null;
+		// Reuse media teardown, now that the Live close protocol has finished.
+		stopRealtimeVoice(status);
+		if (liveError) setRealtimeStatus("Live stopped after an error", liveError);
+		renderLiveTranscript();
+		const resolve = liveCloseResolve; liveCloseResolve = null; liveClosePromise = null;
+		void Promise.all([liveTranscriptSaveQueue, liveTurnSaveQueue]).then(() => resolve?.());
+	}
+
+	function stopLiveVoice(status = "Voice ended") {
+		if (!liveVoice) return Promise.resolve();
+		if (liveClosePromise) return liveClosePromise;
+		liveClosePromise = new Promise((resolve) => { liveCloseResolve = resolve; });
+		const result = liveClosePromise;
+		const started = liveVoice.snapshot().started;
+		if (liveVoice.snapshot().delegation === "responses") {
+			if (realtimeAudio) realtimeAudio.muted = true;
+			realtimeMediaStream?.getTracks().forEach((track) => { track.enabled = false; });
+		}
+		try { liveVoice.close(); } catch { finishLiveVoice(`${status} · final usage unconfirmed`); return result; }
+		if (!started) { finishLiveVoice(status); return result; }
+		setRealtimeStatus("Ending Live...");
+		liveCloseTimer = setTimeout(() => finishLiveVoice(`${status} · final usage unconfirmed`), 5000);
+		return result;
+	}
+
+	async function startLiveVoice() {
+		if (!isRealtimeVoiceEnabledInPreferences()) throw new Error("Enable Voice in Onhand options first.");
+		if (realtimeConnected || realtimeConnecting || liveVoice) return;
+		if (!globalThis.OnhandLiveVoice) throw new Error("Reload Onhand to load GPT-Live support.");
+		realtimeConnecting = true; realtimeError = "";
+		setRealtimeStatus("Connecting GPT-Live...");
+		const sessionPath = getStateSessionPath(currentState);
+		await loadLiveTranscript(sessionPath);
+		liveTranscriptStorageKey = `onhandLiveTranscript:${sessionPath}`;
+		liveUsage = null;
+		liveDiagnostics = [];
+		const managed = currentState?.preferences?.liveDelegation !== "client";
+		const createCoordinator = managed ? globalThis.OnhandLiveResponses?.createCoordinator : globalThis.OnhandLiveVoice.createCoordinator;
+		if (!createCoordinator) throw new Error("Reload Onhand to load managed Live support.");
+		const callId = crypto.randomUUID();
+		let turnTimer = null, turnRevision = 0, savedTurnRevision = 0, directTurns = [];
+		function flushTurns() {
+			clearTimeout(turnTimer); turnTimer = null;
+			if (turnRevision === savedTurnRevision) return;
+			const revision = turnRevision, turns = directTurns;
+			liveTurnSaveQueue = liveTurnSaveQueue.then(async () => {
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:live-transcript-turns", sessionId: sessionPath, callId, revision, turns });
+				if (!result?.ok) throw new Error(result?.error || "Voice answer could not be saved.");
+				savedTurnRevision = revision;
+				if (getStateSessionPath(currentState) === sessionPath) await requestState().catch(() => {});
+			}).catch((error) => { setRealtimeStatus("Voice answer could not be saved", error?.message || String(error)); });
+		}
+		const journal = globalThis.OnhandLiveVoice.createTranscriptJournal((turns) => {
+			directTurns = turns; turnRevision++;
+			// Throttle writes without treating silence as a final turn boundary.
+			if (!turnTimer) turnTimer = setTimeout(flushTurns, 500);
+		});
+		liveFlushTurns = flushTurns;
+		const runtimeCall = async (operation, task = {}) => {
+			const result = await chrome.runtime.sendMessage({ type: "sidebar:live-responses", operation,
+				sessionId: sessionPath, requestId: task.requestId, prompt: task.prompt, reply: task.reply,
+				name: task.name, callId: task.callId, args: task.args, error: task.error, aborted: task.aborted,
+				voiceCallId: task.voiceCallId, revision: task.revision, superseded: task.superseded,
+				modelCalls: task.modelCalls, windowId: await ensureCurrentWindowId() });
+			if (!result?.ok) throw new Error(result?.error || "Managed Live operation failed.");
+			void requestState(); return result.result;
+		};
+		const owner = createCoordinator({
+			classify: async (context) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:live-interruption-check", sessionId: sessionPath, context });
+				if (!result?.ok) throw new Error(result?.error || "Interruption check unavailable.");
+				return result.result;
+			},
+			onDiagnostic: (event) => {
+				if (liveVoice !== owner) return;
+				liveDiagnostics.push(event);
+				if (liveDiagnostics.length > 500) liveDiagnostics.shift();
+				renderLiveTranscript();
+				if (!liveTranscriptSaveTimer) liveTranscriptSaveTimer = setTimeout(saveLiveTranscript, 1500);
+			},
+			onCloseRequested: () => { if (liveVoice === owner) void stopLiveVoice(); },
+			file: async (text) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:live-text-file", sessionId: sessionPath, text });
+				if (!result?.ok) throw new Error(result?.error || "Live source upload failed.");
+				return result.result;
+			},
+			image: async (dataUrl) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:live-image", sessionId: sessionPath, dataUrl });
+				if (!result?.ok) throw new Error(result?.error || "Live image upload failed.");
+				return result.result;
+			},
+			config: async () => globalThis.OnhandLiveResponses.assertCompatibleConfig(await runtimeCall("config")),
+			begin: (task) => runtimeCall("begin", task),
+			update: (task) => runtimeCall("update", task),
+			review: (task) => runtimeCall("review", task),
+			tool: (task) => runtimeCall("tool", task),
+			finish: (task) => runtimeCall("finish", task),
+			getState: () => currentState || {},
+			send: (event) => {
+				if (realtimeDataChannel?.readyState !== "open") throw new Error("Live event connection is closed.");
+				const payload = JSON.stringify(event);
+				try { realtimeDataChannel.send(payload); }
+				catch (error) { throw new Error(`${event.type} failed (${new TextEncoder().encode(payload).length} bytes): ${error?.message || error}`); }
+			},
+			submit: async (task) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({
+					type: "sidebar:submit-prompt", prompt: task.prompt, displayPrompt: `[Voice] ${task.prompt}`,
+					sessionId: task.sessionId, clientRequestId: task.requestId, voiceContext: task.context, attachments: task.attachments,
+					learningMode: Boolean(currentState?.preferences?.learningMode), source: "live-voice",
+					windowId: await ensureCurrentWindowId(),
+				});
+				if (!result?.ok) throw new Error(result?.error || "Onhand could not start that request.");
+				void requestState(); return result;
+			},
+			stop: async (requestId) => {
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId });
+				if (!result?.ok) throw new Error(result?.error || "Could not stop the previous request.");
+				void requestState();
+			},
+			onStatus: (status) => { if (liveVoice === owner) { setRealtimeStatus(status); renderLiveTranscript(); } },
+			onError: (error) => {
+				if (liveVoice === owner) setRealtimeStatus("Live error", error?.message || String(error));
+			},
+			onStarted: () => {
+				if (liveVoice !== owner) return;
+				clearTimeout(liveStartTimer);
+				realtimeConnecting = false; realtimeConnected = true;
+				setRealtimeStatus("Live · listening"); scheduleRealtimeIdleTimeout();
+			},
+			onTranscript: (entry) => {
+				if (liveVoice !== owner) return;
+				journal.append(entry);
+				liveTranscript.push(entry); renderLiveTranscript();
+				if (entry.text.trim()) noteRealtimeActivity();
+				if (!liveTranscriptSaveTimer) liveTranscriptSaveTimer = setTimeout(saveLiveTranscript, 1500);
+			},
+			onDelegation: (event) => { if (liveVoice === owner) journal.delegate(event); },
+			onMuteAcknowledged: (eventId, muted) => { if (eventId === liveMuteEventId) setRealtimeStatus(muted ? "Mic muted — still speaking" : "Live · listening"); },
+			onUsage: (usage) => { if (liveVoice === owner) { liveUsage = usage; renderLiveTranscript(); } },
+			onClosed: (event) => {
+				if (liveVoice === owner) finishLiveVoice(event.reason === "close_requested" ? "Voice ended" : `Voice ended · ${event.reason || "closed"}`);
+			},
+		});
+		liveVoice = owner;
+		liveStartTimer = setTimeout(() => {
+			if (liveVoice === owner && !owner.snapshot().started) finishLiveVoice("Live connection timed out · final usage unconfirmed");
+		}, 45000);
+		renderRealtimeControls();
+		try {
+			// An unpacked-extension rebuild can leave an older service worker
+			// paired with a freshly opened panel. Detect the required review
+			// capability before opening the mic or starting a paid Live session.
+			if (managed) globalThis.OnhandLiveResponses.assertCompatibleConfig(await runtimeCall("config"));
+			if (liveVoice !== owner) return;
+			const stream = await createRealtimeInputMediaStream();
+			if (liveVoice !== owner) { stream.getTracks().forEach((track) => track.stop()); return; }
+			realtimeMediaStream = stream;
+			const tracks = realtimeMediaStream.getAudioTracks();
+			if (!tracks.length) throw new Error("Chrome returned no microphone audio track.");
+			realtimeActiveMicLabel = tracks[0].label || getRealtimeMicDeviceLabel(realtimeMicDeviceId);
+			realtimeMicMuted = false; applyRealtimeMicMuted(); startRealtimeMicMonitor(realtimeMediaStream);
+			const pc = new RTCPeerConnection();
+			const dc = pc.createDataChannel("oai-events");
+			const audio = new Audio(); audio.autoplay = true;
+			realtimePeerConnection = pc; realtimeDataChannel = dc; realtimeAudio = audio;
+			pc.ontrack = (event) => {
+				if (liveVoice !== owner) return;
+				audio.srcObject = event.streams[0];
+				void audio.play().catch(() => setRealtimeStatus("Audio playback blocked", "Click End, then Voice, to enable playback."));
+				const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+				if (AudioContextCtor) {
+					livePlaybackContext = new AudioContextCtor();
+					const analyser = livePlaybackContext.createAnalyser(); analyser.fftSize = 1024;
+					livePlaybackContext.createMediaStreamSource(event.streams[0]).connect(analyser);
+					const samples = new Uint8Array(analyser.fftSize);
+					let outputActive = false, quietFrames = 0;
+					void livePlaybackContext.resume().catch(() => {});
+					livePlaybackTimer = setInterval(() => {
+						analyser.getByteTimeDomainData(samples);
+						realtimeOutputAudioPlaying = samples.some((sample) => Math.abs(sample - 128) > 2);
+						quietFrames = realtimeOutputAudioPlaying ? 0 : quietFrames + 1;
+						if (realtimeOutputAudioPlaying && !outputActive) { outputActive = true; owner.noteAudioActivity?.(true); }
+						if (!realtimeOutputAudioPlaying && quietFrames >= 3 && outputActive) { outputActive = false; owner.noteAudioActivity?.(false); }
+					}, 100);
+				}
+			};
+			dc.onmessage = (event) => {
+				if (liveVoice !== owner) return;
+				try { owner.handle(JSON.parse(event.data)); }
+				catch (error) { setRealtimeStatus("Live error", error?.message || String(error)); }
+			};
+			dc.onclose = () => { if (liveVoice === owner) finishLiveVoice("Voice disconnected · final usage unconfirmed"); };
+			pc.onconnectionstatechange = () => {
+				if (liveVoice === owner && pc.connectionState === "failed") finishLiveVoice("Voice disconnected · final usage unconfirmed");
+			};
+			for (const track of tracks) pc.addTrack(track, realtimeMediaStream);
+			await pc.setLocalDescription(await pc.createOffer());
+			await waitForRealtimeIceGathering(pc);
+			const result = await chrome.runtime.sendMessage({ type: "sidebar:live-session", sessionId: sessionPath, sdp: pc.localDescription?.sdp });
+			if (liveVoice !== owner) return;
+			if (!result?.ok) throw new Error(result?.error || "Could not create GPT-Live session.");
+			if (result.result.delegation && result.result.delegation !== (managed ? "responses" : "client")) throw new Error("Voice settings changed during connection. Start Voice again.");
+			await pc.setRemoteDescription({ type: "answer", sdp: result.result.sdp });
+		} catch (error) {
+			if (liveVoice !== owner) return;
+			finishLiveVoice("Voice idle");
+			if (isRealtimeMicrophonePermissionError(error)) {
+				realtimeRestartAfterMicPermission = true;
+				await openRealtimeMicPermissionPage().catch(() => {});
+				setRealtimeStatus("Mic permission needed", realtimeMicrophoneErrorMessage(error));
+			} else setRealtimeStatus("Live setup failed", error?.message || String(error));
+		}
+	}
+
 	async function startRealtimeVoice() {
 		assertSidebarConnected();
+		if (currentState?.preferences?.voiceEngine === "live") return await startLiveVoice();
 		if (!isRealtimeVoiceEnabledInPreferences()) {
 			throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
 		}
@@ -9904,6 +10254,7 @@
 	}
 
 	function stopRealtimeVoice(status = "Voice idle") {
+		if (liveVoice) return stopLiveVoice(status);
 		clearRealtimeIdleTimeout();
 		stopRealtimeMicMonitor();
 		realtimeMicMuted = false;
@@ -9948,6 +10299,7 @@
 	}
 
 	async function sendRealtimeTextPrompt(prompt) {
+		if (liveVoice) { liveVoice.text(prompt); return; }
 		if (!realtimeConnected || !realtimeDataChannel || realtimeDataChannel.readyState !== "open") {
 			throw new Error("Start Voice before sending a voice-chat message.");
 		}
@@ -10221,12 +10573,17 @@
 		renderMeta(currentState || {});
 	});
 
-	closeButton.addEventListener("click", () => {
-		stopRealtimeVoice();
+	closeButton.addEventListener("click", async () => {
+		await stopRealtimeVoice();
 		setOpen(false);
 		void ensureCurrentWindowId()
 			.then((windowId) => chrome.runtime.sendMessage({ type: "sidebar:close", windowId }))
 			.catch(() => {});
+	});
+	window.addEventListener("pagehide", () => {
+		// Browser-owned panel close cannot await finalization. Save the latest
+		// cumulative usage as unconfirmed and request closure while still open.
+		if (liveVoice) { void saveLiveTranscript(); try { liveVoice.close(); } catch {} }
 	});
 
 	function handleSessionSelection() {
@@ -10282,10 +10639,7 @@
 			renderRealtimeMicDeviceSelect();
 		});
 		if (realtimeConnected || realtimeConnecting) {
-			stopRealtimeVoice("Switching mic...");
-			setTimeout(() => {
-				void startRealtimeVoice();
-			}, 250);
+			void Promise.resolve(stopRealtimeVoice("Switching mic...")).then(() => startRealtimeVoice());
 		}
 	}
 
@@ -10577,6 +10931,10 @@
 	input.addEventListener("keydown", (event) => {
 		if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
 		event.preventDefault();
+		if (liveVoice && realtimeConnected && (input.value.trim() || attachmentDrafts.length)) {
+			void submitPrompt(input.value).catch((error) => setRealtimeStatus("Live error", error?.message || String(error)));
+			return;
+		}
 		submitComposerInput();
 	});
 
@@ -10670,6 +11028,9 @@
 	if (globalThis.__onhandSidebarExposeTestHooks) {
 		globalThis.__onhandSidebarTestHooks = {
 			getMessageRenderCount: () => messageRenderCount,
+			startLiveVoice,
+			stopLiveVoice,
+			getLiveState: () => liveVoice?.snapshot() || liveUsage,
 			setKatexModule(module) {
 				katexModule = module;
 				renderState(currentState || {});

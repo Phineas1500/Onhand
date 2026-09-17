@@ -609,6 +609,74 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
 }
 
+async function assertPdfReuseRequiresWholeQuote() {
+	const { transform } = await import("esbuild");
+	const names = ["parsePdfAnchor", "pdfAnchorText", "pdfAnchorPageNumber", "pdfDocumentUrl", "pdfHighlightMatches", "findExistingPdfHighlight", "removeDuplicatePdfHighlights"];
+	const declarations = await Promise.all(names.map(name => loadFunctionFromFile("packages/browser-extension/src/pdf-viewer.ts", name)));
+	const { code } = await transform(declarations.join("\n"), { loader: "ts", target: "es2022" });
+	const { window } = new JSDOM('<main class="page" data-page-number="2"></main>');
+	const { document } = window;
+	const deps = {
+		document,
+		Element: window.Element,
+		compactSearchText: text => text.toLowerCase().replace(/\s+/g, ""),
+		getPageNumber: page => Number(page?.dataset.pageNumber),
+		removeNotesForAnnotation: id => document.querySelector(`[data-onhand-note-for="${id}"]`)?.remove(),
+	};
+	const viewer = new Function(...Object.keys(deps), `${code}\nreturn { findExistingPdfHighlight, removeDuplicatePdfHighlights };`)(...Object.values(deps));
+	const add = (id, text, pageNumber = 2, occurrence = 1) => {
+		const mark = document.createElement("div");
+		mark.setAttribute("data-onhand-highlight-kind", "pdf");
+		mark.setAttribute("data-onhand-annotation-id", id);
+		mark.setAttribute("data-onhand-matched-text", text);
+		mark.setAttribute("data-onhand-pdf-anchor", JSON.stringify({ matchedText: text, pageNumber, occurrence, document: { url: "https://example.test/science.pdf" } }));
+		document.querySelector("main").append(mark);
+		return mark;
+	};
+	for (const [fragment, complete] of [
+		["Plants absorb light", "Plants absorb light and convert it into chemical energy."],
+		["Requests are cached", "Requests are cached until their expiration time is reached."],
+	]) {
+		document.querySelector("main").replaceChildren();
+		const short = add("short", fragment);
+		assert.equal(viewer.findExistingPdfHighlight(complete), null, "a short fragment must not stand in for the requested full quote");
+		assert.equal(viewer.findExistingPdfHighlight(complete, { pdfAnchor: JSON.parse(short.getAttribute("data-onhand-pdf-anchor")) }), null, "a stale short anchor must not override the requested quote");
+		assert.equal(viewer.findExistingPdfHighlight(fragment), short, "exact reuse stays idempotent");
+		const long = add("long", complete);
+		assert.equal(viewer.findExistingPdfHighlight(complete), long);
+		assert.equal(viewer.findExistingPdfHighlight(complete, { pdfAnchor: { pageNumber: 3 } }), null);
+		assert.equal(viewer.findExistingPdfHighlight(complete, {}, 2), null);
+		assert.equal(viewer.findExistingPdfHighlight(complete, { pdfAnchor: { document: { url: "https://example.test/other.pdf" } } }), null);
+		const note = document.createElement("aside");
+		note.setAttribute("data-onhand-note-for", "long");
+		document.querySelector("main").append(note);
+		add("duplicate", fragment);
+		assert.equal(viewer.removeDuplicatePdfHighlights(short, fragment), 1, "only exact duplicates should be consolidated");
+		assert.equal(long.isConnected, true, "a broader cited passage must survive deduplication");
+		assert.equal(note.isConnected, true, "its note must survive too");
+		short.remove();
+		assert.equal(viewer.findExistingPdfHighlight(fragment), long, "a larger mark can cover a shorter request");
+	}
+	window.close();
+
+	const quote = "Plants absorb light and convert it into chemical energy.";
+	const { dom, toolkit } = await createToolkit(`<main class="pdfViewer"><div class="page" data-page-number="2"><div class="canvasWrapper"></div><div class="textLayer"><span>${quote}</span></div></div></main>`);
+	const page = dom.window.document.querySelector(".page");
+	setElementRect(page, { left: 0, top: 0, width: 600, height: 800 });
+	Object.defineProperties(page, { clientWidth: { value: 600 }, clientHeight: { value: 800 } });
+	setElementRect(dom.window.document.querySelector(".textLayer span"), { left: 50, top: 100, width: 500, height: 24 });
+	const first = await toolkit.highlightText("Plants absorb light", { scrollIntoView: false });
+	const full = await toolkit.highlightText(quote, { reuseExisting: true, scrollIntoView: false, pdfAnchor: first.pdfAnchor });
+	assert.notEqual(full.annotationId, first.annotationId, "a stale anchor must not reuse partial geometry");
+	assert.equal(full.pdfAnchor.textQuote.exact, quote, "the new overlay must cover the complete requested quote");
+	const repeat = await toolkit.highlightText(quote, { reuseExisting: true, scrollIntoView: false, pdfAnchor: full.pdfAnchor });
+	assert.equal(repeat.annotationId, full.annotationId);
+	const shortReplay = await toolkit.highlightText("Plants absorb light", { reuseExisting: true, scrollIntoView: false, pdfAnchor: first.pdfAnchor });
+	assert.equal(shortReplay.annotationId, first.annotationId);
+	assert.equal(dom.window.document.querySelectorAll('[data-onhand-highlight-kind="pdf"]').length, 2, "distinct historical evidence is preserved");
+	dom.window.close();
+}
+
 async function assertPdfViewerCitationNavigationAndRebuild() {
 	const { transform } = await import("esbuild");
 	const declarations = await Promise.all(["pdfScrollToAnnotation", "restorePdfAnnotationSnapshots"].map(
@@ -1433,7 +1501,7 @@ async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 	);
 	assert.match(
 		backgroundSource,
-		/const shouldOpenViewerInNewTab = args\.newTab === true \|\| \(sourceIsGoogleDocs && args\.newTab !== false\);/,
+		/const shouldOpenViewerInNewTab = \(args\.newTab === true && !pdfTabMatchesSource\(sourceTab, pdfUrl\)\)\s*\|\| \(sourceIsGoogleDocs && args\.newTab !== false\);/,
 		"Google Docs PDF handoff should preserve the original Docs tab by default",
 	);
 	assert.match(backgroundSource, /async function highlightGoogleDocsViaPdfViewer/, "Google Docs highlights should use a PDF viewer handoff helper");
@@ -3920,6 +3988,7 @@ async function main() {
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertPdfViewerCitationNavigationAndRebuild();
+	await assertPdfReuseRequiresWholeQuote();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();

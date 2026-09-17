@@ -2,6 +2,7 @@ import { runSidebarIncrementalRegressions } from "./lib/sidebar-incremental-regr
 import { runSidebarScrollRegressions } from "./lib/sidebar-scroll-regressions.mjs";
 import { runSidebarHistoryRegressions } from "./lib/sidebar-history-regressions.mjs";
 import { runSidebarReviewRegressions } from "./lib/onhand-review-regressions.mjs";
+import { runLiveSidebarRegressions } from "./lib/sidebar-live-regressions.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { JSDOM } from "jsdom";
@@ -201,6 +202,11 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 			async sendMessage(message) {
 				runtimeMessages.push(message);
 				if (message?.type === "sidebar:fetch-state") return { ok: true, state };
+				if (message?.type === "sidebar:live-responses" && options.liveResponses) return options.liveResponses(message);
+				if (message?.type === "sidebar:live-interruption-check" && options.liveInterruption) return options.liveInterruption(message);
+				if (message?.type === "sidebar:live-image" && options.liveImage) return options.liveImage(message);
+				if (message?.type === "sidebar:live-text-file" && options.liveTextFile) return options.liveTextFile(message);
+				if (message?.type === "sidebar:live-session" && options.liveSessionResponse) return options.liveSessionResponse(message);
 				if (message?.type === "sidebar:list-sessions") {
 					const configuredSessions =
 						typeof options.sessions === "function" ? options.sessions(state) : Array.isArray(options.sessions) ? options.sessions : null;
@@ -509,6 +515,13 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 						},
 					};
 				}
+				if (message?.type === "sidebar:live-transcript-turns") {
+					state.turns = state.turns.filter(turn => turn.liveVoiceSessionId !== message.callId);
+					state.turns.push(...message.turns.map(turn => ({ ...turn, id: `live:${message.callId}:${turn.id}`,
+						userPrompt: `[Voice] ${turn.userPrompt}`, voiceOrigin: "live", liveVoiceSessionId: message.callId,
+						activities: [], pageActions: [], pending: false, error: false })));
+					return { ok: true, result: { saved: true } };
+				}
 				if (message?.type === "sidebar:realtime-record-turn") {
 					if (typeof options.realtimeRecordTurnResponse === "function") {
 						return options.realtimeRecordTurnResponse(message, state);
@@ -599,6 +612,12 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 			},
 		},
 	};
+	window.TextEncoder = TextEncoder;
+	Object.defineProperty(window.crypto, "subtle", { value: crypto.subtle });
+	window.eval(await readFile(new URL("../packages/browser-extension/live-voice.js", import.meta.url), "utf8"));
+	window.eval(await readFile(new URL("../packages/browser-extension/live-interruptions.js", import.meta.url), "utf8"));
+	window.eval(await readFile(new URL("../packages/browser-extension/live-responses.js", import.meta.url), "utf8"));
+	options.setupWindow?.(window);
 	window.eval(await readFile(SIDEBAR_PATH, "utf8"));
 	await new Promise((resolve) => window.setTimeout(resolve, 50));
 	dom.dispatchRuntimeMessage = async (message) => {
@@ -611,6 +630,26 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	dom.getOpenOptionsCalls = () => openOptionsCalls;
 	dom.getCreatedTabs = () => createdTabs.map((tab) => ({ ...tab }));
 	return dom;
+}
+
+async function assertProgressDistinguishesNewAndReusedSources() {
+	const state = createState();
+	state.turns = [{
+		id: "progress-sources", userPrompt: "Compare these passages", reply: "Comparison complete.", activities: [],
+		pageActions: [
+			{ key: "highlight:a", type: "annotation", annotationId: "a", label: "Highlighted text" },
+			{ key: "scroll:a", type: "annotation", annotationId: "a", label: "Moved to section" },
+			{ key: "highlight:b", type: "annotation", annotationId: "b", label: "Highlighted text" },
+			{ key: "scroll:b", type: "annotation", annotationId: "b", label: "Moved to section" },
+			{ key: "scroll:c", type: "annotation", annotationId: "c", label: "Moved to section" },
+			{ key: "highlight:c", type: "annotation", annotationId: "c", reusedExisting: true, label: "Reused source highlight" },
+		],
+	}];
+	const dom = await renderSidebar(state, []);
+	const summary = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.querySelector(".onhand-progress summary")?.textContent;
+	assert.match(summary, /highlighted 2 passages/);
+	assert.match(summary, /reused 1 source/);
+	dom.window.close();
 }
 
 async function assertNativePanelAnnouncesOpened() {
@@ -2630,7 +2669,7 @@ async function assertRealtimeVoiceDisabledState() {
 	assert.equal(voiceButton.textContent, "Off", "expected disabled realtime voice button to render as off");
 	assert.equal(voiceButton.disabled, true, "expected disabled realtime voice button to be disabled");
 	assert.equal(status.textContent, "Voice disabled", "expected realtime status to explain disabled voice");
-	assert.match(status.title, /Enable Realtime Voice/);
+	assert.match(status.title, /Enable Voice/);
 	dom.window.close();
 }
 
@@ -3434,6 +3473,10 @@ async function assertRealtimePublishSidebarAnswerCanAnnotateAndCite() {
 		shadow.querySelector('.onhand-entry:not(.onhand-realtime-answer) [data-action-key="highlight:ann-realtime-alpha"]'),
 		"expected saved realtime voice answer to expose source buttons",
 	);
+	state.turns.at(-1).error = true;
+	state.turns.at(-1).reply = "Error: Backend response input history limit.";
+	await hooks.requestState();
+	assert.equal(shadow.querySelector('.onhand-entry.error .onhand-response .onhand-cite'), null, "a voice error must not cite an unrelated source");
 
 	dom.window.close();
 }
@@ -5000,11 +5043,13 @@ async function assertCitationTokenFoldingBridgesInflection() {
 	assert.equal(uncited.length, 0, "unrelated prose must never be chipped");
 }
 
+await runLiveSidebarRegressions({ renderSidebar, createState });
 await runSidebarReviewRegressions({ renderSidebar, createState });
 await runSidebarIncrementalRegressions({ renderSidebar, createState });
 await runSidebarScrollRegressions({ renderSidebar, createState });
 await runSidebarHistoryRegressions({ renderSidebar, createState });
 await assertNativePanelAnnouncesOpened();
+await assertProgressDistinguishesNewAndReusedSources();
 await assertSessionWideCitationNumbers();
 await assertCitationLinksSurviveAnnotationRecovery();
 await assertCitationTokenFoldingBridgesInflection();

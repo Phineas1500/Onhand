@@ -25826,9 +25826,9 @@ function pdfHighlightMatches(annotation, rawQuery, options = {}, occurrence = 1)
   const targetUrl = pdfDocumentUrl(targetAnchor);
   const existingUrl = pdfDocumentUrl(existingAnchor);
   if (targetUrl && existingUrl && targetUrl !== existingUrl) return false;
-  const targetText = pdfAnchorText(targetAnchor, rawQuery);
+  const targetText = compactSearchText(rawQuery) || pdfAnchorText(targetAnchor);
   const existingText = pdfAnchorText(existingAnchor, annotation.getAttribute("data-onhand-matched-text") || "");
-  if (targetText && existingText && targetText !== existingText && !targetText.includes(existingText) && !existingText.includes(targetText)) return false;
+  if (!targetText || !existingText || !existingText.includes(targetText)) return false;
   const targetOccurrence = Number(targetAnchor?.occurrence || options.occurrence || occurrence || 1);
   const existingOccurrence = Number(existingAnchor?.occurrence || 1);
   if (Number.isFinite(targetOccurrence) && Number.isFinite(existingOccurrence) && targetOccurrence > 0 && existingOccurrence > 0 && targetOccurrence !== existingOccurrence) {
@@ -25846,6 +25846,7 @@ function removeDuplicatePdfHighlights(keeper, rawQuery, options = {}, occurrence
   let removed = 0;
   for (const annotation of Array.from(document.querySelectorAll("[data-onhand-highlight-kind='pdf']"))) {
     if (annotation === keeper || !pdfHighlightMatches(annotation, rawQuery, options, occurrence)) continue;
+    if (pdfAnchorText(parsePdfAnchor(annotation), annotation.getAttribute("data-onhand-matched-text") || "") !== pdfAnchorText(parsePdfAnchor(keeper), keeper.getAttribute("data-onhand-matched-text") || "")) continue;
     const annotationId = annotation.getAttribute("data-onhand-annotation-id") || "";
     if (annotationId) removeNotesForAnnotation(annotationId);
     annotation.remove();

@@ -2290,9 +2290,10 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		const targetUrl = getPdfAnchorDocumentUrl(targetAnchor);
 		const existingUrl = getPdfAnchorDocumentUrl(existingAnchor);
 		if (targetUrl && existingUrl && targetUrl !== existingUrl) return false;
-		const targetText = getPdfAnchorComparableText(targetAnchor, rawQuery);
+		const targetText = compactHighlightSearchText(rawQuery) || getPdfAnchorComparableText(targetAnchor);
 		const existingText = getPdfAnchorComparableText(existingAnchor, annotationElement.getAttribute("data-onhand-matched-text") || "");
-		if (targetText && existingText && targetText !== existingText && !targetText.includes(existingText) && !existingText.includes(targetText)) return false;
+		// Reuse only when the existing mark covers the whole requested quote.
+		if (!targetText || !existingText || !existingText.includes(targetText)) return false;
 		const targetOccurrence = Number(targetAnchor?.occurrence || options.occurrence || occurrence || 1);
 		const existingOccurrence = Number(existingAnchor?.occurrence || 1);
 		if (
@@ -2338,6 +2339,8 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		for (const annotationElement of Array.from(document.querySelectorAll('[data-onhand-highlight-kind="pdf"]'))) {
 			if (annotationElement === keeper) continue;
 			if (!pdfAnnotationMatchesReplayTarget(annotationElement, rawQuery, options, occurrence)) continue;
+			if (getPdfAnchorComparableText(parsePdfAnchorFromElement(annotationElement), annotationElement.getAttribute("data-onhand-matched-text") || "") !==
+				getPdfAnchorComparableText(parsePdfAnchorFromElement(keeper), keeper.getAttribute("data-onhand-matched-text") || "")) continue;
 			if (removePdfOverlayAnnotation(annotationElement)) removed += 1;
 		}
 		return removed;
@@ -2345,6 +2348,9 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 	const restorePdfAnchorHighlight = async (pdfAnchor, rawQuery, options = {}) => {
 		if (!pdfAnchor || typeof pdfAnchor !== "object") return null;
+		const query = compactHighlightSearchText(rawQuery);
+		// An old short anchor cannot supply geometry for a newly expanded quote.
+		if (query && !getPdfAnchorComparableText(pdfAnchor).includes(query)) return null;
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || pdfAnchor.occurrence || 1) || 1));
 		if (options.reuseExisting === true) {
 			const existing = findExistingPdfAnnotation(rawQuery, { ...options, pdfAnchor }, occurrence);

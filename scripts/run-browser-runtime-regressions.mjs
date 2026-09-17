@@ -2,6 +2,7 @@ import { runRuntimeReviewRegressions } from "./lib/onhand-review-regressions.mjs
 import { runSidebarPollRegressions } from "./lib/onhand-sidebar-poll-regressions.mjs";
 import { runVoiceTranscriptRegressions } from "./lib/voice-transcript-regressions.mjs";
 import { runSessionPageActionRestoreRegressions } from "./lib/session-page-action-restore-regressions.mjs";
+import { runPdfViewerTabRegressions } from "./lib/pdf-viewer-tab-regressions.mjs";
 import assert from "node:assert/strict";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
@@ -10733,6 +10734,268 @@ async function configureSmokeRuntime(host = createReplayHost()) {
 	return runtime;
 }
 
+async function assertManagedGroundingReview() {
+	const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const assess = __browserRuntimeTest.assessManagedAnswerGroundingForTest;
+	const trace = (toolName, args = {}, state = "complete", resultSummary = "") => ({ toolName, args, state, resultSummary });
+	const capture = trace("browser_pdf_capture_page_image");
+	const read = trace("browser_pdf_read_pages");
+	const mark = trace("browser_highlight_text", { text: "The mechanism is explained in this passage." }, "complete", "Highlighted text; annotationId: source-1");
+	const note = trace("browser_show_note", { annotationId: "source-1", note: "This explains the causal step." });
+	for (const prompt of [
+		"Walk me through Figure 1. Without recurrence, how does it know word order?",
+		"Explain the diagram. Why does the membrane allow water through?",
+		"What does this chart show, and how does the control loop work?",
+	]) {
+		const req = { displayPrompt: prompt, toolTraces: [capture] };
+		let result = assess(req, "A plausible but ungrounded explanation.");
+		assert.equal(result.ready, false, prompt); assert.match(result.instruction, /explanatory PDF section/);
+		result = assess({ ...req, toolTraces: [capture, read, mark] }, "Explanation. [[cite:source-1]]");
+		assert.equal(result.ready, false); assert.match(result.instruction, /browser_show_note/);
+		result = assess({ ...req, toolTraces: [capture, read, mark, note] }, "Explanation without citation.");
+		assert.equal(result.ready, false); assert.match(result.instruction, /Cite the supporting highlight/);
+		assert.equal(assess({ ...req, toolTraces: [capture, read, mark, note] }, "Explanation. [[cite:source-1]]").ready, true);
+		assert.equal(assess({ ...req, toolTraces: [capture, read, mark, note] }, "Explanation. [[cite:invented]]").ready, false);
+	}
+	for (const prompt of ["What does Figure 1 show?", "Describe this diagram briefly.", "Repeat just the word order point.", "Explain the diagram and why it works, but do not change the page."]) {
+		assert.equal(assess({ displayPrompt: prompt, toolTraces: [capture] }, "Short explanation.").ready, true, prompt);
+	}
+	const html = { displayPrompt: "Explain this article.", toolTraces: [mark, note] };
+	assert.equal(assess(html, "Explanation. [[cite:source-1]]").ready, true);
+	assert.equal(assess({ ...html, toolTraces: [] }, "Explanation. [[cite:source-1]]").ready, false, "citation strings cannot stand in for executed actions");
+	assert.equal(assess({ ...html, toolTraces: [mark, { ...note, state: "error" }] }, "Explanation. [[cite:source-1]]").ready, false);
+	assert.equal(assess({ ...html, toolTraces: [], priorManagedTurn: { toolTraces: [mark, note] } }, "Revised explanation. [[cite:source-1]]").ready, true);
+	assert.equal(assess({ ...html, toolTraces: [trace("browser_scroll_to_annotation", { annotationId: "source-1" }), note] }, "Explanation. [[cite:source-1]]").ready, true, "verified reuse does not require duplicate highlights");
+
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const sessionId = (await runtime.getState()).currentSession.sessionId;
+	const requestId = crypto.randomUUID();
+	const { readFile } = await import("node:fs/promises");
+	const background = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	const branchStart = background.indexOf('if (message?.type === "sidebar:live-responses") {');
+	const branchEnd = background.indexOf('if (message?.type === "sidebar:live-transcript-turns")', branchStart);
+	assert.ok(branchStart > 0 && branchEnd > branchStart);
+	const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+	const dispatch = new AsyncFunction("message", "getOnhandBrowserRuntime", "sendResponse", background.slice(branchStart, branchEnd));
+	const call = async (operation, args = {}) => {
+		let response;
+		await dispatch({ type: "sidebar:live-responses", operation, sessionId, requestId, ...args }, () => runtime, value => { response = value; });
+		assert.equal(response.ok, true);
+		return response.result;
+	};
+	const config = await call("config");
+	assert.ok(config.tools.some(tool => tool.name === "onhand_review_answer"));
+	await call("begin", { prompt: "Explain this article." });
+	assert.equal((await call("review", { reply: "Uncited draft." })).ready, false);
+	const reviewCall = { name: "onhand_review_answer", callId: "review-1", args: { answer: "Uncited draft." } };
+	assert.equal(JSON.parse((await call("tool", reviewCall)).output).canRetry, true);
+	assert.equal(JSON.parse((await call("tool", reviewCall)).output).canRetry, true, "duplicate review does not consume another attempt");
+	assert.equal(JSON.parse((await call("tool", { ...reviewCall, callId: "review-2" })).output).canRetry, false);
+	await call("tool", { name: "browser_highlight_text", callId: "mark", args: { text: "Alpha smoke content" } });
+	await call("tool", { name: "browser_show_note", callId: "note", args: { annotationId: "replay-highlight", note: "This passage supports the explanation." } });
+	const reply = "Alpha smoke content supports this explanation. [[cite:replay-highlight]]";
+	assert.equal((await call("review", { reply })).ready, true);
+	await call("finish", { reply });
+	assert.equal((await runtime.getState()).turns[0].error, false);
+	const next = crypto.randomUUID();
+	await runtime.liveResponses({ operation: "begin", sessionId, requestId: next, prompt: "Explain this article." });
+	await runtime.liveResponses({ operation: "finish", sessionId, requestId: next, reply: "An uncited draft." });
+	const failed = (await runtime.getState()).turns.at(-1);
+	assert.equal(failed.error, true); assert.match(failed.reply, /not fully grounded/);
+	console.log("Managed grounding: conceptual PDF, HTML, quick visual, no-page-changes, verified reuse, citations, bounded review and finalization passed");
+}
+
+async function assertManagedLiveRuntime() {
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const sessionId = (await runtime.getState()).currentSession.sessionId;
+	const requestId = crypto.randomUUID();
+	const call = (operation, args = {}) => runtime.liveResponses({ operation, sessionId, requestId, ...args });
+	assert.equal((await runtime.getState()).preferences.liveInterruptionEnabled, false);
+	await runtime.updateSettings({ liveInterruptionEnabled: true });
+	await runtime.updateSettings({ learningMode: false });
+	assert.equal((await runtime.getState()).preferences.liveInterruptionEnabled, true, "unrelated settings retain interruption experiment");
+	let config = await call("config");
+	assert.equal(config.model, "gpt-5.6-terra");
+	assert.ok(config.tools.some(tool => tool.name === "browser_pdf_read_pages"));
+	assert.ok(config.tools.some(tool => tool.name === "onhand_get_context"));
+	assert.equal(config.tools.some(tool => tool.name === "onhand_record_learning_event"), false);
+	await runtime.updateSettings({ learningMode: true, liveResponsesModel: "gpt-5.6-luna", advancedRuntimeInspectionEnabled: false });
+	config = await call("config");
+	assert.equal(config.model, "gpt-5.6-luna");
+	assert.ok(config.tools.some(tool => tool.name === "onhand_record_learning_event"));
+	assert.equal(config.tools.some(tool => tool.name === "browser_run_js"), false);
+	await call("begin", { prompt: "Highlight Alpha smoke content", targetWindowId: 3 });
+	await assert.rejects(runtime.submitPrompt({ prompt: "Should wait" }), /already responding/);
+	await assert.rejects(runtime.liveResponses({ operation: "tool", sessionId: "wrong", requestId, name: "browser_highlight_text", callId: "bad", args: { text: "No" } }), /conversation changed/);
+	await call("tool", { name: "onhand_get_context", callId: "context", args: {} });
+	await assert.rejects(call("tool", { name: "browser_run_js", callId: "disabled", args: { code: "1" } }), /unavailable/);
+	await assert.rejects(call("tool", { name: "browser_highlight_text", callId: "invalid", args: {} }), /Validation failed/);
+	const action = { name: "browser_highlight_text", callId: "mark", args: { text: "Alpha smoke content" } };
+	await call("tool", action); await call("tool", action);
+	assert.equal(host.calls.filter(call => call.name === "highlight_text").length, 1);
+	await assert.rejects(call("tool", { ...action, args: { text: "different" } }), /Conflicting tool/);
+	await call("tool", { name: "onhand_record_learning_event", callId: "check", args: { kind: "check_opened", promptText: "What does Alpha mean?", conceptLabel: "Alpha", checkId: "alpha-check", annotationId: "replay-highlight" } });
+	assert.equal((await runtime.getState()).learnerState.openChecks[0].checkId, "alpha-check");
+	const reply = "Alpha is the source passage. [[cite:replay-highlight]]";
+	await call("update", { reply });
+	assert.equal((await runtime.getState()).activeRequestId, requestId);
+	await call("finish", { reply, modelCalls: 2 });
+	let state = await runtime.getState();
+	assert.equal(state.activeRequestId, null); assert.equal(state.turns.length, 1);
+	assert.match(state.turns[0].reply, /Alpha is the source passage/);
+	assert.ok(state.turns[0].pageActions.some(action => action.annotationId === "replay-highlight"));
+	assert.equal(state.preferences.aiModel, "onhand-smoke-1", "Live backend never changes the text model");
+		const nextId = crypto.randomUUID();
+	await runtime.liveResponses({ operation: "begin", sessionId, requestId: nextId, prompt: "Next question" });
+	await assert.rejects(call("finish", { reply: "Stale result" }), /no longer active/);
+	assert.equal((await runtime.getState()).activeRequestId, nextId, "a late finalization cannot release another request's lane");
+	await runtime.stop(nextId);
+	await assert.rejects(runtime.liveResponses({ operation: "tool", sessionId, requestId: nextId, name: "browser_highlight_text", callId: "late", args: { text: "No" } }), /abort/i);
+	await runtime.liveResponses({ operation: "finish", sessionId, requestId: nextId, error: "Test transport error", aborted: false });
+	state = await runtime.getState(); assert.equal(state.activeRequestId, null);
+	assert.equal(state.turns.at(-1).error, true); assert.match(state.turns.at(-1).reply, /Test transport error/);
+	const restarted = await configureSmokeRuntime(host);
+	assert.equal((await restarted.getState()).turns.length, 2);
+	assert.equal((await restarted.getState()).learnerState.openChecks[0].promptText, "What does Alpha mean?");
+	console.log("Managed Live runtime: shared tools, guards, learner state, persistence, and request ownership passed");
+}
+
+async function assertLiveInterruptionWorkerRouting() {
+	const { readFile } = await import("node:fs/promises");
+	const source = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	const start = source.indexOf("const liveInterruptionChecks = new Map();");
+	const end = source.indexOf("async function createLiveCallWithStoredApiKey", start);
+	assert.ok(start > 0 && end > start);
+	const state = { currentSession: { sessionId: "worker-session" }, preferences: { liveDelegation: "responses", liveInterruptionEnabled: false } };
+	let credentialReads = 0, classifierCalls = 0, release;
+	const pending = new Promise(resolve => { release = resolve; });
+	const runtime = { getState: async () => state, getOpenAIRealtimeCredential: async () => { credentialReads++; return { apiKey: "fixture-only" }; } };
+	const classify = async (context, key) => {
+		classifierCalls++; assert.equal(key, "fixture-only"); assert.equal(context.request, "Compare models.");
+		await pending; return { action: "pause" };
+	};
+	const check = new Function("getOnhandBrowserRuntime", "globalThis", source.slice(start, end) + "\nreturn checkLiveInterruption;")(
+		() => runtime, { OnhandLiveInterruptions: { classify } });
+	const message = { sessionId: "worker-session", context: { request: "Compare models.", speech: "Actually, only the small model." } };
+	await assert.rejects(check(message), /not enabled/);
+	state.preferences.liveInterruptionEnabled = true;
+	await assert.rejects(check({ ...message, sessionId: "old-session" }), /not enabled/);
+	state.preferences.liveDelegation = "client";
+	await assert.rejects(check(message), /not enabled/);
+	assert.equal(credentialReads, 0); assert.equal(classifierCalls, 0);
+	state.preferences.liveDelegation = "responses";
+	const first = check(message); await new Promise(resolve => setTimeout(resolve, 0));
+	await assert.rejects(check(message), /already pending/);
+	state.currentSession.sessionId = "new-session"; release();
+	await assert.rejects(first, /conversation changed/);
+	assert.equal(credentialReads, 1); assert.equal(classifierCalls, 1);
+}
+
+async function assertManagedLiveRevisions() {
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const sessionId = (await runtime.getState()).currentSession.sessionId;
+	const requestId = crypto.randomUUID(), voiceCallId = crypto.randomUUID();
+	const call = (operation, revision, args = {}) => runtime.liveResponses({ operation, sessionId, requestId, voiceCallId, revision, ...args });
+	const config = await call("config", 1);
+	assert.deepEqual(config.tools.find(tool => tool.name === "onhand_get_context").parameters.required, ["request_relation", "full_request"]);
+	await call("begin", 1, { prompt: "Explain the first section." });
+	await call("tool", 1, { name: "browser_highlight_text", callId: "first-mark", args: { text: "Alpha smoke content" } });
+	await call("tool", 1, { name: "browser_show_note", callId: "first-note", args: { annotationId: "replay-highlight", note: "This explains the first section." } });
+	await call("finish", 1, { reply: "First section explanation. [[cite:replay-highlight]]", modelCalls: 2 });
+	let state = await runtime.getState();
+	const mark = state.turns[0].pageActions.find(action => action.annotationId === "replay-highlight");
+	assert.ok(mark);
+	await call("begin", 2, { prompt: "Explain the first section, including why the conclusion follows." });
+	state = await runtime.getState();
+	assert.equal(state.turns.length, 0, "the old revision is hidden while the same question is being updated");
+	assert.equal(state.activeRequestId, requestId);
+	assert.match(state.messages.find(message => message.id === `user:${requestId}`).text, /including why/);
+	await assert.rejects(call("finish", 1, { reply: "Late obsolete answer" }), /revision is no longer active/);
+	await assert.rejects(call("tool", 1, { name: "browser_highlight_text", callId: "stale", args: { text: "Do not mark" } }), /revision is no longer active/);
+	await runtime.recordLiveTranscriptTurns({ sessionId, callId: "captions", revision: 1, turns: [] });
+	assert.equal((await runtime.getState()).turns.length, 0, "caption persistence cannot restore the superseded card");
+	await call("finish", 2, { reply: "The complete revised explanation. [[cite:replay-highlight]]", modelCalls: 3 });
+	state = await runtime.getState();
+	assert.equal(state.turns.length, 1);
+	assert.equal(state.turns[0].id, requestId);
+	assert.equal(state.turns[0].managedLiveRevision, 2);
+	assert.equal(state.turns[0].modelCalls, 5);
+	assert.equal(state.turns[0].interrupted, false);
+	assert.match(state.turns[0].userPrompt, /including why/);
+	assert.equal(state.turns[0].pageActions.some(action => action.annotationId === "replay-highlight"), true);
+	assert.equal(host.calls.filter(call => call.name === "highlight_text").length, 1);
+	await assert.rejects(call("begin", 2), /stale/);
+	await assert.rejects(runtime.liveResponses({ operation: "begin", sessionId, requestId, voiceCallId: "another-call", revision: 3 }), /another call/);
+	await call("begin", 3, { prompt: "The same question with a correction." });
+	await call("finish", 3, { aborted: true, reply: "" });
+	state = await runtime.getState();
+	assert.equal(state.turns.length, 1); assert.equal(state.turns[0].interrupted, true);
+	assert.match(state.turns[0].reply, /Voice ended before an answer was completed/);
+	assert.doesNotMatch(state.turns[0].reply, /No reply generated/);
+	const restarted = await configureSmokeRuntime(host);
+	assert.equal((await restarted.getState()).turns[0].managedLiveRevision, 3);
+	assert.equal((await restarted.getState()).turns[0].pageActions.some(action => action.annotationId === "replay-highlight"), true);
+	console.log("Managed Live continuation: one saved question, complete prompt, retained evidence, stale-revision guards, and interrupted status passed");
+}
+
+async function assertLiveTranscriptPersistence() {
+	installChromeStorageStub();
+	const host = createReplayHost();
+	const runtime = await configureSmokeRuntime(host);
+	const sessionId = (await runtime.getState()).currentSession.sessionId;
+	const entry = { id: "caption-1", userPrompt: "Only German, in BLEU points.", reply: "28.4 versus 27.3: 1.1 points.", createdAt: new Date().toISOString() };
+	const save = (revision, turns) => runtime.recordLiveTranscriptTurns({ sessionId, callId: "voice-call", revision, turns });
+	await save(1, [entry]);
+	let state = await runtime.getState();
+	const directId = state.turns[0].id;
+	assert.equal(state.turns[0].voiceOrigin, "live");
+	assert.ok(!state.currentSession.sessionName, "revisable captions cannot freeze an automatic session name");
+	assert.deepEqual(state.turns[0].pageActions, []);
+	assert.equal(state.messages.length, 2, "direct replies enter saved conversation history");
+	const requestId = crypto.randomUUID();
+	await runtime.liveResponses({ operation: "begin", sessionId, requestId, prompt: "An independent source lookup" });
+	await runtime.liveResponses({ operation: "update", sessionId, requestId, reply: "Working draft." });
+	await save(2, [{ ...entry, reply: entry.reply + " Not a percentage." }]);
+	state = await runtime.getState();
+	assert.equal(state.activeRequestId, requestId, "caption persistence cannot release the execution lane");
+	assert.equal(state.messages.find(message => message.id === `assistant:${requestId}`).text, "Working draft.", "caption saves preserve the active backend draft");
+	await runtime.liveResponses({ operation: "update", sessionId, requestId, reply: "Updated working draft." });
+	assert.equal((await runtime.getState()).messages.find(message => message.id === `assistant:${requestId}`).text, "Updated working draft.");
+	assert.equal(state.turns.filter(turn => turn.id === directId).length, 1);
+	await save(1, [entry]);
+	assert.match((await runtime.getState()).turns.find(turn => turn.id === directId).reply, /Not a percentage/);
+	await runtime.liveResponses({ operation: "finish", sessionId, requestId, reply: "A verified backend result." });
+	await save(3, []);
+	state = await runtime.getState();
+	assert.equal(state.turns.length, 1, "late delegation retracts only this call's caption-derived answer");
+	assert.equal(state.turns[0].id, requestId);
+	assert.match(state.currentSession.sessionName, /An independent source lookup/, "the authoritative question supplies the title after caption retraction");
+	await runtime.renameSession("Paper notes");
+	await save(4, [entry]);
+	assert.equal((await runtime.getState()).currentSession.sessionName, "Paper notes", "caption updates preserve manually chosen titles");
+	await runtime.startNewSession();
+	const otherId = (await runtime.getState()).currentSession.sessionId;
+	await save(5, [{ ...entry, reply: entry.reply + " Final caption." }]);
+	state = await runtime.getState();
+	assert.equal(state.currentSession.sessionId, otherId);
+	assert.equal(state.turns.length, 0, "late captions cannot appear in a different conversation");
+	const restarted = await configureSmokeRuntime(host);
+	await restarted.switchSession(sessionId);
+	state = await restarted.getState();
+	assert.equal(state.turns.length, 2);
+	assert.match(state.turns.find(turn => turn.id === directId).reply, /Final caption/);
+	await restarted.recordLiveTranscriptTurns({ sessionId, callId: "voice-call", revision: 4, turns: [] });
+	assert.equal((await restarted.getState()).turns.length, 2, "revision ordering survives runtime restart");
+	await assert.rejects(restarted.recordLiveTranscriptTurns({ sessionId: "missing", callId: "voice-call", revision: 6, turns: [] }), /no longer exists/);
+	console.log("Live direct answers: persistence, revisions, retraction, restart, and execution/session isolation passed");
+}
+
 async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 	installChromeStorageStub();
 	const entered = deferred();
@@ -10749,16 +11012,23 @@ async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 		return await runCommand(name, args);
 	};
 	const runtime = await configureSmokeRuntime(host);
+	assert.equal((await runtime.getState()).preferences.voiceEngine, "realtime");
+	await runtime.updateSettings({ voiceEngine: "live" });
+	await runtime.updateSettings({ learningMode: false });
+	assert.equal((await runtime.getState()).preferences.voiceEngine, "live", "unrelated settings preserve the selected voice engine");
+	await assert.rejects(runtime.submitPrompt({ source: "live-voice", sessionId: "wrong-session", prompt: "Do not run" }), /voice conversation changed/);
 	const beforeHistory = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke" });
-	const first = runtime.submitPrompt({ prompt: "First preparation request", targetWindowId: 3 });
+	const liveRequestId = crypto.randomUUID();
+	const first = runtime.submitPrompt({ prompt: "First preparation request", targetWindowId: 3, source: "live-voice", sessionId: beforeHistory.state.currentSession.sessionId, clientRequestId: liveRequestId });
 	await entered.promise;
-	assert.ok((await runtime.getState()).activeRequestId);
+	assert.equal((await runtime.getState()).activeRequestId, liveRequestId, "the voice coordinator owns a stable ID during preparation");
+	assert.equal((await runtime.stop("another-request")).stopped, false, "stale cancellation must not abort the active request");
 	const preparing = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke", knownHistoryRevision: beforeHistory.historyRevision });
 	assert.equal(preparing.historyUnchanged, false, "starting a request must send its new messages");
 	const unchangedPreparation = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke", knownHistoryRevision: preparing.historyRevision });
 	assert.equal(unchangedPreparation.historyUnchanged, true);
 	assert.ok(unchangedPreparation.state.activeRequestId, "history omission must retain live request state");
-	assert.equal((await runtime.stop()).stopped, true);
+	assert.equal((await runtime.stop(liveRequestId)).stopped, true);
 	await first;
 	let state = await waitForRuntimeCompletion(runtime);
 	assert.equal(state.status, "Stopped");
@@ -11042,6 +11312,12 @@ async function main() {
 	await assertPdfScrollRestoreUsesViewerCoordinates();
 	await assertMarkupWithMarginNotesBypassesOptionalNoteBudget();
 	await assertPdfMarkupRequestDoesNotRequireExistingSelection();
+	await assertManagedGroundingReview();
+	await assertManagedLiveRuntime();
+	await assertLiveInterruptionWorkerRouting();
+	await assertManagedLiveRevisions();
+	await assertLiveTranscriptPersistence();
+	await runPdfViewerTabRegressions();
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

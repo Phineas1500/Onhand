@@ -945,9 +945,10 @@ function pdfHighlightMatches(annotation: HTMLElement, rawQuery: string, options:
 	const targetUrl = pdfDocumentUrl(targetAnchor);
 	const existingUrl = pdfDocumentUrl(existingAnchor);
 	if (targetUrl && existingUrl && targetUrl !== existingUrl) return false;
-	const targetText = pdfAnchorText(targetAnchor, rawQuery);
+	const targetText = compactSearchText(rawQuery) || pdfAnchorText(targetAnchor);
 	const existingText = pdfAnchorText(existingAnchor, annotation.getAttribute("data-onhand-matched-text") || "");
-	if (targetText && existingText && targetText !== existingText && !targetText.includes(existingText) && !existingText.includes(targetText)) return false;
+	// A fragment inside the requested quote does not cover the requested evidence.
+	if (!targetText || !existingText || !existingText.includes(targetText)) return false;
 	const targetOccurrence = Number(targetAnchor?.occurrence || options.occurrence || occurrence || 1);
 	const existingOccurrence = Number(existingAnchor?.occurrence || 1);
 	if (Number.isFinite(targetOccurrence) && Number.isFinite(existingOccurrence) && targetOccurrence > 0 && existingOccurrence > 0 && targetOccurrence !== existingOccurrence) {
@@ -967,6 +968,9 @@ function removeDuplicatePdfHighlights(keeper: HTMLElement, rawQuery: string, opt
 	let removed = 0;
 	for (const annotation of Array.from(document.querySelectorAll<HTMLElement>("[data-onhand-highlight-kind='pdf']"))) {
 		if (annotation === keeper || !pdfHighlightMatches(annotation, rawQuery, options, occurrence)) continue;
+		// Overlapping passages can support different saved citations and notes.
+		if (pdfAnchorText(parsePdfAnchor(annotation), annotation.getAttribute("data-onhand-matched-text") || "") !==
+			pdfAnchorText(parsePdfAnchor(keeper), keeper.getAttribute("data-onhand-matched-text") || "")) continue;
 		const annotationId = annotation.getAttribute("data-onhand-annotation-id") || "";
 		if (annotationId) removeNotesForAnnotation(annotationId);
 		annotation.remove();

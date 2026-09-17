@@ -1,3 +1,6 @@
+import "./live-voice.js";
+import "./live-interruptions.js";
+import { uploadLiveImage, uploadLiveText } from "./live-responses-files.js";
 import { ONHAND_EXTENSION_RUNTIME_REVISION } from "./runtime-revision.js";
 import { createOnhandBrowserRuntime } from "./onhand-runtime.bundle.js";
 import { searchPdfCorpus } from "./pdf-corpus-search.bundle.js";
@@ -24,7 +27,7 @@ const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/c
 const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
 const OPENAI_REALTIME_VOICE = "marin";
 const REALTIME_API_KEY_SETUP_MESSAGE =
-	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with Realtime API access in the OpenAI platform API key field, then Save.";
+	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with voice API access in the OpenAI platform API key field, then Save.";
 const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
 const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
@@ -6566,9 +6569,10 @@ const createPageToolkit = (options = {}) => {
 		const targetUrl = getPdfAnchorDocumentUrl(targetAnchor);
 		const existingUrl = getPdfAnchorDocumentUrl(existingAnchor);
 		if (targetUrl && existingUrl && targetUrl !== existingUrl) return false;
-		const targetText = getPdfAnchorComparableText(targetAnchor, rawQuery);
+		const targetText = compactHighlightSearchText(rawQuery) || getPdfAnchorComparableText(targetAnchor);
 		const existingText = getPdfAnchorComparableText(existingAnchor, annotationElement.getAttribute("data-onhand-matched-text") || "");
-		if (targetText && existingText && targetText !== existingText && !targetText.includes(existingText) && !existingText.includes(targetText)) return false;
+		// Reuse only when the existing mark covers the whole requested quote.
+		if (!targetText || !existingText || !existingText.includes(targetText)) return false;
 		const targetOccurrence = Number(targetAnchor?.occurrence || options.occurrence || occurrence || 1);
 		const existingOccurrence = Number(existingAnchor?.occurrence || 1);
 		if (
@@ -6614,6 +6618,8 @@ const createPageToolkit = (options = {}) => {
 		for (const annotationElement of Array.from(document.querySelectorAll('[data-onhand-highlight-kind="pdf"]'))) {
 			if (annotationElement === keeper) continue;
 			if (!pdfAnnotationMatchesReplayTarget(annotationElement, rawQuery, options, occurrence)) continue;
+			if (getPdfAnchorComparableText(parsePdfAnchorFromElement(annotationElement), annotationElement.getAttribute("data-onhand-matched-text") || "") !==
+				getPdfAnchorComparableText(parsePdfAnchorFromElement(keeper), keeper.getAttribute("data-onhand-matched-text") || "")) continue;
 			if (removePdfOverlayAnnotation(annotationElement)) removed += 1;
 		}
 		return removed;
@@ -6621,6 +6627,9 @@ const createPageToolkit = (options = {}) => {
 
 	const restorePdfAnchorHighlight = async (pdfAnchor, rawQuery, options = {}) => {
 		if (!pdfAnchor || typeof pdfAnchor !== "object") return null;
+		const query = compactHighlightSearchText(rawQuery);
+		// An old short anchor cannot supply geometry for a newly expanded quote.
+		if (query && !getPdfAnchorComparableText(pdfAnchor).includes(query)) return null;
 		const occurrence = Math.max(1, Math.min(20, Number(options.occurrence || pdfAnchor.occurrence || 1) || 1));
 		if (options.reuseExisting === true) {
 			const existing = findExistingPdfAnnotation(rawQuery, { ...options, pdfAnchor }, occurrence);
@@ -10986,6 +10995,23 @@ function shouldDetachPdfViewerOpenFromSourceTab(args = {}) {
 	return Boolean(normalizePdfUrlCandidate(args.pdfUrl, "", { allowFile: false }));
 }
 
+function pdfTabMatchesSource(tab, pdfUrl) {
+	if (!tab?.url || !pdfUrl || isGoogleDocsDocumentUrl(tab.url)) return false;
+	const source = isOnhandPdfViewerLikeUrl(tab.url)
+		? extractPdfSourceUrlFromViewerLikeUrl(tab.url)
+		: normalizePdfUrlCandidate(tab.url, "", { allowFile: true });
+	return Boolean(source && stripUrlHash(source) === stripUrlHash(pdfUrl));
+}
+
+async function findExistingPdfViewerTab(pdfUrl, windowId) {
+	const scopedWindowId = typeof windowId === "number" ? windowId : (await chrome.windows.getLastFocused())?.id;
+	// Never switch to an unrelated browser window when resolving a URL-only open.
+	if (typeof scopedWindowId !== "number") return null;
+	const tabs = await chrome.tabs.query({ windowId: scopedWindowId });
+	const matches = tabs.filter((tab) => tab?.id && pdfTabMatchesSource(tab, pdfUrl));
+	return matches.find((tab) => tab.active) || matches[0] || null;
+}
+
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
@@ -10997,7 +11023,10 @@ async function openPdfInOnhandViewer(args = {}) {
 	if (isFileUrl(pdfUrl)) grantOnhandPdfViewerFileSource(pdfUrl);
 	const diagnostics = createPdfViewerHandoffDiagnostics(args, sourceTab, pdfUrl);
 	const sourceIsGoogleDocs = isGoogleDocsDocumentUrl(sourceTab.url);
-	const shouldOpenViewerInNewTab = args.newTab === true || (sourceIsGoogleDocs && args.newTab !== false);
+	// A native PDF is already the destination. Mount the viewer there even if
+	// the tool requested newTab; that option preserves a different source page.
+	const shouldOpenViewerInNewTab = (args.newTab === true && !pdfTabMatchesSource(sourceTab, pdfUrl))
+		|| (sourceIsGoogleDocs && args.newTab !== false);
 	let initialSelectionHandoff = normalizePdfSelectionForViewerHandoff(args.pdfSelection || args.selection, pdfUrl);
 	let initialSelectionHandoffFailure = null;
 	if (!initialSelectionHandoff && args.disableSelectionHandoff !== true) {
@@ -11150,7 +11179,7 @@ async function openPdfInOnhandViewer(args = {}) {
 
 	if (!sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		let targetTab;
-		if (args.newTab === true) {
+		if (shouldOpenViewerInNewTab) {
 			targetTab = await chrome.tabs.create({
 				url: pdfUrl,
 				active: args.active !== false,
@@ -11183,7 +11212,7 @@ async function openPdfInOnhandViewer(args = {}) {
 				inlineViewer,
 				alreadyOpen: sourceTab.url === pdfUrl,
 				opened: true,
-				replacedCurrentTab: args.newTab !== true && args.detachedNewTab !== true,
+				replacedCurrentTab: !shouldOpenViewerInNewTab && args.detachedNewTab !== true,
 				preservedSourceUrl: true,
 				pageLocationDiagnostics: diagnostics,
 			};
@@ -13301,12 +13330,19 @@ async function handleCommandInner(name, args = {}) {
 				};
 			}
 			case "open_pdf_in_onhand_viewer": {
+				// Managed Live can call this before the normal agent's PDF preflight.
+				// Reuse a native PDF too, not only an already-mounted Onhand viewer.
+				let targetArgs = args;
+				if (shouldDetachPdfViewerOpenFromSourceTab(args)) {
+					const existingTab = await findExistingPdfViewerTab(args.pdfUrl, args.windowId);
+					if (existingTab) targetArgs = { ...args, tabId: existingTab.id, newTab: false };
+				}
 				// A pdfUrl-only newTab open has no meaningful source tab: resolving
 				// one falls back to whatever tab is active, so the whole open (PDF
 				// load + viewer install) must finish inside that unrelated tab's
 				// command budget while selection/page probes aim at it. Give the
 				// PDF its own tab up front and serialize there instead.
-				if (shouldDetachPdfViewerOpenFromSourceTab(args)) {
+				if (shouldDetachPdfViewerOpenFromSourceTab(targetArgs)) {
 					const detachedTab = await chrome.tabs.create({
 						active: args.active !== false,
 						...(typeof args.windowId === "number" ? { windowId: args.windowId } : {}),
@@ -13329,10 +13365,10 @@ async function handleCommandInner(name, args = {}) {
 						}
 					}, openTimeoutMs);
 				}
-				const tab = await resolveTargetTab(args);
+				const tab = await resolveTargetTab(targetArgs);
 				return await withTabCommand(tab.id, async () => {
 					try {
-						return await openPdfInOnhandViewer({ ...args, tabId: tab.id });
+						return await openPdfInOnhandViewer({ ...targetArgs, tabId: tab.id });
 					} catch (error) {
 						const blocked = classifyBlockedNavigation(tab, error);
 						if (blocked) throw new Error(`The PDF tab is blocked before it can load. ${blocked.detail}`);
@@ -14086,6 +14122,54 @@ function summarizeRealtimePdfContext({ tab, page, selection, visible, errors } =
 	};
 }
 
+const liveInterruptionChecks = new Map();
+async function checkLiveInterruption(message) {
+	const runtime = getOnhandBrowserRuntime();
+	const state = await runtime.getState();
+	if (!state.preferences?.liveInterruptionEnabled || state.preferences?.liveDelegation === "client"
+		|| (message.sessionId !== state.currentSession?.sessionId && message.sessionId !== state.currentSession?.sessionFile)) {
+		throw new Error("Interruption checks are not enabled for this conversation.");
+	}
+	const key = message.sessionId;
+	const previous = liveInterruptionChecks.get(key);
+	if (previous?.running || Date.now() - (previous?.started || 0) < 500) throw new Error("Interruption check already pending.");
+	const check = { started: Date.now(), running: true }; liveInterruptionChecks.set(key, check);
+	// Bound bookkeeping across many saved conversations. Never evict a live check.
+	for (const [id, entry] of liveInterruptionChecks) if (id !== key && !entry.running) liveInterruptionChecks.delete(id);
+	try {
+		const credential = await runtime.getOpenAIRealtimeCredential();
+		const result = await globalThis.OnhandLiveInterruptions.classify(message.context, credential.apiKey);
+		const current = await runtime.getState();
+		if (message.sessionId !== current.currentSession?.sessionId && message.sessionId !== current.currentSession?.sessionFile) throw new Error("Voice conversation changed.");
+		return result;
+	} finally { check.running = false; }
+}
+
+async function createLiveCallWithStoredApiKey(browserSdp, options = {}) {
+	const sdp = typeof browserSdp === "string" ? browserSdp : "";
+	if (sdp.length > 65536 || !sdp.startsWith("v=0") || !/m=audio\s/.test(sdp) || !/m=application\s/.test(sdp)) {
+		throw new Error("Browser SDP is missing required audio/data-channel media sections.");
+	}
+	const runtime = getOnhandBrowserRuntime();
+	const credential = await runtime.getOpenAIRealtimeCredential();
+	const state = await runtime.getState();
+	if (options.sessionId !== state.currentSession?.sessionId && options.sessionId !== state.currentSession?.sessionFile) throw new Error("Voice conversation changed.");
+	const responsesConfig = state.preferences?.liveDelegation === "client" ? null : await runtime.liveResponses({ operation: "config", sessionId: options.sessionId });
+	const response = await fetch("https://api.openai.com/v1/live/sessions", {
+		method: "POST",
+		headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
+		body: JSON.stringify({ session: globalThis.OnhandLiveVoice.sessionConfig(state, responsesConfig), transport: { type: "webrtc", sdp } }),
+		signal: AbortSignal.timeout(30000),
+	});
+	const result = await response.json().catch(() => null);
+	if (!response.ok) {
+		const detail = String(result?.error?.message || `HTTP ${response.status}`).slice(0, 600);
+		throw new Error(`GPT-Live session setup failed: ${detail}`);
+	}
+	if (!result?.session?.id || !result?.transport?.sdp) throw new Error("Live returned no session ID or SDP answer.");
+	return { sessionId: result.session.id, sdp: result.transport.sdp, model: "gpt-live-1", delegation: responsesConfig ? "responses" : "client" };
+}
+
 function buildRealtimeSessionConfig() {
 	return {
 		type: "realtime",
@@ -14563,6 +14647,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiApiKeys: message.aiApiKeys,
 				authMode: message.authMode,
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
+				voiceEngine: message.voiceEngine,
+				liveDelegation: message.liveDelegation,
+				liveInterruptionEnabled: message.liveInterruptionEnabled,
+				liveResponsesModel: message.liveResponsesModel,
 				diagnosticsEnabled: message.diagnosticsEnabled,
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
@@ -14746,6 +14834,41 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
+		if (message?.type === "sidebar:live-session") {
+			sendResponse({ ok: true, result: await createLiveCallWithStoredApiKey(message.sdp, { sessionId: message.sessionId }) });
+			return;
+		}
+
+		if (message?.type === "sidebar:live-interruption-check") {
+			sendResponse({ ok: true, result: await checkLiveInterruption(message) });
+			return;
+		}
+
+		if (message?.type === "sidebar:live-responses") {
+			const { operation, sessionId, requestId, prompt, reply, name, callId, args, error, aborted, modelCalls, voiceCallId, revision, superseded } = message;
+			const result = await getOnhandBrowserRuntime().liveResponses({ operation, sessionId, requestId, prompt, reply, name, callId, args, error, aborted, modelCalls, voiceCallId, revision, superseded, targetWindowId: message.windowId });
+			sendResponse({ ok: true, result });
+			return;
+		}
+
+		if (message?.type === "sidebar:live-transcript-turns") {
+			const { sessionId, callId, revision, turns } = message;
+			sendResponse({ ok: true, result: await getOnhandBrowserRuntime().recordLiveTranscriptTurns({ sessionId, callId, revision, turns }) });
+			return;
+		}
+
+		if (message?.type === "sidebar:live-image" || message?.type === "sidebar:live-text-file") {
+			const runtime = getOnhandBrowserRuntime();
+			const state = await runtime.getState();
+			if (message.sessionId !== state.currentSession?.sessionId && message.sessionId !== state.currentSession?.sessionFile) throw new Error("Voice conversation changed.");
+			const credential = await runtime.getOpenAIRealtimeCredential();
+			const result = message.type === "sidebar:live-image"
+				? await uploadLiveImage(message.dataUrl, credential.apiKey)
+				: await uploadLiveText(message.text, credential.apiKey);
+			sendResponse({ ok: true, result });
+			return;
+		}
+
 		if (message?.type === "sidebar:realtime-session") {
 			sendResponse({
 				ok: true,
@@ -14925,6 +15048,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const response = await runtime.deleteSession(message.sessionPath, {
 				targetWindowId: typeof message.windowId === "number" ? message.windowId : undefined,
 			});
+			await chrome.storage.local.remove(`onhandLiveTranscript:${response.deletedSessionId}`);
 			sendResponse({
 				ok: true,
 				deletedSessionId: response.deletedSessionId,
@@ -14973,6 +15097,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			const response = await runtime.submitPrompt({
 				prompt: message.prompt,
 				displayPrompt: message.displayPrompt,
+				sessionId: message.sessionId,
+				clientRequestId: message.clientRequestId,
+				voiceContext: message.voiceContext,
 				attachments: Array.isArray(message.attachments) ? message.attachments : [],
 				source: typeof message.source === "string" ? message.source : "sidebar",
 				learningMode: Boolean(message.learningMode),
@@ -15041,7 +15168,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		if (message?.type === "sidebar:stop") {
 			const runtime = getOnhandBrowserRuntime();
-			const response = await runtime.stop();
+			const response = await runtime.stop(typeof message.requestId === "string" ? message.requestId : undefined);
 			sendResponse({
 				ok: true,
 				stopped: response.stopped,
