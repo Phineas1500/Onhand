@@ -70,7 +70,7 @@ through `FREE_TIER_ALERT_MAX_*` environment variables; run
   the sampled analytics report is an estimate. Its cost totals include terminal
   JSON, cancelled, and errored responses plus late cost adjustments. Adjustments
   do not add another call or repeat token usage.
-- `p95_ms`: whether OpenRouter/provider routing is creating slow responses.
+- `p95_ms`: whether the model provider is creating slow responses.
 - `quota_and_rejections`: abuse pressure or overly strict caps.
 - `browser_run_js_*`: constrained advanced runtime-inspection usage. Unexpected
   growth here means the prompts or the runtime-inspection setting gate need another review.

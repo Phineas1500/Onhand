@@ -1,39 +1,17 @@
 // Onhand free tier proxy.
 //
-// An OpenAI-compatible passthrough to OpenRouter that lets the extension's
-// "Onhand Free" provider work without any user key:
-//   POST /v1/register           -> issues an anonymous device token
-//   POST /v1/chat/completions   -> forwards to OpenRouter (streaming)
-//   POST /v1/telemetry          -> records opt-in diagnostics events
-//   POST /v1/error-reports      -> stores explicit anonymized error reports
-//
-// Cost and abuse controls:
-// - model allowlist (cheap models only)
-// - server-side OpenRouter provider pinning (US hosts; user pages and PDFs
-//   never transit PRC-hosted APIs)
-// - per-device daily request cap, per-turn model-call cap, daily shared cost cap
-// - per-IP daily registration cap
-// - request body size and max_tokens clamps
-//
-// Secrets/bindings: OPENROUTER_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
+// Proxies text, image, and function-calling requests to OpenAI's official API.
+// POST /v1/register issues an anonymous token; /v1/chat/completions streams
+// completions; /v1/telemetry and /v1/error-reports collect diagnostics.
+// Per-device, per-turn, concurrency, and shared cost controls stay server-side.
+// Secrets/bindings: OPENAI_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
 
 import { fetchOpenRouterGenerationMetadata, reportedGenerationCost } from "./generation-metadata.mjs";
+import { ALLOWED_CLIENT_MODELS, OPENAI_CHAT_URL, prepareOpenAIRequestBody, openAIUsageCost } from "./openai-upstream.mjs";
 
-const FREE_TIER_TEXT_MODEL = "openai/gpt-5.6-luna";
-const FREE_TIER_VISUAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct";
-const ALLOWED_MODELS = new Set([FREE_TIER_TEXT_MODEL]);
-// Provider pinning is per-model: Luna is served by OpenAI itself (US-hosted,
-// no PRC transit, tool calls validated in the scenario evals); the visual
-// route keeps the vetted US host set that serves Mistral.
-const ALLOWED_OPENROUTER_PROVIDERS_BY_MODEL = {
-	"openai/gpt-5.6-luna": ["openai"],
-	"mistralai/mistral-small-3.2-24b-instruct": ["deepinfra", "parasail", "novita", "wandb"],
-};
-const UPSTREAM_FALLBACK_STATUSES = new Set([404]);
 const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
 const MAX_ERROR_REPORT_BODY_BYTES = 64_000;
-const MAX_OUTPUT_TOKENS = 16_384;
 const DEFAULT_DAILY_COST_CAP_USD = 5;
 const DEFAULT_REQUEST_COST_RESERVATION_USD = 0.25;
 const DEFAULT_CONCURRENT_REQUEST_CAP = 4;
@@ -43,11 +21,10 @@ const UPSTREAM_REQUEST_TIMEOUT_MS = 4 * 60_000;
 const DEFAULT_DAILY_REQUEST_CAP = 80;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
-// Tuned for Luna pricing (~2x DeepSeek per-turn realized cost); env-overridable.
+// Warning threshold remains independently configurable from model pricing.
 const DEFAULT_HEAVY_TURN_COST_USD = 0.01;
 const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
 const QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const QUOTA_BYPASS_SOURCE = "free-tier-bypass";
@@ -380,49 +357,6 @@ function requestTelemetryIds(request) {
 	};
 }
 
-function valueContainsImage(value) {
-	if (!value) return false;
-	if (typeof value === "string") return value.startsWith("data:image/");
-	if (Array.isArray(value)) return value.some(valueContainsImage);
-	if (typeof value !== "object") return false;
-	const type = String(value.type || "").toLowerCase();
-	if (type === "image" || type === "image_url" || type === "input_image") return true;
-	if (typeof value.image_url === "string" || value.image_url?.url) return true;
-	if (typeof value.url === "string" && value.url.startsWith("data:image/")) return true;
-	if (typeof value.data === "string" && value.mimeType?.startsWith?.("image/")) return true;
-	if (typeof value.data === "string" && value.media_type?.startsWith?.("image/")) return true;
-	return Object.values(value).some(valueContainsImage);
-}
-
-function routedModelForRequestBody(body) {
-	return valueContainsImage(body?.messages) ? FREE_TIER_VISUAL_MODEL : FREE_TIER_TEXT_MODEL;
-}
-
-function upstreamCandidateModelsForRequestBody(body) {
-	const primary = routedModelForRequestBody(body);
-	if (primary === FREE_TIER_TEXT_MODEL) return [primary, FREE_TIER_VISUAL_MODEL];
-	return [primary];
-}
-
-function prepareOpenRouterRequestBody(body, model) {
-	const next = structuredClone(body || {});
-	next.model = model;
-	const requested = firstFiniteNumber(next.max_completion_tokens, next.max_tokens);
-	next.max_tokens = requested > 0 ? Math.min(Math.floor(requested), MAX_OUTPUT_TOKENS) || 1 : MAX_OUTPUT_TOKENS;
-	if (Object.hasOwn(next, "max_completion_tokens")) next.max_completion_tokens = next.max_tokens;
-	next.n = 1;
-	// Server-side routing policy always wins over anything client-supplied.
-	next.provider = { only: ALLOWED_OPENROUTER_PROVIDERS_BY_MODEL[model] || ["openai"] };
-	delete next.models;
-	delete next.route;
-	delete next.transforms;
-	return next;
-}
-
-function shouldRetryUpstreamResponse(response, candidateIndex, candidateModels) {
-	return !response.ok && UPSTREAM_FALLBACK_STATUSES.has(response.status) && candidateIndex < candidateModels.length - 1;
-}
-
 async function handleRegister(request, env, ctx) {
 	const startedAt = Date.now();
 	const cap = envNumber(env, "REGISTRATIONS_PER_IP_PER_DAY", 5);
@@ -471,6 +405,7 @@ function providerFromPayload(payload) {
 
 
 async function enrichCompletionFields(env, fields) {
+	if (fields.costResolved || fields.provider === "openai") return fields;
 	const metadata = await fetchOpenRouterGenerationMetadata(env, fields.generationId);
 	if (!metadata) return fields;
 	const promptTokens = firstFiniteNumber(metadata.tokens_prompt, metadata.native_tokens_prompt, fields.promptTokens);
@@ -505,7 +440,7 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 	let persistedGenerationId = "";
 	let upstreamModel = "";
 	let provider = compactString(baseFields.provider || "", 80);
-	let providerRequestId = "";
+	let providerRequestId = baseFields.providerRequestId || "";
 	let streamedBytes = 0;
 	let finished = false;
 	let cancelled = false;
@@ -560,9 +495,10 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 			durationMs: startedAt > 0 ? Date.now() - startedAt : baseFields.durationMs,
 			provider, generationId, upstreamModel, providerRequestId,
 			promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens,
-			totalTokens: usage?.total_tokens, cost: usage?.cost,
+			totalTokens: usage?.total_tokens, cost: openAIUsageCost(usage),
+			costResolved: openAIUsageCost(usage) !== undefined,
 		};
-		if (!generationId && firstFiniteNumber(fields.cost) === undefined && baseFields.status < 400) {
+		if (!fields.costResolved && baseFields.status < 400) {
 			writeAnalytics(ctx, env, "free_tier_accounting_unresolved", { ...fields, errorCode: "missing_generation_usage" }, request);
 		}
 		const eventName = result === "cancelled" ? "chat_stream_cancelled"
@@ -707,7 +643,7 @@ async function handleChatCompletions(request, env, ctx) {
 		}, request);
 		return json(400, { error: { message: "Request body must be JSON." } });
 	}
-	if (!ALLOWED_MODELS.has(String(body.model || ""))) {
+	if (!body || typeof body !== "object" || !ALLOWED_CLIENT_MODELS.has(String(body.model || ""))) {
 		writeAnalytics(ctx, env, "chat_request_rejected", {
 			...telemetryIds,
 			source,
@@ -719,11 +655,13 @@ async function handleChatCompletions(request, env, ctx) {
 			current: usage.current,
 			cap: dailyRequestCap,
 			actionCount: turnUsage.current,
-			model: body.model,
+			model: body?.model,
 			errorCode: "model_not_allowed",
 		}, request);
-		return json(400, { error: { message: `The free tier serves ${[...ALLOWED_MODELS].join(", ")} only.` } });
+		return json(400, { error: { message: `The free tier serves ${[...ALLOWED_CLIENT_MODELS].join(", ")} only.` } });
 	}
+
+	if (!env.OPENAI_API_KEY) return json(503, { error: { message: "Onhand Free is temporarily unavailable: the OpenAI funding key is not configured." } });
 
 	const accountingId = crypto.randomUUID();
 	let upstreamTimeoutMs = UPSTREAM_REQUEST_TIMEOUT_MS;
@@ -780,64 +718,25 @@ async function handleChatCompletions(request, env, ctx) {
 	const abortBeforeHeaders = () => preHeaderAbort.abort(request.signal.reason);
 	request.signal.addEventListener("abort", abortBeforeHeaders, { once: true });
 	const upstreamDeadline = AbortSignal.any([AbortSignal.timeout(Math.floor(upstreamTimeoutMs)), preHeaderAbort.signal]);
-	const candidateModels = upstreamCandidateModelsForRequestBody(body);
-	let upstream = null;
-	let metricBase = null;
-	for (const [candidateIndex, candidateModel] of candidateModels.entries()) {
-		const upstreamBody = prepareOpenRouterRequestBody(body, candidateModel);
-		let response;
-		try { response = await fetch(OPENROUTER_URL, {
+	const upstreamBody = prepareOpenAIRequestBody(body);
+	let upstream;
+	try {
+		upstream = await fetch(OPENAI_CHAT_URL, {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-				"HTTP-Referer": "https://github.com/Phineas1500/Onhand",
-				"X-Title": "Onhand Free Tier",
-				"X-OpenRouter-Metadata": "enabled",
-			},
+			headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.OPENAI_API_KEY}` },
 			body: JSON.stringify(upstreamBody), signal: upstreamDeadline,
-		}); } catch {
-			request.signal.removeEventListener("abort", abortBeforeHeaders);
-			await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
-			return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
-		}
-		const candidateMetricBase = {
-			...telemetryIds,
-			source,
-			quotaBypassed,
-			accountingDay,
-			accountingId,
-			status: response.status,
-			durationMs: Date.now() - startedAt,
-			startedAtMs: startedAt,
-			bodyBytes: raw.length,
-			deviceHash,
-			current: usage.current,
-			cap: dailyRequestCap,
-			actionCount: turnUsage.current,
-			model: upstreamBody.model,
-			provider: response.headers.get("X-OpenRouter-Provider") || "",
-		};
-		if (shouldRetryUpstreamResponse(response, candidateIndex, candidateModels)) {
-			writeAnalytics(ctx, env, "chat_upstream_retry", {
-				...candidateMetricBase,
-				result: "retry",
-				errorCode: `upstream_${response.status}`,
-			}, request);
-			try {
-				await response.body?.cancel?.();
-			} catch {}
-			continue;
-		}
-		upstream = response;
-		metricBase = candidateMetricBase;
-		break;
+		});
+	} catch {
+		request.signal.removeEventListener("abort", abortBeforeHeaders);
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, provider: "openai", status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
+		return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
 	}
 	request.signal.removeEventListener("abort", abortBeforeHeaders);
-	if (!upstream || !metricBase) {
-		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 502, noCharge: true, result: "error" }, request);
-		return json(502, { error: { message: "No upstream model was available for Onhand Free." } });
-	}
+	const metricBase = {
+		...baseFields, status: upstream.status, durationMs: Date.now() - startedAt,
+		bodyBytes: raw.length, model: upstreamBody.model, provider: "openai",
+		providerRequestId: upstream.headers.get("x-request-id") || "",
+	};
 	writeAnalytics(ctx, env, "chat_upstream_response", {
 		...metricBase,
 		result: upstream.ok ? "ok" : "error",
@@ -1093,15 +992,8 @@ export default {
 };
 
 export const __freeTierTest = {
-	FREE_TIER_TEXT_MODEL,
-	FREE_TIER_VISUAL_MODEL,
 	MAX_BODY_BYTES,
 	QUOTA_BYPASS_HEADER,
-	prepareOpenRouterRequestBody,
 	quotaBypassAuthorized,
-	shouldRetryUpstreamResponse,
 	timingSafeEqualText,
-	upstreamCandidateModelsForRequestBody,
-	valueContainsImage,
-	routedModelForRequestBody,
 };

@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 
+import { prepareOpenAIRequestBody, openAIUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
+
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MODELS = [
 	"deepseek/deepseek-v4-flash",
@@ -425,7 +427,7 @@ async function runEval(args) {
 async function runOneCase({ args, apiKey, iteration, model, pricing, runId, testCase }) {
 	const startedAt = new Date().toISOString();
 	const request = testCase.buildRequest();
-	const requestBody = {
+	let requestBody = {
 		model,
 		messages: request.messages,
 		temperature: 0.2,
@@ -435,6 +437,7 @@ async function runOneCase({ args, apiKey, iteration, model, pricing, runId, test
 		...(request.tools ? { tools: request.tools, tool_choice: "auto" } : {}),
 		...(args.providerOnly.length ? { provider: { only: args.providerOnly } } : {}),
 	};
+	if (args.baseUrl === "https://api.openai.com/v1" && model === "gpt-6-luna") requestBody = prepareOpenAIRequestBody(requestBody);
 	const started = performance.now();
 	try {
 		const response = await fetchWithTimeout(`${args.baseUrl}/chat/completions`, {
@@ -480,7 +483,7 @@ async function runOneCase({ args, apiKey, iteration, model, pricing, runId, test
 			checks: scored.checks,
 			latencyMs,
 			finishReason: choice.finish_reason || null,
-			provider: metadata?.provider_name || payload?.openrouter_metadata?.provider_name || null,
+			provider: metadata?.provider_name || payload?.openrouter_metadata?.provider_name || (args.baseUrl === "https://api.openai.com/v1" ? "openai" : null),
 			upstreamModel: payload?.model || null,
 			generationId: payload?.id || null,
 			usage,
@@ -561,11 +564,13 @@ function normalizeUsage(usage = {}, metadata = null) {
 }
 
 function numberOrNull(value) {
+	if (value == null || value === "") return null;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
 function estimateCost(model, usage, pricing, metadata) {
+	if (model === "gpt-6-luna") return { reported: null, estimated: openAIUsageCost(usage.raw) ?? null };
 	const reported = numberOrNull(metadata?.total_cost ?? metadata?.usage ?? usage.reportedCost);
 	const price = pricing.get(model);
 	if (!price) return { reported, estimated: null };

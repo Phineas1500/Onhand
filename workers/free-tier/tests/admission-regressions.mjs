@@ -88,13 +88,15 @@ export async function runAdmissionRegressions({ fixture, handle, providerMock, p
 			assert.ok(!result.token && !result.accepted, "a quota outage cannot accept a request through KV fallback");
 		}
 		{
-			const f = fixture(); let metadataDone;
-			globalThis.fetch = async (url) => String(url).includes("/generation") ? new Promise((resolve) => { metadataDone = resolve; }) : providerResponse(completionPayload());
+			const f = fixture(); let providerCalls = 0;
+			globalThis.fetch = async () => { providerCalls++; return providerResponse(completionPayload()); };
 			await (await handle(f)).text();
-			assert.equal(await f.cost(), 0.25, "terminal usage is durable while metadata is still pending");
+			assert.equal(await f.cost(), 0.25, "terminal OpenAI usage is durable at EOF");
 			const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
 			assert.equal(await ledger.storage.get("active"), 0, "EOF releases capacity without waiting for metadata");
-			metadataDone(Response.json({ data: { total_cost: 0.25 } })); await f.flush();
+			await f.flush();
+			assert.equal(providerCalls, 1, "OpenAI accounting needs no metadata lookup");
+			assert.equal(await ledger.storage.get("reserved"), 0);
 		}
 		{
 			const f = fixture(); const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
@@ -141,11 +143,11 @@ export async function runAdmissionRegressions({ fixture, handle, providerMock, p
 			assert.equal(await ledger.total(day), 0);
 			assert.equal(await ledger.storage.get("reserved"), 0.25);
 			const rows = [...(await ledger.storage.list({ prefix: "request:" })).values()];
-			assert.match(rows[0].generationId, /^gen-/, "generation survives a total accounting RPC outage");
+			assert.match(rows[0].generationId, /^chatcmpl-/, "generation survives a total accounting RPC outage");
 			Date.now = () => originalNow() + 6 * 60_000;
 			await new DailyCostLedger(ledger.storage, f.env).alarm();
-			assert.equal(await ledger.total(day), 0.25);
-			assert.equal(await ledger.storage.get("reserved"), 0);
+			assert.equal(await ledger.total(day), 0);
+			assert.equal(await ledger.storage.get("reserved"), 0.25, "lost OpenAI usage retains its budget hold after restart");
 			Date.now = originalNow;
 		}
 		for (const status of [400, 500, "network"]) {

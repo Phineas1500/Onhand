@@ -1,5 +1,12 @@
 # Free Tier Model Eval
 
+> **2026-09-22 migration:** GPT-6 Luna now has a direct OpenAI evaluation path.
+> The dated comparisons below remain historical. Current migration evidence is in
+> [the validation report](validation/2026-09-22-gpt6-luna.md).
+>
+> Run the same four behavioral cases with the Worker's request normalization:
+> `npm run eval:free-tier-models -- --base-url=https://api.openai.com/v1 --api-key-env=OPENAI_API_KEY --models=gpt-6-luna --iterations=3`
+
 > **Default switched 2026-07-31:** the text route now runs `openai/gpt-5.6-luna`
 > (served by OpenAI upstream). The deterministic battery scored it a tie with
 > DeepSeek V4 Flash; the decision came from qualitative scenario evals (real

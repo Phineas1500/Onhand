@@ -784,7 +784,7 @@ function evaluateChecks(report, thresholds) {
 		actual: avgCost,
 		limit: thresholds.maxAvgCostUsd,
 		severity: "warn",
-		message: `Average OpenRouter cost per completed response for health sources (${healthSources.join(", ")}).`,
+		message: `Average model cost per completed response for health sources (${healthSources.join(", ")}).`,
 	});
 	addThresholdCheck(checks, {
 		metric: "prompt_failures",

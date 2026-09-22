@@ -26,7 +26,8 @@ simultaneous requests, but does not establish a hard dollar ceiling. There is no
 claimed dollar bound without a provider-enforced per-request or account spending
 limit. Reevaluate the reservation when changing model prices, input size, visual
 routing, output limits, or the number of unresolved generations. Output count is
-fixed to one and both supported output-token fields are clamped to 16,384.
+fixed to one and both client output-token fields normalize to a clamped
+`max_completion_tokens` of at most 16,384.
 
 A request admitted just before UTC midnight remains charged to that day. A new day
 has its own quota and capacity; at midnight up to two days' active request limits
@@ -40,15 +41,17 @@ until accounting is resolved. Capacity denials include `Retry-After: 5`.
 
 - The admission intent and recovery alarm are persisted before provider dispatch.
 - The first SSE generation ID is persisted before its bytes reach the client.
-- Terminal usage is committed before metadata lookup; EOF waits for this short
-  durable write, while enrichment runs in `waitUntil`.
+- Official OpenAI terminal token usage is priced at Standard rates, including
+  cached input, cache writes, and long-context rates. EOF waits for its durable
+  write; no provider cost lookup is needed.
 - A confirmed rejection or cancellation before dispatch releases the reservation.
   Network errors, provider 5xx responses, and missing usage are uncertain outcomes;
   they retain a hold. Known usage replaces only the corresponding part of a hold.
-- Completed known generations are retried by the alarm until metadata supplies a
-  cost (including a legitimate zero). If the Worker dies or settlement RPCs fail,
-  the stored intent recovers when the lease expires. A late generation ID also
-  schedules recovery after the original lease has been cleaned up.
+- Legacy OpenRouter `gen-` records retain alarm-based metadata reconciliation.
+  Official OpenAI completion IDs cannot use that endpoint. Missing final usage
+  or exhausted settlement retries leave an unresolved hold, including after a
+  Worker restart. The capacity lease expires but does not release uncertain
+  budget. Holds affect only their admission UTC day.
 - A provisional charge under a request ID transfers into the provider-generation
   entry without double counting. Repeated or out-of-order settlement is idempotent.
 - Missing-ID requests and metadata that remains absent after twelve alarm attempts
@@ -98,7 +101,7 @@ dependency to run actual workerd SQLite/RPC, HTTP disconnect, alarm, concurrent
 admission, and restart-persistence checks. It requires Node 22 or later and is a
 separate mandatory CI step. `ONHAND_MINIFLARE_MODULE` remains available for testing
 another installed Miniflare version through the deterministic suite. Both suites
-mock OpenRouter; they spend no provider credits and do not prove a production
+mock OpenAI and legacy OpenRouter reconciliation; they spend no provider credits and do not prove a production
 deployment.
 
 Storage design follows Cloudflare's [transactional SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)

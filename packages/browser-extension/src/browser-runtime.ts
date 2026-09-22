@@ -424,9 +424,9 @@ const GOOGLE_API_MODEL = "gemini-2.5-flash";
 const OPENROUTER_API_PROVIDER = "openrouter";
 const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_PROVIDER = "onhand-free";
-const ONHAND_FREE_MODEL = "openai/gpt-5.6-luna";
-const ONHAND_FREE_MODEL_LABEL = "Onhand Free (GPT-5.6 Luna + Mistral Vision)";
-const ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1048576;
+const ONHAND_FREE_MODEL = "gpt-6-luna";
+const ONHAND_FREE_MODEL_LABEL = "Onhand Free (GPT-6 Luna)";
+const ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1050000;
 const ONHAND_FREE_VISUAL_CONTEXT_WINDOW = 131072;
 const ONHAND_FREE_VISUAL_IMAGE_BLOCK_LIMIT = 2;
 const ONHAND_FREE_VISUAL_TEXT_BUDGET_CHARS = 48000;
@@ -2245,9 +2245,8 @@ async function buildFreeTierModel() {
 	// Always the worker's allowlisted model: anything else stored in
 	// settings (e.g. from an older UI) would only bounce off the worker.
 	// Image-capable input is advertised here so user attachments and visual
-	// tool results survive OpenAI-compatible conversion. The worker keeps the
-	// client-visible model id allowlisted, then routes image-bearing requests
-	// to the hosted visual model server-side.
+	// tool results survive OpenAI-compatible conversion. Text and images use
+	// GPT-6 Luna through the same hosted route.
 	return {
 		id: ONHAND_FREE_MODEL,
 		name: ONHAND_FREE_MODEL_LABEL,

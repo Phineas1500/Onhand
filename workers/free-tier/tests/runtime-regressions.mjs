@@ -52,13 +52,15 @@ async function runLocalWorkerAttempt(modulePath, day) {
 			unsafeDirectSockets: [{ host: "127.0.0.1", port: 0 }],
 			kvNamespaces: ["FREE_TIER_KV"],
 			durableObjects: { FREE_TIER_COST_LEDGER: { className: "FreeTierCostLedger", useSQLite: true } },
-			bindings: { OPENROUTER_API_KEY: "test-only", DAILY_COST_CAP_USD: cap },
+			bindings: { OPENAI_API_KEY: "test-openai", OPENROUTER_API_KEY: "test-only", DAILY_COST_CAP_USD: cap },
 			outboundService: async (request) => {
 				const url = new URL(request.url);
-				assert.equal(url.host, "openrouter.ai", "all upstream requests are intercepted locally");
+				assert.ok(["api.openai.com", "openrouter.ai"].includes(url.host), "all upstream requests are intercepted locally");
 				if (url.pathname.endsWith("/generation")) return Response.json({ data: { id: url.searchParams.get("id"), total_cost: 0.25 } });
 				const input = await request.json();
-				const payload = { id: `gen-runtime-${++generation}`, usage: { cost: 0.25 }, choices: [] };
+				assert.equal(url.host, "api.openai.com");
+				assert.equal(input.model, "gpt-6-luna");
+				const payload = { id: `chatcmpl-runtime-${++generation}`, usage: { prompt_tokens: 0, completion_tokens: 500000 }, choices: [] };
 				if (input.messages?.[0]?.content === "disconnect-fixture") {
 					let cancelled = false;
 					let remainingChunks = 20;
@@ -118,7 +120,7 @@ async function runLocalWorkerAttempt(modulePath, day) {
 		for (const stream of [true, false]) {
 			const response = await mf.dispatchFetch("https://fixture.test/v1/chat/completions", request(stream));
 			assert.equal(response.status, 200);
-			assert.match(await response.text(), /gen-runtime-/);
+			assert.match(await response.text(), /chatcmpl-runtime-/);
 		}
 		await expectCost(5.6);
 
@@ -132,23 +134,31 @@ async function runLocalWorkerAttempt(modulePath, day) {
 		const response = await fetch(new URL("/v1/chat/completions", await mf.unsafeGetDirectURL()), { ...disconnectRequest, signal: disconnect.signal });
 		assert.equal(response.status, 200);
 		const reader = response.body.getReader();
-		assert.match(new TextDecoder().decode((await reader.read()).value), /gen-runtime-/);
+		assert.match(new TextDecoder().decode((await reader.read()).value), /chatcmpl-runtime-/);
 		disconnect.abort();
 		await reader.cancel().catch(() => {});
-		await expectCost(5.85);
-		const eventsResponse = await mf.dispatchFetch("https://fixture.test/fixture-events");
-		assert.equal(eventsResponse.status, 200);
-		const events = await eventsResponse.json();
+		await expectCost(5.6); // Missing terminal usage retains a hold, not a fabricated cost.
+		// Missing OpenAI usage leaves cost unchanged, so expectCost cannot wait
+		// for the asynchronous disconnect finalizer. Await its observable event.
+		let events = [];
+		const cancelDeadline = Date.now() + 5000;
+		do {
+			const eventsResponse = await mf.dispatchFetch("https://fixture.test/fixture-events");
+			assert.equal(eventsResponse.status, 200);
+			events = await eventsResponse.json();
+			if (events.includes("chat_stream_cancelled")) break;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		} while (Date.now() < cancelDeadline);
 		assert.equal(events.filter((event) => event === "chat_stream_cancelled").length, 1,
 			"real HTTP disconnect must finalize as cancellation exactly once, not natural EOF");
 
 		// Allow a real SQLite-backed alarm to reconcile a generation after the
 		// originating request and its Worker have finished.
 		await ledger({ id: "gen-alarm", generationId: "gen-alarm", cost: 0.20, reconcile: true });
-		await expectCost(6.05);
-		await expectCost(6.10, 25_000);
+		await expectCost(5.8);
+		await expectCost(5.85, 25_000);
 		await ledger({ id: "gen-alarm", cost: 0.25 });
-		await expectCost(6.10);
+		await expectCost(5.85);
 
 		// Run admission against actual SQLite and RPC, not the Node storage mock.
 		const admissionDay = new Date(Date.now() + 24 * 60 * 60_000).toISOString().slice(0, 10);

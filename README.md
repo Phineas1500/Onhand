@@ -57,7 +57,7 @@ See `docs/AGENT_TRAJECTORY_EVAL.md` for the evaluation contract, and `docs/AGENT
 ## Security and privacy model
 
 - Browser-only mode stores runtime settings in extension storage, including the selected auth mode, model, optional provider API keys, OpenAI Codex sign-in credentials, and the anonymous Onhand Free token.
-- Onhand Free uses a hosted Cloudflare Worker that forwards model requests to OpenRouter with daily usage caps. Anonymous diagnostics are required for Onhand Free so the hosted endpoint can monitor reliability, cost, quota pressure, crashes, and abuse.
+- Onhand Free uses a hosted Cloudflare Worker that forwards model requests directly to OpenAI (GPT-6 Luna) with daily usage caps. Anonymous diagnostics are required for Onhand Free so the hosted endpoint can monitor reliability, cost, quota pressure, crashes, and abuse.
 - OpenAI Codex sign-in uses the browser OAuth flow with selectable Codex text models. `gpt-5.5` remains the default, and GPT-5.6 Sol (`gpt-5.6-sol`), Terra (`gpt-5.6-terra`), and Luna (`gpt-5.6-luna`) are available when the signed-in Codex plan includes them.
 - Provider API-key mode calls the selected provider directly from the extension runtime. Supported providers include OpenAI, Anthropic, Google Gemini, and OpenRouter.
 - Anonymous diagnostics and explicit error reports are redacted. They do not include prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys. Sentry receives only redacted crash/exception events when diagnostics are enabled or when the user explicitly sends an anonymized error report.

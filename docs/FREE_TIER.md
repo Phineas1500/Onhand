@@ -2,25 +2,22 @@
 
 The free tier lets users run Onhand without any API key or account. The
 extension's "Onhand Free (beta)" provider talks to a small Cloudflare
-Worker (`workers/free-tier/`) that proxies OpenAI-compatible chat
-completions to OpenRouter with Onhand's key.
+Worker (`workers/free-tier/`) that forwards chat completions directly to
+OpenAI using Onhand's server-side `OPENAI_API_KEY`. Usage is billed to that
+key's OpenAI project and draws from its applicable API credits.
 
 ## Why this shape
 
-- GPT-5.6 Luna won the 2026-07-31 model evaluation (deterministic battery
-  tie with DeepSeek V4 Flash, decisively better research discipline in
-  live scenario runs) at fractions of a cent per turn measured through
-  OpenRouter; see docs/FREE_TIER_MODEL_EVAL.md.
-- Image-bearing requests route server-side to Mistral Small 3.2, the
-  tier's dedicated visual model. The extension treats
-  that visual route as a 128K-context path, compacts image-bearing
-  agent transcripts, and downscales/compresses retained images before
-  the next free-tier model call.
-- The worker pins OpenRouter routing per model: the GPT-5.6 Luna text
-  route is served by OpenAI itself, and the Mistral visual route stays on
-  vetted US hosts (`deepinfra`, `parasail`, `novita`, `wandb`) — so
-  free-tier pages and PDFs never transit PRC-hosted APIs and only hosts
-  with validated tool-call behavior serve requests.
+- Text, screenshots, and image-bearing tool results all use `gpt-6-luna`.
+  There is no new-request fallback to OpenRouter or Mistral.
+- Chat Completions preserves the existing extension stream and function-call
+  loop. The Worker explicitly sets `reasoning_effort: "none"`, as required for
+  GPT-6 Luna function calling on that endpoint. Reasoning with tools would
+  require a separate Responses API migration.
+- Image compression, the two-image limit, and conservative 128K visual transcript
+  budget remain as client resource controls, not model context limitations.
+- The Worker forces Standard processing, one completion, and `store: false`.
+  The funding key never enters the extension.
 - Devices are identified by an anonymous token issued at first use; no
   accounts, emails, or page content are stored. The worker keeps only
   daily request counters and a seven-day charge ledger containing generation
@@ -28,9 +25,8 @@ completions to OpenRouter with Onhand's key.
 
 ## Cost controls
 
-- client-visible model allowlist: `openai/gpt-5.6-luna`; requests
-  whose message history contains image content are rewritten upstream to
-  `mistralai/mistral-small-3.2-24b-instruct`
+- client-visible model allowlist: `gpt-6-luna`, plus `openai/gpt-5.6-luna`
+  as a compatibility alias for published extensions; both route to GPT-6 Luna
 - `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
 - `REQUEST_COST_RESERVATION_USD` (default `$0.25` estimated hold before dispatch)
@@ -42,7 +38,8 @@ completions to OpenRouter with Onhand's key.
 - `REGISTRATIONS_PER_IP_PER_DAY` (default 5)
 - `TELEMETRY_EVENTS_PER_IP_PER_DAY` (default 1000 diagnostics events/day)
 - `ERROR_REPORTS_PER_IP_PER_DAY` (default 50 explicit error reports/day)
-- request body capped at ~2.5MB, `max_tokens` clamped to 16384
+- request body capped at ~2.5MB; either client output limit becomes
+  `max_completion_tokens`, clamped to 16384
 
 The values in this repo are defaults. The deployed worker may run
 different caps (set via wrangler vars), so production limits can be
@@ -57,8 +54,14 @@ After deploying, use [`FREE_TIER_OPS.md`](FREE_TIER_OPS.md) to query the
 Cloudflare Analytics Engine dataset for cost, latency, failures, quota pressure,
 and advanced runtime-inspection usage.
 
-At the measured ~1¢/turn, a maxed-out free device costs roughly
-$0.15-0.25/day; typical usage is far below that.
+GPT-6 Luna Standard rates verified September 22, 2026 are $0.10/M input,
+$0.01/M cached input, $0.125/M cache writes, and $0.50/M output. Requests
+above 272K input tokens use 2x input/cache rates and 1.5x output rates.
+Compared with GPT-5.6 Luna Standard rates, ordinary input is 50% cheaper
+and output about 58% cheaper. Actual turn cost and latency depend on transcript
+size, caching, and tool rounds; the older model's turn measurements do not
+establish GPT-6 performance. See [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
+and the [migration validation](validation/2026-09-22-gpt6-luna.md).
 
 ## Deploying
 
@@ -92,7 +95,7 @@ already lost charges. Keep this migration tag in subsequent deployments.
 cd workers/free-tier
 npx wrangler login
 npx wrangler kv namespace create FREE_TIER_KV   # paste id into wrangler.toml
-npx wrangler secret put OPENROUTER_API_KEY      # the funding key, press y
+npx wrangler secret put OPENAI_API_KEY          # OpenAI project with API credits
 npx wrangler deploy
 ```
 
@@ -140,10 +143,14 @@ Free-tier model calls include private `X-Onhand-Turn-Id` and
 `X-Onhand-Session-Id` headers from the extension to the Worker. The
 Worker stores those ids in Analytics Engine so ops reports can group
 model-call cost by user-visible Onhand turn. The ids are not needed in
-the chat payload itself; the Worker uses OpenRouter's generation metadata
-endpoint after completion to enrich the aggregate event with provider,
-upstream model, request id, token count, and cost when OpenRouter exposes
-those fields.
+the chat payload itself. OpenAI completion usage and the `x-request-id`
+response header supply the aggregate model, request identity, and token counts.
+The Worker calculates cost using the documented Standard rates, including cache
+reads/writes and long-context pricing, and always requests final streamed usage.
+If usage is absent after a disconnect or accounting outage, the budget reservation
+remains until that UTC day's allowance expires; it is not counted as a known charge.
+OpenAI completion IDs are never queried at OpenRouter. The legacy OpenRouter key
+is used only to reconcile pre-migration `gen-` records during ledger retention.
 
 Worker-side events:
 
@@ -213,8 +220,8 @@ index and `blob1`; source is `blob2`; result is `blob3`; model/provider
 are `blob4`/`blob5`; country/colo/user-agent-family are
 `blob6`/`blob7`/`blob8`; extension version/runtime revision/auth mode/
 AI provider/AI model/device hash/error code are `blob9` through
-`blob15`; Onhand turn id/session id/OpenRouter generation id/upstream
-model/OpenRouter request id are `blob16` through `blob20`. Numeric fields
+`blob15`; Onhand turn id/session id/provider generation id/upstream
+model/provider request id are `blob16` through `blob20`. Numeric fields
 are timestamp, status, duration, body bytes, quota current, quota cap,
 prompt tokens, completion tokens, total tokens, cost, action count, and
 artifact count.
@@ -271,7 +278,7 @@ WHERE blob1 IN ('chat_stream_complete', 'chat_response_complete',
 
 ## Operations notes
 
-- Rotating the OpenRouter key: `npx wrangler secret put OPENROUTER_API_KEY` again.
+- Rotating the OpenAI funding key: `npx wrangler secret put OPENAI_API_KEY` again.
 - Abuse response: lower `DAILY_REQUEST_CAP`, or delete a token's
   `token:<id>` KV entry to revoke it.
 - Cost response: lower `DAILY_COST_CAP_USD` to cap shared daily spend, or lower

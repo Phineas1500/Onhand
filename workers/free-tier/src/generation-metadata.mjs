@@ -11,7 +11,9 @@ export function reportedGenerationCost(metadata) {
 
 export async function fetchOpenRouterGenerationMetadata(env, generationId, attempts = 2) {
 	const id = String(generationId || "").replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 160);
-	if (!id || !env?.OPENROUTER_API_KEY) return null;
+	// Only pre-migration OpenRouter generations can use this recovery API.
+	// Never send official OpenAI completion IDs or credentials to OpenRouter.
+	if (!id.startsWith("gen-") || !env?.OPENROUTER_API_KEY) return null;
 	const url = new URL(OPENROUTER_GENERATION_URL);
 	url.searchParams.set("id", id);
 	for (let attempt = 1; attempt <= attempts; attempt += 1) {

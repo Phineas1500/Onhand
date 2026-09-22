@@ -1,93 +1,36 @@
 import assert from "node:assert/strict";
 import worker, { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 
-const {
-	FREE_TIER_TEXT_MODEL,
-	FREE_TIER_VISUAL_MODEL,
-	MAX_BODY_BYTES,
-	QUOTA_BYPASS_HEADER,
-	prepareOpenRouterRequestBody,
-	quotaBypassAuthorized,
-	shouldRetryUpstreamResponse,
-	routedModelForRequestBody,
-	timingSafeEqualText,
-	upstreamCandidateModelsForRequestBody,
-	valueContainsImage,
-} = __freeTierTest;
-
-assert.equal(MAX_BODY_BYTES, 2_500_000, "free-tier visual requests should have room for compressed image payloads");
-
-const textOnlyBody = { messages: [{ role: "user", content: "hello" }] };
-assert.equal(routedModelForRequestBody(textOnlyBody), FREE_TIER_TEXT_MODEL);
-assert.deepEqual(upstreamCandidateModelsForRequestBody(textOnlyBody), [FREE_TIER_TEXT_MODEL, FREE_TIER_VISUAL_MODEL]);
-
-assert.equal(
-	routedModelForRequestBody({
-		messages: [
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "What does this show?" },
-					{ type: "image_url", image_url: { url: "data:image/png;base64,VklTVUFM" } },
-				],
-			},
-		],
-	}),
-	FREE_TIER_VISUAL_MODEL,
-);
-assert.deepEqual(
-	upstreamCandidateModelsForRequestBody({
-		messages: [
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "What does this show?" },
-					{ type: "image_url", image_url: { url: "data:image/png;base64,VklTVUFM" } },
-				],
-			},
-		],
-	}),
-	[FREE_TIER_VISUAL_MODEL],
-);
-
-assert.equal(
-	routedModelForRequestBody({
-		messages: [
-			{ role: "assistant", tool_calls: [{ id: "call_1", type: "function", function: { name: "browser_get_visible_region_image", arguments: "{}" } }] },
-			{ role: "tool", tool_call_id: "call_1", content: "Captured visible region image." },
-			{
-				role: "user",
-				content: [
-					{ type: "text", text: "Attached image(s) from tool result:" },
-					{ type: "image_url", image_url: { url: "data:image/png;base64,VklTVUFM" } },
-				],
-			},
-		],
-	}),
-	FREE_TIER_VISUAL_MODEL,
-);
-
-assert.equal(valueContainsImage({ type: "image", data: "VklTVUFM", mimeType: "image/png" }), true);
-assert.equal(valueContainsImage({ nested: [{ data: "VklTVUFM", media_type: "image/png" }] }), true);
-assert.equal(valueContainsImage({ nested: [{ data: "VklTVUFM", mimeType: "text/plain" }] }), false);
-
-const prepared = prepareOpenRouterRequestBody({ ...textOnlyBody, model: "bad/model", max_tokens: 999999, transforms: ["middle-out"] }, FREE_TIER_VISUAL_MODEL);
-assert.equal(prepared.model, FREE_TIER_VISUAL_MODEL);
-assert.equal(prepared.max_tokens, 16384);
+import { FREE_TIER_MODEL, OPENAI_CHAT_URL, MAX_OUTPUT_TOKENS, prepareOpenAIRequestBody, openAIUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
+const { MAX_BODY_BYTES, QUOTA_BYPASS_HEADER, quotaBypassAuthorized, timingSafeEqualText } = __freeTierTest;
+const FREE_TIER_TEXT_MODEL = FREE_TIER_MODEL;
+assert.equal(MAX_BODY_BYTES, 2_500_000);
+const messages = [{ role: "user", content: [{ type: "text", text: "Describe this" }, { type: "image_url", image_url: { url: "data:image/png;base64,fixture" } }] }];
+const tools = [{ type: "function", function: { name: "browser_read", parameters: { type: "object", properties: {} } } }];
+const prepared = prepareOpenAIRequestBody({ model: "unapproved/model", messages, tools, stream: true,
+ max_tokens: 999999, reasoning_effort: "high", service_tier: "priority", store: true, n: 99,
+ provider: { only: ["other"] }, models: ["other"], transforms: ["middle-out"], route: "fallback", stream_options: { include_usage: false } });
+assert.equal(prepared.model, "gpt-6-luna");
+assert.equal(prepared.max_completion_tokens, MAX_OUTPUT_TOKENS);
+assert.equal(prepared.reasoning_effort, "none");
+assert.equal(prepared.service_tier, "default");
+assert.equal(prepared.store, false);
 assert.equal(prepared.n, 1);
-for (const value of [-2, Infinity, "bogus", 50000]) {
-	const clamped = prepareOpenRouterRequestBody({ max_tokens: 20, max_completion_tokens: value, n: 100, models: ["unapproved/model"], route: "fallback" }, FREE_TIER_TEXT_MODEL);
-	assert.ok(clamped.max_tokens >= 1 && clamped.max_tokens <= 16384);
-	assert.equal(clamped.max_completion_tokens, clamped.max_tokens);
-	assert.equal(clamped.n, 1);
-	assert.equal(Object.hasOwn(clamped, "models"), false);
-	assert.equal(Object.hasOwn(clamped, "route"), false);
+assert.deepEqual(prepared.messages, messages);
+assert.deepEqual(prepared.tools, tools);
+assert.deepEqual(prepared.stream_options, { include_usage: true });
+for (const key of ["provider", "models", "transforms", "route", "max_tokens"]) assert.equal(Object.hasOwn(prepared, key), false);
+for (const value of [-2, Infinity, "bogus", 50000, 0.5]) {
+ const body = prepareOpenAIRequestBody({ max_completion_tokens: value });
+ assert.ok(body.max_completion_tokens >= 1 && body.max_completion_tokens <= MAX_OUTPUT_TOKENS);
+ assert.equal(Object.hasOwn(body, "stream_options"), false);
 }
-assert.deepEqual(prepared.provider, { only: ["deepinfra", "parasail", "novita", "wandb"] });
-assert.equal(Object.hasOwn(prepared, "transforms"), false);
-assert.equal(shouldRetryUpstreamResponse(new Response("missing", { status: 404 }), 0, [FREE_TIER_TEXT_MODEL, FREE_TIER_VISUAL_MODEL]), true);
-assert.equal(shouldRetryUpstreamResponse(new Response("bad", { status: 500 }), 0, [FREE_TIER_TEXT_MODEL, FREE_TIER_VISUAL_MODEL]), false);
-assert.equal(shouldRetryUpstreamResponse(new Response("missing", { status: 404 }), 1, [FREE_TIER_TEXT_MODEL, FREE_TIER_VISUAL_MODEL]), false);
+assert.equal(openAIUsageCost({ prompt_tokens: 1000, completion_tokens: 100 }), 0.00015);
+assert.equal(openAIUsageCost({ prompt_tokens: 1000, completion_tokens: 100, prompt_tokens_details: { cached_tokens: 400, cache_write_tokens: 200 } }), 0.000119);
+assert.equal(openAIUsageCost({ prompt_tokens: 272001, completion_tokens: 100 }), (272001 * 0.2 + 75) / 1e6);
+assert.equal(openAIUsageCost({ prompt_tokens: 272000, completion_tokens: 100 }), 0.02725);
+assert.equal(openAIUsageCost({ prompt_tokens: 0, completion_tokens: 0 }), 0);
+for (const usage of [null, {}, { prompt_tokens: 1 }, { prompt_tokens: -1, completion_tokens: 1 }, { prompt_tokens: 1, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 2 } }]) assert.equal(openAIUsageCost(usage), undefined);
 
 const bypassSecret = "dev-bypass-secret-123456";
 const bypassDeviceHash = "devicehash123";
@@ -156,7 +99,8 @@ function fixture(startingCost = 0) {
 	const tasks = [];
 	const ledgers = new Map();
 	const env = {
-		OPENROUTER_API_KEY: "mock-only-no-real-network",
+		OPENAI_API_KEY: "mock-openai-key",
+		OPENROUTER_API_KEY: "mock-legacy-key",
 		DAILY_COST_CAP_USD: "5",
 		FREE_TIER_KV: { get: async (key) => data.get(key) ?? null, put: async (key, value) => { data.set(key, value); } },
 		ONHAND_ANALYTICS: { writeDataPoint: (point) => { events.push(point); } },
@@ -181,9 +125,10 @@ function chatRequest(stream = true, headers = {}) {
 		body: JSON.stringify({ model: FREE_TIER_TEXT_MODEL, stream, messages: [{ role: "user", content: "fixture" }] }),
 	});
 }
+// Magnified synthetic token counts exercise dollar-scale quota arithmetic.
 function completionPayload(cost = 0.25) {
-	return { id: `gen-fixture-${++generationSequence}`, model: FREE_TIER_TEXT_MODEL,
-		choices: [{ delta: { content: "fixture" } }], usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5, cost } };
+	return { id: `chatcmpl-fixture-${++generationSequence}`, model: FREE_TIER_TEXT_MODEL,
+		choices: [{ delta: { content: "fixture" } }], usage: { prompt_tokens: 0, completion_tokens: Math.round(cost * 2_000_000), total_tokens: Math.round(cost * 2_000_000) } };
 }
 function providerResponse(payload, kind = "complete") {
 	if (kind === "json") return Response.json(payload);
@@ -199,6 +144,9 @@ async function handle(f, stream = true, headers = {}) { return worker.fetch(chat
 function providerMock(payload, kind = "complete", metadata = { total_cost: 0.25 }) {
 	return async (url, init) => {
 		if (String(url).includes("/generation")) return Response.json({ data: { id: payload.id, ...metadata } });
+		assert.equal(String(url), OPENAI_CHAT_URL);
+		assert.equal(init.headers.Authorization, "Bearer mock-openai-key");
+		assert.equal(JSON.parse(init.body).model, "gpt-6-luna");
 		return providerResponse(payload, kind);
 	};
 }
@@ -286,36 +234,52 @@ try {
 		await assert.rejects(ledger.total("2000-01-01"), /mismatch/);
 	}
 
-	// Terminal usage survives null metadata. If metadata is temporarily absent,
-	// the DO alarm can add a later charge even after the Worker has finished.
+	// Legacy pending generations can still reconcile after the migration.
 	{
 		const f = fixture();
-		const payload = completionPayload();
-		globalThis.fetch = providerMock(payload, "complete", { total_cost: null, usage: null });
-		await (await handle(f)).text();
-		await f.flush();
-		assert.equal(await f.cost(), 0.25, "null metadata must not overwrite real usage with zero");
 		const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
-		assert.equal((await ledger.storage.list({ prefix: "pending:" })).size, 1);
-		globalThis.fetch = async () => Response.json({ data: { id: payload.id, total_cost: 0.30 } });
-		await ledger.alarm();
-		await ledger.alarm();
-		assert.equal(await f.cost(), 0.30, "only the missing delta is reconciled, once");
+		await ledger.record({ day, id: "gen-legacy", generationId: "gen-legacy", cost: 0.25, reconcile: true });
+		globalThis.fetch = async (url, init) => {
+			assert.equal(new URL(url).hostname, "openrouter.ai");
+			assert.equal(init.headers.Authorization, "Bearer mock-legacy-key");
+			return Response.json({ data: { id: "gen-legacy", total_cost: 0.30 } });
+		};
+		await ledger.alarm(); await ledger.alarm();
+		assert.equal(await f.cost(), 0.30);
 		assert.equal((await ledger.storage.list({ prefix: "pending:" })).size, 0);
-		assert.equal(f.events.filter((e) => e.indexes[0] === "free_tier_cost_adjustment").length, 1);
-		assert.ok(Math.abs(f.events.find((e) => e.indexes[0] === "free_tier_cost_adjustment").doubles[9] - 0.05) < 1e-10);
 	}
+	// OpenAI does not expose OpenRouter's generation-cost lookup. A dropped
+	// stream without final usage keeps its reservation; no cross-provider call.
 	{
 		const f = fixture();
-		const payload = completionPayload(undefined);
-		delete payload.usage;
-		globalThis.fetch = providerMock(payload, "cancel", {});
+		const payload = completionPayload(); delete payload.usage;
+		globalThis.fetch = providerMock(payload, "cancel");
 		const reader = (await handle(f)).body.getReader();
 		await reader.read(); await reader.cancel(); await f.flush();
+		const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
 		assert.equal(await f.cost(), 0);
-		globalThis.fetch = async () => Response.json({ data: { id: payload.id, total_cost: 0.25 } });
-		await f.env.FREE_TIER_COST_LEDGER.getByName(day).alarm();
-		assert.equal(await f.cost(), 0.25, "cancelled generation with no terminal usage reconciles durably");
+		assert.equal(await ledger.storage.get("reserved"), 0.25);
+		globalThis.fetch = async () => { throw new Error("OpenAI completion must not be queried at OpenRouter"); };
+		await ledger.alarm();
+		assert.equal(await ledger.storage.get("reserved"), 0.25);
+	}
+	// Published clients' old model ID is an alias, never an OpenRouter route.
+	{
+		const f = fixture();
+		globalThis.fetch = providerMock(completionPayload());
+		const response = await worker.fetch(new Request("https://worker.test/v1/chat/completions", {
+			method: "POST", headers: { Authorization: `Bearer ${token}` },
+			body: JSON.stringify({ model: "openai/gpt-5.6-luna", messages, tools, stream: false }),
+		}), f.env, f.ctx);
+		assert.equal(response.status, 200); await response.text(); await f.flush();
+		assert.equal(await f.cost(), 0.25);
+	}
+	{
+		const f = fixture(); delete f.env.OPENAI_API_KEY;
+		globalThis.fetch = async () => { throw new Error("Missing key must not dispatch"); };
+		assert.equal((await handle(f)).status, 503);
+		const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
+		assert.equal((await ledger.storage.list({ prefix: "request:" })).size, 0);
 	}
 
 	// Real zero-cost generations resolve without retries; metadata that never
