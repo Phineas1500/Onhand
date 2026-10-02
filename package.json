@@ -71,8 +71,8 @@
     "test:agent-trajectory-eval": "node ./scripts/run-agent-trajectory-eval-regressions.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.7",
-    "@earendil-works/pi-ai": "^0.80.7",
+    "@earendil-works/pi-agent-core": "^1.0.0",
+    "@earendil-works/pi-ai": "^1.0.0",
     "@mozilla/readability": "^0.6.0",
     "@sentry/browser": "^10.57.0",
     "@vercel/speed-insights": "^2.0.0",

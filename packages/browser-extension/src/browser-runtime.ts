@@ -1292,8 +1292,6 @@ const HIGHLIGHT_RETRY_MAX_CHARS = 180;
 const HIGHLIGHT_FAILURE_ABORT_LIMIT = 4;
 const COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 3;
 const HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
-const HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_CHARS = 72;
-const HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_WORDS = 10;
 const HIGHLIGHT_COMMAND_TIMEOUT_MS = 6000;
 const HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12000;
 // Notes/scrolls get the same total allowance as a highlight tool call: on a
@@ -1388,13 +1386,14 @@ function buildHighlightRetryCandidates(value: unknown) {
 	return candidates.slice(0, retryLimit);
 }
 
+// Fragments go first only for spans long enough that the original is skipped
+// anyway. Trying clause fragments first for ordinary sentences let a leading
+// clause win ("After every commit" instead of "After every commit with changed
+// dependencies, React will first run the cleanup function…"), dropping the
+// part that carries the claim. A span that misses still falls back to the same
+// fragments.
 function shouldTryHighlightRetryCandidatesBeforeOriginal(value: unknown) {
-	const normalized = normalizeHighlightRetryCandidate(value);
-	if (normalized.length > HIGHLIGHT_RETRY_MAX_CHARS) return true;
-	if (normalized.length < HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_CHARS) return false;
-	if (highlightRetryWordCount(normalized) < HIGHLIGHT_PREFLIGHT_MEDIUM_MIN_WORDS) return false;
-	if (/[=∫∏∑√≈≤≥<>|∣\\{}_^]/u.test(normalized)) return false;
-	return buildHighlightRetryCandidates(normalized).length > 0;
+	return normalizeHighlightRetryCandidate(value).length > HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS;
 }
 
 function shouldSkipOriginalHighlightAttempt(value: unknown, attemptedCandidates: number) {
@@ -10671,6 +10670,15 @@ export const __browserRuntimeTest = {
 	summarizeRestoredArtifact,
 };
 
+// Some models cannot turn reasoning off (their catalog thinkingLevelMap has
+// `off: null`, e.g. GPT-6 Astra and GPT-6.1 Sol). pi-ai drops a "none" effort
+// for them, so the request would run at the model's default effort and, on
+// the plain OpenAI API, stop requesting the encrypted reasoning that tool
+// rounds replay. Ask for their lowest supported level instead.
+function reasoningEffortForModel(model: any, effort: string) {
+	return effort === "none" && model?.thinkingLevelMap?.off === null ? "low" : effort;
+}
+
 function streamOnhandFast(model: any, context: any, options: any = {}) {
 	const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
 	const effectiveModel =
@@ -10694,7 +10702,7 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 	if (effectiveModel?.api === "openai-codex-responses") {
 		return streamOpenAICodexResponses(effectiveModel, context, {
 			...baseOptions,
-			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
+			reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
 			reasoningSummary: "auto",
 			textVerbosity: reasoningProfile?.textVerbosity || "low",
 			// Codex fast mode: same model on priority inference. The plan's
@@ -10710,7 +10718,7 @@ function streamOnhandFast(model: any, context: any, options: any = {}) {
 		// content (see docs/onhand-pdf-qa-2026-06-09.md, Finding 4).
 		return streamOpenAIResponses(effectiveModel, context, {
 			...baseOptions,
-			reasoningEffort: reasoningProfile?.reasoningEffort || "none",
+			reasoningEffort: reasoningEffortForModel(effectiveModel, reasoningProfile?.reasoningEffort || "none"),
 			reasoningSummary: "auto",
 		});
 	}

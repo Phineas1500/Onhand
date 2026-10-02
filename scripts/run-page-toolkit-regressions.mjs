@@ -978,6 +978,48 @@ async function assertReadableContentChoosesFullRootAndIncludesTables() {
 	assert.match(content.markdown, /32\.0%/);
 }
 
+async function assertReadableContentKeepsPageWideFormContent() {
+	// ASP.NET WebForms pages (ods.od.nih.gov) wrap the whole body in one <form>;
+	// extraction used to treat every block as form chrome and return only a title.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const dom = new JSDOM(
+		`
+		<!doctype html>
+		<html id="ctl00_ctl00_htmlTag">
+			<head><title>Vitamin D - Health Professional Fact Sheet</title></head>
+			<body>
+				<form id="aspnetForm">
+					<main>
+						<nav><a href="/">Health Information</a></nav>
+						<article>
+							<h1>Vitamin D - Health Professional Fact Sheet</h1>
+							<h2>Recommended Intakes</h2>
+							<p>Intake recommendations for vitamin D are provided in the Dietary Reference Intakes developed by an expert committee of the National Academies.</p>
+							<table>
+								<caption>Recommended Dietary Allowances (RDAs) for Vitamin D</caption>
+								<tr><th>Age</th><th>Male</th><th>Female</th></tr>
+								<tr><td>14–18 years</td><td>15 mcg (600 IU)</td><td>15 mcg (600 IU)</td></tr>
+								<tr><td>&gt;70 years</td><td>20 mcg (800 IU)</td><td>20 mcg (800 IU)</td></tr>
+							</table>
+							<aside><p>Sign up for the ODS newsletter to receive updates.</p></aside>
+						</article>
+					</main>
+				</form>
+			</body>
+		</html>
+		`,
+		{ url: "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	const extractReadableContentInPage = dom.window.eval(`(${declaration})`);
+	const content = await extractReadableContentInPage({ maxChars: 4000 });
+
+	assert.match(content.markdown, /Dietary Reference Intakes/);
+	assert.match(content.markdown, /15 mcg \(600 IU\)/);
+	assert.match(content.headingOutlineMarkdown, /Recommended Intakes/);
+	assert.doesNotMatch(content.markdown, /newsletter/i, "chrome inside the readable root is still skipped");
+	assert.doesNotMatch(content.markdown, /Health Information/, "nav inside the root is still chrome");
+}
+
 async function assertReadableContentMatchesHighlightableSurface() {
 	// Everything readable extraction emits must be anchorable by highlightText:
 	// no hidden-dialog headings, no tooltip text, no chrome outside the semantic
@@ -3948,6 +3990,16 @@ return classifyBlockedNavigation;`)();
 	assert.equal(classify({ url: "https://pubs.aip.org/article", title: "Just a moment..." }, null).kind, "bot-challenge");
 	assert.equal(classify({ url: "https://example.com/ok", title: "A normal page" }, null), null, "real destinations must not be classified as blocked");
 	assert.equal(classify({ url: "https://example.com/ok", title: "A normal page" }, new Error("Missing host permission")), null, "permission errors are not interstitials");
+
+	// A page stuck behind a print dialog never runs injected scripts; the probe
+	// must give up instead of stalling navigation, and report the page as blocked.
+	const probeDeclaration = await loadBackgroundFunction("probeTabScriptable");
+	const probe = new Function("chrome", `${probeDeclaration}
+return probeTabScriptable;`)({ scripting: { executeScript: () => new Promise(() => {}) } });
+	const startedAt = Date.now();
+	const probeError = await probe(7, 20);
+	assert.ok(Date.now() - startedAt < 1000, "an unresponsive page must not stall the probe");
+	assert.equal(classify({ url: "https://ods.od.nih.gov/factsheets/VitaminD-Consumer/?print=1", title: "Vitamin D - Consumer" }, probeError).kind, "unresponsive-page");
 }
 
 async function assertPdfSelectionIncludesAnchor() {
@@ -3998,6 +4050,7 @@ async function main() {
 	await assertGoogleDocsReadableContentUsesTextExport();
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
+	await assertReadableContentKeepsPageWideFormContent();
 	await assertReadableContentMatchesHighlightableSurface();
 	await assertReadableContentQuerySnippetsCoverDistantTerms();
 	await assertTextbookReaderSearchUsesGenericSearchUi();

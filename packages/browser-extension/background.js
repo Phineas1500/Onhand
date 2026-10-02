@@ -10883,6 +10883,12 @@ function classifyBlockedNavigation(tab, probeError) {
 	const title = String(tab?.title || "").trim();
 	if (probeError) {
 		const message = String(probeError?.message || probeError || "");
+		if (/did not respond to scripts/i.test(message)) {
+			return {
+				kind: "unresponsive-page",
+				detail: "The page is not responding to scripts, usually because it opened a dialog such as a print prompt. Do not retry this URL; read the same source from a plain URL (for example without print parameters) or use another source.",
+			};
+		}
 		if (/chrome-error:\/\/chromewebdata|showing error page/i.test(message)) {
 			const insecure = /^http:\/\//i.test(url);
 			return {
@@ -10902,13 +10908,24 @@ function classifyBlockedNavigation(tab, probeError) {
 	return null;
 }
 
-async function probeTabScriptable(tabId) {
+// A page showing a modal dialog (window.print(), alert) runs no injected script
+// until the dialog closes, so an unbounded probe stalls the navigate tool for
+// as long as the dialog stays open (observed: 260s on an NIH ?print=1 page).
+async function probeTabScriptable(tabId, timeoutMs = 5000) {
 	if (!tabId) return null;
+	let timeoutId;
 	try {
-		await chrome.scripting.executeScript({ target: { tabId }, func: () => true });
+		await Promise.race([
+			chrome.scripting.executeScript({ target: { tabId }, func: () => true }),
+			new Promise((_, reject) => {
+				timeoutId = setTimeout(() => reject(new Error(`The page did not respond to scripts within ${timeoutMs}ms.`)), timeoutMs);
+			}),
+		]);
 		return null;
 	} catch (error) {
 		return error;
+	} finally {
+		clearTimeout(timeoutId);
 	}
 }
 
@@ -12003,6 +12020,13 @@ async function extractReadableContentInPage(options = {}) {
 		document.body ||
 		document.documentElement;
 	const ignoredSelector = "script, style, noscript, svg, nav, header, footer, aside, form, button, input, select, textarea";
+	// ASP.NET WebForms sites (e.g. ods.od.nih.gov) wrap the whole page in one
+	// <form>. An ignored element that contains the readable root is page
+	// scaffolding, not chrome; skipping it dropped every block on such pages.
+	const isInsideIgnored = (element) => {
+		const ignored = element.closest(ignoredSelector);
+		return Boolean(ignored) && !ignored.contains(root);
+	};
 	const blocks = [];
 	const headingOutline = [];
 	const headingOutlineElements = [];
@@ -12012,7 +12036,7 @@ async function extractReadableContentInPage(options = {}) {
 	const pushHeadingOutline = (element) => {
 		if (headingOutline.length >= maxHeadingOutline) return;
 		if (!(element instanceof Element) || !isVisible(element)) return;
-		if (element.closest(ignoredSelector)) return;
+		if (isInsideIgnored(element)) return;
 		const tag = element.tagName.toLowerCase();
 		const level = Number(tag.slice(1)) || 2;
 		const clean = normalize(headingOwnText(element));
@@ -12140,7 +12164,7 @@ async function extractReadableContentInPage(options = {}) {
 		};
 		const collectFrom = (element) => {
 			if (!(element instanceof Element) || !isVisible(element)) return false;
-			if (element.closest(ignoredSelector)) return false;
+			if (isInsideIgnored(element)) return false;
 			if (isHeadingElement(element)) return true;
 			const tag = element.tagName.toLowerCase();
 			if (tag === "table") {
@@ -12179,7 +12203,7 @@ async function extractReadableContentInPage(options = {}) {
 		let mathHits = 0;
 		while (sibling && scanned < 10) {
 			if (isHeadingElement(sibling)) break;
-			if (sibling instanceof Element && isVisible(sibling) && !sibling.closest(ignoredSelector)) {
+			if (sibling instanceof Element && isVisible(sibling) && !isInsideIgnored(sibling)) {
 				const text = normalize(sibling.textContent || "");
 				if (
 					sibling.querySelector?.("mjx-container, math, .MathJax, [data-mathml]") ||
@@ -12268,7 +12292,7 @@ async function extractReadableContentInPage(options = {}) {
 	// The document's first h1 is often hidden chrome (sr-only dialog headings,
 	// skip links); only a visible, non-chrome h1 can serve as the title block.
 	const titleElement =
-		Array.from(document.querySelectorAll("h1")).find((element) => isVisible(element) && !element.closest(ignoredSelector)) || null;
+		Array.from(document.querySelectorAll("h1")).find((element) => isVisible(element) && !isInsideIgnored(element)) || null;
 	const title = normalize(titleElement ? headingOwnText(titleElement) : document.title);
 	if (title) pushBlock("h1", title, titleElement || document.documentElement);
 
@@ -12277,7 +12301,7 @@ async function extractReadableContentInPage(options = {}) {
 		let index = 0;
 		for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table")) {
 			if (!(element instanceof Element) || !isVisible(element)) continue;
-			if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
+			if (isInsideIgnored(element) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 			const tag = element.tagName.toLowerCase();
 			const text = blockTextFor(tag, element);
 			const score = queryScore(text);
@@ -12314,7 +12338,7 @@ async function extractReadableContentInPage(options = {}) {
 	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table")) {
 		if (usedChars >= maxChars) break;
 		if (!(element instanceof Element) || !isVisible(element)) continue;
-		if (element.closest(ignoredSelector) && !["pre"].includes(element.tagName.toLowerCase())) continue;
+		if (isInsideIgnored(element) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 		const tag = element.tagName.toLowerCase();
 		pushBlock(tag, blockTextFor(tag, element), element);
 	}
@@ -12323,7 +12347,7 @@ async function extractReadableContentInPage(options = {}) {
 		for (const element of root.querySelectorAll("div, section")) {
 			if (usedChars >= maxChars || blocks.length >= 40) break;
 			if (!(element instanceof Element) || !isVisible(element)) continue;
-			if (element.closest(ignoredSelector)) continue;
+			if (isInsideIgnored(element)) continue;
 			const text = normalize(element.textContent || "");
 			if (text.length < 80 || text.length > 1200) continue;
 			pushBlock("p", text, element);

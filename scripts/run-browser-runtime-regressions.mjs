@@ -1174,12 +1174,26 @@ async function assertSelectionFormatting() {
 	assert.deepEqual(
 		buildHighlightRetryCandidates(mediumDerivationHighlightText),
 		["A theorem may be derived", "joint and conditional probabilities"],
-		"medium source sentences should shrink to exact clause spans before expensive full-sentence highlighting",
+		"medium source sentences should still offer exact clause spans as retry fallbacks",
 	);
 	assert.equal(
 		shouldTryHighlightRetryCandidatesBeforeOriginalForTest(mediumDerivationHighlightText),
+		false,
+		"medium source sentences should try the full sentence first so a leading clause cannot replace the claim",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest(
+			"After every commit with changed dependencies, React will first run the cleanup function (if you provided it) with the old values, and then run your setup function with the new values.",
+		),
+		false,
+		"a single 183-char sentence must not shrink to its first clause ('After every commit')",
+	);
+	assert.equal(
+		shouldTryHighlightRetryCandidatesBeforeOriginalForTest(
+			`${"A long block-like source span that runs on past one visible sentence ".repeat(5)}and keeps going.`,
+		),
 		true,
-		"medium source sentences with retry clauses should try concise spans before the original text",
+		"spans too long to attempt whole should still try bounded fragments first",
 	);
 	assert.equal(
 		shouldTryHighlightRetryCandidatesBeforeOriginalForTest("Short exact source phrase"),
@@ -2608,7 +2622,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(
 		runtimeSourceForHighlightPolicy,
 		/shouldTryHighlightRetryCandidatesBeforeOriginal/,
-		"highlight commands should try short exact candidates before brittle long spans",
+		"highlight commands should try bounded fragments before spans too long to attempt whole",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
