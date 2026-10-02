@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = fileURLToPath(new URL("./dump-onhand-sessions.mjs", import.meta.url));
@@ -19,6 +20,8 @@ const DEFAULT_JUDGE_TIMEOUT_MS = 60_000;
 const DEFAULT_JUDGE_BASE_URL = process.env.OPENAI_API_KEY ? "https://api.openai.com/v1" : "https://openrouter.ai/api/v1";
 const DEFAULT_JUDGE_MODEL = process.env.OPENAI_API_KEY ? "gpt-4.1-mini" : "openai/gpt-4.1-mini";
 const DEFAULT_JUDGE_API_KEY_ENV = process.env.OPENAI_API_KEY ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY";
+const EXTENSION_ID = process.env.ONHAND_EXTENSION_ID || "hpjpjeehgbloadhdidmecpijppodibim";
+const SCREENSHOT_MAX_MARKS_PER_TAB = 4;
 
 const PROCESS_NARRATION_PATTERNS = [
 	{ id: "let-me-read", pattern: "\\blet me (?:start by )?(?:read|reading|look|looking|check|checking|find|finding|capture|capturing)\\b" },
@@ -249,7 +252,9 @@ Options:
   --json                      Print JSON summary to stdout.
   --dry-run                   Validate and print the run plan without opening a browser.
   --list-cases                Print available built-in cases.
-  --keep-tabs                 Do not close content tabs between cases (default: close them to keep the debug browser healthy).
+  --keep-tabs                 Do not close the tabs a case opened (default: close them to keep the debug browser healthy).
+  --model <id>                Run with this Onhand model (must be offered by the current provider), then restore the previous one.
+  --screenshots               Save a viewport screenshot around each landed mark (up to ${SCREENSHOT_MAX_MARKS_PER_TAB} per tab).
   --judge                     Ask a rubric judge to decide final quality.
   --judge-export-ok           Required with --judge; sends rubric docs and eval data to the judge API.
   --judge-model <model>       OpenAI-compatible judge model. Default: ${DEFAULT_JUDGE_MODEL}
@@ -264,6 +269,13 @@ Variant object fields:
 
 Case object fields:
   id, url, prompt, learning, timeout, expect
+  setupUrls                   URLs opened in their own tabs before the prompt (multi-page cases).
+
+Multi-page / research expect fields:
+  requiredToolPatterns        Each regex must match a completed tool name.
+  forbiddenToolPatterns       No attempted tool name may match.
+  minAnnotatedTabs            Marks must land on at least this many distinct tabs.
+  minSourceTabs               Tools must read or mark at least this many distinct tabs.
 `);
 }
 
@@ -277,6 +289,8 @@ function parseArgs(argv) {
 		dryRun: false,
 		listCases: false,
 		keepTabs: false,
+		model: "",
+		screenshots: false,
 		caseIds: [],
 		casesFile: "",
 		url: "",
@@ -314,6 +328,10 @@ function parseArgs(argv) {
 			args.listCases = true;
 		} else if (value === "--keep-tabs") {
 			args.keepTabs = true;
+		} else if (value === "--screenshots") {
+			args.screenshots = true;
+		} else if (value === "--model" || value.startsWith("--model=")) {
+			args.model = readValue("--model");
 		} else if (value === "--judge") {
 			args.judge = true;
 		} else if (value === "--judge-export-ok") {
@@ -694,14 +712,28 @@ function cdpHttp(host, port, path) {
 	});
 }
 
-// Each case opens its own content tab via ask-new-url and nothing closes it.
-// Left to accumulate, the debug browser degrades: backgrounded tabs report
-// zero-rect layouts, which surface as false "No visible text matched" and
-// empty-reply failures — model-independent noise that masquerades as quality
-// regressions. Close finished http(s) content tabs between cases; the
-// extension's own pages (sidebar/offscreen/service worker) are not http(s)
-// and chrome:// tabs are left alone.
-async function closeContentTabs(host, port) {
+async function listContentTargetIds(host, port) {
+	try {
+		const targets = JSON.parse(await cdpHttp(host, port, "/json/list"));
+		return new Set(
+			(Array.isArray(targets) ? targets : [])
+				.filter((target) => target?.type === "page" && /^https?:\/\//.test(String(target?.url || "")))
+				.map((target) => target.id),
+		);
+	} catch {
+		return new Set();
+	}
+}
+
+// Each case opens its own content tabs (ask-new-url, setup URLs, and any tab
+// Onhand navigates to) and nothing closes them. Left to accumulate, the debug
+// browser degrades: backgrounded tabs report zero-rect layouts, which surface
+// as false "No visible text matched" and empty-reply failures — model-
+// independent noise that masquerades as quality regressions. Close the http(s)
+// tabs the case opened; tabs that existed before it (the user's own, when the
+// run targets their everyday profile), the extension's own pages, and
+// chrome:// tabs are left alone.
+async function closeContentTabs(host, port, preexistingIds = new Set()) {
 	let targets;
 	try {
 		targets = JSON.parse(await cdpHttp(host, port, "/json/list"));
@@ -713,6 +745,7 @@ async function closeContentTabs(host, port) {
 	for (const target of targets) {
 		if (target?.type !== "page") continue;
 		if (!/^https?:\/\//.test(String(target?.url || ""))) continue;
+		if (preexistingIds.has(target.id)) continue;
 		try {
 			await cdpHttp(host, port, `/json/close/${target.id}`);
 			closed += 1;
@@ -721,6 +754,127 @@ async function closeContentTabs(host, port) {
 		}
 	}
 	return closed;
+}
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function openTarget(host, port, url) {
+	// /json/new only accepts PUT in current Chromium.
+	const response = await fetch(`http://${host}:${port}/json/new?${url}`, { method: "PUT" });
+	if (!response.ok) throw new Error(`CDP /json/new returned HTTP ${response.status}`);
+	return await response.json();
+}
+
+function connectTarget(webSocketDebuggerUrl) {
+	return new Promise((resolve, reject) => {
+		const socket = new WebSocket(webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
+		const pending = new Map();
+		let nextId = 0;
+		socket.on("message", (raw) => {
+			const message = JSON.parse(raw);
+			const entry = pending.get(message.id);
+			if (!entry) return;
+			pending.delete(message.id);
+			if (message.error) entry.reject(new Error(message.error.message));
+			else entry.resolve(message.result);
+		});
+		socket.once("error", reject);
+		socket.once("open", () =>
+			resolve({
+				send(method, params = {}) {
+					const id = ++nextId;
+					return new Promise((resolveSend, rejectSend) => {
+						pending.set(id, { resolve: resolveSend, reject: rejectSend });
+						socket.send(JSON.stringify({ id, method, params }));
+					});
+				},
+				close: () => socket.close(),
+			}),
+		);
+	});
+}
+
+async function evaluateValue(session, expression) {
+	const result = await session.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+	if (result?.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+	return result?.result?.value;
+}
+
+// Switches Onhand's model with the same browser-runtime:update-settings message
+// the options page sends, and returns the previous model so main() can restore
+// the user's choice after the run.
+async function setOnhandModel(args, modelId, { requireOffered = true } = {}) {
+	const target = await openTarget(args.host, args.port, `chrome-extension://${EXTENSION_ID}/options.html`);
+	const session = await connectTarget(target.webSocketDebuggerUrl);
+	try {
+		for (let attempt = 0; attempt < 40; attempt += 1) {
+			if (await evaluateValue(session, "Boolean(globalThis.chrome?.runtime?.sendMessage)")) break;
+			await sleep(250);
+		}
+		const readSettings = `new Promise((resolve) => chrome.runtime.sendMessage({ type: "get-status" }, (status) => resolve(status?.status?.browserRuntime || {})))`;
+		const before = await evaluateValue(session, readSettings);
+		const offered = (before.providerModels?.[before.aiProvider] || []).map((model) => model.id);
+		if (requireOffered && !offered.includes(modelId)) throw new Error(`Onhand's ${before.aiProvider} provider does not offer ${modelId} (offers: ${offered.join(", ")})`);
+		const update = await evaluateValue(session, `chrome.runtime.sendMessage({ type: "browser-runtime:update-settings", aiModel: ${JSON.stringify(modelId)} })`);
+		if (!update?.ok) throw new Error(update?.error || `Onhand rejected model ${modelId}`);
+		const after = await evaluateValue(session, readSettings);
+		if (after.aiModel !== modelId) throw new Error(`Onhand reports model ${after.aiModel} after switching to ${modelId}`);
+		return { provider: before.aiProvider, previousModel: before.aiModel };
+	} finally {
+		session.close();
+		await cdpHttp(args.host, args.port, `/json/close/${target.id}`).catch(() => {});
+	}
+}
+
+function withoutHash(url) {
+	return String(url || "").replace(/#.*$/, "");
+}
+
+// Scrolls each landed mark into view in its tab and saves a viewport
+// screenshot, so a reviewer can see where highlights and margin notes landed.
+async function captureAnnotationScreenshots(turn, args, runDir, baseName) {
+	const tabs = new Map();
+	for (const action of collectActions(turn).filter(isHighlightAction)) {
+		if (!action.annotationId || !action.url) continue;
+		const entry = tabs.get(action.tabId) || { url: action.url, marks: [] };
+		if (!entry.marks.some((mark) => mark.annotationId === action.annotationId)) {
+			entry.marks.push({ annotationId: action.annotationId, text: String(action.citationText || action.detail || "") });
+		}
+		tabs.set(action.tabId, entry);
+	}
+	if (!tabs.size) return [];
+	const targets = JSON.parse(await cdpHttp(args.host, args.port, "/json/list"));
+	const screenshots = [];
+	let tabIndex = 0;
+	for (const entry of tabs.values()) {
+		tabIndex += 1;
+		const target = targets.find((candidate) => candidate?.type === "page" && withoutHash(candidate.url) === withoutHash(entry.url));
+		if (!target?.webSocketDebuggerUrl) continue;
+		// Background tabs do not paint, so bring each one forward first.
+		await cdpHttp(args.host, args.port, `/json/activate/${target.id}`).catch(() => {});
+		const session = await connectTarget(target.webSocketDebuggerUrl);
+		try {
+			for (const [markIndex, mark] of entry.marks.slice(0, SCREENSHOT_MAX_MARKS_PER_TAB).entries()) {
+				const found = await evaluateValue(
+					session,
+					`(() => { const mark = document.querySelector(${JSON.stringify(`[data-onhand-annotation-id="${mark.annotationId}"]`)}); if (!mark) return false; mark.scrollIntoView({ block: "center" }); return true; })()`,
+				);
+				if (!found) continue;
+				await sleep(700);
+				const { data } = await session.send("Page.captureScreenshot", { format: "jpeg", quality: 70 });
+				const file = `${baseName}__tab${tabIndex}__mark${markIndex + 1}.jpg`;
+				await writeFile(join(runDir, file), Buffer.from(data, "base64"));
+				screenshots.push({ file, url: entry.url, annotationId: mark.annotationId, text: mark.text });
+			}
+		} catch (error) {
+			screenshots.push({ file: "", url: entry.url, error: error.message });
+		} finally {
+			session.close();
+		}
+	}
+	return screenshots;
 }
 
 function runCli(args, options = {}) {
@@ -820,7 +974,40 @@ function collectHighlightTexts(turn) {
 function collectNoteTexts(turn) {
 	return collectActions(turn)
 		.filter((action) => action?.noteText || String(action?.key || "").startsWith("note:") || action?.type === "note")
-		.map((action) => String(action?.noteText || action?.detail || action?.label || "").trim())
+		// `detail` is a truncated display summary; citationText carries the full note.
+		.map((action) => String(action?.noteText || action?.citationText || action?.detail || action?.label || "").trim())
+		.filter(Boolean);
+}
+
+function isHighlightAction(action) {
+	return String(action?.key || "").startsWith("highlight:") && action?.tabId != null;
+}
+
+function collectAnnotatedTabs(turn) {
+	const tabs = new Map();
+	for (const action of collectActions(turn).filter(isHighlightAction)) {
+		const entry = tabs.get(action.tabId) || { tabId: action.tabId, url: String(action.url || ""), marks: 0 };
+		entry.marks += 1;
+		tabs.set(action.tabId, entry);
+	}
+	return [...tabs.values()];
+}
+
+// Tabs the turn actually used: every tab it marked plus every tab a completed
+// tool reported reading from.
+function collectSourceTabIds(turn) {
+	const ids = new Set(collectAnnotatedTabs(turn).map((tab) => tab.tabId));
+	for (const trace of Array.isArray(turn?.toolTraces) ? turn.toolTraces : []) {
+		const tabId = trace?.state === "complete" ? trace?.resultDetails?.tab?.id : null;
+		if (tabId != null) ids.add(tabId);
+	}
+	return ids;
+}
+
+function collectNavigatedUrls(turn) {
+	return (Array.isArray(turn?.toolTraces) ? turn.toolTraces : [])
+		.filter((trace) => trace?.toolName === "browser_navigate" && trace?.state === "complete")
+		.map((trace) => String(trace?.effectiveArgs?.url || trace?.args?.url || "").trim())
 		.filter(Boolean);
 }
 
@@ -856,8 +1043,13 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 	const reply = String(turn.reply || "");
 	const highlightTexts = collectHighlightTexts(turn);
 	const noteTexts = collectNoteTexts(turn);
+	const annotatedTabs = collectAnnotatedTabs(turn);
+	const navigatedUrls = collectNavigatedUrls(turn);
 	const expect = testCase.expect || {};
 	const metrics = {
+		annotatedTabCount: annotatedTabs.length,
+		sourceTabCount: collectSourceTabIds(turn).size,
+		navigationCount: navigatedUrls.length,
 		replyWordCount: words(reply),
 		highlightCount: Math.max(highlightTexts.length, completedRealHighlightToolCount(turn)),
 		noteCount: noteTexts.length,
@@ -938,6 +1130,22 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 	if (expect.maxTotalToolDurationMs != null && metrics.toolDurationMs > Number(expect.maxTotalToolDurationMs)) {
 		penalty(0.08, `tool time too high: ${metrics.toolDurationMs}ms > ${expect.maxTotalToolDurationMs}`, false);
 	}
+	const attemptedToolNames = allTools(turn).map((tool) => String(tool?.toolName || ""));
+	const completedToolNames = allTools(turn)
+		.filter((tool) => tool?.state === "complete")
+		.map((tool) => String(tool?.toolName || ""));
+	for (const pattern of expect.requiredToolPatterns || []) {
+		if (!completedToolNames.some((name) => regex(pattern).test(name))) penalty(0.16, `required tool missing: ${pattern}`);
+	}
+	for (const pattern of expect.forbiddenToolPatterns || []) {
+		if (attemptedToolNames.some((name) => regex(pattern).test(name))) penalty(0.14, `forbidden tool used: ${pattern}`);
+	}
+	if (expect.minAnnotatedTabs != null && metrics.annotatedTabCount < Number(expect.minAnnotatedTabs)) {
+		penalty(0.16, `expected marks on at least ${expect.minAnnotatedTabs} tab(s), got ${metrics.annotatedTabCount}`);
+	}
+	if (expect.minSourceTabs != null && metrics.sourceTabCount < Number(expect.minSourceTabs)) {
+		penalty(0.16, `expected at least ${expect.minSourceTabs} source tab(s), got ${metrics.sourceTabCount}`);
+	}
 	const minScore = Number(expect.minScore || DEFAULT_MIN_SCORE);
 	score = Math.max(0, Math.min(1, Number(score.toFixed(3))));
 	return {
@@ -952,6 +1160,8 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		reply,
 		highlights: highlightTexts,
 		notes: noteTexts,
+		annotatedTabs,
+		navigatedUrls,
 		tools: allTools(turn).map((tool) => ({
 			toolName: tool.toolName || "",
 			state: tool.state || "",
@@ -997,9 +1207,13 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 	if (variant.systemAppend) cliArgs.push("--eval-system-append", variant.systemAppend);
 	if (variant.launcherAppend) cliArgs.push("--eval-launcher-append", variant.launcherAppend);
 	const startedAt = Date.now();
+	const preexistingTabIds = await listContentTargetIds(args.host, args.port);
 	let raw = null;
 	let evaluation = null;
 	try {
+		for (const setupUrl of testCase.setupUrls || []) await runCli(["open-url", setupUrl, "--json"], args);
+		// Let setup tabs finish loading before the primary tab opens and takes focus.
+		if (testCase.setupUrls?.length) await sleep(3000);
 		let retriedBlankAnswer = false;
 		let retriedWeakNoSourceAnswer = false;
 		for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -1059,6 +1273,9 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 			}
 		}
 	} catch (error) {
+		// A timed-out turn keeps running in the extension and would reject every
+		// later case with "Wait for the current Onhand operation to finish".
+		if (/Timed out waiting for request/i.test(error.message)) await runCli(["stop", "--json"], args).catch(() => {});
 		evaluation = {
 			caseId: testCase.id,
 			variantId: variant.id,
@@ -1075,9 +1292,16 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 		};
 	}
 	const safeName = `${safeId(testCase.id)}__${safeId(variant.id)}`;
+	if (args.screenshots && raw?.turn) {
+		try {
+			evaluation = { ...evaluation, screenshots: await captureAnnotationScreenshots(raw.turn, args, runDir, safeName) };
+		} catch (error) {
+			evaluation = { ...evaluation, warnings: [...(evaluation.warnings || []), `screenshots failed: ${error.message}`] };
+		}
+	}
 	await writeFile(join(runDir, `${safeName}.json`), JSON.stringify({ case: testCase, variant, evaluation, raw }, null, 2));
 	if (!args.keepTabs) {
-		await closeContentTabs(args.host, args.port);
+		await closeContentTabs(args.host, args.port, preexistingTabIds);
 	}
 	return evaluation;
 }
@@ -1116,6 +1340,7 @@ function markdownReport(plan, results, variantSummary) {
 		"# Page Prompt Eval",
 		"",
 		`Run: ${plan.runId}`,
+		...(plan.model ? [`Model: ${plan.model}`] : []),
 		`Cases: ${plan.cases.length}`,
 		`Variants: ${plan.variants.length}`,
 		"",
@@ -1127,12 +1352,25 @@ function markdownReport(plan, results, variantSummary) {
 	for (const entry of variantSummary) {
 		lines.push(`| ${entry.variantId} | ${entry.runs} | ${entry.passes}/${entry.runs} | ${entry.averageScore.toFixed(3)} | ${entry.averageElapsedMs}ms |`);
 	}
-	lines.push("", "## Cases", "", "| Case | Variant | Status | Score | Judge | Highlights | Notes | Words | Failures |", "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | --- |");
+	lines.push("", "## Cases", "", "| Case | Variant | Status | Score | Judge | Highlights | Notes | Marked Tabs | Navigations | Words | Failures |", "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |");
 	for (const result of results) {
 		const judgeCell = result.judge ? `${result.judge.verdict} ${Number(result.judge.score || 0).toFixed(2)}${result.judge.summary ? `<br>${result.judge.summary.replace(/\|/g, "\\|")}` : ""}` : "";
 		lines.push(
-			`| ${result.caseId} | ${result.variantId} | ${result.status} | ${result.score.toFixed(3)} | ${judgeCell} | ${result.metrics?.highlightCount ?? 0} | ${result.metrics?.noteCount ?? 0} | ${result.metrics?.replyWordCount ?? 0} | ${result.failures.map((item) => item.replace(/\|/g, "\\|")).join("<br>") || ""} |`,
+			`| ${result.caseId} | ${result.variantId} | ${result.status} | ${result.score.toFixed(3)} | ${judgeCell} | ${result.metrics?.highlightCount ?? 0} | ${result.metrics?.noteCount ?? 0} | ${result.metrics?.annotatedTabCount ?? 0} | ${result.metrics?.navigationCount ?? 0} | ${result.metrics?.replyWordCount ?? 0} | ${result.failures.map((item) => item.replace(/\|/g, "\\|")).join("<br>") || ""} |`,
 		);
+	}
+	lines.push("", "## Details", "");
+	for (const result of results) {
+		const testCase = plan.cases.find((entry) => entry.id === result.caseId);
+		lines.push(`### ${result.caseId} / ${result.variantId}`, "");
+		if (testCase) lines.push(`Prompt: ${testCase.prompt}`, `URL: ${testCase.url}${testCase.setupUrls?.length ? ` (also open: ${testCase.setupUrls.join(", ")})` : ""}`, "");
+		lines.push("Reply:", "", ...String(result.reply || "(none)").split("\n").map((line) => `> ${line}`), "");
+		if (result.highlights?.length) lines.push("Highlights:", ...result.highlights.map((text) => `- ${String(text).split("\n")[0]}`), "");
+		if (result.notes?.length) lines.push("Notes:", ...result.notes.map((text) => `- ${text}`), "");
+		if (result.annotatedTabs?.length) lines.push(`Marked tabs: ${result.annotatedTabs.map((tab) => `${tab.url} (${tab.marks})`).join(", ")}`, "");
+		if (result.navigatedUrls?.length) lines.push(`Navigated to: ${result.navigatedUrls.join(", ")}`, "");
+		const shots = (result.screenshots || []).filter((shot) => shot.file);
+		if (shots.length) lines.push("Screenshots:", ...shots.map((shot) => `- ${shot.file}`), "");
 	}
 	const judged = results.filter((result) => result.judge);
 	if (judged.length) {
@@ -1198,17 +1436,24 @@ async function main() {
 		return;
 	}
 	await mkdir(runDir, { recursive: true });
+	const switched = args.model ? await setOnhandModel(args, args.model) : null;
+	if (switched) plan.model = `${switched.provider}/${args.model}`;
 	await writeFile(join(runDir, "plan.json"), JSON.stringify(plan, null, 2));
 	const rubric = args.judge ? await loadJudgeRubric() : "";
 	const results = [];
-	for (const variant of variants) {
-		for (const testCase of cases) {
-			const result = await runOne(testCase, variant, args, runDir, rubric);
-			results.push(result);
-			const status = result.status === "pass" ? "PASS" : "FAIL";
-			const judgeText = result.judge ? ` judge=${result.judge.verdict}:${Number(result.judge.score || 0).toFixed(2)}` : "";
-			console.log(`${status} ${testCase.id} / ${variant.id} score=${result.score.toFixed(3)}${judgeText} highlights=${result.metrics?.highlightCount ?? 0} notes=${result.metrics?.noteCount ?? 0} words=${result.metrics?.replyWordCount ?? 0}`);
+	try {
+		for (const variant of variants) {
+			for (const testCase of cases) {
+				const result = await runOne(testCase, variant, args, runDir, rubric);
+				results.push(result);
+				const status = result.status === "pass" ? "PASS" : "FAIL";
+				const judgeText = result.judge ? ` judge=${result.judge.verdict}:${Number(result.judge.score || 0).toFixed(2)}` : "";
+				console.log(`${status} ${testCase.id} / ${variant.id} score=${result.score.toFixed(3)}${judgeText} highlights=${result.metrics?.highlightCount ?? 0} notes=${result.metrics?.noteCount ?? 0} tabs=${result.metrics?.annotatedTabCount ?? 0} nav=${result.metrics?.navigationCount ?? 0} words=${result.metrics?.replyWordCount ?? 0}`);
+			}
 		}
+	} finally {
+		// The user's previous model may be a custom id the provider list omits.
+		if (switched && switched.previousModel !== args.model) await setOnhandModel(args, switched.previousModel, { requireOffered: false });
 	}
 	const variantSummary = summarizeVariants(results);
 	const summary = { plan: { ...plan, cases: cases.map((testCase) => testCase.id), variants: variants.map((variant) => variant.id) }, results, variantSummary };
