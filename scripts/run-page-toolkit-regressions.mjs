@@ -1945,6 +1945,24 @@ async function createToolkitAtUrl(html, url, toolkitOptions = {}) {
 	};
 }
 
+async function assertMathWaitIgnoresScriptSource() {
+	// Inline script source is full of "\[" and "$$" (regex literals, jQuery). It
+	// used to count as raw TeX, so script-heavy pages with no math waited ~4.5s
+	// for a typesetter on every highlight (boxofficemojo.com).
+	const scriptOnly = await createToolkit(
+		`<main><p>Lilo and Stitch earned more than any other release this weekend.</p><script>var r = /\\[(\\d+)\\]/; $$("tr"); var s = "\\\\begin{x}";</script></main>`,
+	);
+	let startedAt = Date.now();
+	await scriptOnly.toolkit.highlightText("Lilo and Stitch earned more than any other release", { scrollIntoView: false });
+	assert.ok(Date.now() - startedAt < 1500, `script source must not trigger the math wait (took ${Date.now() - startedAt}ms)`);
+
+	// Visible, untypeset TeX still waits for a typesetter to appear.
+	const visibleTex = await createToolkit(`<main><p>The posterior is \\(p(\\theta \\mid x)\\) by definition here.</p></main>`);
+	startedAt = Date.now();
+	await visibleTex.toolkit.highlightText("by definition here", { scrollIntoView: false });
+	assert.ok(Date.now() - startedAt >= 2000, "visible raw TeX keeps the typesetting wait");
+}
+
 async function assertHiddenTabAnnotationCommandsSkipThrottledWaits() {
 	const { dom, toolkit } = await createToolkit(
 		`<main><p>Hidden tab throttling target sentence for the note placement path.</p></main>`,
@@ -4064,6 +4082,7 @@ async function main() {
 	await assertPdfViewerCitationNavigationAndRebuild();
 	await assertPdfReuseRequiresWholeQuote();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
+	await assertMathWaitIgnoresScriptSource();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();
 	await assertOffscreenClipboardWithoutDocumentFocus();

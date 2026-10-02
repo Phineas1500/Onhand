@@ -7178,9 +7178,24 @@ const createPageToolkit = (options = {}) => {
 		return /^[A-Z][A-Za-z0-9]{1,10}$/.test(compact);
 	};
 
+	// Only text a reader can see counts: inline <script>/<style> source is full
+	// of "\(", "\[", and "$$" (regex literals, jQuery), and matching it made
+	// script-heavy pages with no math wait ~4.5s for a typesetter on every
+	// highlight (boxofficemojo.com). Math kept in <script type="math/tex"> is
+	// covered by pageHasRenderedMath instead.
 	const pageHasRawTexSource = () => {
-		const text = document.body?.textContent || "";
-		return /(?:\$\$|\\\(|\\\[|\\begin\{)/.test(text);
+		const root = document.body;
+		if (!root) return false;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+			acceptNode(node) {
+				if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+				return /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/.test(node.nodeName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+			},
+		});
+		for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+			if (/(?:\$\$|\\\(|\\\[|\\begin\{)/.test(node.nodeValue || "")) return true;
+		}
+		return false;
 	};
 
 	const pageHasRenderedMath = () => Boolean(document.querySelector(`${MATH_CONTAINER_SELECTOR}, script[type^="math/tex"]`));
