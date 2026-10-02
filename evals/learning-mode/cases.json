@@ -1,0 +1,72 @@
+{
+	"description": "Learning-mode sequencing on live pages (docs/ONHAND_BEHAVIOR_PREFERENCES.md §5, LEARNING_MODE_SPEC.md): conceptual asks lead with an anchored guiding question and hold the walkthrough until the learner responds; study artifacts and quick lookups are answered directly. Run with `node scripts/run-page-prompt-eval.mjs --cases-file evals/learning-mode/cases.json --model <id>`.",
+	"cases": [
+		{
+			"id": "learning-teach-self-attention",
+			"url": "https://jalammar.github.io/illustrated-transformer/",
+			"prompt": "Teach me how self-attention works, using this page.",
+			"learning": true,
+			"timeout": "300s",
+			"expect": {
+				"minHighlights": 1,
+				"maxHighlights": 2,
+				"maxWords": 130,
+				"requiredReplyPatterns": ["\\?"],
+				"forbiddenReplyPatterns": ["softmax"]
+			},
+			"reviewNote": "Ask before telling: one anchored concept plus one guiding question; the score/softmax/weighted-sum walkthrough waits for the learner."
+		},
+		{
+			"id": "learning-explain-light-reactions",
+			"url": "https://en.wikipedia.org/wiki/Photosynthesis",
+			"prompt": "Explain how the light-dependent reactions work on this page.",
+			"learning": true,
+			"timeout": "300s",
+			"expect": {
+				"minHighlights": 1,
+				"maxHighlights": 2,
+				"maxWords": 130,
+				"requiredReplyPatterns": ["\\?"]
+			},
+			"reviewNote": "Same stance on a different page and verb: anchor the first idea and ask, rather than narrating the whole electron-transport chain."
+		},
+		{
+			"id": "learning-how-encoder-decoder-attention",
+			"url": "https://jalammar.github.io/illustrated-transformer/",
+			"prompt": "How does the encoder-decoder attention layer use the encoder's output?",
+			"learning": true,
+			"timeout": "300s",
+			"expect": {
+				"minHighlights": 1,
+				"maxHighlights": 2,
+				"maxWords": 130,
+				"requiredReplyPatterns": ["\\?"]
+			},
+			"reviewNote": "A plain conceptual question routes through the grounded lane, not the teaching lane; Learning mode should still ask first."
+		},
+		{
+			"id": "learning-summary-direct",
+			"url": "https://en.wikipedia.org/wiki/Photosynthesis",
+			"prompt": "Summarize the key ideas on this page.",
+			"learning": true,
+			"timeout": "300s",
+			"expect": {
+				"minHighlights": 2,
+				"minWords": 40
+			},
+			"reviewNote": "Study artifacts skip the guiding-question beat: deliver the summary directly."
+		},
+		{
+			"id": "learning-lookup-direct",
+			"url": "https://en.wikipedia.org/wiki/James_Webb_Space_Telescope",
+			"prompt": "When did JWST launch?",
+			"learning": true,
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 80,
+				"requiredReplyPatterns": ["2021"]
+			},
+			"reviewNote": "Trivial factual lookups skip the guiding-question beat: answer directly."
+		}
+	]
+}

@@ -4955,6 +4955,28 @@ async function assertConstitutionPromptContract() {
 		"compact-teaching",
 		"the compact teaching deliverable profile survives the lane collapse",
 	);
+	// Learning mode asks before telling on conceptual asks. The lane policy sits
+	// next to the request, so it must carry the stance: "highlight each key
+	// concept" made literal models walk through everything after a token question.
+	const askFirst = /Learning mode, ask before telling/;
+	const learningTeach = buildReasoningProfileForTest({}, "Teach me how self-attention works, using this page.", [], true);
+	assert.match(learningTeach.promptPolicy, askFirst);
+	assert.doesNotMatch(learningTeach.promptPolicy, /Highlight each key concept/, "the full-coverage teaching policy must not compete with ask-before-telling");
+	assert.equal(learningTeach.mode, "compact-teaching", "the lane and its guards stay the same; only the policy text changes");
+	const learningHow = buildReasoningProfileForTest({}, "How does the encoder-decoder attention layer use the encoder's output?", [], true);
+	assert.match(learningHow.promptPolicy, askFirst);
+	assert.equal(learningHow.mode, "grounded");
+	assert.match(buildReasoningProfileForTest({}, "Explain how the light-dependent reactions work on this page.", [], true).promptPolicy, askFirst);
+	for (const directPrompt of [
+		"Summarize the key ideas on this page.",
+		"Make me flashcards for this page.",
+		"When did JWST launch?",
+		"Just tell me how self-attention works.",
+		"Explain self-attention directly, no questions.",
+	]) {
+		assert.doesNotMatch(buildReasoningProfileForTest({}, directPrompt, [], true).promptPolicy, askFirst, `study artifacts, lookups, and explicit asks for the answer stay direct: ${directPrompt}`);
+	}
+	assert.doesNotMatch(buildReasoningProfileForTest({}, "Teach me how self-attention works, using this page.", [], false).promptPolicy, askFirst, "answer mode keeps the teaching policy");
 }
 
 async function assertPdfCitationFormatting() {

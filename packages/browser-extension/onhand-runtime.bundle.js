@@ -90748,9 +90748,21 @@ function assistantMessageTextContent(message) {
   if (typeof message.content === "string") return message.content;
   return (Array.isArray(message.content) ? message.content : []).filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n");
 }
+function learningModeShouldAskFirst(prompt) {
+  const text = ownWordsPromptText(prompt);
+  if (!text || promptForbidsPageChanges(prompt)) return false;
+  if (/\b(?:summar(?:y|ies|i[sz]e)|overview|takeaways?|rundown|outline|flash\s?cards?|cheat\s?sheet|study\s+guide|quiz\s+me)\b/.test(text)) return false;
+  if (/\b(?:just\s+(?:tell|give|explain)|directly|straight\s+answer|(?:give|tell)\s+me\s+the\s+answer|no\s+questions|without\s+(?:the\s+)?(?:questions|quizzing))\b/.test(text)) return false;
+  return /\b(?:teach|tutor|explain|walk\s+(?:me\s+)?through|help\s+me\s+understand|intuition|how\s+(?:does|do|is|are|can|would|did)|why\s+(?:does|do|is|are|did|would)|what\s+(?:makes|causes|happens))\b/.test(text);
+}
+var LEARNING_ASK_FIRST_POLICY = 'Runtime policy: Learning mode, ask before telling. Anchor the first idea the learner needs with one or two source highlights (a short note if it helps), then ask one short guiding question tied to that highlight \u2014 a prediction, "what do you notice", or "say it back". End the turn there: do not walk through the remaining steps or give the full explanation yet; teach them after the learner responds. If the learner already answered a guiding question on this concept, repeats the ask, asks for the answer outright, or seems frustrated, teach it directly now with the usual source anchors. Keep the reply to a few sentences.';
 function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false) {
+  const profile = buildLaneReasoningProfile(settings2, prompt, attachments);
+  if (!learningMode || profile.mode === "document-review" || !learningModeShouldAskFirst(prompt)) return profile;
+  return { ...profile, reason: `${profile.reason} Learning mode: ask before telling.`, promptPolicy: LEARNING_ASK_FIRST_POLICY };
+}
+function buildLaneReasoningProfile(settings2, prompt, attachments = []) {
   void attachments;
-  void learningMode;
   if (promptAsksForDocumentReviewMarkup(prompt)) {
     return {
       mode: "document-review",
