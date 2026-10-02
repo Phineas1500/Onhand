@@ -293,6 +293,32 @@ async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
 }
 
 
+async function assertIntentClassifierSendsItsInstructions() {
+	// pi-ai 1.0 providers read the system prompt only from transcript system
+	// messages. The intent classifier sends a legacy { systemPrompt, messages }
+	// context straight to the provider; unnormalized, its JSON instructions were
+	// replaced by "You are a helpful assistant." and every classification came
+	// back as unparseable prose, silently disabling the classifier.
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await runtime.updateSettings({ aiProvider: "openai", aiModel: "gpt-5.5", authMode: "api-key", aiApiKeys: { openai: "sk-test-classifier" } });
+	const originalFetch = globalThis.fetch;
+	const requestBodies = [];
+	globalThis.fetch = async (url, init = {}) => {
+		requestBodies.push(String(init.body || ""));
+		return new Response(JSON.stringify({ error: { message: "stubbed" } }), { status: 400, headers: { "content-type": "application/json" } });
+	};
+	try {
+		await runtime.classifyPromptIntentForEval("When did JWST launch?");
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+	assert.ok(requestBodies.length > 0, "the classifier should reach the provider");
+	assert.match(requestBodies[0], /You classify one user request sent to Onhand/, "the classifier's instructions must reach the provider request");
+	assert.doesNotMatch(requestBodies[0], /You are a helpful assistant/, "the provider default prompt must not replace the classifier's instructions");
+}
+
 async function assertProviderApiKeyStorageAndRouting() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -11403,6 +11429,7 @@ async function main() {
 	await assertArtifactCursorStopsAtRequestedLimit();
 	await assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources();
 	await assertProviderApiKeyStorageAndRouting();
+	await assertIntentClassifierSendsItsInstructions();
 	await assertAssistantStreamingTextBlocksStaySeparated();
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();

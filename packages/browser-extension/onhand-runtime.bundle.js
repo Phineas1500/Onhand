@@ -94151,7 +94151,8 @@ function withModelStreamIdleTimeout(model, options, startStream, idleTimeoutMs =
   return output;
 }
 function streamOnhandFast(model, context, options = {}) {
-  return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, context, streamOptions));
+  const transcriptContext = normalizeContext(context);
+  return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, transcriptContext, streamOptions));
 }
 function streamOnhandProvider(model, context, options = {}) {
   const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};

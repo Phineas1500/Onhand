@@ -4,7 +4,7 @@ import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@eare
 // ./api/*). The ./compat surface re-exports the legacy names, so import them
 // there to keep this call site stable across the bump.
 import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAICodexResponses, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai/compat";
-import { createAssistantMessageEventStream, validateToolArguments } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, normalizeContext, validateToolArguments } from "@earendil-works/pi-ai";
 import * as Sentry from "@sentry/browser";
 import { assertConstitutionPrompt } from "./agent/constitution";
 import { MARK_POLICY } from "./agent/mark-policy";
@@ -10770,8 +10770,14 @@ function withModelStreamIdleTimeout(model: any, options: any, startStream: (opti
 	return output;
 }
 
+// pi-ai 1.0 providers read the system prompt and tools only from transcript
+// system messages; a legacy { systemPrompt, tools, messages } context sent
+// directly (the intent classifier) lost its instructions and the model got
+// "You are a helpful assistant." instead. normalizeContext folds them in and
+// leaves an Agent's already-normalized transcript unchanged.
 function streamOnhandFast(model: any, context: any, options: any = {}) {
-	return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, context, streamOptions));
+	const transcriptContext = normalizeContext(context);
+	return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, transcriptContext, streamOptions));
 }
 
 function streamOnhandProvider(model: any, context: any, options: any = {}) {
