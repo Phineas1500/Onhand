@@ -4,7 +4,7 @@ import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@eare
 // ./api/*). The ./compat surface re-exports the legacy names, so import them
 // there to keep this call site stable across the bump.
 import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAICodexResponses, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai/compat";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, validateToolArguments } from "@earendil-works/pi-ai";
 import * as Sentry from "@sentry/browser";
 import { assertConstitutionPrompt } from "./agent/constitution";
 import { MARK_POLICY } from "./agent/mark-policy";
@@ -10357,6 +10357,7 @@ export const __browserRuntimeTest = {
 	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
 	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
 	isTransientProviderErrorForTest: isTransientProviderError,
+	withModelStreamIdleTimeoutForTest: withModelStreamIdleTimeout,
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
@@ -10679,7 +10680,101 @@ function reasoningEffortForModel(model: any, effort: string) {
 	return effort === "none" && model?.thinkingLevelMap?.off === null ? "low" : effort;
 }
 
+// A provider stream that stops sending anything (observed: a GPT-6.1 Sol Codex
+// call went silent for 4.7 minutes mid-turn) would hang the turn until the user
+// stopped it. Onhand only requests none/low reasoning effort, so this long
+// without a single provider event means the call is stuck. The "timed out"
+// error is retried once by finalizeRequest's transient-provider retry.
+const MODEL_STREAM_IDLE_TIMEOUT_MS = 90_000;
+
+function emptyAssistantUsage() {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+
+function withModelStreamIdleTimeout(model: any, options: any, startStream: (options: any) => any, idleTimeoutMs = MODEL_STREAM_IDLE_TIMEOUT_MS) {
+	const controller = new AbortController();
+	const outerSignal: AbortSignal | undefined = options?.signal;
+	const forwardAbort = () => controller.abort(outerSignal?.reason);
+	if (outerSignal?.aborted) forwardAbort();
+	else outerSignal?.addEventListener("abort", forwardAbort, { once: true });
+	const output = createAssistantMessageEventStream();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let finished = false;
+	const fail = (errorMessage: string) => {
+		if (finished) return;
+		finished = true;
+		output.push({
+			type: "error",
+			reason: "error",
+			error: {
+				role: "assistant",
+				content: [],
+				api: model?.api,
+				provider: model?.provider,
+				model: model?.id,
+				usage: emptyAssistantUsage(),
+				stopReason: "error",
+				errorMessage,
+				timestamp: Date.now(),
+			},
+		} as any);
+		output.end();
+	};
+	const cleanup = () => {
+		clearTimeout(timer);
+		outerSignal?.removeEventListener("abort", forwardAbort);
+	};
+	const resetTimer = () => {
+		if (finished) return;
+		clearTimeout(timer);
+		timer = setTimeout(() => {
+			controller.abort(new Error("model stream idle timeout"));
+			fail(`The model stopped responding: no data for ${Math.round(idleTimeoutMs / 1000)}s, so the request timed out.`);
+		}, idleTimeoutMs);
+	};
+	const onProviderStreamEvent = options?.onProviderStreamEvent;
+	let input: any;
+	try {
+		input = startStream({
+			...options,
+			signal: controller.signal,
+			// Raw provider events (e.g. reasoning progress) prove the call is alive
+			// even while no normalized event has been emitted yet.
+			onProviderStreamEvent: (data: unknown, eventModel: any) => {
+				resetTimer();
+				return onProviderStreamEvent?.(data, eventModel);
+			},
+		});
+	} catch (error) {
+		// Provider stream functions throw synchronously on missing auth; keep that.
+		cleanup();
+		throw error;
+	}
+	resetTimer();
+	void (async () => {
+		try {
+			for await (const event of input) {
+				if (finished) break;
+				resetTimer();
+				output.push(event);
+				if (event?.type === "done" || event?.type === "error") finished = true;
+			}
+			if (!finished) fail("The model stream ended without a final response.");
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error));
+		} finally {
+			cleanup();
+			output.end();
+		}
+	})();
+	return output;
+}
+
 function streamOnhandFast(model: any, context: any, options: any = {}) {
+	return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, context, streamOptions));
+}
+
+function streamOnhandProvider(model: any, context: any, options: any = {}) {
 	const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
 	const effectiveModel =
 		model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context)

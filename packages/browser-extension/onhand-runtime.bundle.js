@@ -93764,6 +93764,7 @@ var __browserRuntimeTest = {
   shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
   tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
   isTransientProviderErrorForTest: isTransientProviderError,
+  withModelStreamIdleTimeoutForTest: withModelStreamIdleTimeout,
   collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
   collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
   humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
@@ -94068,7 +94069,91 @@ var __browserRuntimeTest = {
 function reasoningEffortForModel(model, effort) {
   return effort === "none" && model?.thinkingLevelMap?.off === null ? "low" : effort;
 }
+var MODEL_STREAM_IDLE_TIMEOUT_MS = 9e4;
+function emptyAssistantUsage() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+function withModelStreamIdleTimeout(model, options, startStream, idleTimeoutMs = MODEL_STREAM_IDLE_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const outerSignal = options?.signal;
+  const forwardAbort = () => controller.abort(outerSignal?.reason);
+  if (outerSignal?.aborted) forwardAbort();
+  else outerSignal?.addEventListener("abort", forwardAbort, { once: true });
+  const output = createAssistantMessageEventStream();
+  let timer;
+  let finished = false;
+  const fail2 = (errorMessage) => {
+    if (finished) return;
+    finished = true;
+    output.push({
+      type: "error",
+      reason: "error",
+      error: {
+        role: "assistant",
+        content: [],
+        api: model?.api,
+        provider: model?.provider,
+        model: model?.id,
+        usage: emptyAssistantUsage(),
+        stopReason: "error",
+        errorMessage,
+        timestamp: Date.now()
+      }
+    });
+    output.end();
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", forwardAbort);
+  };
+  const resetTimer = () => {
+    if (finished) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      controller.abort(new Error("model stream idle timeout"));
+      fail2(`The model stopped responding: no data for ${Math.round(idleTimeoutMs / 1e3)}s, so the request timed out.`);
+    }, idleTimeoutMs);
+  };
+  const onProviderStreamEvent = options?.onProviderStreamEvent;
+  let input;
+  try {
+    input = startStream({
+      ...options,
+      signal: controller.signal,
+      // Raw provider events (e.g. reasoning progress) prove the call is alive
+      // even while no normalized event has been emitted yet.
+      onProviderStreamEvent: (data, eventModel) => {
+        resetTimer();
+        return onProviderStreamEvent?.(data, eventModel);
+      }
+    });
+  } catch (error2) {
+    cleanup();
+    throw error2;
+  }
+  resetTimer();
+  void (async () => {
+    try {
+      for await (const event of input) {
+        if (finished) break;
+        resetTimer();
+        output.push(event);
+        if (event?.type === "done" || event?.type === "error") finished = true;
+      }
+      if (!finished) fail2("The model stream ended without a final response.");
+    } catch (error2) {
+      fail2(error2 instanceof Error ? error2.message : String(error2));
+    } finally {
+      cleanup();
+      output.end();
+    }
+  })();
+  return output;
+}
 function streamOnhandFast(model, context, options = {}) {
+  return withModelStreamIdleTimeout(model, options, (streamOptions) => streamOnhandProvider(model, context, streamOptions));
+}
+function streamOnhandProvider(model, context, options = {}) {
   const { onhandReasoningProfile, onhandTelemetry, onhandCodexFastMode, ...streamOptions } = options || {};
   const effectiveModel = model?.provider === ONHAND_FREE_PROVIDER && contextContainsImage(context) ? {
     ...model,

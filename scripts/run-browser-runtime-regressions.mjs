@@ -2414,6 +2414,7 @@ async function assertConstitutionPromptContract() {
 			shouldPreserveTrustedWorkspaceTabIdForTest,
 			tabIdListedInWorkspaceScanForTest,
 			isTransientProviderErrorForTest,
+			withModelStreamIdleTimeoutForTest,
 			collectResearchScaffoldingTabIdsForTest,
 			collectUncitedTurnMarkRemovalsForTest,
 			buildHighlightTimeoutTabGuardResultForTest,
@@ -3348,6 +3349,67 @@ async function assertConstitutionPromptContract() {
 		assert.equal(isTransientProviderErrorForTest(new Error("Invalid API key provided")), false, "permanent auth failures must surface immediately");
 		assert.equal(isTransientProviderErrorForTest(new Error("Model context length exceeded")), false);
 		assert.equal(isTransientProviderErrorForTest(null), false);
+		{
+			// A model call that goes silent must end as a retryable timeout instead
+			// of hanging the turn (a GPT-6.1 Sol Codex call stalled 4.7 minutes).
+			const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+			const model = { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6.1-sol" };
+			const collect = async (stream) => {
+				const events = [];
+				for await (const event of stream) events.push(event);
+				return events;
+			};
+			const done = { type: "done", reason: "stop", message: { role: "assistant", content: [], stopReason: "stop" } };
+			let silentSignal = null;
+			const silent = withModelStreamIdleTimeoutForTest(model, {}, (options) => {
+				silentSignal = options.signal;
+				return { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) };
+			}, 30);
+			const startedAt = Date.now();
+			const silentEvents = await collect(silent);
+			assert.ok(Date.now() - startedAt < 1000, "a silent model stream must not hang the turn");
+			assert.equal(silentEvents.at(-1)?.type, "error");
+			assert.match(silentEvents.at(-1).error.errorMessage, /timed out/);
+			assert.equal(isTransientProviderErrorForTest(new Error(silentEvents.at(-1).error.errorMessage)), true, "the idle timeout must earn the one quiet retry");
+			assert.equal(silentSignal.aborted, true, "the stalled provider request must be aborted");
+			assert.equal((await silent.result()).stopReason, "error");
+
+			let activeSignal = null;
+			const active = withModelStreamIdleTimeoutForTest(model, {}, (options) => {
+				activeSignal = options.signal;
+				return (async function* () {
+					for (let index = 0; index < 4; index += 1) {
+						await sleep(15);
+						yield { type: "text_delta", contentIndex: 0, delta: "x", partial: {} };
+					}
+					yield done;
+				})();
+			}, 50);
+			const activeEvents = await collect(active);
+			assert.deepEqual(activeEvents.map((event) => event.type), ["text_delta", "text_delta", "text_delta", "text_delta", "done"], "a streaming response passes through unchanged");
+			assert.equal(activeSignal.aborted, false);
+
+			const thinking = withModelStreamIdleTimeoutForTest(model, {}, (options) =>
+				(async function* () {
+					for (let index = 0; index < 5; index += 1) {
+						await sleep(20);
+						options.onProviderStreamEvent?.({ type: "response.reasoning_summary_text.delta" }, model);
+					}
+					yield done;
+				})(), 50);
+			assert.equal((await collect(thinking)).at(-1)?.type, "done", "raw provider events keep a call alive before its first normalized event");
+
+			const outer = new AbortController();
+			let forwardedSignal = null;
+			withModelStreamIdleTimeoutForTest(model, { signal: outer.signal }, (options) => {
+				forwardedSignal = options.signal;
+				return (async function* () {
+					yield done;
+				})();
+			}, 50);
+			outer.abort();
+			assert.equal(forwardedSignal.aborted, true, "a user stop must still reach the provider request");
+		}
 		const scaffoldingRequest = {
 			initialActiveTab: { id: 10 },
 			toolTraces: [
