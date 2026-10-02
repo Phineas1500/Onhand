@@ -7501,6 +7501,16 @@ const createPageToolkit = (options = {}) => {
 			if (options.pdfNodeBoundaries && hasContent && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
 				pendingSpace = { node, offset: 0, endOffset: 0 };
 			}
+			// Whitespace-only nodes between cells are dropped, so adjacent cells
+			// would glue ("years15 mcg"); read a cell boundary as a space.
+			if (
+				options.tableCellBoundaries &&
+				hasContent &&
+				!pendingSpace &&
+				previousNode?.parentElement?.closest("td, th") !== node.parentElement?.closest("td, th")
+			) {
+				pendingSpace = { node, offset: 0, endOffset: 0 };
+			}
 			previousNode = node;
 			for (let offset = 0; offset < value.length; ) {
 				const character = String.fromCodePoint(value.codePointAt(offset));
@@ -8436,6 +8446,55 @@ const createPageToolkit = (options = {}) => {
 			if (!approximate) continue;
 			if (!bestApproximateMatch || approximate.score > bestApproximateMatch.score) {
 				bestApproximateMatch = { ...approximate, mappedText, container };
+			}
+		}
+
+		// A request copied from a table row ("Adults 19–70 years 15 mcg (600 IU)",
+		// or the "| label | value |" form readable extraction renders) spans
+		// several cells, so no td/th container matches it and retries used to
+		// land on the label cell alone, without the figures. Match whole rows with
+		// cell boundaries read as spaces; highlightRange promotes the cross-cell
+		// range to the row.
+		if (matchIndex === 0 && occurrence === 1) {
+			const rowQueryText = rawQuery.replace(/^\s*\|/, "").replace(/\|\s*$/, "").replace(/\s*\|\s*/g, " ").trim();
+			const rowQueries =
+				rowQueryText && rowQueryText !== rawQuery
+					? {
+							normalizedQuery: lowerText(rowQueryText),
+							searchQuery: normalizeHighlightSearchText(rowQueryText),
+							compactQuery: compactHighlightSearchText(rowQueryText),
+							useCompactQuery: compactHighlightSearchText(rowQueryText).length >= 12,
+							compactFallback: "compact-text",
+						}
+					: highlightQueries;
+			// Cheap necessary condition before walking a row's text nodes, so a miss
+			// stays fast on pages with large tables.
+			const rowQueryTokens = tokenizeApproximateQuery(rowQueryText || rawQuery);
+			for (const row of document.querySelectorAll("tr")) {
+				const rowTokens = new Set(tokenizeApproximateQuery(Array.from(row.cells || [], (cell) => cell.textContent || "").join(" ")));
+				if (rowQueryTokens.some((token) => !rowTokens.has(token))) continue;
+				if (!isVisible(row) || row.querySelector("tr") || row.querySelectorAll("td, th").length < 2) continue;
+				if (isInsideExcludedAnnotationAncestor(row) || row.closest("[data-onhand-highlight-kind]")) continue;
+				const textNodes = collectHighlightTextNodes(row);
+				if (!textNodes.length) continue;
+				const mappedText = buildNormalizedTextMap(textNodes, { tableCellBoundaries: true });
+				for (const mode of buildExactHighlightModes(mappedText, rowQueries)) {
+					const foundAt = mode.query ? mode.text.indexOf(mode.query) : -1;
+					if (foundAt === -1) continue;
+					const start = mode.positions[foundAt];
+					const end = mode.positions[foundAt + mode.query.length - 1];
+					if (!start || !end) continue;
+					const range = document.createRange();
+					range.setStart(start.node, start.offset);
+					range.setEnd(end.node, getRangeEndOffset(end));
+					return await highlightRange(range, rawQuery, {
+						scrollIntoView,
+						approximate: Boolean(mode.fallback),
+						fallback: mode.fallback || "table-row",
+						anchorContext: extractHighlightAnchorContext(mode.text, foundAt, mode.query.length),
+						anchorOccurrence: occurrence,
+					});
+				}
 			}
 		}
 
@@ -10916,7 +10975,10 @@ async function probeTabScriptable(tabId, timeoutMs = 5000) {
 	let timeoutId;
 	try {
 		await Promise.race([
-			chrome.scripting.executeScript({ target: { tabId }, func: () => true }),
+			// injectImmediately: a merely slow page that has not reached
+			// document_idle must not read as unresponsive; only a blocked renderer
+			// should time out.
+			chrome.scripting.executeScript({ target: { tabId }, func: () => true, injectImmediately: true }),
 			new Promise((_, reject) => {
 				timeoutId = setTimeout(() => reject(new Error(`The page did not respond to scripts within ${timeoutMs}ms.`)), timeoutMs);
 			}),

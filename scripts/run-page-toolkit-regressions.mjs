@@ -1020,6 +1020,28 @@ async function assertReadableContentKeepsPageWideFormContent() {
 	assert.doesNotMatch(content.markdown, /Health Information/, "nav inside the root is still chrome");
 }
 
+async function assertHighlightTextMatchesAcrossTableRowCells() {
+	// Models quote a row ("Adults 19–70 years 15 mcg (600 IU)") or extraction's
+	// "| label | value |" form. No single cell holds that text, so it used to
+	// fail and retries shrank it to the label cell, dropping the figures.
+	const { dom, toolkit } = await createToolkit(
+		`<main><table><caption>Recommended Dietary Allowances (RDAs) for Vitamin D</caption><tbody><tr><th>Age</th><th>Male</th><th>Female</th></tr><tr><td>14–18 years</td><td>15 mcg (600 IU)</td><td>15 mcg (600 IU)</td></tr><tr><td>Adults 19–70 years</td><td>15 mcg (600 IU)</td><td>15 mcg (600 IU)</td></tr><tr><td>Adults 71 years and older</td><td>20 mcg (800 IU)</td><td>20 mcg (800 IU)</td></tr></tbody></table></main>`,
+	);
+	const { document } = dom.window;
+	const marked = (result) => document.querySelector(`[data-onhand-annotation-id="${result.annotationId}"]`);
+
+	const row = await toolkit.highlightText("Adults 19–70 years 15 mcg (600 IU)", { scrollIntoView: false });
+	assert.equal(marked(row)?.closest("tr")?.cells?.[0]?.textContent, "Adults 19–70 years", "a quoted row lands on that row");
+	assert.match(marked(row).textContent, /15 mcg \(600 IU\)/, "the row mark carries the figures, not just the label");
+
+	const piped = await toolkit.highlightText("| Adults 71 years and older | 20 mcg (800 IU) |", { scrollIntoView: false });
+	assert.match(marked(piped)?.textContent || "", /Adults 71 years and older\s*20 mcg \(800 IU\)/, "the extraction's pipe-row form lands on the row");
+
+	const cell = await toolkit.highlightText("14–18 years", { scrollIntoView: false });
+	assert.equal(cell.kind, "inline", "text inside one cell keeps its inline cell highlight");
+	assert.equal(marked(cell)?.closest("td")?.textContent, "14–18 years");
+}
+
 async function assertReadableContentMatchesHighlightableSurface() {
 	// Everything readable extraction emits must be anchorable by highlightText:
 	// no hidden-dialog headings, no tooltip text, no chrome outside the semantic
@@ -4051,6 +4073,7 @@ async function main() {
 	await assertGoogleDocsReadableContentDoesNotFallbackToToolbarOnExportFailure();
 	await assertReadableContentChoosesFullRootAndIncludesTables();
 	await assertReadableContentKeepsPageWideFormContent();
+	await assertHighlightTextMatchesAcrossTableRowCells();
 	await assertReadableContentMatchesHighlightableSurface();
 	await assertReadableContentQuerySnippetsCoverDistantTerms();
 	await assertTextbookReaderSearchUsesGenericSearchUi();
