@@ -132,6 +132,10 @@ function hasTool(turn, name, state = "") {
 	return allTools(turn).some((tool) => tool.toolName === name && (!state || tool.state === state));
 }
 
+function landedHighlight(turn) {
+	return hasTool(turn, "browser_highlight_text", "complete") || hasTool(turn, "browser_highlight_text", "recovered");
+}
+
 function findTrace(result, name) {
 	const traces = Array.isArray(result?.turn?.toolTraces) ? result.turn.toolTraces : [];
 	const matching = traces.filter((trace) => trace?.toolName === name);
@@ -221,10 +225,12 @@ async function runContextReuseTest(fixture) {
 		{ newSession: true },
 	);
 	assertReply(first, /Network idle/i, "First context pass should read the network output.");
-	assert.equal(hasTool(first.turn, "browser_highlight_text"), false, `Ordinary context Q&A should not create highlights.\nTools: ${toolList(first.turn)}`);
+	// G1 (docs/ONHAND_BEHAVIOR_PREFERENCES.md): every page-grounded answer leaves at
+	// least one source highlight; an attempt that recovers after a retry counts.
+	assert.ok(landedHighlight(first.turn), `Page-grounded Q&A should anchor its answer with a source highlight.\nTools: ${toolList(first.turn)}`);
 	const second = await ask("Using the same page context, what output text is shown for the CSS field before clicking? Keep the answer short.");
 	assertReply(second, /(?:CSS field value:\s*)?idle/i, "Second context pass should retain enough page context for the CSS field output.");
-	assert.equal(hasTool(second.turn, "browser_highlight_text"), false, `Cached follow-up Q&A should not attempt highlights.\nTools: ${toolList(second.turn)}`);
+	assert.ok(landedHighlight(second.turn), `A page-grounded follow-up should still anchor its answer.\nTools: ${toolList(second.turn)}`);
 	const context = await runCli(["context", "--current", "--json"], { json: true });
 	assert.ok(context?.totals?.turns >= 2, `Expected context telemetry for at least two turns: ${JSON.stringify(context, null, 2)}`);
 	return { first, second, context };

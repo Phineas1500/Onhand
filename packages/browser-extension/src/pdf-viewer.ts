@@ -208,11 +208,18 @@ function updateZoomControls() {
 	zoomInButton.disabled = currentScale >= MAX_SCALE - 0.001;
 }
 
+// The document scrolls, so horizontal centering uses its visible width:
+// innerWidth also counts an always-on scrollbar (macOS with a mouse attached),
+// which put zoom previews half a scrollbar off center.
+function visibleViewportWidth() {
+	return document.documentElement.clientWidth || window.innerWidth;
+}
+
 function defaultZoomClientPoint() {
 	const toolbar = document.querySelector<HTMLElement>(".onhand-pdf-toolbar");
 	const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
 	return {
-		clientX: window.innerWidth / 2,
+		clientX: visibleViewportWidth() / 2,
 		clientY: toolbarBottom + Math.max(1, window.innerHeight - toolbarBottom) / 2,
 	};
 }
@@ -266,7 +273,7 @@ function captureTransientZoomGeometry(anchor: PdfZoomAnchor | null): PdfTransien
 		pageTop: pageRect.top - viewerRect.top,
 		pageWidth: pageRect.width,
 		pageHeight: pageRect.height,
-		availableWidth: Math.max(1, window.innerWidth - padding.left - padding.right),
+		availableWidth: Math.max(1, visibleViewportWidth() - padding.left - padding.right),
 	};
 }
 
@@ -275,7 +282,7 @@ function centeredTransientZoomAnchor(anchor: PdfZoomAnchor | null) {
 	return {
 		...anchor,
 		xRatio: 0.5,
-		clientX: window.innerWidth / 2,
+		clientX: visibleViewportWidth() / 2,
 	};
 }
 
@@ -303,7 +310,7 @@ function applyTransientZoom(nextScale: number, anchor: PdfZoomAnchor | null) {
 	// pointer position. Once it overflows, preserve the point under the cursor.
 	transientZoomCentersHorizontally = geometry.pageWidth * ratio <= geometry.availableWidth + 0.5;
 	const horizontalRatio = transientZoomCentersHorizontally ? 0.5 : transientZoomAnchor.xRatio;
-	const targetClientX = transientZoomCentersHorizontally ? window.innerWidth / 2 : transientZoomAnchor.clientX;
+	const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 : transientZoomAnchor.clientX;
 	const localAnchorX = geometry.pageLeft + geometry.pageWidth * horizontalRatio;
 	const localAnchorY = geometry.pageTop + geometry.pageHeight * transientZoomAnchor.yRatio;
 	const translateX = targetClientX - geometry.viewerClientLeft - localAnchorX * ratio;
@@ -3246,7 +3253,7 @@ window.addEventListener(
 	((event: any) => {
 		if (!pdfDocument) return;
 		event.preventDefault?.();
-		queueGestureZoom(nativeGestureStartScale * (Number(event.scale) || 1), Number(event.clientX) || window.innerWidth / 2, Number(event.clientY) || window.innerHeight / 2);
+		queueGestureZoom(nativeGestureStartScale * (Number(event.scale) || 1), Number(event.clientX) || visibleViewportWidth() / 2, Number(event.clientY) || window.innerHeight / 2);
 	}) as EventListener,
 	{ passive: false } as AddEventListenerOptions,
 );

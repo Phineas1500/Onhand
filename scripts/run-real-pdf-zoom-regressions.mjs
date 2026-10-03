@@ -298,8 +298,12 @@ async function readGeometry(viewer, pageNumber) {
 			center: rect.left + rect.width / 2,
 			width: rect.width,
 			height: rect.height,
-			viewportWidth: innerWidth,
-			viewportCenter: innerWidth / 2,
+			// The document scrolls, so center within its visible width: innerWidth
+			// also counts an always-on scrollbar (macOS with a mouse attached), which
+			// made a correctly centered page read about half a scrollbar off.
+			viewportWidth: document.documentElement.clientWidth,
+			viewportCenter: document.documentElement.clientWidth / 2,
+			windowWidth: innerWidth,
 			transform: document.querySelector('#viewer')?.style.transform || 'none',
 			status: document.querySelector('#onhand-pdf-status')?.textContent || '',
 			canvasCount: canvases.length,
@@ -352,7 +356,7 @@ function assertRasterStayedVisible(trace, label) {
 async function assertCenteredZoom(viewer, pageNumber) {
 	const fitted = await selectPageAndFit(viewer, pageNumber);
 	assert.ok(fitted.width <= fitted.viewportWidth - 48 + CENTER_TOLERANCE_PX, `page ${pageNumber}: fitted page should leave gray margins`);
-	assert.ok(Math.abs(fitted.center - fitted.viewportCenter) <= CENTER_TOLERANCE_PX, `page ${pageNumber}: fitted page should start centered`);
+	assert.ok(Math.abs(fitted.center - fitted.viewportCenter) <= CENTER_TOLERANCE_PX, `page ${pageNumber}: fitted page should start centered (page center ${fitted.center.toFixed(1)}, viewport center ${fitted.viewportCenter.toFixed(1)}, visible width ${fitted.viewportWidth}, window width ${fitted.windowWidth})`);
 	const trace = await traceWheel(viewer, pageNumber, { deltaY: -5, clientX: 80 });
 	const previewOffset = Math.abs(trace.during.center - trace.during.viewportCenter);
 	const centerJump = Math.abs(trace.during.center - trace.settled.center);
@@ -512,6 +516,11 @@ async function main() {
 		const wideCentered = await assertCenteredZoom(viewer, 1);
 		const narrowCentered = await assertCenteredZoom(viewer, 2);
 		const anchored = await assertAnchoredOverflowZoom(viewer, 1);
+		// Always-on scrollbars (macOS with a mouse attached, most Linux/Windows
+		// setups) shrink the visible width; zoom previews centered on innerWidth
+		// landed half a scrollbar off. Force a classic scrollbar so this runs everywhere.
+		await viewer.evaluate(`(() => { const style = document.createElement('style'); style.textContent = '::-webkit-scrollbar { width: 15px; background: #ccc; } ::-webkit-scrollbar-thumb { background: #888; }'; document.head.appendChild(style); document.documentElement.style.overflowY = 'scroll'; return document.documentElement.clientWidth < innerWidth; })()`);
+		const scrollbarCentered = await assertCenteredZoom(viewer, 1);
 		console.log("Real PDF zoom regressions: PASS");
 		console.log(`Fixture: full-page raster image, mixed page sizes, ${Math.round(fixture.length / 1024)} KiB`);
 		console.log(
@@ -519,6 +528,9 @@ async function main() {
 		);
 		console.log(
 			`Centered page 2: preview=${narrowCentered.previewOffset.toFixed(3)}px settle=${narrowCentered.centerJump.toFixed(3)}px latency=${narrowCentered.trace.previewLatencyMs.toFixed(1)}ms`,
+		);
+		console.log(
+			`Centered page 1 with a classic scrollbar: preview=${scrollbarCentered.previewOffset.toFixed(3)}px settle=${scrollbarCentered.centerJump.toFixed(3)}px`,
 		);
 		console.log(
 			`Oversized page 1: preview anchor=${anchored.previewAnchorOffset.toFixed(3)}px settled anchor=${anchored.settledAnchorOffset.toFixed(3)}px latency=${anchored.trace.previewLatencyMs.toFixed(1)}ms`,

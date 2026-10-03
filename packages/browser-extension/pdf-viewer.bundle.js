@@ -25211,11 +25211,14 @@ function updateZoomControls() {
   zoomOutButton.disabled = currentScale <= MIN_SCALE + 1e-3;
   zoomInButton.disabled = currentScale >= MAX_SCALE - 1e-3;
 }
+function visibleViewportWidth() {
+  return document.documentElement.clientWidth || window.innerWidth;
+}
 function defaultZoomClientPoint() {
   const toolbar = document.querySelector(".onhand-pdf-toolbar");
   const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
   return {
-    clientX: window.innerWidth / 2,
+    clientX: visibleViewportWidth() / 2,
     clientY: toolbarBottom + Math.max(1, window.innerHeight - toolbarBottom) / 2
   };
 }
@@ -25265,7 +25268,7 @@ function captureTransientZoomGeometry(anchor) {
     pageTop: pageRect.top - viewerRect.top,
     pageWidth: pageRect.width,
     pageHeight: pageRect.height,
-    availableWidth: Math.max(1, window.innerWidth - padding.left - padding.right)
+    availableWidth: Math.max(1, visibleViewportWidth() - padding.left - padding.right)
   };
 }
 function centeredTransientZoomAnchor(anchor) {
@@ -25273,7 +25276,7 @@ function centeredTransientZoomAnchor(anchor) {
   return {
     ...anchor,
     xRatio: 0.5,
-    clientX: window.innerWidth / 2
+    clientX: visibleViewportWidth() / 2
   };
 }
 function applyTransientZoom(nextScale, anchor) {
@@ -25292,7 +25295,7 @@ function applyTransientZoom(nextScale, anchor) {
   }
   transientZoomCentersHorizontally = geometry.pageWidth * ratio <= geometry.availableWidth + 0.5;
   const horizontalRatio = transientZoomCentersHorizontally ? 0.5 : transientZoomAnchor.xRatio;
-  const targetClientX = transientZoomCentersHorizontally ? window.innerWidth / 2 : transientZoomAnchor.clientX;
+  const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 : transientZoomAnchor.clientX;
   const localAnchorX = geometry.pageLeft + geometry.pageWidth * horizontalRatio;
   const localAnchorY = geometry.pageTop + geometry.pageHeight * transientZoomAnchor.yRatio;
   const translateX = targetClientX - geometry.viewerClientLeft - localAnchorX * ratio;
@@ -27858,7 +27861,7 @@ window.addEventListener(
   ((event) => {
     if (!pdfDocument) return;
     event.preventDefault?.();
-    queueGestureZoom(nativeGestureStartScale * (Number(event.scale) || 1), Number(event.clientX) || window.innerWidth / 2, Number(event.clientY) || window.innerHeight / 2);
+    queueGestureZoom(nativeGestureStartScale * (Number(event.scale) || 1), Number(event.clientX) || visibleViewportWidth() / 2, Number(event.clientY) || window.innerHeight / 2);
   }),
   { passive: false }
 );
