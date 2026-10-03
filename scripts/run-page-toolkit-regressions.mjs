@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import vm from "node:vm";
 import { JSDOM } from "jsdom";
 import { scholarPdfHtml } from "./serve-browser-runtime-fixture.mjs";
 
@@ -1943,6 +1944,222 @@ async function createToolkitAtUrl(html, url, toolkitOptions = {}) {
 		dom,
 		toolkit: createPageToolkit({ theme: "light", ...toolkitOptions }),
 	};
+}
+
+async function assertReadableContentIncludesDisplayEquations() {
+	// "Show me Bayes' rule": Wikipedia's boxed equation sits in a div, outside
+	// every block extraction visited, so the model only saw "...stated
+	// mathematically as the following equation:" and highlighted that.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const tex = (latex) => `<span class="mwe-math-element"><math><semantics><mrow><mi>P</mi></mrow><annotation encoding="application/x-tex">${latex}</annotation></semantics></math></span>`;
+	const dom = new JSDOM(
+		`<!doctype html><html><head><title>Bayes' theorem</title></head><body><div class="mw-parser-output">
+			<p>Bayes' theorem is stated mathematically as the following equation:</p>
+			<div class="equation-box">${tex("{\\displaystyle P(A\\vert B)={\\frac {P(B\\vert A)P(A)}{P(B)}}}")}</div>
+			<p>where ${tex("{\\displaystyle A}")} and B are events.</p>
+			<dl><dd><span class="mwe-math-element mwe-math-element-block">${tex("{\\displaystyle P(B)=\\sum _{j}P(B\\vert A_{j})P(A_{j})}")}</span></dd></dl>
+		</div></body></html>`,
+		{ url: "https://en.wikipedia.org/wiki/Bayes%27_theorem", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	const content = await dom.window.eval(`(${declaration})`)({ maxChars: 20000 });
+	const texts = Array.from(content.blocks, (block) => block.text);
+	assert.ok(texts.includes("$${\\displaystyle P(A\\vert B)={\\frac {P(B\\vert A)P(A)}{P(B)}}}$$"), "the boxed display equation is extracted with its own LaTeX");
+	assert.ok(texts.includes("$${\\displaystyle P(B)=\\sum _{j}P(B\\vert A_{j})P(A_{j})}$$"), "indented display math is extracted");
+	assert.ok(texts.indexOf("Bayes' theorem is stated mathematically as the following equation:") < texts.findIndex((text) => text.includes("\\frac {P(B")), "the equation follows its lead-in");
+	assert.equal(texts.filter((text) => text.startsWith("$${\\displaystyle A}")).length, 0, "inline math stays part of its paragraph");
+}
+
+async function assertLineBreakParagraphsSplitAndStayHighlightable() {
+	// paulgraham.com puts a whole essay in one <p> with <br><br> between
+	// paragraphs. textContent drops the breaks: extraction returned one
+	// 25k-character block with words glued ("July 2013One"), so the model
+	// could neither page through it nor quote cleanly ("going.RecruitThe").
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const html = `<table><tr><td><p><font size="2" face="verdana">July 2013<br><br>One of the most common types of advice we give at Y Combinator is to do things that don't scale.<br><br><b>Recruit</b><br><br>The most common unscalable thing founders have to do at the start is to recruit users manually.<br>Line two of the same paragraph.</font></p></td></tr></table>`;
+	const dom = new JSDOM(`<!doctype html><html><head><title>Do Things that Don't Scale</title></head><body>${html}</body></html>`, {
+		url: "https://paulgraham.com/ds.html",
+		pretendToBeVisual: true,
+		runScripts: "outside-only",
+	});
+	const content = await dom.window.eval(`(${declaration})`)({ maxChars: 20000 });
+	const texts = Array.from(content.blocks.filter((block) => block.tag === "p"), (block) => block.text);
+	assert.deepEqual(texts, [
+		"July 2013",
+		"One of the most common types of advice we give at Y Combinator is to do things that don't scale.",
+		"Recruit",
+		"The most common unscalable thing founders have to do at the start is to recruit users manually. Line two of the same paragraph.",
+	], "double line breaks split paragraphs; a single break reads as a space");
+	assert.doesNotMatch(content.markdown, /2013One|scale\.Recruit|manually\.Line/, "no words glued across line breaks");
+
+	// greatwork.html has no <p> at all: the essay is loose text in a layout
+	// cell (with an epigraph blockquote first), 599 <br>s, nested tables.
+	const essay = Array.from({ length: 12 }, (_, index) => `Paragraph ${index} of the essay about great work, long enough to look like prose that a reader would want to keep.`).join("<br><br>");
+	const looseDom = new JSDOM(
+		`<!doctype html><html><head><title>How to Do Great Work</title></head><body><table><tr><td><img src="nav.gif"></td><td><table><tr><td><font size="2" face="verdana">July 2023<br><br><blockquote>The best lack all conviction, while the worst are full of passionate intensity.</blockquote>${essay}<br><br><b>Notes</b><br><br>[1] A footnote.</font></td></tr></table></td></tr></table></body></html>`,
+		{ url: "https://www.paulgraham.com/greatwork.html", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	const loose = await looseDom.window.eval(`(${declaration})`)({ maxChars: 20000 });
+	const looseTexts = Array.from(loose.blocks, (block) => block.text);
+	assert.equal(looseTexts.filter((text) => /^Paragraph \d+ of the essay/.test(text)).length, 12, "every loose paragraph in a layout cell is extracted");
+	assert.ok(looseTexts.indexOf("July 2023") < looseTexts.findIndex((text) => text.startsWith(">")), "loose text and block elements keep document order");
+	assert.ok(looseTexts.findIndex((text) => text.startsWith(">")) < looseTexts.findIndex((text) => text.startsWith("Paragraph 0")));
+	assert.equal(looseTexts.filter((text) => text.includes("The best lack all conviction")).length, 1, "the epigraph is emitted once");
+	assert.ok(!loose.blocks.some((block) => block.tag === "table"), "layout tables are not emitted as glued table rows");
+
+	const { dom: pageDom, toolkit } = await createToolkit(html);
+	const marked = (result) => pageDom.window.document.querySelector(`[data-onhand-annotation-id="${result.annotationId}"]`);
+	const quoted = await toolkit.highlightText("The most common unscalable thing founders have to do at the start is to recruit users manually. Line two", { scrollIntoView: false });
+	assert.match(marked(quoted)?.textContent || "", /recruit users manually/, "a quote copied from the split extraction still anchors");
+	const glued = await toolkit.highlightText("July 2013One of the most common types", { scrollIntoView: false });
+	assert.match(marked(glued)?.textContent || "", /One of the most common/, "an old glued quote still anchors");
+
+	// The live failure: quoting the sentence after a footnote marker and a
+	// <br><br> paragraph break highlighted the previous paragraph's last
+	// sentence and the marker too ("...must not exist. [1]Actually startups...").
+	const { dom: essayDom, toolkit: essayToolkit } = await createToolkit(
+		`<p><font>Or they don't, in which case the market must not exist. <font color="#999999">[<a href="#f1n">1</a>]</font><br><br>Actually startups take off because the founders make them take off. There may be a handful that just grew by themselves.</font></p>`,
+	);
+	const sentence = await essayToolkit.highlightText("Actually startups take off because the founders make them take off.", { scrollIntoView: false });
+	const sentenceMark = Array.from(essayDom.window.document.querySelectorAll(`[data-onhand-annotation-id="${sentence.annotationId}"]`)).map((node) => node.textContent).join("");
+	assert.match(sentenceMark, /^Actually startups take off/, "the mark starts at the quoted sentence");
+	assert.doesNotMatch(sentenceMark, /must not exist|\[1\]/, "the mark does not run back across the paragraph break");
+}
+
+async function assertReadableContentPagesThroughLongPages() {
+	// startBlock continues the query-less document-order stream exactly, so a
+	// note-taking pass can read an essay with no headings to the end.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const paragraphs = Array.from({ length: 40 }, (_, index) => `<p>Paragraph ${index}: ${"Do things that don't scale when recruiting the first users. ".repeat(4)}</p>`).join("");
+	const dom = new JSDOM(`<!doctype html><html><head><title>Do Things that Don't Scale</title></head><body><table><tr><td><font>${paragraphs}</font></td></tr></table></body></html>`, {
+		url: "http://paulgraham.com/ds.html",
+		pretendToBeVisual: true,
+		runScripts: "outside-only",
+	});
+	const extract = dom.window.eval(`(${declaration})`);
+	const seen = [];
+	let startBlock = 0;
+	for (let guard = 0; guard < 20; guard += 1) {
+		const content = await extract({ maxChars: 2500, startBlock });
+		assert.equal(content.pagingSupported, true);
+		assert.equal(content.startBlock, startBlock);
+		if (!content.blocks.length) break;
+		const complete = content.truncated ? content.blocks.slice(0, -1) : content.blocks;
+		for (const block of complete) seen.push(block.text);
+		if (!content.truncated) break;
+		startBlock += complete.length;
+	}
+	const paragraphNumbers = seen.map((text) => Number(text.match(/^Paragraph (\d+):/)?.[1])).filter((value) => Number.isFinite(value));
+	assert.deepEqual(paragraphNumbers, Array.from({ length: 40 }, (_, index) => index), "paging covers every paragraph once, in order");
+	const full = await extract({ maxChars: 50000 });
+	const continued = await extract({ maxChars: 2500, startBlock: 5, query: "recruiting users" });
+	assert.equal(continued.queryUsed, false, "a continuation reads in document order and ignores query");
+	assert.equal(continued.blocks[0].text, full.blocks[5].text, "startBlock N resumes at block N of the query-less stream");
+}
+
+async function assertVisibleRegionClipUsesDocumentCoordinates() {
+	// CDP's Page.captureScreenshot clip is document-relative. Passing the
+	// viewport-relative region made every capture on a scrolled page (the
+	// automatic "what does this chart show?" capture included) come back blank.
+	const declaration = await loadBackgroundFunction("getVisibleRegionSnapshot");
+	const clampDeclaration = await loadBackgroundFunction("clampNumber");
+	const captures = [];
+	let zoom = 1;
+	const context = vm.createContext({
+		chrome: { tabs: { getZoom: async () => zoom } },
+		focusTab: async (tabId) => ({ id: tabId, windowId: 1 }),
+		resolveVisibleRegionTargetInPage: () => {},
+		executeScriptInTab: async (_tabId, _func, args) => ({
+			viewport: { width: 1293, height: 803, devicePixelRatio: 2, scrollX: 0, scrollY: 6000 },
+			selectorRegion: args[1] ? { x: 355, y: 269, width: 760, height: 266, selector: "match: Z-scheme", visibleRatio: 1, matchedLabel: "The Z scheme" } : null,
+		}),
+		getVisibleRegionViewportFallback: async () => assert.fail("the page script succeeded"),
+		captureTabScreenshot: async (_tabId, options) => {
+			captures.push(options.clip);
+			return { dataUrl: "data:image/png;base64,AAAA", method: "debugger" };
+		},
+	});
+	vm.runInContext(`${clampDeclaration}\n${declaration}\nglobalThis.getVisibleRegionSnapshot = getVisibleRegionSnapshot;`, context);
+
+	const viewportShot = await context.getVisibleRegionSnapshot(7, {});
+	assert.deepEqual({ ...captures[0] }, { x: 0, y: 6000, width: 1293, height: 803, scale: 1 }, "a viewport capture on a scrolled page clips the visible part of the document");
+	assert.equal(viewportShot.region.y, 0, "the reported region stays viewport-relative");
+
+	const figureShot = await context.getVisibleRegionSnapshot(7, { match: "Z-scheme" });
+	assert.deepEqual({ ...captures[1] }, { x: 355, y: 6269, width: 760, height: 266, scale: 1 });
+	assert.equal(figureShot.region.matchedLabel, "The Z scheme");
+
+	// A site zoomed to 110% (Chrome remembers zoom per origin) scales the
+	// device-independent clip; the reported region stays in CSS pixels.
+	zoom = 1.1;
+	const zoomedShot = await context.getVisibleRegionSnapshot(7, { match: "Z-scheme" });
+	const zoomedClip = captures[2];
+	assert.ok(Math.abs(zoomedClip.x - 355 * 1.1) < 1e-6 && Math.abs(zoomedClip.y - 6269 * 1.1) < 1e-6, "zoom scales the clip origin");
+	assert.ok(Math.abs(zoomedClip.width - 760 * 1.1) < 1e-6 && Math.abs(zoomedClip.height - 266 * 1.1) < 1e-6, "zoom scales the clip size");
+	assert.equal(zoomedShot.region.width, 760);
+}
+
+async function assertVisibleRegionMatchFindsNamedFigure() {
+	// Asked about the Z-scheme diagram, the model passed selector "figure",
+	// which captured the page's first figure (the lead diagram) with no
+	// warning. match finds a figure by caption/alt/file name anywhere on the
+	// page; a miss reports the page's figures instead of capturing the viewport.
+	const declaration = await loadBackgroundFunction("resolveVisibleRegionTargetInPage");
+	const dom = new JSDOM(
+		`<!doctype html><html><body><main>
+			<figure id="lead"><img data-w="380" data-h="380" src="https://upload.wikimedia.org/x/220px-Photosynthesis_en.svg.png" alt=""><figcaption>Schematic of photosynthesis in plants. The carbohydrates produced are stored in or used by the plant.</figcaption></figure>
+			<p>Text <img data-w="16" data-h="16" src="/icons/z-scheme-icon.png" alt="Z scheme icon"></p>
+			<figure id="zscheme"><img data-w="520" data-h="380" src="https://upload.wikimedia.org/x/500px-Z-scheme.svg.png" alt=""><figcaption>The "Z scheme"</figcaption></figure>
+			<figure id="map"><img data-w="600" data-h="300" src="https://upload.wikimedia.org/x/Seawifs_global_biosphere.jpg" alt="World map"><figcaption>Composite image showing the global distribution of photosynthesis</figcaption></figure>
+			<table><tr><td id="infobox"><span><img data-w="250" data-h="200" src="/img/leaf-cross-section.png" alt=""></span><div class="infobox-caption">Cross-section of a leaf showing chloroplasts</div></td></tr></table>
+		</main></body></html>`,
+		{ url: "https://en.wikipedia.org/wiki/Photosynthesis", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	const { window } = dom;
+	window.Element.prototype.getBoundingClientRect = function () {
+		const width = Number(this.getAttribute("data-w") || this.querySelector?.("[data-w]")?.getAttribute("data-w") || 0);
+		const height = Number(this.getAttribute("data-h") || this.querySelector?.("[data-h]")?.getAttribute("data-h") || 0);
+		return { left: 100, top: 100, right: 100 + width, bottom: 100 + height, width, height, x: 100, y: 100 };
+	};
+	const resolve = window.eval(`(${declaration})`);
+	const { document } = window;
+
+	const zscheme = await resolve("", "Z-scheme diagram", false);
+	assert.equal(zscheme.targetError, undefined);
+	assert.equal(zscheme.selectorRegion.width, 520, "match frames the Z-scheme figure, not the first figure or the tiny icon");
+	assert.match(zscheme.selectorRegion.matchedLabel, /Z scheme/);
+
+	const byCaption = await resolve("", "the composite global distribution image", false);
+	assert.equal(byCaption.selectorRegion.width, 600, "caption words find the figure");
+
+	const infobox = await resolve("", "leaf cross-section", false);
+	assert.equal(infobox.selectorRegion.matchedLabel, "Cross-section of a leaf showing chloroplasts", "a caption beside an unwrapped image still identifies it");
+
+	const letterOnly = await resolve("", "Z-scheme", false);
+	assert.equal(letterOnly.selectorRegion.width, 520);
+	const zOnlyPage = new JSDOM(
+		`<!doctype html><body><figure><img data-w="300" data-h="200" src="https://example.com/z-axis-plot.png" alt=""><figcaption>Plot of the Z axis</figcaption></figure><img data-w="1" data-h="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></body>`,
+		{ url: "https://example.com/", pretendToBeVisual: true, runScripts: "outside-only" },
+	);
+	zOnlyPage.window.Element.prototype.getBoundingClientRect = window.Element.prototype.getBoundingClientRect;
+	const zOnly = await zOnlyPage.window.eval(`(${declaration})`)("", "Z-scheme", false);
+	assert.equal(zOnly.selectorRegion, null, "a lone shared letter is not a figure match");
+	assert.doesNotMatch(zOnly.targetError, /base64|R0lGOD/, "data: placeholders never appear as figure names");
+
+	const sharedWordOnly = await resolve("", "global warming figure", false);
+	assert.equal(sharedWordOnly.selectorRegion, null, "one shared word out of two is not enough to pick a figure");
+
+	const miss = await resolve("", "Calvin cycle diagram", false);
+	assert.equal(miss.selectorRegion, null);
+	assert.match(miss.targetError, /No image or figure matched "Calvin cycle diagram"/);
+	assert.match(miss.targetError, /Schematic of photosynthesis/, "a miss lists the page's figures so the model can retry");
+
+	const generic = await resolve("figure", "", false);
+	assert.equal(generic.selectorRegion.selectorMatchCount, 3, "a generic selector reports how many elements it matched");
+	assert.equal(generic.selectorRegion.width, 380, "a bare selector still captures its first match");
+
+	const missingSelector = await resolve("#nope", "", false);
+	assert.match(missingSelector.targetError, /No element matched selector: #nope/, "a selector miss is an error, not a viewport capture");
+	assert.ok(document.querySelector("#zscheme"));
 }
 
 async function assertMathWaitIgnoresScriptSource() {
@@ -4083,6 +4300,11 @@ async function main() {
 	await assertPdfReuseRequiresWholeQuote();
 	await assertHiddenTabAnnotationCommandsSkipThrottledWaits();
 	await assertMathWaitIgnoresScriptSource();
+	await assertVisibleRegionMatchFindsNamedFigure();
+	await assertVisibleRegionClipUsesDocumentCoordinates();
+	await assertReadableContentPagesThroughLongPages();
+	await assertLineBreakParagraphsSplitAndStayHighlightable();
+	await assertReadableContentIncludesDisplayEquations();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();
 	await assertOffscreenClipboardWithoutDocumentFocus();

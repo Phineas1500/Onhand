@@ -7827,13 +7827,14 @@
 			),
 			makeTool(
 				"browser_get_visible_region_image",
-				"Capture the visible viewport, selector box, or viewport coordinates for visual debugging. Prefer exact text tools for citations.",
+				"Capture the visible viewport, a specific figure (match: words from its caption or alt text), a selector box, or viewport coordinates. For a named figure that may be offscreen, pass match. Prefer exact text tools for citations.",
 				currentTabOnly({
 					x: { type: "number" },
 					y: { type: "number" },
 					width: { type: "number" },
 					height: { type: "number" },
 					selector: { type: "string" },
+					match: { type: "string" },
 					label: { type: "string" },
 					format: { type: "string" },
 					quality: { type: "number" },

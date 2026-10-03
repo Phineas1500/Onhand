@@ -7510,9 +7510,29 @@ const createPageToolkit = (options = {}) => {
 		let pendingSpace = null;
 		let hasContent = false;
 		let previousNode = null;
+		// A <br> renders as a line break, so text on either side never reads as
+		// one word. Without this, br-separated pages (an essay whose paragraphs
+		// are <br><br>) glued "[1]Actually", and sentence snapping ran through
+		// the paragraph break into the previous paragraph.
+		let breakWalker = null;
+		const lineBreakBetween = (fromNode, toNode) => {
+			const doc = toNode?.ownerDocument;
+			if (!fromNode || !doc) return false;
+			breakWalker ||= doc.createTreeWalker(doc.documentElement, 1 | 4);
+			breakWalker.currentNode = fromNode;
+			for (let steps = 0; steps < 12; steps += 1) {
+				const next = breakWalker.nextNode();
+				if (!next || next === toNode) return false;
+				if (next.nodeName === "BR") return true;
+			}
+			return false;
+		};
 
 		for (const node of textNodes) {
 			const value = String(node.nodeValue || "");
+			if (hasContent && !pendingSpace && previousNode && !/^\s/.test(value) && lineBreakBetween(previousNode, node)) {
+				pendingSpace = { node, offset: 0, endOffset: 0 };
+			}
 			if (options.pdfNodeBoundaries && hasContent && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
 				pendingSpace = { node, offset: 0, endOffset: 0 };
 			}
@@ -11565,64 +11585,209 @@ async function getVisibleRegionViewportFallback(focusedTab, scriptError = null) 
 	}
 }
 
+// Runs in the page via chrome.scripting, so it must stay self-contained.
+// Resolves what a visible-region capture should frame: a CSS selector, or
+// `match` — words from a figure's caption, alt text, title, or file name — so a
+// named figure that is offscreen or is not the page's first <figure> can be
+// captured. Problems come back as targetError instead of throwing, so the
+// caller never mistakes a failed lookup for a viewport capture.
+async function resolveVisibleRegionTargetInPage(selector, match, shouldScrollIntoView) {
+	const rawSelector = String(selector || "").trim();
+	const rawMatch = String(match || "").trim();
+	const readViewport = () => ({
+		width: Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1)),
+		height: Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1)),
+		devicePixelRatio: Number(window.devicePixelRatio || 1),
+		scrollX: Math.round(window.scrollX || 0),
+		scrollY: Math.round(window.scrollY || 0),
+	});
+	const compact = (value, max = 80) => {
+		const text = String(value || "").replace(/\s+/g, " ").trim();
+		return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+	};
+	const normalize = (value) =>
+		String(value || "")
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.replace(/[^a-z0-9]+/g, " ")
+			.trim();
+	// Words that describe any figure rather than this one.
+	const GENERIC_WORDS = new Set([
+		"a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "this", "that", "these", "those", "its", "it", "with",
+		"diagram", "diagrams", "figure", "figures", "fig", "image", "images", "picture", "pictures", "photo", "photograph",
+		"chart", "graph", "plot", "illustration", "drawing", "schematic", "map", "screenshot", "infographic", "visual",
+		"top", "bottom", "above", "below", "first", "page", "article", "shown", "show", "shows",
+	]);
+	const tokensOf = (value) => normalize(value).split(" ").filter(Boolean);
+	const fileNameText = (src) => {
+		try {
+			const url = new URL(String(src || ""), location.href);
+			if (!/^https?:$/.test(url.protocol)) return "";
+			const path = url.pathname;
+			const name = decodeURIComponent(path.split("/").filter(Boolean).pop() || "");
+			return name.replace(/^\d+px-/i, "").replace(/\.(png|jpe?g|gif|svg|webp|avif)(\.png)?$/i, "").replace(/[_-]+/g, " ");
+		} catch {
+			return "";
+		}
+	};
+
+	let element = null;
+	let selectorMatchCount = 0;
+	let matchedLabel = "";
+	if (rawMatch) {
+		const scope = rawSelector ? Array.from(document.querySelectorAll(rawSelector)) : [document.body || document.documentElement];
+		if (rawSelector && !scope.length) return { viewport: readViewport(), selectorRegion: null, targetError: `No element matched selector: ${rawSelector}` };
+		const media = new Set();
+		for (const root of scope) {
+			if (root.matches?.("img, svg, canvas, video, picture, [role='img']")) media.add(root);
+			for (const node of root.querySelectorAll?.("img, svg, canvas, video, picture, [role='img']") || []) media.add(node);
+		}
+		// The figure a media element belongs to: an explicit figure wrapper, or
+		// the nearest ancestor that holds a caption and no other media.
+		const frameFor = (node) => {
+			const explicit = node.closest("figure, [role='figure'], .thumb, .thumbinner, .gallerybox");
+			if (explicit) return explicit;
+			let current = node.parentElement;
+			for (let depth = 0; current && current !== document.body && depth < 4; depth += 1, current = current.parentElement) {
+				if (current.querySelectorAll("img, canvas, video").length > 1) break;
+				if (current.querySelector("figcaption, [class*='caption']")) return current;
+			}
+			return node;
+		};
+		const frames = new Map();
+		for (const node of media) {
+			if (node.parentElement?.closest?.("svg")) continue;
+			const rect = node.getBoundingClientRect();
+			if (rect.width < 48 || rect.height < 48) continue;
+			const frame = frameFor(node);
+			const caption = frame.querySelector?.("figcaption, .thumbcaption, .gallerytext, [class*='caption']")?.textContent || "";
+			const parts = [
+				caption,
+				node.getAttribute("alt"),
+				node.getAttribute("title"),
+				node.getAttribute("aria-label"),
+				frame.getAttribute?.("aria-label"),
+				node.querySelector?.("title")?.textContent,
+				fileNameText(node.currentSrc || node.getAttribute("src") || node.querySelector?.("img")?.getAttribute("src")),
+			];
+			const entry = frames.get(frame) || { frame, media: node, area: 0, parts: [], label: "" };
+			if (rect.width * rect.height > entry.area) {
+				entry.area = rect.width * rect.height;
+				entry.media = node;
+			}
+			entry.parts.push(...parts.filter(Boolean));
+			entry.label ||= compact(caption || node.getAttribute("alt") || node.getAttribute("title") || node.getAttribute("aria-label") || fileNameText(node.getAttribute("src")));
+			frames.set(frame, entry);
+		}
+		const allTokens = tokensOf(rawMatch);
+		const wanted = allTokens.filter((token) => !GENERIC_WORDS.has(token));
+		const queryTokens = wanted.length ? wanted : allTokens;
+		// Single letters ("Z" in "Z-scheme") and other short fragments help a
+		// phrase match but cannot carry a match on their own.
+		const significant = queryTokens.filter((token) => token.length >= 3 || /\d/.test(token));
+		const scoringTokens = significant.length ? significant : queryTokens;
+		const phrase = queryTokens.join(" ");
+		let best = null;
+		for (const entry of frames.values()) {
+			const text = normalize(entry.parts.join(" "));
+			const words = new Set(text.split(" "));
+			const hits = scoringTokens.filter((token) => words.has(token)).length;
+			if (!hits) continue;
+			const score = hits / scoringTokens.length + (phrase && ` ${text} `.includes(` ${phrase} `) ? 0.5 : 0);
+			// Most of the distinctive words must match: "Krebs cycle" sharing only
+			// "cycle" with a Calvin-cycle caption is a different figure.
+			if (score >= 0.6 && (!best || score > best.score)) best = { ...entry, score };
+		}
+		if (!best) {
+			const known = Array.from(frames.values()).map((entry) => entry.label).filter(Boolean).slice(0, 8);
+			return {
+				viewport: readViewport(),
+				selectorRegion: null,
+				targetError: `No image or figure matched "${compact(rawMatch, 60)}".${known.length ? ` Figures on this page include: ${known.map((label) => `"${label}"`).join("; ")}.` : " No captionable images were found on this page."}`,
+			};
+		}
+		element = best.frame;
+		matchedLabel = best.label;
+	} else if (rawSelector) {
+		const matches = document.querySelectorAll(rawSelector);
+		selectorMatchCount = matches.length;
+		element = matches[0] || null;
+		if (!element) return { viewport: readViewport(), selectorRegion: null, targetError: `No element matched selector: ${rawSelector}` };
+	}
+
+	let selectorRegion = null;
+	if (element) {
+		if (shouldScrollIntoView !== false) {
+			// "instant", not "auto": auto follows CSS scroll-behavior, and on a
+			// smooth-scrolling site the rect would be measured mid-animation.
+			element.scrollIntoView?.({ behavior: "instant", block: "center", inline: "center" });
+			// Lazy images only start loading once scrolled near the viewport;
+			// capturing straight away would photograph a blank placeholder.
+			const pending = Array.from(element.matches?.("img") ? [element] : element.querySelectorAll?.("img") || []).filter((img) => !img.complete);
+			if (pending.length) {
+				await Promise.race([
+					Promise.all(pending.map((img) => new Promise((resolve) => {
+						img.addEventListener("load", resolve, { once: true });
+						img.addEventListener("error", resolve, { once: true });
+					}))),
+					new Promise((resolve) => setTimeout(resolve, 2000)),
+				]);
+			}
+			await Promise.race([
+				new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+				new Promise((resolve) => setTimeout(resolve, 300)),
+			]);
+		}
+		const rect = element.getBoundingClientRect();
+		const { width: viewportWidth, height: viewportHeight } = readViewport();
+		const visibleLeft = Math.max(0, rect.left);
+		const visibleTop = Math.max(0, rect.top);
+		const visibleRight = Math.min(viewportWidth, rect.right);
+		const visibleBottom = Math.min(viewportHeight, rect.bottom);
+		const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+		const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+		const elementArea = Math.max(1, rect.width * rect.height);
+		const visibleRatio = Math.max(0, Math.min(1, (visibleWidth * visibleHeight) / elementArea));
+		selectorRegion = {
+			x: Math.round(rect.left),
+			y: Math.round(rect.top),
+			width: Math.round(rect.width),
+			height: Math.round(rect.height),
+			selector: rawSelector || (rawMatch ? `match: ${compact(rawMatch, 60)}` : ""),
+			visibleRatio,
+			clipped: visibleRatio < 0.98 || rect.left < 0 || rect.top < 0 || rect.right > viewportWidth || rect.bottom > viewportHeight,
+			smallRegion: rect.width < 120 || rect.height < 120,
+			visibleRect: {
+				x: Math.round(visibleLeft),
+				y: Math.round(visibleTop),
+				width: Math.round(visibleWidth),
+				height: Math.round(visibleHeight),
+			},
+			...(selectorMatchCount > 1 ? { selectorMatchCount } : {}),
+			...(matchedLabel ? { matchedLabel } : {}),
+		};
+	}
+	return { viewport: readViewport(), selectorRegion };
+}
+
 async function getVisibleRegionSnapshot(tabId, options = {}) {
 	const focusedTab = await focusTab(tabId);
 	let viewport;
 	try {
-		viewport = await executeScriptInTab(
-			focusedTab.id,
-			(selector, shouldScrollIntoView) => {
-			let selectorRegion = null;
-			const rawSelector = String(selector || "").trim();
-			if (rawSelector) {
-				const element = document.querySelector(rawSelector);
-				if (!element) throw new Error(`No element matched selector: ${rawSelector}`);
-				if (shouldScrollIntoView !== false) {
-					element.scrollIntoView?.({ behavior: "auto", block: "center", inline: "center" });
-				}
-				const rect = element.getBoundingClientRect();
-				const viewportWidth = Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1));
-				const viewportHeight = Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1));
-				const visibleLeft = Math.max(0, rect.left);
-				const visibleTop = Math.max(0, rect.top);
-				const visibleRight = Math.min(viewportWidth, rect.right);
-				const visibleBottom = Math.min(viewportHeight, rect.bottom);
-				const visibleWidth = Math.max(0, visibleRight - visibleLeft);
-				const visibleHeight = Math.max(0, visibleBottom - visibleTop);
-				const elementArea = Math.max(1, rect.width * rect.height);
-				const visibleRatio = Math.max(0, Math.min(1, (visibleWidth * visibleHeight) / elementArea));
-				selectorRegion = {
-					x: Math.round(rect.left),
-					y: Math.round(rect.top),
-					width: Math.round(rect.width),
-					height: Math.round(rect.height),
-					selector: rawSelector,
-					visibleRatio,
-					clipped: visibleRatio < 0.98 || rect.left < 0 || rect.top < 0 || rect.right > viewportWidth || rect.bottom > viewportHeight,
-					smallRegion: rect.width < 120 || rect.height < 120,
-					visibleRect: {
-						x: Math.round(visibleLeft),
-						y: Math.round(visibleTop),
-						width: Math.round(visibleWidth),
-						height: Math.round(visibleHeight),
-					},
-				};
-			}
-			const viewport = {
-				width: Math.max(1, Math.round(window.innerWidth || document.documentElement?.clientWidth || 1)),
-				height: Math.max(1, Math.round(window.innerHeight || document.documentElement?.clientHeight || 1)),
-				devicePixelRatio: Number(window.devicePixelRatio || 1),
-				scrollX: Math.round(window.scrollX || 0),
-				scrollY: Math.round(window.scrollY || 0),
-			};
-			return { viewport, selectorRegion };
-			},
-			[String(options.selector || ""), options.scrollIntoView !== false],
-		);
+		viewport = await executeScriptInTab(focusedTab.id, resolveVisibleRegionTargetInPage, [
+			String(options.selector || ""),
+			String(options.match || ""),
+			options.scrollIntoView !== false,
+		]);
 		if (viewport && typeof viewport === "object") viewport.source = viewport.source || "page-script";
 	} catch (error) {
 		viewport = await getVisibleRegionViewportFallback(focusedTab, error);
+		if (viewport && (options.selector || options.match)) viewport.targetUnresolved = true;
 	}
+	// A selector or figure match that found nothing must not silently fall
+	// back to the whole viewport: the caller asked for a specific region.
+	if (viewport?.targetError) throw new Error(viewport.targetError);
 	const viewportInfo = viewport?.viewport || { width: 1, height: 1, devicePixelRatio: 1, scrollX: 0, scrollY: 0 };
 	const selectorRegion = viewport?.selectorRegion || null;
 	const rawRegion = selectorRegion || {
@@ -11643,14 +11808,26 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 		coordinateSystem: "viewport-css-pixels",
 		...(selectorRegion?.selector ? { selector: selectorRegion.selector } : {}),
 		...(selectorRegion ? { visibleRatio: selectorRegion.visibleRatio, clipped: Boolean(selectorRegion.clipped), smallRegion: Boolean(selectorRegion.smallRegion) } : {}),
+		...(selectorRegion?.selectorMatchCount > 1 ? { selectorMatchCount: selectorRegion.selectorMatchCount } : {}),
+		...(selectorRegion?.matchedLabel ? { matchedLabel: selectorRegion.matchedLabel } : {}),
+		...(viewport?.targetUnresolved ? { targetUnresolved: true } : {}),
 	};
+	// Page.captureScreenshot reads clip in document coordinates and in
+	// device-independent pixels (CSS pixels times the tab's zoom), while the
+	// region above is viewport-relative CSS pixels. Without the scroll offset a
+	// capture on a scrolled page photographs an offscreen strip (blank); without
+	// the zoom factor it drifts off the target on any zoomed site.
+	const zoomFactor = await chrome.tabs
+		.getZoom(focusedTab.id)
+		.then((value) => (Number(value) > 0 ? Number(value) : 1))
+		.catch(() => 1);
 	const screenshot = await captureTabScreenshot(focusedTab.id, {
 		...options,
 		clip: {
-			x,
-			y,
-			width,
-			height,
+			x: (x + (Number(viewportInfo.scrollX) || 0)) * zoomFactor,
+			y: (y + (Number(viewportInfo.scrollY) || 0)) * zoomFactor,
+			width: width * zoomFactor,
+			height: height * zoomFactor,
 			scale: 1,
 		},
 	});
@@ -11659,7 +11836,7 @@ async function getVisibleRegionSnapshot(tabId, options = {}) {
 		dataUrl: screenshot.dataUrl,
 		method: screenshot.method,
 		mimeType: options.format === "jpeg" ? "image/jpeg" : "image/png",
-		label: String(options.label || selectorRegion?.selector || "visible region").trim().slice(0, 80) || "visible region",
+		label: String(options.label || selectorRegion?.matchedLabel || selectorRegion?.selector || "visible region").trim().slice(0, 80) || "visible region",
 		region,
 		...(selectorRegion
 			? {
@@ -11917,6 +12094,10 @@ async function extractGoogleDocsTextExportForTab(tab, options = {}) {
 
 async function extractReadableContentInPage(options = {}) {
 	const maxChars = Math.max(1000, Math.min(50000, Number(options.maxChars || 20000) || 20000));
+	// Paging for long pages: skip the first startBlock blocks of the
+	// document-order stream (the same stream a query-less first call returns),
+	// so a reader can continue exactly where the previous excerpt stopped.
+	const startBlock = Math.max(0, Math.min(100000, Math.floor(Number(options.startBlock) || 0)));
 	const maxHeadingOutline = Math.max(0, Math.min(160, Number(options.maxHeadingOutline || 80) || 80));
 	const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
 	const queryStopWords = new Set([
@@ -11943,7 +12124,7 @@ async function extractReadableContentInPage(options = {}) {
 	]);
 	const queryTokens = Array.from(
 		new Set(
-			(String(options.query || "").toLowerCase().match(/[a-z][a-z0-9._-]{2,}|[0-9]+(?:\.[0-9]+)?%?/g) || []).filter(
+			(String(startBlock > 0 ? "" : options.query || "").toLowerCase().match(/[a-z][a-z0-9._-]{2,}|[0-9]+(?:\.[0-9]+)?%?/g) || []).filter(
 				(token) => !queryStopWords.has(token),
 			),
 		),
@@ -12131,6 +12312,13 @@ async function extractReadableContentInPage(options = {}) {
 		headingOutlineElements.push({ entry, element });
 	};
 	const isHeadingElement = (element) => element instanceof Element && /^h[1-6]$/i.test(element.tagName);
+	// <br> inside a cell separates lines; textContent would glue them.
+	const cellTextWithBreaks = (cell) => {
+		if (!cell.querySelector("br")) return cell.textContent || "";
+		const clone = cell.cloneNode(true);
+		for (const br of Array.from(clone.querySelectorAll("br"))) br.replaceWith(" ");
+		return clone.textContent || "";
+	};
 	const tableMarkdown = (table, maxRows = 18, maxTableChars = 2400) => {
 		if (!(table instanceof Element)) return "";
 		const rows = [];
@@ -12140,7 +12328,7 @@ async function extractReadableContentInPage(options = {}) {
 			if (!(row instanceof Element) || !isVisible(row)) continue;
 			const cells = Array.from(row.children || [])
 				.filter((cell) => cell instanceof Element && /^(td|th)$/i.test(cell.tagName) && isVisible(cell))
-				.map((cell) => normalize(cell.textContent || "").slice(0, 220))
+				.map((cell) => normalize(cellTextWithBreaks(cell)).slice(0, 220))
 				.filter(Boolean);
 			if (!cells.length) continue;
 			rows.push(`| ${cells.join(" | ")} |`);
@@ -12306,7 +12494,86 @@ async function extractReadableContentInPage(options = {}) {
 		for (const node of Array.from(clone.querySelectorAll(selector))) node.remove();
 		return clone.textContent || "";
 	};
-	const visibleBlockText = (element) => withoutRemoved(element, hiddenBlockDescendantSelector);
+	// Old-school pages (paulgraham.com) hold a whole essay in one <p> and
+	// separate paragraphs with <br><br>. textContent drops the breaks, gluing
+	// words ("July 2013One") into one unpageable block. Split such blocks at
+	// double breaks; a single break reads as a space. Null when no <br>.
+	const lineBreakParagraphs = (element) => {
+		if (!(element instanceof Element) || !element.querySelector("br")) return null;
+		const clone = element.cloneNode(true);
+		for (const node of Array.from(clone.querySelectorAll(hiddenBlockDescendantSelector))) node.remove();
+		for (const br of Array.from(clone.querySelectorAll("br"))) br.replaceWith("\u2029");
+		return String(clone.textContent || "")
+			.split(/\u2029\s*\u2029\s*/)
+			.map((part) => normalize(part.replace(/\u2029/g, " ")))
+			.filter(Boolean);
+	};
+	const visibleBlockText = (element) => {
+		const parts = lineBreakParagraphs(element);
+		return parts ? parts.join(" ") : withoutRemoved(element, hiddenBlockDescendantSelector);
+	};
+	// Layout tables (a page wrapped in nested <table>s, an essay in one cell)
+	// are not data: as a table block they duplicate the whole page as one glued
+	// row. Their inner paragraphs are emitted on their own; loose cell text is
+	// emitted as paragraphs instead.
+	const isLayoutTable = (table) =>
+		Boolean(table.querySelector("table")) ||
+		Array.from(table.rows || []).some((row) =>
+			Array.from(row.cells || []).some((cell) => normalize(cell.textContent || "").length > 600 && cell.querySelector("p, div, br, blockquote, ul, ol")),
+		);
+	// A layout cell's content in document order: loose text split at <br><br>
+	// (old-school pages put the essay straight into the cell), and the block
+	// elements the main pass also emits (same text, so the later visit is a
+	// dedupe no-op). Nested tables get their own pass.
+	const layoutCellBlocks = (cell) => {
+		const out = [];
+		let buffer = "";
+		const flush = () => {
+			for (const part of buffer.split(/\u2029\s*\u2029\s*/)) {
+				const text = normalize(part.replace(/\u2029/g, " "));
+				if (text) out.push({ tag: "p", text });
+			}
+			buffer = "";
+		};
+		const visit = (node) => {
+			for (const child of Array.from(node.childNodes || [])) {
+				if (child.nodeType === 3) {
+					buffer += child.nodeValue || "";
+					continue;
+				}
+				if (!(child instanceof Element)) continue;
+				const tag = child.tagName.toLowerCase();
+				if (tag === "br") {
+					buffer += "\u2029";
+					continue;
+				}
+				if (/^(?:script|style|noscript|template|svg|button|input|select|textarea|img)$/.test(tag)) continue;
+				if (child.matches(hiddenBlockDescendantSelector) || !isVisible(child) || isInsideIgnored(child)) continue;
+				if (tag === "table") {
+					flush();
+					continue;
+				}
+				if (/^(?:p|blockquote|pre|h[1-6])$/.test(tag)) {
+					flush();
+					const parts = tag === "p" || tag === "blockquote" ? lineBreakParagraphs(child) : null;
+					for (const text of parts || [blockTextFor(tag, child)]) out.push({ tag, text });
+					continue;
+				}
+				if (tag === "ul" || tag === "ol") {
+					flush();
+					for (const item of Array.from(child.querySelectorAll("li"))) out.push({ tag: "li", text: listItemOwnText(item) });
+					continue;
+				}
+				const blockish = /^(?:div|dl|dt|dd|center|section|article|header|footer|main|figure|figcaption|address|hr|form|fieldset)$/.test(tag);
+				if (blockish) flush();
+				visit(child);
+				if (blockish) flush();
+			}
+		};
+		visit(cell);
+		flush();
+		return out;
+	};
 	// A list item's textContent concatenates any nested list into one unhighlightable
 	// glued string; the nested items are collected as their own blocks anyway.
 	const listItemOwnText = (element) => withoutRemoved(element, `ul, ol, ${hiddenBlockDescendantSelector}`);
@@ -12322,18 +12589,34 @@ async function extractReadableContentInPage(options = {}) {
 		}
 		return clone.textContent || "";
 	};
+	// Display equations live outside paragraphs (Wikipedia's .equation-box,
+	// indented <dd> math, KaTeX/MathJax display blocks), so extraction used to
+	// drop them: asked for Bayes' rule, the model only ever saw the lead-in
+	// sentence and highlighted that. Emit them as $$...$$ blocks carrying the
+	// page's own LaTeX, which the highlighter matches to the rendered equation.
+	const DISPLAY_MATH_SELECTOR = ".equation-box, .mwe-math-element-block, .katex-display, mjx-container[display='true'], .MathJax_Display, math[display='block']";
+	const displayMathLatex = (element) => {
+		const annotation = element.querySelector("annotation[encoding='application/x-tex']") || element.querySelector("annotation");
+		const text = annotation?.textContent || element.querySelector("math[alttext]")?.getAttribute("alttext") || element.getAttribute?.("alttext") || element.querySelector("img[alt]")?.getAttribute("alt") || "";
+		return normalize(text);
+	};
 	const blockTextFor = (tag, element) => {
 		if (tag === "table") return tableMarkdown(element);
 		if (tag === "li") return listItemOwnText(element);
 		if (/^h[1-6]$/.test(tag)) return headingOwnText(element);
 		return visibleBlockText(element);
 	};
+	let skipBlocks = startBlock;
 	const pushBlock = (kind, text, element) => {
 		const clean = normalize(text);
 		if (!clean || clean.length < 2) return;
 		const key = clean.toLowerCase();
 		if (seen.has(key)) return;
 		seen.add(key);
+		if (skipBlocks > 0) {
+			skipBlocks -= 1;
+			return;
+		}
 		const prefix = /^h[1-6]$/.test(kind) ? `${"#".repeat(Number(kind.slice(1)) || 2)} ` : kind === "li" ? "- " : kind === "blockquote" ? "> " : "";
 		const body =
 			kind === "pre"
@@ -12380,6 +12663,7 @@ async function extractReadableContentInPage(options = {}) {
 			if (!(element instanceof Element) || !isVisible(element)) continue;
 			if (isInsideIgnored(element) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 			const tag = element.tagName.toLowerCase();
+			if (tag === "table" && isLayoutTable(element)) continue;
 			const text = blockTextFor(tag, element);
 			const score = queryScore(text);
 			if (score <= 0) continue;
@@ -12412,15 +12696,36 @@ async function extractReadableContentInPage(options = {}) {
 		}
 	}
 
-	for (const element of root.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table")) {
+	for (const element of root.querySelectorAll(`h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table, ${DISPLAY_MATH_SELECTOR}`)) {
 		if (usedChars >= maxChars) break;
 		if (!(element instanceof Element) || !isVisible(element)) continue;
 		if (isInsideIgnored(element) && !["pre"].includes(element.tagName.toLowerCase())) continue;
+		if (element.matches(DISPLAY_MATH_SELECTOR)) {
+			// Math inside a paragraph, list item, or another display block is
+			// already part of that block's text.
+			if (element.parentElement?.closest(`${DISPLAY_MATH_SELECTOR}, p, li, blockquote, table, figcaption, caption, h1, h2, h3, h4, h5, h6`)) continue;
+			const latex = displayMathLatex(element);
+			if (latex) pushBlock("math", `$$${latex}$$`, element);
+			continue;
+		}
 		const tag = element.tagName.toLowerCase();
+		if (tag === "table" && isLayoutTable(element)) {
+			for (const row of Array.from(element.rows || [])) {
+				for (const cell of Array.from(row.cells || [])) {
+					for (const block of layoutCellBlocks(cell)) pushBlock(block.tag, block.text, cell);
+				}
+			}
+			continue;
+		}
+		const parts = tag === "p" || tag === "blockquote" ? lineBreakParagraphs(element) : null;
+		if (parts) {
+			for (const part of parts) pushBlock(tag, part, element);
+			continue;
+		}
 		pushBlock(tag, blockTextFor(tag, element), element);
 	}
 
-	if (blocks.length < 3) {
+	if (blocks.length < 3 && startBlock === 0) {
 		for (const element of root.querySelectorAll("div, section")) {
 			if (usedChars >= maxChars || blocks.length >= 40) break;
 			if (!(element instanceof Element) || !isVisible(element)) continue;
@@ -12439,6 +12744,9 @@ async function extractReadableContentInPage(options = {}) {
 		blockCount: blocks.length,
 		charCount: markdown.length,
 		truncated: markdown.length >= maxChars,
+		pagingSupported: true,
+		startBlock,
+		queryUsed: queryTokens.length > 0,
 		headingOutline,
 		headingOutlineMarkdown: headingOutline.map((heading) => heading.markdown || heading.text).join("\n"),
 		blocks,
@@ -13529,7 +13837,7 @@ async function handleCommandInner(name, args = {}) {
 				try {
 					content =
 						(await extractGoogleDocsTextExportForTab(tab, { maxChars: args.maxChars })) ||
-						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars, query: args.query })})`));
+						(await evaluateInTab(tab.id, `(${extractReadableContentInPage.toString()})(${JSON.stringify({ maxChars: args.maxChars, query: args.query, startBlock: args.startBlock })})`));
 					content = await maybeGetDebuggerFrameReadableContent(tab, content, {
 						maxChars: args.maxChars,
 						query: args.query,

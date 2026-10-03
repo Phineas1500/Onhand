@@ -3231,9 +3231,29 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		let pendingSpace = null;
 		let hasContent = false;
 		let previousNode = null;
+		// A <br> renders as a line break, so text on either side never reads as
+		// one word. Without this, br-separated pages (an essay whose paragraphs
+		// are <br><br>) glued "[1]Actually", and sentence snapping ran through
+		// the paragraph break into the previous paragraph.
+		let breakWalker = null;
+		const lineBreakBetween = (fromNode, toNode) => {
+			const doc = toNode?.ownerDocument;
+			if (!fromNode || !doc) return false;
+			breakWalker ||= doc.createTreeWalker(doc.documentElement, 1 | 4);
+			breakWalker.currentNode = fromNode;
+			for (let steps = 0; steps < 12; steps += 1) {
+				const next = breakWalker.nextNode();
+				if (!next || next === toNode) return false;
+				if (next.nodeName === "BR") return true;
+			}
+			return false;
+		};
 
 		for (const node of textNodes) {
 			const value = String(node.nodeValue || "");
+			if (hasContent && !pendingSpace && previousNode && !/^\s/.test(value) && lineBreakBetween(previousNode, node)) {
+				pendingSpace = { node, offset: 0, endOffset: 0 };
+			}
 			if (options.pdfNodeBoundaries && hasContent && !pendingSpace && pdfTextNodeBoundaryNeedsSpace(previousNode, node)) {
 				pendingSpace = { node, offset: 0, endOffset: 0 };
 			}
