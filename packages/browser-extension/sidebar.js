@@ -4018,7 +4018,7 @@
 			type: "browser-runtime:update-settings",
 			authMode: "api-key",
 			aiProvider: "onhand-free",
-			aiModel: "deepseek/deepseek-v4-flash",
+			aiModel: "gpt-6-luna",
 		});
 		if (!response?.ok) throw new Error(response?.error || "Could not enable the free tier.");
 		authStatusText = "";

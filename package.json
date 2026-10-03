@@ -42,6 +42,7 @@
     "ops:free-tier:check": "node ./scripts/run-free-tier-ops-report.mjs --days=1 --check --fail-on-critical --test-device-hashes=auto",
     "free-tier:bypass": "node ./scripts/free-tier-bypass.mjs",
     "debug:sessions": "node ./scripts/dump-onhand-sessions.mjs",
+    "debug:reload-extension": "node ./scripts/reload-onhand-extension.mjs",
     "test:fixtures": "node ./scripts/show-test-fixtures.mjs",
     "test:preflight": "node ./scripts/test-preflight.mjs",
     "test:page-toolkit-regressions": "node ./scripts/run-page-toolkit-regressions.mjs",

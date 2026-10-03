@@ -2,6 +2,7 @@ const DEFAULT_RUN_ID = `chrome-acceptance-${new Date().toISOString().slice(0, 10
 
 const OPERATOR_NOTES = [
 	"Use Computer Use for chrome://extensions reloads, the Onhand options page, the Onhand side panel, and prompt submission.",
+	"Without Computer Use, launch Chrome or Helium with --remote-debugging-port, reload with npm run debug:reload-extension, and drive side-panel prompts with npm run debug:sessions (ask-new-url / ask).",
 	"Use the Codex Chrome Extension backend only for normal web page automation after extension UI is closed.",
 	"If Codex Chrome reports that another extension UI is open, close the side panel, extension options tab, or chrome://extensions tab and retry page automation.",
 	"Treat that Codex Chrome blocker as an automation conflict unless the Onhand side-panel prompt itself fails with an OAuth or model error.",
@@ -11,7 +12,7 @@ const suites = {
 	oauth: {
 		label: "OAuth prompt probe",
 		setup: [
-			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, the model under test as aiModel, hasOAuthCredentials true, and expired false",
 			"close extension options, chrome://extensions, and any open Onhand side panel before using Codex Chrome page automation",
 			"open https://en.wikipedia.org/wiki/Personal_computer in Chrome",
 			"open the Onhand side panel with Computer Use",
@@ -36,8 +37,8 @@ const suites = {
 		label: "Local fixture matrix",
 		setup: [
 			"npm run build:extension",
-			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"reload the unpacked extension from packages/browser-extension/ on chrome://extensions (Computer Use), or run npm run debug:reload-extension over the debug port",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, the model under test as aiModel, hasOAuthCredentials true, and expired false",
 			"npm run serve:fixture",
 			"open http://127.0.0.1:8765/ in Chrome",
 			"start a fresh Onhand side-panel session named Chrome acceptance {runId}",
@@ -129,8 +130,8 @@ const suites = {
 		label: "PDF annotation matrix",
 		setup: [
 			"npm run build:extension",
-			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"reload the unpacked extension from packages/browser-extension/ on chrome://extensions (Computer Use), or run npm run debug:reload-extension over the debug port",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, the model under test as aiModel, hasOAuthCredentials true, and expired false",
 			"npm run serve:fixture",
 			"start a fresh Onhand side-panel session named Chrome PDF acceptance {runId}",
 			"use the controlled PDF.js-style fixture and Scholar-like fixture first, then run the native Chrome PDF unsupported diagnostic and the real Google Scholar PDF Reader cases when available",
@@ -321,10 +322,10 @@ const suites = {
 	"real-pages": {
 		label: "Real page matrix",
 		setup: [
-			"reload the unpacked Chrome extension if the runtime bundle changed",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"reload the unpacked extension if the runtime bundle changed (chrome://extensions, or npm run debug:reload-extension over the debug port)",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, the model under test as aiModel, hasOAuthCredentials true, and expired false",
 			"start a fresh Onhand side-panel session named Chrome real-page acceptance {runId}",
-			"run each case in Chrome, not Helium",
+			"run each case in Chrome or Helium with the unpacked extension loaded",
 		],
 		cases: [
 			{
@@ -371,8 +372,8 @@ const suites = {
 	learning: {
 		label: "Learning Mode matrix",
 		setup: [
-			"reload the unpacked Chrome extension if the runtime bundle changed",
-			"confirm extension options show authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, and expired false",
+			"reload the unpacked extension if the runtime bundle changed (chrome://extensions, or npm run debug:reload-extension over the debug port)",
+			"confirm extension options show authMode oauth, aiProvider openai-codex, the model under test as aiModel, hasOAuthCredentials true, and expired false",
 			"open https://www.cs.purdue.edu/homes/ribeirob/courses/Spring2026/lectures/06BayesianDL/BayesianDL.html in Chrome",
 			"start a fresh Onhand side-panel session named Chrome learning acceptance {runId}",
 			"run these cases in order; keep the same session for the Learning Mode cases so repeated-concept state can accumulate",
@@ -515,7 +516,7 @@ const suites = {
 		setup: [
 			"optional: npm run generate:realtime-voice-fixture, then play the generated WAV through Chrome's selected microphone or a virtual audio device",
 			"npm run build:extension",
-			"reload the unpacked Chrome extension from packages/browser-extension/ using Computer Use on chrome://extensions",
+			"reload the unpacked extension from packages/browser-extension/ on chrome://extensions (Computer Use), or run npm run debug:reload-extension over the debug port",
 			"confirm extension options show an OpenAI platform API key with Realtime API access; Codex OAuth can stay selected for text chat but is not enough for Realtime voice",
 			"npm run serve:fixture",
 			"open http://127.0.0.1:8765/ in Chrome",
@@ -686,7 +687,7 @@ function printHelp() {
 function printPlan(plan) {
 	console.log(`# Chrome Acceptance Gate: ${plan.runId}`);
 	console.log("");
-	console.log("Use Chrome with the Codex Chrome Extension and OpenAI Codex OAuth. Record PASS/FAIL results in the PR or handoff.");
+	console.log("Use Chrome or Helium with the unpacked Onhand extension and OpenAI Codex OAuth. Record PASS/FAIL results in the PR or handoff.");
 	console.log("");
 	console.log("Operator notes:");
 	for (const line of plan.operatorNotes) console.log(`- ${line}`);

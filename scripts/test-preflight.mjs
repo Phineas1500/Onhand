@@ -195,8 +195,8 @@ async function main() {
 	console.log("");
 	console.log("Manual reminders:");
 	console.log("- Before a release, run `npm run test:real-browser-anchoring` (needs a Chromium-based browser, e.g. Helium): it exercises live DOM highlight anchoring/re-find that the mocked suites cannot.");
-	console.log("- Reload the unpacked extension after changing the generated runtime bundle, using Computer Use on chrome://extensions when validating from Codex.");
-	console.log("- Confirm OpenAI Codex OAuth status before real Chrome validation: authMode oauth, aiProvider openai-codex, aiModel gpt-5.5, hasOAuthCredentials true, expired false.");
+	console.log("- Reload the unpacked extension after changing the generated runtime bundle: Computer Use on chrome://extensions, or `npm run debug:reload-extension` over the remote-debugging port.");
+	console.log("- Confirm OpenAI Codex OAuth status before real-browser validation: authMode oauth, aiProvider openai-codex, the model under test, hasOAuthCredentials true, expired false.");
 	console.log("- For real Chrome validation, run the prompts from `npm run acceptance:chrome -- --suite=all` in the Onhand side panel with Computer Use.");
 	console.log("- Use the Codex Chrome Extension backend only for normal web pages after Onhand extension UI is closed.");
 	console.log("- The browser-only runtime no longer requires Electron, tmux, or a localhost bridge.");

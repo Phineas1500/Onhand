@@ -41,10 +41,10 @@ npm run acceptance:chrome -- --suite=all --json
 ## Preconditions
 
 - Build the runtime with `npm run build:extension`.
-- Reload the unpacked Chrome extension from `packages/browser-extension/`.
-- Use Chrome, not Helium.
+- Reload the unpacked extension from `packages/browser-extension/` (see Automation Boundaries for the two ways to do it).
+- Use Chrome or Helium. Branded Chrome 137+ ignores `--load-extension`, so load the unpacked extension from `chrome://extensions` (or over CDP with `Extensions.loadUnpacked`); Helium accepts `--load-extension`.
 - Use the Onhand side panel.
-- Confirm the extension options status shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false`.
+- Confirm the extension options status shows `authMode: "oauth"`, `aiProvider: "openai-codex"`, the model under test as `aiModel`, `hasOAuthCredentials: true`, and `expired: false`.
 - Start a fresh Onhand session whose title includes the run id.
 
 ## Automation Boundaries
@@ -55,6 +55,12 @@ Use Computer Use for extension UI:
 - the Onhand extension options page
 - the Onhand side panel
 - submitting and reading side-panel prompts
+
+Without Computer Use (for example from Claude Code), drive the same steps over the browser's remote-debugging port instead:
+
+- launch Chrome or Helium with `--remote-debugging-port=<port>`
+- reload with `npm run debug:reload-extension -- --port=<port>`, which calls `chrome.developerPrivate.reload` from the `chrome://extensions` page (`chrome.runtime.reload()` can leave the old MV3 service worker running)
+- submit and read side-panel prompts with `npm run debug:sessions -- ask-new-url <url> "<prompt>"` and `ask`
 
 Use the Codex Chrome Extension backend only for normal web page automation after extension UI is closed. It is useful for opening real pages, inspecting normal page state, and checking that a target page is ready before a side-panel run.
 
