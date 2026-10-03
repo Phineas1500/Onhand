@@ -875,6 +875,11 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		"h6",
 		"summary",
 		'[data-testid="tweetText"]',
+		// GitHub's file view draws each code line as a div (inside an
+		// aria-hidden layer; a transparent textarea is the accessible copy),
+		// so code lines matched no container and could never be marked.
+		// Read-only view only: live editors (CodeMirror, Monaco) own their DOM.
+		".react-code-line-contents",
 	].join(", ");
 
 		const MATH_CONTAINER_SELECTOR = [
@@ -4249,6 +4254,46 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 						fallback: mode.fallback || "table-row",
 						anchorContext: extractHighlightAnchorContext(mode.text, foundAt, mode.query.length),
 						anchorOccurrence: occurrence,
+					});
+				}
+			}
+			// A whole-row quote copied from extraction ("| 3 | Shanghai Tower | 632 |
+			// ... | notes | [18] |") rarely matches the row text exactly: notes
+			// cells carry inline references and extraction truncates long cells.
+			// Exact containment failed, and the approximate matcher then landed on
+			// a different row sharing one word. Match cell by cell instead: the row
+			// holding most of the quoted cells, and clearly more than any other.
+			const normalizeCell = (value) =>
+				normalizeHighlightSearchText(String(value || "").replace(/\[(?:\d{1,3}|[a-z])\]/gi, " ").replace(/…$/, ""))
+					.replace(/\s+/g, " ")
+					.trim();
+			const queryCells = rawQuery.includes("|") ? rawQuery.split("|").map(normalizeCell).filter((cell) => cell.length >= 1) : [];
+			if (queryCells.length >= 3) {
+				let best = null;
+				let runnerUpHits = 0;
+				for (const row of document.querySelectorAll("tr")) {
+					if (row.querySelector("tr") || (row.cells?.length || 0) < 2) continue;
+					const cells = Array.from(row.cells || [], (cell) => normalizeCell(cell.textContent));
+					const hits = queryCells.filter((queryCell) => cells.some((cell) => cell === queryCell || (queryCell.length >= 16 && cell.startsWith(queryCell)))).length;
+					if (!best || hits > best.hits) {
+						runnerUpHits = best?.hits || 0;
+						best = { row, hits };
+					} else if (hits > runnerUpHits) {
+						runnerUpHits = hits;
+					}
+				}
+				if (
+					best &&
+					best.hits >= Math.max(3, Math.ceil(queryCells.length * 0.6)) &&
+					best.hits > runnerUpHits &&
+					isVisible(best.row) &&
+					!isInsideExcludedAnnotationAncestor(best.row) &&
+					!best.row.closest("[data-onhand-highlight-kind]")
+				) {
+					return await highlightBlockElement(best.row, rawQuery, {
+						scrollIntoView,
+						approximate: true,
+						fallback: "table-row-cells",
 					});
 				}
 			}

@@ -933,6 +933,27 @@ function hasOrphanMarkdownDelimiterLine(reply) {
 	return lines.some((line, index) => !paired.has(index) && /^\s*(?:\*\*|__|`{1,3})\s*$/.test(line));
 }
 
+// Substantive answer points (a bullet, or a sentence of prose) that state
+// something but carry no [[cite:]] chip — G1/G9 coverage. Lead-ins ending in
+// a colon, questions, synthesis lines, and code are not counted.
+function uncitedAnswerPoints(reply) {
+	const text = String(reply || "").replace(/```[\s\S]*?```/g, " ").replace(/\$\$[\s\S]*?\$\$/g, " ");
+	const units = [];
+	for (const rawLine of text.split("\n")) {
+		const line = rawLine.trim();
+		if (!line || /^#{1,6}\s/.test(line)) continue;
+		const body = line.replace(/^(?:[-*•]|\d+[.)])\s+/, "");
+		const parts = body !== line ? [body] : body.split(/(?<=[.!?])\s+(?=[A-Z*"“])/);
+		for (const part of parts) units.push(part.trim());
+	}
+	return units.filter((unit) => {
+		if (!unit || /\[\[cite:/.test(unit) || /[?:]\s*$/.test(unit)) return false;
+		if (/^(?:\*\*)?(?:in short|overall|takeaway|in one sentence|main takeaway|bottom line|summary|marked|answer|switch learning)\b/i.test(unit)) return false;
+		if (/instructions aimed at AI assistants/i.test(unit)) return false;
+		return (unit.match(/[A-Za-z]{2,}/g) || []).length >= 6;
+	});
+}
+
 function allTools(turn) {
 	return [
 		...(Array.isArray(turn?.toolTraces) ? turn.toolTraces : []),
@@ -1076,6 +1097,7 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		hasInlineMarkdownHeading: /[^\n][ \t]+#{2,4}[ \t]+\S/.test(reply),
 		hasMarkdownTable: /^\s*\|.+\|\s*$/m.test(reply) || /\|[ \t]+\|(?:-{3,}|:?-{3,}:?)/.test(reply) || reply.split("\n").some((line) => !/[$\\`]/.test(line) && /^\s*\S[^\n|]{1,80}\s+\|\s+\S/.test(line)),
 		hasOrphanMarkdownDelimiter: hasOrphanMarkdownDelimiterLine(reply),
+		uncitedPointCount: uncitedAnswerPoints(reply).length,
 		hasDuplicatedOpening: /\b(?:Here(?:'|’)s\s+(?:a|the)|Here\s+are\s+(?:the\s+)?(?:main\s+)?)\s+(?:roadmap|summary|rundown|overview|data structures)[^.!?\n]{0,180}(?:[.!?]|[—–-])\s*Here(?:'|’)s\s+(?:a|the)\s+(?:roadmap|summary|rundown|overview)/i.test(reply),
 		hasRedundantHighlightRecap:
 			/\n{2,}(?:(?:The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap(?:\s+at\s+a\s+glance|\s*\([^)]{0,80}\))?\.?\s*)?(?:Highlighted sections?|Source markers?|Marked sections?)(?:\s+on\s+the\s+page)?|The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap\b)\b[^:\n]{0,180}:\s*\n/i.test(reply) ||
@@ -1106,6 +1128,8 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 	if (expect.forbidInlineMarkdownHeadings && metrics.hasInlineMarkdownHeading) penalty(0.12, "reply contains inline Markdown headings");
 	if (expect.forbidMarkdownTables && metrics.hasMarkdownTable) penalty(0.14, "reply contains a Markdown table");
 	if (metrics.hasOrphanMarkdownDelimiter) penalty(0.12, "reply contains an orphan Markdown delimiter line");
+	// Advisory: page-grounded answers should chip every page point (G1/G9).
+	if (metrics.highlightCount > 0 && metrics.uncitedPointCount > 0) penalty(0, `${metrics.uncitedPointCount} answer point(s) carry no citation chip`, false);
 	if (metrics.hasDuplicatedOpening) penalty(0.12, "reply contains a duplicated opening sentence");
 	if (metrics.hasRedundantHighlightRecap) penalty(0.12, "reply contains a redundant highlighted-section recap");
 	if (metrics.hasDanglingCompactFooterLeadIn) penalty(0.12, "reply contains a dangling lead-in before the compact teaching footer");

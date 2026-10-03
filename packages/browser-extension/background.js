@@ -5154,6 +5154,11 @@ const createPageToolkit = (options = {}) => {
 		"h6",
 		"summary",
 		'[data-testid="tweetText"]',
+		// GitHub's file view draws each code line as a div (inside an
+		// aria-hidden layer; a transparent textarea is the accessible copy),
+		// so code lines matched no container and could never be marked.
+		// Read-only view only: live editors (CodeMirror, Monaco) own their DOM.
+		".react-code-line-contents",
 	].join(", ");
 
 		const MATH_CONTAINER_SELECTOR = [
@@ -8528,6 +8533,46 @@ const createPageToolkit = (options = {}) => {
 						fallback: mode.fallback || "table-row",
 						anchorContext: extractHighlightAnchorContext(mode.text, foundAt, mode.query.length),
 						anchorOccurrence: occurrence,
+					});
+				}
+			}
+			// A whole-row quote copied from extraction ("| 3 | Shanghai Tower | 632 |
+			// ... | notes | [18] |") rarely matches the row text exactly: notes
+			// cells carry inline references and extraction truncates long cells.
+			// Exact containment failed, and the approximate matcher then landed on
+			// a different row sharing one word. Match cell by cell instead: the row
+			// holding most of the quoted cells, and clearly more than any other.
+			const normalizeCell = (value) =>
+				normalizeHighlightSearchText(String(value || "").replace(/\[(?:\d{1,3}|[a-z])\]/gi, " ").replace(/…$/, ""))
+					.replace(/\s+/g, " ")
+					.trim();
+			const queryCells = rawQuery.includes("|") ? rawQuery.split("|").map(normalizeCell).filter((cell) => cell.length >= 1) : [];
+			if (queryCells.length >= 3) {
+				let best = null;
+				let runnerUpHits = 0;
+				for (const row of document.querySelectorAll("tr")) {
+					if (row.querySelector("tr") || (row.cells?.length || 0) < 2) continue;
+					const cells = Array.from(row.cells || [], (cell) => normalizeCell(cell.textContent));
+					const hits = queryCells.filter((queryCell) => cells.some((cell) => cell === queryCell || (queryCell.length >= 16 && cell.startsWith(queryCell)))).length;
+					if (!best || hits > best.hits) {
+						runnerUpHits = best?.hits || 0;
+						best = { row, hits };
+					} else if (hits > runnerUpHits) {
+						runnerUpHits = hits;
+					}
+				}
+				if (
+					best &&
+					best.hits >= Math.max(3, Math.ceil(queryCells.length * 0.6)) &&
+					best.hits > runnerUpHits &&
+					isVisible(best.row) &&
+					!isInsideExcludedAnnotationAncestor(best.row) &&
+					!best.row.closest("[data-onhand-highlight-kind]")
+				) {
+					return await highlightBlockElement(best.row, rawQuery, {
+						scrollIntoView,
+						approximate: true,
+						fallback: "table-row-cells",
 					});
 				}
 			}
@@ -12602,6 +12647,36 @@ async function extractReadableContentInPage(options = {}) {
 		const text = annotation?.textContent || element.querySelector("math[alttext]")?.getAttribute("alttext") || element.getAttribute?.("alttext") || element.querySelector("img[alt]")?.getAttribute("alt") || "";
 		return normalize(text);
 	};
+	// Code viewers draw each line as a div (GitHub's file view, CodeMirror,
+	// Monaco), and GitHub marks that layer aria-hidden, so extraction used to
+	// return no code at all for a file page. Read the lines in order; on
+	// GitHub, the "file content" textarea holds the whole file even when the
+	// visible lines are virtualized.
+	const CODE_VIEWER_ROOT_SELECTOR = ".react-code-lines, .cm-content, .view-lines";
+	const CODE_VIEWER_LINE_SELECTOR = ".react-code-line-contents, .cm-line, .view-line";
+	const codeViewerText = (viewer) => {
+		const fileContent = viewer.closest("section, [data-hpc], main, body")?.querySelector('textarea[aria-label="file content" i]');
+		const lines = Array.from(viewer.querySelectorAll(CODE_VIEWER_LINE_SELECTOR)).map((line) => String(line.textContent || "").replace(/\u00a0/g, " ").replace(/\s+$/, ""));
+		const fromLines = lines.join("\n");
+		const fromTextarea = String(fileContent?.value || "");
+		return fromTextarea.length > fromLines.length ? fromTextarea : fromLines;
+	};
+	const codeChunks = (code, maxChunkChars = 2400) => {
+		const chunks = [];
+		let current = [];
+		let length = 0;
+		for (const line of String(code || "").split("\n")) {
+			if (length + line.length + 1 > maxChunkChars && current.length) {
+				chunks.push(current.join("\n"));
+				current = [];
+				length = 0;
+			}
+			current.push(line);
+			length += line.length + 1;
+		}
+		if (current.some((line) => line.trim())) chunks.push(current.join("\n"));
+		return chunks;
+	};
 	const blockTextFor = (tag, element) => {
 		if (tag === "table") return tableMarkdown(element);
 		if (tag === "li") return listItemOwnText(element);
@@ -12698,8 +12773,15 @@ async function extractReadableContentInPage(options = {}) {
 		}
 	}
 
-	for (const element of root.querySelectorAll(`h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table, ${DISPLAY_MATH_SELECTOR}`)) {
+	for (const element of root.querySelectorAll(`h1, h2, h3, h4, h5, h6, p, li, blockquote, pre, figcaption, caption, table, ${DISPLAY_MATH_SELECTOR}, ${CODE_VIEWER_ROOT_SELECTOR}`)) {
 		if (usedChars >= maxChars) break;
+		// Checked before isVisible: GitHub's rendered code layer is aria-hidden
+		// even though it is exactly what a sighted reader sees.
+		if (element instanceof Element && element.matches(CODE_VIEWER_ROOT_SELECTOR)) {
+			if (element.parentElement?.closest(CODE_VIEWER_ROOT_SELECTOR)) continue;
+			for (const chunk of codeChunks(codeViewerText(element))) pushBlock("pre", chunk, element);
+			continue;
+		}
 		if (!(element instanceof Element) || !isVisible(element)) continue;
 		if (isInsideIgnored(element) && !["pre"].includes(element.tagName.toLowerCase())) continue;
 		if (element.matches(DISPLAY_MATH_SELECTOR)) {

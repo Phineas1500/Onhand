@@ -610,6 +610,31 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
 }
 
+async function assertGithubCodeViewIsReadableAndMarkable() {
+	// GitHub's file view draws code lines as divs inside an aria-hidden layer
+	// (a transparent "file content" textarea is the accessible copy), so
+	// extraction returned no code and every highlight failed; the model
+	// detoured through raw.githubusercontent.com in a background tab.
+	const declaration = await loadBackgroundFunction("extractReadableContentInPage");
+	const lines = ["def get(url, params=None, **kwargs):", '    r"""Sends a GET request."""', "", '    return request("get", url, params=params, **kwargs)'];
+	const html = `<main><h1>requests/src/requests/api.py</h1><section><textarea id="read-only-cursor-text-area" aria-label="file content">${lines.join("\n")}</textarea><div class="react-code-file-contents" aria-hidden="true"><div class="react-code-lines">${lines.map((line, index) => `<div class="react-code-text react-code-line-contents" data-line-number="${index + 1}"><span>${line.replace(/</g, "&lt;")}</span></div>`).join("")}</div></div></section></main>`;
+	const dom = new JSDOM(`<!doctype html><html><head><title>api.py</title></head><body>${html}</body></html>`, {
+		url: "https://github.com/psf/requests/blob/main/src/requests/api.py",
+		pretendToBeVisual: true,
+		runScripts: "outside-only",
+	});
+	const content = await dom.window.eval(`(${declaration})`)({ maxChars: 20000 });
+	const code = content.blocks.find((block) => block.tag === "pre")?.text || "";
+	assert.match(code, /def get\(url, params=None, \*\*kwargs\):/, "the code view is extracted");
+	assert.match(code, /\n    return request\("get", url, params=params, \*\*kwargs\)/, "indentation and line breaks survive");
+
+	const { dom: pageDom, toolkit } = await createToolkit(html);
+	const result = await toolkit.highlightText('return request("get", url, params=params, **kwargs)', { scrollIntoView: false });
+	const mark = pageDom.window.document.querySelector(`[data-onhand-annotation-id="${result.annotationId}"]`);
+	assert.match(mark?.textContent || "", /return request\("get"/, "a code line can be marked");
+	assert.ok(mark?.closest(".react-code-line-contents"), "the mark lands in the rendered code line, not the hidden textarea");
+}
+
 async function assertPdfMatchedTextKeepsLineBreakSpaces() {
 	// A BLEU-score highlight was reported as "...best results, includingensembles":
 	// range.toString() glues pdf.js text-layer spans that sit on separate lines.
@@ -1058,6 +1083,20 @@ async function assertHighlightTextMatchesAcrossTableRowCells() {
 
 	const piped = await toolkit.highlightText("| Adults 71 years and older | 20 mcg (800 IU) |", { scrollIntoView: false });
 	assert.match(marked(piped)?.textContent || "", /Adults 71 years and older\s*20 mcg \(800 IU\)/, "the extraction's pipe-row form lands on the row");
+
+	// A whole-row quote copied from extraction, with a long notes cell and a
+	// reference cell: exact containment fails, and the approximate matcher used
+	// to land on a different row sharing the city ("Shanghai World Financial Center").
+	const { dom: towerDom, toolkit: towerToolkit } = await createToolkit(
+		`<main><table><tbody><tr><th>Rank</th><th>Name</th><th>m</th><th>ft</th><th>Floors</th><th>City</th><th>Country</th><th>Year</th><th>Comments</th><th>Ref</th></tr><tr><td>3</td><td><a href="#">Shanghai Tower</a></td><td>632</td><td>2,073</td><td>128 (+ 5 below ground)</td><td>Shanghai</td><td>China</td><td>2015</td><td>Tallest building in East Asia,<sup>[16]</sup> tallest twisted building in the world; contains the highest luxury hotel in the world.</td><td><sup><a href="#r18">[18]</a></sup></td></tr><tr><td>12</td><td><a href="#">Shanghai World Financial Center</a></td><td>492</td><td>1,614</td><td>101</td><td>Shanghai</td><td>China</td><td>2008</td><td>Tallest building in the world with an opening at the top.</td><td><sup>[25]</sup></td></tr></tbody></table></main>`,
+	);
+	const tower = await towerToolkit.highlightText(
+		"| 3 | Shanghai Tower | 632 | 2,073 | 128 (+ 5 below ground) | Shanghai | China | 2015 | Tallest building in East Asia, tallest twisted building in the world; contains the highest luxury hotel in the world. Tallest building in China. | [18] |",
+		{ scrollIntoView: false },
+	);
+	const towerRow = towerDom.window.document.querySelector(`[data-onhand-annotation-id="${tower.annotationId}"]`)?.closest("tr") || towerDom.window.document.querySelector(`tr[data-onhand-annotation-id="${tower.annotationId}"]`);
+	assert.match(towerRow?.textContent || "", /Shanghai Tower/, "a whole-row quote with notes and references marks the quoted row");
+	assert.doesNotMatch(towerRow?.textContent || "", /World Financial Center/, "not a different row that shares the city");
 
 	const cell = await toolkit.highlightText("14–18 years", { scrollIntoView: false });
 	assert.equal(cell.kind, "inline", "text inside one cell keeps its inline cell highlight");
@@ -4327,6 +4366,7 @@ async function main() {
 	await assertLineBreakParagraphsSplitAndStayHighlightable();
 	await assertReadableContentIncludesDisplayEquations();
 	await assertPdfMatchedTextKeepsLineBreakSpaces();
+	await assertGithubCodeViewIsReadableAndMarkable();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();
 	await assertOffscreenClipboardWithoutDocumentFocus();

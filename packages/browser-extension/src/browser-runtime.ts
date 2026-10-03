@@ -638,7 +638,7 @@ Default answer mode:
 - For explicit named formula/equation/theorem requests, locate that named formula or its section first. Do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula.
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
-- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
+- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. The reverse holds too: every sentence or bullet that states something from the page carries the chip of the mark that supports it — when several bullets rest on one mark, repeat that mark's chip on each — and a page point with no mark yet gets its supporting sentence highlighted before you answer, or is cut, or is labeled general knowledge. Only a lead-in line or a closing synthesis line may stand without a chip. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
 - If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
@@ -1177,7 +1177,9 @@ function pageReadableExcerptForModel(content: any, text: string, startBlock: num
 	const lastShownWasCut = shown === blocks.length && shown > 1 && Boolean(content?.truncated) && /…$/.test(String(blocks[shown - 1]?.text || ""));
 	const nextBlock = startBlock + shown - (lastShownWasCut ? 1 : 0);
 	return {
-		text: truncateStructuredText(body, READABLE_EXCERPT_MODEL_CHARS),
+		// Blocks are already normalized by extraction; collapsing spaces again
+		// would flatten the indentation of extracted code.
+		text: body.length <= READABLE_EXCERPT_MODEL_CHARS ? body.trim() : truncateStructuredText(body, READABLE_EXCERPT_MODEL_CHARS),
 		note: more
 			? `\n\n(Showing blocks ${startBlock}-${lastBlock}; the page continues. To read on, call browser_extract_content again with startBlock ${nextBlock}.)`
 			: startBlock > 0
@@ -6669,13 +6671,8 @@ function learningModeShouldAskFirst(prompt: unknown) {
 }
 
 const LEARNING_ASK_FIRST_POLICY =
-	'Runtime policy: Learning mode, ask before telling. Anchor the first idea the learner needs with one or two source highlights (a short note if it helps), then ask one short guiding question tied to that highlight — a prediction, "what do you notice", or "say it back". End the turn there: do not walk through the remaining steps or give the full explanation yet; teach them after the learner responds. If the learner already answered a guiding question on this concept, repeats the ask, asks for the answer outright, or seems frustrated, teach it directly now with the usual source anchors. Keep the reply to a few sentences.';
+	'Runtime policy: Learning mode, ask before telling. Anchor the first idea the learner needs with one or two source highlights (a short note if it helps), then ask one short guiding question tied to that highlight — a prediction, "what do you notice", or "say it back". The question must leave the answer for the learner to produce: do not state the highlighted conclusion just before asking it, and do not offer choices where one simply repeats the highlighted wording. End the turn there: do not walk through the remaining steps or give the full explanation yet; teach them after the learner responds. If the learner already answered a guiding question on this concept, repeats the ask, asks for the answer outright, or seems frustrated, teach it directly now with the usual source anchors. Keep the reply to a few sentences.';
 
-// The per-request policy sits next to the user's request, so a lane policy that
-// says "highlight each key concept and let the notes carry the explanation"
-// outweighed the Learning append: literal models (GPT-6 Luna) asked a token
-// question and then walked through everything. The lane, budgets, and guards
-// stay the same; only the policy text changes for conceptual Learning asks.
 // "Quiz me" (§3.8): the marks anchor each question to the passage it tests,
 // so the notes must not hand over the answer — in the review, every note
 // stated the answer to the question it anchored.
@@ -6688,6 +6685,11 @@ function promptAsksForQuiz(prompt: unknown) {
 	return /\b(?:quiz|test)\s+me\b|\b(?:give|make|write|create)\s+(?:me\s+)?(?:a\s+)?(?:quick\s+|short\s+)?(?:quiz|practice\s+(?:questions?|test)|self-test)\b/.test(text);
 }
 
+// The per-request policy sits next to the user's request, so a lane policy that
+// says "highlight each key concept and let the notes carry the explanation"
+// outweighed the Learning append: literal models (GPT-6 Luna) asked a token
+// question and then walked through everything. The lane, budgets, and guards
+// stay the same; only the policy text changes for conceptual Learning asks.
 function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfile {
 	let profile = buildLaneReasoningProfile(settings, prompt, attachments);
 	if (promptAsksForQuiz(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${QUIZ_POLICY}` };
@@ -11240,21 +11242,24 @@ function createTools(
 						? await withToolCommandTimeout(name, timeoutMs, runEffectiveCommand)
 						: await runEffectiveCommand();
 				};
+				// G17/§6.2: an attempt that only lands as an approximate match
+				// covering a small part of the quote is a weak anchor — a misquote
+				// landed "know this is premature at this point, but" for a sentence
+				// about business models, and a full table-row quote landed on a
+				// different row. Undo it and keep looking; the final error points
+				// at the real passage.
+				const rejectWeakApproximateLanding = async (highlighted: any, attemptParams: any) => {
+					const weakLanding = weakApproximateRetryLanding(String((params as any)?.text || ""), highlighted);
+					if (!weakLanding) return;
+					const annotationId = String(highlighted?.annotation?.annotationId || "");
+					const tabId = Number(highlighted?.tab?.id || attemptParams?.tabId || 0);
+					if (annotationId && tabId) await host.runCommand("remove_annotations", { tabId, annotationIds: [annotationId] }).catch(() => {});
+					throw new Error(weakLanding);
+				};
 				const runHighlightCandidate = async (candidate: string) => {
 					const retryParams = { ...(params as any), text: candidate };
 					const highlighted = await runCommandWithParams(retryParams);
-					// G17/§6.2: a retry fragment that only lands as an approximate
-					// match covering a small part of the original quote is a weak
-					// anchor (a misquote landed "know this is premature at this
-					// point, but" for a sentence about business models). Undo it and
-					// keep looking; the final error points at the real passage.
-					const weakLanding = weakApproximateRetryLanding(String((params as any)?.text || ""), highlighted);
-					if (weakLanding) {
-						const annotationId = String(highlighted?.annotation?.annotationId || "");
-						const tabId = Number(highlighted?.tab?.id || (retryParams as any)?.tabId || 0);
-						if (annotationId && tabId) await host.runCommand("remove_annotations", { tabId, annotationIds: [annotationId] }).catch(() => {});
-						throw new Error(weakLanding);
-					}
+					await rejectWeakApproximateLanding(highlighted, retryParams);
 					return {
 						...highlighted,
 						highlightRetry: {
@@ -11301,6 +11306,7 @@ function createTools(
 							throw lastHighlightError || new Error(`No visible text matched: ${(params as any)?.text || ""}`);
 						}
 						result = await runCommandWithParams(params);
+						if (commandName === "highlight_text") await rejectWeakApproximateLanding(result, params);
 					}
 				} catch (error) {
 					if (commandName !== "highlight_text") throw error;
