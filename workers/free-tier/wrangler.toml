@@ -28,8 +28,13 @@ DAILY_REQUEST_CAP = "80"
 DAILY_COST_CAP_USD = "5"
 # Reserved before dispatch, reconciled against provider cost. This is an
 # estimate, not a guaranteed per-request upper price bound; see admission.md.
-REQUEST_COST_RESERVATION_USD = "0.25"
-CONCURRENT_REQUEST_CAP = "4"
+# GPT-6 Luna calls average ~$0.0004; a body at the 2.5 MB cap with 16k output
+# tokens costs ~$0.14-0.17 at long-context rates. $0.15 covers that while
+# letting ~33 requests be in flight under the $5 cap (0.25 allowed 20).
+REQUEST_COST_RESERVATION_USD = "0.15"
+# Global in-flight requests across all users. A turn runs several model calls
+# in sequence, so 4 throttled public traffic with only a few active users.
+CONCURRENT_REQUEST_CAP = "20"
 DEVICE_CONCURRENT_REQUEST_CAP = "2"
 # Stops runaway single turns while still allowing complex pages/PDFs.
 TURN_MODEL_CALL_CAP = "50"
@@ -38,7 +43,9 @@ HEAVY_TURN_MODEL_CALLS = "10"
 # Warning threshold; independent of the model pricing table.
 HEAVY_TURN_COST_USD = "0.01"
 HEAVY_TURN_TOKENS = "100000"
-REGISTRATIONS_PER_IP_PER_DAY = "5"
+# Classrooms and offices share one NAT IP; 5 refused the sixth student of the
+# day. Per-device request caps still bound what each registration can spend.
+REGISTRATIONS_PER_IP_PER_DAY = "25"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 ERROR_REPORTS_PER_IP_PER_DAY = "50"
 
