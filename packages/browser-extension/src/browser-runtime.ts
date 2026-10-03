@@ -16566,7 +16566,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
 					const existingAnchorContext = buildExistingAnchorContext(session);
 					const liveVoiceContext = rawSource === "live-voice"
-						? "This answer will also be spoken. Start with a self-contained paragraph of at most 45 words, including essential qualifications. In Learning Mode, put the single learning question or evaluation first without revealing an unrequested solution. Additional detail and citations can follow in the sidebar.\nLive conversation reference data (fragments may be incomplete; apply the latest correction and keep speaker roles distinct):\n"
+						? "This answer will also be spoken. Start with a self-contained paragraph of at most 45 words, including essential qualifications, and write any math or symbols in that paragraph as spoken words (\"x squared\", \"a over b\"), never LaTeX. In Learning Mode, put the single learning question or evaluation first without revealing an unrequested solution. Additional detail and citations can follow in the sidebar.\nLive conversation reference data (fragments may be incomplete; apply the latest correction and keep speaker roles distinct):\n"
 							+ JSON.stringify((Array.isArray(request.voiceContext) ? request.voiceContext : []).slice(-40).map((entry: any) => ({ role: entry.role === "assistant" ? "assistant" : "user", text: String(entry.text || "").slice(0, 350) })))
 						: "";
 					const sessionContext = [recentConversation, priorPageContext, liveVoiceContext].filter(Boolean).join("\n\n");

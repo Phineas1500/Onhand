@@ -4510,10 +4510,30 @@ async function assertRealtimeExplicitLearningVoiceTranscriptPlansSocraticMove() 
 	dom.window.close();
 }
 
+async function assertRealtimeVoiceRoutingKeepsReadingQuestionsOnTheSharedAgent() {
+	// A prototype "calendar" route sent any utterance with book/schedule/
+	// meeting/slot/available to the standalone voice agent, skipping every
+	// shared-agent rule ("What does this book say about entropy?").
+	const dom = await renderSidebar(createState(), []);
+	const route = (prompt, learningMode = false, url = "https://example.test/article") =>
+		dom.window.OnhandVoiceRouting.realtimeRoute(prompt, { page: { url }, tab: { url }, preferences: { learningMode } });
+	for (const prompt of [
+		"What does this book say about entropy?",
+		"What learning-rate schedule did the paper use?",
+		"Is this jacket available in other colors?",
+		"Summarize the meeting notes on this page.",
+	]) {
+		assert.equal(route(prompt), "backend", `reading questions go to the shared agent: ${prompt}`);
+	}
+	assert.equal(route("Quiz me on this page.", true), "voice-agent:socratic", "explicit Learning quizzes stay with the voice agent");
+	assert.equal(route("What time is it in Tokyo?", false, ""), "voice-agent:no-page-context", "page-less questions stay with the voice agent");
+	dom.window.close();
+}
+
 async function assertRealtimeStandaloneVoiceAnswerPersistsToSession() {
 	const runtimeMessages = [];
 	const events = [];
-	const state = createState();
+	const state = { ...createState(), page: null, tab: null }; // no page open: the standalone voice agent answers
 	const dom = await renderSidebar(state, runtimeMessages);
 	const hooks = getRealtimeTestHooks(dom);
 	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
@@ -4551,7 +4571,7 @@ async function assertRealtimeStandaloneVoiceAnswerPersistsToSession() {
 async function assertRealtimeAnswerClearsWhenSessionChanges() {
 	const runtimeMessages = [];
 	const events = [];
-	const state = createState();
+	const state = { ...createState(), page: null, tab: null }; // no page open: the standalone voice agent answers
 	const dom = await renderSidebar(state, runtimeMessages);
 	const hooks = getRealtimeTestHooks(dom);
 	hooks.setRealtimeDataChannel(createRealtimeTestDataChannel(events));
@@ -4589,7 +4609,7 @@ async function assertRealtimeAnswerClearsWhenSessionChanges() {
 async function assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn() {
 	const runtimeMessages = [];
 	const events = [];
-	const state = createState();
+	const state = { ...createState(), page: null, tab: null }; // no page open: the standalone voice agent answers
 	state.tab = {
 		id: 42,
 		title: "Alpha smoke fixture",
@@ -4609,7 +4629,11 @@ async function assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn() {
 	await waitForSidebarTick(dom);
 	assert.equal(hooks.getRealtimeDebugState().pendingDirectAnswerRequestId, "request-stale-direct");
 
-	await hooks.sendRealtimeTextPrompt("Can you check whether my calendar is available tomorrow at 3?");
+	// Move on to a turn the standalone voice agent answers (an explicit
+	// Learning quiz); the stale page answer must not be narrated over it.
+	state.preferences.learningMode = true;
+	await hooks.requestState();
+	await hooks.sendRealtimeTextPrompt("Quiz me on Alpha smoke content.");
 	await waitForSidebarTick(dom);
 	state.turns.push({
 		id: "request-stale-direct",
@@ -5135,6 +5159,7 @@ await assertRealtimePublishSidebarAnswerCanAnnotateAndCite();
 await assertRealtimeDirectAnswerFallsBackToEarlierSourceCitations();
 await assertRealtimeDirectAnswerPreambleQueuesFinalNarration();
 await assertRealtimeStaleDirectAnswerDoesNotNarrateOldTurn();
+await assertRealtimeVoiceRoutingKeepsReadingQuestionsOnTheSharedAgent();
 await assertRealtimeStandaloneVoiceAnswerPersistsToSession();
 await assertRealtimeAnswerClearsWhenSessionChanges();
 

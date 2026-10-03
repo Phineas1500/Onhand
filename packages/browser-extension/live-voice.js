@@ -39,17 +39,44 @@
 		return { model: MODEL, instructions: instructions(state.preferences?.learningMode), input,
 			delegation: responsesConfig ? { type: "responses", responses: responsesConfig } : { type: "client" }, audio: { output: { voice: "marin" } }, store: false };
 	}
+	// Spoken text must not carry TeX: "$f(x)=(6x^2+7x)^4$" reached Live verbatim.
+	// The backend is asked for math in words; this is the fallback for what
+	// slips through (delimiters, common commands, simple powers).
+	const SPOKEN_TEX = { mid: " given ", neq: " is not equal to ", ne: " is not equal to ", leq: " is at most ", le: " is at most ", geq: " is at least ", ge: " is at least ",
+		approx: " is approximately ", infty: " infinity ", to: " to ", rightarrow: " goes to ", sum: " the sum of ", int: " the integral of ", partial: " partial ", cdot: " times ", times: " times ", pm: " plus or minus " };
+	function speakableMath(value) {
+		// TeX's own delimiter rule: no space just inside $...$ and no digit right
+		// after the closing $, so "costs $5 and $6" stays money.
+		return text(value)
+			.replace(/\$\$([\s\S]+?)\$\$|\$(?=\S)([^$\n]*?\S)\$(?!\d)|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g, (_match, a, b, c, d) => ` ${a || b || c || d} `)
+			.replace(/\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/g, "($1) over ($2)")
+			.replace(/\\sqrt\s*\{([^{}]+)\}/g, "the square root of ($1)")
+			.replace(/\\(?:left|right|displaystyle|,|;|!|quad|qquad)/g, " ")
+			.replace(/\\([a-zA-Z]+)/g, (_match, name) => SPOKEN_TEX[name] || ` ${name} `)
+			.replace(/\^\{?2\}?(?![0-9])/g, " squared").replace(/\^\{?3\}?(?![0-9])/g, " cubed").replace(/\^\{([^{}]+)\}|\^([A-Za-z0-9]+)/g, (_match, a, b) => ` to the ${a || b}`)
+			.replace(/_\{([^{}]+)\}|_([A-Za-z0-9])/g, (_match, a, b) => ` sub ${a || b}`)
+			.replace(/[{}]/g, "")
+			.replace(/[ \t]{2,}/g, " ")
+			.replace(/[ \t]+([;:,.?!])/g, "$1");
+	}
 	function speechResult(turn) {
-		const full = text(turn?.reply).replace(/\[\[cite:[^\]]+\]\]/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+		const full = speakableMath(text(turn?.reply).replace(/\[\[cite:[^\]]+\]\]/g, "")).replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
 			.replace(/<[^>]+>/g, "")
 			.replace(/\[\d+\]/g, "").replace(/https?:\/\/\S+/g, "")
 			.replace(/^#{1,6}\s+.*$/gm, "").replace(/^[>*\-]+\s*/gm, "").replace(/[*_`]/g, "").trim();
 		const spoken = full.replace(/\s+/g, " ");
+		// The backend is asked to open with a self-contained spoken paragraph.
+		// When it did, speak just that: speaking a short reply whole read the
+		// answer twice (opening, then bullets restating it) and ran labels into
+		// bullet text ("How to read it Inputs: ..."). A lead-in ending in a
+		// colon is not self-contained. Never cut a paragraph mid-sentence.
+		const paragraphs = full.split(/\n\s*\n/).map((paragraph) => paragraph.replace(/\s+/g, " ").trim()).filter(Boolean);
+		const opening = paragraphs[0] || "";
+		const openingFits = opening && encoder.encode(opening).length <= 480;
+		const selfContained = openingFits && !/:$/.test(opening) && opening.split(" ").length >= 8;
+		if (paragraphs.length > 1 && selfContained) return opening;
 		if (encoder.encode(spoken).length <= 480) return spoken;
-		// The backend is asked to put a complete spoken answer first. Never
-		// cut that paragraph mid-sentence and lose a qualification or question.
-		const opening = full.split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
-		return opening && encoder.encode(opening).length <= 480 ? opening
+		return openingFits ? opening
 			: "The answer is ready in the sidebar. It needs more detail than I can give in one short update; we can walk through it together.";
 	}
 	function uiContext(state = {}) {

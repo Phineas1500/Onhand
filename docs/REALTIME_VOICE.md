@@ -86,7 +86,6 @@ When Voice is connected:
 - voice turns are guarded by a local turn id; if the student interrupts or starts a newer turn, late planner/evaluator/direct-answer results are ignored instead of overwriting the sidebar or speaking stale content
 - standalone Realtime voice answers and Learning Mode voice prompts/feedback are saved as text turns in the current Onhand session; raw mic/model audio is not saved
 - the realtime model registers these function tools through `session.update`:
-  - `check_calendar(date, time)` as the minimal sample tool
   - `get_current_learning_context()` for current tab, visible text, selection, and learner state
   - `annotate_page(anchors)` for exact highlights and short notes
   - `open_pdf_in_onhand_viewer()` for direct or unsupported PDF surfaces
@@ -105,3 +104,11 @@ The voice model is intentionally narrow. It can ask for compact context, place h
 - Chrome may ask for microphone permission after the first `Voice` click.
 - If Chrome reports `Permission dismissed` from the side panel, Onhand opens `mic-permission.html` in a normal extension tab. Click `Allow microphone` there; the side panel will retry the voice connection after permission is granted.
 - Chrome extensions cannot use the packaged-app-only `audioCapture` permission. Onhand uses `navigator.mediaDevices.getUserMedia()` from the side panel and helper permission page instead.
+
+## Testing voice without a microphone
+
+`npm run debug:sessions -- ask "question" --voice live --wait` (or `ask-new-url <url> "question" --voice live`) runs the real Live client-mode coordinator (`live-voice.js`) inside the CLI's driver page against the real runtime: the question arrives as a spoken transcript, Live's client delegation submits it exactly as `sidebar.js` does (`source: "live-voice"`, `voiceContext`, the spoken-opening instruction), and the text Onhand hands Live to speak (`speechResult`) is captured. `--voice realtime` reports the Realtime engine's routing (`OnhandVoiceRouting.realtimeRoute`) and submits backend-routed prompts the way that engine does.
+
+Any eval suite runs this way with `--voice live|realtime`, e.g. `npm run eval:creative -- --voice live`. Voice checks fail a case when the Realtime engine would route it to the standalone voice agent or when the spoken text falls back to "the answer is ready in the sidebar", warn when it runs past ~45 words, and support per-case `requiredSpokenPatterns` / `forbiddenSpokenPatterns`.
+
+Not covered without a live call: speech recognition and endpointing, Live's own decision to delegate and its spoken paraphrase, the standalone Realtime voice agent, and managed (hosted) Live delegation.

@@ -8205,14 +8205,14 @@
 		}
 	}
 
-	function isRealtimeCalendarRequest(prompt) {
-		return /\b(calendar|schedule|appointment|available|availability|book|meeting|slot)\b/i.test(String(prompt || ""));
-	}
-
+	// A prototype-era "calendar" route used to send any utterance mentioning a
+	// book, schedule, meeting, slot, or availability to the standalone voice
+	// agent (for a sample check_calendar tool), so "What does this book say
+	// about entropy?" skipped every shared-agent rule. Only explicit Learning
+	// quizzes and page-less questions stay with the voice agent.
 	function shouldRouteRealtimePromptThroughOnhand(prompt, state = currentState) {
 		const text = String(prompt || "").trim();
 		if (!text) return false;
-		if (isRealtimeCalendarRequest(text)) return false;
 		if (shouldRouteRealtimePromptThroughSocraticPlan(text, state)) return false;
 		return hasRealtimePageMaterialContext(state);
 	}
@@ -8231,11 +8231,20 @@
 		const text = String(prompt || "").trim();
 		if (!text) return false;
 		if (!Boolean(state?.preferences?.learningMode)) return false;
-		if (isRealtimeCalendarRequest(text)) return false;
 		if (!hasRealtimePageMaterialContext(state)) return false;
 		if (!isExplicitRealtimeSocraticRequest(text)) return false;
 		return true;
 	}
+
+	// Read-only probe for voice evals: which path a spoken prompt takes under
+	// the Realtime engine. Uses only the passed state; no side effects.
+	globalThis.OnhandVoiceRouting = Object.freeze({
+		realtimeRoute(prompt, state) {
+			if (shouldRouteRealtimePromptThroughOnhand(prompt, state)) return "backend";
+			if (shouldRouteRealtimePromptThroughSocraticPlan(prompt, state)) return "voice-agent:socratic";
+			return "voice-agent:no-page-context";
+		},
+	});
 
 	function compactRealtimeTutorText(value, maxLength = 240) {
 		const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -9480,17 +9489,6 @@
 			return await executeRealtimeBrowserTool(name, args);
 		}
 		switch (name) {
-			case "check_calendar": {
-				const date = String(args?.date || "").trim();
-				const time = String(args?.time || "").trim();
-				const unavailable = /^(12:00|15:00|3:00)/.test(time);
-				return {
-					date,
-					time,
-					available: Boolean(date && time && !unavailable),
-					message: unavailable ? "That tutoring slot is already booked." : "That tutoring slot is available.",
-				};
-			}
 			case "get_current_learning_context":
 				return await requestRealtimeContext();
 			case "annotate_page": {

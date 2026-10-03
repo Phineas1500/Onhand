@@ -129,6 +129,18 @@ await check('spoken results preserve complete qualifications and exclude citatio
   const opening = 'This association is present. However, the study cannot establish causation.';
   assert.equal(api.speechResult({ reply: `## Result\n\n${opening} [[cite:private-annotation-id]]\n\n${'More detail. '.repeat(80)}` }), opening);
   assert.doesNotMatch(api.speechResult({ reply: 'A long unbroken paragraph. '.repeat(80) }), /^A long/);
+  // Spoken text never carries TeX (a homework hint reached Live as "$f(x)=(6x^2+7x)^4$"),
+  // while prices keep their dollar signs.
+  assert.equal(api.speechResult({ reply: 'Problem 1 is $f(x)=(6x^2+7x)^4$; what is the derivative of $6x^2+7x$?' }), 'Problem 1 is f(x)=(6x squared+7x) to the 4; what is the derivative of 6x squared+7x?');
+  assert.match(api.speechResult({ reply: 'Bayes: $$P(A\\mid B)=\\frac{P(B\\mid A)\\,P(A)}{P(B)}$$ links them.' }), /P\(A given B\)=\(P\(B given A\) P\(A\)\) over \(P\(B\)\) links them\./);
+  assert.equal(api.speechResult({ reply: 'Tickets cost $5 and $6 each.' }), 'Tickets cost $5 and $6 each.');
+  // A self-contained spoken opening is spoken alone; the bullets after it would
+  // repeat the answer (voice eval: product page, diagram read-out).
+  const spokenOpening = 'Yes. It supports two 4K displays at 60 hertz, and it needs a five-volt, five-amp USB-C supply.';
+  assert.equal(api.speechResult({ reply: `${spokenOpening}\n\n- **Displays:** dual 4Kp60 HDMI output. [[cite:a]]\n- **Power:** a 5 V, 5 A supply. [[cite:b]]` }), spokenOpening);
+  // A lead-in ending in a colon is not an answer on its own: short replies stay whole.
+  assert.equal(api.speechResult({ reply: 'Commenters raised three criticisms:\n\n- Limited novelty.\n- Weak economics.' }), 'Commenters raised three criticisms: Limited novelty. Weak economics.');
+  assert.doesNotMatch(api.speechResult({ reply: 'Scores: $x_i$ and $y^{10}$ matter.' }), /[$\\^_{}]/);
 });
 await check('old notices cannot claim future speech or repeat already consumed work', async () => {
   const h = harness(); h.delegate('empty-old', 10);

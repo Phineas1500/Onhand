@@ -164,7 +164,7 @@
 				"minHighlights": 1,
 				"maxWords": 200,
 				"requiredReplyPatterns": [
-					"branch predict"
+					"branch (?:mis)?predict"
 				]
 			}
 		},
@@ -188,7 +188,7 @@
 				"maxWords": 160,
 				"requiredReplyPatterns": [
 					"4K|dual",
-					"5V|27W|5A|power supply"
+					"5 ?V|27 ?W|5 ?A|five-volt|27-watt|power supply"
 				]
 			}
 		},

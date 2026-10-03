@@ -250,6 +250,10 @@ Options:
   --timeout <duration>        Onhand answer wait timeout. Default: ${DEFAULT_TIMEOUT}
   --out-dir <path>            Output directory. Default: ${DEFAULT_OUT_DIR}/<timestamp>
   --json                      Print JSON summary to stdout.
+  --voice live|realtime       Ask each case as a spoken turn (no microphone): live runs the
+                              Live client-mode coordinator and checks the text handed to Live
+                              to speak; realtime checks the Realtime engine's routing and runs
+                              backend-routed prompts the way that engine submits them.
   --dry-run                   Validate and print the run plan without opening a browser.
   --list-cases                Print available built-in cases.
   --keep-tabs                 Do not close the tabs a case opened (default: close them to keep the debug browser healthy).
@@ -323,6 +327,10 @@ function parseArgs(argv) {
 			process.exit(0);
 		} else if (value === "--json") {
 			args.json = true;
+		} else if (value === "--voice" || value.startsWith("--voice=")) {
+			const engine = value.includes("=") ? value.slice("--voice=".length) : readValue("--voice");
+			if (!["live", "realtime"].includes(engine)) throw new Error("--voice must be live or realtime.");
+			args.voice = engine;
 		} else if (value === "--dry-run") {
 			args.dryRun = true;
 		} else if (value === "--list-cases") {
@@ -1239,6 +1247,44 @@ function shouldRetryWeakNoSourceAnswer(evaluation) {
 	);
 }
 
+// Voice checks on top of the normal turn evaluation. The spoken text is what
+// Onhand hands Live (speechResult): the reply when it fits in 480 bytes, else
+// its first paragraph, else a "see the sidebar" fallback — the fallback means
+// the backend ignored the voice instruction to open with a self-contained
+// spoken paragraph of at most 45 words.
+const SPOKEN_FALLBACK_PATTERN = /^The answer is ready in the sidebar\./;
+function applyVoiceChecks(evaluation, raw, testCase) {
+	const voice = raw?.voice || {};
+	const expect = testCase.expect || {};
+	const failures = [...(evaluation.failures || [])];
+	const warnings = [...(evaluation.warnings || [])];
+	let score = Number(evaluation.score || 0);
+	const fail = (amount, message) => { score -= amount; failures.push(message); };
+	if (voice.skipped) {
+		return {
+			...evaluation,
+			status: "fail",
+			score: 0,
+			failures: [`voice route ${voice.route}: the Realtime engine sends this prompt to the separate voice agent, which skips the shared agent's behavior (${voice.skipped})`],
+			warnings,
+			voice,
+		};
+	}
+	const spoken = String(voice.spoken || "");
+	if (voice.engine === "live") {
+		if (!spoken) fail(0.3, "voice: nothing was handed to Live to speak");
+		else if (SPOKEN_FALLBACK_PATTERN.test(spoken)) fail(0.2, "voice: spoken text fell back to \"the answer is ready in the sidebar\" (no self-contained spoken opening under 480 bytes)");
+		else if (words(spoken) > 60) warnings.push(`voice: spoken text is ${words(spoken)} words (target: an opening of at most 45)`);
+		for (const pattern of expect.requiredSpokenPatterns || []) if (!regex(pattern).test(spoken)) fail(0.12, `voice: required spoken pattern missing: ${pattern}`);
+		for (const pattern of expect.forbiddenSpokenPatterns || []) if (regex(pattern).test(spoken)) fail(0.16, `voice: forbidden spoken pattern present: ${pattern}`);
+		if (voice.errors?.length) warnings.push(`voice: coordinator errors: ${voice.errors.join("; ")}`);
+	}
+	if (voice.route && voice.route !== "backend") warnings.push(`voice: under the Realtime engine this prompt would route to ${voice.route}`);
+	score = Math.max(0, score);
+	const minScore = Number(evaluation.minScore || 0);
+	return { ...evaluation, score, failures, warnings, status: failures.length || score < minScore ? "fail" : evaluation.status, voice: { engine: voice.engine, route: voice.route, spoken } };
+}
+
 async function runOne(testCase, variant, args, runDir, rubric = "") {
 	const cliArgs = [
 		"ask-new-url",
@@ -1249,8 +1295,7 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 		testCase.timeout || args.timeout,
 		"--json",
 		"--full",
-		"--source",
-		`prompt-eval:${variant.id}`,
+		...(args.voice ? ["--voice", args.voice] : ["--source", `prompt-eval:${variant.id}`]),
 		"--eval-variant",
 		variant.id,
 	];
@@ -1271,6 +1316,7 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 			const startedAt = Date.now();
 			raw = await runCli(cliArgs, args);
 			evaluation = evaluateTurn(raw, testCase, variant, Date.now() - startedAt);
+			if (args.voice) evaluation = applyVoiceChecks(evaluation, raw, testCase);
 			if (attempt === 0 && shouldRetryBlankPageAnswer(evaluation)) {
 				retriedBlankAnswer = true;
 				continue;
@@ -1358,9 +1404,10 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 		let followUpEvaluation;
 		try {
 			const startedAt = Date.now();
-			const followUpRaw = await runCli(["ask", followUp.prompt, "--wait", "--timeout", testCase.timeout || args.timeout, "--json", "--full"], args);
+			const followUpRaw = await runCli(["ask", followUp.prompt, "--wait", "--timeout", testCase.timeout || args.timeout, "--json", "--full", ...(args.voice ? ["--voice", args.voice] : [])], args);
 			followUpRaws.push(followUpRaw);
 			followUpEvaluation = evaluateTurn(followUpRaw, { ...testCase, prompt: followUp.prompt, expect: followUp.expect || {} }, variant, Date.now() - startedAt);
+			if (args.voice) followUpEvaluation = applyVoiceChecks(followUpEvaluation, followUpRaw, { ...testCase, expect: followUp.expect || {} });
 			if (args.screenshots && followUpRaw?.turn) {
 				followUpEvaluation.screenshots = await captureAnnotationScreenshots(followUpRaw.turn, args, runDir, `${safeName}__followup${index + 1}`).catch(() => []);
 			}
@@ -1442,6 +1489,7 @@ function markdownReport(plan, results, variantSummary) {
 		lines.push(`### ${result.caseId} / ${result.variantId}`, "");
 		if (testCase) lines.push(`Prompt: ${testCase.prompt}`, `URL: ${testCase.url}${testCase.setupUrls?.length ? ` (also open: ${testCase.setupUrls.join(", ")})` : ""}`, "");
 		lines.push("Reply:", "", ...String(result.reply || "(none)").split("\n").map((line) => `> ${line}`), "");
+		if (result.voice) lines.push(`Spoken (${result.voice.engine}; Realtime route: ${result.voice.route}):`, "", `> ${result.voice.spoken || "(nothing)"}`, "");
 		if (result.highlights?.length) lines.push("Highlights:", ...result.highlights.map((text) => `- ${String(text).split("\n")[0]}`), "");
 		if (result.notes?.length) lines.push("Notes:", ...result.notes.map((text) => `- ${text}`), "");
 		if (result.annotatedTabs?.length) lines.push(`Marked tabs: ${result.annotatedTabs.map((tab) => `${tab.url} (${tab.marks})`).join(", ")}`, "");

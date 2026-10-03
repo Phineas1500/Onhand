@@ -64,7 +64,7 @@ function printUsage() {
   npm run debug:sessions -- open-url <url> [--new-tab] [options]
   npm run debug:sessions -- ask-new-url <url> "question" [options]  (starts a new session and always waits)
   npm run debug:sessions -- new [options]
-  npm run debug:sessions -- ask "question" [--new] [--wait] [options]
+  npm run debug:sessions -- ask "question" [--new] [--wait] [--voice live|realtime] [options]
   npm run debug:sessions -- stop [options]
   npm run debug:sessions -- switch <session_id|query> [options]
   npm run debug:sessions -- restore <session_id|query> [options]
@@ -291,6 +291,10 @@ function parseArgs(argv) {
 			args.target = target;
 		} else if (value === "--source" || value.startsWith("--source=")) {
 			args.source = readValue("--source");
+		} else if (value === "--voice" || value.startsWith("--voice=")) {
+			const engine = readValue("--voice");
+			if (!["live", "realtime"].includes(engine)) throw new Error("--voice must be live or realtime.");
+			args.voice = engine;
 		} else if (value === "--window-id" || value.startsWith("--window-id=")) {
 			const windowId = Number(readValue("--window-id"));
 			if (!Number.isFinite(windowId)) throw new Error("--window-id must be a number.");
@@ -444,7 +448,8 @@ async function openDriverTarget(cdp, extensionId, target, shouldCloseTarget = fa
 	if (!status?.ok || status?.status?.runtime !== "browser-extension") {
 		throw new Error(`Extension ${extensionId} did not respond like Onhand.`);
 	}
-	return { extensionId, targetId: target.targetId, sessionId, sendMessage, shouldCloseTarget };
+	const evaluate = async (expression) => await evaluateJson(cdp, sessionId, expression);
+	return { extensionId, targetId: target.targetId, sessionId, sendMessage, evaluate, shouldCloseTarget };
 }
 
 async function createDriverTarget(cdp, extensionId) {
@@ -1246,6 +1251,7 @@ function formatAskResult(result, args) {
 		"",
 		"Reply:",
 		truncateBlock(turn.reply || "", args.textLimit) || "(no reply yet)",
+		...(result.voice ? ["", `Voice (${result.voice.engine}, realtime route: ${result.voice.route}):`, result.voice.skipped || result.voice.spoken || `(${result.voice.spokenSource || "nothing spoken"})`] : []),
 	];
 	return `${lines.join("\n")}\n`;
 }
@@ -1265,6 +1271,7 @@ async function handleAsk(driver, args) {
 		const stateResponse = await checkedMessage(driver.sendMessage, { type: "sidebar:fetch-state", windowId: args.windowId });
 		learningMode = Boolean((stateResponse.state || stateResponse)?.preferences?.learningMode);
 	}
+	if (args.voice) return await handleVoiceAsk(driver, args, prompt, learningMode);
 	const payload = {
 		type: "sidebar:submit-prompt",
 		prompt,
@@ -1282,6 +1289,99 @@ async function handleAsk(driver, args) {
 	if (!args.wait) return { requestId, submitted: true };
 	const waited = await waitForRequest(driver, args, requestId);
 	return { requestId, submitted: true, ...waited };
+}
+
+// Voice test path (no microphone, no WebRTC). Speech recognition, Live's own
+// decision to delegate, and its spoken paraphrase stay out of scope; what runs
+// is real:
+// - live: the Live client-mode coordinator (live-voice.js) runs in the driver
+//   page, the prompt arrives as a spoken transcript, Live's client delegation
+//   hands it to Onhand with the same payload sidebar.js sends, and the text
+//   Onhand hands Live to speak (session.commentary.append) is captured.
+// - realtime: the sidebar's real routing decision; a backend-routed prompt is
+//   submitted the way the Realtime engine does. Prompts routed to the separate
+//   Realtime voice agent are reported, not run (that agent needs a live call).
+async function handleVoiceAsk(driver, args, prompt, learningMode) {
+	if (typeof driver.evaluate !== "function") throw new Error("--voice needs a CDP driver page.");
+	const windowId = args.windowId ?? null;
+	const routeExpression = `(async () => {
+		const response = await chrome.runtime.sendMessage({ type: "sidebar:fetch-state", windowId: ${JSON.stringify(windowId)} });
+		const state = response?.state || response || {};
+		const probe = { ...state, preferences: { ...(state.preferences || {}), learningMode: ${JSON.stringify(learningMode)} } };
+		return JSON.stringify({ route: globalThis.OnhandVoiceRouting?.realtimeRoute?.(${JSON.stringify(prompt)}, probe) || "unknown" });
+	})()`;
+	const { route } = await driver.evaluate(routeExpression);
+	if (args.voice === "realtime") {
+		if (route !== "backend") return { requestId: null, submitted: false, voice: { engine: "realtime", route, skipped: "Routed to the separate Realtime voice agent; that path needs a live audio session." } };
+		const response = await checkedMessage(driver.sendMessage, {
+			type: "sidebar:submit-prompt", prompt, displayPrompt: `[Voice] ${prompt}`, attachments: [],
+			learningMode, source: "realtime-voice-direct-answer", windowId: args.windowId,
+		});
+		const waited = await waitForRequest(driver, args, response.requestId);
+		return { requestId: response.requestId, submitted: true, ...waited, voice: { engine: "realtime", route, spoken: null, spokenSource: "generated by gpt-realtime from the reply" } };
+	}
+	await driver.evaluate(`(async () => {
+		if (!globalThis.OnhandLiveVoice?.createCoordinator) throw new Error("live-voice.js is not loaded in the driver page.");
+		globalThis.__onhandVoiceEval?.coordinator?.dispose?.();
+		const windowId = ${JSON.stringify(windowId)};
+		const learningMode = ${JSON.stringify(learningMode)};
+		const fetchState = async () => {
+			const response = await chrome.runtime.sendMessage({ type: "sidebar:fetch-state", windowId });
+			return response?.state || response || {};
+		};
+		const record = { sent: [], statuses: [], errors: [], submitted: null, state: await fetchState() };
+		const host = {
+			getState: () => record.state,
+			send: (event) => { record.sent.push(event); },
+			submit: async (task) => {
+				const result = await chrome.runtime.sendMessage({
+					type: "sidebar:submit-prompt", prompt: task.prompt, displayPrompt: "[Voice] " + task.prompt,
+					sessionId: task.sessionId, clientRequestId: task.requestId, voiceContext: task.context, attachments: task.attachments,
+					learningMode, source: "live-voice", windowId,
+				});
+				if (!result?.ok) throw new Error(result?.error || "Onhand could not start that request.");
+				record.submitted = result.requestId;
+				return result;
+			},
+			stop: async (requestId) => { await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId }); },
+			onStatus: (status) => record.statuses.push(status),
+			onError: (error) => record.errors.push(String(error?.message || error)),
+			onTranscript: () => {},
+		};
+		const coordinator = globalThis.OnhandLiveVoice.createCoordinator(host, { settleMs: 50 });
+		globalThis.__onhandVoiceEval = { coordinator, record, fetchState };
+		coordinator.handle({ type: "session.started", event_id: "voice_eval_started", session: { id: "voice-eval" } });
+		coordinator.handle({ type: "session.input_transcript.delta", event_id: "voice_eval_transcript", delta: ${JSON.stringify(prompt)}, start_ms: 0, end_ms: 2000 });
+		coordinator.handle({ type: "session.delegation.created", event_id: "voice_eval_delegation", delegation: { id: "voice_eval_delegation_1", target: "client" }, offset_ms: 2100 });
+		return JSON.stringify({ ok: true });
+	})()`);
+	const deadline = Date.now() + args.timeoutMs;
+	let progress = null;
+	while (Date.now() < deadline) {
+		await sleep(Math.max(250, args.pollMs));
+		progress = await driver.evaluate(`(async () => {
+			const voice = globalThis.__onhandVoiceEval;
+			voice.record.state = await voice.fetchState();
+			voice.coordinator.updateState(voice.record.state);
+			return JSON.stringify({
+				submitted: voice.record.submitted,
+				commentary: voice.record.sent.filter((event) => event.type === "session.commentary.append").map((event) => event.content),
+				errors: voice.record.errors,
+				statuses: voice.record.statuses,
+			});
+		})()`);
+		if (progress.commentary.length || progress.errors.length) break;
+	}
+	await driver.evaluate(`(() => { globalThis.__onhandVoiceEval?.coordinator?.dispose?.(); return JSON.stringify({ ok: true }); })()`).catch(() => {});
+	if (!progress?.submitted) throw new Error(`Live voice delegation never reached Onhand.${progress?.errors?.length ? ` ${progress.errors.join("; ")}` : ""}`);
+	if (!progress.commentary.length && !progress.errors.length) throw new Error(`Timed out waiting for request ${progress.submitted}.`);
+	const waited = await waitForRequest(driver, args, progress.submitted);
+	return {
+		requestId: progress.submitted,
+		submitted: true,
+		...waited,
+		voice: { engine: "live", route, spoken: progress.commentary.at(-1) || "", commentary: progress.commentary, errors: progress.errors, statuses: progress.statuses },
+	};
 }
 
 async function handleWatch(driver, args) {
@@ -1932,6 +2032,7 @@ async function main() {
 					submitted: result.submitted,
 					session: result.replay?.session || result.replay?.currentSession || null,
 					turn: result.turn || null,
+					...(result.voice ? { voice: result.voice } : {}),
 				};
 				await writeOutput(args, `${JSON.stringify(outputObject, null, 2)}\n`);
 			} else if (args.wait) {
