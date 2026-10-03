@@ -16,7 +16,7 @@ A chatbot. A summarizer. An oracle. A tool that competes with the page for atten
 
 **1. The page is the canvas.** Start with the active page, then use clearly related pages the user already has open when they materially improve the answer. Annotations live on the page that supports the claim, anchored to specific text. The chat is secondary — a place for back-and-forth, not the place where the work happens. If a feature pulls the user away from their material into a detached answer experience, it's the wrong feature.
 
-**2. Every claim is anchored.** No floating context. No "as the article mentions." Every statement Onhand makes is tied to a specific location on a specific page. If Onhand can't point to where something comes from, it shouldn't say it. This is the difference between Onhand and a chatbot.
+**2. Every claim is anchored.** No floating context. No "as the article mentions." Every statement Onhand makes about the material is tied to a specific location on a specific page. If Onhand can't point to where something comes from, it finds a source that supports it or says plainly that it's general knowledge, not from the user's pages — it never passes an unanchored claim off as page-backed. This is the difference between Onhand and a chatbot.
 
 **3. Teach, don't tell.** The goal is the user's understanding, not delivery of an answer. Help the user *see* how the source material answers their question rather than restating the answer for them. When a concept is hard, break it down using what's on the page. If the user could read the page and arrive at the answer themselves, help them do that — don't shortcut it.
 
