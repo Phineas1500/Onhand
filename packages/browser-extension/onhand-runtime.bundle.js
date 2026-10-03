@@ -89919,9 +89919,47 @@ function looksLikeOnlyVisibleReplyArtifact(value) {
   if (!text) return false;
   return /\b(?:let me|i(?:'|’)ll|i will|i need to|i found|highlight(?:ed|ing)?|source markers?|source highlights?|page is only|page appears to be|page is scrollable)\b/i.test(text);
 }
+function protectFencedCodeBlocks(value) {
+  const lines = value.split("\n");
+  const blocks = [];
+  const out = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const open = lines[index].match(/^[ \t]*(`{3,}|~{3,})/);
+    if (!open) {
+      out.push(lines[index]);
+      continue;
+    }
+    const fenceChar = open[1][0] === "`" ? "`" : "~";
+    const closePattern = new RegExp(`^[ \\t]*\\${fenceChar}{${open[1].length},}[ \\t]*$`);
+    let close2 = -1;
+    for (let probe = index + 1; probe < lines.length; probe += 1) {
+      if (closePattern.test(lines[probe])) {
+        close2 = probe;
+        break;
+      }
+    }
+    if (close2 === -1) {
+      out.push(lines[index]);
+      continue;
+    }
+    blocks.push(lines.slice(index, close2 + 1).join("\n"));
+    out.push(`@@ONHAND_CODE_BLOCK_${blocks.length - 1}@@`);
+    index = close2;
+  }
+  return {
+    text: out.join("\n"),
+    restore: (text) => text.replace(/@@ONHAND_CODE_BLOCK_(\d+)@@/g, (_match, index) => blocks[Number(index)] ?? "")
+  };
+}
 function sanitizeAssistantVisibleReply(value, _request = null) {
   const original = String(value || "").replace(/\r\n?/g, "\n").trim();
-  let text = original;
+  if (!original) return "";
+  const code = protectFencedCodeBlocks(original);
+  const sanitized = sanitizeAssistantVisibleProse(code.text, original);
+  return code.restore(sanitized);
+}
+function sanitizeAssistantVisibleProse(value, original) {
+  let text = value;
   if (!text) return "";
   text = stripOrphanedMarkdownDelimiterLines(text);
   text = stripTinyVisibleReplyArtifacts(text);

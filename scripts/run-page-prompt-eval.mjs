@@ -920,6 +920,19 @@ function words(value) {
 	return match ? match.length : 0;
 }
 
+// A bare ``` line is normally a code block's closing fence: pair fence lines
+// in order and flag only an unpaired one (or a bare ** / __ / ` line).
+function hasOrphanMarkdownDelimiterLine(reply) {
+	const lines = String(reply || "").split("\n");
+	const fenceIndexes = lines.flatMap((line, index) => (/^\s*`{3,}/.test(line) ? [index] : []));
+	const paired = new Set();
+	for (let index = 0; index + 1 < fenceIndexes.length; index += 2) {
+		paired.add(fenceIndexes[index]);
+		paired.add(fenceIndexes[index + 1]);
+	}
+	return lines.some((line, index) => !paired.has(index) && /^\s*(?:\*\*|__|`{1,3})\s*$/.test(line));
+}
+
 function allTools(turn) {
 	return [
 		...(Array.isArray(turn?.toolTraces) ? turn.toolTraces : []),
@@ -1062,7 +1075,7 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		methodMentionCount: methodMentionCount(reply),
 		hasInlineMarkdownHeading: /[^\n][ \t]+#{2,4}[ \t]+\S/.test(reply),
 		hasMarkdownTable: /^\s*\|.+\|\s*$/m.test(reply) || /\|[ \t]+\|(?:-{3,}|:?-{3,}:?)/.test(reply) || reply.split("\n").some((line) => !/[$\\`]/.test(line) && /^\s*\S[^\n|]{1,80}\s+\|\s+\S/.test(line)),
-		hasOrphanMarkdownDelimiter: /^\s*(?:\*\*|__|`{1,3})\s*$/m.test(reply),
+		hasOrphanMarkdownDelimiter: hasOrphanMarkdownDelimiterLine(reply),
 		hasDuplicatedOpening: /\b(?:Here(?:'|’)s\s+(?:a|the)|Here\s+are\s+(?:the\s+)?(?:main\s+)?)\s+(?:roadmap|summary|rundown|overview|data structures)[^.!?\n]{0,180}(?:[.!?]|[—–-])\s*Here(?:'|’)s\s+(?:a|the)\s+(?:roadmap|summary|rundown|overview)/i.test(reply),
 		hasRedundantHighlightRecap:
 			/\n{2,}(?:(?:The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap(?:\s+at\s+a\s+glance|\s*\([^)]{0,80}\))?\.?\s*)?(?:Highlighted sections?|Source markers?|Marked sections?)(?:\s+on\s+the\s+page)?|The\s+(?:page|article|chapter|document)(?:'s|’s)?\s+roadmap\b)\b[^:\n]{0,180}:\s*\n/i.test(reply) ||

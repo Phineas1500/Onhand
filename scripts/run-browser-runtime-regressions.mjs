@@ -2030,6 +2030,13 @@ async function assertQuizRepliesKeepAnswersAndFencesIntact() {
 	assert.match(bareBlock, /```\nnpm test\n```/, "a language-less code block keeps both fences");
 	assert.equal(sanitize("The answer is here.\n```"), "The answer is here.", "an unpaired bare fence is still an orphan");
 	assert.equal(sanitize("Bold claim.\n**\nNext line."), "Bold claim.\nNext line.", "orphaned emphasis delimiters are still stripped");
+	// Live failure (requests README): code blocks indented inside list items
+	// lost their closing fences, "# comment" lines became headings, and the
+	// citation chips ended up inside the code.
+	const listCode = sanitize("1. **Install Requests**:\n   ```bash\n   python -m pip install requests\n   ```\n   [[cite:a]]\n\n2. **First request**:\n   ```python\n   import requests\n\n   r = requests.get(\"https://httpbin.org/get\")\n   # 200 means success\n   print(r.status_code)\n   ```\n   Done. [[cite:b]]");
+	assert.equal((listCode.match(/^[ \t]*```/gm) || []).length, 4, "both indented code blocks keep their opening and closing fences");
+	assert.match(listCode, /   import requests\n\n   r = requests\.get\("https:\/\/httpbin\.org\/get"\)\n   # 200 means success\n/, "code inside a fence is left exactly as written");
+	assert.match(listCode, /```\n\s*\[\[cite:a\]\]/, "the citation stays after the closed block, not inside it");
 
 	const settings = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" };
 	const quiz = buildProfile(settings, "Quiz me on this page.", [], false);

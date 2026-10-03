@@ -1,0 +1,206 @@
+{
+	"cases": [
+		{
+			"id": "recipe-half-batch",
+			"url": "https://www.allrecipes.com/recipe/10813/best-chocolate-chip-cookies/",
+			"timeout": "300s",
+			"prompt": "I only want to make half a batch. How much flour and butter do I need?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 160,
+				"requiredReplyPatterns": [
+					"flour",
+					"butter"
+				]
+			}
+		},
+		{
+			"id": "legal-elements",
+			"url": "https://www.law.cornell.edu/wex/negligence",
+			"timeout": "300s",
+			"prompt": "What does a plaintiff have to prove to win a negligence claim?",
+			"expect": {
+				"minHighlights": 3,
+				"requiredReplyPatterns": [
+					"duty",
+					"breach",
+					"caus",
+					"damage|harm|injur"
+				]
+			}
+		},
+		{
+			"id": "docs-list-vs-tuple",
+			"url": "https://docs.python.org/3/tutorial/datastructures.html",
+			"timeout": "300s",
+			"prompt": "According to this page, how are tuples different from lists?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 220
+			}
+		},
+		{
+			"id": "readme-install-first-request",
+			"url": "https://github.com/psf/requests",
+			"timeout": "300s",
+			"prompt": "How do I install this and make my first request?",
+			"expect": {
+				"minHighlights": 2,
+				"requiredReplyPatterns": [
+					"pip install"
+				]
+			}
+		},
+		{
+			"id": "code-file-explain",
+			"url": "https://github.com/psf/requests/blob/main/src/requests/api.py",
+			"timeout": "300s",
+			"prompt": "What does the get() function in this file do, and what does it return?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 200,
+				"requiredReplyPatterns": [
+					"Response"
+				]
+			}
+		},
+		{
+			"id": "wiki-table-third-tallest",
+			"url": "https://en.wikipedia.org/wiki/List_of_tallest_buildings",
+			"timeout": "300s",
+			"prompt": "Which building is the third tallest, and what city is it in?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 120
+			}
+		},
+		{
+			"id": "false-premise-great-wall",
+			"url": "https://en.wikipedia.org/wiki/Great_Wall_of_China",
+			"timeout": "300s",
+			"prompt": "Why can you see the Great Wall from the Moon with the naked eye?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 200,
+				"requiredReplyPatterns": [
+					"not|myth|cannot|can't|isn't|no "
+				]
+			}
+		},
+		{
+			"id": "unanswerable-on-page",
+			"url": "https://en.wikipedia.org/wiki/Mitochondrion",
+			"timeout": "300s",
+			"prompt": "What does this page say about how mitochondria affect aging in dogs?",
+			"expect": {
+				"maxWords": 220
+			}
+		},
+		{
+			"id": "derivation-quadratic",
+			"url": "https://en.wikipedia.org/wiki/Quadratic_formula",
+			"timeout": "300s",
+			"prompt": "Walk me through the derivation of the quadratic formula by completing the square.",
+			"expect": {
+				"minHighlights": 3
+			}
+		},
+		{
+			"id": "timeline-apollo",
+			"url": "https://en.wikipedia.org/wiki/Apollo_11",
+			"timeout": "300s",
+			"prompt": "Give me a timeline of Apollo 11 from launch to splashdown.",
+			"expect": {
+				"minHighlights": 5
+			}
+		},
+		{
+			"id": "format-three-bullets",
+			"url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+			"timeout": "300s",
+			"prompt": "Explain what a Promise is in exactly three bullet points.",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 140
+			}
+		},
+		{
+			"id": "eli10-entanglement",
+			"url": "https://en.wikipedia.org/wiki/Quantum_entanglement",
+			"timeout": "300s",
+			"prompt": "Explain this to me like I'm 10.",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 220
+			}
+		},
+		{
+			"id": "learning-wrong-answer",
+			"url": "https://en.wikipedia.org/wiki/Photosynthesis",
+			"learning": true,
+			"timeout": "300s",
+			"prompt": "Teach me what the Calvin cycle does.",
+			"expect": {
+				"minHighlights": 1
+			},
+			"followUps": [
+				{
+					"prompt": "So the Calvin cycle is the part where chlorophyll absorbs sunlight, right?",
+					"expect": {
+						"maxWords": 200,
+						"requiredReplyPatterns": [
+							"not|no[,.]|actually|isn't|light-dependent"
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "qa-top-answer",
+			"url": "https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array",
+			"timeout": "300s",
+			"prompt": "According to the top answer, why is the sorted array faster?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 200,
+				"requiredReplyPatterns": [
+					"branch predict"
+				]
+			}
+		},
+		{
+			"id": "translate-spanish",
+			"url": "https://es.wikipedia.org/wiki/Machu_Picchu",
+			"timeout": "300s",
+			"prompt": "Translate the first paragraph of this article into English.",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 260
+			}
+		},
+		{
+			"id": "product-spec",
+			"url": "https://www.raspberrypi.com/products/raspberry-pi-5/",
+			"timeout": "300s",
+			"prompt": "Can it drive two 4K displays at once, and what power supply does it need?",
+			"expect": {
+				"minHighlights": 2,
+				"maxWords": 160,
+				"requiredReplyPatterns": [
+					"4K|dual",
+					"5V|27W|5A|power supply"
+				]
+			}
+		},
+		{
+			"id": "locate-evidence",
+			"url": "https://react.dev/learn/thinking-in-react",
+			"timeout": "300s",
+			"prompt": "Where does this page explain how to figure out the minimal state?",
+			"expect": {
+				"minHighlights": 1,
+				"maxWords": 140
+			}
+		}
+	]
+}

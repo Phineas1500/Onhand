@@ -5434,9 +5434,53 @@ function looksLikeOnlyVisibleReplyArtifact(value: unknown) {
 	return /\b(?:let me|i(?:'|’)ll|i will|i need to|i found|highlight(?:ed|ing)?|source markers?|source highlights?|page is only|page appears to be|page is scrollable)\b/i.test(text);
 }
 
+// Fenced code is content, not markdown to tidy. The sanitizers below strip
+// "orphan" backticks, collapse indentation, and read "# comment" as a heading,
+// so an indented code block in a list item lost its closing fence and the rest
+// of the reply rendered as code. Set complete fenced blocks aside first.
+function protectFencedCodeBlocks(value: string) {
+	const lines = value.split("\n");
+	const blocks: string[] = [];
+	const out: string[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const open = lines[index].match(/^[ \t]*(`{3,}|~{3,})/);
+		if (!open) {
+			out.push(lines[index]);
+			continue;
+		}
+		const fenceChar = open[1][0] === "`" ? "`" : "~";
+		const closePattern = new RegExp(`^[ \\t]*\\${fenceChar}{${open[1].length},}[ \\t]*$`);
+		let close = -1;
+		for (let probe = index + 1; probe < lines.length; probe += 1) {
+			if (closePattern.test(lines[probe])) {
+				close = probe;
+				break;
+			}
+		}
+		if (close === -1) {
+			out.push(lines[index]);
+			continue;
+		}
+		blocks.push(lines.slice(index, close + 1).join("\n"));
+		out.push(`@@ONHAND_CODE_BLOCK_${blocks.length - 1}@@`);
+		index = close;
+	}
+	return {
+		text: out.join("\n"),
+		restore: (text: string) => text.replace(/@@ONHAND_CODE_BLOCK_(\d+)@@/g, (_match, index) => blocks[Number(index)] ?? ""),
+	};
+}
+
 function sanitizeAssistantVisibleReply(value: unknown, _request: any = null) {
 	const original = String(value || "").replace(/\r\n?/g, "\n").trim();
-	let text = original;
+	if (!original) return "";
+	const code = protectFencedCodeBlocks(original);
+	const sanitized = sanitizeAssistantVisibleProse(code.text, original);
+	return code.restore(sanitized);
+}
+
+function sanitizeAssistantVisibleProse(value: string, original: string) {
+	let text = value;
 	if (!text) return "";
 	text = stripOrphanedMarkdownDelimiterLines(text);
 	text = stripTinyVisibleReplyArtifacts(text);
