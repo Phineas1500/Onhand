@@ -270,6 +270,7 @@ Variant object fields:
 Case object fields:
   id, url, prompt, learning, timeout, expect
   setupUrls                   URLs opened in their own tabs before the prompt (multi-page cases).
+  followUps                   [{ prompt, expect }] asked in the same session after the first turn.
 
 Multi-page / research expect fields:
   requiredToolPatterns        Each regex must match a completed tool name.
@@ -1299,7 +1300,33 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 			evaluation = { ...evaluation, warnings: [...(evaluation.warnings || []), `screenshots failed: ${error.message}`] };
 		}
 	}
-	await writeFile(join(runDir, `${safeName}.json`), JSON.stringify({ case: testCase, variant, evaluation, raw }, null, 2));
+	// Follow-ups continue the same session (G18 anchor reuse, clarifications);
+	// each turn is scored on its own expectations and any failure fails the case.
+	const followUpRaws = [];
+	for (const [index, followUp] of (raw?.turn && !evaluation.failures.length ? testCase.followUps || [] : []).entries()) {
+		const label = `follow-up ${index + 1}`;
+		let followUpEvaluation;
+		try {
+			const startedAt = Date.now();
+			const followUpRaw = await runCli(["ask", followUp.prompt, "--wait", "--timeout", testCase.timeout || args.timeout, "--json", "--full"], args);
+			followUpRaws.push(followUpRaw);
+			followUpEvaluation = evaluateTurn(followUpRaw, { ...testCase, prompt: followUp.prompt, expect: followUp.expect || {} }, variant, Date.now() - startedAt);
+			if (args.screenshots && followUpRaw?.turn) {
+				followUpEvaluation.screenshots = await captureAnnotationScreenshots(followUpRaw.turn, args, runDir, `${safeName}__followup${index + 1}`).catch(() => []);
+			}
+		} catch (error) {
+			if (/Timed out waiting for request/i.test(error.message)) await runCli(["stop", "--json"], args).catch(() => {});
+			followUpEvaluation = { status: "fail", score: 0, failures: [error.message], warnings: [], metrics: {}, reply: "", highlights: [], notes: [], tools: [] };
+		}
+		evaluation = {
+			...evaluation,
+			followUps: [...(evaluation.followUps || []), { prompt: followUp.prompt, ...followUpEvaluation }],
+			failures: [...evaluation.failures, ...followUpEvaluation.failures.map((failure) => `${label}: ${failure}`)],
+			status: evaluation.status === "pass" && followUpEvaluation.status === "pass" ? "pass" : "fail",
+			score: Math.min(evaluation.score, followUpEvaluation.score),
+		};
+	}
+	await writeFile(join(runDir, `${safeName}.json`), JSON.stringify({ case: testCase, variant, evaluation, raw, followUpRaws }, null, 2));
 	if (!args.keepTabs) {
 		await closeContentTabs(args.host, args.port, preexistingTabIds);
 	}
@@ -1369,6 +1396,10 @@ function markdownReport(plan, results, variantSummary) {
 		if (result.notes?.length) lines.push("Notes:", ...result.notes.map((text) => `- ${text}`), "");
 		if (result.annotatedTabs?.length) lines.push(`Marked tabs: ${result.annotatedTabs.map((tab) => `${tab.url} (${tab.marks})`).join(", ")}`, "");
 		if (result.navigatedUrls?.length) lines.push(`Navigated to: ${result.navigatedUrls.join(", ")}`, "");
+		for (const [index, followUp] of (result.followUps || []).entries()) {
+			lines.push(`Follow-up ${index + 1}: ${followUp.prompt}`, "", ...String(followUp.reply || "(none)").split("\n").map((line) => `> ${line}`), "");
+			if (followUp.highlights?.length) lines.push("Follow-up highlights:", ...followUp.highlights.map((text) => `- ${String(text).split("\n")[0]}`), "");
+		}
 		const shots = (result.screenshots || []).filter((shot) => shot.file);
 		if (shots.length) lines.push("Screenshots:", ...shots.map((shot) => `- ${shot.file}`), "");
 	}
