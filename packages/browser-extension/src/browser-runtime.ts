@@ -438,10 +438,12 @@ const ONHAND_FREE_VISUAL_IMAGE_SMALL_BASE64_CHARS = 180000;
 const ONHAND_FREE_VISUAL_IMAGE_MAX_EDGE_PX = 1440;
 const ONHAND_FREE_VISUAL_IMAGE_EDGE_STEPS = [1440, 1200, 960];
 const ONHAND_FREE_VISUAL_IMAGE_QUALITY_STEPS = [0.76, 0.66, 0.56];
-// Public builds do not hard-code the hosted workers/free-tier proxy. Configure
-// it locally with the onhandFreeTierBaseUrl key in chrome.storage.local. See
-// docs/FREE_TIER.md.
-const ONHAND_FREE_TIER_DEFAULT_BASE_URL = "";
+// The hosted workers/free-tier proxy is injected only into packaged store builds
+// (npm run package:chrome), so tracked source and the tracked bundle never carry
+// it. Other builds leave Onhand Free unconfigured unless a profile sets the
+// onhandFreeTierBaseUrl key in chrome.storage.local. See docs/FREE_TIER.md.
+declare const __ONHAND_FREE_TIER_BASE_URL__: string;
+const ONHAND_FREE_TIER_DEFAULT_BASE_URL = typeof __ONHAND_FREE_TIER_BASE_URL__ === "string" ? __ONHAND_FREE_TIER_BASE_URL__ : "";
 const ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 const ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
@@ -2199,7 +2201,7 @@ async function getFreeTierBaseUrl(): Promise<string> {
 	const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
 	const baseUrl = (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
 	if (!baseUrl) {
-		throw new Error("Onhand Free is not configured. Set chrome.storage.local.onhandFreeTierBaseUrl to the deployed free-tier Worker URL.");
+		throw new Error("Onhand Free isn't available in this build of Onhand. Choose another AI provider in Onhand's settings. (Developers: set onhandFreeTierBaseUrl; see docs/FREE_TIER.md.)");
 	}
 	return baseUrl;
 }

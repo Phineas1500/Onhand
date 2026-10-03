@@ -367,7 +367,25 @@ async function assertProviderApiKeyStorageAndRouting() {
 		const runtimeSource = await readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
 		const runtimeBundle = await readFile(new URL("../packages/browser-extension/onhand-runtime.bundle.js", import.meta.url), "utf8");
 		assert.match(optionsSource, /lockedModels/, "options page should lock the free-tier model dropdown to curated entries");
-		assert.match(runtimeSource, /ONHAND_FREE_TIER_DEFAULT_BASE_URL = ""/, "free-tier base URL should be configured outside tracked source");
+		assert.match(runtimeSource, /ONHAND_FREE_TIER_DEFAULT_BASE_URL = typeof __ONHAND_FREE_TIER_BASE_URL__/, "the free-tier base URL comes from the release build, not tracked source");
+		// Store packages inject the URL at build time (npm run package:chrome);
+		// prove the injection path works without touching the tracked bundle.
+		const { execFileSync } = await import("node:child_process");
+		const { mkdtemp, rm } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const stagingDir = await mkdtemp(join(tmpdir(), "onhand-free-tier-build-"));
+		try {
+			const stagedBundle = join(stagingDir, "onhand-runtime.bundle.js");
+			execFileSync(process.execPath, [new URL("./build-browser-runtime.mjs", import.meta.url).pathname], {
+				cwd: new URL("..", import.meta.url).pathname,
+				stdio: "ignore",
+				env: { ...process.env, ONHAND_RUNTIME_OUTFILE: stagedBundle, ONHAND_BUILD_FREE_TIER_BASE_URL: "https://free-tier.example.test/v1" },
+			});
+			assert.match(await readFile(stagedBundle, "utf8"), /https:\/\/free-tier\.example\.test\/v1/, "a packaged build must carry its free-tier URL");
+		} finally {
+			await rm(stagingDir, { recursive: true, force: true });
+		}
 		assert.doesNotMatch(runtimeSource, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "source must not hard-code a public free-tier Worker URL");
 		assert.doesNotMatch(runtimeBundle, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "bundle must not hard-code a public free-tier Worker URL");
 	}

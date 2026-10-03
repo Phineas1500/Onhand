@@ -8,7 +8,9 @@ const developmentAgentObserverDisabledShim = new URL(
 	"../packages/browser-extension/src/observability/development-agent-observer-disabled-shim.ts",
 	import.meta.url,
 ).pathname;
-const outfile = "packages/browser-extension/onhand-runtime.bundle.js";
+// The release packager rebuilds into a staged copy; everything else writes the
+// tracked bundle.
+const outfile = process.env.ONHAND_RUNTIME_OUTFILE || "packages/browser-extension/onhand-runtime.bundle.js";
 
 function resolveLocalRaindropWorkshopUrl(value) {
 	const raw = String(value || "").trim();
@@ -26,6 +28,19 @@ function resolveLocalRaindropWorkshopUrl(value) {
 }
 
 const localRaindropWorkshopUrl = resolveLocalRaindropWorkshopUrl(process.env.ONHAND_RAINDROP_WORKSHOP_URL);
+
+// Only the release packager (scripts/package-chrome-extension.mjs) sets this, so
+// the tracked bundle never carries the hosted Worker URL. Ordinary builds leave
+// Onhand Free unconfigured unless a profile sets onhandFreeTierBaseUrl.
+function resolveFreeTierBaseUrl(value) {
+	const raw = String(value || "").trim();
+	if (!raw) return "";
+	const parsed = new URL(raw);
+	if (parsed.protocol !== "https:") throw new Error("ONHAND_BUILD_FREE_TIER_BASE_URL must use HTTPS.");
+	return parsed.toString().replace(/\/+$/, "");
+}
+
+const freeTierBaseUrl = resolveFreeTierBaseUrl(process.env.ONHAND_BUILD_FREE_TIER_BASE_URL);
 const isRaindropPiAgentImporter = (importer) => importer.replaceAll("\\", "/").includes("/node_modules/@raindrop-ai/pi-agent/");
 
 await esbuild.build({
@@ -44,6 +59,7 @@ await esbuild.build({
 	define: {
 		"process.env.NODE_ENV": "\"production\"",
 		__ONHAND_RAINDROP_WORKSHOP_URL__: JSON.stringify(localRaindropWorkshopUrl),
+		__ONHAND_FREE_TIER_BASE_URL__: JSON.stringify(freeTierBaseUrl),
 	},
 	plugins: [
 		{

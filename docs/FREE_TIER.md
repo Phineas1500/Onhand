@@ -114,11 +114,29 @@ endpoint to the repo. Keep it in your ignored local `.env`:
 ONHAND_FREE_TIER_BASE_URL=https://<your-worker>.workers.dev/v1
 ```
 
-Then set the override in extension storage:
+Store packages get the URL at packaging time, so Onhand Free works for store
+users without touching extension storage:
+
+```sh
+npm run package:chrome
+```
+
+This builds the extension, stages a copy, rebuilds only the staged runtime
+bundle with `ONHAND_FREE_TIER_BASE_URL` injected, and writes
+`dist/onhand-v<version>-chrome.zip`. Tracked source and the tracked
+`onhand-runtime.bundle.js` stay URL-free, and the script refuses to package
+if either would carry it. Pass `--force` to replace an existing zip for the
+same version.
+
+Development builds (`npm run build:extension`) stay unconfigured; set the
+override in extension storage instead:
 
 ```js
 chrome.storage.local.set({ onhandFreeTierBaseUrl: "https://<your-worker>.workers.dev/v1" })
 ```
+
+Without either, selecting Onhand Free reports that it isn't available in
+this build and points the user at another provider.
 
 ## Local testing
 

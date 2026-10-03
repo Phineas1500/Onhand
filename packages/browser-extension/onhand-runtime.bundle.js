@@ -86537,7 +86537,7 @@ var ONHAND_FREE_VISUAL_IMAGE_SMALL_BASE64_CHARS = 18e4;
 var ONHAND_FREE_VISUAL_IMAGE_MAX_EDGE_PX = 1440;
 var ONHAND_FREE_VISUAL_IMAGE_EDGE_STEPS = [1440, 1200, 960];
 var ONHAND_FREE_VISUAL_IMAGE_QUALITY_STEPS = [0.76, 0.66, 0.56];
-var ONHAND_FREE_TIER_DEFAULT_BASE_URL = "";
+var ONHAND_FREE_TIER_DEFAULT_BASE_URL = true ? "" : "";
 var ONHAND_FREE_BASE_URL_STORAGE_KEY = "onhandFreeTierBaseUrl";
 var ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
 var ONHAND_FREE_TURN_ID_HEADER = "X-Onhand-Turn-Id";
@@ -88013,7 +88013,7 @@ async function getFreeTierBaseUrl() {
   const override = String(stored[ONHAND_FREE_BASE_URL_STORAGE_KEY] || "").trim();
   const baseUrl = (override || ONHAND_FREE_TIER_DEFAULT_BASE_URL).replace(/\/+$/, "");
   if (!baseUrl) {
-    throw new Error("Onhand Free is not configured. Set chrome.storage.local.onhandFreeTierBaseUrl to the deployed free-tier Worker URL.");
+    throw new Error("Onhand Free isn't available in this build of Onhand. Choose another AI provider in Onhand's settings. (Developers: set onhandFreeTierBaseUrl; see docs/FREE_TIER.md.)");
   }
   return baseUrl;
 }
