@@ -467,6 +467,17 @@ export function createFixtureServer({ host = "127.0.0.1", port = DEFAULT_PORT } 
 				);
 				return;
 			}
+			// Static pages for live eval suites (evals/fixtures/*.html), e.g. the
+			// prompt-injection page in evals/creative. Names are restricted so
+			// the route can never read outside that folder.
+			const evalFixture = url.pathname.match(/^\/eval-fixtures\/([a-z0-9][a-z0-9-]*\.html)$/);
+			if (evalFixture) {
+				const body = await readFile(new URL(`../evals/fixtures/${evalFixture[1]}`, import.meta.url)).catch(() => null);
+				if (body) {
+					send(req, res, 200, { "Content-Type": "text/html; charset=utf-8" }, body);
+					return;
+				}
+			}
 			if (url.pathname === "/health") {
 				send(req, res, 200, { "Content-Type": "application/json; charset=utf-8" }, JSON.stringify({ ok: true }));
 				return;

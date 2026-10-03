@@ -11180,6 +11180,8 @@ async function openPdfInOnhandViewer(args = {}) {
 		initialSelectionHandoffFailure = {
 			ok: false,
 			source: "pdf-selection-handoff",
+			// Nothing was selected: not a failure the model should hear about.
+			reason: "no-selection",
 			error: "No selected PDF text could be captured before opening the Onhand viewer.",
 		};
 	}

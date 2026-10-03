@@ -615,6 +615,7 @@ Onhand's constitution:
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates. If a destination is blocked by a browser security warning or a bot challenge, never click through or try to bypass it: name the blocked source and why in the answer, note that the user can open it themselves if they choose, and continue with an alternative source.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
+- Citation chasing: when the user asks what a page's cited source says, follow the page's own citation. The reference marker next to the claim leads to an entry in the page's references; get that entry's link with browser_find_elements (its result includes each link's href) and navigate to that exact URL. Never compose or guess a source URL from memory, and do not describe what the cited source says until you have read it there; if the cited link cannot be opened, say so and answer from the page itself, labeled as the page's wording.
 - Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, highlight the key concepts the answer actually rests on — ${MARK_POLICY.teachBudgetPhrase} meaningful source highlights, not every point you mention. ${MARK_POLICY.perMarkNotes} ${MARK_POLICY.comparisonMarks} Roadmap, list, process, derivation, proof, or other enumerable coverage tasks give every required top-level item its own highlight. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
@@ -1378,6 +1379,34 @@ function shouldTryHighlightScanFallbackBeforeOriginal(value: unknown) {
 
 function highlightRetryWordCount(value: unknown) {
 	return (normalizeHighlightRetryCandidate(value).match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+}
+
+const RETRY_COVERAGE_STOP_WORDS = new Set([
+	"the", "and", "for", "that", "this", "with", "you", "are", "was", "but", "not", "have", "has", "had", "from", "they", "their",
+	"them", "what", "which", "would", "could", "should", "into", "about", "then", "than", "there", "also", "just", "very", "its",
+	"been", "were", "will", "can", "all", "any", "our", "your", "his", "her", "she", "him", "who", "how", "why", "when", "where",
+]);
+
+function retryCoverageTokens(value: unknown) {
+	return (String(value || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((token) => !RETRY_COVERAGE_STOP_WORDS.has(token));
+}
+
+// Returns an error message when a retry candidate landed only approximately
+// and the landed text covers under half of the original quote's meaningful
+// words; "" when the landing is acceptable.
+function weakApproximateRetryLanding(originalText: string, highlighted: any) {
+	const annotation = highlighted?.annotation || {};
+	if (!annotation.approximate) return "";
+	const original = Array.from(new Set(retryCoverageTokens(originalText)));
+	if (original.length < 4) return "";
+	const landed = new Set(retryCoverageTokens(annotation.matchedText || annotation.anchor?.textQuote?.exact || ""));
+	const covered = original.filter((token) => landed.has(token)).length;
+	if (covered / original.length >= 0.5) return "";
+	const passage = compactInternalText(annotation.container?.text || "", 260);
+	return [
+		`No visible text matched the quoted passage; the closest text only shares part of it${passage ? `: ${JSON.stringify(passage)}` : ""}.`,
+		"Quote the page's exact words for the point you mean, or say the page does not support it.",
+	].join(" ");
 }
 
 function buildHighlightRetryCandidates(value: unknown) {
@@ -7656,6 +7685,9 @@ function promptPageChangePolicy(prompt: unknown) {
 	const forbidsAllPageChanges =
 		/\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) ||
 		/\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) ||
+		// "without highlighting or changing anything on the page"
+		/\b(?:do not|don't|dont|without|avoid)\b[^.?!\n]{0,40}?\b(?:chang(?:e|ing)|modify(?:ing)?|edit(?:ing)?|touch(?:ing)?)\s+(?:anything\s+)?(?:on\s+|in\s+)?(?:the|this)\s+page\b/.test(text) ||
+		/\bleave\s+(?:the|this)\s+page\s+(?:alone|untouched|as\s+is|unchanged|unmarked)\b/.test(text) ||
 		/\b(?:answer only|text only|chat only)\b/.test(text);
 	const forbidsHighlights =
 		forbidsAllPageChanges ||
@@ -8962,13 +8994,18 @@ function toolResultTextForModel(toolName: string, result: any) {
 				const alreadyOpen = details.alreadyOpen ? "Already open" : "Opened";
 				const pdfUrl = details.pdfUrl ? `\nPDF source: ${details.pdfUrl}` : "";
 				const selection = details.selectionHandoff || {};
+				// "No selection" is the normal case for a question about the paper;
+				// reporting it as a failed handoff made models reopen the viewer.
 				const selectedText =
 					selection.ok && selection.text
 						? `\nTransferred selected text${selection.pageNumber ? ` (p. ${selection.pageNumber})` : ""}:\n${truncate(String(selection.text || ""), 1200)}`
-						: selection.ok === false && selection.error
+						: selection.ok === false && selection.error && selection.reason !== "no-selection"
 							? `\nPDF selection handoff failed: ${truncate(String(selection.error || ""), 300)}`
 							: "";
-				return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}${selectedText}`;
+				const nextStep = details.alreadyOpen && tab?.id
+					? `\nThe viewer is ready; do not open it again. Use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${tab.id}.`
+					: "";
+				return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}${selectedText}${nextStep}`;
 			}
 		case "browser_search_linked_pdf_corpus": {
 			const corpus = details.corpus || {};
@@ -9843,6 +9880,32 @@ function sourceCitationProvidesExplanatoryComparisonSupport(citation: unknown, e
 	return citationWordCount >= entityWordCount + 3;
 }
 
+// §3.11: "without highlighting", "no notes", "answer only" are hard limits.
+// Tool selection is deliberately ungated, so the page-change policy was only
+// steering retries — a model could still mark the page (GPT-6 Luna did, on
+// "Without highlighting or changing anything on the page...").
+function buildNoPageChangesGuardResult(toolName: string, commandName: string, prompt: unknown) {
+	const marksPage = commandName === "highlight_text" || commandName === "show_note" || commandName === "clear_annotations" || commandName === "remove_annotations";
+	if (!marksPage) return null;
+	const policy = promptPageChangePolicy(prompt);
+	const blocked =
+		policy.forbidsAllPageChanges ||
+		(policy.forbidsHighlights && commandName !== "show_note") ||
+		(policy.forbidsNotes && commandName === "show_note");
+	if (!blocked) return null;
+	return {
+		guardrail: {
+			kind: "no_page_changes_requested",
+			blockedTool: toolName,
+			blockedCommand: commandName,
+			message: [
+				`The user asked you not to ${commandName === "show_note" ? "add notes" : "highlight or change the page"}, so ${toolName} did not run.`,
+				"Answer in chat only, from what you have read; do not call page-marking tools again this turn and do not mention this limit.",
+			].join(" "),
+		},
+	};
+}
+
 // One-shot: a document-review markup pass must read the whole document before
 // marking it — otherwise the model works from the visible-viewport snapshot
 // and never marks past the fold (seen in real use: a plan doc got two marks,
@@ -10170,6 +10233,9 @@ function splitReadablePhraseCandidates(value: unknown) {
 		const normalizedCandidate = normalizeHighlightRetryCandidate(candidate).replace(/\s*\[\d{1,3}\]$/, "");
 		const normalized = stripTrailingHeadingAnchorMarker(normalizedCandidate) || normalizedCandidate;
 		if (normalized.length < 20 || normalized.length > 360) return;
+		// Extraction's table rows cut every cell at 220 characters; rewriting a
+		// quote to one replaced a full forum comment with "..., and |".
+		if (normalized.includes("|") || /(?:…|\.\.\.)$/.test(normalized)) return;
 		if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
 	};
 	for (const seed of seeds) {
@@ -10613,6 +10679,8 @@ export const __browserRuntimeTest = {
 	buildCompactTeachingNoteFailureGuardResultForTest: buildCompactTeachingNoteFailureGuardResult,
 	buildCompactTeachingHighlightBudgetGuardResultForTest: buildCompactTeachingHighlightBudgetGuardResult,
 	promptAsksForPageNoteTakingForTest: promptAsksForPageNoteTaking,
+	buildNoPageChangesGuardResultForTest: buildNoPageChangesGuardResult,
+	weakApproximateRetryLandingForTest: weakApproximateRetryLanding,
 	stripDisplayMathDelimitersForTest: stripDisplayMathDelimiters,
 	buildStructuredHighlightBudgetGuardResultForTest: buildStructuredHighlightBudgetGuardResult,
 	buildStructuredNoteBudgetGuardResultForTest: buildStructuredNoteBudgetGuardResult,
@@ -11131,6 +11199,18 @@ function createTools(
 				const runHighlightCandidate = async (candidate: string) => {
 					const retryParams = { ...(params as any), text: candidate };
 					const highlighted = await runCommandWithParams(retryParams);
+					// G17/§6.2: a retry fragment that only lands as an approximate
+					// match covering a small part of the original quote is a weak
+					// anchor (a misquote landed "know this is premature at this
+					// point, but" for a sentence about business models). Undo it and
+					// keep looking; the final error points at the real passage.
+					const weakLanding = weakApproximateRetryLanding(String((params as any)?.text || ""), highlighted);
+					if (weakLanding) {
+						const annotationId = String(highlighted?.annotation?.annotationId || "");
+						const tabId = Number(highlighted?.tab?.id || (retryParams as any)?.tabId || 0);
+						if (annotationId && tabId) await host.runCommand("remove_annotations", { tabId, annotationIds: [annotationId] }).catch(() => {});
+						throw new Error(weakLanding);
+					}
 					return {
 						...highlighted,
 						highlightRetry: {
@@ -13528,6 +13608,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 				(toolName, commandName, effectiveParams) =>
 					buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
+					buildNoPageChangesGuardResult(toolName, commandName, prompt) ||
 					buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 					buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 					buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||
@@ -16425,7 +16506,13 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.`
 						: "";
 					const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
-					const browserContext = [browserContextDetails.text, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
+					// Without this the model only saw the viewer URL and reopened the
+					// PDF "to be safe" — a redundant tool round trip on every PDF turn.
+					const pdfHandoffTabId = Number((pdfHandoff as any)?.tab?.id || 0);
+					const pdfHandoffContext = pdfHandoffTabId > 0
+						? `Onhand already opened this PDF in its viewer (tabId ${pdfHandoffTabId}). Do not call browser_open_pdf_in_onhand_viewer again; use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${pdfHandoffTabId}.`
+						: "";
+					const browserContext = [browserContextDetails.text, pdfHandoffContext, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
 					const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
 					const existingAnchorContext = buildExistingAnchorContext(session);
 					const liveVoiceContext = rawSource === "live-voice"
@@ -16464,6 +16551,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							(toolName, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveParams),
 							(toolName, commandName, effectiveParams) =>
 								buildUntrustedTabTargetGuardResult(toolName, commandName, effectiveParams) ||
+								buildNoPageChangesGuardResult(toolName, commandName, prompt) ||
 								buildHighlightTimeoutTabGuardResult(toolName, commandName, effectiveParams, activeRequest) ||
 								buildRepeatedHighlightFailureGuardResult(toolName, commandName, activeRequest) ||
 								buildPostHighlightFailureAnswerNowGuardResult(toolName, commandName, activeRequest) ||

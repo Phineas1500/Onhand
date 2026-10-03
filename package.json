@@ -67,6 +67,7 @@
     "eval:page-prompts": "node ./scripts/run-page-prompt-eval.mjs",
     "eval:page-teaching-smoke": "node ./scripts/run-page-prompt-eval.mjs --case bayesian-no-page-changes --case mdn-fetch-teach --case energy-heat-pump-summary --case bayes-source-derivation",
     "eval:real-world": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/real-world/cases.json --screenshots",
+    "eval:creative": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/creative/cases.json --screenshots",
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",
     "eval:agent-trajectories": "node ./scripts/run-agent-trajectory-eval.mjs",
     "eval:agent-trajectories:live": "node ./scripts/run-agent-trajectory-baseline.mjs",

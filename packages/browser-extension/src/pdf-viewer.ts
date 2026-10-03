@@ -427,6 +427,31 @@ function pdfTextNodeBoundaryNeedsSpace(previous: Text | null, next: Text) {
 	return nextRect.left - previousRect.right > lineHeight * 0.12;
 }
 
+// range.toString() glues text-layer spans the same way textContent does, so a
+// match across a wrapped line was reported as "includingensembles". Rebuild
+// the matched text with the same boundary spaces the text map uses.
+function rangeTextWithPdfBoundarySpaces(range: Range) {
+	const common = range.commonAncestorContainer;
+	const root = common.nodeType === Node.TEXT_NODE ? common.parentNode : common;
+	if (!root) return range.toString();
+	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+	let text = "";
+	let previous: Text | null = null;
+	while (walker.nextNode()) {
+		const node = walker.currentNode as Text;
+		if (!range.intersectsNode(node)) continue;
+		const value = node.nodeValue || "";
+		const start = node === range.startContainer ? range.startOffset : 0;
+		const end = node === range.endContainer ? range.endOffset : value.length;
+		const part = value.slice(start, end);
+		if (!part) continue;
+		if (text && !/\s$/.test(text) && !/^\s/.test(part) && pdfTextNodeBoundaryNeedsSpace(previous, node)) text += " ";
+		text += part;
+		previous = node;
+	}
+	return text || range.toString();
+}
+
 function buildNormalizedTextMap(root: Element) {
 	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 	const positions: Array<{ node: Text; offset: number }> = [];
@@ -639,7 +664,7 @@ function findMappedTextRange(root: Element, query: string, occurrence = 1, conte
 		if (range) {
 			return {
 				range,
-				matchedText: normalizeText(range.toString()) || normalizeText(query),
+				matchedText: normalizeText(rangeTextWithPdfBoundarySpaces(range)) || normalizeText(query),
 				fallback: undefined,
 				context: extractNormalizedContext(map.searchText, exactIndex, queryText.length),
 			};
@@ -669,7 +694,7 @@ function findMappedTextRange(root: Element, query: string, occurrence = 1, conte
 			if (range) {
 				return {
 					range,
-					matchedText: normalizeText(range.toString()) || normalizeText(query),
+					matchedText: normalizeText(rangeTextWithPdfBoundarySpaces(range)) || normalizeText(query),
 					fallback: "compact-text",
 					context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1),
 				};
@@ -700,7 +725,7 @@ function findMappedTextRange(root: Element, query: string, occurrence = 1, conte
 			if (range) {
 				return {
 					range,
-					matchedText: normalizeText(range.toString()) || normalizeText(query),
+					matchedText: normalizeText(rangeTextWithPdfBoundarySpaces(range)) || normalizeText(query),
 					fallback: "context",
 					context: extractNormalizedContext(map.text, startMapIndex, endMapIndex - startMapIndex + 1),
 				};

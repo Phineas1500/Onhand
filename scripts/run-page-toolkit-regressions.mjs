@@ -610,6 +610,27 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.match(source, /commandSourceUrl !== sourceUrl/, "PDF viewer bridge commands should be scoped to the loaded PDF URL");
 }
 
+async function assertPdfMatchedTextKeepsLineBreakSpaces() {
+	// A BLEU-score highlight was reported as "...best results, includingensembles":
+	// range.toString() glues pdf.js text-layer spans that sit on separate lines.
+	const { transform } = await import("esbuild");
+	const names = ["pdfTextNodeBoundaryNeedsSpace", "rangeTextWithPdfBoundarySpaces"];
+	const declarations = await Promise.all(names.map((name) => loadFunctionFromFile("packages/browser-extension/src/pdf-viewer.ts", name)));
+	const { code } = await transform(declarations.join("\n"), { loader: "ts", target: "es2022" });
+	const { window } = new JSDOM('<div class="textLayer"><span id="a">improving over the existing best results, including</span><br role="presentation"><span id="b">ensembles, by over 2 BLEU.</span></div>');
+	const { document } = window;
+	const viewer = new Function("document", "Node", "NodeFilter", `${code}\nreturn { rangeTextWithPdfBoundarySpaces };`)(document, window.Node, window.NodeFilter);
+	const range = document.createRange();
+	range.setStart(document.querySelector("#a").firstChild, 10);
+	range.setEnd(document.querySelector("#b").firstChild, 9);
+	assert.equal(range.toString(), "over the existing best results, includingensembles", "the raw range glues the lines");
+	assert.equal(viewer.rangeTextWithPdfBoundarySpaces(range), "over the existing best results, including ensembles", "the reported match keeps the line-break space");
+	const single = document.createRange();
+	single.setStart(document.querySelector("#a").firstChild, 0);
+	single.setEnd(document.querySelector("#a").firstChild, 9);
+	assert.equal(viewer.rangeTextWithPdfBoundarySpaces(single), "improving", "a match inside one span is unchanged");
+}
+
 async function assertPdfReuseRequiresWholeQuote() {
 	const { transform } = await import("esbuild");
 	const names = ["parsePdfAnchor", "pdfAnchorText", "pdfAnchorPageNumber", "pdfDocumentUrl", "pdfHighlightMatches", "findExistingPdfHighlight", "removeDuplicatePdfHighlights"];
@@ -4305,6 +4326,7 @@ async function main() {
 	await assertReadableContentPagesThroughLongPages();
 	await assertLineBreakParagraphsSplitAndStayHighlightable();
 	await assertReadableContentIncludesDisplayEquations();
+	await assertPdfMatchedTextKeepsLineBreakSpaces();
 	await assertNativeChromePdfViewerSelectionFallback();
 	await assertPdfClipboardSelectionUsesExtensionOnly();
 	await assertOffscreenClipboardWithoutDocumentFocus();

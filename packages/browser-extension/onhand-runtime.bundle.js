@@ -86696,6 +86696,7 @@ Onhand's constitution:
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates. If a destination is blocked by a browser security warning or a bot challenge, never click through or try to bypass it: name the blocked source and why in the answer, note that the user can open it themselves if they choose, and continue with an alternative source.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
+- Citation chasing: when the user asks what a page's cited source says, follow the page's own citation. The reference marker next to the claim leads to an entry in the page's references; get that entry's link with browser_find_elements (its result includes each link's href) and navigate to that exact URL. Never compose or guess a source URL from memory, and do not describe what the cited source says until you have read it there; if the cited link cannot be opened, say so and answer from the page itself, labeled as the page's wording.
 - Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, highlight the key concepts the answer actually rests on \u2014 ${MARK_POLICY.teachBudgetPhrase} meaningful source highlights, not every point you mention. ${MARK_POLICY.perMarkNotes} ${MARK_POLICY.comparisonMarks} Roadmap, list, process, derivation, proof, or other enumerable coverage tasks give every required top-level item its own highlight. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
@@ -87324,6 +87325,74 @@ function shouldTryHighlightScanFallbackBeforeOriginal(value) {
 }
 function highlightRetryWordCount(value) {
   return (normalizeHighlightRetryCandidate(value).match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+}
+var RETRY_COVERAGE_STOP_WORDS = /* @__PURE__ */ new Set([
+  "the",
+  "and",
+  "for",
+  "that",
+  "this",
+  "with",
+  "you",
+  "are",
+  "was",
+  "but",
+  "not",
+  "have",
+  "has",
+  "had",
+  "from",
+  "they",
+  "their",
+  "them",
+  "what",
+  "which",
+  "would",
+  "could",
+  "should",
+  "into",
+  "about",
+  "then",
+  "than",
+  "there",
+  "also",
+  "just",
+  "very",
+  "its",
+  "been",
+  "were",
+  "will",
+  "can",
+  "all",
+  "any",
+  "our",
+  "your",
+  "his",
+  "her",
+  "she",
+  "him",
+  "who",
+  "how",
+  "why",
+  "when",
+  "where"
+]);
+function retryCoverageTokens(value) {
+  return (String(value || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter((token) => !RETRY_COVERAGE_STOP_WORDS.has(token));
+}
+function weakApproximateRetryLanding(originalText, highlighted) {
+  const annotation = highlighted?.annotation || {};
+  if (!annotation.approximate) return "";
+  const original = Array.from(new Set(retryCoverageTokens(originalText)));
+  if (original.length < 4) return "";
+  const landed = new Set(retryCoverageTokens(annotation.matchedText || annotation.anchor?.textQuote?.exact || ""));
+  const covered = original.filter((token) => landed.has(token)).length;
+  if (covered / original.length >= 0.5) return "";
+  const passage = compactInternalText(annotation.container?.text || "", 260);
+  return [
+    `No visible text matched the quoted passage; the closest text only shares part of it${passage ? `: ${JSON.stringify(passage)}` : ""}.`,
+    "Quote the page's exact words for the point you mean, or say the page does not support it."
+  ].join(" ");
 }
 function buildHighlightRetryCandidates(value) {
   const raw = String(value || "").trim();
@@ -91675,7 +91744,8 @@ function promptCouldReferToHighlightedPdfText(prompt) {
 function promptPageChangePolicy(prompt) {
   const text = String(prompt || "").toLowerCase();
   const negativeDirective = /\b(?:do not|don't|dont|no|without|avoid|skip)\b[^.?!\n]{0,80}/;
-  const forbidsAllPageChanges = /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) || /\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) || /\b(?:answer only|text only|chat only)\b/.test(text);
+  const forbidsAllPageChanges = /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) || /\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) || // "without highlighting or changing anything on the page"
+  /\b(?:do not|don't|dont|without|avoid)\b[^.?!\n]{0,40}?\b(?:chang(?:e|ing)|modify(?:ing)?|edit(?:ing)?|touch(?:ing)?)\s+(?:anything\s+)?(?:on\s+|in\s+)?(?:the|this)\s+page\b/.test(text) || /\bleave\s+(?:the|this)\s+page\s+(?:alone|untouched|as\s+is|unchanged|unmarked)\b/.test(text) || /\b(?:answer only|text only|chat only)\b/.test(text);
   const forbidsHighlights = forbidsAllPageChanges || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\s+up)?)\b/.test(
     text
   ) || new RegExp(`${negativeDirective.source}\\b(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\\s+up)?)\\b`).test(text);
@@ -92579,9 +92649,11 @@ PDF source: ${details.pdfUrl}` : "";
       const selection = details.selectionHandoff || {};
       const selectedText = selection.ok && selection.text ? `
 Transferred selected text${selection.pageNumber ? ` (p. ${selection.pageNumber})` : ""}:
-${truncate2(String(selection.text || ""), 1200)}` : selection.ok === false && selection.error ? `
+${truncate2(String(selection.text || ""), 1200)}` : selection.ok === false && selection.error && selection.reason !== "no-selection" ? `
 PDF selection handoff failed: ${truncate2(String(selection.error || ""), 300)}` : "";
-      return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}${selectedText}`;
+      const nextStep = details.alreadyOpen && tab?.id ? `
+The viewer is ready; do not open it again. Use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${tab.id}.` : "";
+      return `${alreadyOpen} PDF in Onhand viewer: ${formatCompactTab(tab)}${pdfUrl}${selectedText}${nextStep}`;
     }
     case "browser_search_linked_pdf_corpus": {
       const corpus = details.corpus || {};
@@ -93287,6 +93359,24 @@ function sourceCitationProvidesExplanatoryComparisonSupport(citation, entity) {
   const entityWordCount = entityWords(entity).length;
   return citationWordCount >= entityWordCount + 3;
 }
+function buildNoPageChangesGuardResult(toolName2, commandName, prompt) {
+  const marksPage = commandName === "highlight_text" || commandName === "show_note" || commandName === "clear_annotations" || commandName === "remove_annotations";
+  if (!marksPage) return null;
+  const policy = promptPageChangePolicy(prompt);
+  const blocked = policy.forbidsAllPageChanges || policy.forbidsHighlights && commandName !== "show_note" || policy.forbidsNotes && commandName === "show_note";
+  if (!blocked) return null;
+  return {
+    guardrail: {
+      kind: "no_page_changes_requested",
+      blockedTool: toolName2,
+      blockedCommand: commandName,
+      message: [
+        `The user asked you not to ${commandName === "show_note" ? "add notes" : "highlight or change the page"}, so ${toolName2} did not run.`,
+        "Answer in chat only, from what you have read; do not call page-marking tools again this turn and do not mention this limit."
+      ].join(" ")
+    }
+  };
+}
 function buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, request) {
   if (commandName !== "highlight_text" && commandName !== "show_note") return null;
   if (!promptAsksForMarkupPass(prompt)) return null;
@@ -93561,6 +93651,7 @@ function splitReadablePhraseCandidates(value) {
     const normalizedCandidate = normalizeHighlightRetryCandidate(candidate).replace(/\s*\[\d{1,3}\]$/, "");
     const normalized = stripTrailingHeadingAnchorMarker(normalizedCandidate) || normalizedCandidate;
     if (normalized.length < 20 || normalized.length > 360) return;
+    if (normalized.includes("|") || /(?:…|\.\.\.)$/.test(normalized)) return;
     if (!candidates.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) candidates.push(normalized);
   };
   for (const seed of seeds) {
@@ -93950,6 +94041,8 @@ var __browserRuntimeTest = {
   buildCompactTeachingNoteFailureGuardResultForTest: buildCompactTeachingNoteFailureGuardResult,
   buildCompactTeachingHighlightBudgetGuardResultForTest: buildCompactTeachingHighlightBudgetGuardResult,
   promptAsksForPageNoteTakingForTest: promptAsksForPageNoteTaking,
+  buildNoPageChangesGuardResultForTest: buildNoPageChangesGuardResult,
+  weakApproximateRetryLandingForTest: weakApproximateRetryLanding,
   stripDisplayMathDelimitersForTest: stripDisplayMathDelimiters,
   buildStructuredHighlightBudgetGuardResultForTest: buildStructuredHighlightBudgetGuardResult,
   buildStructuredNoteBudgetGuardResultForTest: buildStructuredNoteBudgetGuardResult,
@@ -94385,6 +94478,14 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
         const runHighlightCandidate = async (candidate) => {
           const retryParams = { ...params, text: candidate };
           const highlighted = await runCommandWithParams(retryParams);
+          const weakLanding = weakApproximateRetryLanding(String(params?.text || ""), highlighted);
+          if (weakLanding) {
+            const annotationId = String(highlighted?.annotation?.annotationId || "");
+            const tabId = Number(highlighted?.tab?.id || retryParams?.tabId || 0);
+            if (annotationId && tabId) await host.runCommand("remove_annotations", { tabId, annotationIds: [annotationId] }).catch(() => {
+            });
+            throw new Error(weakLanding);
+          }
           return {
             ...highlighted,
             highlightRetry: {
@@ -96625,7 +96726,7 @@ function createOnhandBrowserRuntime(host) {
           learningMode ? "learning" : "answer"
         ),
         (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+        (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
         async (effectiveParams) => {
           if (!effectiveParams?.scanPage) return null;
           const text = compactActionText(effectiveParams?.text);
@@ -99199,7 +99300,9 @@ function createOnhandBrowserRuntime(host) {
           requestContext.abortController.signal.throwIfAborted();
           const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl ? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.` : "";
           const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
-          const browserContext = [browserContextDetails.text, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
+          const pdfHandoffTabId = Number(pdfHandoff?.tab?.id || 0);
+          const pdfHandoffContext = pdfHandoffTabId > 0 ? `Onhand already opened this PDF in its viewer (tabId ${pdfHandoffTabId}). Do not call browser_open_pdf_in_onhand_viewer again; use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${pdfHandoffTabId}.` : "";
+          const browserContext = [browserContextDetails.text, pdfHandoffContext, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
           const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
           const existingAnchorContext = buildExistingAnchorContext(session);
           const liveVoiceContext = rawSource === "live-voice" ? "This answer will also be spoken. Start with a self-contained paragraph of at most 45 words, including essential qualifications. In Learning Mode, put the single learning question or evaluation first without revealing an unrequested solution. Additional detail and citations can follow in the sidebar.\nLive conversation reference data (fragments may be incomplete; apply the latest correction and keep speaker roles distinct):\n" + JSON.stringify((Array.isArray(request.voiceContext) ? request.voiceContext : []).slice(-40).map((entry) => ({ role: entry.role === "assistant" ? "assistant" : "user", text: String(entry.text || "").slice(0, 350) }))) : "";
@@ -99232,7 +99335,7 @@ function createOnhandBrowserRuntime(host) {
                 learningMode ? "learning" : "answer"
               ),
               (toolName2, toolCallId, _requestedParams, effectiveParams) => recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveParams),
-              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
+              (toolName2, commandName, effectiveParams) => buildUntrustedTabTargetGuardResult(toolName2, commandName, effectiveParams) || buildNoPageChangesGuardResult(toolName2, commandName, prompt) || buildHighlightTimeoutTabGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildRepeatedHighlightFailureGuardResult(toolName2, commandName, activeRequest) || buildPostHighlightFailureAnswerNowGuardResult(toolName2, commandName, activeRequest) || buildRepeatedViewportReadGuardResult(toolName2, commandName, activeRequest) || buildVisiblePdfSelectionFirstPassGuardResult(toolName2, commandName, prompt, firstPassPdfSelectionQuestion, activeRequest?.toolTraces || []) || buildTextbookContextReadyGuardResult(toolName2, commandName, effectiveParams, activeRequest?.toolTraces || []) || buildEmptyHighlightTextGuardResult(toolName2, commandName, effectiveParams) || buildDuplicateTabNavigationGuardResult(toolName2, commandName, effectiveParams, activeRequest) || buildReviewExtractionFirstGuardResult(toolName2, commandName, prompt, activeRequest) || buildWeakStructuredHighlightTextGuardResult(toolName2, commandName, effectiveParams, prompt) || buildWeakCompactTeachingHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildNamedFormulaHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildConceptLocationHighlightGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildSurplusReviewNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingNoteGuardResult(toolName2, commandName, prompt, activeRequest) || buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredNoteBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildOptionalFrameFallbackNoteGuardResult(toolName2, commandName, effectiveParams, prompt, activeRequest) || buildCompactTeachingHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildStructuredHighlightBudgetGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusReviewHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusTeachingHighlightGuardResult(toolName2, commandName, prompt, activeRequest) || buildSurplusHighlightGuardResult(toolName2, commandName, prompt, activeRequest),
               async (effectiveParams) => {
                 if (!effectiveParams?.scanPage) return null;
                 const text = compactActionText(effectiveParams?.text);

@@ -170,7 +170,7 @@ const BUILTIN_CASES = [
 	},
 	{
 		id: "energy-heat-pump-summary",
-		url: "https://www.energy.gov/energysaver/heat-pump-systems",
+		url: "https://www.energystar.gov/products/air_source_heat_pumps",
 		prompt: "Give me a practical summary of this page.",
 		expect: {
 			minHighlights: 1,
@@ -274,7 +274,7 @@ Case object fields:
 
 Multi-page / research expect fields:
   requiredToolPatterns        Each regex must match a completed tool name.
-  forbiddenToolPatterns       No attempted tool name may match.
+  forbiddenToolPatterns       No tool that actually ran may match (guardrail-blocked attempts only warn).
   minAnnotatedTabs            Marks must land on at least this many distinct tabs.
   minSourceTabs               Tools must read or mark at least this many distinct tabs.
 `);
@@ -1131,15 +1131,28 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 	if (expect.maxTotalToolDurationMs != null && metrics.toolDurationMs > Number(expect.maxTotalToolDurationMs)) {
 		penalty(0.08, `tool time too high: ${metrics.toolDurationMs}ms > ${expect.maxTotalToolDurationMs}`, false);
 	}
-	const attemptedToolNames = allTools(turn).map((tool) => String(tool?.toolName || ""));
 	const completedToolNames = allTools(turn)
 		.filter((tool) => tool?.state === "complete")
 		.map((tool) => String(tool?.toolName || ""));
 	for (const pattern of expect.requiredToolPatterns || []) {
 		if (!completedToolNames.some((name) => regex(pattern).test(name))) penalty(0.16, `required tool missing: ${pattern}`);
 	}
+	// A call a runtime guardrail blocked never touched the page: that is the
+	// runtime enforcing the request, so it is a warning, not a violation.
+	const guardBlockedTrace = (tool) => tool?.state === "error" && /guardrail blocked/i.test(String(tool?.resultSummary || tool?.error || ""));
+	// Activities mirror traces under the same call id ("tool:<id>" vs the
+	// trace's toolCallId) but carry no result text, so match blocks by id.
+	const blockedCallIds = new Set((Array.isArray(turn?.toolTraces) ? turn.toolTraces : []).filter(guardBlockedTrace).map((tool) => String(tool?.toolCallId || "")));
+	const guardBlocked = (tool) => guardBlockedTrace(tool) || blockedCallIds.has(String(tool?.toolCallId || String(tool?.id || "").replace(/^(?:tool|trace):/, "")));
+	const ranToolNames = allTools(turn)
+		.filter((tool) => !guardBlocked(tool))
+		.map((tool) => String(tool?.toolName || ""));
+	const blockedToolNames = allTools(turn)
+		.filter(guardBlocked)
+		.map((tool) => String(tool?.toolName || ""));
 	for (const pattern of expect.forbiddenToolPatterns || []) {
-		if (attemptedToolNames.some((name) => regex(pattern).test(name))) penalty(0.14, `forbidden tool used: ${pattern}`);
+		if (ranToolNames.some((name) => regex(pattern).test(name))) penalty(0.14, `forbidden tool used: ${pattern}`);
+		else if (blockedToolNames.some((name) => regex(pattern).test(name))) penalty(0, `forbidden tool attempted but blocked by a guardrail: ${pattern}`, false);
 	}
 	if (expect.minAnnotatedTabs != null && metrics.annotatedTabCount < Number(expect.minAnnotatedTabs)) {
 		penalty(0.16, `expected marks on at least ${expect.minAnnotatedTabs} tab(s), got ${metrics.annotatedTabCount}`);
@@ -1430,6 +1443,21 @@ function markdownReport(plan, results, variantSummary) {
 	return `${lines.join("\n")}\n`;
 }
 
+// Cases may point at local fixture pages (http://127.0.0.1:8765/...). Start
+// the fixture server for the run unless one is already listening.
+async function ensureFixtureServerForCases(cases) {
+	const fixtureUrls = cases
+		.flatMap((testCase) => [testCase.url, ...(Array.isArray(testCase.setupUrls) ? testCase.setupUrls : [])])
+		.filter((value) => /^http:\/\/127\.0\.0\.1:8765\//.test(String(value || "")));
+	if (!fixtureUrls.length) return null;
+	const alreadyRunning = await fetch("http://127.0.0.1:8765/health").then((response) => response.ok).catch(() => false);
+	if (alreadyRunning) return null;
+	const { startFixtureServer } = await import("./serve-browser-runtime-fixture.mjs");
+	const started = await startFixtureServer({ host: "127.0.0.1", port: 8765 });
+	console.log("page-prompt-eval: started the local fixture server on 127.0.0.1:8765");
+	return started;
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.listCases) {
@@ -1467,6 +1495,7 @@ async function main() {
 		return;
 	}
 	await mkdir(runDir, { recursive: true });
+	const fixtureServer = await ensureFixtureServerForCases(cases);
 	const switched = args.model ? await setOnhandModel(args, args.model) : null;
 	if (switched) plan.model = `${switched.provider}/${args.model}`;
 	await writeFile(join(runDir, "plan.json"), JSON.stringify(plan, null, 2));
@@ -1485,6 +1514,7 @@ async function main() {
 	} finally {
 		// The user's previous model may be a custom id the provider list omits.
 		if (switched && switched.previousModel !== args.model) await setOnhandModel(args, switched.previousModel, { requireOffered: false });
+		await new Promise((resolve) => (fixtureServer ? fixtureServer.server.close(resolve) : resolve()));
 	}
 	const variantSummary = summarizeVariants(results);
 	const summary = { plan: { ...plan, cases: cases.map((testCase) => testCase.id), variants: variants.map((variant) => variant.id) }, results, variantSummary };

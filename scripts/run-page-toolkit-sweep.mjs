@@ -50,7 +50,7 @@ const SWEEP_PAGES = [
 	{ id: "paulgraham-essay", family: "plain-html", url: "https://www.paulgraham.com/greatwork.html" },
 	{ id: "gutenberg-novel", family: "large-plain", url: "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm" },
 	{ id: "wcag-spec", family: "w3c-spec", url: "https://www.w3.org/TR/WCAG21/" },
-	{ id: "energy-heat-pump", family: "gov-cms", url: "https://www.energy.gov/energysaver/heat-pump-systems" },
+	{ id: "energy-heat-pump", family: "gov-cms", url: "https://www.energystar.gov/products/air_source_heat_pumps" },
 ];
 
 function parseArgs(argv) {
