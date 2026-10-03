@@ -948,7 +948,7 @@ function uncitedAnswerPoints(reply) {
 	}
 	return units.filter((unit) => {
 		if (!unit || /\[\[cite:/.test(unit) || /[?:]\s*$/.test(unit)) return false;
-		if (/^(?:\*\*)?(?:in short|overall|takeaway|in one sentence|main takeaway|bottom line|summary|marked|answer|switch learning)\b/i.test(unit)) return false;
+		if (/^(?:\*\*)?(?:in short|overall|takeaway|in one sentence|main takeaway|bottom line|summary|so|thus|therefore|in other words|marked|answer|switch learning)\b/i.test(unit)) return false;
 		if (/instructions aimed at AI assistants/i.test(unit)) return false;
 		return (unit.match(/[A-Za-z]{2,}/g) || []).length >= 6;
 	});
