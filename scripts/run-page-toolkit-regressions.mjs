@@ -1970,6 +1970,36 @@ function assertPassivePdfHighlightElement(element, label = "PDF highlight") {
 	assert.equal(element.getAttribute("aria-hidden"), "true", `${label} should be hidden from accessibility navigation`);
 }
 
+// Web-page citation lookup: a quoted claim leads to the markers right after it,
+// each marker to its reference entry and links, and a short reference on to the
+// full citation. Luna could not turn Wikipedia's "[17]" into a link before.
+async function assertWebCitationLookup() {
+	const { toolkit } = await createToolkit(`<main>
+		<p>The mirror has a gold coating to provide infrared reflectivity.<sup class="reference"><a href="#cite_note-17">[17]</a></sup> It is folded for launch.<sup class="reference"><a href="#cite_note-18">[18]</a></sup></p>
+		<p>Gold reflects red light well.<sup class="reference"><a href="#cite_note-Smith-3">[3]</a></sup></p>
+		<ol class="references">
+			<li id="cite_note-17"><span class="reference-text"><a class="external text" href="https://jwst.nasa.gov/content/about/faqs/faq.html">"Frequently asked questions"</a>. NASA. The mirror has a gold coating to provide infrared reflectivity.</span></li>
+			<li id="cite_note-18"><span class="reference-text">Launch notes <a href="https://example.org/launch">launch</a></span></li>
+			<li id="cite_note-Smith-3"><span class="reference-text"><a href="#CITEREFSmith2020">Smith 2020</a>, p. 4.</span></li>
+		</ol>
+		<ul><li><cite id="CITEREFSmith2020">Smith, J. (2020). <a class="external" href="https://doi.org/10.1/gold">Gold mirrors</a>.</cite></li></ul>
+	</main>`);
+	const full = toolkit.findCitations("The mirror has a gold coating to provide infrared reflectivity.");
+	assert.equal(full.matchedClaim, true);
+	assert.deepEqual(Array.from(full.citations, (c) => c.marker), ["[17]"], "only the marker right after the claim, not the next sentence's");
+	assert.equal(full.citations[0].links[0].href, "https://jwst.nasa.gov/content/about/faqs/faq.html");
+	assert.match(full.citations[0].entryText, /Frequently asked questions/);
+	const partial = toolkit.findCitations("gold coating to provide infrared");
+	assert.deepEqual(Array.from(partial.citations, (c) => c.marker), ["[17]"], "a quoted fragment finds the marker at its sentence end");
+	const short = toolkit.findCitations("Gold reflects red light well");
+	assert.equal(short.citations[0].fullCitation.links[0].href, "https://doi.org/10.1/gold", "a short reference is followed to the full citation's link");
+	assert.deepEqual(Array.from(toolkit.findCitations("", { reference: "[18]" }).citations, (c) => c.links[0].href), ["https://example.org/launch"], "lookup by marker number");
+	const missing = toolkit.findCitations("A sentence that is not on this page at all");
+	assert.equal(missing.matchedClaim, false);
+	assert.match(missing.note, /not found/);
+	console.log("Web citation lookup: claim, fragment, short reference, marker number, and missing claim passed");
+}
+
 async function createToolkit(html, toolkitOptions = {}) {
 	const dom = new JSDOM(html, {
 		url: "https://example.test/article",
@@ -4468,6 +4498,7 @@ async function main() {
 	await assertPdfHighlightPrefersVisiblePageMatch();
 	await assertPdfSelectionIncludesAnchor();
 	await assertBlockedNavigationClassification();
+	await assertWebCitationLookup();
 
 	console.log("Page toolkit regressions: PASS");
 }

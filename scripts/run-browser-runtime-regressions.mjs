@@ -3020,8 +3020,8 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
-		/!activeRequest\.contentFilterRetry[\s\S]{0,200}content_filter[\s\S]{0,300}contentFilterRetry = true;[\s\S]{0,400}queueBlankReplyRetry/,
-		"an answer cut off by a provider content filter is rewritten once from the completed marks",
+		/contentFilterRetryCount \|\| 0\) < 2[\s\S]{0,200}content_filter[\s\S]{0,600}queueBlankReplyRetry\(activeAgent, buildContentFilterRetryPrompt\(activeRequest\)/,
+		"work cut off by a provider content filter continues, up to twice",
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
@@ -11326,6 +11326,18 @@ async function assertCitedSourceQuestionsOpenTheSource() {
 	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, toolTraces: [...base.toolTraces, { toolName: "browser_navigate", state: "error", args: { url: "https://example.test/ref" } }] }), false, "an attempted open counts, even if it failed");
 	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, toolTraces: [...base.toolTraces, { toolName: "browser_extract_content", state: "complete", args: { tabId: 9 } }] }), false, "reading the source in another open tab counts");
 	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, displayPrompt: "Why was gold used for the mirror?" }), false, "ordinary questions are unaffected");
+	const filtered = test.buildContentFilterRetryPrompt({ displayPrompt: "Take notes on this essay.", toolTraces: [
+		{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-1-a" },
+		{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-2-b" },
+	] });
+	assert.match(filtered, /Continue the user's task[\s\S]*2 marks already placed[\s\S]*at most four marks[\s\S]*9 to 15 consecutive words[\s\S]*Original user request: Take notes on this essay\./, "a filtered response continues the task with less verbatim text per step");
+	const fallbackRequest = { toolTraces: [
+		{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-1-a" },
+		{ toolName: "browser_show_note", state: "complete", resultSummary: "Added note to annotationId onhand-1-a" },
+		{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text annotationId: onhand-2-b" },
+	] };
+	assert.equal(test.buildContentFilterFallbackReply(fallbackRequest), "I marked 2 passages on the page with 1 note; they carry the answer. The model provider's content filter stopped the written summary, so it isn't shown here. [[cite:onhand-1-a]][[cite:onhand-2-b]]");
+	assert.equal(test.buildContentFilterFallbackReply({ toolTraces: [] }), "", "with no marks the error is shown as before");
 	assert.match(test.buildCitedSourceRetryPrompt(base, "The cited explanation is X."), /without opening it[\s\S]*Never compose or guess a source URL[\s\S]*claims about the source are unverified/);
 	console.log("Cited-source questions: detection, one retry, and honest fallback passed");
 }

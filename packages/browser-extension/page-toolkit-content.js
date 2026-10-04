@@ -412,6 +412,107 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 		return matches.slice(0, maxResults);
 	};
 
+	// Citation lookup for web pages, the HTML counterpart of the PDF viewer's
+	// find-citation: locate the quoted claim, take the reference markers right
+	// after it, follow each to its entry in the page's references, and return
+	// the entry text with its outside links. Short references ("Smith 2020,
+	// p. 4") are followed one more hop to the full citation.
+	const CITATION_MARKER_SELECTOR = 'sup a[href^="#"], a[href^="#cite_note"], a[href^="#fn"], a[href^="#footnote"], a[href^="#ref"], a[role="doc-noteref"], a.footnote-ref';
+	const CITATION_BLOCK_SELECTOR = "p, li, dd, td, th, blockquote, figcaption";
+	const citationClean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+	const citationBlockText = (root) => {
+		// Block text with whitespace collapsed and citation markers left out,
+		// plus each marker's offset in that text.
+		let text = "";
+		const markers = [];
+		const append = (value) => {
+			const piece = String(value || "").replace(/\s+/g, " ");
+			text += text.endsWith(" ") && piece.startsWith(" ") ? piece.slice(1) : piece;
+		};
+		const walk = (node) => {
+			if (node.nodeType === Node.TEXT_NODE) return append(node.nodeValue);
+			if (!(node instanceof Element) || /^(?:SCRIPT|STYLE|NOSCRIPT)$/.test(node.tagName)) return;
+			const markerAnchors = node.matches(CITATION_MARKER_SELECTOR) ? [node]
+				: node.tagName === "SUP" ? [...node.querySelectorAll(CITATION_MARKER_SELECTOR)] : [];
+			if (markerAnchors.length) {
+				for (const anchor of markerAnchors) markers.push({ anchor, offset: text.trimEnd().length });
+				return;
+			}
+			for (const child of node.childNodes) walk(child);
+		};
+		walk(root);
+		return { text, markers };
+	};
+	const citationOutsideLinks = (element) => {
+		const pageBase = location.href.split("#")[0];
+		const links = [...element.querySelectorAll("a[href]")]
+			.map((anchor) => ({ href: anchor.href, text: citationClean(anchor.textContent).slice(0, 120), external: anchor.classList.contains("external") }))
+			.filter((link) => /^https?:/i.test(link.href) && !link.href.startsWith(`${pageBase}#`) && link.href !== pageBase);
+		const offSite = links.filter((link) => { try { return new URL(link.href).hostname !== location.hostname; } catch { return false; } });
+		const ordered = (offSite.length ? offSite : links).sort((a, b) => Number(b.external) - Number(a.external));
+		const seen = new Set();
+		return ordered.filter((link) => !seen.has(link.href) && seen.add(link.href)).slice(0, 6).map(({ href, text }) => ({ href, text }));
+	};
+	const resolveCitationEntry = (anchor) => {
+		const id = decodeURIComponent(String(anchor.getAttribute("href") || "").slice(1));
+		const target = id && (document.getElementById(id) || document.getElementsByName(id)[0]);
+		if (!target) return { marker: citationClean(anchor.textContent), entryText: "", links: [], error: "The marker's reference entry was not found on the page." };
+		const entry = target.tagName === "LI" ? target : target.closest("li") || target;
+		const textElement = entry.querySelector(".reference-text") || entry;
+		const result = { marker: citationClean(anchor.textContent), entryText: citationClean(textElement.textContent).slice(0, 600), links: citationOutsideLinks(textElement) };
+		const shortRef = textElement.querySelector('a[href^="#CITEREF"], a[href^="#cite-"], a[href^="#bib"]');
+		const fullTarget = shortRef && document.getElementById(decodeURIComponent(String(shortRef.getAttribute("href")).slice(1)));
+		if (fullTarget) {
+			const fullElement = fullTarget.closest("li, cite, p") || fullTarget;
+			result.fullCitation = { text: citationClean(fullElement.textContent).slice(0, 600), links: citationOutsideLinks(fullElement) };
+		}
+		return result;
+	};
+	const findCitations = (claimText, options = {}) => {
+		const claim = citationClean(claimText).toLowerCase().replace(/^["'“‘]+|["'”’]+$/g, "");
+		const reference = String(options.reference || "").replace(/[[\]\s]/g, "");
+		if (!claim && !reference) throw new Error("find_citation requires the claim text or a reference number");
+		let block = null;
+		let claimEnd = -1;
+		let blockMarkers = [];
+		if (claim) {
+			const words = claim.split(" ");
+			const needles = [claim, claim.slice(0, 160), words.slice(0, 12).join(" "), words.slice(-12).join(" ")].filter((needle) => needle.length >= 12);
+			search: for (const candidate of document.querySelectorAll(CITATION_BLOCK_SELECTOR)) {
+				if (candidate.closest("ol.references, .references, .reflist, #references, .footnotes")) continue;
+				const { text, markers } = citationBlockText(candidate);
+				const lower = text.toLowerCase();
+				for (const needle of needles) {
+					const index = lower.indexOf(needle);
+					if (index < 0) continue;
+					block = candidate;
+					blockMarkers = markers;
+					claimEnd = index + needle.length;
+					if (needle !== claim && needle !== words.slice(-12).join(" ")) {
+						const sentenceEnd = lower.slice(claimEnd).search(/[.!?](?:\s|$)/);
+						if (sentenceEnd >= 0 && sentenceEnd < 400) claimEnd += sentenceEnd + 1;
+					}
+					break search;
+				}
+			}
+			if (!block && !reference) return { matchedClaim: false, citations: [], note: "The claim text was not found on this page; quote it exactly as the page shows it." };
+		}
+		let chosen = [];
+		if (reference) {
+			const pool = block ? blockMarkers.map((entry) => entry.anchor) : [...document.querySelectorAll(CITATION_MARKER_SELECTOR)];
+			chosen = pool.filter((anchor) => citationClean(anchor.textContent).replace(/[[\]\s]/g, "").toLowerCase() === reference.toLowerCase()).slice(0, 1);
+		} else {
+			const after = blockMarkers.filter((entry) => entry.offset >= claimEnd - 3);
+			const adjacent = after.filter((entry) => entry.offset <= claimEnd + 3);
+			const group = adjacent.length ? adjacent : after.length ? after.filter((entry) => entry.offset === after[0].offset) : [];
+			chosen = group.slice(0, 3).map((entry) => entry.anchor);
+		}
+		if (!chosen.length) {
+			return { matchedClaim: Boolean(block), citations: [], note: block ? "The claim was found, but no citation marker follows it on the page." : `No citation marker [${reference}] was found on this page.` };
+		}
+		return { matchedClaim: Boolean(block) || !claim, citations: chosen.map(resolveCitationEntry) };
+	};
+
 	const clickElement = (element) => {
 		if (!(element instanceof Element)) throw new Error("Target element not found");
 		if (!isVisible(element)) throw new Error("Target element is not visible");
@@ -5196,6 +5297,7 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 
 	return {
 		findElementsByText,
+		findCitations,
 		clickByText,
 		typeByLabel,
 		getAnnotationSurfaceInfo,

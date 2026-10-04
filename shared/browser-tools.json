@@ -11,7 +11,8 @@
         "browser_get_scroll_state",
         "browser_get_visible_region_image",
         "browser_get_dom",
-        "browser_textbook_search"
+        "browser_textbook_search",
+        "browser_find_citation"
       ]
     },
     {

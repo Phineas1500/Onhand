@@ -86698,7 +86698,7 @@ Onhand's constitution:
 - The user's pages come first. Use the current tab and already-open tabs before navigation. New pages are a fallback only when the open material cannot answer. Already-open tabs are a live workspace: read clearly related background tabs by tabId without switching the user's focus.
 - When the user explicitly asks to search online, look up external sources, open URLs, or take them to another source, that request is permission to navigate. Open or switch to the relevant source/search page, then ground claims on that page with highlights and notes. Preserve the user's current page by opening each distinct destination URL in its own tab unless the user explicitly asks to replace the current tab; reuse an already-open matching tab instead of creating duplicates. If a destination is blocked by a browser security warning or a bot challenge, never click through or try to bypass it: name the blocked source and why in the answer, note that the user can open it themselves if they choose, and continue with an alternative source.
 - When the user asks to open, follow, inspect, check, or review links/notes/readings/resources listed on the current page or an already-open index/master page, that request is permission to navigate within those linked pages. Use browser_list_tabs when needed to recover the already-open index/master page, then browser_find_elements to recover the destination URL and browser_navigate with newTab true and active false to open each distinct destination in the background. Inspect and annotate that destination by tabId. Use browser_click_text/browser_click only when no destination URL is available, and do not activate a source merely to read or annotate it. Do not create repeat tabs for the same URL. Do not stop at highlighting the index/master page unless the index itself answers the question.
-- Citation chasing: when the user asks what a page's cited source says, follow the page's own citation. The reference marker next to the claim leads to an entry in the page's references; get that entry's link with browser_find_elements (its result includes each link's href) and navigate to that exact URL. Never compose or guess a source URL from memory, and do not describe what the cited source says until you have read it there; if the cited link cannot be opened, say so and answer from the page itself, labeled as the page's wording.
+- Citation chasing: when the user asks what a page's cited source says, follow the page's own citation. The reference marker next to the claim leads to an entry in the page's references; on a web page, call browser_find_citation with the claim's exact text to get that entry and its links (browser_pdf_find_citation in a PDF), then navigate to one of those exact URLs. Never compose or guess a source URL from memory, and do not describe what the cited source says until you have read it there; if the cited link cannot be opened, say so and answer from the page itself, labeled as the page's wording.
 - Be concise in words, thorough in coverage. For broad teach/review/summarize prompts, highlight the key concepts the answer actually rests on \u2014 ${MARK_POLICY.teachBudgetPhrase} meaningful source highlights, not every point you mention. ${MARK_POLICY.perMarkNotes} ${MARK_POLICY.comparisonMarks} Roadmap, list, process, derivation, proof, or other enumerable coverage tasks give every required top-level item its own highlight. Thorough means covering the relevant required points, not annotating everything nearby.
 - Write for a narrow side panel. Avoid dense wall-of-text paragraphs. Prefer short paragraphs, compact labeled sections, bullets, or numbered steps when explaining diagrams, processes, comparisons, lists, or multi-part ideas. Do not use horizontal rules like "---" as section separators in sidebar answers. For visual explanations, use labels like "What it shows", "How to read it", or "Takeaway" when useful. Keep trivial answers simple, but split deeper answers into scannable chunks instead of one long block.
 - The session is the artifact. Preserve existing session highlights, notes, citations, and restoreable page state across follow-up questions unless the user explicitly asks to clear or replace them.
@@ -86822,6 +86822,11 @@ var PDF_CORPUS_SEARCH_SCHEMA = typebox_exports.Object({
   }), { description: "The evidence coverage slots derived from the selected problem" }),
   maxSources: typebox_exports.Optional(typebox_exports.Number({ description: "Safety ceiling for linked PDFs to inspect without opening tabs. Defaults to 30; maximum 50." })),
   maxMatchesPerSlot: typebox_exports.Optional(typebox_exports.Number({ description: "Strongest page matches to return for each evidence slot. Defaults to 3." }))
+});
+var FIND_CITATION_SCHEMA = typebox_exports.Object({
+  ...TAB_MATCH_SCHEMA,
+  text: typebox_exports.Optional(typebox_exports.String({ description: "The claim the citation supports, copied exactly as the page shows it (a sentence or a distinctive part of one); the reference markers right after it are looked up" })),
+  reference: typebox_exports.Optional(typebox_exports.String({ description: 'A citation marker to look up directly, like "17" or "[17]", when you already know it' }))
 });
 var PDF_FIND_CITATION_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
@@ -89559,12 +89564,26 @@ function shouldRequireCitedSourceRetry(request) {
 }
 function buildCitedSourceRetryPrompt(request, assistantText) {
   return [
-    "You described what the cited source says without opening it. Follow the page's own citation now: find the reference marker next to the claim, use browser_find_elements on the references section to get that entry's link (its href), navigate to that exact URL, read it, and answer from what the source itself says, with a highlight on the supporting passage there.",
+    "You described what the cited source says without opening it. Follow the page's own citation now: call browser_find_citation with the claim's exact text to get the reference entry and its links, navigate to one of those exact URLs, read it, and answer from what the source itself says, with a highlight on the supporting passage there.",
     "Never compose or guess a source URL from memory. If the citation has no link or the link cannot be opened, say that plainly and answer from the page's own wording, labeled as the page's wording.",
     `Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
     assistantText ? `Draft answer (its claims about the source are unverified; keep them only if the source confirms them):
 ${truncateStructuredText(assistantText, 2e3)}` : ""
   ].filter(Boolean).join("\n\n");
+}
+function buildContentFilterRetryPrompt(request) {
+  const marks = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).length;
+  return [
+    "The model provider's content filter stopped your last response before it finished, and none of it was kept. The filter tends to trigger when one response reproduces long passages of the page word for word.",
+    `Continue the user's task from where it stands (${marks} mark${marks === 1 ? "" : "s"} already placed; keep them and do not repeat completed tool calls). In each step place at most four marks, pass browser_highlight_text a distinctive part of the sentence (9 to 15 consecutive words; Onhand marks the whole sentence), and write notes and the answer in your own words rather than quoting the page.`,
+    `Original user request: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`
+  ].join("\n\n");
+}
+function buildContentFilterFallbackReply(request) {
+  const ids = Array.from(new Set((Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter(isCompletedSourceHighlightTrace).map(markerGateAnnotationId).filter(Boolean)));
+  if (!ids.length) return "";
+  const notes = (request.toolTraces || []).filter((trace) => trace?.state === "complete" && trace?.toolName === "browser_show_note").length;
+  return `I marked ${ids.length} passage${ids.length === 1 ? "" : "s"} on the page${notes ? ` with ${notes} note${notes === 1 ? "" : "s"}` : ""}; they carry the answer. The model provider's content filter stopped the written summary, so it isn't shown here. ${ids.map((id) => `[[cite:${id}]]`).join("")}`;
 }
 function shouldBufferAssistantDraftUntilSettled(request) {
   if (!request) return false;
@@ -89658,7 +89677,7 @@ function assessManagedAnswerGrounding(request, reply) {
     if (String(action.key || "").startsWith("note:") && action.annotationId) noted.add(action.annotationId);
   }
   const pdfVisual = hasCompletedToolTrace(evidence, "browser_pdf_capture_page_image");
-  if (promptAsksForCitedSource(request.displayPrompt) && !hasConsultedAnotherSource(evidence)) missing.push("Open the cited source before describing it: get the reference entry's link with browser_find_elements, navigate to it, and answer from what it says. If it cannot be opened, say so and answer from the page's wording, labeled as such.");
+  if (promptAsksForCitedSource(request.displayPrompt) && !hasConsultedAnotherSource(evidence)) missing.push("Open the cited source before describing it: get the reference entry's links with browser_find_citation, navigate to one, and answer from what it says. If it cannot be opened, say so and answer from the page's wording, labeled as such.");
   if (conceptual && pdfVisual && !pdfRead) missing.push("Read the explanatory PDF section with browser_pdf_search/browser_pdf_read_pages; a figure image alone does not verify the mechanism.");
   if (shouldRequirePageSourceMarkerRetry(evidence, reply) || (pdfRead || conceptual) && !ids.size) {
     missing.push("Place a short exact supporting-text highlight for each central claim, or verify and reuse an existing supporting highlight. Use the source's mechanism/definition, not an unrelated caption or heading.");
@@ -92631,6 +92650,19 @@ function isSafeCitationUrl(rawUrl) {
     return false;
   }
 }
+function formatWebCitationForModel(details) {
+  const citations = Array.isArray(details?.citations) ? details.citations : [];
+  if (!citations.length) return `No citation found on ${formatCompactTab(details?.tab)}: ${details?.note || "no marker follows that text."}`;
+  const lines = [`Citations on ${formatCompactTab(details?.tab)}${details?.matchedClaim === false ? " (claim text not matched; looked up by marker)" : ""}:`];
+  for (const citation of citations) {
+    lines.push(`- ${citation.marker || "[?]"} ${truncate2(citation.entryText || citation.error || "(empty entry)", 400)}`);
+    const links = [...citation.links || [], ...citation.fullCitation?.links || []];
+    if (citation.fullCitation?.text) lines.push(`  Full citation: ${truncate2(citation.fullCitation.text, 400)}`);
+    lines.push(links.length ? `  Links: ${links.map((link) => `${link.href}${link.text ? ` (${truncate2(link.text, 60)})` : ""}`).join("; ")}` : "  Links: none (the entry has no link to open)");
+  }
+  lines.push("Open the cited source with browser_navigate to one of these exact URLs; never compose a URL.");
+  return lines.join("\n");
+}
 function formatPdfCitationForModel(details) {
   const citation = details.citation || details || {};
   if (!citation.found) {
@@ -92774,6 +92806,8 @@ ${candidates.join("\n\n") || "No evidence slots were supplied."}`;
       return formatPdfSearchForModel(details);
     case "browser_pdf_find_citation":
       return formatPdfCitationForModel(details);
+    case "browser_find_citation":
+      return formatWebCitationForModel(details);
     case "browser_pdf_read_pages":
       return formatPdfPagesForModel(details);
     case "browser_pdf_jump_to_page": {
@@ -94059,6 +94093,8 @@ var __browserRuntimeTest = {
   createToolsForTest: createTools,
   pageInjectionNotice,
   promptAsksForCitedSource,
+  buildContentFilterRetryPrompt,
+  buildContentFilterFallbackReply,
   shouldRequireCitedSourceRetry,
   buildCitedSourceRetryPrompt,
   buildRecentConversationContextForTest: buildRecentConversationContext,
@@ -94765,6 +94801,13 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       "pdf_read_pages"
     ),
     commandTool(
+      "browser_find_citation",
+      "Browser Find Citation",
+      "On a web page (not a PDF), look up the citation for a claim: pass the claim's exact text (or a marker number) and get the reference markers after it, each reference entry's text, and its links. Use it before opening a cited source, then navigate to one of the returned URLs.",
+      FIND_CITATION_SCHEMA,
+      "find_citation"
+    ),
+    commandTool(
       "browser_pdf_find_citation",
       "Browser PDF Find Citation",
       "Look up a bibliography entry in the current Onhand PDF viewer by bracket number (like [14]) or entry text. Returns the entry text, a source target for highlighting it, and identifiers (arXiv id, DOI, URL) with a suggested URL for opening the cited work.",
@@ -95051,6 +95094,7 @@ function getToolStatusMessage(toolName2) {
     case "browser_pdf_search":
       return "Searching the PDF...";
     case "browser_pdf_find_citation":
+    case "browser_find_citation":
       return "Looking up the citation...";
     case "browser_pdf_read_pages":
       return "Reading PDF pages...";
@@ -95213,6 +95257,20 @@ function buildPageAction(toolName2, result) {
         windowId: tab?.windowId || null,
         ...pageActionTabFields(tab),
         label: search.openedResult?.navigated ? "Opened reader result" : "Searched textbook",
+        detail
+      };
+    }
+    case "browser_find_citation": {
+      const first = (Array.isArray(details.citations) ? details.citations : [])[0];
+      if (!first) return null;
+      const detail = truncate2(`${first.marker || ""} ${first.entryText || ""}`.trim(), 72);
+      return {
+        key: `web-citation:${tab?.id || "tab"}:${first.marker || detail}`,
+        type: "read",
+        tabId: tab?.id || null,
+        windowId: tab?.windowId || null,
+        ...pageActionTabFields(tab),
+        label: "Found citation",
         detail
       };
     }
@@ -96956,15 +97014,23 @@ function createOnhandBrowserRuntime(host) {
       }
       finalError = null;
     }
-    if (finalError && !activeRequest.aborted && !activeRequest.contentFilterRetry && activeAgent && /content_filter/i.test(String(finalError?.message || finalError))) {
+    if (finalError && !activeRequest.aborted && Number(activeRequest.contentFilterRetryCount || 0) < 2 && activeAgent && /content_filter/i.test(String(finalError?.message || finalError))) {
+      activeRequest.contentFilterRetryCount = Number(activeRequest.contentFilterRetryCount || 0) + 1;
       activeRequest.contentFilterRetry = true;
       resetAssistantDraftText(activeRequest);
       blankSupersededAssistantDraft(requestId);
-      await publishState({ status: "Rewriting the answer..." });
-      queueBlankReplyRetry(activeAgent, "The previous answer was cut off by the model provider's content filter before it finished. Write the final answer now, plainly and concisely, citing the highlights you already placed. Do not repeat completed tool calls.", (retryError) => {
+      await publishState({ status: "Continuing after a provider filter..." });
+      queueBlankReplyRetry(activeAgent, buildContentFilterRetryPrompt(activeRequest), (retryError) => {
         void finalizeRequest(session, requestId, retryError);
       }, activeRequest.abortController?.signal);
       return;
+    }
+    if (finalError && !activeRequest.aborted && /content_filter/i.test(String(finalError?.message || finalError))) {
+      const fallback = buildContentFilterFallbackReply(activeRequest);
+      if (fallback) {
+        assistantText = fallback;
+        finalError = null;
+      }
     }
     const missingToolTrace = !finalError && !activeRequest.aborted && !activeRequest.missingToolRetry ? findMissingKnownBrowserToolTrace(activeRequest) : null;
     if (missingToolTrace && activeAgent) {
