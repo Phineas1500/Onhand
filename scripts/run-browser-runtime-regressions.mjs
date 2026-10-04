@@ -11247,6 +11247,53 @@ async function assertManagedGroundingReview() {
 	console.log("Managed grounding: conceptual PDF, HTML, quick visual, no-page-changes, verified reuse, citations, bounded review and finalization passed");
 }
 
+async function assertVoiceDefaultsToLiveWithTheOnhandAgent() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const smoke = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key", experimentalModelLaneClassifier: false, modelLaneClassifierDefaultMigrated: true };
+	const load = async (settings) => {
+		globalThis.chrome.storage.local.data = { onhandBrowserRuntime: { settings: { ...smoke, ...settings }, currentSessionId: "" } };
+		return (await createOnhandBrowserRuntime(createReplayHost()).getState()).preferences;
+	};
+	let preferences = await load({});
+	assert.equal(preferences.voiceEngine, "live", "voice defaults to GPT-Live");
+	assert.equal(preferences.liveDelegation, "client", "Live defaults to the Onhand agent and the chosen text model");
+	// Values saved before the migration were persisted defaults as often as
+	// choices, so they adopt the new defaults once, persisted for options.js.
+	preferences = await load({ voiceEngine: "realtime", liveDelegation: "responses" });
+	assert.equal(preferences.voiceEngine, "live");
+	assert.equal(preferences.liveDelegation, "client");
+	const persisted = globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings;
+	assert.deepEqual([persisted.voiceEngine, persisted.liveDelegation, persisted.voiceDefaultsMigrated], ["live", "client", true], "the migration persists to raw storage");
+	preferences = await load({ voiceEngine: "realtime", liveDelegation: "responses", voiceDefaultsMigrated: true });
+	assert.equal(preferences.voiceEngine, "realtime", "a choice saved after the migration is kept");
+	assert.equal(preferences.liveDelegation, "responses", "hosted delegation stays available as an explicit choice");
+	await load({});
+	await createOnhandBrowserRuntime(createReplayHost()).updateSettings({ voiceEngine: "realtime", liveDelegation: "responses" });
+	preferences = (await createOnhandBrowserRuntime(createReplayHost()).getState()).preferences;
+	assert.deepEqual([preferences.voiceEngine, preferences.liveDelegation], ["realtime", "responses"], "a newly saved choice survives a reload");
+	console.log("Voice defaults: Live with the Onhand agent, one-time migration, and kept choices passed");
+}
+
+// Hosted delegation builds its instructions before any question exists; the
+// per-request policy typed chat adds must arrive with each resolved question.
+async function assertHostedVoiceGetsPerRequestPolicy() {
+	installChromeStorageStub();
+	const runtime = await configureSmokeRuntime(createReplayHost());
+	const sessionId = (await runtime.getState()).currentSession.sessionId;
+	const policyFor = async (prompt) => {
+		const requestId = crypto.randomUUID();
+		await runtime.liveResponses({ operation: "begin", sessionId, requestId, prompt, targetWindowId: 3 });
+		const { output } = await runtime.liveResponses({ operation: "tool", sessionId, requestId, name: "onhand_get_context", callId: "context", args: {} });
+		await runtime.liveResponses({ operation: "finish", sessionId, requestId, error: "Test complete", aborted: false });
+		return JSON.parse(output).requestPolicy;
+	};
+	assert.match(await policyFor("Quiz me on this page"), /Quiz request: .*never reveal an answer/, "a spoken quiz gets the quiz policy");
+	assert.match(await policyFor("Take notes on this page"), /Page note-taking/, "spoken note-taking gets the notes policy");
+	assert.doesNotMatch(await policyFor("What does Alpha mean?"), /Quiz request|Page note-taking/);
+	console.log("Hosted voice: per-request quiz and notes policies passed");
+}
+
 async function assertManagedLiveRuntime() {
 	installChromeStorageStub();
 	const host = createReplayHost();
@@ -11455,10 +11502,11 @@ async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 		return await runCommand(name, args);
 	};
 	const runtime = await configureSmokeRuntime(host);
-	assert.equal((await runtime.getState()).preferences.voiceEngine, "realtime");
-	await runtime.updateSettings({ voiceEngine: "live" });
+	assert.equal((await runtime.getState()).preferences.voiceEngine, "live");
+	await runtime.updateSettings({ voiceEngine: "realtime" });
 	await runtime.updateSettings({ learningMode: false });
-	assert.equal((await runtime.getState()).preferences.voiceEngine, "live", "unrelated settings preserve the selected voice engine");
+	assert.equal((await runtime.getState()).preferences.voiceEngine, "realtime", "unrelated settings preserve the selected voice engine");
+	await runtime.updateSettings({ voiceEngine: "live" });
 	await assert.rejects(runtime.submitPrompt({ source: "live-voice", sessionId: "wrong-session", prompt: "Do not run" }), /voice conversation changed/);
 	const beforeHistory = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke" });
 	const liveRequestId = crypto.randomUUID();
@@ -11757,6 +11805,8 @@ async function main() {
 	await assertPdfMarkupRequestDoesNotRequireExistingSelection();
 	await assertManagedGroundingReview();
 	await assertManagedLiveRuntime();
+	await assertVoiceDefaultsToLiveWithTheOnhandAgent();
+	await assertHostedVoiceGetsPerRequestPolicy();
 	await assertLiveInterruptionWorkerRouting();
 	await assertManagedLiveRevisions();
 	await assertLiveTranscriptPersistence();

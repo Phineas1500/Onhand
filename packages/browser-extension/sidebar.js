@@ -7585,7 +7585,7 @@
 			? "End voice conversation"
 			: needsApiKeySetup
 				? "Open Onhand options to add an OpenAI platform API key for Voice."
-				: currentState?.preferences?.voiceEngine === "live" ? "Start GPT-Live voice tutor." : "Start realtime voice tutor.";
+				: currentState?.preferences?.voiceEngine === "realtime" ? "Start realtime voice tutor." : "Start GPT-Live voice tutor.";
 		realtimeVoiceButton.setAttribute("aria-label", realtimeVoiceButton.title);
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
@@ -9970,7 +9970,7 @@
 		liveTranscriptStorageKey = `onhandLiveTranscript:${sessionPath}`;
 		liveUsage = null;
 		liveDiagnostics = [];
-		const managed = currentState?.preferences?.liveDelegation !== "client";
+		const managed = currentState?.preferences?.liveDelegation === "responses";
 		const createCoordinator = managed ? globalThis.OnhandLiveResponses?.createCoordinator : globalThis.OnhandLiveVoice.createCoordinator;
 		if (!createCoordinator) throw new Error("Reload Onhand to load managed Live support.");
 		const callId = crypto.randomUUID();
@@ -10154,7 +10154,7 @@
 
 	async function startRealtimeVoice() {
 		assertSidebarConnected();
-		if (currentState?.preferences?.voiceEngine === "live") return await startLiveVoice();
+		if (currentState?.preferences?.voiceEngine !== "realtime") return await startLiveVoice();
 		if (!isRealtimeVoiceEnabledInPreferences()) {
 			throw new Error("Realtime voice is disabled. Open Onhand options and enable Realtime Voice.");
 		}

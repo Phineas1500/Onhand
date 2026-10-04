@@ -14619,7 +14619,7 @@ const liveInterruptionChecks = new Map();
 async function checkLiveInterruption(message) {
 	const runtime = getOnhandBrowserRuntime();
 	const state = await runtime.getState();
-	if (!state.preferences?.liveInterruptionEnabled || state.preferences?.liveDelegation === "client"
+	if (!state.preferences?.liveInterruptionEnabled || state.preferences?.liveDelegation !== "responses"
 		|| (message.sessionId !== state.currentSession?.sessionId && message.sessionId !== state.currentSession?.sessionFile)) {
 		throw new Error("Interruption checks are not enabled for this conversation.");
 	}
@@ -14647,7 +14647,7 @@ async function createLiveCallWithStoredApiKey(browserSdp, options = {}) {
 	const credential = await runtime.getOpenAIRealtimeCredential();
 	const state = await runtime.getState();
 	if (options.sessionId !== state.currentSession?.sessionId && options.sessionId !== state.currentSession?.sessionFile) throw new Error("Voice conversation changed.");
-	const responsesConfig = state.preferences?.liveDelegation === "client" ? null : await runtime.liveResponses({ operation: "config", sessionId: options.sessionId });
+	const responsesConfig = state.preferences?.liveDelegation !== "responses" ? null : await runtime.liveResponses({ operation: "config", sessionId: options.sessionId });
 	const response = await fetch("https://api.openai.com/v1/live/sessions", {
 		method: "POST",
 		headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },

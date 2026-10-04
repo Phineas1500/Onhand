@@ -206,6 +206,13 @@ const PANEL_SNAPSHOT = `(async () => {
 	return JSON.stringify({ status: st.status || "", busy: Boolean(st.activeRequestId) || turns.some((t) => t.pending), turns, events: globalThis.__onhandVoiceCall?.events || [] });
 })()`;
 
+// The moment the backend's answer reaches Live: hosted delegation streams a
+// final_answer message; the Onhand agent (client delegation) appends it as
+// commentary for Live to speak.
+function isAnswerHandoff(e) {
+	return (e.inner === "response.output_item.done/message" && e.phase === "final_answer") || (e.d === "out" && e.type === "session.commentary.append");
+}
+
 function joined(events, type, from, to = Infinity) {
 	return events.filter((e) => e.type === type && e.t >= from && e.t < to).map((e) => e.text).join("").replace(/\s+/g, " ").trim();
 }
@@ -222,7 +229,7 @@ function speechProblems(text) {
 function analyzeQuestion(events, question, nextStart) {
 	const from = question.t;
 	const delegation = events.find((e) => e.type === "session.delegation.created" && e.t >= from && e.t < nextStart);
-	const final = events.filter((e) => e.inner === "response.output_item.done/message" && e.phase === "final_answer" && e.t >= from && e.t < nextStart).at(-1);
+	const final = events.filter((e) => isAnswerHandoff(e) && e.t >= from && e.t < nextStart).at(-1);
 	const speechAfterFinal = final ? events.filter((e) => e.type === "session.output_transcript.delta" && e.t > final.t && e.t < nextStart) : [];
 	const errors = events.filter((e) => e.error && e.t >= from && e.t < nextStart).map((e) => e.error);
 	const spoken = joined(events, "session.output_transcript.delta", from, nextStart);
@@ -232,6 +239,7 @@ function analyzeQuestion(events, question, nextStart) {
 		spoken,
 		spokenAnswer,
 		delegated: Boolean(delegation),
+		backend: !delegation ? "" : final?.d === "out" ? "onhand-agent" : final ? "hosted" : "",
 		backendFinal: final?.text || "",
 		answerSpoken: final ? speechAfterFinal.length > 0 : Boolean(spoken),
 		answerSpeechDelayMs: final && speechAfterFinal.length ? speechAfterFinal[0].t - final.t : null,
@@ -353,7 +361,7 @@ async function main() {
 				const now = await cdp.evaluate(panel, `__onhandVoiceCall.now()`);
 				const events = snapshot.events.filter((e) => e.t >= played.t);
 				const delegated = events.some((e) => e.type === "session.delegation.created");
-				const final = events.filter((e) => e.inner === "response.output_item.done/message" && e.phase === "final_answer").at(-1);
+				const final = events.filter(isAnswerHandoff).at(-1);
 				const lastSpeech = events.filter((e) => e.type === "session.output_transcript.delta").at(-1);
 				const settled = !snapshot.busy && snapshot.turns.length > turnsBefore;
 				if (delegated) {
@@ -390,7 +398,8 @@ async function main() {
 			console.log(`\nQ${index + 1}: ${r.question}`);
 			console.log(`  heard:   ${r.heard || "(nothing)"}`);
 			console.log(`  spoken:  ${r.spoken || "(nothing)"}`);
-			if (r.delegated) console.log(`  answer:  ${r.answerSpoken ? `spoken ${r.answerSpeechDelayMs} ms after the backend finished` : "NOT SPOKEN after the backend finished"}`);
+			if (r.delegated) console.log(`  answer:  ${r.answerSpoken ? `spoken ${r.answerSpeechDelayMs} ms after the ${r.backend === "hosted" ? "hosted backend" : "Onhand agent"} finished` : "NOT SPOKEN after the backend finished"}`);
+			if (r.backend === "onhand-agent") console.log(`  handed:  ${r.backendFinal}`);
 			if (r.speechProblems.length) console.log(`  speech:  ${r.speechProblems.join(", ")}`);
 			if (r.errors.length) console.log(`  errors:  ${r.errors.join("; ")}`);
 		}

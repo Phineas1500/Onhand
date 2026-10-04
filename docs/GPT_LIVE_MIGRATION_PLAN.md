@@ -2,6 +2,16 @@
 
 Prepared September 13, 2026 against `main` at `9f8afa1`, then updated during implementation. The source map below describes the pre-migration baseline; line numbers there are historical.
 
+## Live is the default, backed by the Onhand agent (October 3, 2026)
+
+GPT-Live 1 is now the default voice engine (`voiceEngine: "live"`), and client delegation is the default Live backend (`liveDelegation: "client"`). Each delegated question goes through the same submission path as typed chat (`source: "live-voice"`), so voice uses the user's chosen text model and sign-in, the same lanes and per-request policies (quiz, page notes, document review, no page changes), and the same guards. Live speaks a short opening from the answer; the full cited answer lands in the sidebar. Stored settings from before this change were persisted defaults as often as choices, so they adopt Live with the Onhand agent once (`voiceDefaultsMigrated`); choices saved afterward are kept. GPT-Realtime 2.1 and hosted GPT-5.6 Terra/Luna delegation remain selectable in options.
+
+Hosted delegation builds its instructions once per call, before any question exists. Its `onhand_get_context` result now carries `requestPolicy`, the per-request policy typed chat would add for the resolved question, so a spoken quiz gets the no-reveal quiz policy there too.
+
+The live-voice submission told the agent to lead with a 45-word spoken paragraph and that citations "can follow in the sidebar". Through that path the chosen model (GPT-5.6 Sol) skipped tools on a figure question 3 of 3 times, against 2 of 4 typed. The instruction now says to ground the answer exactly as a typed answer, and that citation markers are removed from speech. One remaining gap applies to typed chat too: on web figure questions the model often answers from the caption without capturing the image (§3.13). Hosted Terra captured it every time because of its answer-review step.
+
+Verification: real calls with `npm run eval:voice-call` (synthetic microphone) heard both questions verbatim and spoke the Onhand agent's answer about 0.75 s after it was handed to Live. A spoken "Quiz me on this page" through the same path asked one question and left hint-only notes.
+
 ## Early correction experiment (September 16, 2026)
 
 Managed GPT-Live + Terra remains the research path. The new `liveInterruptionEnabled` setting defaults off; it was enabled in the local Helium installation for the voice trial after rebuilding and reloading the unpacked extension. A separate, tool-free GPT-5.6 Luna request classifies the resolved active question and accumulating new speech. It receives no PDF/page dump, uses `store: false` and strict structured output, and can return incomplete correction (`pause`), actionable correction (`revise`), acknowledgment, explicit resume, unrelated question, or uncertain. This follows [React to transcript fragments](https://developers.openai.com/api/docs/guides/live-delegation#react-to-transcript-fragments) and the concurrent checks in [Live conversation guardrails](https://developers.openai.com/api/docs/guides/voice-server-controls?api=live#apply-conversation-guardrails).

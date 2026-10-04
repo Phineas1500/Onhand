@@ -63,7 +63,7 @@ const liveInterruptionInput = document.getElementById("liveInterruptionEnabled")
 const liveResponsesModelInput = document.getElementById("liveResponsesModel");
 function syncLiveFields() {
 	document.getElementById("liveDelegationField").hidden = voiceEngineInput.value !== "live";
-	document.getElementById("liveResponsesModelField").hidden = voiceEngineInput.value !== "live" || liveDelegationInput.value === "client";
+	document.getElementById("liveResponsesModelField").hidden = voiceEngineInput.value !== "live" || liveDelegationInput.value !== "responses";
 }
 const voiceModelName = () => voiceEngineInput.value === "live" ? "gpt-live-1" : "gpt-realtime-2.1";
 const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
@@ -360,8 +360,11 @@ async function loadForm() {
 		runtimeSettings.authMode === "api-key" ? (storedProvider === FREE_TIER_PROVIDER ? "free" : "api-key") : "oauth";
 	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
-	voiceEngineInput.value = runtimeSettings.voiceEngine === "live" ? "live" : "realtime";
-	liveDelegationInput.value = runtimeSettings.liveDelegation === "client" ? "client" : "responses";
+	// Mirrors the runtime's one-time voice migration: values saved before it
+	// adopt Live with the Onhand agent; later saved choices are kept.
+	const voiceChoicesSaved = runtimeSettings.voiceDefaultsMigrated === true;
+	voiceEngineInput.value = voiceChoicesSaved && runtimeSettings.voiceEngine === "realtime" ? "realtime" : "live";
+	liveDelegationInput.value = voiceChoicesSaved && runtimeSettings.liveDelegation === "responses" ? "responses" : "client";
 	liveInterruptionInput.checked = Boolean(runtimeSettings.liveInterruptionEnabled);
 	liveResponsesModelInput.value = runtimeSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra";
 	syncLiveFields();

@@ -419,8 +419,8 @@
         <div class="field">
           <label for="voiceEngine">Voice model</label>
           <select id="voiceEngine">
-            <option value="realtime">GPT-Realtime 2.1</option>
-            <option value="live">GPT-Live 1 (experimental)</option>
+            <option value="live">GPT-Live 1 (default)</option>
+            <option value="realtime">GPT-Realtime 2.1 (previous)</option>
           </select>
           <p class="help">Live keeps the conversation going while Onhand reads and uses tools. $0.05 per connected minute, including silence, plus backend model usage. Restart Voice after changing models.</p>
         </div>
@@ -428,10 +428,10 @@
         <div id="liveDelegationField" class="field" hidden>
           <label for="liveDelegation">Live backend</label>
           <select id="liveDelegation">
-            <option value="responses">Managed Responses (recommended)</option>
-            <option value="client">Onhand agent (client fallback)</option>
+            <option value="client">Your text model (recommended)</option>
+            <option value="responses">Hosted GPT-5.6 Terra or Luna (experimental)</option>
           </select>
-          <p class="help">Managed Responses uses the OpenAI API key for both voice and reasoning. Your text-chat model and sign-in stay separate. Client fallback uses your selected Onhand agent. Restart Voice after changing this setting.</p>
+          <p class="help">By default, Live hands questions to the same Onhand agent as text chat, using your chosen text model and sign-in, and speaks a short version of its answer. The hosted option runs the work on GPT-5.6 through Live instead, billed to the OpenAI API key. Restart Voice after changing this setting.</p>
         </div>
         <div id="liveResponsesModelField" class="field" hidden>
           <label for="liveResponsesModel">Live reasoning model</label>

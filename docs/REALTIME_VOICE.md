@@ -1,5 +1,7 @@
 # Realtime Voice Tutor
 
+> **Update 2026-10-03:** GPT-Live 1 is now the default voice engine, and by default Live hands every question to the regular Onhand agent, so voice uses the chosen text model and sign-in plus every per-request rule typed chat applies. Existing installs adopt these defaults once; choices saved afterward are kept. GPT-Realtime 2.1 (this document) and hosted GPT-5.6 Terra/Luna delegation remain selectable in options. See `GPT_LIVE_MIGRATION_PLAN.md`.
+
 > **Update 2026-07-31:** The Socratic voice delegation described below (`answer_directly` / `plan_pedagogical_move` / `evaluate_response`, the sidebar pedagogical planner/evaluator) was retired and deleted. It had been unreachable since the June realtime-only routing change. Voice Learning Mode will be redesigned against the realtime-only architecture; text-mode Learning is unaffected. Sections mentioning those tools are historical.
 
 Onhand has an experimental Realtime voice tutor branch that layers `gpt-realtime-2.1` speech-to-speech interaction over the existing browser-extension tutor.
@@ -111,10 +113,10 @@ The voice model is intentionally narrow. It can ask for compact context, place h
 
 Any eval suite runs this way with `--voice live|realtime`, e.g. `npm run eval:creative -- --voice live`. Voice checks fail a case when the Realtime engine would route it to the standalone voice agent or when the spoken text falls back to "the answer is ready in the sidebar", warn when it runs past ~45 words, and support per-case `requiredSpokenPatterns` / `forbiddenSpokenPatterns`.
 
-Not covered without a live call: speech recognition and endpointing, Live's own decision to delegate and its spoken paraphrase, the standalone Realtime voice agent, and managed (hosted) Live delegation.
+Not covered without a live call: speech recognition and endpointing, Live's own decision to delegate and its spoken paraphrase, the standalone Realtime voice agent, and hosted (managed) Live delegation.
 
 ### Real calls with a synthetic microphone
 
-`npm run eval:voice-call -- --url <page> --question "..." [--question "follow-up"]` places a real (paid) call with the panel's saved voice settings. It opens the actual side panel next to the page in a new window, swaps the panel's microphone for a synthetic stream before pressing Voice, and plays each question into it, synthesized silently with `say -o`. Nothing is played aloud and no room audio is captured. For each question it reports what Live heard, what it said, whether it spoke the delegated answer and how soon after the backend finished, plus the saved turns with their tools and marks. `--mute-after` presses the panel's Mute button after the first question, and `--timeline` prints the Live data-channel events. Every call ends by closing the panel and its window, within `--max-seconds` (default 120).
+`npm run eval:voice-call -- --url <page> --question "..." [--question "follow-up"]` places a real (paid) call with the panel's saved voice settings. It opens the actual side panel next to the page in a new window, swaps the panel's microphone for a synthetic stream before pressing Voice, and plays each question into it, synthesized silently with `say -o`. Nothing is played aloud and no room audio is captured. For each question it reports what Live heard, what it said, whether it spoke the delegated answer and how soon after the backend (the Onhand agent, or the hosted model when selected) finished, plus the saved turns with their tools and marks. `--mute-after` presses the panel's Mute button after the first question, and `--timeline` prints the Live data-channel events. Every call ends by closing the panel and its window, within `--max-seconds` (default 120).
 
 The synthetic mic carries a faint noise floor (`--room-tone-db`, default -50). With pure digital silence after the question, Live heard the question and ran the delegation but never spoke the delegated answer. A real microphone always picks up room tone, and Mute tells Live the input is muted, so real calls are unaffected.
