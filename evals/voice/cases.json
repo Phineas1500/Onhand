@@ -1,0 +1,93 @@
+{
+  "description": "Real Live voice calls through the side panel with a synthetic microphone (npm run eval:voice). Each turn is spoken in order within one call. expect: \"handoff\" means Live must delegate the turn to Onhand's backend; \"live\" means Live should answer it itself (small talk, repeats of returned results, thanks).",
+  "cases": [
+    {
+      "id": "wiki-follow-ups",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "turns": [
+        { "say": "What does the diagram at the top of this article show?", "expect": "handoff" },
+        { "say": "Where in the plant does that happen?", "expect": "handoff" },
+        { "say": "Why are leaves green?", "expect": "handoff" },
+        { "say": "Is it the same in algae?", "expect": "handoff" },
+        { "say": "Can you say that again more briefly?", "expect": "live" },
+        { "say": "Thanks, that's helpful.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "own-knowledge-follow-ups",
+      "note": "Follow-ups Live could answer from general knowledge; they still need the backend.",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "turns": [
+        { "say": "What does the diagram at the top of this article show?", "expect": "handoff" },
+        { "say": "What's the chemical equation for that?", "expect": "handoff" },
+        { "say": "Do cacti do it differently?", "expect": "handoff" },
+        { "say": "What's the main pigment again?", "expect": "handoff" },
+        { "say": "Okay, got it.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "mdn-follow-ups",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+      "turns": [
+        { "say": "What does fetch return, according to this page?", "expect": "handoff" },
+        { "say": "How do I check if the request failed?", "expect": "handoff" },
+        { "say": "Is that different from axios?", "expect": "handoff" },
+        { "say": "Sorry, can you repeat that last part?", "expect": "live" },
+        { "say": "Thanks.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "small-talk",
+      "note": "Mostly conversation that must not cost a backend round trip.",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "turns": [
+        { "say": "Hi, can you hear me?", "expect": "live" },
+        { "say": "What is this article about?", "expect": "handoff" },
+        { "say": "Sorry, I missed that. Can you repeat it?", "expect": "live" },
+        { "say": "Hold on one second.", "expect": "live" },
+        { "say": "Okay, I'm back. Why do plants need water for this?", "expect": "handoff" },
+        { "say": "Great, thanks!", "expect": "live" }
+      ]
+    },
+    {
+      "id": "learning-quiz",
+      "note": "Learning mode: the learner's answer and hint requests must reach the backend, which grades and coaches.",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "learningMode": true,
+      "turns": [
+        { "say": "Quiz me on this page.", "expect": "handoff" },
+        { "say": "Light energy becomes chemical energy.", "expect": "handoff" },
+        { "say": "Can I get a hint for the next one?", "expect": "handoff" },
+        { "say": "Okay, thanks, that's enough for now.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "pdf-follow-ups",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "turns": [
+        { "say": "What is this paper about?", "expect": "handoff" },
+        { "say": "What BLEU score did they get on English to German?", "expect": "handoff" },
+        { "say": "Is that better than earlier models?", "expect": "handoff" },
+        { "say": "Thanks.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "overview-wikipedia",
+      "note": "Live knows the page title; the title is not the page's content.",
+      "url": "https://en.wikipedia.org/wiki/Tacoma_Narrows_Bridge_(1940)",
+      "turns": [
+        { "say": "Hi there.", "expect": "live" },
+        { "say": "What's this page about?", "expect": "handoff" },
+        { "say": "Thanks.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "overview-mdn",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+      "turns": [
+        { "say": "What is this page about?", "expect": "handoff" },
+        { "say": "Okay, cool.", "expect": "live" }
+      ]
+    }
+  ]
+}

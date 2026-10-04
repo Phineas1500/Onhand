@@ -70,6 +70,7 @@
     "eval:creative": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/creative/cases.json --screenshots",
     "eval:page-types": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/page-types/cases.json --screenshots",
     "eval:voice-call": "node ./scripts/run-live-voice-call.mjs",
+    "eval:voice": "node ./scripts/run-voice-eval.mjs",
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",
     "eval:agent-trajectories": "node ./scripts/run-agent-trajectory-eval.mjs",
     "eval:agent-trajectories:live": "node ./scripts/run-agent-trajectory-baseline.mjs",

@@ -2044,6 +2044,10 @@ async function assertQuizRepliesKeepAnswersAndFencesIntact() {
 	assert.match(quiz.promptPolicy, /never the answer/);
 	assert.match(buildProfile(settings, "Give me a quick quiz on this chapter", [], true).promptPolicy, /Quiz request/, "Learning mode quizzes carry it too");
 	assert.doesNotMatch(buildProfile(settings, "What does the test suite check?", [], false).promptPolicy, /Quiz request/, "ordinary prompts do not");
+	for (const ask of ["I'm not sure. Can I get a hint?", "[Voice] Can I get a hint for the next one", "I'm stuck on this one", "Give me a clue"]) {
+		assert.match(buildProfile(settings, ask, [], true).promptPolicy, /Hint request: .*without giving any part of the answer/, `"${ask}" carries the hint rule`);
+	}
+	assert.doesNotMatch(buildProfile(settings, "What does the hinterland mean here?", [], true).promptPolicy, /Hint request/, "words that merely contain hint do not");
 
 	// Named formulas: extraction shows display equations as $$...$$; a quote
 	// copied with the delimiters must still target that equation.

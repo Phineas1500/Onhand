@@ -6685,6 +6685,15 @@ const LEARNING_ASK_FIRST_POLICY =
 const QUIZ_POLICY =
 	"Quiz request: ask the questions in chat and anchor each one to the passage it tests, but never reveal an answer before the user responds. A note on a quiz mark names what to look for or the idea being tested — never the answer, the result, or the rule that settles the question. Do not put a citation chip on the question whose answer the marked passage states outright; reveal and grade answers only after the user replies.";
 
+// Hints quoted the answer's own words or filled in half of it ("_____ energy
+// -> chemical energy"). A hint points at where to look or what to do next.
+const HINT_POLICY =
+	"Hint request: give one hint that points the learner to where the answer is (the marked passage, a section or figure) or to the next reasoning step, without giving any part of the answer. Do not quote or paraphrase the words that state it, fill in part of it, or give a clue that leaves only one obvious word. A repeated hint on the same question may point more precisely, still without stating the answer. End by inviting them to try.";
+
+function promptAsksForHint(prompt: unknown) {
+	return /\b(?:hint|clue|nudge)\b|\b(?:i'?m|i\s+am)\s+stuck\b/.test(ownWordsPromptText(prompt));
+}
+
 function promptAsksForQuiz(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
@@ -6699,6 +6708,7 @@ function promptAsksForQuiz(prompt: unknown) {
 function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attachments: any[] = [], learningMode = false): ReasoningProfile {
 	let profile = buildLaneReasoningProfile(settings, prompt, attachments);
 	if (promptAsksForQuiz(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${QUIZ_POLICY}` };
+	if (promptAsksForHint(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${HINT_POLICY}` };
 	if (!learningMode || profile.mode === "document-review" || profile.mode === "page-notes" || !learningModeShouldAskFirst(prompt)) return profile;
 	return { ...profile, reason: `${profile.reason} Learning mode: ask before telling.`, promptPolicy: LEARNING_ASK_FIRST_POLICY };
 }
