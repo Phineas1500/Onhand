@@ -36,6 +36,15 @@ await check('session setup preserves backend independence and compact role-label
   assert.equal(config.input[1].content[0].type, 'output_text');
   assert.equal(config.tools, undefined); assert.equal(config.audio.input, undefined);
 });
+await check('page follow-ups are delegated; only returned results may be repeated directly', () => {
+  // A real call had Live answer "where in the plant does that happen?" itself,
+  // wrongly, as if it were a brief clarification of the previous answer.
+  const text = api.instructions(false);
+  assert.match(text, /needs any fact the backend has not already returned/);
+  assert.match(text, /"where does that happen\?"/);
+  assert.match(text, /Never answer a follow-up from your own knowledge; if a new fact is needed, delegate\./);
+  assert.doesNotMatch(text, /brief clarification,/, "a follow-up must not pass as a brief clarification");
+});
 await check('delegation arriving before captions waits and then uses the full streamed text', async () => {
   const h = harness(); h.delegate('item-first', 300); await delay(10);
   assert.equal(h.submitted.length, 0);

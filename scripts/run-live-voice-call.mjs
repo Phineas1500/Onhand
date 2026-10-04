@@ -23,6 +23,9 @@ const DEFAULT_PORT = Number(process.env.ONHAND_CDP_PORT || process.env.ONHAND_TE
 const DEFAULT_EXTENSION_ID = process.env.ONHAND_EXTENSION_ID || "hpjpjeehgbloadhdidmecpijppodibim";
 const QUIET_AFTER_SPEECH_MS = 6000;
 const NO_SPEECH_AFTER_ANSWER_MS = 45000;
+// Live occasionally misses the first utterance of a call entirely. A question
+// with no input caption this long after its audio ends is played once more.
+const UNHEARD_RETRY_MS = 8000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function usage() {
@@ -344,15 +347,17 @@ async function main() {
 
 		for (const [index, clip] of audio.entries()) {
 			const turnsBefore = (await cdp.evaluate(panel, PANEL_SNAPSHOT)).turns.length;
-			const played = await cdp.evaluate(panel, `__onhandVoiceCall.play(${JSON.stringify(clip.b64)}, ${JSON.stringify(clip.label)})`, true);
-			questions.push({ label: clip.label, t: played.t });
+			const play = () => cdp.evaluate(panel, `__onhandVoiceCall.play(${JSON.stringify(clip.b64)}, ${JSON.stringify(clip.label)})`, true);
+			let played = await play();
+			const question = { label: clip.label, t: played.t, retried: false };
+			questions.push(question);
 			log(`Asked: ${clip.label}`);
 			if (index === 0 && args.muteAfter) {
 				await sleep(played.duration * 1000 + 1500);
 				const pressed = await cdp.evaluate(panel, `(() => { const b = ${SHADOW_FIND("realtimeMuteButton")}; if (!b || b.hidden) return JSON.stringify(false); b.click(); return JSON.stringify(b.getAttribute("aria-pressed") === "true"); })()`, true);
 				log(pressed ? "Pressed Mute" : "Mute button unavailable");
 			}
-			const questionEnd = played.t + played.duration * 1000;
+			let questionEnd = played.t + played.duration * 1000;
 			let settledAt = 0;
 			while (true) {
 				if (Date.now() >= capAt) { hitCap = true; break; }
@@ -364,6 +369,14 @@ async function main() {
 				const final = events.filter(isAnswerHandoff).at(-1);
 				const lastSpeech = events.filter((e) => e.type === "session.output_transcript.delta").at(-1);
 				const settled = !snapshot.busy && snapshot.turns.length > turnsBefore;
+				const heard = events.some((e) => e.type === "session.input_transcript.delta");
+				if (!heard && !delegated && !question.retried && now - questionEnd > UNHEARD_RETRY_MS) {
+					question.retried = true;
+					played = await play();
+					questionEnd = played.t + played.duration * 1000;
+					log(`Not heard; asked again: ${clip.label}`);
+					continue;
+				}
 				if (delegated) {
 					if (!settled || !final) continue;
 					settledAt ||= Date.now();
@@ -385,6 +398,7 @@ async function main() {
 	const events = snapshot.events;
 	const results = questions.map((question, index) => ({
 		question: question.label,
+		retried: question.retried,
 		...analyzeQuestion(events, question, questions[index + 1]?.t ?? Infinity),
 	}));
 	const turns = snapshot.turns.filter((t) => /^\[Voice\]/.test(t.prompt) || t.reply);
@@ -396,8 +410,9 @@ async function main() {
 	} else {
 		for (const [index, r] of results.entries()) {
 			console.log(`\nQ${index + 1}: ${r.question}`);
-			console.log(`  heard:   ${r.heard || "(nothing)"}`);
+			console.log(`  heard:   ${r.heard || "(nothing)"}${r.retried ? "  (asked twice: the first attempt was not heard)" : ""}`);
 			console.log(`  spoken:  ${r.spoken || "(nothing)"}`);
+			console.log(`  handled: ${r.delegated ? "handed to the backend" : "answered by Live itself"}`);
 			if (r.delegated) console.log(`  answer:  ${r.answerSpoken ? `spoken ${r.answerSpeechDelayMs} ms after the ${r.backend === "hosted" ? "hosted backend" : "Onhand agent"} finished` : "NOT SPOKEN after the backend finished"}`);
 			if (r.backend === "onhand-agent") console.log(`  handed:  ${r.backendFinal}`);
 			if (r.speechProblems.length) console.log(`  speech:  ${r.speechProblems.join(", ")}`);
