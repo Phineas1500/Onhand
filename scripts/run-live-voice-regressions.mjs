@@ -44,6 +44,8 @@ await check('page follow-ups are delegated; only returned results may be repeate
   assert.match(text, /"where does that happen\?"/);
   assert.match(text, /Never answer a follow-up from your own knowledge; if a new fact is needed, delegate\./);
   assert.doesNotMatch(text, /brief clarification,/, "a follow-up must not pass as a brief clarification");
+  // Live answered "what is this article about?" from the page title alone.
+  assert.match(text, /The page title and URL you are given identify the page; they are not its content/);
 });
 await check('delegation arriving before captions waits and then uses the full streamed text', async () => {
   const h = harness(); h.delegate('item-first', 300); await delay(10);
