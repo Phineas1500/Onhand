@@ -22,12 +22,6 @@ const OPERA_TOOLBAR_POPUP_PATH = "opera-sidebar-help.html";
 const OPERA_TOOLBAR_ACTION_TITLE = "Onhand: open from Opera's sidebar";
 const OPERA_TOOLBAR_HINT_BADGE_TEXT = "Side";
 const OPERA_TOOLBAR_HINT_DURATION_MS = 4000;
-const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
-const OPENAI_REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
-const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
-const OPENAI_REALTIME_VOICE = "marin";
-const REALTIME_API_KEY_SETUP_MESSAGE =
-	"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with voice API access in the OpenAI platform API key field, then Save.";
 const ONHAND_THEME_STORAGE_KEY = "onhandSidebarTheme";
 const ONHAND_THEME_VALUES = new Set(["system", "light", "dark"]);
 const ONHAND_FREE_TOKEN_STORAGE_KEY = "onhandFreeTierToken";
@@ -14565,56 +14559,6 @@ chrome.runtime.onConnect.addListener((port) => {
 	});
 });
 
-function normalizeRealtimeAnchors(value) {
-	const anchors = Array.isArray(value) ? value : [];
-	return anchors
-		.map((anchor) => ({
-			text: typeof anchor?.text === "string" ? anchor.text.trim() : "",
-			note: typeof anchor?.note === "string" ? anchor.note.trim() : "",
-			label: typeof anchor?.label === "string" ? anchor.label.trim() : "",
-			conceptLabel: typeof anchor?.conceptLabel === "string" ? anchor.conceptLabel.trim() : "",
-			checkKind: typeof anchor?.checkKind === "string" ? anchor.checkKind.trim() : "",
-			checkPrompt: typeof anchor?.checkPrompt === "string" ? anchor.checkPrompt.trim() : "",
-		}))
-		.filter((anchor) => anchor.text);
-}
-
-function summarizeRealtimePdfContext({ tab, page, selection, visible, errors } = {}) {
-	const tabUrl = String(tab?.url || page?.url || visible?.url || selection?.url || "");
-	const pageSurface = page && typeof page === "object" ? page : null;
-	const visibleSurface = visible && typeof visible === "object" ? visible : null;
-	const selectionSurface = selection && typeof selection === "object" ? selection : null;
-	const isPdf =
-		pageSurface?.surface === "pdf" ||
-		visibleSurface?.surface === "pdf" ||
-		selectionSurface?.surface === "pdf" ||
-		isLikelyPdfResourceUrl(tabUrl) ||
-		isOnhandPdfViewerLikeUrl(tabUrl);
-	if (!isPdf) return null;
-	const text =
-		String(selectionSurface?.text || "").trim() ||
-		String(visibleSurface?.text || "").trim() ||
-		String(pageSurface?.text || "").trim();
-	const unsupported =
-		pageSurface?.unsupported === true ||
-		visibleSurface?.unsupported === true ||
-		selectionSurface?.unsupported === true ||
-		Boolean((errors?.capture || errors?.visible || errors?.selection) && isLikelyPdfResourceUrl(tabUrl) && !text);
-	return {
-		surface: "pdf",
-		viewer: pageSurface?.viewer || visibleSurface?.viewer || selectionSurface?.viewer || (isOnhandPdfViewerLikeUrl(tabUrl) ? "onhand-pdf-viewer" : ""),
-		url: tabUrl,
-		supported: Boolean(text && !unsupported),
-		unsupported,
-		handoffAvailable: Boolean(!isOnhandPdfViewerLikeUrl(tabUrl) && isLikelyPdfResourceUrl(tabUrl)),
-		message: unsupported
-			? "PDF context is not readable in this surface yet. Open it in Onhand's PDF viewer before tutoring from it."
-			: text
-				? "PDF text context is available."
-				: "PDF detected; text context is still loading or unavailable.",
-	};
-}
-
 const liveInterruptionChecks = new Map();
 async function checkLiveInterruption(message) {
 	const runtime = getOnhandBrowserRuntime();
@@ -14661,245 +14605,6 @@ async function createLiveCallWithStoredApiKey(browserSdp, options = {}) {
 	}
 	if (!result?.session?.id || !result?.transport?.sdp) throw new Error("Live returned no session ID or SDP answer.");
 	return { sessionId: result.session.id, sdp: result.transport.sdp, model: "gpt-live-1", delegation: responsesConfig ? "responses" : "client" };
-}
-
-function buildRealtimeSessionConfig() {
-	return {
-		type: "realtime",
-		model: OPENAI_REALTIME_MODEL,
-		output_modalities: ["audio"],
-		audio: {
-			input: {
-				noise_reduction: { type: "far_field" },
-				transcription: { model: "gpt-4o-mini-transcribe" },
-				turn_detection: {
-					type: "semantic_vad",
-					eagerness: "low",
-					create_response: false,
-					interrupt_response: false,
-				},
-			},
-			output: { voice: OPENAI_REALTIME_VOICE },
-		},
-		instructions: [
-			"You are Onhand's realtime audio interface.",
-			"Use semantic patience for microphone turns.",
-			"Do not answer page questions from audio by yourself; Onhand will send exact answer text to speak when the runtime agent has finished page grounding.",
-		].join(" "),
-	};
-}
-
-function createRealtimeMultipartBody(sdp, session) {
-	const boundary = `onhand-realtime-${crypto.randomUUID()}`;
-	const delimiter = `--${boundary}`;
-	const body = [
-		delimiter,
-		'Content-Disposition: form-data; name="sdp"',
-		"Content-Type: application/sdp",
-		"",
-		sdp,
-		delimiter,
-		'Content-Disposition: form-data; name="session"',
-		"Content-Type: application/json",
-		"",
-		JSON.stringify(session),
-		`${delimiter}--`,
-		"",
-	].join("\r\n");
-	return {
-		body,
-		contentType: `multipart/form-data; boundary=${boundary}`,
-	};
-}
-
-async function createRealtimeCallWithStoredApiKey(browserSdp) {
-	const sdp = typeof browserSdp === "string" ? browserSdp : "";
-	const normalizedSdp = sdp.replace(/\r\n/g, "\n");
-	if (!normalizedSdp.startsWith("v=0") || !/\nm=audio\s/i.test(normalizedSdp) || !/\nm=application\s/i.test(normalizedSdp)) {
-		throw new Error(`Browser SDP is missing required audio/data-channel media sections (${sdp.length} chars received).`);
-	}
-	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
-	const apiKey = String(credential?.apiKey || "").trim();
-	if (!apiKey) throw new Error(REALTIME_API_KEY_SETUP_MESSAGE);
-
-	const multipart = createRealtimeMultipartBody(sdp, buildRealtimeSessionConfig());
-
-	const response = await fetch(OPENAI_REALTIME_CALLS_URL, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": multipart.contentType,
-			"OpenAI-Safety-Identifier": "onhand-browser-extension",
-		},
-		body: multipart.body,
-	});
-	const answerSdp = await response.text();
-	if (!response.ok) {
-		if (response.status === 401 || response.status === 403) {
-			throw new Error(`${REALTIME_API_KEY_SETUP_MESSAGE} OpenAI rejected the saved key.`);
-		}
-		throw new Error(answerSdp || `OpenAI Realtime call setup failed with ${response.status}.`);
-	}
-	return {
-		sdp: answerSdp,
-		model: OPENAI_REALTIME_MODEL,
-		voice: OPENAI_REALTIME_VOICE,
-		source: credential?.source || "extension-auth",
-	};
-}
-
-async function createRealtimeClientSecret() {
-	const credential = await getOnhandBrowserRuntime().getOpenAIRealtimeCredential();
-	const apiKey = String(credential?.apiKey || "").trim();
-	if (!apiKey) throw new Error(REALTIME_API_KEY_SETUP_MESSAGE);
-	const session = buildRealtimeSessionConfig();
-	const attempts = [
-		{ label: "nested-session", body: { session } },
-		{ label: "top-level-session", body: session },
-	];
-	const errors = [];
-	let payload = null;
-	for (const attempt of attempts) {
-		const response = await fetch(OPENAI_REALTIME_CLIENT_SECRETS_URL, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-				"OpenAI-Safety-Identifier": "onhand-browser-extension",
-			},
-			body: JSON.stringify(attempt.body),
-		});
-		const text = await response.text();
-		try {
-			payload = text ? JSON.parse(text) : null;
-		} catch {
-			payload = null;
-		}
-		if (response.ok) break;
-		if (response.status === 401 || response.status === 403) {
-			errors.push(`${attempt.label}: ${REALTIME_API_KEY_SETUP_MESSAGE} OpenAI rejected the saved key.`);
-			payload = null;
-			break;
-		}
-		errors.push(`${attempt.label}: ${text || `HTTP ${response.status}`}`);
-		payload = null;
-	}
-	if (!payload) {
-		throw new Error(errors.join(" "));
-	}
-	const value = payload?.value || payload?.client_secret?.value || payload?.client_secret || "";
-	if (!value) throw new Error("OpenAI Realtime client secret response did not include a value.");
-	return {
-		value,
-		model: OPENAI_REALTIME_MODEL,
-		voice: OPENAI_REALTIME_VOICE,
-		source: credential?.source || "extension-auth",
-	};
-}
-
-async function getRealtimeLearningContext(windowId) {
-	const args = typeof windowId === "number" ? { windowId } : {};
-	const runtime = getOnhandBrowserRuntime();
-	const [state, captured, selection, visible] = await Promise.all([
-		runtime.getState().catch((error) => ({ error: error?.message || String(error) })),
-		handleCommand("capture_state", args).catch((error) => ({ error: error?.message || String(error) })),
-		handleCommand("get_selection", args).catch((error) => ({ error: error?.message || String(error) })),
-		handleCommand("get_visible_text", { ...args, maxChars: 5000, maxBlocks: 32 }).catch((error) => ({
-			error: error?.message || String(error),
-		})),
-	]);
-	const tab = captured?.tab || visible?.tab || selection?.tab || null;
-	const errors = {
-		state: state?.error || "",
-		capture: captured?.error || "",
-		selection: selection?.error || "",
-		visible: visible?.error || "",
-	};
-	return {
-		tab,
-		page: captured?.page || null,
-		selection: selection?.selection || null,
-		visible: visible?.visible || null,
-		pdf: summarizeRealtimePdfContext({
-			tab,
-			page: captured?.page || null,
-			selection: selection?.selection || null,
-			visible: visible?.visible || null,
-			errors,
-		}),
-		learnerState: state?.learnerState || null,
-		currentSession: state?.currentSession || null,
-		preferences: state?.preferences || null,
-		errors,
-	};
-}
-
-async function annotateRealtimePage(message) {
-	const windowId = typeof message.windowId === "number" ? message.windowId : undefined;
-	const baseArgs = typeof windowId === "number" ? { windowId } : {};
-	const anchors = normalizeRealtimeAnchors(message.anchors);
-	if (!anchors.length) throw new Error("At least one anchor with text is required.");
-
-	const runtime = getOnhandBrowserRuntime();
-	const results = [];
-	for (let index = 0; index < anchors.length; index += 1) {
-		const anchor = anchors[index];
-		const highlighted = await handleCommand("highlight_text", {
-			...baseArgs,
-			text: anchor.text,
-			clearExisting: false,
-			scrollIntoView: index === 0,
-			reuseExisting: true,
-			allowApproximate: true,
-		});
-		const annotationId = highlighted?.annotation?.annotationId || "";
-		let note = null;
-		if (annotationId && anchor.note) {
-			note = await handleCommand("show_note", {
-				...baseArgs,
-				annotationId,
-				note: anchor.note,
-				label: anchor.label || "Tutor note",
-				scrollIntoView: index === 0,
-			});
-		}
-
-		if (anchor.conceptLabel) {
-			await runtime.recordLearningEvent({
-				kind: "concept_introduced",
-				conceptLabel: anchor.conceptLabel,
-				annotationId,
-				url: highlighted?.tab?.url || "",
-				tabTitle: highlighted?.tab?.title || "",
-			});
-		}
-		if (anchor.checkPrompt) {
-			await runtime.recordLearningEvent({
-				kind: "check_opened",
-				checkKind: anchor.checkKind === "retrieval" ? "retrieval" : "prediction",
-				conceptLabel: anchor.conceptLabel || "Page concept",
-				promptText: anchor.checkPrompt,
-				annotationId,
-				url: highlighted?.tab?.url || "",
-				tabTitle: highlighted?.tab?.title || "",
-			});
-		}
-
-		results.push({
-			text: anchor.text,
-			note: anchor.note,
-			label: anchor.label,
-			conceptLabel: anchor.conceptLabel,
-			annotationId,
-			tab: highlighted?.tab || null,
-			matchedText: highlighted?.annotation?.matchedText || highlighted?.annotation?.text || "",
-			noteAnnotationId: note?.note?.annotationId || "",
-		});
-	}
-	return {
-		annotations: results,
-		learnerState: (await runtime.getState())?.learnerState || null,
-	};
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
@@ -15140,7 +14845,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				aiApiKeys: message.aiApiKeys,
 				authMode: message.authMode,
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
-				voiceEngine: message.voiceEngine,
 				liveDelegation: message.liveDelegation,
 				liveInterruptionEnabled: message.liveInterruptionEnabled,
 				liveResponsesModel: message.liveResponsesModel,
@@ -15319,14 +15023,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
-		if (message?.type === "sidebar:realtime-context") {
-			sendResponse({
-				ok: true,
-				context: await getRealtimeLearningContext(typeof message.windowId === "number" ? message.windowId : undefined),
-			});
-			return;
-		}
-
 		if (message?.type === "sidebar:live-session") {
 			sendResponse({ ok: true, result: await createLiveCallWithStoredApiKey(message.sdp, { sessionId: message.sessionId }) });
 			return;
@@ -15362,27 +15058,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
-		if (message?.type === "sidebar:realtime-session") {
-			sendResponse({
-				ok: true,
-				result: await createRealtimeCallWithStoredApiKey(message.sdp),
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-client-secret") {
-			sendResponse({
-				ok: true,
-				result: await createRealtimeClientSecret(),
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-browser-tool") {
+		// Runs one page-toolkit command directly; used by the real-browser test
+		// harnesses (anchoring, PDF sweeps) rather than by the side panel.
+		if (message?.type === "sidebar:browser-tool") {
 			const tool = String(message.tool || "");
 			const command = REALTIME_BROWSER_TOOL_COMMANDS[tool] || "";
 			if (!command || (message.command && message.command !== command)) {
-				throw new Error(`Unsupported realtime browser tool: ${tool || "(missing)"}`);
+				throw new Error(`Unsupported browser tool: ${tool || "(missing)"}`);
 			}
 			const normalizedArgs = normalizeRealtimeBrowserToolArgs(message.args || {});
 			const result = await handleCommand(command, {
@@ -15396,32 +15078,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 			return;
 		}
 
-		if (message?.type === "sidebar:realtime-pdf-tool") {
-			const tool = String(message.tool || "");
-			const allowedTools = new Set(["pdf_search", "pdf_read_pages", "pdf_jump_to_page", "pdf_capture_page_image", "pdf_find_citation"]);
-			if (!allowedTools.has(tool)) {
-				throw new Error(`Unsupported realtime PDF tool: ${tool || "(missing)"}`);
-			}
-			const result = await handleCommand(tool, {
-				...(message.args || {}),
-				windowId: typeof message.windowId === "number" ? message.windowId : undefined,
-			});
-			sendResponse({
-				ok: true,
-				result,
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-annotate") {
-			sendResponse({
-				ok: true,
-				result: await annotateRealtimePage(message),
-			});
-			return;
-		}
-
-		if (message?.type === "sidebar:realtime-record-turn") {
+		// Saves a finished turn with its page actions; used by the real-browser
+		// workflow harnesses to seed conversations.
+		if (message?.type === "sidebar:record-turn") {
 			const runtime = getOnhandBrowserRuntime();
 			sendResponse({
 				ok: true,

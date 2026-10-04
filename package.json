@@ -22,8 +22,6 @@
     "raindrop:pilot:status": "node ./scripts/manage-raindrop-development-pilot.mjs status",
     "raindrop:pilot:stop": "node ./scripts/manage-raindrop-development-pilot.mjs stop",
     "acceptance:chrome": "node ./scripts/show-chrome-acceptance.mjs",
-    "generate:realtime-voice-fixture": "node ./scripts/generate-realtime-voice-fixture.mjs",
-    "serve:realtime": "node ./scripts/serve-realtime-session.mjs",
     "serve:fixture": "node ./scripts/serve-browser-runtime-fixture.mjs",
     "serve:agent-trajectories": "node ./scripts/serve-agent-trajectory-fixtures.mjs",
     "website:sync-store": "node ./scripts/sync-chrome-store-version.mjs",

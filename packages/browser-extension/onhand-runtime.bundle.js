@@ -86657,7 +86657,6 @@ var COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
 var DEFAULT_SETTINGS = {
   learningMode: false,
   realtimeVoiceEnabled: false,
-  voiceEngine: "live",
   // Live hands work to the regular Onhand agent, so voice uses the chosen text
   // model and every per-request rule. Hosted Responses delegation is opt-in.
   liveDelegation: "client",
@@ -88417,7 +88416,6 @@ function buildPublicSettings(settings2) {
   return {
     learningMode: settings2.learningMode,
     realtimeVoiceEnabled: settings2.realtimeVoiceEnabled,
-    voiceEngine: settings2.voiceEngine === "realtime" ? "realtime" : "live",
     liveDelegation: settings2.liveDelegation === "responses" ? "responses" : "client",
     liveInterruptionEnabled: Boolean(settings2.liveInterruptionEnabled),
     liveResponsesModel: settings2.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -91887,34 +91885,6 @@ function buildVisualResponseFormatRequirement(prompt, details, pdfVisualCapture)
     "- Use a plain paragraph only when the complete answer is one sentence."
   ].join("\n");
 }
-async function runRealtimePdfHandoffIfNeeded(host, targetWindowId) {
-  let activeTab = null;
-  try {
-    const state2 = await host.snapshotState();
-    activeTab = pickActiveTab(state2, targetWindowId);
-  } catch (error2) {
-    host.log?.("realtime PDF handoff snapshot failed", error2);
-    return null;
-  }
-  if (!shouldAutoOpenPdfViewerForTab(activeTab)) return null;
-  try {
-    return await host.runCommand(
-      "open_pdf_in_onhand_viewer",
-      withTargetWindowId(
-        {
-          active: true,
-          newTab: false,
-          waitForLoad: true,
-          timeoutMs: 2e4
-        },
-        targetWindowId
-      )
-    );
-  } catch (error2) {
-    host.log?.("realtime PDF handoff failed", error2);
-    return null;
-  }
-}
 function textHasAny(text, pattern) {
   pattern.lastIndex = 0;
   return pattern.test(text);
@@ -94165,7 +94135,6 @@ var __browserRuntimeTest = {
   isOnhandPdfViewerUrl,
   parseExplicitPdfHandoffParams,
   isLikelyPdfUrlForAutoHandoff,
-  runRealtimePdfHandoffIfNeeded,
   shouldAutoOpenPdfViewerForTab,
   promptReferencesVisiblePdfSelectionOrPage,
   promptCouldReferToHighlightedPdfText,
@@ -95523,7 +95492,6 @@ function createOnhandBrowserRuntime(host) {
         ...rawSettings,
         learningMode: Boolean(rawSettings.learningMode),
         realtimeVoiceEnabled: Boolean(rawSettings.realtimeVoiceEnabled),
-        voiceEngine: voicePreviouslyMigrated && rawSettings.voiceEngine === "realtime" ? "realtime" : "live",
         liveDelegation: voicePreviouslyMigrated && rawSettings.liveDelegation === "responses" ? "responses" : "client",
         liveInterruptionEnabled: Boolean(rawSettings.liveInterruptionEnabled),
         liveResponsesModel: rawSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -95545,6 +95513,7 @@ function createOnhandBrowserRuntime(host) {
         voiceDefaultsMigrated: true,
         codexFastModeEnabled: rawSettings.codexFastModeEnabled === true
       };
+      delete settings2.voiceEngine;
       const sessions = {};
       for (const record of await getAllSessionRecords()) {
         const session = normalizeSession(record);
@@ -95672,7 +95641,7 @@ function createOnhandBrowserRuntime(host) {
     if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
       return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
     }
-    if (/^sidebar:realtime-(?:browser|pdf)-tool$/.test(messageType)) {
+    if (messageType === "sidebar:browser-tool") {
       return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
     }
     return false;
@@ -96366,7 +96335,7 @@ function createOnhandBrowserRuntime(host) {
       if (timer) clearTimeout(timer);
       signal?.removeEventListener("abort", abortAgent);
     }
-    if (timedOut) throw new Error("Internal realtime tutor planner timed out.");
+    if (timedOut) throw new Error("Internal planner timed out.");
     const failure = extractAssistantFailure(agent.state.messages);
     if (failure) throw failure;
     return extractAssistantText(agent.state.messages);
@@ -98864,7 +98833,6 @@ function createOnhandBrowserRuntime(host) {
         ...nextPartial,
         learningMode: Boolean(nextPartial.learningMode ?? store2.settings.learningMode),
         realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store2.settings.realtimeVoiceEnabled),
-        voiceEngine: (nextPartial.voiceEngine ?? store2.settings.voiceEngine) === "realtime" ? "realtime" : "live",
         liveDelegation: (nextPartial.liveDelegation ?? store2.settings.liveDelegation) === "responses" ? "responses" : "client",
         liveInterruptionEnabled: Boolean(nextPartial.liveInterruptionEnabled ?? store2.settings.liveInterruptionEnabled),
         liveResponsesModel: (nextPartial.liveResponsesModel ?? store2.settings.liveResponsesModel) === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -98884,6 +98852,7 @@ function createOnhandBrowserRuntime(host) {
         voiceDefaultsMigrated: true,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
+      delete store2.settings.voiceEngine;
       sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
       const session = store2.sessions[store2.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");

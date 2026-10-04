@@ -57,15 +57,13 @@ const aiApiKeyInput = document.getElementById("aiApiKey");
 const apiKeyLabelEl = document.getElementById("apiKeyLabel");
 const apiKeyHelpEl = document.getElementById("apiKeyHelp");
 const capabilityStatusEl = document.getElementById("capabilityStatus");
-const voiceEngineInput = document.getElementById("voiceEngine");
 const liveDelegationInput = document.getElementById("liveDelegation");
 const liveInterruptionInput = document.getElementById("liveInterruptionEnabled");
 const liveResponsesModelInput = document.getElementById("liveResponsesModel");
 function syncLiveFields() {
-	document.getElementById("liveDelegationField").hidden = voiceEngineInput.value !== "live";
-	document.getElementById("liveResponsesModelField").hidden = voiceEngineInput.value !== "live" || liveDelegationInput.value !== "responses";
+	document.getElementById("liveResponsesModelField").hidden = liveDelegationInput.value !== "responses";
 }
-const voiceModelName = () => voiceEngineInput.value === "live" ? "gpt-live-1" : "gpt-realtime-2.1";
+const voiceModelName = () => "gpt-live-1";
 const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
 const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
 const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField");
@@ -216,7 +214,7 @@ function syncCapabilityStatus() {
 		const modelId = selectedModel();
 		capabilityStatusEl.textContent = isRealtimeVoiceEnabled()
 			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Voice uses an OpenAI platform API key for ${voiceModelName()}.`
-			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Realtime Voice is disabled.`;
+			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Voice is disabled.`;
 		capabilityStatusEl.className = "ok";
 		return;
 	}
@@ -241,7 +239,7 @@ function syncCapabilityStatus() {
 		? isOpenAiApiKeyMode()
 			? ` The same OpenAI API key is also used for ${voiceModelName()}.`
 			: ` Voice uses a separate OpenAI platform API key for ${voiceModelName()}.`
-		: " Realtime Voice is disabled.";
+		: " Voice is disabled.";
 	capabilityStatusEl.textContent = unsupported.length
 		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.${realtimeText}`
 		: `${meta.name}/${modelId} supports Onhand text chat, page tools, vision inputs, and structured helper output.${realtimeText}`;
@@ -361,9 +359,8 @@ async function loadForm() {
 	providerInput.value = storedProvider === FREE_TIER_PROVIDER ? "openai" : storedProvider;
 	realtimeVoiceEnabledInput.checked = Boolean(runtimeSettings.realtimeVoiceEnabled);
 	// Mirrors the runtime's one-time voice migration: values saved before it
-	// adopt Live with the Onhand agent; later saved choices are kept.
+	// adopt the Onhand agent as Live's backend; later saved choices are kept.
 	const voiceChoicesSaved = runtimeSettings.voiceDefaultsMigrated === true;
-	voiceEngineInput.value = voiceChoicesSaved && runtimeSettings.voiceEngine === "realtime" ? "realtime" : "live";
 	liveDelegationInput.value = voiceChoicesSaved && runtimeSettings.liveDelegation === "responses" ? "responses" : "client";
 	liveInterruptionInput.checked = Boolean(runtimeSettings.liveInterruptionEnabled);
 	liveResponsesModelInput.value = runtimeSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra";
@@ -421,7 +418,6 @@ async function save() {
 		aiModel: selectedModel(),
 		authMode: isCodexSignInMode() ? "oauth" : "api-key",
 		realtimeVoiceEnabled: isRealtimeVoiceEnabled(),
-		voiceEngine: voiceEngineInput.value,
 		liveDelegation: liveDelegationInput.value,
 		liveInterruptionEnabled: liveInterruptionInput.checked,
 		liveResponsesModel: liveResponsesModelInput.value,
@@ -532,4 +528,3 @@ await loadForm().catch((error) => renderStatus(error?.message || String(error), 
 await trackOptionsOpened();
 
 liveDelegationInput.addEventListener("change", syncLiveFields);
-voiceEngineInput.addEventListener("change", () => { syncLiveFields(); syncRealtimeVoiceFields(); syncCapabilityStatus(); });

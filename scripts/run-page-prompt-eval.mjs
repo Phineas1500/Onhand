@@ -250,10 +250,8 @@ Options:
   --timeout <duration>        Onhand answer wait timeout. Default: ${DEFAULT_TIMEOUT}
   --out-dir <path>            Output directory. Default: ${DEFAULT_OUT_DIR}/<timestamp>
   --json                      Print JSON summary to stdout.
-  --voice live|realtime       Ask each case as a spoken turn (no microphone): live runs the
-                              Live client-mode coordinator and checks the text handed to Live
-                              to speak; realtime checks the Realtime engine's routing and runs
-                              backend-routed prompts the way that engine submits them.
+  --voice live                Ask each case as a spoken turn (no microphone): runs the Live
+                              client-mode coordinator and checks the text handed to Live to speak.
   --dry-run                   Validate and print the run plan without opening a browser.
   --list-cases                Print available built-in cases.
   --keep-tabs                 Do not close the tabs a case opened (default: close them to keep the debug browser healthy).
@@ -329,7 +327,7 @@ function parseArgs(argv) {
 			args.json = true;
 		} else if (value === "--voice" || value.startsWith("--voice=")) {
 			const engine = value.includes("=") ? value.slice("--voice=".length) : readValue("--voice");
-			if (!["live", "realtime"].includes(engine)) throw new Error("--voice must be live or realtime.");
+			if (engine !== "live") throw new Error("--voice must be live (the Realtime engine was removed).");
 			args.voice = engine;
 		} else if (value === "--dry-run") {
 			args.dryRun = true;
@@ -1260,16 +1258,6 @@ function applyVoiceChecks(evaluation, raw, testCase) {
 	const warnings = [...(evaluation.warnings || [])];
 	let score = Number(evaluation.score || 0);
 	const fail = (amount, message) => { score -= amount; failures.push(message); };
-	if (voice.skipped) {
-		return {
-			...evaluation,
-			status: "fail",
-			score: 0,
-			failures: [`voice route ${voice.route}: the Realtime engine sends this prompt to the separate voice agent, which skips the shared agent's behavior (${voice.skipped})`],
-			warnings,
-			voice,
-		};
-	}
 	const spoken = String(voice.spoken || "");
 	if (voice.engine === "live") {
 		if (!spoken) fail(0.3, "voice: nothing was handed to Live to speak");
@@ -1279,10 +1267,9 @@ function applyVoiceChecks(evaluation, raw, testCase) {
 		for (const pattern of expect.forbiddenSpokenPatterns || []) if (regex(pattern).test(spoken)) fail(0.16, `voice: forbidden spoken pattern present: ${pattern}`);
 		if (voice.errors?.length) warnings.push(`voice: coordinator errors: ${voice.errors.join("; ")}`);
 	}
-	if (voice.route && voice.route !== "backend") warnings.push(`voice: under the Realtime engine this prompt would route to ${voice.route}`);
 	score = Math.max(0, score);
 	const minScore = Number(evaluation.minScore || 0);
-	return { ...evaluation, score, failures, warnings, status: failures.length || score < minScore ? "fail" : evaluation.status, voice: { engine: voice.engine, route: voice.route, spoken } };
+	return { ...evaluation, score, failures, warnings, status: failures.length || score < minScore ? "fail" : evaluation.status, voice: { engine: voice.engine, spoken } };
 }
 
 async function runOne(testCase, variant, args, runDir, rubric = "") {
@@ -1489,7 +1476,7 @@ function markdownReport(plan, results, variantSummary) {
 		lines.push(`### ${result.caseId} / ${result.variantId}`, "");
 		if (testCase) lines.push(`Prompt: ${testCase.prompt}`, `URL: ${testCase.url}${testCase.setupUrls?.length ? ` (also open: ${testCase.setupUrls.join(", ")})` : ""}`, "");
 		lines.push("Reply:", "", ...String(result.reply || "(none)").split("\n").map((line) => `> ${line}`), "");
-		if (result.voice) lines.push(`Spoken (${result.voice.engine}; Realtime route: ${result.voice.route}):`, "", `> ${result.voice.spoken || "(nothing)"}`, "");
+		if (result.voice) lines.push(`Spoken (${result.voice.engine}):`, "", `> ${result.voice.spoken || "(nothing)"}`, "");
 		if (result.highlights?.length) lines.push("Highlights:", ...result.highlights.map((text) => `- ${String(text).split("\n")[0]}`), "");
 		if (result.notes?.length) lines.push("Notes:", ...result.notes.map((text) => `- ${text}`), "");
 		if (result.annotatedTabs?.length) lines.push(`Marked tabs: ${result.annotatedTabs.map((tab) => `${tab.url} (${tab.marks})`).join(", ")}`, "");

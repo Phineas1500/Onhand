@@ -232,7 +232,7 @@ async function openContext(port) {
 	}
 	const sendMessage = (payload) => driverEval(`chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
 	const tool = async (name, args) => {
-		const response = await sendMessage({ type: "sidebar:realtime-browser-tool", tool: name, args });
+		const response = await sendMessage({ type: "sidebar:browser-tool", tool: name, args });
 		if (!response?.ok) throw new Error(response?.error || `Could not run ${name}`);
 		return response;
 	};
@@ -375,7 +375,7 @@ async function runAnchoringGroup(pdfUrl, profile, port) {
 			pdfAnchor: mark.pdfAnchor,
 		})));
 		const recorded = await ctx.sendMessage({
-			type: "sidebar:realtime-record-turn", voiceTurnId: "live-repeated-citations",
+			type: "sidebar:record-turn", voiceTurnId: "live-repeated-citations",
 			userPrompt: "Compare the two repeated passages.",
 			reply: marks.map((mark, i) => `Occurrence ${i ? 3 : 1}. [[cite:${mark.annotationId}]]`).join("\n\n"), pageActions: actions,
 		});

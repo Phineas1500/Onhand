@@ -1,5 +1,7 @@
 # Voice Architecture
 
+> **Historical (2026-10-04):** this is the original GPT-Realtime 2.1 design. That engine was removed; voice now runs on GPT-Live 1 and hands questions to the regular Onhand agent. See `VOICE.md`.
+
 > **Update 2026-07-31:** The Socratic voice delegation described below (`answer_directly` / `plan_pedagogical_move` / `evaluate_response`, the sidebar pedagogical planner/evaluator) was retired and deleted. It had been unreachable since the June realtime-only routing change. Voice Learning Mode will be redesigned against the realtime-only architecture; text-mode Learning is unaffected. Sections mentioning those tools are historical.
 
 ## Status

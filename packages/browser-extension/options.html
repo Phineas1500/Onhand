@@ -413,19 +413,12 @@
             <input id="realtimeVoiceEnabled" type="checkbox" />
             <span>Enable voice</span>
           </label>
-          <p id="realtimeVoiceHelp" class="help">Enable Realtime Voice to use <code>gpt-realtime-2.1</code> with an OpenAI platform API key.</p>
+          <p id="realtimeVoiceHelp" class="help">Enable voice to use <code>gpt-live-1</code> with an OpenAI platform API key.</p>
         </div>
 
-        <div class="field">
-          <label for="voiceEngine">Voice model</label>
-          <select id="voiceEngine">
-            <option value="live">GPT-Live 1 (default)</option>
-            <option value="realtime">GPT-Realtime 2.1 (previous)</option>
-          </select>
-          <p class="help">Live keeps the conversation going while Onhand reads and uses tools. $0.05 per connected minute, including silence, plus backend model usage. Restart Voice after changing models.</p>
-        </div>
+        <p class="help">Voice uses GPT-Live 1, which keeps the conversation going while Onhand reads and uses tools. $0.05 per connected minute, including silence, plus backend model usage.</p>
 
-        <div id="liveDelegationField" class="field" hidden>
+        <div id="liveDelegationField" class="field">
           <label for="liveDelegation">Live backend</label>
           <select id="liveDelegation">
             <option value="client">Your text model (recommended)</option>
@@ -451,7 +444,7 @@
         <div id="realtimeOpenAiKeyField" class="field" hidden>
           <label for="realtimeOpenAiApiKey">OpenAI platform API key for voice</label>
           <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-          <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-realtime-2.1</code>. Text chat keeps using the selected authentication mode above.</p>
+          <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-live-1</code>. Text chat keeps using the selected authentication mode above.</p>
         </div>
 
         <div class="field">
@@ -489,7 +482,7 @@
 
       <section>
         <h2>OpenAI Codex Sign-In</h2>
-        <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Realtime Voice can use an OpenAI platform API key when enabled.</p>
+        <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Voice uses an OpenAI platform API key when enabled.</p>
 
         <div class="auth-grid">
           <div class="auth-card">

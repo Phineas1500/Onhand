@@ -134,12 +134,10 @@ export async function runSidebarReviewRegressions({ renderSidebar, createState }
 			assert.equal(queue.length, 2, "idle polls must not stack behind outstanding requests");
 			queue[1].resolve({ ok: true, state: newState });
 			await newRequest;
-			hooks.setRealtimeActiveVoiceTurn({ id: "new-voice-turn" });
 			if (staleResult === "rejection") queue[0].reject(new Error("Old background connection closed"));
 			else queue[0].resolve(staleResult === "success" ? { ok: true, state: oldState } : { ok: false, error: "Old failure" });
 			await oldRequest;
 			assert.equal(shadowOf(dom).querySelector("#sessionTitleInput").value, "New session", staleResult);
-			assert.equal(hooks.getRealtimeDebugState().activeVoiceTurn?.id, "new-voice-turn", staleResult);
 		} finally { dom.window.close(); }
 	}
 	// Starting a session change must invalidate a poll immediately, even before

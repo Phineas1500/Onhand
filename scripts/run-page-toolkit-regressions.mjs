@@ -505,12 +505,7 @@ async function assertPdfViewerHandoffHelpers() {
 	assert.match(
 		backgroundSource,
 		/REALTIME_BROWSER_TOOL_COMMANDS[\s\S]*browser_pdf_capture_page_image:\s*"pdf_capture_page_image"[\s\S]*browser_pdf_find_citation:\s*"pdf_find_citation"/,
-		"Realtime browser bridge should expose PDF page image capture and citation lookup",
-	);
-	assert.match(
-		backgroundSource,
-		/new Set\(\["pdf_search", "pdf_read_pages", "pdf_jump_to_page", "pdf_capture_page_image", "pdf_find_citation"\]\)/,
-		"Realtime PDF bridge should allow search, read, jump, image capture, and citation lookup",
+		"the browser-tool bridge should expose PDF page image capture and citation lookup",
 	);
 }
 
@@ -848,7 +843,7 @@ async function assertVisibleRegionCaptureFallsBackWhenDomIsRestricted() {
 	const source = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
 	const manifest = JSON.parse(await readFile(join(PROJECT_ROOT, "packages/browser-extension/manifest.json"), "utf8"));
 	assert.ok(manifest.permissions.includes("activeTab"), "visible-region capture should be allowed after the user activates Onhand");
-	assert.match(source, /browser_get_visible_region_image:\s*"get_visible_region_image"/, "visible-region capture should be whitelisted for realtime browser tools");
+	assert.match(source, /browser_get_visible_region_image:\s*"get_visible_region_image"/, "visible-region capture should be whitelisted for browser tools");
 	assert.match(source, /function getVisibleRegionViewportFallback\(focusedTab,\s*scriptError\s*=\s*null\)/, "visible-region capture should have a non-DOM viewport fallback");
 	assert.match(
 		source,
@@ -1672,7 +1667,6 @@ async function assertGoogleDocsHighlightUsesPdfViewerHandoff() {
 	);
 	for (const [source, label] of [
 		[browserRuntimeSource, "typed agent"],
-		[sidebarSource, "Realtime voice agent"],
 	]) {
 		assert.match(source, /negative, absence, or whole-document PDF claims/i, `${label} should treat broad PDF absence claims as a distinct verification task`);
 		assert.match(source, /multiple conceptually distinct phrasings/i, `${label} should require semantic query variation for PDF absence claims`);

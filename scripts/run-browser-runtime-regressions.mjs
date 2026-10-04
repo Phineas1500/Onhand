@@ -663,8 +663,8 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				message: "Source not found on this page: private source",
 			},
 			{
-				label: "realtime tool target miss",
-				messageType: "sidebar:realtime-browser-tool",
+				label: "browser tool target miss",
+				messageType: "sidebar:browser-tool",
 				message: "Onhand page tools only run on web or local-file tabs, not Onhand Sidebar",
 			},
 		];
@@ -6167,7 +6167,8 @@ async function assertLearningOpenCheckVoiceAnswerResolvesWithoutRegrounding() {
 	await runtime.submitPrompt({
 		prompt: "I think the Alpha smoke content plays the role of confirming extraction works.",
 		displayPrompt: "[Voice] I think the Alpha smoke content plays the role of confirming extraction works.",
-		source: "realtime-voice-direct-answer",
+		source: "live-voice",
+		sessionId: (await runtime.getState()).currentSession.sessionId,
 		attachments: [],
 		learningMode: true,
 	});
@@ -11260,22 +11261,21 @@ async function assertVoiceDefaultsToLiveWithTheOnhandAgent() {
 		return (await createOnhandBrowserRuntime(createReplayHost()).getState()).preferences;
 	};
 	let preferences = await load({});
-	assert.equal(preferences.voiceEngine, "live", "voice defaults to GPT-Live");
 	assert.equal(preferences.liveDelegation, "client", "Live defaults to the Onhand agent and the chosen text model");
+	assert.equal("voiceEngine" in preferences, false, "Live is the only voice engine");
 	// Values saved before the migration were persisted defaults as often as
-	// choices, so they adopt the new defaults once, persisted for options.js.
+	// choices, so they adopt the new default once, persisted for options.js.
+	// A stored engine choice from the Realtime era is dropped.
 	preferences = await load({ voiceEngine: "realtime", liveDelegation: "responses" });
-	assert.equal(preferences.voiceEngine, "live");
 	assert.equal(preferences.liveDelegation, "client");
 	const persisted = globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings;
-	assert.deepEqual([persisted.voiceEngine, persisted.liveDelegation, persisted.voiceDefaultsMigrated], ["live", "client", true], "the migration persists to raw storage");
-	preferences = await load({ voiceEngine: "realtime", liveDelegation: "responses", voiceDefaultsMigrated: true });
-	assert.equal(preferences.voiceEngine, "realtime", "a choice saved after the migration is kept");
-	assert.equal(preferences.liveDelegation, "responses", "hosted delegation stays available as an explicit choice");
+	assert.deepEqual([persisted.liveDelegation, persisted.voiceDefaultsMigrated, "voiceEngine" in persisted], ["client", true, false], "the migration persists to raw storage");
+	preferences = await load({ liveDelegation: "responses", voiceDefaultsMigrated: true });
+	assert.equal(preferences.liveDelegation, "responses", "hosted delegation chosen after the migration is kept");
 	await load({});
-	await createOnhandBrowserRuntime(createReplayHost()).updateSettings({ voiceEngine: "realtime", liveDelegation: "responses" });
+	await createOnhandBrowserRuntime(createReplayHost()).updateSettings({ liveDelegation: "responses" });
 	preferences = (await createOnhandBrowserRuntime(createReplayHost()).getState()).preferences;
-	assert.deepEqual([preferences.voiceEngine, preferences.liveDelegation], ["realtime", "responses"], "a newly saved choice survives a reload");
+	assert.equal(preferences.liveDelegation, "responses", "a newly saved choice survives a reload");
 	console.log("Voice defaults: Live with the Onhand agent, one-time migration, and kept choices passed");
 }
 
@@ -11506,11 +11506,11 @@ async function assertPreparationCanBeStoppedWithoutLateContinuation() {
 		return await runCommand(name, args);
 	};
 	const runtime = await configureSmokeRuntime(host);
-	assert.equal((await runtime.getState()).preferences.voiceEngine, "live");
-	await runtime.updateSettings({ voiceEngine: "realtime" });
+	assert.equal((await runtime.getState()).preferences.liveDelegation, "client");
+	await runtime.updateSettings({ liveDelegation: "responses" });
 	await runtime.updateSettings({ learningMode: false });
-	assert.equal((await runtime.getState()).preferences.voiceEngine, "realtime", "unrelated settings preserve the selected voice engine");
-	await runtime.updateSettings({ voiceEngine: "live" });
+	assert.equal((await runtime.getState()).preferences.liveDelegation, "responses", "unrelated settings preserve the selected Live backend");
+	await runtime.updateSettings({ liveDelegation: "client" });
 	await assert.rejects(runtime.submitPrompt({ source: "live-voice", sessionId: "wrong-session", prompt: "Do not run" }), /voice conversation changed/);
 	const beforeHistory = await runtime.getSidebarState({ activeUrl: "https://example.test/replay-smoke" });
 	const liveRequestId = crypto.randomUUID();

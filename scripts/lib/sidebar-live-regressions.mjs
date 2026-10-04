@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 export async function runLiveSidebarRegressions({ renderSidebar, createState }) {
 	const tick = () => new Promise(resolve => setTimeout(resolve, 20));
-	const state = createState(); state.preferences.voiceEngine = "live"; state.preferences.liveDelegation = "client";
+	const state = createState(); state.preferences.liveDelegation = "client";
 	const messages = [], sent = [], tracks = [];
 	let pc, dc;
 	const options = {
@@ -56,6 +56,11 @@ export async function runLiveSidebarRegressions({ renderSidebar, createState }) 
 		await new Promise(resolve => setTimeout(resolve, 500));
 		const first = messages.find(message => message.type === "sidebar:submit-prompt");
 		assert.equal(first.source, "live-voice"); assert.equal(first.sessionId, state.currentSession.sessionId);
+		// The agent is still working toward a spoken answer: idle expiry must not
+		// end the call, or the answer would arrive as silent text.
+		assert.equal(hooks.getRealtimeDebugState().connected, true);
+		assert.equal(hooks.expireRealtimeIdleTimeout(), false, "idle expiry defers while Live's backend request is active");
+		assert.equal(hooks.getRealtimeDebugState().connected, true);
 		assert.ok(first.clientRequestId); assert.ok(first.voiceContext.length);
 		await hooks.requestState();
 		const input = shadow.getElementById("input");
@@ -95,7 +100,7 @@ export async function runLiveSidebarRegressions({ renderSidebar, createState }) 
 		console.log("Live sidebar transport, corrections, mute, captions, and graceful close passed");
 	} finally { dom.window.close(); }
 
-	const managedState = createState(); managedState.preferences.voiceEngine = "live"; managedState.preferences.liveDelegation = "responses";
+	const managedState = createState(); managedState.preferences.liveDelegation = "responses";
 	const initialTurns = managedState.turns.length;
 	const managedMessages = [];
 	const managedDom = await renderSidebar(managedState, managedMessages, {
@@ -197,7 +202,7 @@ export async function runLiveSidebarRegressions({ renderSidebar, createState }) 
 	} finally { managedDom.window.close(); }
 
 	const supervisedState = createState();
-	Object.assign(supervisedState.preferences, { voiceEngine: "live", liveDelegation: "responses", liveInterruptionEnabled: true });
+	Object.assign(supervisedState.preferences, { liveDelegation: "responses", liveInterruptionEnabled: true });
 	const supervisedMessages = [];
 	let copiedTiming = "";
 	let interruptionAction = "pause", correctionSpeech = "Actually, only English to German.";

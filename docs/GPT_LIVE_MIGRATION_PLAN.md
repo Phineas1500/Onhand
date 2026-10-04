@@ -2,9 +2,13 @@
 
 Prepared September 13, 2026 against `main` at `9f8afa1`, then updated during implementation. The source map below describes the pre-migration baseline; line numbers there are historical.
 
+## Realtime removed (October 4, 2026)
+
+The GPT-Realtime 2.1 engine is gone: its call setup, client secrets and dev session server, its separate voice tutor and routing, its page and annotation bridge, the `voiceEngine` setting, and about 2,200 lines of its tests. Live is the only voice engine. Shared voice code (mic capture and picker, mute, status and error UI, idle timeout) stays, some of it under `realtime*` names. Two background messages that test harnesses use were renamed: `sidebar:browser-tool` and `sidebar:record-turn`. Voice now has its own doc, `VOICE.md`, and suite, `npm run eval:voice`.
+
 ## Live is the default, backed by the Onhand agent (October 3, 2026)
 
-GPT-Live 1 is now the default voice engine (`voiceEngine: "live"`), and client delegation is the default Live backend (`liveDelegation: "client"`). Each delegated question goes through the same submission path as typed chat (`source: "live-voice"`), so voice uses the user's chosen text model and sign-in, the same lanes and per-request policies (quiz, page notes, document review, no page changes), and the same guards. Live speaks a short opening from the answer; the full cited answer lands in the sidebar. Stored settings from before this change were persisted defaults as often as choices, so they adopt Live with the Onhand agent once (`voiceDefaultsMigrated`); choices saved afterward are kept. GPT-Realtime 2.1 and hosted GPT-5.6 Terra/Luna delegation remain selectable in options.
+GPT-Live 1 is now the default voice engine, and client delegation is the default Live backend (`liveDelegation: "client"`). Each delegated question goes through the same submission path as typed chat (`source: "live-voice"`), so voice uses the user's chosen text model and sign-in, the same lanes and per-request policies (quiz, page notes, document review, no page changes), and the same guards. Live speaks a short opening from the answer; the full cited answer lands in the sidebar. Stored settings from before this change were persisted defaults as often as choices, so they adopt Live with the Onhand agent once (`voiceDefaultsMigrated`); choices saved afterward are kept. GPT-Realtime 2.1 and hosted GPT-5.6 Terra/Luna delegation remain selectable in options.
 
 Hosted delegation builds its instructions once per call, before any question exists. Its `onhand_get_context` result now carries `requestPolicy`, the per-request policy typed chat would add for the resolved question, so a spoken quiz gets the no-reveal quiz policy there too.
 

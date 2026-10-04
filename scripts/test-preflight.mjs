@@ -37,7 +37,9 @@ const REQUIRED_FILES = [
 	"scripts/run-sidebar-regressions.mjs",
 	"scripts/run-live-voice-regressions.mjs",
 	"scripts/run-browser-runtime-smoke.mjs",
-	"scripts/generate-realtime-voice-fixture.mjs",
+	"scripts/run-live-voice-call.mjs",
+	"scripts/run-voice-eval.mjs",
+	"evals/voice/cases.json",
 	"scripts/show-chrome-acceptance.mjs",
 	"scripts/sync-browser-tools.mjs",
 	"shared/browser-tools.json",
@@ -52,13 +54,15 @@ const REMOVED_PATHS = [
 	"packages/pi-extension/index.ts",
 	"scripts/run-browser-bridge-regression.mjs",
 	"scripts/run-tier2-smoke.mjs",
+	"scripts/serve-realtime-session.mjs",
+	"scripts/generate-realtime-voice-fixture.mjs",
 ];
 
 const REQUIRED_SCRIPTS = [
 	"build:browser-runtime",
 	"build:extension",
 	"acceptance:chrome",
-	"generate:realtime-voice-fixture",
+	"eval:voice",
 	"serve:fixture",
 	"test:fixtures",
 	"test:preflight",
@@ -145,13 +149,12 @@ async function main() {
 	if (!hasFileHostPermission) failures.push("Manifest is missing local file host permission.");
 
 	const backgroundSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/background.js"), "utf8");
-	const realtimeSessionSource = await readFile(join(PROJECT_ROOT, "scripts/serve-realtime-session.mjs"), "utf8");
-	const realtimeModel = "gpt-realtime-2.1";
-	const hasCurrentRealtimeModel =
-		backgroundSource.includes(`const OPENAI_REALTIME_MODEL = "${realtimeModel}";`) &&
-		realtimeSessionSource.includes(`const MODEL = process.env.REALTIME_MODEL || "${realtimeModel}";`);
-	printCheck("Realtime voice model", hasCurrentRealtimeModel, realtimeModel);
-	if (!hasCurrentRealtimeModel) failures.push(`Realtime voice defaults must use ${realtimeModel}.`);
+	const liveVoiceSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/live-voice.js"), "utf8");
+	const liveModel = "gpt-live-1";
+	// Live is the only voice engine; the retired Realtime call setup must stay gone.
+	const hasLiveVoiceOnly = liveVoiceSource.includes(`const MODEL = "${liveModel}";`) && !backgroundSource.includes("/v1/realtime/calls");
+	printCheck("Voice model", hasLiveVoiceOnly, liveModel);
+	if (!hasLiveVoiceOnly) failures.push(`Voice must use ${liveModel} only, with no Realtime call setup.`);
 
 	const operaSidebarHelpSource = await readFile(join(PROJECT_ROOT, "packages/browser-extension/opera-sidebar-help.html"), "utf8");
 	const hasOperaToolbarHint =

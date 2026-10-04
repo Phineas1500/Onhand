@@ -82,7 +82,6 @@ interface RuntimeSession {
 interface RuntimeSettings {
 	learningMode: boolean;
 	realtimeVoiceEnabled: boolean;
-	voiceEngine: "realtime" | "live";
 	liveDelegation: "responses" | "client";
 	liveInterruptionEnabled: boolean;
 	liveResponsesModel: "gpt-5.6-terra" | "gpt-5.6-luna";
@@ -106,8 +105,8 @@ interface RuntimeSettings {
 	// the old default (adopt the new default); true means the stored value is
 	// authoritative (a real opt-out is respected).
 	modelLaneClassifierDefaultMigrated: boolean;
-	// Set once stored voice settings have adopted Live with the Onhand agent as
-	// the default (October 2026); afterwards stored choices are authoritative.
+	// Set once stored voice settings have adopted the Onhand agent as Live's
+	// default backend (October 2026); afterwards stored choices are authoritative.
 	voiceDefaultsMigrated: boolean;
 	// Codex fast mode: service_tier "priority" on the Codex responses API —
 	// the same model on faster inference. Off by default because the plan's
@@ -577,7 +576,6 @@ const COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
 const DEFAULT_SETTINGS: RuntimeSettings = {
 	learningMode: false,
 	realtimeVoiceEnabled: false,
-	voiceEngine: "live",
 	// Live hands work to the regular Onhand agent, so voice uses the chosen text
 	// model and every per-request rule. Hosted Responses delegation is opt-in.
 	liveDelegation: "client",
@@ -2640,7 +2638,6 @@ function buildPublicSettings(settings: RuntimeSettings) {
 	return {
 		learningMode: settings.learningMode,
 		realtimeVoiceEnabled: settings.realtimeVoiceEnabled,
-		voiceEngine: settings.voiceEngine === "realtime" ? "realtime" : "live",
 		liveDelegation: settings.liveDelegation === "responses" ? "responses" : "client",
 		liveInterruptionEnabled: Boolean(settings.liveInterruptionEnabled),
 		liveResponsesModel: settings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -7867,35 +7864,6 @@ function buildVisualResponseFormatRequirement(prompt: unknown, details?: any, pd
 	].join("\n");
 }
 
-async function runRealtimePdfHandoffIfNeeded(host: RuntimeHost, targetWindowId?: number) {
-	let activeTab = null;
-	try {
-		const state = await host.snapshotState();
-		activeTab = pickActiveTab(state, targetWindowId);
-	} catch (error) {
-		host.log?.("realtime PDF handoff snapshot failed", error);
-		return null;
-	}
-	if (!shouldAutoOpenPdfViewerForTab(activeTab)) return null;
-	try {
-		return await host.runCommand(
-			"open_pdf_in_onhand_viewer",
-			withTargetWindowId(
-				{
-					active: true,
-					newTab: false,
-					waitForLoad: true,
-					timeoutMs: 20000,
-				},
-				targetWindowId,
-			),
-		);
-	} catch (error) {
-		host.log?.("realtime PDF handoff failed", error);
-		return null;
-	}
-}
-
 function textHasAny(text: string, pattern: RegExp) {
 	pattern.lastIndex = 0;
 	return pattern.test(text);
@@ -10817,7 +10785,6 @@ export const __browserRuntimeTest = {
 	isOnhandPdfViewerUrl,
 	parseExplicitPdfHandoffParams,
 	isLikelyPdfUrlForAutoHandoff,
-	runRealtimePdfHandoffIfNeeded,
 	shouldAutoOpenPdfViewerForTab,
 	promptReferencesVisiblePdfSelectionOrPage,
 	promptCouldReferToHighlightedPdfText,
@@ -12322,7 +12289,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				...rawSettings,
 				learningMode: Boolean(rawSettings.learningMode),
 				realtimeVoiceEnabled: Boolean(rawSettings.realtimeVoiceEnabled),
-				voiceEngine: voicePreviouslyMigrated && rawSettings.voiceEngine === "realtime" ? "realtime" : "live",
 				liveDelegation: voicePreviouslyMigrated && rawSettings.liveDelegation === "responses" ? "responses" : "client",
 				liveInterruptionEnabled: Boolean(rawSettings.liveInterruptionEnabled),
 				liveResponsesModel: rawSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -12346,6 +12312,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				voiceDefaultsMigrated: true,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
 			};
+			// Retired with the Realtime engine (October 2026); Live is the only engine.
+			delete (settings as any).voiceEngine;
 			const sessions: Record<string, RuntimeSession> = {};
 			for (const record of await getAllSessionRecords()) {
 				const session = normalizeSession(record);
@@ -12487,7 +12455,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
 			return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
 		}
-		if (/^sidebar:realtime-(?:browser|pdf)-tool$/.test(messageType)) {
+		if (messageType === "sidebar:browser-tool") {
 			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
 		}
 		return false;
@@ -13212,7 +13180,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			if (timer) clearTimeout(timer);
 			signal?.removeEventListener("abort", abortAgent);
 		}
-		if (timedOut) throw new Error("Internal realtime tutor planner timed out.");
+		if (timedOut) throw new Error("Internal planner timed out.");
 		const failure = extractAssistantFailure(agent.state.messages);
 		if (failure) throw failure;
 		return extractAssistantText(agent.state.messages);
@@ -16037,7 +16005,6 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				...nextPartial,
 				learningMode: Boolean(nextPartial.learningMode ?? store.settings.learningMode),
 				realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store.settings.realtimeVoiceEnabled),
-				voiceEngine: (nextPartial.voiceEngine ?? store.settings.voiceEngine) === "realtime" ? "realtime" : "live",
 				liveDelegation: (nextPartial.liveDelegation ?? store.settings.liveDelegation) === "responses" ? "responses" : "client",
 				liveInterruptionEnabled: Boolean(nextPartial.liveInterruptionEnabled ?? store.settings.liveInterruptionEnabled),
 				liveResponsesModel: (nextPartial.liveResponsesModel ?? store.settings.liveResponsesModel) === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
@@ -16057,6 +16024,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				voiceDefaultsMigrated: true,
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 			};
+			delete (store.settings as any).voiceEngine;
 			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");

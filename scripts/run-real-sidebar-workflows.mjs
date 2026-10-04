@@ -234,7 +234,7 @@ async function assertCitationTargets(ctx, panel, viewer, actions, expectedChips)
 async function connectionRecoveryGroup(ctx, panel, viewer, actions) {
 	const { ev, state } = panelHelpers(ctx, panel);
 	// Add a later answer so the failing citation belongs to an older entry.
-	checked(await ctx.sendMessage({ type: "sidebar:realtime-record-turn", voiceTurnId: "ci-later-answer", userPrompt: "Continue after the garden answer.", reply: "A later fixture answer follows the cited voice response. ".repeat(16), pageActions: [] }));
+	checked(await ctx.sendMessage({ type: "sidebar:record-turn", voiceTurnId: "ci-later-answer", userPrompt: "Continue after the garden answer.", reply: "A later fixture answer follows the cited voice response. ".repeat(16), pageActions: [] }));
 	await waitUntil(async () => (await state()).count === 102, "later answer after the cited response");
 	await ev(`(()=>{const s=${ROOT},send=chrome.runtime.sendMessage.bind(chrome.runtime);window.__ciDisconnect=false;window.__ciDisconnectHits=[];window.__ciFailSource=false;window.__ciSourceCalls=[];chrome.runtime.sendMessage=async(message,...rest)=>{if(message?.type==='sidebar:activate-action')window.__ciSourceCalls.push({key:message.key,injectFailure:window.__ciFailSource});if(message?.type==='sidebar:fetch-state'&&window.__ciDisconnect){window.__ciDisconnectHits.push(Date.now());throw new Error('Fixture background connection unavailable')}if(message?.type==='sidebar:activate-action'&&window.__ciFailSource){window.__ciFailSource=false;return{ok:false,error:'Fixture source could not be opened'}}return send(message,...rest)};window.__ciReaderNodes=[...s.querySelectorAll('#messages > .onhand-entry')];const source=s.querySelector('#messages .onhand-cite');source.scrollIntoView({block:'center'});window.__ciSource=source;return true})()`);
 	await delay(200);
@@ -295,7 +295,7 @@ async function nativeGroup(ctx, base) {
 	}
 	const reply = QUOTES.map((quote, index) => `${quote} ${"This extended fixture explanation checks that a complete voice answer keeps its paragraphs and source references when saved. ".repeat(7)}[[cite:${actions[index * 2].annotationId}]]`).join("\n\n");
 	assert.ok(reply.length > 2000, "voice fixture must exceed the former saved-answer truncation limit");
-	checked(await ctx.sendMessage({ type: "sidebar:realtime-record-turn", voiceTurnId: "ci-pdf-answer", userPrompt: "Explain the three garden practices.", reply, pageActions: actions }));
+	checked(await ctx.sendMessage({ type: "sidebar:record-turn", voiceTurnId: "ci-pdf-answer", userPrompt: "Explain the three garden practices.", reply, pageActions: actions }));
 	const panel = await openNativePanel(ctx, tab.windowId);
 	const { ev, state } = panelHelpers(ctx, panel);
 	await waitUntil(async () => (await state()).count === 101, "101 native sidebar entries");
@@ -326,7 +326,7 @@ async function nativeGroup(ctx, base) {
 	assert.ok(idlePolls.every((poll) => poll.bytes < fullBytes / 5), "unchanged polls must omit the large conversation payload");
 	assert.equal(await ev(`window.__ciNodes.every((n,i)=>${ROOT}.querySelectorAll('#messages > .onhand-entry')[i]===n)`), true);
 	await ev("window.__ciPolls=[]");
-	checked(await ctx.sendMessage({ type: "sidebar:realtime-record-turn", voiceTurnId: "ci-pdf-answer", userPrompt: "Explain the three garden practices.", reply: `Current history update reached the panel.\n\n${reply}`, pageActions: actions }));
+	checked(await ctx.sendMessage({ type: "sidebar:record-turn", voiceTurnId: "ci-pdf-answer", userPrompt: "Explain the three garden practices.", reply: `Current history update reached the panel.\n\n${reply}`, pageActions: actions }));
 	await waitUntil(async () => (await state()).text.includes("Current history update reached the panel."), "history revision invalidation");
 	await waitUntil(() => ev("window.__ciPolls.some(p=>p.unchanged===false&&p.turns&&p.messages)"), "full response after history edit");
 	assert.equal(await ev(`window.__ciNodes.slice(0,100).every((n,i)=>${ROOT}.querySelectorAll('#messages > .onhand-entry')[i]===n)`), true);

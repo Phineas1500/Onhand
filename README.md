@@ -37,7 +37,8 @@ The broader product plan lives in:
 
 - `docs/ONHAND_CONSTITUTION.md`
 - `docs/ONHAND_PLAN.md`
-- `docs/VOICE_ARCHITECTURE.md`
+- `docs/VOICE.md`
+- `docs/VOICE_ARCHITECTURE.md` (historical Realtime design)
 
 ## Built with Codex and GPT-5.6
 
@@ -140,15 +141,9 @@ npm run acceptance:chrome -- --suite=all
 
 For terminal-first session inspection, CLI-driven browser questions, and automated live acceptance, see `docs/SESSION_DEBUGGING.md`.
 
-## Experimental Realtime Voice Tutor
+## Voice
 
-This branch includes an experimental `gpt-realtime-2.1` WebRTC voice tutor for the side panel. Start the local session endpoint with:
-
-```sh
-OPENAI_API_KEY=... npm run serve:realtime
-```
-
-Voice requires an OpenAI platform API key saved in the Onhand options page. Open the options page, paste a platform key with Realtime API access in the OpenAI platform API key field, save, reload the extension, and click `Voice` in the side panel. You can keep Authentication set to OpenAI Codex sign-in for text chat. The local endpoint is only a fallback/dev path. Details are in `docs/REALTIME_VOICE.md`.
+The side panel's Voice button starts a GPT-Live 1 conversation. Live hands questions to the same Onhand agent as text chat, so voice uses the chosen text model, and speaks a short version of the cited answer that lands in the sidebar. Enable Voice in the Onhand options page and save an OpenAI platform API key; text chat can stay on OpenAI Codex sign-in. Details and the voice test tools (`npm run eval:voice`, `npm run eval:voice-call`) are in `docs/VOICE.md`.
 
 ## Browser Runtime Tools
 

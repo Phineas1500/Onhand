@@ -250,7 +250,7 @@ async function openContext(port) {
 		await delay(250);
 	}
 	const tool = async (name, args) => {
-		const response = await driverEval(`chrome.runtime.sendMessage(${JSON.stringify({ type: "sidebar:realtime-browser-tool", tool: name, args })})`);
+		const response = await driverEval(`chrome.runtime.sendMessage(${JSON.stringify({ type: "sidebar:browser-tool", tool: name, args })})`);
 		if (!response?.ok) throw new Error(response?.error || `Could not run ${name}`);
 		return response.result;
 	};
