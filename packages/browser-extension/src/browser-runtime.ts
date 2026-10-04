@@ -13052,7 +13052,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				}
 				seen.add(entry.id);
 				return { id: `live:${callId}:${entry.id}`, voiceOrigin: "live", liveVoiceSessionId: callId,
-					userPrompt: `[Voice] ${entry.userPrompt}`, reply: entry.reply, createdAt: entry.createdAt,
+					userPrompt: `[Voice] ${entry.userPrompt.trim()}`, reply: entry.reply.trim(), createdAt: entry.createdAt,
 					activities: [], pageActions: [], pending: false, error: false };
 			});
 			// Reconcile only this call's caption-derived turns. Never replace a

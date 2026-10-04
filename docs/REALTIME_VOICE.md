@@ -112,3 +112,9 @@ The voice model is intentionally narrow. It can ask for compact context, place h
 Any eval suite runs this way with `--voice live|realtime`, e.g. `npm run eval:creative -- --voice live`. Voice checks fail a case when the Realtime engine would route it to the standalone voice agent or when the spoken text falls back to "the answer is ready in the sidebar", warn when it runs past ~45 words, and support per-case `requiredSpokenPatterns` / `forbiddenSpokenPatterns`.
 
 Not covered without a live call: speech recognition and endpointing, Live's own decision to delegate and its spoken paraphrase, the standalone Realtime voice agent, and managed (hosted) Live delegation.
+
+### Real calls with a synthetic microphone
+
+`npm run eval:voice-call -- --url <page> --question "..." [--question "follow-up"]` places a real (paid) call with the panel's saved voice settings. It opens the actual side panel next to the page in a new window, swaps the panel's microphone for a synthetic stream before pressing Voice, and plays each question into it, synthesized silently with `say -o`. Nothing is played aloud and no room audio is captured. For each question it reports what Live heard, what it said, whether it spoke the delegated answer and how soon after the backend finished, plus the saved turns with their tools and marks. `--mute-after` presses the panel's Mute button after the first question, and `--timeline` prints the Live data-channel events. Every call ends by closing the panel and its window, within `--max-seconds` (default 120).
+
+The synthetic mic carries a faint noise floor (`--room-tone-db`, default -50). With pure digital silence after the question, Live heard the question and ran the delegation but never spoke the delegated answer. A real microphone always picks up room tone, and Mute tells Live the input is muted, so real calls are unaffected.

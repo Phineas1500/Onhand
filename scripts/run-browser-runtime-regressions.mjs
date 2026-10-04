@@ -11389,12 +11389,15 @@ async function assertLiveTranscriptPersistence() {
 	const host = createReplayHost();
 	const runtime = await configureSmokeRuntime(host);
 	const sessionId = (await runtime.getState()).currentSession.sessionId;
-	const entry = { id: "caption-1", userPrompt: "Only German, in BLEU points.", reply: "28.4 versus 27.3: 1.1 points.", createdAt: new Date().toISOString() };
+	// Live captions arrive as deltas that start with a space.
+	const entry = { id: "caption-1", userPrompt: " Only German, in BLEU points.", reply: " 28.4 versus 27.3: 1.1 points.", createdAt: new Date().toISOString() };
 	const save = (revision, turns) => runtime.recordLiveTranscriptTurns({ sessionId, callId: "voice-call", revision, turns });
 	await save(1, [entry]);
 	let state = await runtime.getState();
 	const directId = state.turns[0].id;
 	assert.equal(state.turns[0].voiceOrigin, "live");
+	assert.equal(state.turns[0].userPrompt, "[Voice] Only German, in BLEU points.", "caption turns save without the leading delta space");
+	assert.equal(state.turns[0].reply, "28.4 versus 27.3: 1.1 points.");
 	assert.ok(!state.currentSession.sessionName, "revisable captions cannot freeze an automatic session name");
 	assert.deepEqual(state.turns[0].pageActions, []);
 	assert.equal(state.messages.length, 2, "direct replies enter saved conversation history");
