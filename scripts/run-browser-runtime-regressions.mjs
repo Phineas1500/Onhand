@@ -11294,6 +11294,35 @@ async function assertPageInjectionNoticeAndClassifierPageContext() {
 	console.log("Page-injection notice and classifier page context passed");
 }
 
+async function assertCitedSourceQuestionsOpenTheSource() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	for (const ask of [
+		"The article says Webb's mirror is gold-coated. What does the source it cites for that say about why gold was used?",
+		"What does the cited study actually conclude?",
+		"[Voice] What do the sources they cite say about this?",
+		"What does reference [12] say about the dosage?",
+	]) assert.equal(test.promptAsksForCitedSource(ask), true, ask);
+	for (const ask of [
+		"Cite your sources for this answer.",
+		"Which sources does this page use?",
+		"What does this article say about why gold was used?",
+	]) assert.equal(test.promptAsksForCitedSource(ask), false, ask);
+	const base = { displayPrompt: "What does the source it cites say about why gold was used?", initialActiveTab: { id: 7 }, toolTraces: [
+		{ toolName: "browser_extract_content", state: "complete", args: { tabId: 7 } },
+		{ toolName: "browser_highlight_text", state: "complete", args: { tabId: 7, text: "gold" } },
+	] };
+	// The page was opened in the background: the recorded starting tab is some
+	// other tab, but reading and marking the article is still not consulting the source.
+	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, initialActiveTab: { id: 3 } }), true, "the question's page is the tab the agent read and marked");
+	assert.equal(test.shouldRequireCitedSourceRetry(base), true, "answering from the article alone retries once");
+	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, citedSourceRetry: true }), false, "only one retry");
+	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, toolTraces: [...base.toolTraces, { toolName: "browser_navigate", state: "error", args: { url: "https://example.test/ref" } }] }), false, "an attempted open counts, even if it failed");
+	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, toolTraces: [...base.toolTraces, { toolName: "browser_extract_content", state: "complete", args: { tabId: 9 } }] }), false, "reading the source in another open tab counts");
+	assert.equal(test.shouldRequireCitedSourceRetry({ ...base, displayPrompt: "Why was gold used for the mirror?" }), false, "ordinary questions are unaffected");
+	assert.match(test.buildCitedSourceRetryPrompt(base, "The cited explanation is X."), /without opening it[\s\S]*Never compose or guess a source URL[\s\S]*claims about the source are unverified/);
+	console.log("Cited-source questions: detection, one retry, and honest fallback passed");
+}
+
 async function assertVoiceDefaultsToLiveWithTheOnhandAgent() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -11853,6 +11882,7 @@ async function main() {
 	await assertManagedLiveRuntime();
 	await assertVoiceDefaultsToLiveWithTheOnhandAgent();
 	await assertPageInjectionNoticeAndClassifierPageContext();
+	await assertCitedSourceQuestionsOpenTheSource();
 	await assertHostedVoiceGetsPerRequestPolicy();
 	await assertLiveInterruptionWorkerRouting();
 	await assertManagedLiveRevisions();

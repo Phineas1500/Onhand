@@ -3889,7 +3889,8 @@ function isFinalizeGateEligibleRequest(request: any) {
 		promptAsksForStructuredPageSourceMarker(request.displayPrompt) ||
 		promptAsksForMarkupPass(request.displayPrompt) ||
 		promptAsksForExternalBrowsing(markerPromptText) ||
-		promptAsksForLinkedPageNavigation(markerPromptText)
+		promptAsksForLinkedPageNavigation(markerPromptText) ||
+		promptAsksForCitedSource(request.displayPrompt)
 	);
 }
 
@@ -3899,6 +3900,48 @@ function isFinalizeGateEligibleRequest(request: any) {
 // streaming; the unpredictable retries (missing-tool, transient-provider,
 // blank-reply) stay streamed and any clipped exposure is recorded on
 // provisionalAnswerExposed instead of suppressed.
+// "What does the source it cites say?" can only be answered from the cited
+// source. GPT-6 Luna sometimes skipped opening it and still wrote "the cited
+// explanation is ..." from the article alone.
+function promptAsksForCitedSource(prompt: unknown) {
+	const text = ownWordsPromptText(prompt);
+	if (!text) return false;
+	return /\b(?:sources?|references?|stud(?:y|ies)|papers?|articles?|reports?)\s+(?:that\s+)?(?:it|they|the (?:page|article|post|paper|essay))\s+(?:cites?|cited|references?|referenced|links? to)\b|\bcited\s+(?:source|reference|study|paper|article|report)s?\b|\b(?:footnote|reference|citation)\s*\[?\d+\]?\s+(?:say|says|said|shows?|claims?)\b/.test(text);
+}
+
+// Opening another page (attempted, whatever the outcome) or reading a tab other
+// than the question's page counts as consulting the source. The question's page
+// is the tab the agent first read or marked: the recorded starting tab can be a
+// different tab when the page was opened in the background.
+function hasConsultedAnotherSource(request: any) {
+	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
+	const traceTabId = (trace: any) => Number(trace?.effectiveArgs?.tabId ?? trace?.args?.tabId);
+	const firstPageTrace = traces.find((trace: any) => trace?.state === "complete" && Number.isFinite(traceTabId(trace))
+		&& /^browser_(?:extract_content|get_visible_text|pdf_read_pages|highlight_text|find_elements)$/.test(String(trace?.toolName || "")));
+	const pageTabId = firstPageTrace ? traceTabId(firstPageTrace) : Number(request?.initialActiveTab?.id);
+	return traces.some((trace: any) => {
+		if (trace?.toolName === "browser_navigate" || trace?.toolName === "browser_activate_tab") return true;
+		const tabId = traceTabId(trace);
+		return trace?.state === "complete" && /^browser_(?:extract_content|get_visible_text|pdf_read_pages)$/.test(String(trace?.toolName || ""))
+			&& Number.isFinite(tabId) && tabId !== pageTabId;
+	});
+}
+
+function shouldRequireCitedSourceRetry(request: any) {
+	if (!request || request.aborted || request.citedSourceRetry) return false;
+	if (!promptAsksForCitedSource(request.displayPrompt)) return false;
+	return !hasConsultedAnotherSource(request);
+}
+
+function buildCitedSourceRetryPrompt(request: any, assistantText: string) {
+	return [
+		"You described what the cited source says without opening it. Follow the page's own citation now: find the reference marker next to the claim, use browser_find_elements on the references section to get that entry's link (its href), navigate to that exact URL, read it, and answer from what the source itself says, with a highlight on the supporting passage there.",
+		"Never compose or guess a source URL from memory. If the citation has no link or the link cannot be opened, say that plainly and answer from the page's own wording, labeled as the page's wording.",
+		`Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
+		assistantText ? `Draft answer (its claims about the source are unverified; keep them only if the source confirms them):\n${truncateStructuredText(assistantText, 2000)}` : "",
+	].filter(Boolean).join("\n\n");
+}
+
 function shouldBufferAssistantDraftUntilSettled(request: any) {
 	if (!request) return false;
 	if (typeof request.finalizeGateEligible !== "boolean") {
@@ -4043,6 +4086,7 @@ function assessManagedAnswerGrounding(request: any, reply: string) {
 		if (String(action.key || "").startsWith("note:") && action.annotationId) noted.add(action.annotationId);
 	}
 	const pdfVisual = hasCompletedToolTrace(evidence, "browser_pdf_capture_page_image");
+	if (promptAsksForCitedSource(request.displayPrompt) && !hasConsultedAnotherSource(evidence)) missing.push("Open the cited source before describing it: get the reference entry's link with browser_find_elements, navigate to it, and answer from what it says. If it cannot be opened, say so and answer from the page's wording, labeled as such.");
 	if (conceptual && pdfVisual && !pdfRead) missing.push("Read the explanatory PDF section with browser_pdf_search/browser_pdf_read_pages; a figure image alone does not verify the mechanism.");
 	if (shouldRequirePageSourceMarkerRetry(evidence, reply) || ((pdfRead || conceptual) && !ids.size)) {
 		missing.push("Place a short exact supporting-text highlight for each central claim, or verify and reuse an existing supporting highlight. Use the source's mechanism/definition, not an unrelated caption or heading.");
@@ -10684,6 +10728,9 @@ function extractToolErrorText(result: unknown) {
 
 export const __browserRuntimeTest = {
 	pageInjectionNotice,
+	promptAsksForCitedSource,
+	shouldRequireCitedSourceRetry,
+	buildCitedSourceRetryPrompt,
 	buildRecentConversationContextForTest: buildRecentConversationContext,
 	withRuntimeStoreForTest: withRuntimeStore,
 	deleteSessionRecordsForTest: deleteSessionRecords,
@@ -13899,6 +13946,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						return;
 					}
 					assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
+				}
+				if (!finalError && !activeRequest.aborted && shouldRequireCitedSourceRetry(activeRequest) && activeAgent) {
+					activeRequest.citedSourceRetry = true;
+					resetAssistantDraftText(activeRequest);
+					blankSupersededAssistantDraft(requestId);
+					await publishState({ status: "Opening the cited source..." });
+					queueBlankReplyRetry(activeAgent, buildCitedSourceRetryPrompt(activeRequest, assistantText), (retryError) => {
+						void finalizeRequest(session, requestId, retryError);
+					}, activeRequest.abortController?.signal);
+					return;
 				}
 				if (!finalError && !activeRequest.aborted && shouldRequirePageSourceMarkerRetry(activeRequest, assistantText) && activeAgent) {
 					activeRequest.pageSourceMarkerRetry = true;
