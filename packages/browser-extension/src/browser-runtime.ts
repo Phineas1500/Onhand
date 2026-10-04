@@ -628,6 +628,8 @@ Onhand's constitution:
 - Math formatting: when writing LaTeX symbols or equations, wrap inline math in $...$ and display equations in $$...$$. Never leave raw LaTeX commands such as \\cdot, \\sqrt, \\frac, or \\text{} outside math delimiters, including inside bullets and numbered steps. If extracted page math is fragmented or missing operators, do not copy it verbatim into chat or source highlights; either rewrite a clean formula only when the intended formula is clear from context, or explain the relationship in words.
 
 Default answer mode:
+- A request too vague to act on (a lone "?", "hmm", or a single unclear word) gets one short clarifying question about what the user wants from the page, with no page work.
+- When a question calls for page work, use as few steps as you can; every step is a full model round trip the user waits through. Once you know the supporting passages, place all of the answer's highlights in one step of parallel tool calls, and attach each note in that same step by calling browser_show_note with highlightText set to the exact text you passed to browser_highlight_text. Then write the answer. When the page's readable text is already in your context, mark and answer from it instead of reading the page again.
 - For every question you answer from page material, create a durable source highlight on the exact visible/readable text that supports each point the answer states — one for a one-point answer, one per distinct point otherwise — then answer in chat referencing those highlights. This applies to ordinary factual questions too: do not answer chat-only when the page supports the claim. Exceptions: if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when the highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
@@ -862,7 +864,8 @@ const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 
 const SHOW_NOTE_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
-	annotationId: Type.String({ description: "Annotation ID returned by browser_highlight_text" }),
+	annotationId: Type.Optional(Type.String({ description: "Annotation ID returned by browser_highlight_text. Omit it and pass highlightText instead to add the note in the same step as its highlight." })),
+	highlightText: Type.Optional(Type.String({ description: "The exact text passed to browser_highlight_text, used instead of annotationId so a highlight and its note can be issued in the same step; the note waits for that highlight to land." })),
 	note: Type.String({ description: `A short interpretive marginal note (${MARK_POLICY.noteShapePhrase}) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. The note carries the explanation for its mark.` }),
 	label: Type.Optional(Type.String({ description: "Optional short label shown above the note" })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." })),
@@ -8176,6 +8179,10 @@ function promptAsksForStructuredPageSourceMarker(prompt: unknown) {
 function promptAsksForCompactPageTeaching(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text || promptForbidsPageChanges(prompt)) return false;
+	// Note-taking and document review are markup passes: the marks are the
+	// deliverable, so the compact teaching cap and its guards never apply, even
+	// when the intent classifier also calls the ask teaching.
+	if (promptAsksForMarkupPass(prompt)) return false;
 	if (!promptAsksForTeachingPageSourceMarker(prompt)) return false;
 	if (promptAsksForStructuredPageSourceMarker(prompt) || promptAsksForComparison(prompt)) return false;
 	return !textHasAny(text, /\b(?:deep|detailed|thorough|exhaustive|section[-\s]?by[-\s]?section|every section|all sections|full walkthrough|complete walkthrough)\b/);
@@ -10727,6 +10734,7 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	createToolsForTest: createTools,
 	pageInjectionNotice,
 	promptAsksForCitedSource,
 	shouldRequireCitedSourceRetry,
@@ -11304,7 +11312,30 @@ function createTools(
 	) => void = () => {},
 	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
 	runHighlightScanFallback: (effectiveParams: Record<string, unknown>, lastError: unknown) => Promise<any | null> = async () => null,
+	findTurnHighlightAnnotationId: (highlightText: string) => string = () => "",
 ): AgentTool[] {
+	// A highlight and its note can be issued in one step (tools run in
+	// parallel): the note names the highlight by its text and waits for it,
+	// saving the model round trip a returned annotationId would otherwise cost.
+	const highlightsInFlight = new Map<string, Promise<any>>();
+	const noteHighlightKey = (text: unknown) => compactActionText(text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
+	const resolveNoteHighlightId = async (highlightText: string) => {
+		const key = noteHighlightKey(highlightText);
+		for (let waited = 0; !highlightsInFlight.has(key) && waited < 2000; waited += 100) {
+			if (findTurnHighlightAnnotationId(highlightText)) break;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		const inFlight = highlightsInFlight.get(key);
+		if (inFlight) {
+			const landed = await inFlight.catch(() => null);
+			const annotationId = compactActionText(landed?.details?.annotation?.annotationId);
+			if (annotationId) return annotationId;
+			throw new Error("The highlight for this note did not land, so the note was not added. Retry the highlight, then add the note with the annotationId it returns.");
+		}
+		const earlier = findTurnHighlightAnnotationId(highlightText);
+		if (earlier) return earlier;
+		throw new Error("No highlight with that text was placed. Call browser_show_note with the annotationId returned by browser_highlight_text.");
+	};
 	const commandTool = (
 		name: string,
 		label: string,
@@ -11319,6 +11350,9 @@ function createTools(
 		parameters,
 		executionMode: options.sequential ? "sequential" : undefined,
 		async execute(_toolCallId, params) {
+			if (commandName === "show_note" && !(params as any)?.annotationId && (params as any)?.highlightText) {
+				params = { ...(params as any), annotationId: await resolveNoteHighlightId(String((params as any).highlightText)) };
+			}
 			const executeCommand = async () => {
 				let result: any;
 				const runCommandWithParams = async (requestedParams: any) => {
@@ -11432,9 +11466,10 @@ function createTools(
 					details: result,
 				};
 			};
-			return commandName === "highlight_text"
-				? await withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand)
-				: await executeCommand();
+			if (commandName !== "highlight_text") return await executeCommand();
+			const highlighting = withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand);
+			highlightsInFlight.set(noteHighlightKey((params as any)?.text), highlighting);
+			return await highlighting;
 		},
 	});
 
@@ -13646,6 +13681,40 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 	}
 
+	// Most page questions began with a model round trip that only called
+	// browser_extract_content (33 of 42 Luna turns). Reading the page during
+	// preparation, recorded as that same completed tool call, lets the first
+	// model step place marks instead. General-knowledge asks, vague prompts,
+	// PDFs and Google Docs (already read into context) are skipped.
+	async function runReadablePagePreflight(prompt: string, details: any, targetWindowId?: number, requestHost: RuntimeHost = host) {
+		if (!activeRequest) return "";
+		const activeTab = details?.activeTab;
+		if (!activeTab?.id || !/^(?:https?|file):/i.test(String(activeTab.url || ""))) return "";
+		if (browserContextLooksLikePdf(details) || isGoogleDocsDocumentUrlForContext(activeTab.url)) return "";
+		if (ownWordsPromptText(prompt).split(/\s+/).filter(Boolean).length < 3) return "";
+		const intent = getModelIntentClassificationForPrompt(prompt);
+		if (intent && !intent.pageScoped) return "";
+		const toolName = "browser_extract_content";
+		const activityId = `tool:preflight:${toolName}:${activeTab.id}`;
+		const requested = { tabId: activeTab.id };
+		const params = withRequestBrowserContext(withTargetWindowId(requested, targetWindowId), "extract_content");
+		appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "running" });
+		recordToolTraceStart(toolName, activityId, requested);
+		recordToolTraceEffectiveArgs(toolName, activityId, params);
+		try {
+			const result = await requestHost.runCommand("extract_content", params);
+			recordToolTraceEnd(toolName, activityId, { details: result }, false);
+			appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "complete" });
+			appendUniquePageAction(activeRequest.pageActions, buildPageAction(toolName, result));
+			return toolResultTextForModel(toolName, result);
+		} catch (error) {
+			host.log?.("readable page preflight failed", error);
+			recordToolTraceEnd(toolName, activityId, { details: { error: (error as any)?.message || String(error) } }, true);
+			appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "error" });
+			return "";
+		}
+	}
+
 	async function runPdfVisualCapturePreflight(prompt: string, details: any, targetWindowId?: number, pdfHandoff?: any, requestHost: RuntimeHost = host) {
 		if (!activeRequest || !promptAsksAboutVisualRegion(prompt)) return null;
 		if (!browserContextLooksLikePdf(details) && !pdfHandoff) return null;
@@ -13796,6 +13865,13 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						scrollIntoView: (effectiveParams as any)?.scrollIntoView !== false,
 						pdfAnchor: (effectiveParams as any)?.pdfAnchor,
 					});
+				},
+				(highlightText) => {
+					const key = compactActionText(highlightText).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
+					const trace = [...(activeRequest?.toolTraces || [])].reverse().find((candidate: any) => candidate?.state === "complete"
+						&& candidate?.toolName === "browser_highlight_text"
+						&& compactActionText(candidate?.args?.text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "") === key);
+					return trace ? markerGateAnnotationId(trace) : "";
 				},
 			),
 			prompt,
@@ -16676,6 +16752,11 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					const reasoningProfile = buildReasoningProfile(requestSettings, prompt, attachments, learningMode);
 					const pdfVisualCapture = await runPdfVisualCapturePreflight(prompt, browserContextDetails, targetWindowId, pdfHandoff, preparationHost);
 					requestContext.abortController.signal.throwIfAborted();
+					const readablePage = pdfHandoff ? "" : await runReadablePagePreflight(prompt, browserContextDetails, targetWindowId, preparationHost);
+					requestContext.abortController.signal.throwIfAborted();
+					const readablePageContext = readablePage
+						? `Onhand already read this page for you (a completed browser_extract_content call):\n${readablePage}\nMark and answer from this text. Call browser_extract_content again only to continue past this excerpt (startBlock) or to search a long page with a query.`
+						: "";
 					const pdfVisualCaptureContext = pdfVisualCapture?.dataUrl
 						? `Captured PDF page image for visual grounding: p. ${pdfVisualCapture.pageNumber || pdfVisualCapture.page || "?"}. Use the attached PDF page image for visual parts of this answer; cite exact PDF text when available.`
 						: "";
@@ -16686,7 +16767,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					const pdfHandoffContext = pdfHandoffTabId > 0
 						? `Onhand already opened this PDF in its viewer (tabId ${pdfHandoffTabId}). Do not call browser_open_pdf_in_onhand_viewer again; use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${pdfHandoffTabId}.`
 						: "";
-					const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext].filter(Boolean).join("\n\n");
+					const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext, readablePageContext].filter(Boolean).join("\n\n");
 					const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
 					const existingAnchorContext = buildExistingAnchorContext(session);
 					const liveVoiceContext = rawSource === "live-voice"

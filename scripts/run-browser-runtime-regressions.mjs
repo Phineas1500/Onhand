@@ -10076,7 +10076,14 @@ async function assertExactExtractContentPromptsInjectQuery() {
 	assert.equal(extractCall.args.maxChars >= 30000, true, "exact/table prompts should expand extract_content maxChars");
 	const store = getStoredStore();
 	const session = store.sessions[store.currentSessionId];
-	const extractTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_extract_content");
+	const isPreflight = (trace) => String(trace.toolCallId || trace.id || "").startsWith("tool:preflight:");
+	// The runtime reads the page during preparation; that read keeps the
+	// requested/effective split too.
+	const preflightTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_extract_content" && isPreflight(trace));
+	assert.ok(preflightTrace, "page questions read the page during preparation");
+	assert.deepEqual(Object.keys(preflightTrace.args), ["tabId"], "the preflight records only the requested tab");
+	assert.match(preflightTrace.effectiveArgs.query || "", /Qwen tensors/, "the preflight read gets the same injected query");
+	const extractTrace = session.turns[0].toolTraces?.find((trace) => trace.toolName === "browser_extract_content" && !isPreflight(trace));
 	assert.ok(extractTrace, "expected extract_content trace for exact extract query regression");
 	assert.equal(extractTrace.args.query, undefined, "requested model args should remain separate from runtime-injected query");
 	assert.equal(extractTrace.args.maxChars, 800);
@@ -11323,6 +11330,57 @@ async function assertCitedSourceQuestionsOpenTheSource() {
 	console.log("Cited-source questions: detection, one retry, and honest fallback passed");
 }
 
+// A highlight and its note go out in one step: the note names the highlight by
+// text and waits for it, instead of needing another model round trip for the
+// returned annotationId.
+async function assertNotesCanNameTheirHighlightInTheSameStep() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const commands = [];
+	const host = {
+		async runCommand(name, args) {
+			commands.push({ name, args });
+			if (name === "highlight_text") {
+				await new Promise((resolve) => setTimeout(resolve, 150));
+				if (/missing/.test(args.text)) throw new Error(`No visible text matched: ${args.text}`);
+				return { tab: { id: 5, title: "Page", url: "https://example.test/" }, annotation: { annotationId: `onhand-${args.text.length}`, matchedText: args.text } };
+			}
+			if (name === "show_note") return { tab: { id: 5 }, note: { annotationId: args.annotationId, note: args.note } };
+			return {};
+		},
+	};
+	const tools = test.createToolsForTest(host, {}, (params) => params);
+	const highlight = tools.find((tool) => tool.name === "browser_highlight_text");
+	const note = tools.find((tool) => tool.name === "browser_show_note");
+	// Issued together, note first: it still waits for its highlight.
+	const [noted] = await Promise.all([
+		note.execute("n1", { highlightText: "Bees dance to share directions.", note: "The dance encodes the route." }),
+		highlight.execute("h1", { text: "Bees dance to share directions." }),
+	]);
+	assert.equal(commands.find((call) => call.name === "show_note").args.annotationId, "onhand-31", "the note attaches to the highlight with that text");
+	assert.equal(noted.details.note.annotationId, "onhand-31");
+	await Promise.all([
+		assert.rejects(note.execute("n2", { highlightText: "missing passage", note: "x" }), /did not land/),
+		highlight.execute("h2", { text: "missing passage" }).catch(() => null),
+	]);
+	assert.equal(commands.filter((call) => call.name === "show_note").length, 1, "a note whose highlight failed is not added");
+	await assert.rejects(note.execute("n3", { highlightText: "never highlighted", note: "x" }), /No highlight with that text/);
+	console.log("Notes naming their highlight: same-step attach, failed highlight, and unknown text passed");
+}
+
+// With the open page in its context, the classifier began calling note-taking
+// "teaching"; the compact teaching cap then blocked marks and a Luna note pass
+// ended with 2 marks (it had 10-11 before).
+async function assertNoteTakingNeverGetsTheTeachingCap() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const prompt = "Take notes on this essay for me — I'm going to review it before a founders meetup.";
+	test.setModelIntentClassificationForPromptForTest(prompt, { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false, problemSolvingHelp: false });
+	assert.equal(test.promptAsksForCompactPageTeachingForTest(prompt), false, "a note-taking pass is not compact teaching even when classified as teaching");
+	const summary = "Summarize the key ideas on this page.";
+	test.setModelIntentClassificationForPromptForTest(summary, { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false, problemSolvingHelp: false });
+	assert.equal(test.promptAsksForCompactPageTeachingForTest(summary), true, "ordinary teaching asks keep the compact cap");
+	console.log("Note-taking stays a markup pass when classified as teaching passed");
+}
+
 async function assertVoiceDefaultsToLiveWithTheOnhandAgent() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -11883,6 +11941,8 @@ async function main() {
 	await assertVoiceDefaultsToLiveWithTheOnhandAgent();
 	await assertPageInjectionNoticeAndClassifierPageContext();
 	await assertCitedSourceQuestionsOpenTheSource();
+	await assertNotesCanNameTheirHighlightInTheSameStep();
+	await assertNoteTakingNeverGetsTheTeachingCap();
 	await assertHostedVoiceGetsPerRequestPolicy();
 	await assertLiveInterruptionWorkerRouting();
 	await assertManagedLiveRevisions();
