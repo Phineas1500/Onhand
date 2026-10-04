@@ -1070,6 +1070,25 @@ function toolErrorCount(turn, name) {
 	return Math.max(0, errorCount - recoveredCount);
 }
 
+// Time from the request until the first mark landed on the page: the first
+// impression of a turn, before the answer text finishes.
+function firstMarkMs(turn) {
+	const started = Date.parse(turn?.createdAt || "");
+	if (!Number.isFinite(started)) return null;
+	const ends = (Array.isArray(turn?.toolTraces) ? turn.toolTraces : [])
+		.filter((tool) => tool?.state === "complete" && /highlight|show_note|mark_region/.test(String(tool?.toolName || "")))
+		.map((tool) => Date.parse(tool.endedAt || ""))
+		.filter(Number.isFinite);
+	return ends.length ? Math.max(0, Math.min(...ends) - started) : null;
+}
+
+function median(values) {
+	const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+	if (!sorted.length) return null;
+	const middle = Math.floor(sorted.length / 2);
+	return Math.round(sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
+}
+
 function totalDurationMs(turn) {
 	return allTools(turn).reduce((sum, tool) => sum + (Number.isFinite(Number(tool?.duration_ms)) ? Math.max(0, Number(tool.duration_ms)) : 0), 0);
 }
@@ -1097,6 +1116,8 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		maxNoteChars: noteTexts.reduce((max, text) => Math.max(max, text.length), 0),
 		toolCount: allTools(turn).length,
 		toolDurationMs: totalDurationMs(turn),
+		firstMarkMs: firstMarkMs(turn),
+		turnDurationMs: Number.isFinite(Number(turn.durationMs)) ? Number(turn.durationMs) : null,
 		highlightErrorCount: toolErrorCount(turn, "browser_highlight_text"),
 		elapsedMs,
 		methodMentionCount: methodMentionCount(reply),
@@ -1424,7 +1445,9 @@ function safeId(value) {
 function summarizeVariants(results) {
 	const byVariant = new Map();
 	for (const result of results) {
-		const entry = byVariant.get(result.variantId) || { variantId: result.variantId, runs: 0, passes: 0, score: 0, elapsedMs: 0, judgeRuns: 0, judgeScore: 0 };
+		const entry = byVariant.get(result.variantId) || { variantId: result.variantId, runs: 0, passes: 0, score: 0, elapsedMs: 0, judgeRuns: 0, judgeScore: 0, firstMarks: [], turnDurations: [] };
+		if (result.metrics?.firstMarkMs != null) entry.firstMarks.push(result.metrics.firstMarkMs);
+		if (result.metrics?.turnDurationMs != null) entry.turnDurations.push(result.metrics.turnDurationMs);
 		entry.runs += 1;
 		entry.passes += result.status === "pass" ? 1 : 0;
 		entry.score += result.score;
@@ -1442,6 +1465,9 @@ function summarizeVariants(results) {
 			averageJudgeScore: entry.judgeRuns ? Number((entry.judgeScore / entry.judgeRuns).toFixed(3)) : null,
 			passRate: Number((entry.passes / Math.max(1, entry.runs)).toFixed(3)),
 			averageElapsedMs: Math.round(entry.elapsedMs / Math.max(1, entry.runs)),
+			medianFirstMarkMs: median(entry.firstMarks),
+			medianTurnMs: median(entry.turnDurations),
+			markedRuns: entry.firstMarks.length,
 		}))
 		.sort((left, right) => right.averageScore - left.averageScore || right.passRate - left.passRate || left.averageElapsedMs - right.averageElapsedMs);
 }
@@ -1457,11 +1483,12 @@ function markdownReport(plan, results, variantSummary) {
 		"",
 		"## Variants",
 		"",
-		"| Variant | Runs | Pass | Avg Score | Avg Time |",
-		"| --- | ---: | ---: | ---: | ---: |",
+		"| Variant | Runs | Pass | Avg Score | Avg Time | Median Turn | Median First Mark |",
+		"| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
 	];
 	for (const entry of variantSummary) {
-		lines.push(`| ${entry.variantId} | ${entry.runs} | ${entry.passes}/${entry.runs} | ${entry.averageScore.toFixed(3)} | ${entry.averageElapsedMs}ms |`);
+		const ms = (value) => (value == null ? "—" : `${(value / 1000).toFixed(1)}s`);
+		lines.push(`| ${entry.variantId} | ${entry.runs} | ${entry.passes}/${entry.runs} | ${entry.averageScore.toFixed(3)} | ${entry.averageElapsedMs}ms | ${ms(entry.medianTurnMs)} | ${ms(entry.medianFirstMarkMs)} (${entry.markedRuns} marked) |`);
 	}
 	lines.push("", "## Cases", "", "| Case | Variant | Status | Score | Judge | Highlights | Notes | Marked Tabs | Navigations | Words | Failures |", "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |");
 	for (const result of results) {

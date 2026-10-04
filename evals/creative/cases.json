@@ -113,7 +113,7 @@
 			"expect": {
 				"minHighlights": 8,
 				"requiredReplyPatterns": [
-					"Tenth|10\\b"
+					"Tenth|10(?:th)?\\b"
 				],
 				"forbiddenReplyPatterns": [
 					"instructions aimed at AI assistants"
