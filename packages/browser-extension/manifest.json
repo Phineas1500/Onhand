@@ -4,7 +4,7 @@
 		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
 	},
 	"name": "Onhand",
-	"version": "0.4.5",
+	"version": "0.4.6",
 	"description": "Ask about any webpage or PDF and get answers anchored to the source — highlights, notes, citation chasing. Free to try.",
 	"minimum_chrome_version": "116",
 	"icons": {
