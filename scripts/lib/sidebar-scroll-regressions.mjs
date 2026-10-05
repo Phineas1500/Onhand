@@ -162,8 +162,39 @@ async function assertExplicitPromptAndSessionReset({ renderSidebar, createState 
 	} finally { h.dom.window.close(); }
 }
 
+// A small scroll up from the bottom stays inside the near-bottom band, before
+// Jump to latest appears. Following was decided by distance alone, so the next
+// poll (every 900 ms, even when idle) snapped the reader back to the bottom.
+async function assertSmallScrollUpStopsFollowing({ renderSidebar, createState }) {
+	const state = createState();
+	const h = await harness(renderSidebar, state);
+	try {
+		h.position(h.maxScroll());
+		await h.refresh();
+		assert.equal(h.scroll.scrollTop, h.maxScroll(), "fixture starts at the bottom");
+		const readingPosition = h.maxScroll() - 40;
+		h.position(readingPosition);
+		await h.refresh();
+		assert.equal(h.scroll.scrollTop, readingPosition, "an idle refresh must not undo a small scroll up");
+		assert.equal(h.jumpButton()?.hidden, true, "a reader this close to the bottom does not need Jump to latest");
+		startStreaming(state);
+		state.messages[1].text += " A substantial streaming chunk with newly rendered content.".repeat(8);
+		await h.refresh();
+		assert.equal(h.scroll.scrollTop, readingPosition, "a streaming update must not undo a small scroll up");
+		assert.equal(h.jumpButton()?.hidden, false, "once the answer grows past the reader, Jump to latest appears");
+		h.position(h.maxScroll() - 30);
+		state.messages[1].text += " Another streaming chunk.";
+		await h.refresh();
+		assert.equal(h.scroll.scrollTop, h.maxScroll(), "scrolling back down near the bottom resumes following");
+		h.position(h.maxScroll() - 2);
+		await h.refresh();
+		assert.equal(h.scroll.scrollTop, h.maxScroll() - 2, "even a tiny scroll up is kept");
+	} finally { h.dom.window.close(); }
+}
+
 export async function runSidebarScrollRegressions(helpers) {
 	await assertUpdatesPreserveReaderPosition(helpers);
 	await assertFollowingAndJumpControl(helpers);
+	await assertSmallScrollUpStopsFollowing(helpers);
 	await assertExplicitPromptAndSessionReset(helpers);
 }

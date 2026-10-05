@@ -6127,8 +6127,27 @@
 		actionsEl.innerHTML = "";
 	}
 
+	function distanceFromLatestAnswer() {
+		return body.scrollHeight - body.scrollTop - body.clientHeight;
+	}
+
 	function isNearLatestAnswer() {
-		return body.scrollHeight - body.scrollTop - body.clientHeight < 96;
+		return distanceFromLatestAnswer() < 96;
+	}
+
+	// Whether updates keep the latest answer in view. It follows the reader's
+	// last scroll, not just their distance from the bottom: a small scroll up
+	// stays within the near-bottom band, and a distance check alone snapped it
+	// back on the next poll. Content growing under a following reader leaves
+	// scrollTop unchanged, so it keeps following.
+	let followLatestAnswer = true;
+	let lastTranscriptScrollTop = 0;
+	function noteTranscriptScroll() {
+		const top = body.scrollTop;
+		if (distanceFromLatestAnswer() <= 1) followLatestAnswer = true;
+		else if (top < lastTranscriptScrollTop) followLatestAnswer = false;
+		else if (top > lastTranscriptScrollTop) followLatestAnswer = isNearLatestAnswer();
+		lastTranscriptScrollTop = top;
 	}
 
 	function updateJumpToLatestButton() {
@@ -6137,11 +6156,16 @@
 
 	function scrollToLatestAnswer({ focus = false } = {}) {
 		body.scrollTop = body.scrollHeight;
+		followLatestAnswer = true;
+		lastTranscriptScrollTop = body.scrollTop;
 		if (focus) body.focus({ preventScroll: true });
 		updateJumpToLatestButton();
 	}
 
-	body.addEventListener("scroll", updateJumpToLatestButton, { passive: true });
+	body.addEventListener("scroll", () => {
+		noteTranscriptScroll();
+		updateJumpToLatestButton();
+	}, { passive: true });
 	jumpToLatestButton.addEventListener("click", () => scrollToLatestAnswer({ focus: true }));
 
 	function invalidateSidebarSessionSnapshot() {
@@ -6211,7 +6235,8 @@
 
 	function renderState(state) {
 		restoreOfflineDisabledControls();
-		const wasNearBottom = isNearLatestAnswer();
+		// A scroll can land just before its scroll event; read it here too.
+		noteTranscriptScroll();
 		if (state?.activeRequestId && state.activeRequestId !== lastActiveRequestId) {
 			progressExpanded = null;
 		}
@@ -6265,9 +6290,9 @@
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
 				: "esc dismiss · enter ask · shift+enter newline";
-		// Continue following an answer only while the reader is already at the
-		// bottom. An active request must not override scrolling up to read or cite.
-		if (wasNearBottom || previousSessionPath !== nextSessionPath) scrollToLatestAnswer();
+		// Continue following an answer only while the reader is at the bottom.
+		// An active request must not override scrolling up to read or cite.
+		if (followLatestAnswer || previousSessionPath !== nextSessionPath) scrollToLatestAnswer();
 		else updateJumpToLatestButton();
 		renderConnectionNotice();
 	}

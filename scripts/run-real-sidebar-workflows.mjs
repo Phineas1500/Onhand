@@ -173,8 +173,24 @@ async function scrollGroup(ctx, base) {
 	await ev("(async()=>{const f=window.__onhandPerformanceFixture,s=f.getState();s.messages[1].text+=' Following latest output. '.repeat(100);await f.replaceState(s)})()");
 	g = await geometry();
 	assert.ok(g.height - g.client - g.top < 2, "jumping must resume following subsequent output");
+	// A small scroll up from the bottom stays within the near-bottom band, where
+	// a distance-only check kept following and snapped the reader back.
+	await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: Math.round(g.x), y: Math.round(g.y), deltaX: 0, deltaY: -40 }, sid);
+	await waitUntil(async () => (await geometry()).top < g.top - 10, "small wheel scroll");
+	await delay(300);
+	const nearTop = (await geometry()).top;
+	for (let i = 0; i < 3; i++) {
+		await ev(`(async()=>{const f=window.__onhandPerformanceFixture,s=f.getState();s.messages[1].text+=' Near-bottom update ${i}.';await f.replaceState(s)})()`);
+		assert.ok(Math.abs((await geometry()).top - nearTop) < 2, "a small scroll up must survive the next update");
+	}
+	await ctx.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: Math.round(g.x), y: Math.round(g.y), deltaX: 0, deltaY: 400 }, sid);
+	await waitUntil(async () => { const x = await geometry(); return x.height - x.client - x.top < 2; }, "wheel back to the bottom");
+	await delay(300);
+	await ev("(async()=>{const f=window.__onhandPerformanceFixture,s=f.getState();s.messages[1].text+=' Following again. '.repeat(100);await f.replaceState(s)})()");
+	g = await geometry();
+	assert.ok(g.height - g.client - g.top < 2, "scrolling back to the bottom must resume following");
 	await ctx.driverEval(`chrome.tabs.remove(${tab.id})`);
-	return { syntheticState: true, trustedWheelUpdatesPreserved: 5, keyboardPositionPreserved: true, jumpFocus: g.focus, followingResumed: true };
+	return { syntheticState: true, trustedWheelUpdatesPreserved: 5, keyboardPositionPreserved: true, smallScrollUpPreserved: true, jumpFocus: g.focus, followingResumed: true };
 }
 
 async function openNativePanel(ctx, windowId) {
