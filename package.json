@@ -67,6 +67,7 @@
     "eval:real-world": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/real-world/cases.json --screenshots",
     "eval:creative": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/creative/cases.json --screenshots",
     "eval:page-types": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/page-types/cases.json --screenshots",
+    "eval:hard-pages": "node ./scripts/run-page-prompt-eval.mjs --cases-file evals/hard-pages/cases.json --screenshots",
     "eval:voice-call": "node ./scripts/run-live-voice-call.mjs",
     "eval:voice": "node ./scripts/run-voice-eval.mjs",
     "eval:free-tier-models": "node ./scripts/run-free-tier-model-eval.mjs",

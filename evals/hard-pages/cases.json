@@ -1,0 +1,124 @@
+{
+  "description": "Page types the other suites skip: scanned and very long PDFs, non-Latin and right-to-left pages, very long HTML pages with the answer deep inside, single-page-app docs, API references, GitHub pull requests, and video pages. Run with repetition (npm run eval:hard-pages, three times) and count a case solid only if it passes every run.",
+  "cases": [
+    {
+      "id": "scanned-pdf-1913-tax-form",
+      "url": "https://www.irs.gov/pub/irs-prior/f1040--1913.pdf",
+      "timeout": "300s",
+      "prompt": "What is the normal income tax rate on this form?",
+      "expect": {
+        "maxWords": 180,
+        "requiredReplyPatterns": ["\\b1\\s?(?:per ?cent|percent|%)"]
+      }
+    },
+    {
+      "id": "long-pdf-deep-detail",
+      "url": "https://arxiv.org/pdf/2303.08774",
+      "timeout": "300s",
+      "prompt": "What did GPT-4 score on the Uniform Bar Exam, according to this report?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 180,
+        "requiredReplyPatterns": ["298|90th|top 10"]
+      }
+    },
+    {
+      "id": "japanese-wikipedia-stages",
+      "url": "https://ja.wikipedia.org/wiki/%E5%85%89%E5%90%88%E6%88%90",
+      "timeout": "300s",
+      "prompt": "What two stages of photosynthesis does this page describe?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 220,
+        "requiredReplyPatterns": ["light|明反応|光化学", "Calvin|carbon fixation|dark|暗反応|カルビン|炭素固定"]
+      }
+    },
+    {
+      "id": "arabic-wikipedia-rtl",
+      "url": "https://ar.wikipedia.org/wiki/%D8%A8%D9%86%D8%A7%D8%A1_%D8%B6%D9%88%D8%A6%D9%8A",
+      "timeout": "300s",
+      "prompt": "What gas does this page say photosynthesis releases?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 160,
+        "requiredReplyPatterns": ["oxygen|أكسجين|الأكسجين|أوكسجين"]
+      }
+    },
+    {
+      "id": "chinese-wikipedia-organelle",
+      "url": "https://zh.wikipedia.org/wiki/%E5%85%89%E5%90%88%E4%BD%9C%E7%94%A8",
+      "timeout": "300s",
+      "prompt": "Where in the plant cell does this page say photosynthesis happens?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 160,
+        "requiredReplyPatterns": ["chloroplast|叶绿体|葉綠體"]
+      }
+    },
+    {
+      "id": "very-long-article-late-section",
+      "url": "https://en.wikipedia.org/wiki/History_of_the_United_States",
+      "timeout": "300s",
+      "prompt": "What does this article say caused the Great Recession in 2008?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 200,
+        "requiredReplyPatterns": ["2008|Great Recession", "housing|mortgage|financial|bank|subprime"]
+      }
+    },
+    {
+      "id": "python-docs-deep-detail",
+      "url": "https://docs.python.org/3/library/stdtypes.html",
+      "timeout": "300s",
+      "prompt": "According to this page, what does str.partition return if the separator is not found?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 140,
+        "requiredReplyPatterns": ["empty|''|\"\""]
+      }
+    },
+    {
+      "id": "react-spa-reference",
+      "url": "https://react.dev/reference/react/useState",
+      "timeout": "300s",
+      "prompt": "What does useState return?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 160,
+        "requiredReplyPatterns": ["two|pair|array", "set"]
+      }
+    },
+    {
+      "id": "stripe-api-reference",
+      "url": "https://docs.stripe.com/api/charges/create",
+      "timeout": "300s",
+      "prompt": "Which parameters are required to create a charge?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 180,
+        "requiredReplyPatterns": ["amount", "currency"]
+      }
+    },
+    {
+      "id": "github-pull-request",
+      "url": "https://github.com/react/react/pull/37645",
+      "timeout": "300s",
+      "prompt": "What bug does this pull request fix, and how?",
+      "expect": {
+        "minHighlights": 1,
+        "maxWords": 180,
+        "requiredReplyPatterns": ["arguments", "memoi[sz]|bail|skip"]
+      }
+    },
+    {
+      "id": "youtube-talk-honesty",
+      "url": "https://www.youtube.com/watch?v=UF8uR6Z6KLc",
+      "timeout": "300s",
+      "prompt": "What three stories does he tell in this talk?",
+      "expect": {
+        "maxWords": 220,
+        "requiredReplyPatterns": ["connect(?:ing)? the dots|love and loss|death|transcript|description|can(?:'|’)?t (?:see|access|watch|hear)|not (?:able|available|visible)"]
+      }
+    }
+  ]
+}

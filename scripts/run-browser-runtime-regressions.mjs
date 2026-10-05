@@ -478,10 +478,17 @@ async function assertDestinationNavigationDefaultsToNewTab() {
 		{ url: "https://react.dev/learn", waitForLoad: true },
 		"same-page reloads should not be forced into a new tab",
 	);
+	// A model's newTab:false never replaces the page the user asked about; the
+	// user can still ask for in-place navigation.
 	assert.deepEqual(
 		applyNavigateNewTabDefaultForTest({ url: "https://react.dev/learn/passing-props-to-a-component", newTab: false }, request),
+		{ url: "https://react.dev/learn/passing-props-to-a-component", newTab: true },
+		"a model's current-tab navigation off the starting page opens a new tab",
+	);
+	assert.deepEqual(
+		applyNavigateNewTabDefaultForTest({ url: "https://react.dev/learn/passing-props-to-a-component", newTab: false }, { ...request, displayPrompt: "Go to the passing props page in this tab" }),
 		{ url: "https://react.dev/learn/passing-props-to-a-component", newTab: false },
-		"explicit current-tab navigation should remain possible for special cases",
+		"current-tab navigation stays possible when the user asks for it",
 	);
 	assert.deepEqual(
 		applyNavigateNewTabDefaultForTest({ url: "https://example.test/source" }, {}),
@@ -1281,6 +1288,25 @@ async function assertSelectionFormatting() {
 		}),
 		"",
 		"readable exact-phrase rewrites should not add docs permalink markers",
+	);
+	// str.rpartition's sentence has the same words as str.partition's; an exact
+	// quote of one must never be swapped for the other.
+	const partitionDocs = {
+		toolTraces: [{
+			state: "complete",
+			toolName: "browser_extract_content",
+			resultSummary: "Readable content:\nstr.rpartition(sep) Split the string at the last occurrence of sep. If the separator is not found, return a 3-tuple containing two empty strings, followed by the string itself.\nstr.partition(sep) Split the string at the first occurrence of sep. If the separator is not found, return a 3-tuple containing the string itself, followed by two empty strings.",
+		}],
+	};
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("If the separator is not found, return a 3-tuple containing the string itself, followed by two empty strings.", partitionDocs),
+		"",
+		"an exact quote is kept, not swapped for a similar sentence elsewhere",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("If the separator is not found return a 3-tuple containing the string itself followed by two empty strings", partitionDocs),
+		"If the separator is not found, return a 3-tuple containing the string itself, followed by two empty strings.",
+		"a near-exact quote resolves to the sentence with the same word order",
 	);
 	assert.equal(
 		looksLikeExpandedMathExtractionCandidateForTest(
@@ -11393,6 +11419,41 @@ async function assertNoteTakingNeverGetsTheTeachingCap() {
 	console.log("Note-taking stays a markup pass when classified as teaching passed");
 }
 
+async function assertReplyAssemblyAndAutoCitation() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const join = test.joinAssistantTextBlocksForTest;
+	const question = "What would you like to know about the James Webb Space Telescope page?";
+	assert.equal(join([{ contentIndex: 0, text: question }, { contentIndex: 1, text: question }]), question, "a question repeated after a tool call appears once");
+	assert.equal(join([{ contentIndex: 0, text: "Checking the figure." }, { contentIndex: 1, text: "The diagram shows inputs and outputs." }]), "Checking the figure.\n\nThe diagram shows inputs and outputs.", "different messages stay separate paragraphs");
+	const request = { pageActions: [
+		{ type: "annotation", annotationId: "onhand-1-a", citationText: "Leaves look green because chlorophyll absorbs red and blue light but reflects green light." },
+		{ type: "annotation", annotationId: "onhand-2-b", citationText: "Water is split to release oxygen during the light reactions." },
+	] };
+	const reply = [
+		"Chlorophyll absorbs mostly red and blue light and reflects green light, so leaves look green.",
+		"",
+		"- Water is split during the light reactions, which releases oxygen. [[cite:onhand-2-b]]",
+		"- Plants also store energy as starch.",
+		"",
+		"In short: chlorophyll absorbs red and blue light while reflecting green.",
+		"## Chlorophyll absorbs red and blue light",
+	].join("\n");
+	const cited = test.attachMatchingCitationsToUncitedPoints(reply, request);
+	assert.match(cited, /^Chlorophyll absorbs mostly red and blue light and reflects green light, so leaves look green\. \[\[cite:onhand-1-a\]\]$/m, "an uncited sentence that clearly matches a mark gets its chip");
+	assert.match(cited, /releases oxygen\. \[\[cite:onhand-2-b\]\]$/m, "an already-cited bullet is unchanged");
+	assert.match(cited, /^- Plants also store energy as starch\.$/m, "an unrelated point gets no chip");
+	assert.match(cited, /^In short: chlorophyll absorbs red and blue light while reflecting green\.$/m, "lead-ins are left alone");
+	assert.match(cited, /^## Chlorophyll absorbs red and blue light$/m, "headings are left alone");
+	assert.equal(test.attachMatchingCitationsToUncitedPoints("No chips here about chlorophyll absorbing red and blue light and reflecting green.", request), "No chips here about chlorophyll absorbing red and blue light and reflecting green.", "a reply with no citations at all is left as written");
+	const nav = test.applyNavigateNewTabDefaultForTest;
+	const onVideo = { initialActiveTab: { id: 4, url: "https://www.youtube.com/watch?v=UF8uR6Z6KLc" }, initialActiveUrl: "https://www.youtube.com/watch?v=UF8uR6Z6KLc", displayPrompt: "What three stories does he tell in this talk?" };
+	assert.equal(nav({ tabId: 4, url: "https://www.youtube.com/watch?v=Hd_ptbiPoXM", newTab: false }, onVideo).newTab, true, "the page the user asked about is not replaced");
+	assert.equal(nav({ tabId: 9, url: "https://news.example/transcript", newTab: false }, onVideo).newTab, false, "a tab Onhand opened can be reused");
+	assert.equal(nav({ tabId: 4, url: "https://www.youtube.com/watch?v=Hd_ptbiPoXM", newTab: false }, { ...onVideo, displayPrompt: "Take me to the version with the intro" }).newTab, false, "an explicit ask to go there navigates in place");
+	assert.equal(nav({ url: "https://news.example/transcript" }, onVideo).newTab, true, "the default for another page is still a new tab");
+	console.log("Reply assembly, auto-citation and starting-page navigation passed");
+}
+
 async function assertVoiceDefaultsToLiveWithTheOnhandAgent() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -11955,6 +12016,7 @@ async function main() {
 	await assertCitedSourceQuestionsOpenTheSource();
 	await assertNotesCanNameTheirHighlightInTheSameStep();
 	await assertNoteTakingNeverGetsTheTeachingCap();
+	await assertReplyAssemblyAndAutoCitation();
 	await assertHostedVoiceGetsPerRequestPolicy();
 	await assertLiveInterruptionWorkerRouting();
 	await assertManagedLiveRevisions();

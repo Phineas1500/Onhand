@@ -3645,17 +3645,31 @@ function normalizeAssistantTextBlockIndex(value: unknown, fallback = 0) {
 }
 
 function joinAssistantTextBlocks(blocks: AssistantDraftTextBlock[] = []) {
-	return [...blocks]
+	const texts = [...blocks]
 		.sort((left, right) => normalizeAssistantTextBlockIndex(left?.contentIndex) - normalizeAssistantTextBlockIndex(right?.contentIndex))
 		.map((block) => String(block?.text || "").trim())
-		.filter(Boolean)
+		.filter(Boolean);
+	// Text written before a tool call and repeated after it ("What would you
+	// like to know about this page?" twice) keeps only the later copy.
+	const squash = (value: string) => value.replace(/\s+/g, " ").trim();
+	return texts
+		.filter((text, index) => !texts.slice(index + 1).some((later) => squash(later).startsWith(squash(text))))
 		.join("\n\n")
 		.trim();
 }
 
+// Each model message numbers its text blocks from 0, so a message written after
+// a tool call would append into the previous message's block 0 ("...page?What
+// would..."). Later messages get block indexes after the earlier ones.
+function startAssistantDraftMessage(request: any) {
+	if (!request || typeof request !== "object") return;
+	const blocks: AssistantDraftTextBlock[] = Array.isArray(request.replyBlocks) ? request.replyBlocks : [];
+	request.replyMessageBase = blocks.length ? Math.max(...blocks.map((block) => normalizeAssistantTextBlockIndex(block?.contentIndex))) + 1 : 0;
+}
+
 function ensureAssistantDraftTextBlock(request: any, contentIndex: unknown) {
 	if (!request || typeof request !== "object") return null;
-	const index = normalizeAssistantTextBlockIndex(contentIndex, Array.isArray(request.replyBlocks) ? request.replyBlocks.length : 0);
+	const index = normalizeAssistantTextBlockIndex(contentIndex, Array.isArray(request.replyBlocks) ? request.replyBlocks.length : 0) + normalizeAssistantTextBlockIndex(request.replyMessageBase);
 	if (!Array.isArray(request.replyBlocks)) request.replyBlocks = [];
 	let block = request.replyBlocks.find((candidate: AssistantDraftTextBlock) => candidate?.contentIndex === index);
 	if (!block) {
@@ -3677,6 +3691,7 @@ function resetAssistantDraftText(request: any) {
 	if (!request || typeof request !== "object") return "";
 	request.reply = "";
 	request.replyBlocks = [];
+	request.replyMessageBase = 0;
 	return request.reply;
 }
 
@@ -5705,8 +5720,60 @@ function ensurePdfAbsenceReviewScope(assistantText: string, request: any) {
 	return `${text}\n\nReview scope: ${scope.searchCount} exact-text searches each covered ${scope.totalPageCount}/${scope.totalPageCount} extracted PDF pages. ${readSentence}`;
 }
 
+// Marks follow the answer's points, but a model often states a point that a
+// mark it placed already supports and leaves the chip off (33 uncited points in
+// 44 Luna turns). Attach the chip deterministically when an uncited sentence
+// or bullet clearly matches a mark from this turn: enough shared distinctive
+// words, never on lead-ins, headings, tables or code, and never a chip the
+// same line already carries.
+const CITATION_MATCH_STOPWORDS = new Set("that this with from they their there these those which about would could should into than then them were been have has had will also more most such some what when where while your yours page article essay says said shows show used uses using does each other only very just over under after before because between through".split(" "));
+
+function citationMatchWords(value: unknown) {
+	const words = String(value || "").toLowerCase().replace(/\[\[cite:[^\]]+\]\]/g, " ").match(/[\p{L}\p{N}]{4,}/gu) || [];
+	return new Set(words.filter((word) => !CITATION_MATCH_STOPWORDS.has(word)).map((word) => word.replace(/(?:ing|ed|es|s)$/u, "").slice(0, 12)));
+}
+
+function attachMatchingCitationsToUncitedPoints(text: string, request: any) {
+	if (!text || !request) return text;
+	const marks = (Array.isArray(request.pageActions) ? request.pageActions : [])
+		.filter((action: any) => action?.type === "annotation" && action?.annotationId && (action?.citationText || action?.detail))
+		.map((action: any) => ({ id: String(action.annotationId), words: citationMatchWords(action.citationText || action.detail) }))
+		.filter((mark: any) => mark.words.size >= 3);
+	if (!marks.length || !/\[\[cite:/.test(text)) return text;
+	const leadIn = /^(?:\*\*)?(?:in short|overall|takeaway|in one sentence|main takeaway|bottom line|summary|so|thus|therefore|in other words)\b/i;
+	const citeFor = (unit: string, line: string) => {
+		if (/\[\[cite:/.test(unit) || /[?:]\s*$/.test(unit) || leadIn.test(unit.trim())) return "";
+		const words = citationMatchWords(unit);
+		if (words.size < 4) return "";
+		let best = { id: "", shared: 0, score: 0 };
+		for (const mark of marks) {
+			let shared = 0;
+			for (const word of words) if (mark.words.has(word)) shared += 1;
+			const score = shared / Math.min(words.size, mark.words.size);
+			if (shared > best.shared || (shared === best.shared && score > best.score)) best = { id: mark.id, shared, score };
+		}
+		if (best.shared < 3 || best.score < 0.5 || line.includes(`[[cite:${best.id}]]`)) return "";
+		return best.id;
+	};
+	let inFence = false;
+	return text.split("\n").map((line) => {
+		if (/^\s*```/.test(line)) { inFence = !inFence; return line; }
+		const trimmed = line.trim();
+		if (inFence || !trimmed || /^#{1,6}\s/.test(trimmed) || /^\|/.test(trimmed) || /^\$\$/.test(trimmed)) return line;
+		if (/^\s*(?:[-*•]|\d+[.)])\s+/.test(line)) {
+			const id = citeFor(line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, ""), line);
+			return id ? `${line.replace(/\s+$/, "")} [[cite:${id}]]` : line;
+		}
+		const sentences = line.split(/(?<=[.!?])\s+(?=[A-Z*"“])/);
+		return sentences.map((sentence) => {
+			const id = citeFor(sentence, line);
+			return id ? `${sentence.replace(/\s+$/, "")} [[cite:${id}]]` : sentence;
+		}).join(" ");
+	}).join("\n");
+}
+
 function buildFinalAssistantReply(assistantText: string, finalError: Error | null, request: any = null) {
-	const text = sanitizeAssistantVisibleReply(assistantText, request);
+	const text = attachMatchingCitationsToUncitedPoints(sanitizeAssistantVisibleReply(assistantText, request), request);
 	if (request?.source === "live-responses" && request?.aborted && !finalError) {
 		if (request.superseded) return "Question updated; continuing with the complete request.";
 		return text ? `${text}\n\nVoice ended before this answer was completed.` : "Voice ended before an answer was completed. Ask the complete question again to continue.";
@@ -10468,11 +10535,38 @@ function canRewriteToContainedReadablePhrase(candidate: unknown, proposed: unkno
 	return candidateWords.length >= Math.max(3, Math.ceil(proposedWords.length * 0.65));
 }
 
+// Word-order-aware similarity: the share of the proposed text's significant
+// words that appear in the candidate in the same order (longest common
+// subsequence). Bag-of-words overlap treated str.rpartition's sentence ("two
+// empty strings, followed by the string itself") as str.partition's.
+function orderedSignificantWordOverlap(proposed: unknown, candidate: unknown) {
+	const left = entityWords(proposed);
+	const right = entityWords(candidate);
+	if (!left.length || !right.length) return 0;
+	let previous = new Array(right.length + 1).fill(0);
+	for (const word of left) {
+		const current = [0];
+		for (let index = 0; index < right.length; index += 1) {
+			current.push(word === right[index] ? previous[index] + 1 : Math.max(previous[index + 1], current[index]));
+		}
+		previous = current;
+	}
+	return previous[right.length] / left.length;
+}
+
 function findRecentReadableExactPhrase(request: any, proposed: unknown) {
 	const blocks = recentReadableTraceBlocks(request);
 	const proposedText = String(proposed || "").trim();
 	const proposedLoose = looseHighlightMatchText(proposedText);
 	if (!proposedLoose || proposedLoose.length < 16) return "";
+	// Text the page already contains exactly is never swapped for a similar
+	// sentence elsewhere on the page.
+	for (const block of blocks) {
+		for (const candidate of splitReadablePhraseCandidates(block)) {
+			if (looksLikeExpandedMathExtractionCandidate(candidate, proposedText)) continue;
+			if (looseHighlightMatchText(candidate) === proposedLoose) return candidate !== proposedText ? candidate : "";
+		}
+	}
 	for (const block of blocks) {
 		for (const candidate of splitReadablePhraseCandidates(block)) {
 			const candidateLoose = looseHighlightMatchText(candidate);
@@ -10486,7 +10580,7 @@ function findRecentReadableExactPhrase(request: any, proposed: unknown) {
 			// already-complete sentence only adds text the model did not quote.
 			if (candidateLoose.includes(proposedLoose) && !looksLikeCompleteSentence(proposedText)) return candidate;
 			if (proposedLoose.includes(candidateLoose) && canRewriteToContainedReadablePhrase(candidate, proposedText)) return candidate;
-			if (significantWordOverlap(proposedText, candidate) >= 0.82) return candidate;
+			if (significantWordOverlap(proposedText, candidate) >= 0.82 && orderedSignificantWordOverlap(proposedText, candidate) >= 0.82) return candidate;
 		}
 	}
 	return "";
@@ -10781,6 +10875,9 @@ export const __browserRuntimeTest = {
 	promptAsksForCitedSource,
 	buildContentFilterRetryPrompt,
 	buildContentFilterFallbackReply,
+	attachMatchingCitationsToUncitedPoints,
+	applyNavigateNewTabDefaultForTest: applyNavigateNewTabDefault,
+	joinAssistantTextBlocksForTest: joinAssistantTextBlocks,
 	shouldRequireCitedSourceRetry,
 	buildCitedSourceRetryPrompt,
 	buildRecentConversationContextForTest: buildRecentConversationContext,
@@ -12297,12 +12394,27 @@ function normalizeUrlForNavigationDefault(value: unknown) {
 	}
 }
 
+// The page the user asked about is never replaced by a model's navigation
+// (Luna navigated the user's YouTube tab to a different video with
+// newTab:false while hunting for a transcript). Leaving it opens a new tab
+// unless the user asked to navigate in place.
+function promptAsksToNavigateInPlace(prompt: unknown) {
+	return /\b(?:in (?:this|the same|my current) tab|same tab|replace this page|go to|take me to|open it here|next page)\b/.test(ownWordsPromptText(prompt));
+}
+
 function applyNavigateNewTabDefault(params: any = {}, request: any = null) {
 	const normalized = params && typeof params === "object" ? { ...params } : {};
-	if (normalized.newTab === true || normalized.newTab === false) return normalized;
 	const destinationUrl = normalizeUrlForNavigationDefault(normalized.url);
-	if (!destinationUrl) return normalized;
 	const startingUrl = normalizeUrlForNavigationDefault(request?.initialActiveUrl || request?.initialActiveTab?.url);
+	if (normalized.newTab === true) return normalized;
+	if (normalized.newTab === false) {
+		const targetTabId = Number(normalized.tabId || 0);
+		const startingTabId = Number(request?.initialActiveTab?.id || 0);
+		const replacesStartingPage = (!targetTabId || targetTabId === startingTabId) && Boolean(destinationUrl && startingUrl && destinationUrl !== startingUrl);
+		if (replacesStartingPage && !promptAsksToNavigateInPlace(request?.displayPrompt)) normalized.newTab = true;
+		return normalized;
+	}
+	if (!destinationUrl) return normalized;
 	if (!startingUrl || destinationUrl !== startingUrl) {
 		normalized.newTab = true;
 	}
@@ -14283,6 +14395,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		switch (event.type) {
 			case "agent_start":
 				void publishState({ status: "Thinking..." });
+				break;
+			case "message_start":
+				if ((event as any).message?.role === "assistant") startAssistantDraftMessage(activeRequest);
 				break;
 			case "message_update": {
 				const assistantEvent: any = (event as any).assistantMessageEvent;
