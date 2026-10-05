@@ -86708,7 +86708,7 @@ Onhand's constitution:
 
 Default answer mode:
 - A request too vague to act on (a lone "?", "hmm", or a single unclear word) gets one short clarifying question about what the user wants from the page, with no page work.
-- When a question calls for page work, use as few steps as you can; every step is a full model round trip the user waits through. Once you know the supporting passages, place all of the answer's highlights in one step of parallel tool calls, and attach each note in that same step by calling browser_show_note with highlightText set to the exact text you passed to browser_highlight_text. Then write the answer. When the page's readable text is already in your context, mark and answer from it instead of reading the page again.
+- When a question calls for page work, use as few steps as you can; every step is a full model round trip the user waits through. Once you know the supporting passages, place all of the answer's highlights in one step of parallel tool calls, and give each one that needs a note its note in the same browser_highlight_text call (its note field). Then write the answer. When the page's readable text is already in your context, mark and answer from it instead of reading the page again.
 - For every question you answer from page material, create a durable source highlight on the exact visible/readable text that supports each point the answer states \u2014 one for a one-point answer, one per distinct point otherwise \u2014 then answer in chat referencing those highlights. This applies to ordinary factual questions too: do not answer chat-only when the page supports the claim. Exceptions: if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when the highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
@@ -86894,6 +86894,7 @@ var CAPTURE_STATE_SCHEMA = typebox_exports.Object({
 var HIGHLIGHT_TEXT_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
   text: typebox_exports.String({ description: "Exact visible or PDF-reader text to highlight on the page" }),
+  note: typebox_exports.Optional(typebox_exports.String({ description: `Optional short interpretive margin note to attach to this highlight as soon as it lands (${MARK_POLICY.noteShapePhrase}); same rules as browser_show_note. Use it instead of a separate browser_show_note call for a highlight you are placing now.` })),
   occurrence: typebox_exports.Optional(typebox_exports.Number({ description: "1-based occurrence of the match to highlight" })),
   clearExisting: typebox_exports.Optional(typebox_exports.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up source highlights accumulate." })),
   scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Scroll the highlighted match into view. Always on for turn highlights; false is not honored." })),
@@ -86921,8 +86922,7 @@ var HIGHLIGHT_TEXT_SCHEMA = typebox_exports.Object({
 });
 var SHOW_NOTE_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
-  annotationId: typebox_exports.Optional(typebox_exports.String({ description: "Annotation ID returned by browser_highlight_text. Omit it and pass highlightText instead to add the note in the same step as its highlight." })),
-  highlightText: typebox_exports.Optional(typebox_exports.String({ description: "The exact text passed to browser_highlight_text, used instead of annotationId so a highlight and its note can be issued in the same step; the note waits for that highlight to land." })),
+  annotationId: typebox_exports.String({ description: "Annotation ID returned by browser_highlight_text" }),
   note: typebox_exports.String({ description: `A short interpretive marginal note (${MARK_POLICY.noteShapePhrase}) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. The note carries the explanation for its mark.` }),
   label: typebox_exports.Optional(typebox_exports.String({ description: "Optional short label shown above the note" })),
   scrollIntoView: typebox_exports.Optional(typebox_exports.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." }))
@@ -93706,7 +93706,8 @@ function buildCompactTeachingNoteFailureGuardResult(toolName2, commandName, prom
   if (promptAsksForMarkupPass(prompt)) return null;
   if (!promptAsksForCompactPageTeaching(prompt)) return null;
   if (countToolTracesByState(request, "browser_show_note", ["complete"]) > 0) return null;
-  if (countToolTracesByState(request, "browser_show_note", ["error"]) < COMPACT_TEACHING_NOTE_ERROR_LIMIT) return null;
+  const pageNoteFailures = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter((trace) => trace?.toolName === "browser_show_note" && trace?.state === "error" && !/No highlight with that text|did not land|Validation failed|requires a non-empty|Guardrail blocked/i.test(`${trace?.error || ""} ${trace?.resultSummary || ""}`)).length;
+  if (pageNoteFailures < COMPACT_TEACHING_NOTE_ERROR_LIMIT) return null;
   return {
     guardrail: {
       kind: "compact_teaching_note_failure",
@@ -94670,25 +94671,30 @@ function createRecordLearningEventTool(recordLearningEvent) {
   };
 }
 function createTools(host, artifactHooks, prepareCommandParams = (params) => params, recordLearningEvent = async (event) => applyLearningEvent(createEmptyLearnerState("learning"), event, { mode: "learning" }), recordEffectiveCommandParams = () => {
-}, guardCommand = () => null, runHighlightScanFallback = async () => null, findTurnHighlightAnnotationId = () => "") {
-  const highlightsInFlight = /* @__PURE__ */ new Map();
-  const noteHighlightKey = (text) => compactActionText(text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
-  const resolveNoteHighlightId = async (highlightText) => {
-    const key = noteHighlightKey(highlightText);
-    for (let waited = 0; !highlightsInFlight.has(key) && waited < 2e3; waited += 100) {
-      if (findTurnHighlightAnnotationId(highlightText)) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+}, guardCommand = () => null, runHighlightScanFallback = async () => null, recordCompanionToolCall = () => {
+}) {
+  const addCompanionNote = async (highlightCallId, params, highlighted) => {
+    const note = String(params?.note || "").trim();
+    const annotationId = compactActionText(highlighted?.annotation?.annotationId);
+    if (!note || !annotationId) return "";
+    const noteCallId = `${highlightCallId}:note`;
+    const requested = { ...params?.tabId !== void 0 ? { tabId: params.tabId } : {}, annotationId, note };
+    const effective = prepareCommandParams(requested, "show_note");
+    try {
+      const runNote = async () => guardCommand("browser_show_note", "show_note", effective) || await host.runCommand("show_note", effective);
+      const timeoutMs = annotationCommandTimeoutMs("show_note");
+      const noted = timeoutMs ? await withToolCommandTimeout("browser_show_note", timeoutMs, runNote) : await runNote();
+      recordCompanionToolCall("browser_show_note", noteCallId, requested, effective, {
+        content: [{ type: "text", text: toolResultTextForModel("browser_show_note", noted) }],
+        details: noted
+      }, false);
+      const guarded = noted?.guardrail;
+      return guarded ? ` Note not added: ${guarded.message}` : " Note added.";
+    } catch (error2) {
+      const message = error2?.message || String(error2);
+      recordCompanionToolCall("browser_show_note", noteCallId, requested, effective, message, true);
+      return ` Note not added: ${message}`;
     }
-    const inFlight = highlightsInFlight.get(key);
-    if (inFlight) {
-      const landed = await inFlight.catch(() => null);
-      const annotationId = compactActionText(landed?.details?.annotation?.annotationId);
-      if (annotationId) return annotationId;
-      throw new Error("The highlight for this note did not land, so the note was not added. Retry the highlight, then add the note with the annotationId it returns.");
-    }
-    const earlier = findTurnHighlightAnnotationId(highlightText);
-    if (earlier) return earlier;
-    throw new Error("No highlight with that text was placed. Call browser_show_note with the annotationId returned by browser_highlight_text.");
   };
   const commandTool = (name, label, description, parameters, commandName, options = {}) => ({
     name,
@@ -94697,8 +94703,10 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
     parameters,
     executionMode: options.sequential ? "sequential" : void 0,
     async execute(_toolCallId, params) {
-      if (commandName === "show_note" && !params?.annotationId && params?.highlightText) {
-        params = { ...params, annotationId: await resolveNoteHighlightId(String(params.highlightText)) };
+      const companionNoteParams = commandName === "highlight_text" && params?.note ? { ...params } : null;
+      if (companionNoteParams) {
+        params = { ...params };
+        delete params.note;
       }
       const executeCommand = async () => {
         let result;
@@ -94709,21 +94717,21 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           const timeoutMs = annotationCommandTimeoutMs(commandName);
           return timeoutMs ? await withToolCommandTimeout(name, timeoutMs, runEffectiveCommand) : await runEffectiveCommand();
         };
-        const rejectWeakApproximateLanding = async (highlighted, attemptParams) => {
-          const weakLanding = weakApproximateRetryLanding(String(params?.text || ""), highlighted);
+        const rejectWeakApproximateLanding = async (highlighted2, attemptParams) => {
+          const weakLanding = weakApproximateRetryLanding(String(params?.text || ""), highlighted2);
           if (!weakLanding) return;
-          const annotationId = String(highlighted?.annotation?.annotationId || "");
-          const tabId = Number(highlighted?.tab?.id || attemptParams?.tabId || 0);
+          const annotationId = String(highlighted2?.annotation?.annotationId || "");
+          const tabId = Number(highlighted2?.tab?.id || attemptParams?.tabId || 0);
           if (annotationId && tabId) await host.runCommand("remove_annotations", { tabId, annotationIds: [annotationId] }).catch(() => {
           });
           throw new Error(weakLanding);
         };
         const runHighlightCandidate = async (candidate) => {
           const retryParams = { ...params, text: candidate };
-          const highlighted = await runCommandWithParams(retryParams);
-          await rejectWeakApproximateLanding(highlighted, retryParams);
+          const highlighted2 = await runCommandWithParams(retryParams);
+          await rejectWeakApproximateLanding(highlighted2, retryParams);
           return {
-            ...highlighted,
+            ...highlighted2,
             highlightRetry: {
               originalText: String(params?.text || ""),
               usedText: candidate
@@ -94804,9 +94812,12 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
         };
       };
       if (commandName !== "highlight_text") return await executeCommand();
-      const highlighting = withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand);
-      highlightsInFlight.set(noteHighlightKey(params?.text), highlighting);
-      return await highlighting;
+      const highlighted = await withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand);
+      if (!companionNoteParams || highlighted?.details?.guardrail) return highlighted;
+      const noteStatus = await addCompanionNote(String(_toolCallId || name), companionNoteParams, highlighted?.details);
+      if (!noteStatus) return highlighted;
+      const content = Array.isArray(highlighted?.content) ? highlighted.content : [];
+      return { ...highlighted, content: content.map((part, index) => index === 0 && part?.type === "text" ? { ...part, text: `${part.text}${noteStatus}` } : part) };
     }
   });
   return [
@@ -96732,6 +96743,12 @@ function createOnhandBrowserRuntime(host) {
     entry.args = serializeTraceValue(args, { depth: 4, maxStringLength: 2400, maxArrayItems: 18, maxObjectKeys: 36 });
     if (!existing) activeRequest.toolTraces.push(entry);
   }
+  function recordCompanionToolCall(session, toolName2, toolCallId, args, effectiveArgs, result, isError2) {
+    if (!activeRequest) return;
+    handleAgentEvent(session, activeRequest.id, { type: "tool_execution_start", toolCallId, toolName: toolName2, args });
+    recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveArgs);
+    handleAgentEvent(session, activeRequest.id, { type: "tool_execution_end", toolCallId, toolName: toolName2, result, isError: isError2 });
+  }
   function recordToolTraceEffectiveArgs(toolName2, toolCallId, effectiveArgs = {}) {
     if (!activeRequest || !toolName2 || isInternalToolName(toolName2)) return;
     if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
@@ -97048,11 +97065,7 @@ function createOnhandBrowserRuntime(host) {
             pdfAnchor: effectiveParams?.pdfAnchor
           });
         },
-        (highlightText) => {
-          const key = compactActionText(highlightText).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
-          const trace = [...activeRequest?.toolTraces || []].reverse().find((candidate) => candidate?.state === "complete" && candidate?.toolName === "browser_highlight_text" && compactActionText(candidate?.args?.text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "") === key);
-          return trace ? markerGateAnnotationId(trace) : "";
-        }
+        (...call) => recordCompanionToolCall(session, ...call)
       ),
       prompt,
       attachments,
@@ -99704,7 +99717,8 @@ Mark and answer from this text. Call browser_extract_content again only to conti
                   scrollIntoView: effectiveParams?.scrollIntoView !== false,
                   pdfAnchor: effectiveParams?.pdfAnchor
                 });
-              }
+              },
+              (...call) => recordCompanionToolCall(session, ...call)
             ),
             prompt,
             attachments,

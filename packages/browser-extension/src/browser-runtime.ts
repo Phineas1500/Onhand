@@ -629,7 +629,7 @@ Onhand's constitution:
 
 Default answer mode:
 - A request too vague to act on (a lone "?", "hmm", or a single unclear word) gets one short clarifying question about what the user wants from the page, with no page work.
-- When a question calls for page work, use as few steps as you can; every step is a full model round trip the user waits through. Once you know the supporting passages, place all of the answer's highlights in one step of parallel tool calls, and attach each note in that same step by calling browser_show_note with highlightText set to the exact text you passed to browser_highlight_text. Then write the answer. When the page's readable text is already in your context, mark and answer from it instead of reading the page again.
+- When a question calls for page work, use as few steps as you can; every step is a full model round trip the user waits through. Once you know the supporting passages, place all of the answer's highlights in one step of parallel tool calls, and give each one that needs a note its note in the same browser_highlight_text call (its note field). Then write the answer. When the page's readable text is already in your context, mark and answer from it instead of reading the page again.
 - For every question you answer from page material, create a durable source highlight on the exact visible/readable text that supports each point the answer states — one for a one-point answer, one per distinct point otherwise — then answer in chat referencing those highlights. This applies to ordinary factual questions too: do not answer chat-only when the page supports the claim. Exceptions: if the user explicitly asks for no page changes, answer in prose only; for a quick visual figure/diagram question, answer sidebar-only after capturing the image; and if the page genuinely does not support the claim, say so rather than forcing a generic highlight. Add a short note when the highlight is interpretive (name the passage's role or explain a hard step); a plain confirmatory highlight may stand without a note. Requests to teach, review, walk through, or summarize what a page says, requests for highlighting/notes, evidence location, learning/review source markers, or source/navigation work all create highlights as well, following the multi-point rules below.
 - If captured context already contains the needed text, answer from it and avoid extra inspection. If it does not, do one focused read of the current page before answering. Do not call the same read tool repeatedly unless the first result is unusable.
 - If the user asks about a named section, heading, phrase, table, row, value, tensor, or item and the visible snapshot does not contain it, call browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.
@@ -841,6 +841,7 @@ const CAPTURE_STATE_SCHEMA = Type.Object({
 const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
 	text: Type.String({ description: "Exact visible or PDF-reader text to highlight on the page" }),
+	note: Type.Optional(Type.String({ description: `Optional short interpretive margin note to attach to this highlight as soon as it lands (${MARK_POLICY.noteShapePhrase}); same rules as browser_show_note. Use it instead of a separate browser_show_note call for a highlight you are placing now.` })),
 	occurrence: Type.Optional(Type.Number({ description: "1-based occurrence of the match to highlight" })),
 	clearExisting: Type.Optional(Type.Boolean({ description: "Clear existing Onhand highlights first. Defaults to false so follow-up source highlights accumulate." })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Scroll the highlighted match into view. Always on for turn highlights; false is not honored." })),
@@ -870,8 +871,7 @@ const HIGHLIGHT_TEXT_SCHEMA = Type.Object({
 
 const SHOW_NOTE_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
-	annotationId: Type.Optional(Type.String({ description: "Annotation ID returned by browser_highlight_text. Omit it and pass highlightText instead to add the note in the same step as its highlight." })),
-	highlightText: Type.Optional(Type.String({ description: "The exact text passed to browser_highlight_text, used instead of annotationId so a highlight and its note can be issued in the same step; the note waits for that highlight to land." })),
+	annotationId: Type.String({ description: "Annotation ID returned by browser_highlight_text" }),
 	note: Type.String({ description: `A short interpretive marginal note (${MARK_POLICY.noteShapePhrase}) shown near the highlighted content. Name the passage's role or explain the hard step; do not paraphrase the highlight. The note carries the explanation for its mark.` }),
 	label: Type.Optional(Type.String({ description: "Optional short label shown above the note" })),
 	scrollIntoView: Type.Optional(Type.Boolean({ description: "Keep the highlighted content in view when showing the note. Always on for turn notes; false is not honored." })),
@@ -10328,7 +10328,12 @@ function buildCompactTeachingNoteFailureGuardResult(toolName: string, commandNam
 	if (promptAsksForMarkupPass(prompt)) return null;
 	if (!promptAsksForCompactPageTeaching(prompt)) return null;
 	if (countToolTracesByState(request, "browser_show_note", ["complete"]) > 0) return null;
-	if (countToolTracesByState(request, "browser_show_note", ["error"]) < COMPACT_TEACHING_NOTE_ERROR_LIMIT) return null;
+	// Only notes that reached the page and failed count: an argument or
+	// lookup error says nothing about whether this page accepts notes.
+	const pageNoteFailures = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).filter((trace: any) =>
+		trace?.toolName === "browser_show_note" && trace?.state === "error"
+		&& !/No highlight with that text|did not land|Validation failed|requires a non-empty|Guardrail blocked/i.test(`${trace?.error || ""} ${trace?.resultSummary || ""}`)).length;
+	if (pageNoteFailures < COMPACT_TEACHING_NOTE_ERROR_LIMIT) return null;
 	return {
 		guardrail: {
 			kind: "compact_teaching_note_failure",
@@ -11453,29 +11458,36 @@ function createTools(
 	) => void = () => {},
 	guardCommand: (toolName: string, commandName: string, effectiveParams: Record<string, unknown>) => any | null = () => null,
 	runHighlightScanFallback: (effectiveParams: Record<string, unknown>, lastError: unknown) => Promise<any | null> = async () => null,
-	findTurnHighlightAnnotationId: (highlightText: string) => string = () => "",
+	recordCompanionToolCall: (toolName: string, toolCallId: string, requestedArgs: unknown, effectiveArgs: unknown, result: unknown, isError: boolean) => void = () => {},
 ): AgentTool[] {
-	// A highlight and its note can be issued in one step (tools run in
-	// parallel): the note names the highlight by its text and waits for it,
-	// saving the model round trip a returned annotationId would otherwise cost.
-	const highlightsInFlight = new Map<string, Promise<any>>();
-	const noteHighlightKey = (text: unknown) => compactActionText(text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
-	const resolveNoteHighlightId = async (highlightText: string) => {
-		const key = noteHighlightKey(highlightText);
-		for (let waited = 0; !highlightsInFlight.has(key) && waited < 2000; waited += 100) {
-			if (findTurnHighlightAnnotationId(highlightText)) break;
-			await new Promise((resolve) => setTimeout(resolve, 100));
+	// A note passed with a highlight is added as soon as the highlight lands, in
+	// the same tool call: no extra model round trip for the annotationId, and no
+	// dependence on call order (highlight and note tools run sequentially, so a
+	// note listed before its highlight could never find it). The note goes
+	// through the same preparation and guards as browser_show_note and is
+	// recorded as its own browser_show_note call.
+	const addCompanionNote = async (highlightCallId: string, params: any, highlighted: any) => {
+		const note = String(params?.note || "").trim();
+		const annotationId = compactActionText(highlighted?.annotation?.annotationId);
+		if (!note || !annotationId) return "";
+		const noteCallId = `${highlightCallId}:note`;
+		const requested = { ...(params?.tabId !== undefined ? { tabId: params.tabId } : {}), annotationId, note };
+		const effective = prepareCommandParams(requested, "show_note") as Record<string, unknown>;
+		try {
+			const runNote = async () => guardCommand("browser_show_note", "show_note", effective) || (await host.runCommand("show_note", effective));
+			const timeoutMs = annotationCommandTimeoutMs("show_note");
+			const noted = timeoutMs ? await withToolCommandTimeout("browser_show_note", timeoutMs, runNote) : await runNote();
+			recordCompanionToolCall("browser_show_note", noteCallId, requested, effective, {
+				content: [{ type: "text", text: toolResultTextForModel("browser_show_note", noted) }],
+				details: noted,
+			}, false);
+			const guarded = (noted as any)?.guardrail;
+			return guarded ? ` Note not added: ${guarded.message}` : " Note added.";
+		} catch (error: any) {
+			const message = error?.message || String(error);
+			recordCompanionToolCall("browser_show_note", noteCallId, requested, effective, message, true);
+			return ` Note not added: ${message}`;
 		}
-		const inFlight = highlightsInFlight.get(key);
-		if (inFlight) {
-			const landed = await inFlight.catch(() => null);
-			const annotationId = compactActionText(landed?.details?.annotation?.annotationId);
-			if (annotationId) return annotationId;
-			throw new Error("The highlight for this note did not land, so the note was not added. Retry the highlight, then add the note with the annotationId it returns.");
-		}
-		const earlier = findTurnHighlightAnnotationId(highlightText);
-		if (earlier) return earlier;
-		throw new Error("No highlight with that text was placed. Call browser_show_note with the annotationId returned by browser_highlight_text.");
 	};
 	const commandTool = (
 		name: string,
@@ -11491,8 +11503,10 @@ function createTools(
 		parameters,
 		executionMode: options.sequential ? "sequential" : undefined,
 		async execute(_toolCallId, params) {
-			if (commandName === "show_note" && !(params as any)?.annotationId && (params as any)?.highlightText) {
-				params = { ...(params as any), annotationId: await resolveNoteHighlightId(String((params as any).highlightText)) };
+			const companionNoteParams = commandName === "highlight_text" && (params as any)?.note ? { ...(params as any) } : null;
+			if (companionNoteParams) {
+				params = { ...(params as any) };
+				delete (params as any).note;
 			}
 			const executeCommand = async () => {
 				let result: any;
@@ -11608,9 +11622,12 @@ function createTools(
 				};
 			};
 			if (commandName !== "highlight_text") return await executeCommand();
-			const highlighting = withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand);
-			highlightsInFlight.set(noteHighlightKey((params as any)?.text), highlighting);
-			return await highlighting;
+			const highlighted = await withToolCommandTimeout(`${name} tool call`, HIGHLIGHT_TOOL_CALL_TIMEOUT_MS, executeCommand);
+			if (!companionNoteParams || (highlighted as any)?.details?.guardrail) return highlighted;
+			const noteStatus = await addCompanionNote(String(_toolCallId || name), companionNoteParams, (highlighted as any)?.details);
+			if (!noteStatus) return highlighted;
+			const content = Array.isArray((highlighted as any)?.content) ? (highlighted as any).content : [];
+			return { ...(highlighted as any), content: content.map((part: any, index: number) => index === 0 && part?.type === "text" ? { ...part, text: `${part.text}${noteStatus}` } : part) };
 		},
 	});
 
@@ -13657,6 +13674,15 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (!existing) activeRequest.toolTraces.push(entry);
 	}
 
+	// A tool call made inside another one (a note added with its highlight) is
+	// reported like any model-issued call: trace, activity, and page action.
+	function recordCompanionToolCall(session: RuntimeSession, toolName: string, toolCallId: string, args: unknown, effectiveArgs: unknown, result: unknown, isError: boolean) {
+		if (!activeRequest) return;
+		handleAgentEvent(session, activeRequest.id, { type: "tool_execution_start", toolCallId, toolName, args } as any);
+		recordToolTraceEffectiveArgs(toolName, toolCallId, effectiveArgs);
+		handleAgentEvent(session, activeRequest.id, { type: "tool_execution_end", toolCallId, toolName, result, isError } as any);
+	}
+
 	function recordToolTraceEffectiveArgs(toolName: string, toolCallId: string, effectiveArgs: unknown = {}) {
 		if (!activeRequest || !toolName || isInternalToolName(toolName)) return;
 		if (!Array.isArray(activeRequest.toolTraces)) activeRequest.toolTraces = [];
@@ -14044,13 +14070,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						pdfAnchor: (effectiveParams as any)?.pdfAnchor,
 					});
 				},
-				(highlightText) => {
-					const key = compactActionText(highlightText).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "");
-					const trace = [...(activeRequest?.toolTraces || [])].reverse().find((candidate: any) => candidate?.state === "complete"
-						&& candidate?.toolName === "browser_highlight_text"
-						&& compactActionText(candidate?.args?.text).toLowerCase().replace(/^["'“‘]+|["'”’.]+$/g, "") === key);
-					return trace ? markerGateAnnotationId(trace) : "";
-				},
+				(...call) => recordCompanionToolCall(session, ...call),
 			),
 			prompt,
 			attachments,
@@ -17038,6 +17058,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									pdfAnchor: (effectiveParams as any)?.pdfAnchor,
 								});
 							},
+							(...call) => recordCompanionToolCall(session, ...call),
 						),
 						prompt,
 						attachments,

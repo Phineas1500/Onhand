@@ -11368,17 +11368,19 @@ async function assertCitedSourceQuestionsOpenTheSource() {
 	console.log("Cited-source questions: detection, one retry, and honest fallback passed");
 }
 
-// A highlight and its note go out in one step: the note names the highlight by
-// text and waits for it, instead of needing another model round trip for the
-// returned annotationId.
-async function assertNotesCanNameTheirHighlightInTheSameStep() {
+// A highlight can carry its note: the note is added as soon as the highlight
+// lands, in the same call. Highlight and note tools run one at a time in the
+// order the model lists them, so a separate note listed before its highlight
+// (the earlier same-step design) could never find it; on an x.com post Luna
+// listed five notes first and every one failed.
+async function assertHighlightsCanCarryTheirNote() {
 	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const commands = [];
+	const recorded = [];
 	const host = {
 		async runCommand(name, args) {
 			commands.push({ name, args });
 			if (name === "highlight_text") {
-				await new Promise((resolve) => setTimeout(resolve, 150));
 				if (/missing/.test(args.text)) throw new Error(`No visible text matched: ${args.text}`);
 				return { tab: { id: 5, title: "Page", url: "https://example.test/" }, annotation: { annotationId: `onhand-${args.text.length}`, matchedText: args.text } };
 			}
@@ -11386,23 +11388,54 @@ async function assertNotesCanNameTheirHighlightInTheSameStep() {
 			return {};
 		},
 	};
-	const tools = test.createToolsForTest(host, {}, (params) => params);
+	let blockNotes = false;
+	const guard = (toolName, commandName) => blockNotes && commandName === "show_note" ? { guardrail: { kind: "test_block", blockedTool: toolName, message: "Notes are blocked here." } } : null;
+	const tools = test.createToolsForTest(host, {}, (params) => params, undefined, () => {}, guard, async () => null,
+		(toolName, toolCallId, args, effectiveArgs, result, isError) => recorded.push({ toolName, toolCallId, args, effectiveArgs, result, isError }));
 	const highlight = tools.find((tool) => tool.name === "browser_highlight_text");
-	const note = tools.find((tool) => tool.name === "browser_show_note");
-	// Issued together, note first: it still waits for its highlight.
-	const [noted] = await Promise.all([
-		note.execute("n1", { highlightText: "Bees dance to share directions.", note: "The dance encodes the route." }),
-		highlight.execute("h1", { text: "Bees dance to share directions." }),
-	]);
-	assert.equal(commands.find((call) => call.name === "show_note").args.annotationId, "onhand-31", "the note attaches to the highlight with that text");
-	assert.equal(noted.details.note.annotationId, "onhand-31");
-	await Promise.all([
-		assert.rejects(note.execute("n2", { highlightText: "missing passage", note: "x" }), /did not land/),
-		highlight.execute("h2", { text: "missing passage" }).catch(() => null),
-	]);
+	assert.ok(highlight.parameters.properties.note, "browser_highlight_text accepts a note");
+	assert.equal(tools.find((tool) => tool.name === "browser_show_note").parameters.properties.highlightText, undefined, "notes no longer name a highlight by text");
+
+	const landed = await highlight.execute("h1", { text: "Bees dance to share directions.", note: "The dance encodes the route." });
+	assert.equal(commands.find((call) => call.name === "highlight_text").args.note, undefined, "the note is not sent with the highlight command");
+	assert.deepEqual(commands.find((call) => call.name === "show_note").args, { annotationId: "onhand-31", note: "The dance encodes the route." }, "the note attaches to the highlight that just landed");
+	assert.equal(landed.details.annotation.annotationId, "onhand-31", "the highlight result is unchanged");
+	assert.match(landed.content[0].text, /Note added\.$/, "the model is told the note landed");
+	assert.equal(recorded.length, 1);
+	assert.equal(recorded[0].toolName, "browser_show_note", "the note is recorded as its own browser_show_note call");
+	assert.equal(recorded[0].toolCallId, "h1:note");
+	assert.equal(recorded[0].isError, false);
+	assert.equal(recorded[0].result.details.note.annotationId, "onhand-31");
+
+	await assert.rejects(highlight.execute("h2", { text: "missing passage", note: "x" }), /No visible text matched/);
 	assert.equal(commands.filter((call) => call.name === "show_note").length, 1, "a note whose highlight failed is not added");
-	await assert.rejects(note.execute("n3", { highlightText: "never highlighted", note: "x" }), /No highlight with that text/);
-	console.log("Notes naming their highlight: same-step attach, failed highlight, and unknown text passed");
+
+	blockNotes = true;
+	const blocked = await highlight.execute("h3", { text: "Bees also smell flowers.", note: "Scent matters too." });
+	assert.equal(commands.filter((call) => call.name === "show_note").length, 1, "the note guards still apply");
+	assert.match(blocked.content[0].text, /Note not added: Notes are blocked here\./);
+	assert.equal(recorded.at(-1).result.details.guardrail.kind, "test_block", "a guarded note is recorded with its guardrail");
+
+	const plain = await highlight.execute("h4", { text: "Hives hold thousands of bees." });
+	assert.doesNotMatch(plain.content[0].text, /Note/, "a highlight without a note is unchanged");
+	assert.equal(recorded.length, 2);
+	console.log("Highlights carrying their note: attach, failed highlight, guarded note, and plain highlight passed");
+}
+
+// Notes that never reached the page (an unknown highlight, bad arguments)
+// say nothing about whether the page accepts notes, so they must not trip the
+// compact-teaching "notes keep failing here" stop. In the x.com session five
+// such failures blocked all five real notes that followed.
+async function assertNoteLookupFailuresDoNotStopNotes() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const prompt = "what are some interesting feedback items you're spotting?";
+	test.setModelIntentClassificationForPromptForTest(prompt, { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false, problemSolvingHelp: false });
+	const lookupFailure = { toolName: "browser_show_note", state: "error", error: "No highlight with that text was placed. Call browser_show_note with the annotationId returned by browser_highlight_text." };
+	const pageFailure = { toolName: "browser_show_note", state: "error", error: "Annotation onhand-12 is not on the page." };
+	const guard = (traces) => test.buildCompactTeachingNoteFailureGuardResultForTest("browser_show_note", "show_note", prompt, { toolTraces: traces });
+	assert.equal(guard(Array(5).fill(lookupFailure)), null, "lookup failures do not block notes");
+	assert.equal(guard(Array(5).fill(pageFailure))?.guardrail?.kind, "compact_teaching_note_failure", "notes that failed on the page still stop");
+	console.log("Note lookup failures do not stop later notes passed");
 }
 
 // With the open page in its context, the classifier began calling note-taking
@@ -12014,7 +12047,8 @@ async function main() {
 	await assertVoiceDefaultsToLiveWithTheOnhandAgent();
 	await assertPageInjectionNoticeAndClassifierPageContext();
 	await assertCitedSourceQuestionsOpenTheSource();
-	await assertNotesCanNameTheirHighlightInTheSameStep();
+	await assertHighlightsCanCarryTheirNote();
+	await assertNoteLookupFailuresDoNotStopNotes();
 	await assertNoteTakingNeverGetsTheTeachingCap();
 	await assertReplyAssemblyAndAutoCitation();
 	await assertHostedVoiceGetsPerRequestPolicy();
