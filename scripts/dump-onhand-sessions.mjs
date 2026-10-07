@@ -1310,7 +1310,7 @@ async function handleVoiceAsk(driver, args, prompt, learningMode) {
 			const response = await chrome.runtime.sendMessage({ type: "sidebar:fetch-state", windowId });
 			return response?.state || response || {};
 		};
-		const record = { sent: [], statuses: [], errors: [], submitted: null, state: await fetchState() };
+		const record = { sent: [], statuses: [], errors: [], submitted: null, routed: null, state: await fetchState() };
 		const host = {
 			getState: () => record.state,
 			send: (event) => { record.sent.push(event); },
@@ -1323,6 +1323,15 @@ async function handleVoiceAsk(driver, args, prompt, learningMode) {
 				if (!result?.ok) throw new Error(result?.error || "Onhand could not start that request.");
 				record.submitted = result.requestId;
 				return result;
+			},
+			route: async (task) => {
+				const result = await chrome.runtime.sendMessage({
+					type: "sidebar:voice-route", prompt: task.prompt, context: task.context, sessionId: task.sessionId,
+					stoppedWork: Boolean(task.stoppedWork), windowId,
+				});
+				if (!result?.ok) throw new Error(result?.error || "Onhand could not check that voice command.");
+				record.routed = result.result;
+				return result.result;
 			},
 			stop: async (requestId) => { await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId }); },
 			onStatus: (status) => record.statuses.push(status),
@@ -1346,6 +1355,7 @@ async function handleVoiceAsk(driver, args, prompt, learningMode) {
 			voice.coordinator.updateState(voice.record.state);
 			return JSON.stringify({
 				submitted: voice.record.submitted,
+				routed: voice.record.routed,
 				commentary: voice.record.sent.filter((event) => event.type === "session.commentary.append").map((event) => event.content),
 				errors: voice.record.errors,
 				statuses: voice.record.statuses,
@@ -1354,6 +1364,14 @@ async function handleVoiceAsk(driver, args, prompt, learningMode) {
 		if (progress.commentary.length || progress.errors.length) break;
 	}
 	await driver.evaluate(`(() => { globalThis.__onhandVoiceEval?.coordinator?.dispose?.(); return JSON.stringify({ ok: true }); })()`).catch(() => {});
+	// A page command Onhand carried out directly: no agent request to wait for.
+	if (progress?.routed?.handled) {
+		return {
+			submitted: false,
+			routed: progress.routed,
+			voice: { engine: "live", spoken: progress.commentary.at(-1) || "", commentary: progress.commentary, errors: progress.errors, statuses: progress.statuses },
+		};
+	}
 	if (!progress?.submitted) throw new Error(`Live voice delegation never reached Onhand.${progress?.errors?.length ? ` ${progress.errors.join("; ")}` : ""}`);
 	if (!progress.commentary.length && !progress.errors.length) throw new Error(`Timed out waiting for request ${progress.submitted}.`);
 	const waited = await waitForRequest(driver, args, progress.submitted);

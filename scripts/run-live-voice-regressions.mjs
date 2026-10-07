@@ -3,9 +3,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import '../packages/browser-extension/live-voice.js';
 const api = globalThis.OnhandLiveVoice;
 let count = 0;
-function harness({ submit } = {}) {
+function harness({ submit, route } = {}) {
   const state = { currentSession: { sessionId: 'onhand-session' }, preferences: { learningMode: false }, turns: [], activeRequestId: null };
-  const sent = [], submitted = [], stopped = [], errors = [], captions = [], usages = [];
+  const sent = [], submitted = [], stopped = [], errors = [], captions = [], usages = [], routed = [];
   let eventId = 0, audioTime = 0;
   const coordinator = api.createCoordinator({
     getState: () => state, send: e => sent.push(e),
@@ -13,6 +13,7 @@ function harness({ submit } = {}) {
       submitted.push(task); state.activeRequestId = task.requestId;
       return submit ? await submit(task) : { requestId: task.requestId };
     },
+    ...(route ? { route: async task => { routed.push({ ...task }); return await route(task); } } : {}),
     stop: async id => { stopped.push(id); }, onStatus() {}, onError: e => errors.push(e),
     onTranscript: e => captions.push(e), onUsage: e => usages.push(e),
   }, { settleMs: 2 });
@@ -26,7 +27,7 @@ function harness({ submit } = {}) {
   };
   const spoken = () => sent.filter(e => e.type === 'session.commentary.append');
   emit({ type: 'session.started', session: { id: 'live-session' } });
-  return { coordinator, state, sent, submitted, stopped, errors, captions, usages, emit, input, delegate, finish, spoken };
+  return { coordinator, state, sent, submitted, stopped, errors, captions, usages, routed, emit, input, delegate, finish, spoken };
 }
 async function check(name, run) { await run(); count++; console.log(`PASS ${name}`); }
 await check('session setup preserves backend independence and compact role-labelled history', () => {
@@ -46,6 +47,39 @@ await check('page follow-ups are delegated; only returned results may be repeate
   assert.doesNotMatch(text, /brief clarification,/, "a follow-up must not pass as a brief clarification");
   // Live answered "what is this article about?" from the page title alone.
   assert.match(text, /The page title and URL you are given identify the page; they are not its content/);
+});
+await check('a spoken page command is carried out directly; other requests still reach the agent', async () => {
+  const h = harness({ route: async task => /next page/.test(task.prompt) ? { handled: true, message: 'Page 4 of 15.' } : { handled: false } });
+  h.input('Go to the next page.'); h.delegate('item-page'); await delay(10);
+  assert.equal(h.submitted.length, 0, 'a handled command never starts an agent turn');
+  assert.equal(h.spoken().at(-1).content, 'Page 4 of 15.');
+  assert.equal(h.spoken().at(-1).delegation_id, 'item-page', 'the result answers its own delegation');
+  h.input('Why does attention scale by root d?'); h.delegate('item-question'); await delay(10);
+  assert.equal(h.submitted.length, 1, 'an unhandled request goes to the agent');
+  assert.equal(h.routed.length, 2);
+  h.finish(h.submitted[0], 'To keep the softmax from saturating.');
+  assert.equal(h.spoken().at(-1).content, 'To keep the softmax from saturating.');
+  h.coordinator.text('next page');
+  await delay(10);
+  assert.equal(h.routed.length, 2, 'typed text is never routed');
+  h.coordinator.dispose();
+});
+await check('a failed route falls back to the agent, and a command after interrupted work says so', async () => {
+  const failing = harness({ route: async () => { throw new Error('Decisions unavailable'); } });
+  failing.input('Clear the highlights.'); failing.delegate('item-clear'); await delay(10);
+  assert.equal(failing.submitted.length, 1, 'a route failure must not drop the request');
+  assert.equal(failing.errors.length, 0);
+  failing.coordinator.dispose();
+  const h = harness({ route: async task => ({ handled: /stop/i.test(task.prompt), message: task.stoppedWork ? 'Stopped.' : 'Okay.' }) });
+  h.input('Explain the encoder.'); h.delegate('item-explain'); await delay(10);
+  assert.equal(h.submitted.length, 1);
+  h.input('Stop, never mind.'); h.delegate('item-stop'); await delay(10);
+  assert.equal(h.stopped.length, 1, 'a new spoken request still stops earlier work');
+  h.finish(h.submitted[0], 'Partial answer.'); await delay(10);
+  assert.equal(h.routed.at(-1).stoppedWork, true);
+  assert.equal(h.spoken().at(-1).content, 'Stopped.');
+  assert.equal(h.submitted.length, 1, 'the stop command starts no new agent turn');
+  h.coordinator.dispose();
 });
 await check('delegation arriving before captions waits and then uses the full streamed text', async () => {
   const h = harness(); h.delegate('item-first', 300); await delay(10);

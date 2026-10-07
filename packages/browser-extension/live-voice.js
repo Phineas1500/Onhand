@@ -209,6 +209,7 @@
 			task.sessionId = latestState.currentSession?.sessionId || latestState.currentSession?.sessionFile || "";
 			queued = task;
 			if (active) {
+				task.stoppedWork = true;
 				active.superseded = true;
 				if (latestState.activeRequestId === active.requestId && !active.stopRequested) {
 					active.stopRequested = true;
@@ -224,6 +225,22 @@
 			pumping = true;
 			const task = queued; queued = null; active = task;
 			try {
+				// A spoken page command ("next page", "clear the highlights") is
+				// carried out directly; anything else, or a failed route, goes to
+				// the agent as before.
+				const routed = host.route && task.delegationId ? await host.route(task).catch(() => null) : null;
+				if (task.superseded || task.revision !== revision) {
+					if (active === task) active = null;
+					return;
+				}
+				if (routed?.handled) {
+					active = null;
+					append("commentary", routed.message, task.delegationId);
+					delegations.set(task.delegationId, "completed");
+					host.onRouted?.(task, routed);
+					host.onStatus("Live · listening");
+					return;
+				}
 				host.onStatus("Live · reading your sources");
 				const result = await host.submit(task);
 				if (result.requestId !== task.requestId) throw new Error("Onhand returned a different voice request ID.");
@@ -238,8 +255,10 @@
 					append("commentary", "Onhand could not complete that request. The error is shown in the sidebar.", task.delegationId);
 					host.onError(error);
 				}
-			} finally { pumping = false; }
-			updateState(host.getState());
+			} finally {
+				pumping = false;
+				updateState(host.getState());
+			}
 		}
 		function updateState(state) {
 			latestState = state || {};

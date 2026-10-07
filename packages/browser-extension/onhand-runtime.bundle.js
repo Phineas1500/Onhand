@@ -91079,16 +91079,47 @@ function readDecisionsIntentAnswers(body) {
   }
   return { probabilities: probabilities2, unsureFields, classification: unsureFields.length ? null : classification };
 }
-async function classifyPromptIntentWithDecisions(apiKey, prompt, page = null, signal, fetcher = decisionsFetchForTest || fetch) {
-  const timeout = AbortSignal.timeout(DECISIONS_INTENT_TIMEOUT_MS);
+async function postDecisions(apiKey, body, timeoutMs, signal, fetcher = decisionsFetchForTest || fetch) {
+  const timeout = AbortSignal.timeout(timeoutMs);
   const response = await fetcher(DECISIONS_API_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
-    body: JSON.stringify(buildDecisionsIntentRequest(prompt, page)),
+    body: JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout
   });
-  if (!response.ok) throw new Error(`Decisions classification failed (HTTP ${response.status})`);
-  return readDecisionsIntentAnswers(await response.json());
+  if (!response.ok) throw new Error(`Decisions request failed (HTTP ${response.status})`);
+  return await response.json();
+}
+async function classifyPromptIntentWithDecisions(apiKey, prompt, page = null, signal, fetcher = decisionsFetchForTest || fetch) {
+  return readDecisionsIntentAnswers(await postDecisions(apiKey, buildDecisionsIntentRequest(prompt, page), DECISIONS_INTENT_TIMEOUT_MS, signal, fetcher));
+}
+var VOICE_COMMAND_CONFIDENCE = 0.6;
+var VOICE_COMMAND_TIMEOUT_MS = 1500;
+var VOICE_COMMAND_INSTRUCTIONS = "Choose the single action that fully carries out the latest user request by itself, given the current state. Choose ask_onhand whenever the request needs reading, explaining or answering anything, names a target the listed actions cannot express (such as a specific page number or a highlight about a topic), or combines several steps.";
+var ASK_ONHAND_ACTION = [
+  "ask_onhand",
+  "Anything else: questions, explanations, reading, finding or highlighting content, quizzes, a page number or target not listed above, or a request with more than one step."
+];
+function buildVoiceCommandRequest(prompt, stateLines, conversation, actions) {
+  const history = conversation.slice(-6).map((entry) => `${entry?.role === "assistant" ? "Onhand" : "User"}: ${truncate2(String(entry?.text || "").replace(/\s+/g, " ").trim(), 300)}`).filter((line) => !/:\s*$/.test(line));
+  return {
+    model: DECISIONS_INTENT_MODEL,
+    input: [
+      `Current state:
+${stateLines.join("\n")}`,
+      history.length ? `Conversation so far:
+${history.join("\n")}` : "",
+      `Latest user request: ${prompt}`
+    ].filter(Boolean).join("\n\n"),
+    questions: [{ type: "choice", name: "action", instructions: VOICE_COMMAND_INSTRUCTIONS, choices: actions.map(([value, description]) => ({ value, description })) }]
+  };
+}
+function readVoiceCommandChoice(body) {
+  const answer = (Array.isArray(body?.answers) ? body.answers : []).find((candidate) => candidate?.name === "action");
+  if (answer?.type !== "choice") return { action: "", confidence: 0 };
+  const chosen = (Array.isArray(answer.probabilities) ? answer.probabilities : []).find((entry) => entry?.value === answer.choice);
+  const confidence = Number(answer.confidence ?? chosen?.probability);
+  return { action: String(answer.choice || ""), confidence: Number.isFinite(confidence) ? confidence : 0 };
 }
 function decisionsIntentClassifierKey(settings2) {
   if (settings2.aiProvider === SMOKE_PROVIDER) return decisionsFetchForTest ? getApiKeyForProvider(settings2, OPENAI_API_PROVIDER) : "";
@@ -94278,6 +94309,8 @@ var __browserRuntimeTest = {
   classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
   decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
   decisionsIntentCutoffsForTest: DECISIONS_INTENT_CUTOFFS,
+  buildVoiceCommandRequestForTest: buildVoiceCommandRequest,
+  readVoiceCommandChoiceForTest: readVoiceCommandChoice,
   setDecisionsFetchForTest(fetcher) {
     decisionsFetchForTest = fetcher;
   },
@@ -96583,6 +96616,7 @@ function createOnhandBrowserRuntime(host) {
     });
     return await result;
   }
+  let voiceHighlightCursor = null;
   async function recordRealtimeVoiceTurn(request = {}) {
     const store2 = await loadStore();
     const session = store2.sessions[store2.currentSessionId];
@@ -99119,6 +99153,94 @@ function createOnhandBrowserRuntime(host) {
     },
     async recordRealtimeVoiceTurn(request) {
       return await recordRealtimeVoiceTurn(request);
+    },
+    // Carries out a spoken request Live handed off when it is a simple page
+    // command. Anything else, an unsure choice, or a failed action comes back
+    // unhandled, and the coordinator submits it to the agent as before.
+    async routeVoiceCommand(input = {}) {
+      const startedAt = Date.now();
+      const prompt = String(input.prompt || "").replace(/\s+/g, " ").trim();
+      const unhandled = (reason, extra = {}) => ({ handled: false, reason, ms: Date.now() - startedAt, ...extra });
+      if (!prompt || prompt.length > 300) return unhandled("not a short spoken request");
+      if (activeRequest) return unhandled("Onhand is working on a request");
+      const store2 = await loadStore();
+      const settings2 = store2.settings;
+      const apiKey = getApiKeyForProvider(settings2, OPENAI_API_PROVIDER);
+      if (!apiKey) return unhandled("no OpenAI platform key");
+      const session = store2.sessions[store2.currentSessionId];
+      if (input.sessionId && session && input.sessionId !== store2.currentSessionId && input.sessionId !== buildSessionState(session).sessionFile) {
+        return unhandled("the conversation changed");
+      }
+      const browserState = await host.snapshotState().catch(() => null);
+      const tab = browserState ? pickActiveTab(browserState, input.windowId) : null;
+      const pdf = tab?.id ? await host.runCommand("pdf_page_status", { tabId: tab.id }).catch(() => null) : null;
+      const highlights = (Array.isArray(session?.pageActions) ? session.pageActions : []).filter(
+        (action) => action?.type === "annotation" && action.annotationId && tab?.id && action.tabId === tab.id
+      );
+      const highlightKey = highlights.map((action) => action.annotationId).join("|");
+      if (voiceHighlightCursor?.key !== highlightKey) voiceHighlightCursor = { key: highlightKey, index: -1 };
+      const cursor = voiceHighlightCursor;
+      const actions = [];
+      if (pdf?.pageNumber) {
+        if (!pdf.pageCount || pdf.pageNumber < pdf.pageCount) actions.push(["next_page", "Go to the next page of the open PDF."]);
+        if (pdf.pageNumber > 1) actions.push(["previous_page", "Go to the previous page of the open PDF."]);
+      }
+      if (highlights.length) {
+        actions.push(
+          ["next_highlight", "Scroll to Onhand's next highlight on this page."],
+          ["previous_highlight", "Scroll to Onhand's previous highlight on this page."],
+          ["clear_marks", "Remove all of Onhand's highlights and notes from this page."]
+        );
+      }
+      actions.push(["stop", "Stop what Onhand is doing or cancel the request; no other action."]);
+      actions.push(settings2.learningMode ? ["learning_mode_off", "Turn Learning Mode off."] : ["learning_mode_on", "Turn Learning Mode on."]);
+      actions.push(ASK_ONHAND_ACTION);
+      const stateLines = [
+        `Open page: ${truncate2(String(tab?.title || "unknown"), 120)}`,
+        ...pdf?.pageNumber ? [`It is a PDF in the Onhand viewer, on page ${pdf.pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`] : [],
+        `Onhand's highlights on this page: ${highlights.length}${highlights.length && cursor.index >= 0 ? ` (highlight ${cursor.index + 1} was shown last)` : ""}.`,
+        `Learning Mode is ${settings2.learningMode ? "on" : "off"}.`,
+        input.stoppedWork ? "Onhand was working on an earlier request; it has been stopped." : "Onhand is idle."
+      ];
+      let choice;
+      try {
+        choice = readVoiceCommandChoice(await postDecisions(apiKey, buildVoiceCommandRequest(prompt, stateLines, input.context || [], actions), VOICE_COMMAND_TIMEOUT_MS));
+      } catch (error2) {
+        return unhandled(error2 instanceof Error ? error2.message : String(error2));
+      }
+      if (choice.action === "ask_onhand" || !actions.some(([value]) => value === choice.action)) return unhandled("not a page command", choice);
+      if (choice.confidence < VOICE_COMMAND_CONFIDENCE) return unhandled("unsure", choice);
+      let message = "";
+      try {
+        if (choice.action === "next_page" || choice.action === "previous_page") {
+          const pageNumber = pdf.pageNumber + (choice.action === "next_page" ? 1 : -1);
+          await host.runCommand("pdf_jump_to_page", { tabId: tab.id, pageNumber, pdfAnchor: { viewer: "onhand-pdf-viewer" } });
+          message = `Page ${pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`;
+        } else if (choice.action === "next_highlight" || choice.action === "previous_highlight") {
+          const step = choice.action === "next_highlight" ? 1 : -1;
+          const index = cursor.index < 0 ? step > 0 ? 0 : highlights.length - 1 : cursor.index + step;
+          if (index < 0 || index >= highlights.length) {
+            message = step > 0 ? "That was the last highlight." : "That was the first highlight.";
+          } else {
+            await host.runCommand("scroll_to_annotation", { tabId: tab.id, annotationId: highlights[index].annotationId });
+            cursor.index = index;
+            message = `Highlight ${index + 1} of ${highlights.length}: ${truncate2(String(highlights[index].citationText || highlights[index].detail || ""), 140)}`;
+          }
+        } else if (choice.action === "clear_marks") {
+          await host.runCommand("clear_annotations", { tabId: tab.id });
+          voiceHighlightCursor = null;
+          message = "Cleared Onhand's highlights and notes from this page.";
+        } else if (choice.action === "stop") {
+          message = input.stoppedWork ? "Stopped." : "Okay. Nothing was running.";
+        } else if (choice.action === "learning_mode_on" || choice.action === "learning_mode_off") {
+          await this.updateSettings({ learningMode: choice.action === "learning_mode_on" });
+          message = `Learning Mode is ${choice.action === "learning_mode_on" ? "on" : "off"}.`;
+        }
+      } catch (error2) {
+        return unhandled(`the ${choice.action} action failed: ${error2 instanceof Error ? error2.message : String(error2)}`, choice);
+      }
+      await recordRealtimeVoiceTurn({ userPrompt: `[Voice] ${prompt}`, reply: message });
+      return { handled: true, action: choice.action, confidence: choice.confidence, message, ms: Date.now() - startedAt };
     },
     async recordLiveTranscriptTurns(request) {
       return await recordLiveTranscriptTurns(request);

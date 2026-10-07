@@ -194,7 +194,11 @@
             open page's title and URL to OpenAI's Decisions API with that key, to
             decide quickly how to handle the request (for example, whether it is
             about the open page). Page content is not included. With any other
-            provider, the configured model makes that decision instead. In Onhand Free mode, the
+            provider, the configured model makes that decision instead. In voice
+            calls, Onhand also sends each spoken request Live hands it, with the
+            open page's title, the PDF page number, and recent conversation, to
+            the Decisions API with your platform key, to recognize simple page
+            commands such as "next page". In Onhand Free mode, the
             extension sends the content needed for your request to Onhand's
             Cloudflare Worker, which forwards the model request directly to OpenAI's official API (GPT-6 Luna).
             The hosted Worker streams the response and enforces quota limits; it

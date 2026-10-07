@@ -14403,6 +14403,26 @@ async function handleCommandInner(name, args = {}) {
 				};
 			});
 		}
+		// The open page and page count of a PDF in the Onhand viewer, standalone
+		// or inline in the PDF's own tab, for voice page commands. Other tabs
+		// report no page. The runtime-port lookup is a map read, so it is tried
+		// on any tab; the script bridge only on viewer URLs.
+		case "pdf_page_status": {
+			const tab = await resolveReadTargetTab(args);
+			const statusCommand = { command: "status" };
+			for (const readStatus of [
+				() => callOnhandPdfViewerFrameViaRuntimePort(tab.id, statusCommand, "No Onhand PDF viewer runtime port found"),
+				...(isOnhandPdfViewerLikeUrl(tab.url) ? [() => callOnhandPdfViewerFrameViaBridge(tab.id, statusCommand, "No Onhand PDF viewer frame context found")] : []),
+			]) {
+				try {
+					const status = await readStatus();
+					const pageNumber = normalizePdfPageNumber(status?.pageNumber);
+					const pageCount = Number.parseInt(String(status?.pageCountText || "").replace(/[^0-9]/g, ""), 10) || null;
+					if (status?.ready && pageNumber) return { tab: simplifyTab(tab), pageNumber, pageCount };
+				} catch {}
+			}
+			return { tab: simplifyTab(tab), pageNumber: null, pageCount: null };
+		}
 		case "get_scroll_state": {
 			const tab = await resolveReadTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
@@ -15209,6 +15229,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					reply: message.reply,
 					status: message.status,
 					pageActions: Array.isArray(message.pageActions) ? message.pageActions : [],
+				}),
+			});
+			return;
+		}
+
+		// A spoken request Live handed off: carry it out directly when it is a
+		// simple page command, otherwise report it unhandled for the agent.
+		if (message?.type === "sidebar:voice-route") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.routeVoiceCommand({
+					prompt: String(message.prompt || ""),
+					context: Array.isArray(message.context) ? message.context : [],
+					sessionId: typeof message.sessionId === "string" ? message.sessionId : "",
+					windowId: typeof message.windowId === "number" ? message.windowId : undefined,
+					stoppedWork: Boolean(message.stoppedWork),
 				}),
 			});
 			return;

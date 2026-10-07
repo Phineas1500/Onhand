@@ -7233,6 +7233,16 @@
 				if (!result?.ok) throw new Error(result?.error || "Onhand could not start that request.");
 				void requestState(); return result;
 			},
+			route: async (task) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({
+					type: "sidebar:voice-route", prompt: task.prompt, context: task.context, sessionId: task.sessionId,
+					stoppedWork: Boolean(task.stoppedWork), windowId: await ensureCurrentWindowId(),
+				});
+				if (!result?.ok) throw new Error(result?.error || "Onhand could not check that voice command.");
+				if (result.result?.handled) void requestState();
+				return result.result;
+			},
 			stop: async (requestId) => {
 				const result = await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId });
 				if (!result?.ok) throw new Error(result?.error || "Could not stop the previous request.");

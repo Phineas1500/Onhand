@@ -411,7 +411,7 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	assert.equal(unsure.turn.preparationTiming.classifierOutcome, "unparseable", "the model classifier ran");
 
 	const failed = await runTurn(() => new Response("{}", { status: 503 }));
-	assert.equal(failed.turn.preparationTiming.decisionsFallback, "error: Decisions classification failed (HTTP 503)");
+	assert.equal(failed.turn.preparationTiming.decisionsFallback, "error: Decisions request failed (HTTP 503)");
 	assert.notEqual(failed.turn.preparationTiming.classifierSource, "decisions");
 	assert.equal(failed.turn.preparationTiming.classifierOutcome, "unparseable", "a Decisions failure hands the request to the model classifier");
 	assert.doesNotMatch(String(failed.turn.errorReport?.error_message || ""), /Decisions/, "a Decisions failure never surfaces as the turn's error");
@@ -424,6 +424,97 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	const quick = decided.turn.preparationTiming;
 	assert.equal(quick.modelClassifierHedged, undefined, "a quick Decisions answer never starts the model classifier");
 	console.log("Turns use Decisions when confident and fall back when unsure, failing or slow passed");
+}
+
+// Spoken page commands Live hands off ("next page", "show me the next
+// highlight", "turn on Learning Mode") run directly instead of as an agent
+// turn. Decisions picks among the actions valid right now; anything else,
+// an unsure pick, or a failure comes back unhandled for the agent.
+async function assertVoiceCommandsRunDirectly() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const base = createReplayHost();
+	let pdfPage = 3;
+	let isPdf = true;
+	const host = {
+		...base,
+		async runCommand(name, args = {}) {
+			if (name === "pdf_page_status") return isPdf ? { pageNumber: pdfPage, pageCount: 15 } : { pageNumber: null, pageCount: null };
+			if (name === "pdf_jump_to_page") { base.calls.push({ name, args }); pdfPage = args.pageNumber; return { jump: { pageNumber: pdfPage } }; }
+			return await base.runCommand(name, args);
+		},
+	};
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key",
+		aiApiKeys: { openai: "sk-test-voice" }, experimentalModelLaneClassifier: false, modelLaneClassifierDefaultMigrated: true });
+	await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+	const answered = await waitForRuntimeCompletion(runtime);
+	const highlights = (answered.pageActions || []).filter((action) => action.type === "annotation" && action.annotationId && action.tabId === 7);
+	assert.ok(highlights.length >= 1, "fixture: the scripted turn places a highlight");
+
+	const requests = [];
+	let reply = { choice: "ask_onhand", confidence: 0.99 };
+	test.setDecisionsFetchForTest(async (_url, init) => {
+		requests.push(JSON.parse(init.body));
+		if (reply.status) return new Response("{}", { status: reply.status });
+		return new Response(JSON.stringify({ answers: [{ type: "choice", name: "action", choice: reply.choice, confidence: reply.confidence,
+			probabilities: [{ value: reply.choice, probability: reply.confidence }] }] }), { status: 200 });
+	});
+	const commands = () => base.calls.filter((call) => ["pdf_jump_to_page", "scroll_to_annotation", "clear_annotations"].includes(call.name));
+	const turnCount = async () => (await runtime.getState()).turns.length;
+	try {
+		const say = async (prompt, choice, extra = {}) => { reply = { ...choice }; return await runtime.routeVoiceCommand({ prompt, windowId: 3, ...extra }); };
+		const turnsBefore = await turnCount();
+
+		const nextPage = await say("go to the next page", { choice: "next_page", confidence: 0.97 });
+		assert.equal(nextPage.handled, true);
+		assert.equal(nextPage.message, "Page 4 of 15.");
+		assert.deepEqual(commands().at(-1), { name: "pdf_jump_to_page", args: { tabId: 7, pageNumber: 4, pdfAnchor: { viewer: "onhand-pdf-viewer" } } });
+		const offered = requests.at(-1).questions[0].choices.map((choice) => choice.value);
+		assert.deepEqual(offered, ["next_page", "previous_page", "next_highlight", "previous_highlight", "clear_marks", "stop", "learning_mode_on", "ask_onhand"]);
+		assert.match(requests.at(-1).input, /page 3 of 15/);
+		assert.match(requests.at(-1).input, /Latest user request: go to the next page/);
+		const saved = (await runtime.getState()).turns.at(-1);
+		assert.equal(saved.userPrompt, "[Voice] go to the next page");
+		assert.equal(saved.reply, "Page 4 of 15.");
+		assert.equal(await turnCount(), turnsBefore + 1, "a handled command is saved as one short voice turn");
+
+		const firstHighlight = await say("show me the next highlight", { choice: "next_highlight", confidence: 0.95 });
+		assert.equal(firstHighlight.handled, true);
+		assert.equal(commands().at(-1).args.annotationId, highlights[0].annotationId, "the first next-highlight shows the first highlight");
+		assert.match(firstHighlight.message, new RegExp(`^Highlight 1 of ${highlights.length}: `));
+		assert.match(requests.at(-1).input, /highlight 1 was shown last|highlights on this page: \d+\./);
+
+		const question = await say("why does it say that?", { choice: "ask_onhand", confidence: 0.98 });
+		assert.equal(question.handled, false, "questions go to the agent");
+		const unsure = await say("clear it", { choice: "clear_marks", confidence: 0.4 });
+		assert.equal(unsure.handled, false, "an unsure pick goes to the agent");
+		assert.equal(unsure.reason, "unsure");
+		assert.ok(!commands().some((call) => call.name === "clear_annotations"), "nothing runs on an unsure pick");
+
+		const learning = await say("turn on learning mode", { choice: "learning_mode_on", confidence: 0.99 });
+		assert.equal(learning.handled, true);
+		assert.equal((await runtime.getSettings()).learningMode, true);
+
+		const stop = await say("stop, never mind", { choice: "stop", confidence: 0.99 }, { stoppedWork: true });
+		assert.equal(stop.message, "Stopped.");
+		assert.match(requests.at(-1).input, /it has been stopped/);
+
+		const failed = await say("next page", { status: 503 });
+		assert.equal(failed.handled, false);
+		assert.match(failed.reason, /HTTP 503/);
+
+		isPdf = false;
+		const notOffered = await say("next page", { choice: "next_page", confidence: 0.99 });
+		assert.equal(notOffered.handled, false, "an action that is not valid now is never run");
+		assert.ok(!requests.at(-1).questions[0].choices.some((choice) => choice.value === "next_page"), "page commands are offered only on a PDF");
+
+		const turnsAfter = await turnCount();
+		assert.equal(turnsAfter, turnsBefore + 4, "only handled commands are saved");
+	} finally {
+		test.setDecisionsFetchForTest(null);
+	}
+	console.log("Voice commands: page, highlight, learning and stop run directly; questions, unsure picks and failures go to the agent passed");
 }
 
 async function assertProviderApiKeyStorageAndRouting() {
@@ -12175,6 +12266,7 @@ async function main() {
 	await assertIntentClassifierSendsItsInstructions();
 	await assertDecisionsIntentClassifier();
 	await assertTurnsUseDecisionsWhenConfident();
+	await assertVoiceCommandsRunDirectly();
 	await assertAssistantStreamingTextBlocksStaySeparated();
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();
