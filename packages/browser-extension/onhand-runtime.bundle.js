@@ -97300,6 +97300,7 @@ function createOnhandBrowserRuntime(host) {
       } : {},
       ...activeRequest.modelIntentClassification ? { modelIntentClassification: activeRequest.modelIntentClassification } : {},
       ...activeRequest.modelIntentClassifierError ? { modelIntentClassifierError: activeRequest.modelIntentClassifierError } : {},
+      ...activeRequest.preparationTiming && Object.keys(activeRequest.preparationTiming).length ? { preparationTiming: { ...activeRequest.preparationTiming } } : {},
       ...errorReport ? { errorReport } : {}
     };
     session.turns = activeRequest.priorManagedTurn ? session.turns.map((previous) => previous.id === requestId ? turn : previous) : [...session.turns || [], turn];
@@ -99573,7 +99574,11 @@ function createOnhandBrowserRuntime(host) {
         const requestContext = activeRequest;
         const preparationHost = requestHostFor(requestContext);
         const prepare = (run) => withAbortSignal(requestContext.abortController.signal, run);
+        const preparationTiming = {};
+        const preparationStartedAt = Date.now();
+        activeRequest.preparationTiming = preparationTiming;
         const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier ? (async () => {
+          const classifierStartedAt = Date.now();
           try {
             const classifierModel = await getConfiguredModel(requestSettings);
             const openTab = await preparationHost.snapshotState().then((state2) => pickActiveTab(state2, targetWindowId)).catch(() => null);
@@ -99586,11 +99591,16 @@ function createOnhandBrowserRuntime(host) {
             if (modelIntentClassification && activeRequest === requestContext && !requestContext.aborted) {
               setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
               if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
+              preparationTiming.classifierOutcome = "classified";
             } else {
               modelIntentClassifierError = "unparseable classification; regex routing in effect";
+              preparationTiming.classifierOutcome = "unparseable";
             }
           } catch (error2) {
             modelIntentClassifierError = `${error2 instanceof Error ? error2.message : String(error2)}; regex routing in effect`;
+            preparationTiming.classifierOutcome = "error";
+          } finally {
+            preparationTiming.classifierMs = Date.now() - classifierStartedAt;
           }
         })() : null;
         await publishState({ status: "Starting Onhand..." });
@@ -99641,8 +99651,11 @@ function createOnhandBrowserRuntime(host) {
               learningMode
             });
           }
+          preparationTiming.captureMs = Date.now() - preparationStartedAt;
           if (modelIntentClassificationPromise) {
+            const waitStartedAt = Date.now();
             await prepare(() => modelIntentClassificationPromise);
+            preparationTiming.classifierWaitMs = Date.now() - waitStartedAt;
             activeRequest.modelIntentClassification = modelIntentClassification;
             if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
           }
@@ -99739,6 +99752,9 @@ Mark and answer from this text. Call browser_extract_content again only to conti
             getApiKey: (provider) => resolveApiKey3(provider),
             streamFn: (streamModel, streamContext, streamOptions = {}) => {
               activeRequest.modelCallCount = Number(activeRequest.modelCallCount || 0) + 1;
+              if (activeRequest.modelCallCount === 1 && activeRequest.preparationTiming) {
+                activeRequest.preparationTiming.firstModelCallMs = Date.now() - preparationStartedAt;
+              }
               return streamOnhandFast(streamModel, streamContext, {
                 ...streamOptions,
                 onhandTelemetry: {

@@ -1070,6 +1070,21 @@ function toolErrorCount(turn, name) {
 	return Math.max(0, errorCount - recoveredCount);
 }
 
+// Where the time before the first model call went (see PreparationTiming in
+// browser-runtime.ts): the intent classifier, page capture, and how long the
+// turn waited for the classifier after capture.
+function preparationMetrics(turn) {
+	const timing = turn?.preparationTiming || {};
+	const ms = (value) => (Number.isFinite(Number(value)) ? Number(value) : null);
+	return {
+		classifierMs: ms(timing.classifierMs),
+		classifierOutcome: timing.classifierOutcome || null,
+		captureMs: ms(timing.captureMs),
+		classifierWaitMs: ms(timing.classifierWaitMs),
+		firstModelCallMs: ms(timing.firstModelCallMs),
+	};
+}
+
 // Time from the request until the first mark landed on the page: the first
 // impression of a turn, before the answer text finishes.
 function firstMarkMs(turn) {
@@ -1118,6 +1133,7 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		toolDurationMs: totalDurationMs(turn),
 		firstMarkMs: firstMarkMs(turn),
 		turnDurationMs: Number.isFinite(Number(turn.durationMs)) ? Number(turn.durationMs) : null,
+		...preparationMetrics(turn),
 		highlightErrorCount: toolErrorCount(turn, "browser_highlight_text"),
 		elapsedMs,
 		methodMentionCount: methodMentionCount(reply),
@@ -1445,7 +1461,10 @@ function safeId(value) {
 function summarizeVariants(results) {
 	const byVariant = new Map();
 	for (const result of results) {
-		const entry = byVariant.get(result.variantId) || { variantId: result.variantId, runs: 0, passes: 0, score: 0, elapsedMs: 0, judgeRuns: 0, judgeScore: 0, firstMarks: [], turnDurations: [] };
+		const entry = byVariant.get(result.variantId) || { variantId: result.variantId, runs: 0, passes: 0, score: 0, elapsedMs: 0, judgeRuns: 0, judgeScore: 0, firstMarks: [], turnDurations: [], classifierTimes: [], classifierWaits: [], firstModelCalls: [] };
+		if (result.metrics?.classifierMs != null) entry.classifierTimes.push(result.metrics.classifierMs);
+		if (result.metrics?.classifierWaitMs != null) entry.classifierWaits.push(result.metrics.classifierWaitMs);
+		if (result.metrics?.firstModelCallMs != null) entry.firstModelCalls.push(result.metrics.firstModelCallMs);
 		if (result.metrics?.firstMarkMs != null) entry.firstMarks.push(result.metrics.firstMarkMs);
 		if (result.metrics?.turnDurationMs != null) entry.turnDurations.push(result.metrics.turnDurationMs);
 		entry.runs += 1;
@@ -1468,6 +1487,10 @@ function summarizeVariants(results) {
 			medianFirstMarkMs: median(entry.firstMarks),
 			medianTurnMs: median(entry.turnDurations),
 			markedRuns: entry.firstMarks.length,
+			medianClassifierMs: median(entry.classifierTimes),
+			medianClassifierWaitMs: median(entry.classifierWaits),
+			classifierWaitedRuns: entry.classifierWaits.filter((value) => value > 50).length,
+			medianFirstModelCallMs: median(entry.firstModelCalls),
 		}))
 		.sort((left, right) => right.averageScore - left.averageScore || right.passRate - left.passRate || left.averageElapsedMs - right.averageElapsedMs);
 }
@@ -1483,12 +1506,12 @@ function markdownReport(plan, results, variantSummary) {
 		"",
 		"## Variants",
 		"",
-		"| Variant | Runs | Pass | Avg Score | Avg Time | Median Turn | Median First Mark |",
-		"| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+		"| Variant | Runs | Pass | Avg Score | Avg Time | Median Turn | Median First Mark | Median First Model Call | Median Classifier | Waited on Classifier |",
+		"| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
 	];
 	for (const entry of variantSummary) {
 		const ms = (value) => (value == null ? "—" : `${(value / 1000).toFixed(1)}s`);
-		lines.push(`| ${entry.variantId} | ${entry.runs} | ${entry.passes}/${entry.runs} | ${entry.averageScore.toFixed(3)} | ${entry.averageElapsedMs}ms | ${ms(entry.medianTurnMs)} | ${ms(entry.medianFirstMarkMs)} (${entry.markedRuns} marked) |`);
+		lines.push(`| ${entry.variantId} | ${entry.runs} | ${entry.passes}/${entry.runs} | ${entry.averageScore.toFixed(3)} | ${entry.averageElapsedMs}ms | ${ms(entry.medianTurnMs)} | ${ms(entry.medianFirstMarkMs)} (${entry.markedRuns} marked) | ${ms(entry.medianFirstModelCallMs)} | ${ms(entry.medianClassifierMs)} | ${entry.classifierWaitedRuns}/${entry.classifierWaits.length} runs, median ${ms(entry.medianClassifierWaitMs)} |`);
 	}
 	lines.push("", "## Cases", "", "| Case | Variant | Status | Score | Judge | Highlights | Notes | Marked Tabs | Navigations | Words | Failures |", "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |");
 	for (const result of results) {

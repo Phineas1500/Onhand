@@ -154,6 +154,8 @@ interface UiTurn {
 	toolTraces?: ToolTraceEntry[];
 	modelIntentClassification?: ModelIntentClassification;
 	modelIntentClassifierError?: string;
+	// Where the time before the first model call went. Durations only, in ms.
+	preparationTiming?: PreparationTiming;
 	pageActions: PageAction[];
 	pending: boolean;
 	error: boolean;
@@ -165,6 +167,20 @@ interface UiTurn {
 	durationMs?: number;
 	provisionalAnswerExposed?: boolean;
 	errorReport?: RuntimeErrorReportSnapshot | null;
+}
+
+interface PreparationTiming {
+	// The intent classifier call, start to finish.
+	classifierMs?: number;
+	classifierOutcome?: "classified" | "unparseable" | "error";
+	// Request start until page capture and PDF handoff were done (the point
+	// the turn first needs the classification).
+	captureMs?: number;
+	// How long the turn then waited for the classifier: 0 when it finished
+	// during capture.
+	classifierWaitMs?: number;
+	// Request start until the agent's first model call.
+	firstModelCallMs?: number;
 }
 
 interface ToolTraceEntry {
@@ -14330,6 +14346,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				managedLiveRevision: activeRequest.managedLiveRevision, interrupted: Boolean(activeRequest.aborted) } : {}),
 			...(activeRequest.modelIntentClassification ? { modelIntentClassification: activeRequest.modelIntentClassification } : {}),
 			...(activeRequest.modelIntentClassifierError ? { modelIntentClassifierError: activeRequest.modelIntentClassifierError } : {}),
+			...(activeRequest.preparationTiming && Object.keys(activeRequest.preparationTiming).length ? { preparationTiming: { ...activeRequest.preparationTiming } } : {}),
 			...(errorReport ? { errorReport } : {}),
 		};
 		session.turns = activeRequest.priorManagedTurn
@@ -16876,8 +16893,12 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				// capture below; its first consumers (the reasoning profile and
 				// prior-page context) await it after capture completes, so the
 				// classifier latency hides behind work the request does anyway.
+				const preparationTiming: PreparationTiming = {};
+				const preparationStartedAt = Date.now();
+				activeRequest.preparationTiming = preparationTiming;
 				const modelIntentClassificationPromise = requestSettings.experimentalModelLaneClassifier
 					? (async () => {
+							const classifierStartedAt = Date.now();
 							try {
 								const classifierModel = await getConfiguredModel(requestSettings);
 								const openTab = await preparationHost.snapshotState().then((state) => pickActiveTab(state, targetWindowId)).catch(() => null);
@@ -16886,11 +16907,16 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 								if (modelIntentClassification && activeRequest === requestContext && !requestContext.aborted) {
 									setModelIntentClassificationForPrompt(displayPrompt, modelIntentClassification);
 									if (prompt !== displayPrompt) setModelIntentClassificationForPrompt(prompt, modelIntentClassification);
+									preparationTiming.classifierOutcome = "classified";
 								} else {
 									modelIntentClassifierError = "unparseable classification; regex routing in effect";
+									preparationTiming.classifierOutcome = "unparseable";
 								}
 							} catch (error) {
 								modelIntentClassifierError = `${error instanceof Error ? error.message : String(error)}; regex routing in effect`;
+								preparationTiming.classifierOutcome = "error";
+							} finally {
+								preparationTiming.classifierMs = Date.now() - classifierStartedAt;
 							}
 						})()
 					: null;
@@ -16946,8 +16972,11 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 							learningMode,
 						});
 					}
+					preparationTiming.captureMs = Date.now() - preparationStartedAt;
 					if (modelIntentClassificationPromise) {
+						const waitStartedAt = Date.now();
 						await prepare(() => modelIntentClassificationPromise);
+						preparationTiming.classifierWaitMs = Date.now() - waitStartedAt;
 						activeRequest.modelIntentClassification = modelIntentClassification;
 						if (modelIntentClassifierError) activeRequest.modelIntentClassifierError = modelIntentClassifierError;
 					}
@@ -17080,6 +17109,9 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 						getApiKey: (provider) => resolveApiKey(provider),
 						streamFn: (streamModel: any, streamContext: any, streamOptions: any = {}) => {
 							activeRequest.modelCallCount = Number(activeRequest.modelCallCount || 0) + 1;
+							if (activeRequest.modelCallCount === 1 && activeRequest.preparationTiming) {
+								activeRequest.preparationTiming.firstModelCallMs = Date.now() - preparationStartedAt;
+							}
 							return streamOnhandFast(streamModel, streamContext, {
 								...streamOptions,
 								onhandTelemetry: {
