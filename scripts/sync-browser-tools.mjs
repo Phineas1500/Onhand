@@ -92,10 +92,9 @@ export async function syncBrowserToolWebsite({ root = DEFAULT_ROOT, check = fals
 	const start = source.indexOf(START_MARKER);
 	const end = source.indexOf(END_MARKER, start + START_MARKER.length);
 	if (start < 0 || end < 0) throw new Error(`Missing ${START_MARKER} / ${END_MARKER} in ${WEBSITE_PATH}`);
+	// The tool count shows in the "See all N tools" toggle above the list.
 	const count = inspection.names.length;
-	const heading = `    <h2 class="section-title">${count} small, auditable tools that act across your pages.</h2>`;
-	const withHeading = source.replace(/    <h2 class="section-title">[^\n]*small tools that act on the page\.<\/h2>/, heading)
-		.replace(/    <h2 class="section-title">\d+ small, auditable tools that act across your pages\.<\/h2>/, heading);
+	const withHeading = source.replace(/<span data-onhand-tool-count>\d+<\/span>/, `<span data-onhand-tool-count>${count}</span>`);
 	const nextStart = withHeading.indexOf(START_MARKER);
 	const nextEnd = withHeading.indexOf(END_MARKER, nextStart + START_MARKER.length);
 	const next = `${withHeading.slice(0, nextStart + START_MARKER.length)}\n    <div class="tools-wrap">\n${renderBrowserToolManifest(inspection.manifest)}\n    </div>\n    ${withHeading.slice(nextEnd)}`;

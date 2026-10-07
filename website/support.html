@@ -6,7 +6,7 @@
 <title>Support — Onhand</title>
 <meta name="description" content="Support, setup, and troubleshooting for the Onhand browser extension." />
 <meta property="og:title" content="Support — Onhand" />
-<meta property="og:description" content="Install, authentication, voice tutor, and troubleshooting notes for Onhand." />
+<meta property="og:description" content="Install, sign-in, voice, and troubleshooting notes for Onhand." />
 <meta property="og:type" content="website" />
 <link rel="icon" type="image/png" href="./icons/onhand-128.png" />
 <link rel="apple-touch-icon" href="./icons/onhand-128.png" />
@@ -58,8 +58,7 @@
       <div class="section-eyebrow"><span class="mc">☞</span><span>Support</span></div>
       <h1>Support</h1>
       <p>
-        Onhand is early access software. This page covers the setup path,
-        common browser issues, and where to report bugs.
+        Setup, common browser issues, and where to report bugs.
       </p>
     </div>
   </section>
@@ -69,7 +68,7 @@
       <aside class="legal-toc" aria-label="Support sections">
         <a href="#install">Install</a>
         <a href="#auth">Sign in</a>
-        <a href="#voice">Voice tutor</a>
+        <a href="#voice">Voice</a>
         <a href="#pdfs">PDFs</a>
         <a href="#report">Report a bug</a>
         <a href="#development">Support development</a>
@@ -102,8 +101,8 @@
           </p>
           <ul>
             <li><strong>Onhand Free:</strong> no account or API key. Daily usage is capped and anonymous diagnostics are required.</li>
-            <li><strong>OpenAI Codex sign-in:</strong> recommended for normal browser tutoring.</li>
-            <li><strong>Provider API key:</strong> useful for direct OpenAI, Anthropic, Gemini, or OpenRouter calls. OpenAI API keys can also power the Realtime voice tutor.</li>
+            <li><strong>OpenAI Codex sign-in:</strong> sign in with your ChatGPT Plus or Pro account instead of using an API key.</li>
+            <li><strong>Provider API key:</strong> use your own OpenAI, Anthropic, Gemini, or OpenRouter key. An OpenAI platform API key also enables Voice.</li>
           </ul>
           <p>
             If Onhand says credentials are missing, open the options page,
@@ -113,10 +112,12 @@
         </section>
 
         <section id="voice" class="legal-section">
-          <h2>Voice tutor</h2>
+          <h2>Voice</h2>
           <p>
-            Press <strong>Voice</strong> in the side panel to start the experimental
-            realtime tutor. Your browser and macOS both need microphone access.
+            Press <strong>Voice</strong> in the side panel to talk with Onhand. It
+            answers aloud and hands questions about the page to your chosen model.
+            Voice needs an OpenAI platform API key, and your browser and macOS both
+            need microphone access.
           </p>
           <ul>
             <li>If Chrome never reaches listening, check the site microphone permission and macOS Privacy &amp; Security settings.</li>

@@ -87,7 +87,8 @@
             Onhand does not sell personal information and does not operate a
             hosted user account database. The extension stores its settings,
             provider configuration, anonymous free-tier token, and saved study
-            sessions in <code>chrome.storage.local</code> on your device.
+            sessions in the extension's local storage (<code>chrome.storage.local</code>
+            and IndexedDB) on your device.
           </p>
           <p>
             When you ask Onhand a question, the extension starts with the active
@@ -149,7 +150,7 @@
           <h2>Data Onhand handles</h2>
           <ul>
             <li>Questions and instructions you type into the Onhand side panel.</li>
-            <li>Voice input and transcripts when you start the voice tutor.</li>
+            <li>Voice input and transcripts when you start a voice call.</li>
             <li>Visible page text, selected passages, headings, URLs, and page titles from the active page and any clearly related open source Onhand inspects for the request.</li>
             <li>Metadata such as titles and URLs from eligible open tabs, included with each request to rank potentially relevant sources before any related tab content is read.</li>
             <li>Personal communications if you choose to use Onhand on pages such as webmail, chat, or messaging apps.</li>
@@ -261,7 +262,7 @@
           <h2>Your choices</h2>
           <ul>
             <li>You choose when to open the side panel and ask Onhand a question.</li>
-            <li>You choose when to start or stop the voice tutor.</li>
+            <li>You choose when to start or stop a voice call.</li>
             <li>You choose your authentication mode: Onhand Free, OpenAI Codex sign-in, or a provider API key.</li>
             <li>You can disable anonymous diagnostics unless you are using Onhand Free.</li>
             <li>You can disable advanced runtime inspection to prevent model-requested JavaScript inspection on active pages.</li>
