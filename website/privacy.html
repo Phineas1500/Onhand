@@ -182,12 +182,19 @@
           <p>
             Onhand uses the provider you configure in the extension options page.
             Current modes include OpenAI Codex sign-in, direct provider API key
-            calls for OpenAI, Anthropic, Google Gemini, and OpenRouter, the
-            experimental OpenAI Realtime voice path, and Onhand Free.
+            calls for OpenAI, Anthropic, Google Gemini, and OpenRouter, OpenAI
+            GPT-Live voice (which uses your saved OpenAI platform API key), and
+            Onhand Free.
           </p>
           <p>
             In direct-provider modes, the extension sends the content needed for
-            your request to the provider you configured. In Onhand Free mode, the
+            your request to the provider you configured. When that provider is
+            OpenAI (Codex sign-in or an OpenAI API key) and you have saved an
+            OpenAI platform API key, Onhand also sends your request text and the
+            open page's title and URL to OpenAI's Decisions API with that key, to
+            decide quickly how to handle the request (for example, whether it is
+            about the open page). Page content is not included. With any other
+            provider, the configured model makes that decision instead. In Onhand Free mode, the
             extension sends the content needed for your request to Onhand's
             Cloudflare Worker, which forwards the model request directly to OpenAI's official API (GPT-6 Luna).
             The hosted Worker streams the response and enforces quota limits; it

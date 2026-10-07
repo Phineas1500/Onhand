@@ -119,6 +119,8 @@ npm run debug:sessions -- context --current --json
 
 Onhand classifies each prompt's intent (teaching, comparison, enumerable coverage, review markup, …) to set marker expectations and pick deliverable profiles, and runs a chain of span-quality guards before it highlights. Two tools inspect that logic — one offline, one live.
 
+The classification comes from OpenAI's Decisions API when the chosen model is OpenAI's (Codex sign-in or an OpenAI key) and a platform API key is saved: seven predicates answered in about 0.2 s, used only when every field is clearly true or false. Otherwise, or when Decisions is unsure or fails, the chosen model classifies (about 2-3 s on GPT-6.1 Sol), and the regex router covers an unparseable result. Each turn's `preparationTiming` records which classifier decided (`classifierSource`), why Decisions handed off (`decisionsFallback`), and how long the turn waited before its first model call. `npm run eval:intent-classifier -- --browser --decisions --port <port>` scores the regex router, the chosen model and Decisions against the labeled corpus in `evals/intent-classifier/cases.json`.
+
 ### Offline routing/guard probe
 
 `scripts/probe-routing.mjs` prints the intent predicates and highlight-guard decisions for any prompt with no live turn and no model call, by reading the runtime's `__browserRuntimeTest` export surface:

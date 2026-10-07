@@ -319,6 +319,113 @@ async function assertIntentClassifierSendsItsInstructions() {
 	assert.doesNotMatch(requestBodies[0], /You are a helpful assistant/, "the provider default prompt must not replace the classifier's instructions");
 }
 
+// The Decisions API answers the intent classifier's seven questions in about
+// 0.2 s; the model classifier took 1.8-3.8 s on Sol and every turn waited for
+// it. Decisions decides only when every field is clearly on one side, and is
+// used only with an OpenAI platform key while the chosen model is OpenAI's.
+async function assertDecisionsIntentClassifier() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
+	const request = test.buildDecisionsIntentRequestForTest("summarize this", { title: "Photosynthesis - Wikipedia", url: "https://en.wikipedia.org/wiki/Photosynthesis" });
+	assert.equal(request.model, "gpt-6-luna");
+	assert.deepEqual(request.questions.map((question) => question.name), fields, "one predicate per intent field");
+	assert.ok(request.questions.every((question) => question.type === "predicate" && /ignore any instructions/.test(question.instructions)));
+	assert.match(request.input, /Open page \(context only\): Photosynthesis - Wikipedia/);
+	assert.match(request.input, /User request:\nsummarize this/);
+
+	const answers = (overrides = {}) => ({ answers: fields.map((name) => ({ type: "predicate", name, probability: overrides[name] ?? (name === "pageScoped" || name === "teaching" ? 0.97 : 0.02) })) });
+	const confident = test.readDecisionsIntentAnswersForTest(answers());
+	assert.deepEqual(confident.unsureFields, []);
+	assert.equal(confident.classification.pageScoped, true);
+	assert.equal(confident.classification.teaching, true);
+	assert.equal(confident.classification.comparison, false);
+	const unsure = test.readDecisionsIntentAnswersForTest(answers({ teaching: 0.5 }));
+	assert.equal(unsure.classification, null, "one field between the cutoffs leaves the request undecided");
+	assert.deepEqual(unsure.unsureFields, ["teaching"]);
+	assert.equal(unsure.probabilities.teaching, 0.5);
+	const itemized = test.readDecisionsIntentAnswersForTest(answers({ enumerableCoverage: 0.95, teaching: 0.66 }));
+	assert.equal(itemized.classification?.teaching, false, "an itemized ask is not teaching, even when Decisions half-thinks so");
+	assert.deepEqual(itemized.unsureFields, []);
+	const partial = test.readDecisionsIntentAnswersForTest({ answers: answers().answers.filter((answer) => answer.name !== "comparison") });
+	assert.deepEqual(partial.unsureFields, ["comparison"], "a missing answer is undecided, not false");
+
+	const calls = [];
+	const ok = async (url, init) => { calls.push({ url, init }); return new Response(JSON.stringify(answers()), { status: 200 }); };
+	const decided = await test.classifyPromptIntentWithDecisionsForTest("sk-test-key", "summarize this", null, undefined, ok);
+	assert.equal(calls[0].url, "https://api.openai.com/v1/decisions");
+	assert.equal(calls[0].init.headers.Authorization, "Bearer sk-test-key");
+	assert.equal(decided.classification.teaching, true);
+	const failing = async () => new Response(JSON.stringify({ error: { message: "secret-bearing provider text" } }), { status: 500 });
+	await assert.rejects(test.classifyPromptIntentWithDecisionsForTest("sk-test-key", "x", null, undefined, failing),
+		(error) => /HTTP 500/.test(error.message) && !/secret-bearing/.test(error.message), "errors carry the status, never the provider's text");
+
+	const settings = (overrides) => ({ aiProvider: "openai-codex", aiApiKeys: { openai: "sk-platform" }, aiApiKey: "", ...overrides });
+	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({})), "sk-platform", "Codex sign-in with a saved platform key");
+	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiProvider: "openai" })), "sk-platform");
+	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiApiKeys: {} })), "", "no platform key, no Decisions");
+	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiProvider: "anthropic" })), "", "prompts never go to OpenAI when the chosen model is another company's");
+	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiProvider: "onhand-smoke" })), "", "the smoke provider never calls the real endpoint");
+	console.log("Decisions intent classifier: request, cutoffs, errors, and eligibility passed");
+}
+
+// A full turn: Decisions decides when confident, and the model classifier takes
+// over when a field is unsure or the call fails. The turn records which.
+async function assertTurnsUseDecisionsWhenConfident() {
+	const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
+	const runTurn = async (respond) => {
+		installChromeStorageStub();
+		const requests = [];
+		test.setDecisionsFetchForTest(async (url, init) => { requests.push(JSON.parse(init.body)); return respond(); });
+		try {
+			const runtime = createOnhandBrowserRuntime(createReplayHost());
+			await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key",
+				aiApiKeys: { openai: "sk-test-decisions" }, experimentalModelLaneClassifier: true, modelLaneClassifierDefaultMigrated: true });
+			await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+			const state = await waitForRuntimeCompletion(runtime);
+			return { turn: state.turns.at(-1), requests };
+		} finally {
+			test.setDecisionsFetchForTest(null);
+		}
+	};
+	const answer = (overrides = {}) => new Response(JSON.stringify({ answers: fields.map((name) => ({ type: "predicate", name,
+		probability: overrides[name] ?? (name === "pageScoped" || name === "teaching" ? 0.98 : 0.01) })) }), { status: 200 });
+
+	const decided = await runTurn(() => answer());
+	assert.equal(decided.requests.length, 1, "the turn asks Decisions once");
+	assert.match(decided.requests[0].input, /Summarize this page\./);
+	assert.equal(decided.turn.preparationTiming.classifierSource, "decisions");
+	assert.ok(Number.isFinite(decided.turn.preparationTiming.decisionsMs));
+	assert.equal(decided.turn.preparationTiming.decisionsFallback, undefined);
+	assert.equal(decided.turn.modelIntentClassification.teaching, true, "the turn routes on the Decisions classification");
+	assert.equal(decided.turn.preparationTiming.classifierOutcome, "classified");
+	assert.equal(decided.turn.error, false, "no model classifier call: the scripted model's replies all go to the turn");
+
+	// When Decisions cannot decide, the model classifier runs. It consumes one of
+	// the scripted smoke model's replies (and cannot parse it), so these turns
+	// end without a reply; what matters is that the hand-off happened.
+
+	const unsure = await runTurn(() => answer({ teaching: 0.5 }));
+	assert.equal(unsure.turn.preparationTiming.decisionsFallback, "unsure: teaching", "an unsure field hands the request to the model classifier");
+	assert.notEqual(unsure.turn.preparationTiming.classifierSource, "decisions");
+	assert.equal(unsure.turn.preparationTiming.classifierOutcome, "unparseable", "the model classifier ran");
+
+	const failed = await runTurn(() => new Response("{}", { status: 503 }));
+	assert.equal(failed.turn.preparationTiming.decisionsFallback, "error: Decisions classification failed (HTTP 503)");
+	assert.notEqual(failed.turn.preparationTiming.classifierSource, "decisions");
+	assert.equal(failed.turn.preparationTiming.classifierOutcome, "unparseable", "a Decisions failure hands the request to the model classifier");
+	assert.doesNotMatch(String(failed.turn.errorReport?.error_message || ""), /Decisions/, "a Decisions failure never surfaces as the turn's error");
+	// A slow Decisions answer starts the model classifier after 0.7 s; a
+	// confident Decisions answer that still arrives first wins.
+	const slow = await runTurn(async () => { await new Promise((resolve) => setTimeout(resolve, 1200)); return answer(); });
+	assert.equal(slow.turn.preparationTiming.modelClassifierHedged, true, "a slow Decisions call starts the model classifier");
+	assert.equal(slow.turn.preparationTiming.classifierSource, "decisions");
+	assert.ok(slow.turn.preparationTiming.decisionsMs >= 1100);
+	const quick = decided.turn.preparationTiming;
+	assert.equal(quick.modelClassifierHedged, undefined, "a quick Decisions answer never starts the model classifier");
+	console.log("Turns use Decisions when confident and fall back when unsure, failing or slow passed");
+}
+
 async function assertProviderApiKeyStorageAndRouting() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime, __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -12066,6 +12173,8 @@ async function main() {
 	await assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources();
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
+	await assertDecisionsIntentClassifier();
+	await assertTurnsUseDecisionsWhenConfident();
 	await assertAssistantStreamingTextBlocksStaySeparated();
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();

@@ -1,6 +1,8 @@
-// Intent-classifier evaluation: compares the regex intent predicates and the
-// experimental model intent classifier against a labeled prompt corpus built
-// from real failures (2026-07 testing sessions + PR #52 review findings).
+// Intent-classifier evaluation: compares the regex intent predicates, the
+// model intent classifier, and the Decisions API classifier against the
+// labeled corpus in evals/intent-classifier/cases.json (real failures from
+// 2026-07 sessions and PR #52 review, eval-suite prompts with their pages, and
+// edge cases).
 //
 // Modes:
 //   (default)  score the REGEX baseline only — no network.
@@ -10,11 +12,17 @@
 //   --free     with --browser: classify with the Onhand free-tier model
 //              instead of the configured one (needs a registered free-tier
 //              device in that browser).
+//   --decisions  also classify with the Decisions API through the browser's
+//              saved OpenAI platform key (the key stays in the extension), and
+//              report per-field calibration against the runtime's cutoffs.
+//              With --browser too, it scores the production policy: Decisions
+//              when every field is confident, otherwise the model classifier.
 //   --live     also score an OpenAI-compatible endpoint directly:
 //              OPENAI_API_KEY (required), OPENAI_BASE_URL, OPENAI_MODEL.
 //
 // Expected labels use null for genuinely ambiguous fields (not scored).
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 const EXT_ID = "hpjpjeehgbloadhdidmecpijppodibim";
 
@@ -38,51 +46,8 @@ function installChromeStub() {
 	};
 }
 
-const CORPUS = [
-	// --- verified live wins and failures from the 2026-07 sessions ---
-	["Give me a roadmap of the twelve factors.", { pageScoped: true, enumerableCoverage: true, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	// comparison must stay false here: summarizing others' disagreement is
-	// teaching — comparison=true would disqualify the compact-teaching lane
-	// (observed live: 3 highlights + 1 note dropped to a single anchor).
-	["Summarize the main points of disagreement in these comments.", { pageScoped: true, teaching: true, enumerableCoverage: null, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["Summarize the main claims of this dashboard.", { pageScoped: true, teaching: true, enumerableCoverage: null, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["When should I use a Map instead of a plain object, according to this page?", { pageScoped: true, comparison: true, teaching: false, enumerableCoverage: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["Using both this page and the HTTP/2 page I have open in another tab, what did HTTP/3 change about head-of-line blocking?", { pageScoped: true, comparison: true, crossTabComparison: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["Do these papers agree?", { comparison: true, crossTabComparison: true, pageScoped: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["teach me what this page says", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["Where does it say I can charge money for copies?", { pageScoped: true, teaching: false, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["How has the API changed between these two open docs?", { comparison: true, crossTabComparison: true, pageScoped: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["Go through my manager's feedback on this draft and mark what needs to change.", { documentReviewMarkup: true, pageScoped: true, teaching: null, enumerableCoverage: null, comparison: false, crossTabComparison: false }],
-	["what is the time complexity here?", { pageScoped: true, teaching: false, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["could you help me solve this?", { pageScoped: true, problemSolvingHelp: true }],
-	["Help me troubleshoot why this page will not load.", { pageScoped: true, problemSolvingHelp: false }],
-	["compare this article with the other tab I have open", { pageScoped: true, comparison: true, crossTabComparison: true, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["give me a step-by-step of the branching workflow in this chapter", { pageScoped: true, enumerableCoverage: true, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["Summarize this page. Answer only in chat, no page changes please.", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	// --- Codex review counterexamples: must stay negative ---
-	["give me a career roadmap for becoming a data scientist", { pageScoped: false, enumerableCoverage: false, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["How do I change both tabs to dark mode?", { pageScoped: false, comparison: false, crossTabComparison: false, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["change both tabs to dark mode", { pageScoped: false, comparison: false, crossTabComparison: false, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["outline an essay about climate change for me", { pageScoped: false, enumerableCoverage: false, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["walk me through rejection sampling", { pageScoped: null, teaching: null, enumerableCoverage: null, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	// --- recall probes the regexes are known or likely to miss ---
-	["Qu'est-ce que cette page dit sur les transformateurs ?", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["このページの要点をまとめて", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["summarize teh main pionts of this artcle", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["can you give me the TL;DR of this doc", { pageScoped: true, teaching: true, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["what are the steps described here?", { pageScoped: true, enumerableCoverage: true, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["give me an outline of this essay", { pageScoped: true, enumerableCoverage: true, teaching: null, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["walk me through the proof in section 3", { pageScoped: true, enumerableCoverage: true, teaching: null, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["how do the two approaches in this article differ?", { pageScoped: true, comparison: true, crossTabComparison: false, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["what's the difference between the versions listed on this page?", { pageScoped: true, comparison: true, crossTabComparison: false, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["is this page's claim about caching supported by the paper in my other tab?", { pageScoped: true, crossTabComparison: true, comparison: null, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["review my draft below and mark anything that reads as overclaiming.\n\nDraft:\nOur system achieves perfect accuracy in all settings...", { documentReviewMarkup: true, pageScoped: true, teaching: null, enumerableCoverage: null, comparison: false, crossTabComparison: false }],
-	// --- negatives that look positive on keywords ---
-	["compare React and Vue", { pageScoped: false, comparison: true, crossTabComparison: false, teaching: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["what does 'roadmap' mean in product management?", { pageScoped: false, enumerableCoverage: false, teaching: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-	["my manager wants a comparison table by friday, can you explain what this page says about pivot tables?", { pageScoped: true, teaching: true, comparison: false, crossTabComparison: false, enumerableCoverage: false, documentReviewMarkup: false }],
-	["make this page dark mode", { pageScoped: false, teaching: false, enumerableCoverage: false, comparison: false, crossTabComparison: false, documentReviewMarkup: false }],
-];
+const CORPUS_FILE = new URL("../evals/intent-classifier/cases.json", import.meta.url);
+const CORPUS = JSON.parse(readFileSync(CORPUS_FILE, "utf8")).cases.map((entry) => [entry.prompt, entry.expect, entry.page || null]);
 
 const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 
@@ -101,12 +66,12 @@ function regexVerdicts(test, prompt) {
 	};
 }
 
-function score(name, verdictsByPrompt) {
+function score(name, verdictsByCase) {
 	let scored = 0;
 	let correct = 0;
 	const misses = [];
-	for (const [prompt, expected] of CORPUS) {
-		const verdicts = verdictsByPrompt.get(prompt);
+	for (const [index, [prompt, expected]] of CORPUS.entries()) {
+		const verdicts = verdictsByCase.get(index);
 		if (!verdicts) continue;
 		for (const field of FIELDS) {
 			if (expected[field] === null || expected[field] === undefined) continue;
@@ -144,7 +109,7 @@ async function classifyLive(test, prompt) {
 	return test.parseModelIntentClassificationForTest(body?.choices?.[0]?.message?.content || "");
 }
 
-async function classifyThroughBrowser(port, providerOverride = "") {
+async function classifyThroughBrowser(port, { provider = "", engine = "" } = {}) {
 	const { default: WebSocket } = await import("ws");
 	const http = await import("node:http");
 	const getJson = (path) =>
@@ -187,18 +152,21 @@ async function classifyThroughBrowser(port, providerOverride = "") {
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
 	const results = new Map();
+	const payloads = new Map();
 	const latencies = [];
 	let modelLabel = "";
-	for (const [prompt] of CORPUS) {
+	for (const [index, [prompt, , page]] of CORPUS.entries()) {
+		const message = { type: "browser-runtime:classify-intent-eval", prompt, provider: provider || undefined, engine: engine || undefined, page: page || undefined };
 		const response = await evalDriver(
-			`chrome.runtime.sendMessage({ type: 'browser-runtime:classify-intent-eval', prompt: ${JSON.stringify(prompt)}, provider: ${JSON.stringify(providerOverride || undefined)} }).catch(e => ({ ok: false, error: String(e && e.message || e) }))`,
+			`chrome.runtime.sendMessage(${JSON.stringify(message)}).catch(e => ({ ok: false, error: String(e && e.message || e) }))`,
 		);
 		const payload = response?.result || {};
 		modelLabel = payload.model || modelLabel;
+		payloads.set(index, payload);
+		if (payload.classification || payload.probabilities) latencies.push(Number(payload.elapsedMs) || 0);
 		if (payload.classification) {
-			results.set(prompt, payload.classification);
-			latencies.push(Number(payload.elapsedMs) || 0);
-		} else {
+			results.set(index, payload.classification);
+		} else if (!payload.probabilities) {
 			console.log(`  browser classification failed: ${payload.error || response?.error || "no classification"} — ${prompt.slice(0, 50).replace(/\n/g, " ")}`);
 		}
 	}
@@ -208,29 +176,61 @@ async function classifyThroughBrowser(port, providerOverride = "") {
 	const median = latencies.length ? latencies[Math.floor(latencies.length / 2)] : 0;
 	const p90 = latencies.length ? latencies[Math.floor(latencies.length * 0.9)] : 0;
 	console.log(`\nbrowser classifier model: ${modelLabel} | classified ${results.size}/${CORPUS.length} | latency median ${median}ms, p90 ${p90}ms`);
-	return results;
+	return { results, payloads };
 }
 
 installChromeStub();
 const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 
-const regexResults = new Map(CORPUS.map(([prompt]) => [prompt, regexVerdicts(test, prompt)]));
+const regexResults = new Map(CORPUS.map(([prompt], index) => [index, regexVerdicts(test, prompt)]));
 score("Regex baseline", regexResults);
 
+const portFlagIndex = process.argv.indexOf("--port");
+const port = Number(portFlagIndex > -1 ? process.argv[portFlagIndex + 1] : process.env.ONHAND_CDP_PORT || 9346);
+let modelResults = null;
 if (process.argv.includes("--browser")) {
-	const portFlagIndex = process.argv.indexOf("--port");
-	const port = Number(portFlagIndex > -1 ? process.argv[portFlagIndex + 1] : process.env.ONHAND_CDP_PORT || 9346);
 	const providerOverride = process.argv.includes("--free") ? "onhand-free" : "";
-	const browserResults = await classifyThroughBrowser(port, providerOverride);
-	score(providerOverride ? "Model classifier (free tier)" : "Model classifier (via browser auth)", browserResults);
+	({ results: modelResults } = await classifyThroughBrowser(port, { provider: providerOverride }));
+	score(providerOverride ? "Model classifier (free tier)" : "Model classifier (via browser auth)", modelResults);
+}
+
+if (process.argv.includes("--decisions")) {
+	const { payloads } = await classifyThroughBrowser(port, { engine: "decisions" });
+	const cutoffs = test.decisionsIntentCutoffsForTest;
+	// Raw accuracy at a single 0.5 threshold, to show the model's own calibration.
+	const atHalf = new Map([...payloads].filter(([, p]) => p.probabilities).map(([index, p]) =>
+		[index, Object.fromEntries(FIELDS.map((field) => [field, p.probabilities[field] === undefined ? null : p.probabilities[field] >= 0.5]))]));
+	score("Decisions at a 0.5 threshold", atHalf);
+	console.log("\nDecisions per-field calibration (labeled fields only):");
+	for (const field of FIELDS) {
+		const rows = [];
+		for (const [index, [, expected]] of CORPUS.entries()) {
+			const probability = payloads.get(index)?.probabilities?.[field];
+			if (expected[field] === null || expected[field] === undefined || probability === undefined) continue;
+			rows.push({ probability, want: expected[field], index });
+		}
+		const { trueAt, falseBelow } = cutoffs[field];
+		const sure = rows.filter((row) => row.probability >= trueAt || row.probability < falseBelow);
+		const wrong = sure.filter((row) => (row.probability >= trueAt) !== row.want);
+		const best = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map((t) => [t, rows.filter((row) => (row.probability >= t) === row.want).length]).sort((a, b) => b[1] - a[1])[0];
+		console.log(`  ${field.padEnd(21)} cutoffs >=${trueAt}/<${falseBelow}: confident ${sure.length}/${rows.length}, wrong when confident ${wrong.length}; best single threshold ${best[0]} -> ${best[1]}/${rows.length}`);
+		for (const row of wrong) console.log(`    WRONG p=${row.probability.toFixed(2)} want ${row.want}: ${CORPUS[row.index][0].slice(0, 80).replace(/\n/g, " ")}`);
+	}
+	const decided = new Map([...payloads].filter(([, p]) => p.classification).map(([index, p]) => [index, p.classification]));
+	console.log(`\nDecisions confident on every field: ${decided.size}/${CORPUS.length} requests (the rest go to the model classifier)`);
+	score("Decisions, confident requests only", decided);
+	if (modelResults) {
+		const policy = new Map(CORPUS.map((_, index) => [index, decided.get(index) || modelResults.get(index)]).filter(([, value]) => value));
+		score("Production policy (Decisions when confident, else model)", policy);
+	}
 }
 
 if (process.argv.includes("--live")) {
 	assert.ok(process.env.OPENAI_API_KEY, "--live requires OPENAI_API_KEY");
 	const liveResults = new Map();
-	for (const [prompt] of CORPUS) {
+	for (const [index, [prompt]] of CORPUS.entries()) {
 		try {
-			liveResults.set(prompt, await classifyLive(test, prompt));
+			liveResults.set(index, await classifyLive(test, prompt));
 		} catch (error) {
 			console.log(`live classification failed for "${prompt.slice(0, 50)}": ${error.message}`);
 		}
@@ -238,6 +238,6 @@ if (process.argv.includes("--live")) {
 	score(`Model classifier (${process.env.OPENAI_MODEL || "gpt-5.1-mini"})`, liveResults);
 }
 
-if (!process.argv.includes("--browser") && !process.argv.includes("--live")) {
+if (!process.argv.includes("--browser") && !process.argv.includes("--live") && !process.argv.includes("--decisions")) {
 	console.log("\n(dry run — --browser drives the real extension classifier; --live needs OPENAI_API_KEY)");
 }
