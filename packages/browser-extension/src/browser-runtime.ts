@@ -192,6 +192,12 @@ interface PreparationTiming {
 	learningRerankCandidates?: number;
 	learningEvidenceCheckMs?: number;
 	learningEvidenceChecks?: number;
+	// Each evidence check's verdict and reason, to see why a turn kept
+	// researching.
+	learningEvidenceVerdicts?: string[];
+	// Models the internal planning calls ran on (a provider's fast model for
+	// the planner and reranker when the reader chose a slower one).
+	internalJsonModels?: string[];
 	// Request start until page capture and PDF handoff were done (the point
 	// the turn first needs the classification).
 	captureMs?: number;
@@ -576,6 +582,23 @@ function buildOpenRouterFallbackModel(modelId: string) {
 		maxTokens: 32768,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 	};
+}
+
+// The Learning research planner and corpus reranker return small JSON
+// objects. On the reader's model they took 16-17 s before every GPT-6.1 Sol
+// Learning turn's first step (planner 11-12 s, reranker 4.8 s; 3.5 s and
+// 2 s on Luna), so OpenAI providers run them on that provider's Luna with the
+// same sign-in or key. The evidence check stays on the reader's model: on Luna
+// it asked Sol turns for 2-4 research rounds instead of 1, and the extra
+// rounds wandered to outside sites (113-124 s turns instead of 70-101 s).
+const INTERNAL_JSON_FAST_MODEL_BY_PROVIDER: Record<string, string> = {
+	[OPENAI_API_PROVIDER]: "gpt-6-luna",
+	[OPENAI_CODEX_PROVIDER]: "gpt-6-luna",
+};
+
+function internalJsonFastModelSettings<T extends { aiProvider: string; aiModel: string }>(settings: T): T | null {
+	const fastModel = INTERNAL_JSON_FAST_MODEL_BY_PROVIDER[settings.aiProvider];
+	return fastModel && settings.aiModel !== fastModel ? { ...settings, aiModel: fastModel } : null;
 }
 
 function buildOpenAICodexFallbackModel(modelId: string) {
@@ -11276,6 +11299,7 @@ export const __browserRuntimeTest = {
 	buildLearningResearchContinuationPromptForTest: buildLearningResearchContinuationPrompt,
 	learningReplyIsProgressUpdateForTest: learningReplyIsProgressUpdate,
 	buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
+	internalJsonFastModelSettingsForTest: internalJsonFastModelSettings,
 	buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
 	sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
 	workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -13820,10 +13844,30 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		};
 	}
 
-	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = []) {
+	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = [], { fastModel = false } = {}) {
+		const signal = activeRequest?.abortController?.signal;
+		const fastSettings = fastModel ? internalJsonFastModelSettings(settings) : null;
+		if (fastSettings) {
+			try {
+				const fastModel = await withAbortSignal(signal, () => getConfiguredModel(fastSettings));
+				return await runInternalJsonPromptOnModel(fastModel, prompt, maxTokens, timeoutMs, images);
+			} catch (error) {
+				// A timeout would only take longer on the slower model, and an
+				// aborted turn is over; anything else (the fast model missing from
+				// the reader's plan, say) falls back to the chosen model.
+				if (signal?.aborted || /Internal planner timed out/.test(String((error as any)?.message || ""))) throw error;
+				host.log?.("Internal planning call failed on the fast model; retrying on the configured model", error);
+			}
+		}
+		const model = await withAbortSignal(signal, () => getConfiguredModel(settings));
+		return await runInternalJsonPromptOnModel(model, prompt, maxTokens, timeoutMs, images);
+	}
+
+	async function runInternalJsonPromptOnModel(model: any, prompt: string, maxTokens: number, timeoutMs: number, images: any[]) {
 		const request = activeRequest;
 		const signal = request?.abortController?.signal;
-		const model = await withAbortSignal(signal, () => getConfiguredModel(settings));
+		const timing = request?.preparationTiming;
+		if (timing && model?.id && !timing.internalJsonModels?.includes(model.id)) timing.internalJsonModels = [...(timing.internalJsonModels || []), String(model.id)];
 		const currentSession = await withAbortSignal(signal, () => getCurrentSession().catch(() => null));
 		if (activeRequest) activeRequest.internalModelCallCount = Number(activeRequest.internalModelCallCount || 0) + 1;
 		const telemetry = {
@@ -13937,6 +13981,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				settings,
 				700,
 				15000,
+				[],
+				{ fastModel: true },
 			);
 			timing.learningPlanMs = Date.now() - stepStartedAt;
 			stepStartedAt = Date.now();
@@ -13971,6 +14017,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					settings,
 					900,
 					25000,
+					[],
+					{ fastModel: true },
 				);
 				timing.learningRerankMs = Date.now() - stepStartedAt;
 				const modelCorpusEvidence = parseLearningCorpusReranker(rerankedRaw, hydratedPlan);
@@ -13996,7 +14044,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				500,
 				12000,
 			);
-			return parseLearningEvidenceAssessment(raw, request);
+			const assessment = parseLearningEvidenceAssessment(raw, request);
+			if (timing && assessment) timing.learningEvidenceVerdicts = [...(timing.learningEvidenceVerdicts || []), `${assessment.sufficient ? "sufficient" : "insufficient"}: ${assessment.reason.slice(0, 240)}`];
+			return assessment;
 		} catch (error) {
 			host.log?.("Learning evidence assessment failed; using mechanical fallback", error);
 			return null;

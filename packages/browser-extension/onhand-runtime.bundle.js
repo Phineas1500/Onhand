@@ -86628,6 +86628,14 @@ function buildOpenRouterFallbackModel(modelId) {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   };
 }
+var INTERNAL_JSON_FAST_MODEL_BY_PROVIDER = {
+  [OPENAI_API_PROVIDER]: "gpt-6-luna",
+  [OPENAI_CODEX_PROVIDER]: "gpt-6-luna"
+};
+function internalJsonFastModelSettings(settings2) {
+  const fastModel = INTERNAL_JSON_FAST_MODEL_BY_PROVIDER[settings2.aiProvider];
+  return fastModel && settings2.aiModel !== fastModel ? { ...settings2, aiModel: fastModel } : null;
+}
 function buildOpenAICodexFallbackModel(modelId) {
   const normalizedId = modelId === "gpt-5.6" ? "gpt-5.6-sol" : modelId;
   const model = OPENAI_CODEX_ADDITIONAL_MODELS.find((candidate) => candidate.id === normalizedId);
@@ -94426,6 +94434,7 @@ var __browserRuntimeTest = {
   buildLearningResearchContinuationPromptForTest: buildLearningResearchContinuationPrompt,
   learningReplyIsProgressUpdateForTest: learningReplyIsProgressUpdate,
   buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
+  internalJsonFastModelSettingsForTest: internalJsonFastModelSettings,
   buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
   sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
   workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -96765,10 +96774,26 @@ function createOnhandBrowserRuntime(host) {
       turn
     };
   }
-  async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = []) {
+  async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = [], { fastModel = false } = {}) {
+    const signal = activeRequest?.abortController?.signal;
+    const fastSettings = fastModel ? internalJsonFastModelSettings(settings2) : null;
+    if (fastSettings) {
+      try {
+        const fastModel2 = await withAbortSignal(signal, () => getConfiguredModel(fastSettings));
+        return await runInternalJsonPromptOnModel(fastModel2, prompt, maxTokens, timeoutMs, images);
+      } catch (error2) {
+        if (signal?.aborted || /Internal planner timed out/.test(String(error2?.message || ""))) throw error2;
+        host.log?.("Internal planning call failed on the fast model; retrying on the configured model", error2);
+      }
+    }
+    const model = await withAbortSignal(signal, () => getConfiguredModel(settings2));
+    return await runInternalJsonPromptOnModel(model, prompt, maxTokens, timeoutMs, images);
+  }
+  async function runInternalJsonPromptOnModel(model, prompt, maxTokens, timeoutMs, images) {
     const request = activeRequest;
     const signal = request?.abortController?.signal;
-    const model = await withAbortSignal(signal, () => getConfiguredModel(settings2));
+    const timing = request?.preparationTiming;
+    if (timing && model?.id && !timing.internalJsonModels?.includes(model.id)) timing.internalJsonModels = [...timing.internalJsonModels || [], String(model.id)];
     const currentSession = await withAbortSignal(signal, () => getCurrentSession().catch(() => null));
     if (activeRequest) activeRequest.internalModelCallCount = Number(activeRequest.internalModelCallCount || 0) + 1;
     const telemetry = {
@@ -96877,7 +96902,9 @@ function createOnhandBrowserRuntime(host) {
         buildLearningResearchPlannerPrompt(prompt, browserContextDetails),
         settings2,
         700,
-        15e3
+        15e3,
+        [],
+        { fastModel: true }
       );
       timing.learningPlanMs = Date.now() - stepStartedAt;
       stepStartedAt = Date.now();
@@ -96908,7 +96935,9 @@ function createOnhandBrowserRuntime(host) {
           buildLearningCorpusRerankerPrompt(hydratedPlan),
           settings2,
           900,
-          25e3
+          25e3,
+          [],
+          { fastModel: true }
         );
         timing.learningRerankMs = Date.now() - stepStartedAt;
         const modelCorpusEvidence = parseLearningCorpusReranker(rerankedRaw, hydratedPlan);
@@ -96933,7 +96962,9 @@ function createOnhandBrowserRuntime(host) {
         500,
         12e3
       );
-      return parseLearningEvidenceAssessment(raw, request);
+      const assessment = parseLearningEvidenceAssessment(raw, request);
+      if (timing && assessment) timing.learningEvidenceVerdicts = [...timing.learningEvidenceVerdicts || [], `${assessment.sufficient ? "sufficient" : "insufficient"}: ${assessment.reason.slice(0, 240)}`];
+      return assessment;
     } catch (error2) {
       host.log?.("Learning evidence assessment failed; using mechanical fallback", error2);
       return null;

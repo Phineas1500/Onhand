@@ -11308,9 +11308,25 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	const finalAnswerPrompt = test.buildLearningFinalAnswerPromptForTest({ displayPrompt: "Solve problem 2" }, "I’m checking one more source.");
 	assert.match(finalAnswerPrompt, /Write the final answer to the student now/);
 	assert.match(finalAnswerPrompt, /Original user question: Solve problem 2/);
+	// The Learning planner and corpus reranker run on the provider's Luna when
+	// the reader chose a slower OpenAI model, and fall back to the chosen model
+	// unless the fast call timed out. The evidence check stays on the chosen
+	// model (Luna asked Sol turns for extra research rounds).
+	assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider: "openai-codex", aiModel: "gpt-6.1-sol", authMode: "oauth" }), { aiProvider: "openai-codex", aiModel: "gpt-6-luna", authMode: "oauth" });
+	assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider: "openai", aiModel: "gpt-6-sol" }), { aiProvider: "openai", aiModel: "gpt-6-luna" });
+	for (const settings of [
+		{ aiProvider: "openai-codex", aiModel: "gpt-6-luna" },
+		{ aiProvider: "onhand-free", aiModel: "gpt-6-luna" },
+		{ aiProvider: "anthropic", aiModel: "claude-sonnet-4-5-20250929" },
+		{ aiProvider: "openrouter", aiModel: "deepseek/deepseek-v4-flash" },
+	]) assert.equal(test.internalJsonFastModelSettingsForTest(settings), null, `${settings.aiProvider}/${settings.aiModel} keeps its model`);
 	const runtimeFinalRoundSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
 	assert.match(runtimeFinalRoundSource, /buildLearningResearchContinuationPrompt\(activeRequest, continuationAssessment, assistantText, retryCount \+ 1 >= retryLimit\)/);
 	assert.match(runtimeFinalRoundSource, /else if \(activeAgent && !activeRequest\.aborted && learningReplyIsProgressUpdate\(assistantText\)\) \{\s*activeRequest\.learningFinalAnswerRetry = true;/);
+	assert.match(runtimeFinalRoundSource, /if \(signal\?\.aborted \|\| \/Internal planner timed out\/\.test\(/, "a timed-out or aborted fast call is not retried");
+	assert.equal((runtimeFinalRoundSource.match(/\{ fastModel: true \}/g) || []).length, 2, "only the planner and reranker opt into the fast model");
+	assert.match(runtimeFinalRoundSource, /buildLearningEvidenceAssessmentPrompt\(request, assistantText\),\s*request\.settings as RuntimeSettings,\s*500,\s*12000,\s*\);/, "the evidence check runs on the chosen model");
+	assert.match(runtimeFinalRoundSource, /retrying on the configured model", error\);\s*\}\s*\}\s*const model = await withAbortSignal\(signal, \(\) => getConfiguredModel\(settings\)\);/, "any other fast-model failure retries on the configured model");
 
 	const corpusRanking = rankPdfCorpusTextPages(
 		[
