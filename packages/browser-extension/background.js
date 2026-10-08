@@ -10605,6 +10605,24 @@ async function executePageToolkitMethodViaGenericWebFrames(tabId, methodName, ar
 	});
 }
 
+// PDF reading tools live in the Onhand viewer. On a PDF tab still showing the
+// browser's own viewer they failed ("toolkit.searchPdf is not a function", or
+// "No inline Onhand PDF viewer frame found"); in a Learning run the agent then
+// gave up on the course PDFs and wandered to outside sites. Mount the viewer in
+// that tab (well under a second for a background tab) and run the method once more.
+async function runPdfViewerToolkitMethod(tab, methodName, payload) {
+	try {
+		return await runPageToolkitMethod(tab.id, methodName, payload);
+	} catch (error) {
+		const message = String(error?.message || "");
+		const missingViewer = message.includes(`${methodName} is not a function`) || /No (inline )?Onhand PDF viewer (runtime port|frame)/i.test(message);
+		if (!missingViewer || !isLikelyPdfResourceUrl(tab.url)) throw error;
+		log("Mounting the Onhand PDF viewer for a PDF tool", methodName, tab.id);
+		await openPdfInOnhandViewer({ tabId: tab.id, active: false, newTab: false, disableSelectionHandoff: true });
+		return await runPageToolkitMethod(tab.id, methodName, payload);
+	}
+}
+
 async function runPageToolkitMethod(tabId, methodName, ...args) {
 	const tab = await chrome.tabs.get(tabId);
 	if (!canRunPageToolkitOnTab(tab)) {
@@ -14281,7 +14299,7 @@ async function handleCommandInner(name, args = {}) {
 		case "pdf_search": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const search = await runPageToolkitMethod(tab.id, "searchPdf", {
+				const search = await runPdfViewerToolkitMethod(tab, "searchPdf", {
 					query: args.query,
 					text: args.text,
 					maxMatches: args.maxMatches,
@@ -14323,7 +14341,7 @@ async function handleCommandInner(name, args = {}) {
 		case "pdf_read_pages": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const pages = await runPageToolkitMethod(tab.id, "readPdfPages", {
+				const pages = await runPdfViewerToolkitMethod(tab, "readPdfPages", {
 					pages: args.pages,
 					page: args.page,
 					pageNumber: args.pageNumber,
@@ -14372,7 +14390,7 @@ async function handleCommandInner(name, args = {}) {
 		case "pdf_capture_page_image": {
 			const tab = await resolveTargetTab(args);
 			return await withTabCommand(tab.id, async () => {
-				const image = await runPageToolkitMethod(tab.id, "capturePdfPageImage", {
+				const image = await runPdfViewerToolkitMethod(tab, "capturePdfPageImage", {
 					pageNumber: args.pageNumber,
 					page: args.page,
 					format: args.format,

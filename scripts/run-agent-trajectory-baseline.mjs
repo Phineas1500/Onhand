@@ -246,8 +246,26 @@ async function resolveFreeTierBaseUrl() {
 	return parsed.toString().replace(/\/$/, "");
 }
 
+// Optional, from the environment or the ignored .env: a fixed anonymous test
+// token keeps one device identity across fresh profiles (so a device-scoped
+// quota bypass can apply), and the bypass secret lifts the per-device caps.
+async function readOptionalEnv(key) {
+	const fromProcess = String(process.env[key] || "").trim();
+	if (fromProcess) return fromProcess;
+	try { return parseEnvValue(await readFile(join(ROOT, ".env"), "utf8"), key); } catch { return ""; }
+}
+
 async function configureIsolatedFreeTier(cdp) {
 	const baseUrl = await resolveFreeTierBaseUrl();
+	const testToken = await readOptionalEnv("ONHAND_FREE_TIER_TEST_TOKEN");
+	const bypassSecret = await readOptionalEnv("ONHAND_FREE_QUOTA_BYPASS_SECRET");
+	const bypassExpiresAt = await readOptionalEnv("ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT");
+	const seeded = {
+		onhandFreeTierBaseUrl: baseUrl,
+		...(testToken ? { onhandFreeTierToken: testToken } : {}),
+		...(bypassSecret ? { onhandFreeTierQuotaBypassSecret: bypassSecret, onhandFreeTierQuotaBypassExpiresAt: bypassExpiresAt } : {}),
+	};
+	if (testToken || bypassSecret) process.stderr.write(`[trajectory] free tier: ${testToken ? "fixed test device" : "new device"}${bypassSecret ? `, quota bypass until ${bypassExpiresAt || "(no expiry set)"}` : ""}\n`);
 	const { targetId } = await cdp.send("Target.createTarget", {
 		url: `chrome-extension://${EXTENSION_ID}/options.html`,
 		background: true,
@@ -269,7 +287,7 @@ async function configureIsolatedFreeTier(cdp) {
 		}
 		if (!ready) throw new Error("Onhand options page did not expose extension storage/runtime APIs");
 		const expression = `(async () => {
-			await chrome.storage.local.set({ onhandFreeTierBaseUrl: ${JSON.stringify(baseUrl)} });
+			await chrome.storage.local.set(${JSON.stringify(seeded)});
 			return await chrome.runtime.sendMessage({
 				type: "browser-runtime:update-settings",
 				aiProvider: "onhand-free",

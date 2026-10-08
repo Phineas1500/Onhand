@@ -6743,7 +6743,7 @@ function parseLearningEvidenceAssessment(text: unknown, request: any): LearningE
 	};
 }
 
-function buildLearningResearchContinuationPrompt(request: any, assessment: LearningEvidenceAssessment, assistantText: string) {
+function buildLearningResearchContinuationPrompt(request: any, assessment: LearningEvidenceAssessment, assistantText: string, finalRound = false) {
 	const plan: LearningResearchPlan = request?.learningResearchPlan;
 	return [
 		"Continue the model-led Learning research preflight before answering. Do not emit answer prose until the research tools finish.",
@@ -6754,7 +6754,31 @@ function buildLearningResearchContinuationPrompt(request: any, assessment: Learn
 		plan?.evidenceSlots?.length ? `If a candidate is an index page, call browser_search_linked_pdf_corpus with: ${JSON.stringify(plan.evidenceSlots)}` : "",
 		"Inspect another genuinely distinct plausible source. If an index page links to multiple PDFs, search the linked corpus instead of walking links in list order. Reuse any existing destination/viewer tab; never open the same canonical source twice.",
 		"After each source, judge whether it explains the required concepts. Continue until evidence is sufficient or the strongest reasonable candidates have been exhausted, then produce one final response grounded only in what was found.",
+		finalRound ? LEARNING_FINAL_ROUND_NOTICE : "",
 		assistantText ? `Discarded provisional draft (do not expose it):\n${truncateStructuredText(assistantText, 1800)}` : "",
+	].filter(Boolean).join("\n\n");
+}
+
+// The research rounds are capped. A run that ran out of rounds mid-search
+// shipped its status line ("I’m checking one independent textbook source…")
+// as the student's answer, so the last round says its reply is final, and a
+// status line that still slips through gets one answer-now pass.
+const LEARNING_FINAL_ROUND_NOTICE = "This is the last research round: the reply you write after it is shown to the student as the final answer. Answer the problem from what the sources support and say plainly which parts they do not cover. Never end on a status update such as \"I'm checking another source\".";
+const LEARNING_PROGRESS_UPDATE_MAX_CHARS = 700;
+const LEARNING_PROGRESS_UPDATE_PATTERN = /\b(?:I['’]m|I am|I['’]ll|I will|let me)\s+(?:now\s+|also\s+|still\s+|next\s+)?(?:check|look|search|open|read|try|pull|find|verify|consult|switch|go)(?:ing)?\b/i;
+
+function learningReplyIsProgressUpdate(text: unknown) {
+	const value = String(text || "").trim();
+	if (!value || value.length > LEARNING_PROGRESS_UPDATE_MAX_CHARS) return false;
+	return LEARNING_PROGRESS_UPDATE_PATTERN.test(value.split(/\n\s*\n/).pop() || "");
+}
+
+function buildLearningFinalAnswerPrompt(request: any, assistantText: string) {
+	return [
+		"Research for this problem is over; no further research round will run. Write the final answer to the student now from the evidence already gathered in this turn.",
+		"Do not search, open or read more sources. Keep and cite the marks already made. Where the sources found do not cover part of the problem, say so plainly instead of promising to look further.",
+		`Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || request?.prompt || "")}`,
+		assistantText ? `Discarded status update (do not repeat it):\n${truncateStructuredText(assistantText, 900)}` : "",
 	].filter(Boolean).join("\n\n");
 }
 
@@ -11250,6 +11274,8 @@ export const __browserRuntimeTest = {
 	buildLearningEvidenceAssessmentPromptForTest: buildLearningEvidenceAssessmentPrompt,
 	parseLearningEvidenceAssessmentForTest: parseLearningEvidenceAssessment,
 	buildLearningResearchContinuationPromptForTest: buildLearningResearchContinuationPrompt,
+	learningReplyIsProgressUpdateForTest: learningReplyIsProgressUpdate,
+	buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
 	buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
 	sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
 	workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -14550,7 +14576,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 						return;
 					}
 				}
-				if (!finalError && !activeRequest.aborted && activeRequest.learningResearchPlan?.requiresWorkspaceResearch) {
+				if (!finalError && !activeRequest.aborted && activeRequest.learningResearchPlan?.requiresWorkspaceResearch && !activeRequest.learningFinalAnswerRetry) {
 					await publishState({ status: "Evaluating the supporting material..." });
 					const assessment = await assessLearningResearchEvidence(activeRequest, assistantText);
 					activeRequest.learningEvidenceAssessment = assessment;
@@ -14570,13 +14596,23 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 							};
 							queueBlankReplyRetry(
 								activeAgent,
-								buildLearningResearchContinuationPrompt(activeRequest, continuationAssessment, assistantText),
+								buildLearningResearchContinuationPrompt(activeRequest, continuationAssessment, assistantText, retryCount + 1 >= retryLimit),
 								(retryError) => void finalizeRequest(session, requestId, retryError),
 								activeRequest.abortController?.signal,
 							);
 							return;
 						}
 						if (!activeRequest.aborted && !hasCompletedNonActiveWorkspaceRead(activeRequest)) assistantText = buildLearningWorkspaceEvidenceFallbackReply(activeRequest);
+						else if (activeAgent && !activeRequest.aborted && learningReplyIsProgressUpdate(assistantText)) {
+							activeRequest.learningFinalAnswerRetry = true;
+							resetAssistantDraftText(activeRequest);
+							blankSupersededAssistantDraft(requestId);
+							await publishState({ status: "Writing the answer..." });
+							queueBlankReplyRetry(activeAgent, buildLearningFinalAnswerPrompt(activeRequest, assistantText), (retryError) => {
+								void finalizeRequest(session, requestId, retryError);
+							}, activeRequest.abortController?.signal);
+							return;
+						}
 					}
 				}
 				if (!finalError && !activeRequest.aborted && activeRequest.source !== "live-responses" && !activeRequest.learningResearchPlan?.requiresWorkspaceResearch && shouldRequireLearningWorkspaceEvidence(activeRequest)) {

@@ -11291,6 +11291,26 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.deepEqual(assessment.nextCandidateTabIds, [7]);
 	assert.match(test.buildLearningEvidenceAssessmentPromptForTest(assessmentRequest, "Use dropout."), /semantic evidence quality/i);
 	assert.match(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout."), /Do not emit answer prose until the research tools finish/);
+	// The last research round says its reply is final; a status line that
+	// still ends the turn gets one answer-now pass instead of being shipped.
+	assert.doesNotMatch(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout."), /last research round/);
+	assert.match(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout.", true), /last research round: the reply you write after it is shown to the student as the final answer/);
+	for (const status of [
+		"The linked material still isn’t yielding readable support for all three categories. I’m checking one independent textbook source for the standard definitions.",
+		"Lecture 13 only names the idea. Let me look at the slides for the loss function next.",
+		"I'll now open the second PDF to confirm the training procedure.",
+	]) assert.equal(test.learningReplyIsProgressUpdateForTest(status), true, status);
+	for (const answer of [
+		"",
+		"Use three kinds of regularization: data augmentation (back-translation, random masking), a penalty in the loss (L0 with a Lagrange multiplier), and changes to training such as dropout. Each one limits how closely the network can fit the training set.",
+		`${"Data augmentation adds synthetic examples. ".repeat(18)}I'll check your attempt if you paste it.`,
+	]) assert.equal(test.learningReplyIsProgressUpdateForTest(answer), false, answer.slice(0, 60));
+	const finalAnswerPrompt = test.buildLearningFinalAnswerPromptForTest({ displayPrompt: "Solve problem 2" }, "I’m checking one more source.");
+	assert.match(finalAnswerPrompt, /Write the final answer to the student now/);
+	assert.match(finalAnswerPrompt, /Original user question: Solve problem 2/);
+	const runtimeFinalRoundSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(runtimeFinalRoundSource, /buildLearningResearchContinuationPrompt\(activeRequest, continuationAssessment, assistantText, retryCount \+ 1 >= retryLimit\)/);
+	assert.match(runtimeFinalRoundSource, /else if \(activeAgent && !activeRequest\.aborted && learningReplyIsProgressUpdate\(assistantText\)\) \{\s*activeRequest\.learningFinalAnswerRetry = true;/);
 
 	const corpusRanking = rankPdfCorpusTextPages(
 		[
@@ -11316,6 +11336,33 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		"https://course.test/relevant.pdf",
 		"augment/augmented should outrank a generic data match for an augmentation evidence slot",
 	);
+	// Paraphrased slides share too few of a slot's words for the strict match;
+	// a slot with no strict match takes pages sharing its rarer words, so the
+	// semantic reranker sees them. Words on most pages carry no signal, and a
+	// slot that does match strictly keeps only its strict matches.
+	const paraphraseSources = [
+		{ title: "Text classification slides", url: "https://course.test/text.pdf", pages: [
+			...Array.from({ length: 6 }, (_, index) => ({ pageNumber: index + 1, text: `Text classification slides - page ${index + 1}. The model learns from data.` })),
+			{ pageNumber: 31, text: "Meaning-preserving transformations create additional labeled training examples and reduce reliance on surface wording." },
+		] },
+		{ title: "Pruning slides", url: "https://course.test/pruning.pdf", pages: [{ pageNumber: 28, text: "An L0 penalty controls model complexity through sparsity by favoring fewer nonzero parameters." }] },
+		{ title: "Dropout paper", url: "https://course.test/dropout.pdf", pages: [{ pageNumber: 1, text: "Randomly dropping units during training prevents co-adaptation and improves generalization." }] },
+	];
+	const paraphraseRanking = rankPdfCorpusTextPages(paraphraseSources, [
+		{ id: "loss", description: "loss function regularization term", queries: ["weight decay penalty in the loss function"] },
+		{ id: "training", description: "training procedure regularization", queries: ["dropout regularization technique"] },
+		{ id: "model", description: "", queries: ["the model learns from data"] },
+		{ id: "unrelated", description: "", queries: ["reinforcement reward shaping"] },
+	], 3);
+	const paraphraseSlot = (id) => paraphraseRanking.find((slot) => slot.id === id);
+	assert.deepEqual(paraphraseSlot("loss").matches.map((match) => match.url), ["https://course.test/pruning.pdf"], "the L0 penalty slide is recalled for a loss-penalty slot");
+	assert.deepEqual(
+		paraphraseSlot("training").matches.map((match) => `${match.url}#${match.pageNumber}`),
+		["https://course.test/dropout.pdf#1", "https://course.test/text.pdf#31"],
+		"the dropping-units passage is recalled for a training-procedure slot; title-only pages are not",
+	);
+	assert.ok(paraphraseSlot("model").matches.every((match) => match.url === "https://course.test/text.pdf" && match.pageNumber <= 6), "a slot with strict matches keeps only those");
+	assert.deepEqual(paraphraseSlot("unrelated").matches, [], "no shared words, no candidates");
 
 	const selectionRanked = test.rankOpenTabCandidatesForTest(
 		{ windows: [{ id: 1, focused: true, tabs: [
@@ -11355,6 +11402,12 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.match(backgroundSourceText, /const freshBackgroundSource = args\.freshBackgroundSource === true && sourceTab\?\.active === false;/, "only an unvisited background tab skips the probes");
 	assert.match(backgroundSourceText, /if \(!initialSelectionHandoff && args\.disableSelectionHandoff !== true && !freshBackgroundSource\)/);
 	assert.match(backgroundSourceText, /if \(Date\.now\(\) - startedAt < INLINE_VIEWER_PORT_GRACE_MS\) \{\s*await delay\(100\);\s*continue;/, "the runtime port gets a head start before the frame bridge");
+	// PDF tools on a tab still showing the browser's own PDF viewer mount the
+	// Onhand viewer and retry instead of failing with "searchPdf is not a function".
+	for (const methodName of ["searchPdf", "readPdfPages", "capturePdfPageImage"]) {
+		assert.match(backgroundSourceText, new RegExp(`await runPdfViewerToolkitMethod\\(tab, "${methodName}"`), `${methodName} mounts the viewer on a raw PDF tab`);
+	}
+	assert.match(backgroundSourceText, /if \(!missingViewer \|\| !isLikelyPdfResourceUrl\(tab\.url\)\) throw error;/, "only a PDF tab missing the viewer method gets the viewer mounted");
 	const reusedSourceRequest = {
 		toolTraces: [{
 			state: "complete",

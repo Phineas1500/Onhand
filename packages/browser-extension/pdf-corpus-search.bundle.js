@@ -84819,23 +84819,49 @@ function bestExcerpt(text, queries, maxChars = 900) {
   const start = Math.max(0, bestIndex - Math.floor(maxChars * 0.3));
   return compactText(`${start > 0 ? "\u2026" : ""}${text.slice(start, start + maxChars)}${start + maxChars < text.length ? "\u2026" : ""}`, maxChars + 2);
 }
+function textStemSet(text) {
+  const textTokens = Array.from(new Set(text.toLowerCase().match(/[a-z0-9][a-z0-9'-]{2,}/g) || []));
+  return new Set(textTokens.flatMap((token) => Array.from(tokenStems(token))));
+}
+function relatedWordRecall(pages, queries) {
+  const tokens = Array.from(new Set(queries.flatMap((query) => queryTokens(query))));
+  const weights = /* @__PURE__ */ new Map();
+  for (const token of tokens) {
+    const stems = Array.from(tokenStems(token));
+    const frequency = pages.filter((entry) => stems.some((stem) => entry.stems.has(stem))).length;
+    if (!frequency || pages.length >= 4 && frequency / pages.length > 0.5) continue;
+    weights.set(token, Math.log(1 + pages.length / frequency));
+  }
+  return pages.map((entry) => ({
+    ...entry,
+    score: Array.from(weights).reduce((sum, [token, weight]) => sum + (Array.from(tokenStems(token)).some((stem) => entry.stems.has(stem)) ? weight : 0), 0)
+  })).filter((entry) => entry.score > 0);
+}
 function rankPdfCorpusTextPages(sources, evidenceSlots, maxMatchesPerSlot = 3) {
+  const maxMatches = Math.max(1, Math.min(8, maxMatchesPerSlot));
+  let corpusPages = null;
+  const pageMatch = (source, page, score, queries) => ({
+    title: compactText(source.title || source.url, 240),
+    url: source.url,
+    pageNumber: page.pageNumber,
+    score: Number(score.toFixed(3)),
+    excerpt: bestExcerpt(page.text, queries)
+  });
+  const byScore = (a, b) => b.score - a.score || a.url.localeCompare(b.url) || a.pageNumber - b.pageNumber;
   return evidenceSlots.map((slot) => {
     const queries = Array.from(new Set([
       ...Array.isArray(slot.queries) ? slot.queries : [],
       slot.description || ""
     ].map((query) => compactText(query, 300)).filter(Boolean)));
-    const matches = sources.flatMap((source) => source.pages.map((page) => {
+    let matches = sources.flatMap((source) => source.pages.map((page) => {
       const queryScores = queries.map((query) => scoreTextForQuery(page.text, query)).filter((score2) => score2 > 0).sort((a, b) => b - a);
       const score = (queryScores[0] || 0) + queryScores.slice(1).reduce((sum, value) => sum + value * 0.35, 0);
-      return {
-        title: compactText(source.title || source.url, 240),
-        url: source.url,
-        pageNumber: page.pageNumber,
-        score: Number(score.toFixed(3)),
-        excerpt: bestExcerpt(page.text, queries)
-      };
-    })).filter((match) => match.score > 0).sort((a, b) => b.score - a.score || a.url.localeCompare(b.url) || a.pageNumber - b.pageNumber).slice(0, Math.max(1, Math.min(8, maxMatchesPerSlot)));
+      return pageMatch(source, page, score, queries);
+    })).filter((match) => match.score > 0).sort(byScore).slice(0, maxMatches);
+    if (!matches.length) {
+      corpusPages ||= sources.flatMap((source) => source.pages.map((page) => ({ source, page, stems: textStemSet(page.text) })));
+      matches = relatedWordRecall(corpusPages, queries).map((entry) => pageMatch(entry.source, entry.page, entry.score, queries)).sort(byScore).slice(0, maxMatches);
+    }
     return {
       id: compactText(slot.id, 80),
       description: compactText(slot.description, 300),
