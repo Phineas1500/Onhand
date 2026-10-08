@@ -2879,7 +2879,7 @@ async function assertPdfViewerFrameWaitsHaveTimeoutFallback() {
 	);
 	assert.match(
 		background,
-		/args\.forceReload !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)[\s\S]*probeInlineOnhandPdfViewerStatus\(sourceTab\.id,\s*pdfUrl\)/,
+		/args\.forceReload !== true && args\.newlyOpenedTab !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl\(sourceTab\.url\) && isHttpLikeUrl\(pdfUrl\)[\s\S]*probeInlineOnhandPdfViewerStatus\(sourceTab\.id,\s*pdfUrl\)/,
 		"inline PDF viewer reuse should run even when a later tool call asks for a new tab",
 	);
 	assert.doesNotMatch(
@@ -11431,12 +11431,44 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.match(backgroundSourceText, /const freshBackgroundSource = args\.freshBackgroundSource === true && sourceTab\?\.active === false;/, "only an unvisited background tab skips the probes");
 	assert.match(backgroundSourceText, /if \(!initialSelectionHandoff && args\.disableSelectionHandoff !== true && !freshBackgroundSource\)/);
 	assert.match(backgroundSourceText, /if \(Date\.now\(\) - startedAt < INLINE_VIEWER_PORT_GRACE_MS\) \{\s*await delay\(100\);\s*continue;/, "the runtime port gets a head start before the frame bridge");
+	// A hidden viewer document has no frame to wait for and Chrome clamps its
+	// timers to 1 s, so post-scroll waits yield a message-channel task there
+	// (background-tab highlights took 1.0 s each, now ~0.16 s).
+	const pdfViewerSourceText = await readSourceFile(new URL("../packages/browser-extension/src/pdf-viewer.ts", import.meta.url), "utf8");
+	assert.match(pdfViewerSourceText, /function waitForNextFrame\(timeoutMs = 150\) \{\s*if \(document\.visibilityState === "hidden"\) \{\s*return new Promise<void>\(\(resolve\) => \{\s*const channel = new MessageChannel\(\);/, "hidden viewer documents do not wait on clamped timers");
 	// PDF tools on a tab still showing the browser's own PDF viewer mount the
 	// Onhand viewer and retry instead of failing with "searchPdf is not a function".
 	for (const methodName of ["searchPdf", "readPdfPages", "capturePdfPageImage"]) {
 		assert.match(backgroundSourceText, new RegExp(`await runPdfViewerToolkitMethod\\(tab, "${methodName}"`), `${methodName} mounts the viewer on a raw PDF tab`);
 	}
 	assert.match(backgroundSourceText, /if \(!missingViewer \|\| !isLikelyPdfResourceUrl\(tab\.url\)\) throw error;/, "only a PDF tab missing the viewer method gets the viewer mounted");
+	// A PDF that research opens in a new background tab comes up in the Onhand
+	// viewer as part of the navigation: the model is told to read it by tabId,
+	// and a later hand-off of that tab is answered by the duplicate guard.
+	const viewerNavigation = { tab: { id: 61, title: "pruning.pdf", url: "https://course.test/pruning.pdf" }, navigation: { createdNewTab: true, reusedExistingTab: false, onhandPdfViewer: { opened: true } } };
+	const viewerNavigationText = test.toolResultTextForModelForTest("browser_navigate", { details: viewerNavigation });
+	assert.match(viewerNavigationText, /Opened in the Onhand PDF viewer in the background/);
+	assert.match(viewerNavigationText, /using tabId 61; do not call browser_open_pdf_in_onhand_viewer for it/);
+	assert.doesNotMatch(
+		test.toolResultTextForModelForTest("browser_navigate", { details: { ...viewerNavigation, navigation: { createdNewTab: true, onhandPdfViewer: { opened: false, error: "x" } } } }),
+		/Onhand PDF viewer/,
+		"a failed mount leaves the normal navigation text, so the hand-off can still run",
+	);
+	const viewerNavigationRequest = { toolTraces: [{ state: "complete", toolName: "browser_navigate", resultDetails: viewerNavigation }] };
+	assert.equal(
+		test.buildDuplicateTabNavigationGuardResultForTest("browser_open_pdf_in_onhand_viewer", "open_pdf_in_onhand_viewer", { tabId: 61 }, viewerNavigationRequest)?.guardrail?.kind,
+		"duplicate_pdf_handoff",
+	);
+	assert.equal(test.buildDuplicateTabNavigationGuardResultForTest("browser_open_pdf_in_onhand_viewer", "open_pdf_in_onhand_viewer", { tabId: 62 }, viewerNavigationRequest), null);
+	// A cancelled navigation returns a tab to "complete" without an onUpdated
+	// event, so the load wait polls the tab too (a background PDF opened into
+	// the viewer sat out the 15 s timeout); a tab the navigation just created
+	// skips the existing-viewer probe that set off that navigation.
+	assert.match(backgroundSourceText, /if \(tab\.status === "complete" && !tab\.pendingUrl\) return tab;/);
+	assert.match(backgroundSourceText, /pollId = setInterval\(async \(\) => \{\s*try \{\s*const current = await chrome\.tabs\.get\(tabId\);\s*if \(current\.status !== "complete" \|\| current\.pendingUrl\) return;/, "the load wait polls the tab's status");
+	assert.match(backgroundSourceText, /args\.newlyOpenedTab !== true && !sourceIsGoogleDocs/, "a just-created tab skips the existing-viewer probe");
+	assert.match(backgroundSourceText, /freshBackgroundSource: true, newlyOpenedTab: true \}\)/);
+	assert.match(backgroundSourceText, /if \(blocked \|\| navigation\?\.createdNewTab !== true \|\| !tab\?\.id \|\| tab\.active !== false \|\| tab\.status !== "complete" \|\| !isLikelyPdfResourceUrl\(tab\.url\)\) return null;/, "only a new, loaded, background PDF tab gets the viewer");
 	const reusedSourceRequest = {
 		toolTraces: [{
 			state: "complete",

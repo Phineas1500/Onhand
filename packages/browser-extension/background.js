@@ -10941,12 +10941,20 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 	}
 }
 
+// A navigation that is cancelled rather than finished (a same-URL navigation
+// a PDF tab can pick up just after loading) returns the tab to "complete"
+// without an onUpdated "complete" event, so waiting on the event alone sat out
+// the whole timeout: 15 s for a background PDF opened straight into the
+// Onhand viewer. The tab's status is polled as well.
+const TAB_COMPLETE_POLL_MS = 200;
+
 async function waitForTabComplete(tabId, timeoutMs = 15000) {
 	const tab = await chrome.tabs.get(tabId);
-	if (tab.status === "complete") return tab;
+	if (tab.status === "complete" && !tab.pendingUrl) return tab;
 
 	return await new Promise((resolve, reject) => {
 		let timeoutId;
+		let pollId;
 		const onUpdated = async (updatedTabId, changeInfo, updatedTab) => {
 			if (updatedTabId !== tabId) return;
 			if (changeInfo.status !== "complete") return;
@@ -10957,9 +10965,21 @@ async function waitForTabComplete(tabId, timeoutMs = 15000) {
 		const cleanup = () => {
 			chrome.tabs.onUpdated.removeListener(onUpdated);
 			if (timeoutId) clearTimeout(timeoutId);
+			if (pollId) clearInterval(pollId);
 		};
 
 		chrome.tabs.onUpdated.addListener(onUpdated);
+		pollId = setInterval(async () => {
+			try {
+				const current = await chrome.tabs.get(tabId);
+				if (current.status !== "complete" || current.pendingUrl) return;
+				cleanup();
+				resolve(current);
+			} catch (error) {
+				cleanup();
+				reject(error);
+			}
+		}, TAB_COMPLETE_POLL_MS);
 		timeoutId = setTimeout(async () => {
 			cleanup();
 			try {
@@ -11215,6 +11235,25 @@ async function probeTabScriptable(tabId, timeoutMs = 5000) {
 	}
 }
 
+// A PDF that research opens in a new background tab is read and marked in the
+// Onhand viewer next. Agents spent a model step per batch of sources handing
+// each tab to the viewer (and the trajectory eval counted every such PDF as
+// opened twice), so the navigation mounts the viewer itself. Reused tabs,
+// visible tabs and non-PDF pages are left alone; if mounting fails the
+// navigation still stands and browser_open_pdf_in_onhand_viewer can retry.
+async function mountOnhandPdfViewerForBackgroundPdf(navigation, blocked) {
+	const tab = navigation?.tab;
+	if (blocked || navigation?.createdNewTab !== true || !tab?.id || tab.active !== false || tab.status !== "complete" || !isLikelyPdfResourceUrl(tab.url)) return null;
+	try {
+		const opened = await openPdfInOnhandViewer({ tabId: tab.id, active: false, newTab: false, disableSelectionHandoff: true, freshBackgroundSource: true, newlyOpenedTab: true });
+		if (opened?.viewerReady?.ok === false) return { opened: false, error: String(opened.viewerReady.error || "The PDF did not finish loading.").slice(0, 300) };
+		return { opened: true };
+	} catch (error) {
+		log("Mounting the Onhand PDF viewer after a background navigation failed", tab.url, error?.message || String(error));
+		return { opened: false, error: String(error?.message || error).slice(0, 300) };
+	}
+}
+
 async function navigateBrowser(args = {}) {
 	if (typeof args.url !== "string" || !args.url.trim()) {
 		throw new Error("navigate requires a non-empty 'url'");
@@ -11435,7 +11474,12 @@ async function openPdfInOnhandViewer(args = {}) {
 	// user away from where they were reading on every prompt. This also
 	// applies when a later tool call asks for a new tab after an automatic
 	// preflight already mounted the inline viewer on the current PDF tab.
-	if (args.forceReload !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
+	//
+	// A tab the navigation command created a moment ago holds no viewer, and
+	// probing a PDF tab that finished loading under half a second earlier put
+	// it back into a load that did not report complete for 15 s, so the mount
+	// after a background navigation waited out the tab-load timeout.
+	if (args.forceReload !== true && args.newlyOpenedTab !== true && !sourceIsGoogleDocs && !isOnhandPdfViewerLikeUrl(sourceTab.url) && isHttpLikeUrl(pdfUrl)) {
 		const existingStatus = await probeInlineOnhandPdfViewerStatus(sourceTab.id, pdfUrl);
 		if (existingStatus) {
 			const existingPageNumber = normalizePdfPageNumber(
@@ -13975,11 +14019,13 @@ async function handleCommandInner(name, args = {}) {
 				const navigation = await navigateBrowser(args);
 				const probeError = await probeTabScriptable(navigation.tab?.id);
 				const blocked = classifyBlockedNavigation(navigation.tab, probeError);
+				const onhandPdfViewer = await mountOnhandPdfViewerForBackgroundPdf(navigation, blocked);
 				return {
 					tab: simplifyTab(navigation.tab),
 					navigation: {
 						createdNewTab: navigation.createdNewTab,
 						reusedExistingTab: navigation.reusedExistingTab,
+						...(onhandPdfViewer ? { onhandPdfViewer } : {}),
 					},
 					...(blocked ? { blocked } : {}),
 				};

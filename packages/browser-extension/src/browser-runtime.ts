@@ -732,7 +732,7 @@ Learning uses a tutoring stance:
 - Nudge before correcting. If the user is wrong or stuck, point to the relevant text and give a hint before stating the correction.
 - Cross-tab retrieval works the same here as in every mode: automatic for clearly related tabs, no special wording required. The captured workspace summary is relevance-ranked from metadata for every eligible tab across open browser windows; the current window is a ranking signal, but tab position is never one. Use browser_list_tabs when the compact summary omits tabs, when the current page is insufficient, or when a course/index/master page may lead to better notes.
 - Read likely candidates by explicit tabId without stealing focus. Start with the strongest one to three candidates, then expand only if the evidence is still insufficient.
-- If an index/master page links to the relevant notes or reading, follow that link in a background tab when possible (browser_navigate with newTab true and active false), inspect the destination by tabId, and anchor the useful passage there. If the destination is a PDF, call browser_open_pdf_in_onhand_viewer with that tabId and active false. Do not activate or switch tabs merely to read, search, highlight, note, or hand off a source PDF. Change focus only when the learner explicitly asks to go there; citation/source controls provide the normal jump path.
+- If an index/master page links to the relevant notes or reading, follow that link in a background tab when possible (browser_navigate with newTab true and active false), inspect the destination by tabId, and anchor the useful passage there. A PDF opened that way comes up in the Onhand viewer (the navigation result says so); read, search and mark it by tabId. Call browser_open_pdf_in_onhand_viewer with that tabId and active false only when the result does not say the viewer opened. Do not activate or switch tabs merely to read, search, highlight, note, or hand off a source PDF. Change focus only when the learner explicitly asks to go there; citation/source controls provide the normal jump path.
 - Record a related tab as a learning source only after you actually inspect or highlight it, and name which source supports each cross-tab claim.
 - Homework/problem priority: if the page or prompt looks like an exercise, problem set, assignment, quiz, exam, or the user asks for a "final answer" to a problem, do not give the final numeric, symbolic, or code answer in Learning mode, even if the user asks directly. When you withhold for this reason, say so briefly — name what made the request look like graded work — and make the escape clear: switching Learning mode off gives the direct answer. If the user has clearly identified the material as their own non-graded example, answer it directly.
 - For homework/problem prompts, highlight the problem and the relevant rule or setup, add a short note if helpful, then ask for the next step the learner should do. For example, ask them to identify inside/outside functions, compute the inner derivative, choose the rule, or write the next line. Do not reveal the final answer until the user switches to answer mode or presents their own completed work and asks for feedback.
@@ -3949,7 +3949,7 @@ function buildLearningWorkspaceEvidenceRetryPrompt(request: any, assistantText: 
 		alreadyListed
 			? "You already listed the workspace. Now inspect at least one plausible non-active source with browser_get_visible_text, browser_extract_content, browser_pdf_search/browser_pdf_read_pages, or browser_textbook_search using that source's tabId."
 			: "Before finalizing, call browser_list_tabs for the complete workspace inventory, then inspect at least one plausible non-active source with an explicit tabId.",
-		"Start with the strongest course, lecture, notes, textbook, or worked-example candidates. If a course/index tab links many PDFs, use browser_search_linked_pdf_corpus to search the whole linked collection for the answer's evidence slots; do not crawl the list in DOM, date, chapter, or lecture-number order. Then open, read, and annotate only the strongest returned PDF sources. For a small non-PDF link list, browser_find_elements plus browser_navigate with newTab true and active false remains appropriate. If a returned source is a PDF, call browser_open_pdf_in_onhand_viewer with that tabId and active false. Do not activate a source merely to inspect or hand it off.",
+		"Start with the strongest course, lecture, notes, textbook, or worked-example candidates. If a course/index tab links many PDFs, use browser_search_linked_pdf_corpus to search the whole linked collection for the answer's evidence slots; do not crawl the list in DOM, date, chapter, or lecture-number order. Then open, read, and annotate only the strongest returned PDF sources. Open each with browser_navigate (newTab true, active false); a PDF opens straight in the Onhand viewer, so read and mark it by tabId. Call browser_open_pdf_in_onhand_viewer with that tabId and active false only when the navigation result does not say the viewer opened. For a small non-PDF link list, browser_find_elements plus browser_navigate with newTab true and active false remains appropriate. Do not activate a source merely to inspect or hand it off.",
 		"If a source supports the solution, highlight the exact explanatory passage and add one short note on that source page. Do not use the problem statement as the only citation for techniques or rules that it does not explain.",
 		"If no inspected open source supports the solution, say that clearly and do not present the earlier draft's unsupported claims as though they came from the student's materials.",
 		`Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
@@ -9601,6 +9601,10 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 			case "browser_navigate": {
 				const blocked = (details as any)?.blocked;
 				if (blocked?.detail) return `Navigated to: ${formatCompactTab(tab)}\nDestination blocked: ${blocked.detail}`;
+				const pdfViewer = (details as any)?.navigation?.onhandPdfViewer;
+				if (pdfViewer?.opened === true && tab?.id) {
+					return `Navigated to: ${formatCompactTab(tab)}\nOpened in the Onhand PDF viewer in the background. Read, search and mark it with browser_pdf_read_pages, browser_pdf_search and browser_highlight_text using tabId ${tab.id}; do not call browser_open_pdf_in_onhand_viewer for it.`;
+				}
 				return `Navigated to: ${formatCompactTab(tab)}`;
 			}
 			case "browser_open_pdf_in_onhand_viewer": {
@@ -10125,6 +10129,10 @@ function buildDuplicateTabNavigationGuardResult(toolName: string, commandName: s
 			};
 		}
 		const alreadyAttempted = (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some((trace: any) => {
+			// A background navigation to a PDF mounts the viewer itself.
+			if (trace?.toolName === "browser_navigate" && trace?.state === "complete") {
+				return requestedTabId > 0 && trace?.resultDetails?.navigation?.onhandPdfViewer?.opened === true && traceTargetTabId(trace) === requestedTabId;
+			}
 			if (trace?.toolName !== "browser_open_pdf_in_onhand_viewer" || !["complete", "error"].includes(trace?.state)) return false;
 			const traceParams = trace?.effectiveArgs || trace?.args || {};
 			const traceTabId = Number(traceParams?.tabId || 0);
@@ -11313,6 +11321,7 @@ export const __browserRuntimeTest = {
 	buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
 	internalJsonFastModelSettingsForTest: internalJsonFastModelSettings,
 	learningResearchSourcesReadForTest: learningResearchSourcesRead,
+	toolResultTextForModelForTest: toolResultTextForModel,
 	buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
 	sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
 	workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -12513,7 +12522,7 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				tabId: tab?.id || null,
 				windowId: tab?.windowId || null,
 				...pageActionTabFields(tab),
-				label: "Opened page",
+				label: details?.navigation?.onhandPdfViewer?.opened === true ? "Opened PDF viewer" : "Opened page",
 				detail,
 			};
 		}

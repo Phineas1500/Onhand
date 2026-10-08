@@ -244,8 +244,16 @@ async function assertPdfScrollRestoresInsideViewerWithPausedFrames() {
 		this.scrollX = Math.min(80, left); this.scrollY = Math.min(2400, top);
 	} };
 	const viewer = loadFunctions(["waitForNextFrame", "pdfRestoreScrollPosition", "runPdfToolkitMethod"], {
-		window, requestAnimationFrame: () => 1, setTimeout, updatePageFromScroll: () => { refreshed = true; },
+		window, document: { visibilityState: "visible" }, requestAnimationFrame: () => 1, setTimeout, updatePageFromScroll: () => { refreshed = true; },
 	});
+	// A hidden viewer (background tab) has no frame to wait for and Chrome
+	// clamps its timers to 1 s; it yields a message-channel task instead.
+	const hiddenViewer = loadFunctions(["waitForNextFrame"], {
+		document: { visibilityState: "hidden" }, MessageChannel,
+		requestAnimationFrame: () => assert.fail("a hidden viewer must not wait for a frame"),
+		setTimeout: () => assert.fail("a hidden viewer must not wait on a clamped timer"),
+	});
+	await hiddenViewer.waitForNextFrame();
 	const result = await viewer.runPdfToolkitMethod("restoreScrollPosition", [{ scrollX: 25, scrollY: 1200 }]);
 	assert.deepEqual(result, { surface: "pdf", viewer: "onhand-pdf-viewer", scrollX: 25, scrollY: 1200 });
 	assert.equal(refreshed, true, "restoring scroll updates the viewer page indicator");

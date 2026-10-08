@@ -100,7 +100,23 @@ function inlinePdfViewerBridgeStorageKey(pdfUrl: string) {
 // occluded, which left annotation commands hanging until the surface became
 // visible again (and their stale completions then clobbered newer state).
 // Race a short timeout so layout-settling waits always resolve.
+//
+// A hidden document paints no frame to wait for, and Chrome clamps its timers
+// to a 1 s wake-up, so that timeout cost every highlight, note and jump in a
+// background viewer tab a full second (1.0 s vs 0.17 s in the foreground;
+// Learning research marks its sources in background tabs). Hidden documents
+// yield one message-channel task instead, which timer throttling skips.
 function waitForNextFrame(timeoutMs = 150) {
+	if (document.visibilityState === "hidden") {
+		return new Promise<void>((resolve) => {
+			const channel = new MessageChannel();
+			channel.port1.onmessage = () => {
+				channel.port1.close();
+				resolve();
+			};
+			channel.port2.postMessage(null);
+		});
+	}
 	return new Promise<void>((resolve) => {
 		let settled = false;
 		const finish = () => {

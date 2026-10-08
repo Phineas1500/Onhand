@@ -25125,6 +25125,16 @@ function inlinePdfViewerBridgeStorageKey(pdfUrl) {
   return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
 }
 function waitForNextFrame(timeoutMs = 150) {
+  if (document.visibilityState === "hidden") {
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
+  }
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
