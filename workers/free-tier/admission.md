@@ -85,7 +85,7 @@ The initial production rollout completed on September 8, 2026 UTC; see the
 
 Before later deployments, read the live bindings and variables and preserve any
 intentional overrides. At this rollout, production's `DAILY_REQUEST_CAP` was 250,
-while the repository default remains 80. [`wrangler deploy --keep-vars`](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy) preserves
+while the repository default was 80 (150 since 2026-10-08). [`wrangler deploy --keep-vars`](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy) preserves
 variables absent from the configuration, but does not protect an existing value
 from a value explicitly supplied in the deployment configuration. Use a deployment
 configuration that retains the intended live limits, then verify them after

@@ -19,7 +19,7 @@ const DEFAULT_CONCURRENT_REQUEST_CAP = 4;
 const DEFAULT_DEVICE_CONCURRENT_REQUEST_CAP = 2;
 // Shorter than the durable five-minute admission lease, including stream time.
 const UPSTREAM_REQUEST_TIMEOUT_MS = 4 * 60_000;
-const DEFAULT_DAILY_REQUEST_CAP = 80;
+const DEFAULT_DAILY_REQUEST_CAP = 150;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 // Warning threshold remains independently configurable from model pricing.

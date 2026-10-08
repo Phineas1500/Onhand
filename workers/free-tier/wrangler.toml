@@ -22,8 +22,13 @@ binding = "ONHAND_ANALYTICS"
 dataset = "onhand_events"
 
 [vars]
-# A turn is roughly 3-6 model calls; 80 requests is ~15-25 turns/day.
-DAILY_REQUEST_CAP = "80"
+# An ordinary question is 2-4 model calls (5-11 for heavy ones); a Learning
+# research turn is ~7-11, or 22-25 with an extra research round. 150 allows
+# ~40-75 ordinary questions or ~14-20 Learning turns a day; at ~$0.0004 a
+# call a device that uses it all costs ~$0.06/day, and DAILY_COST_CAP_USD
+# still bounds the total. Raised from 80 on 2026-10-08, when Learning turns
+# on the 0.4.6 extension (27-68 calls) hit 80 after 1-3 questions.
+DAILY_REQUEST_CAP = "150"
 # Shared daily hosted-model spend cap. Set higher/lower in production as needed.
 DAILY_COST_CAP_USD = "5"
 # Reserved before dispatch, reconciled against provider cost. This is an

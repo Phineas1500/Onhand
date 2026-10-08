@@ -27,7 +27,8 @@ key's OpenAI project and draws from its applicable API credits.
 
 - client-visible model allowlist: `gpt-6-luna`, plus `openai/gpt-5.6-luna`
   as a compatibility alias for published extensions; both route to GPT-6 Luna
-- `DAILY_REQUEST_CAP` (default 80 model calls ≈ 15-25 turns/day)
+- `DAILY_REQUEST_CAP` (default 150 model calls ≈ 40-75 ordinary questions or
+  ~14-20 Learning research turns/day; raised from 80 on 2026-10-08)
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
 - `REQUEST_COST_RESERVATION_USD` (default `$0.25` estimated hold before dispatch)
 - `CONCURRENT_REQUEST_CAP` (default 4 active requests per UTC day)
@@ -45,7 +46,7 @@ key's OpenAI project and draws from its applicable API credits.
   predicate/choice/score questions for `gpt-6-luna` only, body capped at 64KB.
   It has its own per-device cap, `DAILY_DECISIONS_CAP` (default 400/day),
   instead of `DAILY_REQUEST_CAP`, so the classifier no longer spends one of a
-  device's 80 model calls per turn; it stops at `DAILY_COST_CAP_USD` and records
+  device's daily model calls per turn; it stops at `DAILY_COST_CAP_USD` and records
   its actual cost there. Warm calls took 180-250 ms end to end on 2026-10-07.
 
 The values in this repo are defaults. The deployed worker may run
