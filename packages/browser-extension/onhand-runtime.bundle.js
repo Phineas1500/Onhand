@@ -90965,7 +90965,7 @@ function setModelIntentClassificationForPrompt(prompt, classification) {
 }
 function clearModelIntentClassifications() {
   modelIntentClassificationsByKey.clear();
-  decisionsForbidsPageMarksKeys.clear();
+  decisionsPageMarksByKey.clear();
 }
 var MODEL_INTENT_FIELD_DEFINITIONS = [
   ["pageScoped", `The ask is about the content of the page/document/material the user has open. Sidebar asks usually are, even when the page is not named ("give me a roadmap of the twelve factors" while reading that page). A question about the open page's own subject is page-scoped even when general knowledge could also answer it ("list the ten amendments" while the Bill of Rights page is open). General-knowledge questions unrelated to the open page and personal-plan asks ("career roadmap for becoming a data scientist") are not.`],
@@ -91042,19 +91042,44 @@ var DECISIONS_INTENT_WORDING = {
   comparison: "True when the answer itself must weigh or contrast two or more alternatives: compare X and Y, X versus Y, X instead of Y, the differences between them, pros and cons, or which of several options to choose or use for a purpose. False when the user asks which of two events came first or other ordering and timing facts, and false for summarizing a debate or disagreement that exists in the material (that is teaching).",
   problemSolvingHelp: `The user is asking for help solving, working through, or answering a concrete problem, exercise, or homework-style question that is visible in the current page or an attached image, including checking whether the user's own answer to it is right. In a browser sidebar, deictic requests such as "could you help me solve this?" and "help me with this question" are true even when they do not repeat the problem title. False for general conceptual explanations, software troubleshooting, document review, invented plans, and metaphorical uses of "solve".`
 };
-var DECISIONS_FORBIDS_PAGE_MARKS_AT = 0.7;
-var DECISIONS_FORBIDS_PAGE_MARKS_WORDING = `True only when the user explicitly asks Onhand not to mark the open page: no highlights, notes, or annotations, or the answer in chat only (for example "without highlighting", "no marks", "chat only", "keep the page clean", in any language). An ordinary question that says nothing about marking the page is false, even though it could be answered in chat. Also false when the user wants marks, limits which marks to make (only some passages, or highlights without notes), asks to remove existing marks, or mentions such phrases as content of the page, and when "without" or "don't" refers to something other than marking the page.`;
-var decisionsForbidsPageMarksKeys = /* @__PURE__ */ new Set();
-function setDecisionsForbidsPageMarksForPrompt(prompt) {
-  for (const key of modelIntentClassificationKeys(prompt)) decisionsForbidsPageMarksKeys.add(key);
-  while (decisionsForbidsPageMarksKeys.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
-    const oldestKey = decisionsForbidsPageMarksKeys.values().next().value;
+var DECISIONS_PAGE_MARKS_YES = 0.7;
+var DECISIONS_PAGE_MARKS_NO = 0.15;
+var DECISIONS_PAGE_MARKS_WORDING = {
+  forbidsPageMarks: `True only when the user explicitly asks Onhand not to mark the open page: no highlights, notes, or annotations, or the answer in chat only (for example "without highlighting", "no marks", "chat only", "keep the page clean", in any language). An ordinary question that says nothing about marking the page is false, even though it could be answered in chat. Also false when the user wants marks, limits which marks to make (only some passages, or highlights without notes), asks to remove existing marks, or mentions such phrases as content of the page or asks what they mean, and when "without" or "don't" refers to something other than marking the page.`,
+  forbidsHighlights: `True only when the user explicitly asks Onhand not to highlight anything on the open page at all (for example "no highlights", "don't highlight", "without highlighting", or a request to leave the page unmarked), in any language. False when the user wants highlights or limits which passages to highlight (only some passages, not a particular part, or fewer of them), asks to remove existing highlights, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about highlighting.`,
+  forbidsNotes: 'True only when the user explicitly asks Onhand not to add any notes to the open page (for example "no notes", "skip the notes", "just highlight, no margin notes", or a request to leave the page unmarked), in any language. False when the user wants notes or limits which notes to add, asks to remove existing notes, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about notes.'
+};
+var decisionsPageMarksByKey = /* @__PURE__ */ new Map();
+function setDecisionsPageMarksForPrompt(prompt, pageMarks) {
+  for (const key of modelIntentClassificationKeys(prompt)) {
+    decisionsPageMarksByKey.delete(key);
+    decisionsPageMarksByKey.set(key, pageMarks);
+  }
+  while (decisionsPageMarksByKey.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
+    const oldestKey = decisionsPageMarksByKey.keys().next().value;
     if (oldestKey === void 0) break;
-    decisionsForbidsPageMarksKeys.delete(oldestKey);
+    decisionsPageMarksByKey.delete(oldestKey);
   }
 }
-function decisionsForbidsPageMarks(prompt) {
-  return decisionsForbidsPageMarksKeys.size > 0 && modelIntentClassificationKeys(prompt).some((key) => decisionsForbidsPageMarksKeys.has(key));
+function decisionsPageMarksForPrompt(prompt) {
+  if (!decisionsPageMarksByKey.size) return null;
+  for (const key of modelIntentClassificationKeys(prompt)) {
+    const pageMarks = decisionsPageMarksByKey.get(key);
+    if (pageMarks) return pageMarks;
+  }
+  return null;
+}
+function applyDecisionsPageMarks(regex, decided) {
+  if (!decided) return regex;
+  const verdict = (probability, regexValue) => probability === void 0 ? regexValue : probability >= DECISIONS_PAGE_MARKS_YES ? true : probability < DECISIONS_PAGE_MARKS_NO ? false : regexValue;
+  const neitherForbidden = (decided.forbidsHighlights ?? 1) < DECISIONS_PAGE_MARKS_NO && (decided.forbidsNotes ?? 1) < DECISIONS_PAGE_MARKS_NO;
+  const borderline = decided.forbidsPageMarks !== void 0 && decided.forbidsPageMarks >= DECISIONS_PAGE_MARKS_NO && decided.forbidsPageMarks < DECISIONS_PAGE_MARKS_YES;
+  const forbidsAllPageChanges = borderline && neitherForbidden ? false : verdict(decided.forbidsPageMarks, regex.forbidsAllPageChanges);
+  return {
+    forbidsAllPageChanges,
+    forbidsHighlights: forbidsAllPageChanges || verdict(decided.forbidsHighlights, regex.forbidsHighlights),
+    forbidsNotes: forbidsAllPageChanges || verdict(decided.forbidsNotes, regex.forbidsNotes)
+  };
 }
 function buildDecisionsIntentRequest(prompt, page = null) {
   const context = buildModelIntentClassifierContext(prompt, page);
@@ -91066,7 +91091,7 @@ function buildDecisionsIntentRequest(prompt, page = null) {
     ].join("\n\n"),
     questions: [
       ...MODEL_INTENT_FIELD_DEFINITIONS.map(([name, definition]) => [name, DECISIONS_INTENT_WORDING[name] || definition]),
-      ["forbidsPageMarks", DECISIONS_FORBIDS_PAGE_MARKS_WORDING]
+      ...Object.entries(DECISIONS_PAGE_MARKS_WORDING)
     ].map(([name, wording]) => ({
       type: "predicate",
       name,
@@ -91075,13 +91100,15 @@ function buildDecisionsIntentRequest(prompt, page = null) {
   };
 }
 function readDecisionsIntentAnswers(body) {
+  const pageMarkNames = Object.keys(DECISIONS_PAGE_MARKS_WORDING);
   const probabilities2 = {};
   for (const answer of Array.isArray(body?.answers) ? body.answers : []) {
-    const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), "forbidsPageMarks"].find((name) => name === answer?.name);
+    const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), ...pageMarkNames].find((name) => name === answer?.name);
     const probability = Number(answer?.probability);
     if (field && answer?.type === "predicate" && Number.isFinite(probability)) probabilities2[field] = probability;
   }
-  const forbidsPageMarks = (probabilities2.forbidsPageMarks ?? 0) >= DECISIONS_FORBIDS_PAGE_MARKS_AT;
+  const pageMarks = {};
+  for (const name of pageMarkNames) if (probabilities2[name] !== void 0) pageMarks[name] = probabilities2[name];
   const classification = {};
   const unsureFields = [];
   for (const [field] of MODEL_INTENT_FIELD_DEFINITIONS) {
@@ -91096,7 +91123,7 @@ function readDecisionsIntentAnswers(body) {
     const teachingIndex = unsureFields.indexOf("teaching");
     if (teachingIndex >= 0) unsureFields.splice(teachingIndex, 1);
   }
-  return { probabilities: probabilities2, unsureFields, forbidsPageMarks, classification: unsureFields.length ? null : classification };
+  return { probabilities: probabilities2, unsureFields, pageMarks: Object.keys(pageMarks).length ? pageMarks : null, classification: unsureFields.length ? null : classification };
 }
 async function postDecisions(apiKey, body, timeoutMs, signal, fetcher = decisionsFetchForTest || fetch) {
   const timeout = AbortSignal.timeout(timeoutMs);
@@ -92039,13 +92066,13 @@ function promptCouldReferToHighlightedPdfText(prompt) {
 function promptPageChangePolicy(prompt) {
   const text = String(prompt || "").toLowerCase();
   const negativeDirective = /\b(?:do not|don't|dont|no|without|avoid|skip)\b[^.?!\n]{0,80}/;
-  const forbidsAllPageChanges = decisionsForbidsPageMarks(prompt) || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) || /\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) || // "without highlighting or changing anything on the page"
+  const forbidsAllPageChanges = /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) || /\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) || // "without highlighting or changing anything on the page"
   /\b(?:do not|don't|dont|without|avoid)\b[^.?!\n]{0,40}?\b(?:chang(?:e|ing)|modify(?:ing)?|edit(?:ing)?|touch(?:ing)?)\s+(?:anything\s+)?(?:on\s+|in\s+)?(?:the|this)\s+page\b/.test(text) || /\bleave\s+(?:the|this)\s+page\s+(?:alone|untouched|as\s+is|unchanged|unmarked)\b/.test(text) || /\b(?:answer only|text only|chat only)\b/.test(text);
   const forbidsHighlights = forbidsAllPageChanges || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\s+up)?)\b/.test(
     text
   ) || new RegExp(`${negativeDirective.source}\\b(?:highlights?|highlighting|annotations?|annotat(?:e|ing|ions?)|mark(?:ing)?(?:\\s+up)?)\\b`).test(text);
   const forbidsNotes = forbidsAllPageChanges || /\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:notes?)\b/.test(text) || new RegExp(`${negativeDirective.source}\\bnotes?\\b`).test(text);
-  return { forbidsAllPageChanges, forbidsHighlights, forbidsNotes };
+  return applyDecisionsPageMarks({ forbidsAllPageChanges, forbidsHighlights, forbidsNotes }, decisionsPageMarksForPrompt(prompt));
 }
 function promptExplicitlyRequestsNote(prompt) {
   const text = String(prompt || "").toLowerCase();
@@ -94327,8 +94354,12 @@ var __browserRuntimeTest = {
   readDecisionsIntentAnswersForTest: readDecisionsIntentAnswers,
   classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
   decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
-  decisionsIntentCutoffsForTest: { ...DECISIONS_INTENT_CUTOFFS, forbidsPageMarks: { trueAt: DECISIONS_FORBIDS_PAGE_MARKS_AT, falseBelow: DECISIONS_FORBIDS_PAGE_MARKS_AT } },
-  setDecisionsForbidsPageMarksForPromptForTest: setDecisionsForbidsPageMarksForPrompt,
+  decisionsIntentCutoffsForTest: {
+    ...DECISIONS_INTENT_CUTOFFS,
+    ...Object.fromEntries(Object.keys(DECISIONS_PAGE_MARKS_WORDING).map((name) => [name, { trueAt: DECISIONS_PAGE_MARKS_YES, falseBelow: DECISIONS_PAGE_MARKS_NO }]))
+  },
+  setDecisionsPageMarksForPromptForTest: setDecisionsPageMarksForPrompt,
+  promptPageChangePolicyForTest: promptPageChangePolicy,
   buildVoiceCommandRequestForTest: buildVoiceCommandRequest,
   readVoiceCommandChoiceForTest: readVoiceCommandChoice,
   setDecisionsFetchForTest(fetcher) {
@@ -99869,10 +99900,10 @@ function createOnhandBrowserRuntime(host) {
               clearTimeout(hedge);
               preparationTiming.decisionsMs = Date.now() - decisionsStartedAt;
               requestContext.abortController.signal.throwIfAborted();
-              if (first.decided?.forbidsPageMarks && activeRequest === requestContext) {
-                setDecisionsForbidsPageMarksForPrompt(displayPrompt);
-                if (prompt !== displayPrompt) setDecisionsForbidsPageMarksForPrompt(prompt);
-                preparationTiming.decisionsForbidsPageMarks = true;
+              if (first.decided?.pageMarks && activeRequest === requestContext) {
+                setDecisionsPageMarksForPrompt(displayPrompt, first.decided.pageMarks);
+                if (prompt !== displayPrompt) setDecisionsPageMarksForPrompt(prompt, first.decided.pageMarks);
+                preparationTiming.decisionsPageMarks = Object.fromEntries(Object.entries(first.decided.pageMarks).map(([name, value]) => [name, Math.round(Number(value) * 100) / 100]));
               }
               if (first.model) {
                 decisionsAbort.abort();

@@ -180,8 +180,9 @@ interface PreparationTiming {
 	decisionsFallback?: string;
 	// Decisions was slow, so the model classifier started alongside it.
 	modelClassifierHedged?: boolean;
-	// Decisions judged that the user asked for the page to be left unmarked.
-	decisionsForbidsPageMarks?: boolean;
+	// Decisions' answers on leaving the page unmarked, and on no highlights or
+	// no notes (probabilities; see applyDecisionsPageMarks).
+	decisionsPageMarks?: Record<string, number>;
 	// Learning-mode research (problem help with linked sources): the planner
 	// model call, the corpus search, the passage reranker model call, and the
 	// after-answer evidence checks (total time and count).
@@ -6792,7 +6793,7 @@ function setModelIntentClassificationForPrompt(prompt: unknown, classification: 
 
 function clearModelIntentClassifications() {
 	modelIntentClassificationsByKey.clear();
-	decisionsForbidsPageMarksKeys.clear();
+	decisionsPageMarksByKey.clear();
 }
 
 // What each intent field means. The model classifier's prompt and the
@@ -6897,27 +6898,65 @@ const DECISIONS_INTENT_WORDING: Partial<Record<keyof ModelIntentClassification, 
 };
 
 // Asked with the intent fields: whether the user wants the page left
-// unmarked. The English patterns in promptPageChangePolicy caught 1 of 8 such
-// requests in a probe ("leave my page untouched", "keep the article clean" and
-// every other language slipped through). A confident yes adds the block; a no
-// never lifts a pattern match. Tuned on evals/intent-classifier: requests
-// scored 0.98-1.00, everything else 0.46 or less.
-const DECISIONS_FORBIDS_PAGE_MARKS_AT = 0.7;
-const DECISIONS_FORBIDS_PAGE_MARKS_WORDING =
-	"True only when the user explicitly asks Onhand not to mark the open page: no highlights, notes, or annotations, or the answer in chat only (for example \"without highlighting\", \"no marks\", \"chat only\", \"keep the page clean\", in any language). An ordinary question that says nothing about marking the page is false, even though it could be answered in chat. Also false when the user wants marks, limits which marks to make (only some passages, or highlights without notes), asks to remove existing marks, or mentions such phrases as content of the page, and when \"without\" or \"don't\" refers to something other than marking the page.";
-const decisionsForbidsPageMarksKeys = new Set<string>();
+// unmarked, wants no highlights, or wants no notes. promptPageChangePolicy's
+// English patterns both missed requests (1 of 8 "leave the page alone" in a
+// probe, every non-English one) and over-blocked ("Don't highlight the whole
+// paragraph, just the key sentence" stopped all highlighting). A confident yes
+// blocks, a confident no lifts the pattern's block, and anything between
+// leaves the pattern in charge. Tuned on evals/intent-classifier: 675/675
+// flags, against 625 for the patterns alone; 22/24 on held-out requests (16).
+const DECISIONS_PAGE_MARKS_YES = 0.7;
+const DECISIONS_PAGE_MARKS_NO = 0.15;
+const DECISIONS_PAGE_MARKS_WORDING = {
+	forbidsPageMarks:
+		"True only when the user explicitly asks Onhand not to mark the open page: no highlights, notes, or annotations, or the answer in chat only (for example \"without highlighting\", \"no marks\", \"chat only\", \"keep the page clean\", in any language). An ordinary question that says nothing about marking the page is false, even though it could be answered in chat. Also false when the user wants marks, limits which marks to make (only some passages, or highlights without notes), asks to remove existing marks, or mentions such phrases as content of the page or asks what they mean, and when \"without\" or \"don't\" refers to something other than marking the page.",
+	forbidsHighlights:
+		"True only when the user explicitly asks Onhand not to highlight anything on the open page at all (for example \"no highlights\", \"don't highlight\", \"without highlighting\", or a request to leave the page unmarked), in any language. False when the user wants highlights or limits which passages to highlight (only some passages, not a particular part, or fewer of them), asks to remove existing highlights, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about highlighting.",
+	forbidsNotes:
+		"True only when the user explicitly asks Onhand not to add any notes to the open page (for example \"no notes\", \"skip the notes\", \"just highlight, no margin notes\", or a request to leave the page unmarked), in any language. False when the user wants notes or limits which notes to add, asks to remove existing notes, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about notes.",
+};
+type DecisionsPageMarks = Partial<Record<keyof typeof DECISIONS_PAGE_MARKS_WORDING, number>>;
+const decisionsPageMarksByKey = new Map<string, DecisionsPageMarks>();
 
-function setDecisionsForbidsPageMarksForPrompt(prompt: unknown) {
-	for (const key of modelIntentClassificationKeys(prompt)) decisionsForbidsPageMarksKeys.add(key);
-	while (decisionsForbidsPageMarksKeys.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
-		const oldestKey = decisionsForbidsPageMarksKeys.values().next().value;
+function setDecisionsPageMarksForPrompt(prompt: unknown, pageMarks: DecisionsPageMarks) {
+	for (const key of modelIntentClassificationKeys(prompt)) {
+		decisionsPageMarksByKey.delete(key);
+		decisionsPageMarksByKey.set(key, pageMarks);
+	}
+	while (decisionsPageMarksByKey.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
+		const oldestKey = decisionsPageMarksByKey.keys().next().value;
 		if (oldestKey === undefined) break;
-		decisionsForbidsPageMarksKeys.delete(oldestKey);
+		decisionsPageMarksByKey.delete(oldestKey);
 	}
 }
 
-function decisionsForbidsPageMarks(prompt: unknown) {
-	return decisionsForbidsPageMarksKeys.size > 0 && modelIntentClassificationKeys(prompt).some((key) => decisionsForbidsPageMarksKeys.has(key));
+function decisionsPageMarksForPrompt(prompt: unknown): DecisionsPageMarks | null {
+	if (!decisionsPageMarksByKey.size) return null;
+	for (const key of modelIntentClassificationKeys(prompt)) {
+		const pageMarks = decisionsPageMarksByKey.get(key);
+		if (pageMarks) return pageMarks;
+	}
+	return null;
+}
+
+// Combines the patterns' verdict with the Decisions answers (see above).
+function applyDecisionsPageMarks(
+	regex: { forbidsAllPageChanges: boolean; forbidsHighlights: boolean; forbidsNotes: boolean },
+	decided: DecisionsPageMarks | null,
+) {
+	if (!decided) return regex;
+	const verdict = (probability: number | undefined, regexValue: boolean) =>
+		probability === undefined ? regexValue : probability >= DECISIONS_PAGE_MARKS_YES ? true : probability < DECISIONS_PAGE_MARKS_NO ? false : regexValue;
+	// A borderline "leave it unmarked" while neither highlights nor notes are
+	// forbidden is implausible ("What does 'chat only' mean?" scored 0.40).
+	const neitherForbidden = (decided.forbidsHighlights ?? 1) < DECISIONS_PAGE_MARKS_NO && (decided.forbidsNotes ?? 1) < DECISIONS_PAGE_MARKS_NO;
+	const borderline = decided.forbidsPageMarks !== undefined && decided.forbidsPageMarks >= DECISIONS_PAGE_MARKS_NO && decided.forbidsPageMarks < DECISIONS_PAGE_MARKS_YES;
+	const forbidsAllPageChanges = borderline && neitherForbidden ? false : verdict(decided.forbidsPageMarks, regex.forbidsAllPageChanges);
+	return {
+		forbidsAllPageChanges,
+		forbidsHighlights: forbidsAllPageChanges || verdict(decided.forbidsHighlights, regex.forbidsHighlights),
+		forbidsNotes: forbidsAllPageChanges || verdict(decided.forbidsNotes, regex.forbidsNotes),
+	};
 }
 
 function buildDecisionsIntentRequest(prompt: unknown, page: { title?: string; url?: string } | null = null) {
@@ -6930,7 +6969,7 @@ function buildDecisionsIntentRequest(prompt: unknown, page: { title?: string; ur
 		].join("\n\n"),
 		questions: [
 			...MODEL_INTENT_FIELD_DEFINITIONS.map(([name, definition]) => [name, DECISIONS_INTENT_WORDING[name] || definition]),
-			["forbidsPageMarks", DECISIONS_FORBIDS_PAGE_MARKS_WORDING],
+			...Object.entries(DECISIONS_PAGE_MARKS_WORDING),
 		].map(([name, wording]) => ({
 			type: "predicate",
 			name,
@@ -6940,13 +6979,15 @@ function buildDecisionsIntentRequest(prompt: unknown, page: { title?: string; ur
 }
 
 function readDecisionsIntentAnswers(body: any) {
-	const probabilities: Partial<Record<keyof ModelIntentClassification | "forbidsPageMarks", number>> = {};
+	const pageMarkNames = Object.keys(DECISIONS_PAGE_MARKS_WORDING) as Array<keyof typeof DECISIONS_PAGE_MARKS_WORDING>;
+	const probabilities: Partial<Record<keyof ModelIntentClassification | keyof typeof DECISIONS_PAGE_MARKS_WORDING, number>> = {};
 	for (const answer of Array.isArray(body?.answers) ? body.answers : []) {
-		const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), "forbidsPageMarks" as const].find((name) => name === answer?.name);
+		const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), ...pageMarkNames].find((name) => name === answer?.name);
 		const probability = Number(answer?.probability);
 		if (field && answer?.type === "predicate" && Number.isFinite(probability)) probabilities[field] = probability;
 	}
-	const forbidsPageMarks = (probabilities.forbidsPageMarks ?? 0) >= DECISIONS_FORBIDS_PAGE_MARKS_AT;
+	const pageMarks: DecisionsPageMarks = {};
+	for (const name of pageMarkNames) if (probabilities[name] !== undefined) pageMarks[name] = probabilities[name];
 	const classification: Partial<ModelIntentClassification> = {};
 	const unsureFields: string[] = [];
 	for (const [field] of MODEL_INTENT_FIELD_DEFINITIONS) {
@@ -6965,7 +7006,7 @@ function readDecisionsIntentAnswers(body: any) {
 		const teachingIndex = unsureFields.indexOf("teaching");
 		if (teachingIndex >= 0) unsureFields.splice(teachingIndex, 1);
 	}
-	return { probabilities, unsureFields, forbidsPageMarks, classification: unsureFields.length ? null : (classification as ModelIntentClassification) };
+	return { probabilities, unsureFields, pageMarks: Object.keys(pageMarks).length ? pageMarks : null, classification: unsureFields.length ? null : (classification as ModelIntentClassification) };
 }
 
 async function postDecisions(apiKey: string, body: unknown, timeoutMs: number, signal?: AbortSignal, fetcher: typeof fetch = decisionsFetchForTest || fetch) {
@@ -8129,7 +8170,6 @@ function promptPageChangePolicy(prompt: unknown) {
 	const text = String(prompt || "").toLowerCase();
 	const negativeDirective = /\b(?:do not|don't|dont|no|without|avoid|skip)\b[^.?!\n]{0,80}/;
 	const forbidsAllPageChanges =
-		decisionsForbidsPageMarks(prompt) ||
 		/\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:page changes?|page edits?|marginalia)\b/.test(text) ||
 		/\b(?:do not|don't|dont)\s+(?:change|modify|edit|annotate|mark up)\s+(?:the\s+)?page\b/.test(text) ||
 		// "without highlighting or changing anything on the page"
@@ -8146,7 +8186,7 @@ function promptPageChangePolicy(prompt: unknown) {
 		forbidsAllPageChanges ||
 		/\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:notes?)\b/.test(text) ||
 		new RegExp(`${negativeDirective.source}\\bnotes?\\b`).test(text);
-	return { forbidsAllPageChanges, forbidsHighlights, forbidsNotes };
+	return applyDecisionsPageMarks({ forbidsAllPageChanges, forbidsHighlights, forbidsNotes }, decisionsPageMarksForPrompt(prompt));
 }
 
 function promptExplicitlyRequestsNote(prompt: unknown) {
@@ -11136,8 +11176,12 @@ export const __browserRuntimeTest = {
 	readDecisionsIntentAnswersForTest: readDecisionsIntentAnswers,
 	classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
 	decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
-	decisionsIntentCutoffsForTest: { ...DECISIONS_INTENT_CUTOFFS, forbidsPageMarks: { trueAt: DECISIONS_FORBIDS_PAGE_MARKS_AT, falseBelow: DECISIONS_FORBIDS_PAGE_MARKS_AT } },
-	setDecisionsForbidsPageMarksForPromptForTest: setDecisionsForbidsPageMarksForPrompt,
+	decisionsIntentCutoffsForTest: {
+		...DECISIONS_INTENT_CUTOFFS,
+		...Object.fromEntries(Object.keys(DECISIONS_PAGE_MARKS_WORDING).map((name) => [name, { trueAt: DECISIONS_PAGE_MARKS_YES, falseBelow: DECISIONS_PAGE_MARKS_NO }])),
+	},
+	setDecisionsPageMarksForPromptForTest: setDecisionsPageMarksForPrompt,
+	promptPageChangePolicyForTest: promptPageChangePolicy,
 	buildVoiceCommandRequestForTest: buildVoiceCommandRequest,
 	readVoiceCommandChoiceForTest: readVoiceCommandChoice,
 	setDecisionsFetchForTest(fetcher: typeof fetch | null) {
@@ -17267,11 +17311,11 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									clearTimeout(hedge);
 									preparationTiming.decisionsMs = Date.now() - decisionsStartedAt;
 									requestContext.abortController.signal.throwIfAborted();
-									// The page-marks answer counts even when an intent field was unsure.
-									if (first.decided?.forbidsPageMarks && activeRequest === requestContext) {
-										setDecisionsForbidsPageMarksForPrompt(displayPrompt);
-										if (prompt !== displayPrompt) setDecisionsForbidsPageMarksForPrompt(prompt);
-										preparationTiming.decisionsForbidsPageMarks = true;
+									// The page-marks answers count even when an intent field was unsure.
+									if (first.decided?.pageMarks && activeRequest === requestContext) {
+										setDecisionsPageMarksForPrompt(displayPrompt, first.decided.pageMarks);
+										if (prompt !== displayPrompt) setDecisionsPageMarksForPrompt(prompt, first.decided.pageMarks);
+										preparationTiming.decisionsPageMarks = Object.fromEntries(Object.entries(first.decided.pageMarks).map(([name, value]) => [name, Math.round(Number(value) * 100) / 100]));
 									}
 									if (first.model) {
 										decisionsAbort.abort();

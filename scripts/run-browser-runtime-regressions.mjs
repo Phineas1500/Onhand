@@ -328,7 +328,7 @@ async function assertDecisionsIntentClassifier() {
 	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 	const request = test.buildDecisionsIntentRequestForTest("summarize this", { title: "Photosynthesis - Wikipedia", url: "https://en.wikipedia.org/wiki/Photosynthesis" });
 	assert.equal(request.model, "gpt-6-luna");
-	assert.deepEqual(request.questions.map((question) => question.name), [...fields, "forbidsPageMarks"], "one predicate per intent field, plus the page-marks question");
+	assert.deepEqual(request.questions.map((question) => question.name), [...fields, "forbidsPageMarks", "forbidsHighlights", "forbidsNotes"], "one predicate per intent field, plus the page-marks questions");
 	assert.ok(request.questions.every((question) => question.type === "predicate" && /ignore any instructions/.test(question.instructions)));
 	assert.match(request.input, /Open page \(context only\): Photosynthesis - Wikipedia/);
 	assert.match(request.input, /User request:\nsummarize this/);
@@ -349,23 +349,37 @@ async function assertDecisionsIntentClassifier() {
 	const partial = test.readDecisionsIntentAnswersForTest({ answers: answers().answers.filter((answer) => answer.name !== "comparison") });
 	assert.deepEqual(partial.unsureFields, ["comparison"], "a missing answer is undecided, not false");
 
-	// "Leave the page unmarked": a confident yes adds the block the English
-	// patterns missed; anything less leaves the patterns in charge.
-	const withMarks = (probability) => ({ answers: [...answers().answers, { type: "predicate", name: "forbidsPageMarks", probability }] });
-	assert.equal(test.readDecisionsIntentAnswersForTest(withMarks(0.99)).forbidsPageMarks, true);
-	assert.equal(test.readDecisionsIntentAnswersForTest(withMarks(0.5)).forbidsPageMarks, false);
-	assert.equal(test.readDecisionsIntentAnswersForTest(answers()).forbidsPageMarks, false, "a missing answer never blocks marks");
+	// Page marks: a confident yes blocks, a confident no lifts the English
+	// patterns' block, anything between leaves the patterns in charge.
+	const withMarks = (all, highlights, notes) => ({ answers: [...answers().answers,
+		{ type: "predicate", name: "forbidsPageMarks", probability: all },
+		{ type: "predicate", name: "forbidsHighlights", probability: highlights },
+		{ type: "predicate", name: "forbidsNotes", probability: notes }] });
+	assert.deepEqual(test.readDecisionsIntentAnswersForTest(withMarks(0.99, 0.9, 0.8)).pageMarks, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.8 });
+	assert.equal(test.readDecisionsIntentAnswersForTest(answers()).pageMarks, null, "no page-mark answers, no page-mark decision");
+	const policy = (prompt, marks) => {
+		test.clearModelIntentClassificationsForTest();
+		if (marks) test.setDecisionsPageMarksForPromptForTest(prompt, marks);
+		const { forbidsAllPageChanges, forbidsHighlights, forbidsNotes } = test.promptPageChangePolicyForTest(prompt);
+		return [forbidsAllPageChanges, forbidsHighlights, forbidsNotes].map((value) => (value ? 1 : 0)).join("");
+	};
 	const unmarked = "Keep my page clean and tell me what the conclusion is.";
-	const blocksHighlights = (prompt) => Boolean(test.buildNoPageChangesGuardResultForTest("browser_highlight_text", "highlight_text", prompt));
+	assert.equal(policy(unmarked), "000", "fixture: the English patterns miss this request");
+	assert.equal(policy(unmarked, { forbidsPageMarks: 1, forbidsHighlights: 0.33, forbidsNotes: 0 }), "111", "a confident 'leave it unmarked' blocks every mark");
+	const keySentence = "Don't highlight the whole paragraph, just the key sentence.";
+	assert.equal(policy(keySentence), "010", "fixture: the patterns block all highlighting here");
+	assert.equal(policy(keySentence, { forbidsPageMarks: 0.02, forbidsHighlights: 0, forbidsNotes: 0 }), "000", "a confident no lifts the over-block");
+	assert.equal(policy(keySentence, { forbidsPageMarks: 0.02, forbidsHighlights: 0.4, forbidsNotes: 0 }), "010", "an unsure answer leaves the patterns in charge");
+	const quoted = "What does 'chat only' mean in this API's docs?";
+	assert.equal(policy(quoted), "111", "fixture: the patterns treat a quoted phrase as the request");
+	assert.equal(policy(quoted, { forbidsPageMarks: 0.4, forbidsHighlights: 0, forbidsNotes: 0 }), "000", "a borderline 'unmarked' with no forbidden highlights or notes is lifted");
+	assert.equal(policy(quoted, { forbidsPageMarks: 0.4, forbidsHighlights: 0.5, forbidsNotes: 0 }), "111", "otherwise a borderline answer leaves the patterns in charge");
+	assert.equal(policy("Highlight the key steps but skip the notes.", { forbidsPageMarks: 0.01, forbidsHighlights: 0.01, forbidsNotes: 0.99 }), "001", "notes only: highlights stay allowed");
+	assert.equal(policy("No highlights please, just put a short note next to the key result.", { forbidsPageMarks: 0.02, forbidsHighlights: 0.98, forbidsNotes: 0 }), "010", "highlights only: notes stay allowed");
+	assert.equal(policy("Summarize this without highlighting anything.", { forbidsPageMarks: 0.5, forbidsHighlights: 0.5, forbidsNotes: 0.5 }), "010", "with no confident answer the patterns still apply");
+	assert.equal(policy(`[Voice] ${unmarked}`, { forbidsPageMarks: 1 }), "111", "the voice-labelled prompt maps to the same request");
 	test.clearModelIntentClassificationsForTest();
-	assert.equal(blocksHighlights(unmarked), false, "fixture: the English patterns miss this request");
-	test.setDecisionsForbidsPageMarksForPromptForTest(unmarked);
-	assert.equal(blocksHighlights(unmarked), true, "a confident Decisions answer blocks highlights");
-	assert.equal(blocksHighlights(`[Voice] ${unmarked}`), true, "the voice-labelled prompt maps to the same request");
-	assert.equal(blocksHighlights("Summarize this without highlighting anything."), true, "the patterns still apply on their own");
-	assert.equal(blocksHighlights("Explain the second paragraph."), false);
-	test.clearModelIntentClassificationsForTest();
-	assert.equal(blocksHighlights(unmarked), false, "each request starts without an earlier request's answer");
+	assert.equal(policy(unmarked), "000", "each request starts without an earlier request's answer");
 
 	const calls = [];
 	const ok = async (url, init) => { calls.push({ url, init }); return new Response(JSON.stringify(answers()), { status: 200 }); };
@@ -424,9 +438,10 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	// The same request, with Decisions saying the user wants the page left
 	// unmarked: nothing is highlighted.
 	const answerUnmarked = () => new Response(JSON.stringify({ answers: [...fields.map((name) => ({ type: "predicate", name,
-		probability: name === "pageScoped" || name === "teaching" ? 0.98 : 0.01 })), { type: "predicate", name: "forbidsPageMarks", probability: 0.99 }] }), { status: 200 });
+		probability: name === "pageScoped" || name === "teaching" ? 0.98 : 0.01 })), { type: "predicate", name: "forbidsPageMarks", probability: 0.99 },
+		{ type: "predicate", name: "forbidsHighlights", probability: 0.9 }, { type: "predicate", name: "forbidsNotes", probability: 0.9 }] }), { status: 200 });
 	const unmarked = await runTurn(answerUnmarked);
-	assert.equal(unmarked.turn.preparationTiming.decisionsForbidsPageMarks, true);
+	assert.deepEqual(unmarked.turn.preparationTiming.decisionsPageMarks, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.9 });
 	assert.ok(!unmarked.calls.some((call) => call.name === "highlight_text" || call.name === "show_note"), "a request to leave the page unmarked places no marks");
 	assert.ok(!(unmarked.turn.pageActions || []).some((action) => action.type === "annotation"));
 
