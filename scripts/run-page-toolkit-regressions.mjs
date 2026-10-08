@@ -56,6 +56,24 @@ async function loadFunctionFromFile(relativePath, functionName) {
 	assert.fail(`${functionName} body end not found`);
 }
 
+async function assertChromeWebStoreTabsAreNamedUnreadable() {
+	// New users start on the Web Store listing, which Chrome forbids extensions
+	// to script. Every page tool failed there and the agent retried 8 times.
+	const isChromeWebStoreUrl = new Function(`${await loadBackgroundFunction("isChromeWebStoreUrl")}\nreturn isChromeWebStoreUrl;`)();
+	assert.equal(isChromeWebStoreUrl("https://chromewebstore.google.com/detail/onhand/ogjmncmkpgdkkcibdiacmagaehjohljb"), true);
+	assert.equal(isChromeWebStoreUrl("https://chrome.google.com/webstore/detail/x"), true);
+	assert.equal(isChromeWebStoreUrl("https://chrome.google.com/intl/en/chrome/"), false);
+	assert.equal(isChromeWebStoreUrl("https://en.wikipedia.org/wiki/Chrome_Web_Store"), false);
+	assert.equal(isChromeWebStoreUrl(""), false);
+	const source = await readFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	const runToolkit = source.slice(source.indexOf("async function runPageToolkitMethod"));
+	assert.ok(
+		runToolkit.indexOf("isChromeWebStoreUrl(tab?.url)") < runToolkit.indexOf("executePageToolkitMethodViaScripting"),
+		"page tools on a Web Store tab answer with the plain limit before trying to script it",
+	);
+	assert.match(source, /function isUnreadableTabError\(tab, error\) \{\s*return \(isFileUrl\(tab\?\.url\) \|\| isChromeWebStoreUrl\(tab\?\.url\)\)/);
+}
+
 async function assertDetachedPdfViewerOpenRouting() {
 	const functionNames = ["normalizePdfUrlCandidate", "shouldDetachPdfViewerOpenFromSourceTab"];
 	const declarations = await Promise.all(functionNames.map((functionName) => loadBackgroundFunction(functionName)));
@@ -4378,6 +4396,7 @@ async function assertPdfSelectionIncludesAnchor() {
 async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertDetachedPdfViewerOpenRouting();
+	await assertChromeWebStoreTabsAreNamedUnreadable();
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertPdfViewerCitationNavigationAndRebuild();

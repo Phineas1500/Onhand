@@ -91666,6 +91666,15 @@ function pickActiveTab(state2, targetWindowId) {
 function isPrivilegedUrl(url) {
   return /^(?:chrome|edge|brave|about):\/\//i.test(String(url || ""));
 }
+function isChromeWebStoreUrl(url) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.hostname === "chromewebstore.google.com" || parsed.hostname === "chrome.google.com" && parsed.pathname.startsWith("/webstore");
+  } catch {
+    return false;
+  }
+}
+var CHROME_WEB_STORE_CONTEXT_NOTE = "The active tab is the Chrome Web Store. Chrome does not let extensions read or mark Web Store pages, so this page's text is unavailable and page tools will fail on it; do not call them on this tab. Say plainly that Onhand can't read Chrome Web Store pages, answer from general knowledge or other open tabs if the question allows, and suggest opening the article, PDF, or doc the user wants help with.";
 function isOnhandPdfViewerUrl(url) {
   try {
     const parsed = new URL(String(url || ""));
@@ -91896,6 +91905,7 @@ function rankOpenTabCandidates(state2, activeTab, prompt = "") {
   const activeUrl = openTabUrlParts(activeTab?.url);
   return flattenTabs(state2).filter((tab) => {
     if (!tab?.id || isPrivilegedUrl(tab.url)) return false;
+    if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || /^chrome-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url))) return false;
     return true;
   }).map((tab) => ({
     ...tab,
@@ -91977,7 +91987,7 @@ async function renderBrowserContextDetails(host, options = {}) {
     let extracted = null;
     let visualRegion = null;
     let warning = null;
-    if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
+    if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url) && !isChromeWebStoreUrl(activeTab.url)) {
       const isGoogleDocsDocument = isGoogleDocsDocumentUrlForContext(activeTab.url);
       try {
         selection = await runBrowserContextCommand(host, "get_selection", { tabId: activeTab.id });
@@ -92016,6 +92026,8 @@ async function renderBrowserContextDetails(host, options = {}) {
           warning ||= error2?.message || String(error2);
         }
       }
+    } else if (activeTab?.url && isChromeWebStoreUrl(activeTab.url)) {
+      warning = CHROME_WEB_STORE_CONTEXT_NOTE;
     } else if (activeTab?.url) {
       warning = `Interactive page context is unavailable on privileged pages like ${activeTab.url}`;
     }
@@ -93127,6 +93139,9 @@ ${text}` : `${heading}
     }
     case "browser_extract_content": {
       const content = details.content || details.extracted || {};
+      if (content?.unsupported === true) {
+        return `Page text unavailable for ${formatCompactTab(tab || content)} (a browser limit, not page content): ${String(content.reason || content.text || "").trim()}`;
+      }
       const rawText = typeof content === "string" ? content : content.markdown || content.text || content.reason || "";
       const text = String(rawText || "").trim();
       const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
@@ -94388,6 +94403,7 @@ function extractToolErrorText(result) {
 }
 var __browserRuntimeTest = {
   createToolsForTest: createTools,
+  renderBrowserContextDetailsForTest: renderBrowserContextDetails,
   pageInjectionNotice,
   promptAsksForCitedSource,
   buildContentFilterRetryPrompt,
@@ -95728,7 +95744,7 @@ function buildPageAction(toolName2, result) {
         windowId: tab?.windowId || null,
         ...pageActionTabFields(tab),
         artifactId,
-        label: "Saved artifact",
+        label: "Saved page snapshot",
         detail: truncate2(details.page?.title || tab?.title || artifactId, 72)
       };
     }

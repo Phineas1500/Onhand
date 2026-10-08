@@ -726,18 +726,40 @@ async function authorizeOnhandPdfViewerFileSource(sender, fileUrl) {
 	return true;
 }
 
-function isLocalFileAccessError(tab, error) {
-	return isFileUrl(tab?.url) && isRestrictedScriptingError(error);
+// Chrome forbids extensions to script the Web Store ("The extensions gallery
+// cannot be scripted"). New users start on its listing page, where every page
+// tool failed and the agent kept retrying; name the limit plainly instead.
+function isChromeWebStoreUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		return url.hostname === "chromewebstore.google.com" || (url.hostname === "chrome.google.com" && url.pathname.startsWith("/webstore"));
+	} catch {
+		return false;
+	}
 }
 
-function createLocalFileAccessError(tab, error) {
-	return new Error(localFileAccessMessage(tab, error));
+const CHROME_WEB_STORE_PAGE_MESSAGE =
+	"This tab is the Chrome Web Store. Chrome doesn't let extensions read or mark Web Store pages, so Onhand can't see it. Open the article, PDF, or doc you want help with and ask there.";
+
+// Toolkit reads that answer with an unsupported-surface payload instead of failing.
+const UNSUPPORTED_TAB_READ_METHODS = ["captureState", "getVisibleText", "getSelectionInfo", "getViewportHeadings", "getScrollState"];
+
+function isUnreadableTabError(tab, error) {
+	return (isFileUrl(tab?.url) || isChromeWebStoreUrl(tab?.url)) && isRestrictedScriptingError(error);
 }
 
-function unsupportedLocalFilePayload(tab, error = null) {
-	const message = localFileAccessMessage(tab, error);
+function unreadableTabMessage(tab, error = null) {
+	return isChromeWebStoreUrl(tab?.url) ? CHROME_WEB_STORE_PAGE_MESSAGE : localFileAccessMessage(tab, error);
+}
+
+function createUnreadableTabError(tab, error) {
+	return new Error(unreadableTabMessage(tab, error));
+}
+
+function unsupportedTabPayload(tab, error = null) {
+	const message = unreadableTabMessage(tab, error);
 	return {
-		surface: "local-file",
+		surface: isChromeWebStoreUrl(tab?.url) ? "chrome-web-store" : "local-file",
 		unsupported: true,
 		reason: message,
 		text: message,
@@ -747,8 +769,8 @@ function unsupportedLocalFilePayload(tab, error = null) {
 	};
 }
 
-function unsupportedLocalFileToolkitPayload(methodName, tab, error = null) {
-	const payload = unsupportedLocalFilePayload(tab, error);
+function unsupportedTabToolkitPayload(methodName, tab, error = null) {
+	const payload = unsupportedTabPayload(tab, error);
 	if (methodName === "getSelectionInfo") {
 		return {
 			...payload,
@@ -10628,6 +10650,10 @@ async function runPdfViewerToolkitMethod(tab, methodName, payload) {
 
 async function runPageToolkitMethod(tabId, methodName, ...args) {
 	const tab = await chrome.tabs.get(tabId);
+	if (isChromeWebStoreUrl(tab?.url)) {
+		if (UNSUPPORTED_TAB_READ_METHODS.includes(methodName)) return unsupportedTabToolkitPayload(methodName, tab);
+		throw createUnreadableTabError(tab);
+	}
 	if (!canRunPageToolkitOnTab(tab)) {
 		throw new Error(`Onhand page tools only run on web or local-file tabs, not ${describeTabForError(tab)}`);
 	}
@@ -10797,11 +10823,11 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 		}
 		return payload;
 	} catch (scriptError) {
-		if (isLocalFileAccessError(tab, scriptError)) {
-			if (["captureState", "getVisibleText", "getSelectionInfo", "getViewportHeadings", "getScrollState"].includes(methodName)) {
-				return unsupportedLocalFileToolkitPayload(methodName, tab, scriptError);
+		if (isUnreadableTabError(tab, scriptError)) {
+			if (UNSUPPORTED_TAB_READ_METHODS.includes(methodName)) {
+				return unsupportedTabToolkitPayload(methodName, tab, scriptError);
 			}
-			throw createLocalFileAccessError(tab, scriptError);
+			throw createUnreadableTabError(tab, scriptError);
 		}
 		// A restricted-scripting error on a PDF tab usually means the main
 		// frame is the browser's native PDF viewer (a different extension);
@@ -11783,6 +11809,7 @@ async function captureTabScreenshot(tabId, options = {}) {
 					method: "tabs.captureVisibleTab",
 				};
 			} catch (tabsError) {
+				if (isChromeWebStoreUrl(focusedTab?.url)) throw createUnreadableTabError(focusedTab);
 				const debuggerMessage = debuggerError?.message || String(debuggerError);
 				const tabsMessage = tabsError?.message || String(tabsError);
 				throw new Error(`Could not capture screenshot via debugger (${debuggerMessage}) or tabs.captureVisibleTab (${tabsMessage})`);
@@ -14100,7 +14127,7 @@ async function handleCommandInner(name, args = {}) {
 				try {
 					result = await evaluateInTab(tab.id, args.expression);
 				} catch (error) {
-					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					if (isUnreadableTabError(tab, error)) throw createUnreadableTabError(tab, error);
 					throw error;
 				}
 				return {
@@ -14116,7 +14143,7 @@ async function handleCommandInner(name, args = {}) {
 				try {
 					outerHTML = await getDomOuterHtml(tab.id);
 				} catch (error) {
-					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					if (isUnreadableTabError(tab, error)) throw createUnreadableTabError(tab, error);
 					throw error;
 				}
 				return {
@@ -14138,7 +14165,7 @@ async function handleCommandInner(name, args = {}) {
 						query: args.query,
 					});
 				} catch (error) {
-					if (isLocalFileAccessError(tab, error)) content = unsupportedLocalFilePayload(tab, error);
+					if (isUnreadableTabError(tab, error)) content = unsupportedTabPayload(tab, error);
 					else throw error;
 				}
 				return {
@@ -14178,7 +14205,7 @@ async function handleCommandInner(name, args = {}) {
 						{ timeoutMs: evaluationTimeoutMs },
 					);
 				} catch (error) {
-					if (isLocalFileAccessError(tab, error)) throw createLocalFileAccessError(tab, error);
+					if (isUnreadableTabError(tab, error)) throw createUnreadableTabError(tab, error);
 					throw error;
 				}
 				return {

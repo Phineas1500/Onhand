@@ -319,6 +319,39 @@ async function assertIntentClassifierSendsItsInstructions() {
 	assert.doesNotMatch(requestBodies[0], /You are a helpful assistant/, "the provider default prompt must not replace the classifier's instructions");
 }
 
+// New users ask their first question on the Web Store listing, which Chrome
+// forbids extensions to script. The turn context must say so up front instead
+// of letting page reads fail and the model quote the refusal as page text.
+async function assertChromeWebStoreTabGetsPlainContextNote() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const commands = [];
+	const host = {
+		snapshotState: async () => ({ windows: [{ focused: true, tabs: [{ id: 5, windowId: 1, active: true, title: "Onhand - Chrome Web Store", url: "https://chromewebstore.google.com/detail/onhand/abc" }] }] }),
+		runCommand: async (command) => {
+			commands.push(command);
+			throw new Error("The extensions gallery cannot be scripted.");
+		},
+	};
+	const details = await test.renderBrowserContextDetailsForTest(host, { prompt: "What does this extension do?" });
+	assert.deepEqual(commands, [], "no page read is attempted on a Web Store tab");
+	assert.match(details.text, /Chrome does not let extensions read or mark Web Store pages/);
+	assert.match(details.text, /do not call them on this tab/);
+	assert.doesNotMatch(details.text, /cannot be scripted/);
+	const withOptions = {
+		snapshotState: async () => ({
+			windows: [
+				{ focused: true, tabs: [{ id: 5, windowId: 1, active: true, title: "Photosynthesis", url: "https://en.wikipedia.org/wiki/Photosynthesis" }, { id: 6, windowId: 1, title: "Onhand Options", url: "chrome-extension://abc/options.html" }, { id: 7, windowId: 1, title: "paper.pdf", url: "chrome-extension://abc/pdf-viewer.html?url=https%3A%2F%2Fexample.test%2Fpaper.pdf" }] },
+			],
+		}),
+		runCommand: async () => ({}),
+	};
+	const listed = (await test.renderBrowserContextDetailsForTest(withOptions, { prompt: "explain this" })).text;
+	assert.doesNotMatch(listed, /Onhand Options/, "unreadable extension pages are not offered as sources");
+	assert.match(listed, /paper\.pdf/, "Onhand's own PDF viewer tabs stay in the open-tab list");
+	const extractText = test.toolResultTextForModelForTest("browser_extract_content", { content: { unsupported: true, surface: "chrome-web-store", reason: "This tab is the Chrome Web Store.", text: "This tab is the Chrome Web Store." } });
+	assert.match(extractText, /^Page text unavailable .*a browser limit, not page content/);
+}
+
 // The Decisions API answers the intent classifier's seven questions in about
 // 0.2 s; the model classifier took 1.8-3.8 s on Sol and every turn waited for
 // it. Decisions decides only when every field is clearly on one side, and is
@@ -12483,6 +12516,7 @@ async function main() {
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
 	await assertDecisionsIntentClassifier();
+	await assertChromeWebStoreTabGetsPlainContextNote();
 	await assertTurnsUseDecisionsWhenConfident();
 	await assertVoiceCommandsRunDirectly();
 	await assertAssistantStreamingTextBlocksStaySeparated();

@@ -132,6 +132,8 @@
 	let authSigningIn = false;
 	let authStatusText = "";
 	let authStatusKind = "";
+	// A question asked before the first-run choice waits in the composer.
+	let pendingAuthPrompt = false;
 	let sidebarTheme = "light";
 	let attachmentDrafts = [];
 	let messageTurnCache = [];
@@ -715,7 +717,8 @@
 	// result, so this is the claim->mark link captured at generation time rather
 	// than reconstructed by token overlap. Markers are stripped from the rendered
 	// text; a block with no resolvable marker falls back to findCitationsForBlock.
-	const CITATION_MARKER_PATTERN = /\[\[\s*cite\s*:\s*([^\]]+?)\s*\]\]/gi;
+	// An empty [[cite:]] still has to be stripped, not shown to the reader.
+	const CITATION_MARKER_PATTERN = /\[\[\s*cite\s*:\s*([^\]]*?)\s*\]\]/gi;
 	const MAX_EXPLICIT_CITATIONS = 3;
 
 	function extractCitationMarkers(text) {
@@ -1993,6 +1996,10 @@
 				color: var(--rm-subtext);
 				font: 12.5px/1.45 var(--rm-font-serif);
 				margin: 0 0 10px;
+			}
+			.onhand-auth-copy.pending {
+				color: var(--rm-text);
+				font-weight: 600;
 			}
 			.onhand-auth-actions {
 				display: flex;
@@ -3467,7 +3474,8 @@
 					padding-inline: 4px;
 				}
 				.onhand-row .learn {
-					grid-column: 4;
+					/* Its own row, so the label fits without widening the Ask column. */
+					grid-column: 1 / -1;
 					grid-row: 2;
 					justify-self: end;
 					padding: 3px;
@@ -3476,7 +3484,6 @@
 					grid-column: 3;
 					min-width: 0;
 				}
-				.onhand-row .learn > span:last-of-type,
 				.onhand-send .kbd {
 					display: none;
 				}
@@ -3874,15 +3881,22 @@
 		if (!(authPanelEl instanceof HTMLElement)) return;
 		const hiddenByView = replayState.open || pageIndexEl.hidden === false;
 		const needsAuth = !hasUsableOnhandAuth(state);
+		if (!needsAuth && pendingAuthPrompt) {
+			pendingAuthPrompt = false;
+			if (input.value.trim() || attachmentDrafts.length) queueMicrotask(submitComposerInput);
+		}
 		authPanelEl.hidden = hiddenByView || !needsAuth;
 		if (authPanelEl.hidden) {
 			authPanelEl.innerHTML = "";
 			return;
 		}
 		const statusClass = authStatusKind ? ` ${escapeAttribute(authStatusKind)}` : "";
+		const authCopy = pendingAuthPrompt
+			? "Pick how Onhand should run, and your question will be sent right away."
+			: "Pick how Onhand should run. You can change this anytime in options.";
 		authPanelEl.innerHTML = `
 			<div class="onhand-auth-title">Get started</div>
-			<p class="onhand-auth-copy">Pick how Onhand should run. You can change this anytime in options.</p>
+			<p class="onhand-auth-copy${pendingAuthPrompt ? " pending" : ""}">${authCopy}</p>
 			<div class="onhand-auth-choices">
 				<button id="authFreeTierButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
 					<span class="onhand-auth-choice-title">Try Onhand free</span>
@@ -5299,7 +5313,7 @@
 		if (highlightCount) parts.push(`highlighted ${pluralize(highlightCount, "passage")}`);
 		if (reusedHighlights.size) parts.push(`reused ${pluralize(reusedHighlights.size, "source")}`);
 		if (noteCount) parts.push(`added ${pluralize(noteCount, "note")}`);
-		if (artifactCount) parts.push(pluralize(artifactCount, "artifact"));
+		if (artifactCount) parts.push(`saved ${pluralize(artifactCount, "page snapshot")}`);
 		if (!tools.length && actions.length && !highlightCount && !reusedHighlights.size && !noteCount && !artifactCount) {
 			parts.push(pluralize(actions.length, "page action"));
 		}
@@ -5951,7 +5965,9 @@
 
 	function renderReplayView() {
 		const currentPath = getCurrentSessionPath(currentState);
-		const hasSession = Boolean(currentPath || replayState.sessionPath || replayState.session);
+		const currentTurns = Array.isArray(currentState?.turns) ? currentState.turns : [];
+		// A brand-new session has nothing to review yet.
+		const hasSession = Boolean(replayState.sessionPath || replayState.session || replayState.open) || Boolean(currentPath && currentTurns.length);
 		replayViewEl.hidden = !hasSession;
 		if (!hasSession) {
 			replayViewEl.innerHTML = "";
@@ -5967,7 +5983,6 @@
 		const selectedArtifactId = replayState.selectedArtifactId || replayState.artifact?.artifactId || artifacts.at(-1)?.artifactId || "";
 		const selectedSummary = artifacts.find((artifact) => artifact.artifactId === selectedArtifactId) || replayState.artifact || null;
 		const annotations = replayState.artifact?.annotations?.length ? replayState.artifact.annotations : replayState.replayableAnnotations;
-		const currentTurns = Array.isArray(currentState?.turns) ? currentState.turns : [];
 		const turnCount = Array.isArray(replayState.turns) && replayState.turns.length ? replayState.turns.length : currentTurns.length;
 		const meta = [
 			turnCount ? pluralize(turnCount, "turn") : "",
@@ -6371,6 +6386,14 @@
 		if (liveVoice && realtimeConnected) {
 			liveVoice.text(trimmedPrompt || "Explain the attached material.", attachments);
 			input.value = ""; attachmentDrafts = []; renderAttachmentDrafts(); return;
+		}
+		// Without a first-run choice the turn would fail with a sign-in error.
+		// Keep the question and send it once the user picks how Onhand runs.
+		if (currentState?.preferences && !hasUsableOnhandAuth(currentState)) {
+			pendingAuthPrompt = true;
+			renderState(currentState);
+			authPanelEl.scrollIntoView?.({ block: "nearest" });
+			return;
 		}
 		scrollToLatestAnswer();
 		const learningMode =
@@ -6993,7 +7016,7 @@
 		const hiddenLabel = realtimeVoiceButton.querySelector(".onhand-sr-only");
 		if (hiddenLabel) hiddenLabel.textContent = buttonLabel;
 		realtimeVoiceButton.title = !voiceEnabled
-			? "Enable Voice in Onhand options."
+			? "Turn on Voice in Onhand options."
 			: realtimeConnected || (liveVoice && realtimeConnecting)
 			? "End voice conversation"
 			: needsApiKeySetup
@@ -7003,10 +7026,11 @@
 		realtimeVoiceButton.classList.toggle("connecting", realtimeConnecting);
 		realtimeVoiceButton.classList.toggle("on", realtimeConnected);
 		realtimeVoiceButton.classList.toggle("error", Boolean(realtimeError));
+		// With Voice off the button opens options, where it is turned on.
 		realtimeVoiceButton.disabled = sidebarConnectionError
 			? !(realtimeConnected || realtimeConnecting)
-			: !voiceEnabled || (realtimeConnecting && !liveVoice);
-		realtimeStatusEl.textContent = !voiceEnabled ? "Voice disabled" : realtimeError || realtimeStatus;
+			: realtimeConnecting && !liveVoice;
+		realtimeStatusEl.textContent = !voiceEnabled ? "Voice off" : realtimeError || realtimeStatus;
 		realtimeStatusEl.setAttribute("aria-expanded", realtimeErrorExpanded && realtimeError ? "true" : "false");
 		realtimeStatusEl.setAttribute("aria-controls", "realtimeErrorBubble");
 		realtimeStatusEl.tabIndex = realtimeError ? 0 : -1;
@@ -7015,7 +7039,7 @@
 			realtimeConnected || realtimeConnecting
 				? `Level: ${formatRealtimeMicLevel(realtimeMicCurrentRms)} · peak ${formatRealtimeMicLevel(realtimeMicPeakRms)}`
 				: "";
-		realtimeStatusEl.title = [!voiceEnabled ? "Enable Voice in Onhand options." : realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
+		realtimeStatusEl.title = [!voiceEnabled ? "Turn on Voice in Onhand options." : realtimeError || realtimeStatus, micLabel ? `Mic: ${micLabel}` : "", micDiagnostics, realtimeMicTrackDetails]
 			.filter(Boolean)
 			.join("\n");
 		realtimeStatusEl.classList.toggle("error", Boolean(realtimeError));
@@ -7838,7 +7862,7 @@
 			stopRealtimeVoice();
 			return;
 		}
-		if (realtimeError && isRealtimeApiKeySetupError(realtimeError)) {
+		if (!isRealtimeVoiceEnabledInPreferences() || (realtimeError && isRealtimeApiKeySetupError(realtimeError))) {
 			void openOnhandOptionsPage().catch((error) => {
 				setRealtimeStatus("Voice setup needed", `${REALTIME_API_KEY_SETUP_MESSAGE} ${error?.message || String(error)}`);
 			});

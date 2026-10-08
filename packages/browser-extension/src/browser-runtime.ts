@@ -7699,6 +7699,21 @@ function isPrivilegedUrl(url: unknown) {
 	return /^(?:chrome|edge|brave|about):\/\//i.test(String(url || ""));
 }
 
+// Chrome forbids extensions to script the Web Store. New users ask their first
+// question there; without this note the model read the tools' refusal as page
+// text and kept trying to read and highlight the listing.
+function isChromeWebStoreUrl(url: unknown) {
+	try {
+		const parsed = new URL(String(url || ""));
+		return parsed.hostname === "chromewebstore.google.com" || (parsed.hostname === "chrome.google.com" && parsed.pathname.startsWith("/webstore"));
+	} catch {
+		return false;
+	}
+}
+
+const CHROME_WEB_STORE_CONTEXT_NOTE =
+	"The active tab is the Chrome Web Store. Chrome does not let extensions read or mark Web Store pages, so this page's text is unavailable and page tools will fail on it; do not call them on this tab. Say plainly that Onhand can't read Chrome Web Store pages, answer from general knowledge or other open tabs if the question allows, and suggest opening the article, PDF, or doc the user wants help with.";
+
 function isOnhandPdfViewerUrl(url: unknown) {
 	try {
 		const parsed = new URL(String(url || ""));
@@ -8001,6 +8016,9 @@ function rankOpenTabCandidates(state: any, activeTab: any, prompt = "") {
 	return flattenTabs(state)
 		.filter((tab: any) => {
 			if (!tab?.id || isPrivilegedUrl(tab.url)) return false;
+			// Page tools can't read other tabs' extension pages (Onhand's options, other
+			// extensions) or the Web Store; offering them sent the agent to read them.
+			if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || (/^chrome-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url)))) return false;
 			return true;
 		})
 		.map((tab: any) => ({
@@ -8109,7 +8127,7 @@ async function renderBrowserContextDetails(
 		let visualRegion = null;
 		let warning = null;
 
-		if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url)) {
+		if (activeTab?.id && activeTab.url && !isPrivilegedUrl(activeTab.url) && !isChromeWebStoreUrl(activeTab.url)) {
 			const isGoogleDocsDocument = isGoogleDocsDocumentUrlForContext(activeTab.url);
 			try {
 				selection = await runBrowserContextCommand(host, "get_selection", { tabId: activeTab.id });
@@ -8148,6 +8166,8 @@ async function renderBrowserContextDetails(
 					warning ||= error?.message || String(error);
 				}
 			}
+		} else if (activeTab?.url && isChromeWebStoreUrl(activeTab.url)) {
+			warning = CHROME_WEB_STORE_CONTEXT_NOTE;
 		} else if (activeTab?.url) {
 			warning = `Interactive page context is unavailable on privileged pages like ${activeTab.url}`;
 		}
@@ -9691,6 +9711,11 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 		}
 		case "browser_extract_content": {
 			const content = details.content || details.extracted || {};
+			// A Web Store or local-file tab returns the browser's limit, not page text;
+			// the model quoted it as "the only readable passage here".
+			if (content?.unsupported === true) {
+				return `Page text unavailable for ${formatCompactTab(tab || content)} (a browser limit, not page content): ${String(content.reason || content.text || "").trim()}`;
+			}
 			const rawText = typeof content === "string" ? content : content.markdown || content.text || content.reason || "";
 			const text = String(rawText || "").trim();
 			const heading = `Readable content from ${formatCompactTab(tab || content)}:`;
@@ -11256,6 +11281,7 @@ function extractToolErrorText(result: unknown) {
 
 export const __browserRuntimeTest = {
 	createToolsForTest: createTools,
+	renderBrowserContextDetailsForTest: renderBrowserContextDetails,
 	pageInjectionNotice,
 	promptAsksForCitedSource,
 	buildContentFilterRetryPrompt,
@@ -12711,7 +12737,7 @@ function buildPageAction(toolName: string, result: any): PageAction | null {
 				windowId: tab?.windowId || null,
 				...pageActionTabFields(tab),
 				artifactId,
-				label: "Saved artifact",
+				label: "Saved page snapshot",
 				detail: truncate(details.page?.title || tab?.title || artifactId, 72),
 			};
 		}

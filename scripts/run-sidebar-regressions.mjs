@@ -24,6 +24,7 @@ function createState() {
 		preferences: {
 			learningMode: false,
 			realtimeVoiceEnabled: true,
+			hasOAuthCredentials: true,
 			extensionVersion: "test",
 			runtimeRevision: "test",
 		},
@@ -591,6 +592,19 @@ async function assertCitationLinksSurviveAnnotationRecovery() {
 	const reopenedShadow = reopened.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
 	assert.deepEqual([...reopenedShadow.querySelectorAll(".onhand-cite")].map((button) => [button.textContent.trim(), button.dataset.actionKey]), [...expected, ["[2]", "note:pdf-mark-2"]]);
 	reopened.window.close();
+}
+
+async function assertEmptyCitationMarkerIsNotShown() {
+	// A reply with no successful highlight once rendered a raw "[[cite:]]".
+	const state = createState();
+	state.turns = [{ ...state.turns[0], pageActions: [], reply: "Onhand can't read Chrome Web Store pages. [[cite:]] Open an article and ask there." }];
+	const dom = await renderSidebar(state, []);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	const text = shadow.getElementById("messages").textContent;
+	assert.match(text, /Open an article and ask there/);
+	assert.doesNotMatch(text, /\[\[\s*cite/, "an empty citation marker must be stripped");
+	dom.window.close();
 }
 
 async function assertReplyTokenPrefixCannotInjectHtml() {
@@ -2220,9 +2234,39 @@ async function assertRealtimeVoiceDisabledState() {
 	const status = shadow.getElementById("realtimeStatus");
 
 	assert.equal(voiceButton.textContent, "Off", "expected disabled realtime voice button to render as off");
-	assert.equal(voiceButton.disabled, true, "expected disabled realtime voice button to be disabled");
-	assert.equal(status.textContent, "Voice disabled", "expected realtime status to explain disabled voice");
-	assert.match(status.title, /Enable Voice/);
+	assert.equal(voiceButton.disabled, false, "a click on the off Voice button must lead somewhere, not do nothing");
+	assert.equal(status.textContent, "Voice off", "expected realtime status to explain disabled voice");
+	assert.match(status.title, /Turn on Voice/);
+	voiceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(dom.getOpenOptionsCalls(), 1, "clicking the off Voice button opens options, where Voice is turned on");
+	dom.window.close();
+}
+
+async function assertPromptBeforeFirstRunChoiceWaits() {
+	// A fresh install has no model choice yet; the turn used to fail with
+	// "Sign in to OpenAI Codex in Onhand options first" and lose the question.
+	const runtimeMessages = [];
+	const state = createState();
+	state.preferences.hasOAuthCredentials = false;
+	const dom = await renderSidebar(state, runtimeMessages);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const input = shadow.getElementById("input");
+	input.value = "What does this page say?";
+	shadow.getElementById("sendButton").click();
+	await waitForSidebarTick(dom);
+	assert.equal(runtimeMessages.filter((message) => message.type === "sidebar:submit-prompt").length, 0, "no turn runs before a choice");
+	assert.equal(input.value, "What does this page say?", "the question stays in the composer");
+	assert.match(shadow.getElementById("authPanel").textContent, /your question will be sent right away/);
+	state.preferences.hasSelectedProviderApiKey = true;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	const submitted = runtimeMessages.filter((message) => message.type === "sidebar:submit-prompt");
+	assert.equal(submitted.length, 1, "the held question is sent once a choice lands");
+	assert.equal(submitted[0].prompt, "What does this page say?");
 	dom.window.close();
 }
 
@@ -2764,6 +2808,8 @@ await assertLearningSessionPanelHidesOutsideLearningState();
 await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeVoiceDisabledState();
+await assertPromptBeforeFirstRunChoiceWaits();
+await assertEmptyCitationMarkerIsNotShown();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
 
