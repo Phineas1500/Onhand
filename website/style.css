@@ -24,9 +24,9 @@
   --font-symbol:'Apple Symbols','Segoe UI Symbol','Noto Sans Symbols','Noto Sans Symbols 2',var(--font-serif);
 }
 
-/* Auto-dark when user has not chosen */
+/* Light by default; "auto" (chosen with the theme toggle) follows the OS */
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
+  :root[data-theme="auto"]{
     --rp-base:#191724; --rp-mantle:#1f1d2e; --rp-crust:#26233a;
     --rp-surface-0:#2a273f; --rp-surface-1:#393552; --rp-surface-2:#44415a;
     --rp-overlay:#908caa;
@@ -72,7 +72,7 @@ section:first-of-type{border-top:0}
 .nav-brand:hover{color:var(--fg);text-decoration:none}
 .nav-brand img{width:26px;height:26px;border-radius:5px;background:var(--bg-elev);padding:2px}
 [data-theme="dark"] .nav-brand img{filter:invert(0.88) hue-rotate(180deg)}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .nav-brand img{filter:invert(0.88) hue-rotate(180deg)}}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"] .nav-brand img{filter:invert(0.88) hue-rotate(180deg)}}
 .nav-links{display:flex;gap:4px;margin-left:14px}
 .nav-link{display:inline-block;padding:8px 12px;font-family:var(--font-mono);font-size:11.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--fg-muted);font-weight:700;border-radius:3px}
 .nav-link:hover{color:var(--fg);background:var(--bg-elev);text-decoration:none}
@@ -81,7 +81,7 @@ section:first-of-type{border-top:0}
 .nav-cta:hover{background:var(--rp-foam);color:var(--rp-base);text-decoration:none}
 [data-theme="dark"] .nav-cta{color:#191724}
 [data-theme="dark"] .nav-cta:hover{color:#191724}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .nav-cta{color:#191724}:root:not([data-theme="light"]) .nav-cta:hover{color:#191724}}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"] .nav-cta{color:#191724}:root[data-theme="auto"] .nav-cta:hover{color:#191724}}
 .nav-ghost{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;color:var(--fg);font-family:var(--font-mono);font-size:11.5px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;border-radius:3px;border:1px solid var(--border);background:transparent;cursor:pointer}
 .nav-ghost:hover{background:var(--bg-elev);color:var(--fg);text-decoration:none}
 .nav-stars{display:inline-flex;align-items:center;gap:4px;padding-left:8px;border-left:1px solid var(--border);font-size:11px;opacity:0.85}
@@ -128,7 +128,7 @@ section:first-of-type{border-top:0}
 .btn-primary .mc{font-size:20px}
 [data-theme="dark"] .btn-primary{color:#191724}
 [data-theme="dark"] .btn-primary:hover{color:#191724}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn-primary{color:#191724}:root:not([data-theme="light"]) .btn-primary:hover{color:#191724}}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"] .btn-primary{color:#191724}:root[data-theme="auto"] .btn-primary:hover{color:#191724}}
 .btn-secondary{display:inline-flex;align-items:center;gap:8px;padding:14px 20px;background:transparent;color:var(--fg);font-family:var(--font-serif);font-size:17px;font-weight:500;border-radius:3px;border:1px solid var(--border);cursor:pointer;text-decoration:none}
 .btn-secondary:hover{background:var(--bg-elev);color:var(--fg);text-decoration:none;border-color:var(--rp-pine)}
 
@@ -204,7 +204,7 @@ section:first-of-type{border-top:0}
 .demo-composer.is-used .demo-suggest:hover{border-color:var(--border);background:var(--bg)}
 .demo-ask-btn{align-self:flex-end;border:0;background:var(--rp-pine);color:var(--rp-base);border-radius:2px;padding:8px 12px;font:700 11px var(--font-mono)}
 [data-theme="dark"] .demo-ask-btn{color:#191724}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .demo-ask-btn{color:#191724}}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"] .demo-ask-btn{color:#191724}}
 @media (max-width:900px){
   .demo-workspace{grid-template-columns:1fr;min-height:0}
   .demo-page{max-height:430px;border-right:0;border-bottom:4px solid #26233a}
@@ -250,7 +250,7 @@ section:first-of-type{border-top:0}
 .release-download:hover{background:var(--rp-foam);color:var(--rp-base);text-decoration:none}
 [data-theme="dark"] .release-download{color:#191724}
 [data-theme="dark"] .release-download:hover{color:#191724}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .release-download{color:#191724}:root:not([data-theme="light"]) .release-download:hover{color:#191724}}
+@media (prefers-color-scheme: dark){:root[data-theme="auto"] .release-download{color:#191724}:root[data-theme="auto"] .release-download:hover{color:#191724}}
 .source-install{border:1px solid var(--border-subtle);border-radius:4px;background:var(--bg);overflow:hidden}
 .source-install summary{cursor:pointer;padding:12px 14px;font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;list-style:none}
 .source-install summary::-webkit-details-marker{display:none}

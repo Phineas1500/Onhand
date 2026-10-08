@@ -6,7 +6,7 @@ Static landing page. No build step. This directory is self-contained:
 - `privacy.html` — privacy policy URL for Chrome Web Store submission
 - `support.html` — support and troubleshooting page
 - `404.html` — fallback page
-- `style.css` — Ramaway Dawn (auto dark via `prefers-color-scheme`, manual override via `data-theme` attribute + theme toggle in nav)
+- `style.css` — Ramaway Dawn (light by default; dark or auto via the `data-theme` attribute + theme toggle in nav, where auto follows `prefers-color-scheme`)
 - `site.js` — Chrome Web Store URL, release metadata, analytics events, theme toggle persistence
 
 Plus assets:

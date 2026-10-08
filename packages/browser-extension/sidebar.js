@@ -132,7 +132,7 @@
 	let authSigningIn = false;
 	let authStatusText = "";
 	let authStatusKind = "";
-	let sidebarTheme = "system";
+	let sidebarTheme = "light";
 	let attachmentDrafts = [];
 	let messageTurnCache = [];
 	let messageRenderContext = "";
@@ -275,17 +275,18 @@
 		return escapeHtml(value).replace(/`/g, "&#96;");
 	}
 
+	// Light unless the reader picked Dark or System in the Theme menu.
 	function normalizeSidebarTheme(value) {
-		const normalized = String(value || "system").toLowerCase();
-		return SIDEBAR_THEME_VALUES.has(normalized) ? normalized : "system";
+		const normalized = String(value || "light").toLowerCase();
+		return SIDEBAR_THEME_VALUES.has(normalized) ? normalized : "light";
 	}
 
 	async function loadSidebarThemePreference() {
 		try {
-			const stored = await chrome.storage.local.get({ [SIDEBAR_THEME_STORAGE_KEY]: "system" });
+			const stored = await chrome.storage.local.get({ [SIDEBAR_THEME_STORAGE_KEY]: "light" });
 			return normalizeSidebarTheme(stored[SIDEBAR_THEME_STORAGE_KEY]);
 		} catch {
-			return "system";
+			return "light";
 		}
 	}
 
@@ -3543,9 +3544,9 @@
 						<label class="onhand-menu-field">
 							<span>Theme</span>
 							<select id="themeSelect" class="onhand-select">
-								<option value="system">System</option>
 								<option value="light">Light</option>
 								<option value="dark">Dark</option>
+								<option value="system">System</option>
 							</select>
 							</label>
 								<div class="onhand-menu-actions">

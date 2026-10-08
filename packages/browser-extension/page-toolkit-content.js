@@ -6,8 +6,8 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 	const fontUrls = toolkitOptions.fontUrls && typeof toolkitOptions.fontUrls === "object" ? toolkitOptions.fontUrls : {};
 	const katexUrl = typeof toolkitOptions.katexUrl === "string" ? toolkitOptions.katexUrl : "";
 	const normalizeAnnotationTheme = (value) => {
-		const theme = String(value || "system").toLowerCase();
-		return theme === "light" || theme === "dark" ? theme : "system";
+		const theme = String(value || "light").toLowerCase();
+		return theme === "light" || theme === "dark" || theme === "system" ? theme : "light";
 	};
 	const annotationTheme = normalizeAnnotationTheme(toolkitOptions.theme);
 	const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();

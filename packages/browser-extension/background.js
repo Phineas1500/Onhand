@@ -188,17 +188,20 @@ function getExtensionFontUrls() {
 	return Object.fromEntries(Object.entries(FONT_ASSET_PATHS).map(([key, path]) => [key, chrome.runtime.getURL(path)]));
 }
 
+// Light unless the reader picked Dark or System in the sidebar's Theme menu.
+const ONHAND_DEFAULT_THEME = "light";
+
 function normalizeOnhandTheme(value) {
-	const theme = String(value || "system").toLowerCase();
-	return ONHAND_THEME_VALUES.has(theme) ? theme : "system";
+	const theme = String(value || ONHAND_DEFAULT_THEME).toLowerCase();
+	return ONHAND_THEME_VALUES.has(theme) ? theme : ONHAND_DEFAULT_THEME;
 }
 
 async function getOnhandThemePreference() {
 	try {
-		const stored = await chrome.storage.local.get({ [ONHAND_THEME_STORAGE_KEY]: "system" });
+		const stored = await chrome.storage.local.get({ [ONHAND_THEME_STORAGE_KEY]: ONHAND_DEFAULT_THEME });
 		return normalizeOnhandTheme(stored[ONHAND_THEME_STORAGE_KEY]);
 	} catch {
-		return "system";
+		return ONHAND_DEFAULT_THEME;
 	}
 }
 
@@ -4279,8 +4282,8 @@ const createPageToolkit = (options = {}) => {
 	const fontUrls = toolkitOptions.fontUrls && typeof toolkitOptions.fontUrls === "object" ? toolkitOptions.fontUrls : {};
 	const katexUrl = typeof toolkitOptions.katexUrl === "string" ? toolkitOptions.katexUrl : "";
 	const normalizeAnnotationTheme = (value) => {
-		const theme = String(value || "system").toLowerCase();
-		return theme === "light" || theme === "dark" ? theme : "system";
+		const theme = String(value || "light").toLowerCase();
+		return theme === "light" || theme === "dark" || theme === "system" ? theme : "light";
 	};
 	const annotationTheme = normalizeAnnotationTheme(toolkitOptions.theme);
 	const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();

@@ -314,21 +314,24 @@ const ONHAND_STORE = {
   }
 })();
 
-// 2) Theme toggle: cycles light → dark → auto. Persisted in localStorage.
+// 2) Theme toggle: cycles light → dark → auto. Light is the default; "auto"
+//    follows the OS. Persisted in localStorage.
 (function(){
   const root = document.documentElement;
   const btn = document.querySelector('[data-theme-toggle]');
-  if (!btn) return;
 
   function apply(mode){
-    if (mode === 'auto') root.removeAttribute('data-theme');
+    if (mode === 'light') root.removeAttribute('data-theme');
     else root.setAttribute('data-theme', mode);
+    if (!btn) return;
     btn.setAttribute('data-mode', mode);
     btn.title = `Theme: ${mode}`;
   }
 
-  const saved = localStorage.getItem('onhand-theme') || 'auto';
-  apply(saved);
+  let saved = 'light';
+  try { saved = localStorage.getItem('onhand-theme') || 'light'; } catch {}
+  apply(['light', 'dark', 'auto'].includes(saved) ? saved : 'light');
+  if (!btn) return;
 
   btn.addEventListener('click', () => {
     const next = btn.getAttribute('data-mode') === 'light' ? 'dark'
