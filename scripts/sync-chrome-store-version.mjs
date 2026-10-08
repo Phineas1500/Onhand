@@ -7,6 +7,7 @@ const SITE_JS_URL = new URL("../website/site.js", import.meta.url);
 const HTML_URLS = [
 	new URL("../website/index.html", import.meta.url),
 	new URL("../website/support.html", import.meta.url),
+	new URL("../website/welcome.html", import.meta.url),
 ];
 const CHECK_ONLY = process.argv.includes("--check");
 

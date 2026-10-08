@@ -11,7 +11,7 @@ const EXPECTED_EVENTS = {
 	githubSourceEvent: "github_source_click",
 	sponsorEvent: "sponsor_click",
 };
-const WEBSITE_PAGES = ["index.html", "404.html", "privacy.html", "support.html"];
+const WEBSITE_PAGES = ["index.html", "404.html", "privacy.html", "support.html", "welcome.html"];
 
 async function loadPage(fileName) {
 	const html = await readFile(join(WEBSITE_DIR, fileName), "utf8");

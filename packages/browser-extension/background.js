@@ -15651,7 +15651,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	return true;
 });
 
+// A store install opens the welcome page once. Chrome hides a new extension in
+// its puzzle-piece menu, and the welcome page is a readable page for the first
+// question (new users otherwise start on the Web Store, which no extension can
+// read). Unpacked loads, including every test profile, skip it.
+const ONHAND_WELCOME_URL = "https://useonhand.com/welcome.html";
+
+async function openWelcomePageAfterInstall(details) {
+	if (details?.reason !== "install") return false;
+	const self = await chrome.management.getSelf();
+	if (!self || self.installType === "development") return false;
+	await chrome.tabs.create({ url: ONHAND_WELCOME_URL, active: true });
+	return true;
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
+	void openWelcomePageAfterInstall(details).catch((error) => log("Could not open the welcome page", error?.message || String(error)));
 	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
 	if (!reason) return;
 	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});

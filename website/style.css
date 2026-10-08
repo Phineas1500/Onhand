@@ -336,6 +336,33 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .legal-section code{font-family:var(--font-mono);font-size:13px;background:var(--bg-deep);color:var(--rp-love);padding:1px 6px;border-radius:2px}
 .inline-action{display:inline-flex;align-items:center;gap:8px;margin-top:4px;font-family:var(--font-mono);font-size:12px;color:var(--rp-pine);text-transform:uppercase;letter-spacing:0.06em;font-weight:700}
 .inline-action:hover{color:var(--rp-foam)}
+
+/* Welcome page (opened once after a store install) */
+.welcome-hero h1{max-width:none}
+.welcome-grid{display:grid;gap:28px}
+.welcome-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.welcome-step{display:flex;gap:14px;align-items:flex-start;background:var(--bg-elev);border:1px solid var(--border-subtle);border-radius:5px;padding:20px}
+.welcome-num{flex:none;width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--rp-pine);color:var(--bg);font-family:var(--font-mono);font-size:14px;font-weight:700}
+.welcome-step h2{font-family:var(--font-serif);font-size:20px;font-weight:600;line-height:1.25;margin:3px 0 6px;color:var(--fg)}
+.welcome-step p{font-size:15px;line-height:1.55;margin:0;color:var(--fg)}
+.welcome-step strong{font-weight:600;color:var(--rp-love)}
+.welcome-page kbd{font-family:var(--font-mono);font-size:12px;padding:1px 6px;border:1px solid var(--border);border-bottom-width:2px;border-radius:3px;background:var(--bg);color:var(--fg);white-space:nowrap}
+.try-card .section-eyebrow{margin-bottom:10px}
+.try-intro{font-size:16px;margin:0 0 10px;color:var(--fg)}
+.ask-chips{list-style:none;margin:0 0 22px;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.ask-chips li{font-family:var(--font-mono);font-size:12px;line-height:1.4;padding:6px 10px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--rp-pine)}
+.try-passage{background:var(--bg);border:1px solid var(--border-subtle);border-left:3px solid var(--rp-gold);border-radius:4px;padding:clamp(18px,3vw,30px)}
+.try-passage h2{font-family:var(--font-serif);font-size:clamp(22px,2.6vw,28px);font-weight:600;line-height:1.2;margin:0 0 12px;color:var(--fg)}
+.try-passage p{font-size:17px;line-height:1.7;margin:0 0 14px;color:var(--fg);max-width:68ch}
+.try-passage p:last-child{margin-bottom:0}
+.try-learning{font-size:15px;line-height:1.6;margin:18px 0 0;color:var(--fg-muted)}
+.try-learning strong{color:var(--rp-love);font-weight:600}
+.welcome-where h2{font-family:var(--font-serif);font-size:clamp(22px,2.6vw,28px);font-weight:600;margin:0 0 12px;color:var(--fg)}
+.welcome-where ul{margin:0 0 14px;padding-left:22px}
+.welcome-where li{font-size:16px;line-height:1.6;margin:0 0 8px;color:var(--fg)}
+.welcome-where li strong{font-weight:600;color:var(--fg)}
+.welcome-where p{font-size:16px;margin:0;color:var(--fg)}
+@media (max-width:820px){.welcome-steps{grid-template-columns:1fr}}
 @media (max-width:820px){
   .legal-grid{grid-template-columns:1fr}
   .legal-toc{position:static;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}

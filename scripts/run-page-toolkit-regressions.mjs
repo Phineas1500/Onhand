@@ -56,6 +56,22 @@ async function loadFunctionFromFile(relativePath, functionName) {
 	assert.fail(`${functionName} body end not found`);
 }
 
+async function assertWelcomePageOpensOnlyAfterStoreInstall() {
+	const created = [];
+	const chrome = (installType) => ({
+		management: { getSelf: async () => ({ installType }) },
+		tabs: { create: async (options) => { created.push(options); return { id: 1 }; } },
+	});
+	const declaration = await loadBackgroundFunction("openWelcomePageAfterInstall");
+	const load = (installType) =>
+		new Function("chrome", `const ONHAND_WELCOME_URL = "https://useonhand.com/welcome.html";\n${declaration}\nreturn openWelcomePageAfterInstall;`)(chrome(installType));
+	assert.equal(await load("normal")({ reason: "install" }), true);
+	assert.deepEqual(created, [{ url: "https://useonhand.com/welcome.html", active: true }], "a store install opens the welcome page once");
+	assert.equal(await load("development")({ reason: "install" }), false, "unpacked loads (every test profile) skip it");
+	assert.equal(await load("normal")({ reason: "update" }), false, "updates never reopen it");
+	assert.equal(created.length, 1);
+}
+
 async function assertChromeWebStoreTabsAreNamedUnreadable() {
 	// New users start on the Web Store listing, which Chrome forbids extensions
 	// to script. Every page tool failed there and the agent retried 8 times.
@@ -4397,6 +4413,7 @@ async function main() {
 	await assertPdfViewerHandoffHelpers();
 	await assertDetachedPdfViewerOpenRouting();
 	await assertChromeWebStoreTabsAreNamedUnreadable();
+	await assertWelcomePageOpensOnlyAfterStoreInstall();
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertPdfViewerCitationNavigationAndRebuild();
