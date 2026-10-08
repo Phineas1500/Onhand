@@ -431,10 +431,22 @@ async function openWorkspace(cdp, testCase, catalog) {
 	return targets;
 }
 
-async function closeFixtureTargets(cdp, catalog) {
+// Closes the fixture tabs and any other page the iteration opened (an agent
+// that browsed to an outside site left that tab open, and the next iteration
+// read it). Pages that existed before the iteration are left alone, which
+// keeps a personal profile's tabs safe.
+async function pageTargetIds(cdp) {
+	const targetInfos = (await cdp.send("Target.getTargets")).targetInfos || [];
+	return new Set(targetInfos.filter((target) => target.type === "page").map((target) => target.targetId));
+}
+
+async function closeFixtureTargets(cdp, catalog, pagesBefore = null) {
 	const targetInfos = (await cdp.send("Target.getTargets")).targetInfos || [];
 	for (const target of targetInfos) {
-		if (!String(target.url || "").startsWith(catalog.baseUrl)) continue;
+		const url = String(target.url || "");
+		const fixture = url.startsWith(catalog.baseUrl);
+		const openedThisIteration = pagesBefore && target.type === "page" && !pagesBefore.has(target.targetId) && !url.startsWith("chrome-extension://");
+		if (!fixture && !openedThisIteration) continue;
 		await cdp.send("Target.closeTarget", { targetId: target.targetId }).catch(() => {});
 	}
 }
@@ -654,6 +666,7 @@ async function main() {
 		trajectoryCases: for (const testCase of selected) {
 			for (let iteration = 1; iteration <= options.iterations; iteration += 1) {
 				await waitForIdle(options);
+				const pagesBefore = await pageTargetIds(cdp);
 				process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: opening fixture workspace\n`);
 				await openWorkspace(cdp, testCase, fixture.catalog);
 				const startedAt = Date.now();
@@ -684,7 +697,7 @@ async function main() {
 				const scored = scoreTrajectory(testCase, trace);
 				process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: ${scored.status} (${scored.score.toFixed(3)})\n`);
 				await persistBaselineArtifacts(outDir, metadata, traces, caseMap);
-				if (!options.keepTabs) await closeFixtureTargets(cdp, fixture.catalog);
+				if (!options.keepTabs) await closeFixtureTargets(cdp, fixture.catalog, pagesBefore);
 				if (isFreeTierQuotaTrace(trace, runtime)) {
 					metadata.stoppedReason = "free-tier-quota-exhausted";
 					process.stderr.write("[trajectory] Onhand Free daily quota exhausted; stopping before additional runs are misclassified.\n");

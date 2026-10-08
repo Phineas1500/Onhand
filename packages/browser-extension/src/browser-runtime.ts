@@ -15098,9 +15098,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			const sourceWasOpenedByThisRequest = sourceTabWasOpenedByRequest(activeRequest, tabId);
 			// When Onhand just opened a raw PDF source in the background, replace
 			// that temporary tab with the viewer instead of leaving two identically
-			// titled tabs. Preserve pre-existing user tabs by using the normal
-			// new-tab behavior for those.
-			return sourceWasOpenedByThisRequest ? { ...backgroundParams, newTab: false } : backgroundParams;
+			// titled tabs, and skip the selection and reading-position probes a tab
+			// nobody has looked at cannot answer. Preserve pre-existing user tabs by
+			// using the normal new-tab behavior for those.
+			return sourceWasOpenedByThisRequest ? { ...backgroundParams, newTab: false, freshBackgroundSource: true } : backgroundParams;
 		}
 		if (commandName === "show_note") {
 			const noteText = compactOnPageNoteText(targetedParams?.note || targetedParams?.text || targetedParams?.label || "");

@@ -10983,6 +10983,8 @@ async function waitForOnhandPdfViewerReady(tabId, timeoutMs = 15000) {
 	throw new Error(lastError?.message || "Timed out waiting for Onhand PDF viewer to finish rendering.");
 }
 
+const INLINE_VIEWER_PORT_GRACE_MS = 2000;
+
 async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUrl = "") {
 	const deadline = Date.now() + timeoutMs;
 	let lastError = null;
@@ -10996,38 +10998,66 @@ async function waitForInlineOnhandPdfViewerReady(tabId, timeoutMs = 15000, pdfUr
 			pageCountText: document.querySelector("#onhand-pdf-page-count")?.textContent || "",
 		};
 	})()`;
+	// Which status route answered, and what each attempt cost (diagnostics).
+	const attempts = [];
+	const startedAt = Date.now();
+	const timed = async (method, run) => {
+		const attemptStartedAt = Date.now();
+		try {
+			const value = await run();
+			if (attempts.length < 24) attempts.push({ method, ms: Date.now() - attemptStartedAt, ready: Boolean(value?.ready) });
+			return value;
+		} catch (error) {
+			if (attempts.length < 24) attempts.push({ method, ms: Date.now() - attemptStartedAt, error: String(error?.message || error).slice(0, 80) });
+			throw error;
+		}
+	};
+	const readyResult = (status, via) => ({ ok: true, ...status, via, waitedMs: Date.now() - startedAt, attempts });
 	while (Date.now() < deadline) {
 		try {
-			const status = await callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found", pdfUrl);
-			if (status?.ready) return { ok: true, ...status };
+			const status = await timed("runtimePort", () => callOnhandPdfViewerFrameViaRuntimePort(tabId, statusCommand, "No Onhand PDF viewer runtime port found", pdfUrl));
+			if (status?.ready) return readyResult(status, "runtimePort");
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 			}
+			// The port answered; the viewer is still rendering. Poll it again.
+			await delay(150);
+			continue;
 		} catch (runtimePortError) {
 			lastError = runtimePortError;
+			if (/failed to load the PDF/.test(String(runtimePortError?.message || ""))) throw runtimePortError;
+		}
+		// A freshly installed viewer connects its runtime port within a few
+		// hundred ms. Tried before the viewer page loads, the frame bridge posts
+		// into the frame's blank initial document and waits out its full 6 s
+		// timeout: every background PDF open took ~8 s for a one-page PDF. Give
+		// the port a head start before the slower fallbacks.
+		if (Date.now() - startedAt < INLINE_VIEWER_PORT_GRACE_MS) {
+			await delay(100);
+			continue;
 		}
 		try {
-			const status = await callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found", pdfUrl);
-			if (status?.ready) return { ok: true, ...status };
+			const status = await timed("bridge", () => callOnhandPdfViewerFrameViaBridge(tabId, statusCommand, "No Onhand PDF viewer frame context found", pdfUrl));
+			if (status?.ready) return readyResult(status, "bridge");
 			if (status?.error) {
 				throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 			}
 		} catch (error) {
 			try {
-				const status = await evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, "No Onhand PDF viewer frame context found");
-				if (status?.ready) return { ok: true, ...status };
+				const status = await timed("scripting", () => evaluateInOnhandPdfViewerFrameViaScripting(tabId, expression, "No Onhand PDF viewer frame context found"));
+				if (status?.ready) return readyResult(status, "scripting");
 				if (status?.error) {
 					throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 				}
 			} catch (fallbackError) {
 				try {
-					const status = await evaluateInMatchingFrame(
+					const status = await timed("matchingFrame", () => evaluateInMatchingFrame(
 						tabId,
 						frameOrContextLooksLikeOnhandPdfViewer,
 						expression,
 						"No Onhand PDF viewer frame context found",
-					);
-					if (status?.ready) return { ok: true, ...status };
+					));
+					if (status?.ready) return readyResult(status, "matchingFrame");
 					if (status?.error) {
 						throw new Error(`Onhand PDF viewer failed to load the PDF: ${status.error}`);
 					}
@@ -11284,7 +11314,11 @@ async function openPdfInOnhandViewer(args = {}) {
 		|| (sourceIsGoogleDocs && args.newTab !== false);
 	let initialSelectionHandoff = normalizePdfSelectionForViewerHandoff(args.pdfSelection || args.selection, pdfUrl);
 	let initialSelectionHandoffFailure = null;
-	if (!initialSelectionHandoff && args.disableSelectionHandoff !== true) {
+	// A PDF tab Onhand opened in the background this turn and the reader has
+	// not switched to holds no selection or reading position: skip the
+	// selection capture (~0.7 s) and page-location detectors (~1.2 s).
+	const freshBackgroundSource = args.freshBackgroundSource === true && sourceTab?.active === false;
+	if (!initialSelectionHandoff && args.disableSelectionHandoff !== true && !freshBackgroundSource) {
 		const selectionStartedAt = Date.now();
 		try {
 			initialSelectionHandoff = await withOperationTimeout(
@@ -11339,6 +11373,8 @@ async function openPdfInOnhandViewer(args = {}) {
 		? { pageNumber: initialSelectionHandoff.pageNumber, source: `${initialSelectionHandoff.source || "pdf-selection"}:selection` }
 		: providedSelectionPageNumber
 			? { pageNumber: providedSelectionPageNumber, source: "provided-selection-page" }
+		: freshBackgroundSource
+			? null
 		: await inferInitialPdfViewerPageLocation(args, sourceTab, pdfUrl, diagnostics);
 	const initialPageNumber = initialPageLocation?.pageNumber || null;
 	const initialPageSource = initialPageLocation?.source || null;
@@ -11399,6 +11435,9 @@ async function openPdfInOnhandViewer(args = {}) {
 			}
 		}
 	let initialScrollRatio = null;
+	const stageStartedAt = Date.now();
+	const stageMs = {};
+	const markStage = (name, startedAt) => { stageMs[name] = Date.now() - startedAt; if (diagnostics) diagnostics.stageMs = stageMs; };
 	if (!initialPageNumber && sourceTab?.id && shouldInferPdfPageNumberFromTab(sourceTab, pdfUrl)) {
 		try {
 			const tabLocation = await inferPdfScrollRatioFromTabDom(sourceTab.id);
@@ -11411,6 +11450,7 @@ async function openPdfInOnhandViewer(args = {}) {
 			} catch {}
 		}
 	}
+	markStage("scrollRatioInference", stageStartedAt);
 	const viewerOptions = initialPageNumber
 		? { pageNumber: initialPageNumber }
 		: initialScrollRatio
@@ -11450,12 +11490,20 @@ async function openPdfInOnhandViewer(args = {}) {
 				active: args.active === false ? undefined : true,
 			});
 		}
+		let stepStartedAt = Date.now();
 		const finalTab = waitForLoad ? await waitForTabComplete(targetTab.id, timeoutMs) : await chrome.tabs.get(targetTab.id);
+		markStage("tabLoad", stepStartedAt);
+		stepStartedAt = Date.now();
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
 		grantOnhandPdfViewerCredentialedSource(finalTab.id, pdfUrl);
 		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
+		markStage("viewerInstall", stepStartedAt);
+		stepStartedAt = Date.now();
 		const viewerReady = waitForLoad ? await safeWaitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl) : null;
+		markStage("viewerReady", stepStartedAt);
+		stepStartedAt = Date.now();
 		const selectionHandoff = await getSelectionHandoffResult(finalTab.id);
+		markStage("selectionHandoffResult", stepStartedAt);
 		return {
 			tab: simplifyTab(await chrome.tabs.get(finalTab.id)),
 			sourceTab: sourceTabSnapshot,

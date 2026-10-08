@@ -11342,6 +11342,19 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		],
 	};
 	assert.equal(test.sourceTabWasOpenedByRequestForTest(handoffRequest, 44), true);
+	// A PDF Onhand just opened in the background skips the selection and
+	// reading-position probes (~1.9 s an open) while the reader has not
+	// switched to it, and the viewer-ready wait gives the viewer's runtime port
+	// a head start: the frame-bridge fallback, tried before the viewer page
+	// loads, waited out a 6 s timeout on every open (8.3 s for a one-page PDF,
+	// now ~0.1-0.3 s).
+	const { readFile: readSourceFile } = await import("node:fs/promises");
+	const runtimeSourceText = await readSourceFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
+	assert.match(runtimeSourceText, /sourceWasOpenedByThisRequest \? \{ \.\.\.backgroundParams, newTab: false, freshBackgroundSource: true \}/);
+	const backgroundSourceText = await readSourceFile(new URL("../packages/browser-extension/background.js", import.meta.url), "utf8");
+	assert.match(backgroundSourceText, /const freshBackgroundSource = args\.freshBackgroundSource === true && sourceTab\?\.active === false;/, "only an unvisited background tab skips the probes");
+	assert.match(backgroundSourceText, /if \(!initialSelectionHandoff && args\.disableSelectionHandoff !== true && !freshBackgroundSource\)/);
+	assert.match(backgroundSourceText, /if \(Date\.now\(\) - startedAt < INLINE_VIEWER_PORT_GRACE_MS\) \{\s*await delay\(100\);\s*continue;/, "the runtime port gets a head start before the frame bridge");
 	const reusedSourceRequest = {
 		toolTraces: [{
 			state: "complete",

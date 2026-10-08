@@ -97871,7 +97871,7 @@ function createOnhandBrowserRuntime(host) {
       const backgroundParams = applyLearningBackgroundFocusDefault(targetedParams, commandName, activeRequest);
       const tabId = Number(backgroundParams?.tabId || 0);
       const sourceWasOpenedByThisRequest = sourceTabWasOpenedByRequest(activeRequest, tabId);
-      return sourceWasOpenedByThisRequest ? { ...backgroundParams, newTab: false } : backgroundParams;
+      return sourceWasOpenedByThisRequest ? { ...backgroundParams, newTab: false, freshBackgroundSource: true } : backgroundParams;
     }
     if (commandName === "show_note") {
       const noteText = compactOnPageNoteText(targetedParams?.note || targetedParams?.text || targetedParams?.label || "");
