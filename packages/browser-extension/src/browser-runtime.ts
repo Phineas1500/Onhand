@@ -180,9 +180,9 @@ interface PreparationTiming {
 	decisionsFallback?: string;
 	// Decisions was slow, so the model classifier started alongside it.
 	modelClassifierHedged?: boolean;
-	// Decisions' answers on leaving the page unmarked, and on no highlights or
-	// no notes (probabilities; see applyDecisionsPageMarks).
-	decisionsPageMarks?: Record<string, number>;
+	// Decisions' answers on page marks (leave unmarked, no highlights, no notes)
+	// and on quiz, hint and cited-source requests (probabilities).
+	decisionsRequestAnswers?: Record<string, number>;
 	// Learning-mode research (problem help with linked sources): the planner
 	// model call, the corpus search, the passage reranker model call, and the
 	// after-answer evidence checks (total time and count).
@@ -3965,7 +3965,7 @@ function isFinalizeGateEligibleRequest(request: any) {
 function promptAsksForCitedSource(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
-	return /\b(?:sources?|references?|stud(?:y|ies)|papers?|articles?|reports?)\s+(?:that\s+)?(?:it|they|the (?:page|article|post|paper|essay))\s+(?:cites?|cited|references?|referenced|links? to)\b|\bcited\s+(?:source|reference|study|paper|article|report)s?\b|\b(?:footnote|reference|citation)\s*\[?\d+\]?\s+(?:say|says|said|shows?|claims?)\b/.test(text);
+	return decisionsRequestVerdict(prompt, "asksAboutCitedSource", /\b(?:sources?|references?|stud(?:y|ies)|papers?|articles?|reports?)\s+(?:that\s+)?(?:it|they|the (?:page|article|post|paper|essay))\s+(?:cites?|cited|references?|referenced|links? to)\b|\bcited\s+(?:source|reference|study|paper|article|report)s?\b|\b(?:footnote|reference|citation)\s*\[?\d+\]?\s+(?:say|says|said|shows?|claims?)\b/.test(text));
 }
 
 // Opening another page (attempted, whatever the outcome) or reading a tab other
@@ -6793,7 +6793,7 @@ function setModelIntentClassificationForPrompt(prompt: unknown, classification: 
 
 function clearModelIntentClassifications() {
 	modelIntentClassificationsByKey.clear();
-	decisionsPageMarksByKey.clear();
+	decisionsRequestAnswersByKey.clear();
 }
 
 // What each intent field means. The model classifier's prompt and the
@@ -6898,59 +6898,78 @@ const DECISIONS_INTENT_WORDING: Partial<Record<keyof ModelIntentClassification, 
 };
 
 // Asked with the intent fields: whether the user wants the page left
-// unmarked, wants no highlights, or wants no notes. promptPageChangePolicy's
+// unmarked, wants no highlights, or wants no notes; and whether they want a
+// quiz, a hint, or what a cited source says (see decisionsRequestVerdict). promptPageChangePolicy's
 // English patterns both missed requests (1 of 8 "leave the page alone" in a
 // probe, every non-English one) and over-blocked ("Don't highlight the whole
 // paragraph, just the key sentence" stopped all highlighting). A confident yes
 // blocks, a confident no lifts the pattern's block, and anything between
 // leaves the pattern in charge. Tuned on evals/intent-classifier: 675/675
 // flags, against 625 for the patterns alone; 22/24 on held-out requests (16).
-const DECISIONS_PAGE_MARKS_YES = 0.7;
-const DECISIONS_PAGE_MARKS_NO = 0.15;
-const DECISIONS_PAGE_MARKS_WORDING = {
+const DECISIONS_REQUEST_YES = 0.7;
+const DECISIONS_REQUEST_NO = 0.15;
+const DECISIONS_REQUEST_WORDING = {
 	forbidsPageMarks:
 		"True only when the user explicitly asks Onhand not to mark the open page: no highlights, notes, or annotations, or the answer in chat only (for example \"without highlighting\", \"no marks\", \"chat only\", \"keep the page clean\", in any language). An ordinary question that says nothing about marking the page is false, even though it could be answered in chat. Also false when the user wants marks, limits which marks to make (only some passages, or highlights without notes), asks to remove existing marks, or mentions such phrases as content of the page or asks what they mean, and when \"without\" or \"don't\" refers to something other than marking the page.",
 	forbidsHighlights:
 		"True only when the user explicitly asks Onhand not to highlight anything on the open page at all (for example \"no highlights\", \"don't highlight\", \"without highlighting\", or a request to leave the page unmarked), in any language. False when the user wants highlights or limits which passages to highlight (only some passages, not a particular part, or fewer of them), asks to remove existing highlights, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about highlighting.",
 	forbidsNotes:
 		"True only when the user explicitly asks Onhand not to add any notes to the open page (for example \"no notes\", \"skip the notes\", \"just highlight, no margin notes\", or a request to leave the page unmarked), in any language. False when the user wants notes or limits which notes to add, asks to remove existing notes, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about notes.",
+	asksForQuiz:
+		"True when the user asks Onhand to quiz or test them on the open material: to ask them questions, practice questions, or a quick test and check their answers, in any language. A request for a hint is not a quiz. False when the user asks about a quiz or test that is part of the page, asks Onhand to answer or grade a question, asks for a summary or study notes, or uses \"test\" in another sense.",
+	asksForHint:
+		"True when the user wants a hint rather than the answer: a nudge, a clue, a pointer in the right direction, or help getting started without the solution being given away, in any language. False when the user wants the answer or a full solution, asks about hints or clues that are content of the page, or asks for an explanation with no wish to work it out themselves.",
+	asksAboutCitedSource:
+		"True when the user asks what a source cited or linked by the open page actually says: the study, paper, report, or reference behind a claim, a numbered citation or footnote, or whether that source supports the claim, in any language. False when the user asks Onhand to cite sources for its own answer, asks which sources the page lists, asks whether the page itself is reliable, or wants other sources found.",
 };
-type DecisionsPageMarks = Partial<Record<keyof typeof DECISIONS_PAGE_MARKS_WORDING, number>>;
-const decisionsPageMarksByKey = new Map<string, DecisionsPageMarks>();
+type DecisionsRequestAnswers = Partial<Record<keyof typeof DECISIONS_REQUEST_WORDING, number>>;
+const decisionsRequestAnswersByKey = new Map<string, DecisionsRequestAnswers>();
 
-function setDecisionsPageMarksForPrompt(prompt: unknown, pageMarks: DecisionsPageMarks) {
+function setDecisionsRequestAnswersForPrompt(prompt: unknown, pageMarks: DecisionsRequestAnswers) {
 	for (const key of modelIntentClassificationKeys(prompt)) {
-		decisionsPageMarksByKey.delete(key);
-		decisionsPageMarksByKey.set(key, pageMarks);
+		decisionsRequestAnswersByKey.delete(key);
+		decisionsRequestAnswersByKey.set(key, pageMarks);
 	}
-	while (decisionsPageMarksByKey.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
-		const oldestKey = decisionsPageMarksByKey.keys().next().value;
+	while (decisionsRequestAnswersByKey.size > MODEL_INTENT_CLASSIFICATION_CACHE_MAX) {
+		const oldestKey = decisionsRequestAnswersByKey.keys().next().value;
 		if (oldestKey === undefined) break;
-		decisionsPageMarksByKey.delete(oldestKey);
+		decisionsRequestAnswersByKey.delete(oldestKey);
 	}
 }
 
-function decisionsPageMarksForPrompt(prompt: unknown): DecisionsPageMarks | null {
-	if (!decisionsPageMarksByKey.size) return null;
+function decisionsRequestAnswersForPrompt(prompt: unknown): DecisionsRequestAnswers | null {
+	if (!decisionsRequestAnswersByKey.size) return null;
 	for (const key of modelIntentClassificationKeys(prompt)) {
-		const pageMarks = decisionsPageMarksByKey.get(key);
+		const pageMarks = decisionsRequestAnswersByKey.get(key);
 		if (pageMarks) return pageMarks;
 	}
 	return null;
 }
 
+// Quiz, hint and cited-source requests: the English patterns missed
+// paraphrases and other languages ("check my understanding with a few
+// questions", "point me in the right direction", "the paper footnoted here":
+// 4/10, 3/10 and 4/8 on a probe) and matched lookalikes ("the page gives a
+// hint about the killer"). Same rule as page marks: a confident yes or no
+// decides, anything between leaves the pattern in charge. On the labeled
+// corpus all three were right on every request, and on 15 held-out ones.
+function decisionsRequestVerdict(prompt: unknown, name: keyof typeof DECISIONS_REQUEST_WORDING, patternValue: boolean) {
+	const probability = decisionsRequestAnswersForPrompt(prompt)?.[name];
+	return probability === undefined ? patternValue : probability >= DECISIONS_REQUEST_YES ? true : probability < DECISIONS_REQUEST_NO ? false : patternValue;
+}
+
 // Combines the patterns' verdict with the Decisions answers (see above).
 function applyDecisionsPageMarks(
 	regex: { forbidsAllPageChanges: boolean; forbidsHighlights: boolean; forbidsNotes: boolean },
-	decided: DecisionsPageMarks | null,
+	decided: DecisionsRequestAnswers | null,
 ) {
 	if (!decided) return regex;
 	const verdict = (probability: number | undefined, regexValue: boolean) =>
-		probability === undefined ? regexValue : probability >= DECISIONS_PAGE_MARKS_YES ? true : probability < DECISIONS_PAGE_MARKS_NO ? false : regexValue;
+		probability === undefined ? regexValue : probability >= DECISIONS_REQUEST_YES ? true : probability < DECISIONS_REQUEST_NO ? false : regexValue;
 	// A borderline "leave it unmarked" while neither highlights nor notes are
 	// forbidden is implausible ("What does 'chat only' mean?" scored 0.40).
-	const neitherForbidden = (decided.forbidsHighlights ?? 1) < DECISIONS_PAGE_MARKS_NO && (decided.forbidsNotes ?? 1) < DECISIONS_PAGE_MARKS_NO;
-	const borderline = decided.forbidsPageMarks !== undefined && decided.forbidsPageMarks >= DECISIONS_PAGE_MARKS_NO && decided.forbidsPageMarks < DECISIONS_PAGE_MARKS_YES;
+	const neitherForbidden = (decided.forbidsHighlights ?? 1) < DECISIONS_REQUEST_NO && (decided.forbidsNotes ?? 1) < DECISIONS_REQUEST_NO;
+	const borderline = decided.forbidsPageMarks !== undefined && decided.forbidsPageMarks >= DECISIONS_REQUEST_NO && decided.forbidsPageMarks < DECISIONS_REQUEST_YES;
 	const forbidsAllPageChanges = borderline && neitherForbidden ? false : verdict(decided.forbidsPageMarks, regex.forbidsAllPageChanges);
 	return {
 		forbidsAllPageChanges,
@@ -6969,7 +6988,7 @@ function buildDecisionsIntentRequest(prompt: unknown, page: { title?: string; ur
 		].join("\n\n"),
 		questions: [
 			...MODEL_INTENT_FIELD_DEFINITIONS.map(([name, definition]) => [name, DECISIONS_INTENT_WORDING[name] || definition]),
-			...Object.entries(DECISIONS_PAGE_MARKS_WORDING),
+			...Object.entries(DECISIONS_REQUEST_WORDING),
 		].map(([name, wording]) => ({
 			type: "predicate",
 			name,
@@ -6979,15 +6998,15 @@ function buildDecisionsIntentRequest(prompt: unknown, page: { title?: string; ur
 }
 
 function readDecisionsIntentAnswers(body: any) {
-	const pageMarkNames = Object.keys(DECISIONS_PAGE_MARKS_WORDING) as Array<keyof typeof DECISIONS_PAGE_MARKS_WORDING>;
-	const probabilities: Partial<Record<keyof ModelIntentClassification | keyof typeof DECISIONS_PAGE_MARKS_WORDING, number>> = {};
+	const requestAnswerNames = Object.keys(DECISIONS_REQUEST_WORDING) as Array<keyof typeof DECISIONS_REQUEST_WORDING>;
+	const probabilities: Partial<Record<keyof ModelIntentClassification | keyof typeof DECISIONS_REQUEST_WORDING, number>> = {};
 	for (const answer of Array.isArray(body?.answers) ? body.answers : []) {
-		const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), ...pageMarkNames].find((name) => name === answer?.name);
+		const field = [...MODEL_INTENT_FIELD_DEFINITIONS.map(([name]) => name), ...requestAnswerNames].find((name) => name === answer?.name);
 		const probability = Number(answer?.probability);
 		if (field && answer?.type === "predicate" && Number.isFinite(probability)) probabilities[field] = probability;
 	}
-	const pageMarks: DecisionsPageMarks = {};
-	for (const name of pageMarkNames) if (probabilities[name] !== undefined) pageMarks[name] = probabilities[name];
+	const requestAnswers: DecisionsRequestAnswers = {};
+	for (const name of requestAnswerNames) if (probabilities[name] !== undefined) requestAnswers[name] = probabilities[name];
 	const classification: Partial<ModelIntentClassification> = {};
 	const unsureFields: string[] = [];
 	for (const [field] of MODEL_INTENT_FIELD_DEFINITIONS) {
@@ -7006,7 +7025,7 @@ function readDecisionsIntentAnswers(body: any) {
 		const teachingIndex = unsureFields.indexOf("teaching");
 		if (teachingIndex >= 0) unsureFields.splice(teachingIndex, 1);
 	}
-	return { probabilities, unsureFields, pageMarks: Object.keys(pageMarks).length ? pageMarks : null, classification: unsureFields.length ? null : (classification as ModelIntentClassification) };
+	return { probabilities, unsureFields, requestAnswers: Object.keys(requestAnswers).length ? requestAnswers : null, classification: unsureFields.length ? null : (classification as ModelIntentClassification) };
 }
 
 async function postDecisions(apiKey: string, body: unknown, timeoutMs: number, signal?: AbortSignal, fetcher: typeof fetch = decisionsFetchForTest || fetch) {
@@ -7116,13 +7135,14 @@ const HINT_POLICY =
 	"Hint request: give one hint that points the learner to where the answer is (the marked passage, a section or figure) or to the next reasoning step, without giving any part of the answer. Do not quote or paraphrase the words that state it, fill in part of it, or give a clue that leaves only one obvious word. A repeated hint on the same question may point more precisely, still without stating the answer. End by inviting them to try.";
 
 function promptAsksForHint(prompt: unknown) {
-	return /\b(?:hint|clue|nudge)\b|\b(?:i'?m|i\s+am)\s+stuck\b/.test(ownWordsPromptText(prompt));
+	return decisionsRequestVerdict(prompt, "asksForHint", /\b(?:hint|clue|nudge)\b|\b(?:i'?m|i\s+am)\s+stuck\b/.test(ownWordsPromptText(prompt)));
 }
 
 function promptAsksForQuiz(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
-	return /\b(?:quiz|test)\s+me\b|\b(?:give|make|write|create)\s+(?:me\s+)?(?:a\s+)?(?:quick\s+|short\s+)?(?:quiz|practice\s+(?:questions?|test)|self-test)\b/.test(text);
+	return decisionsRequestVerdict(prompt, "asksForQuiz",
+		/\b(?:quiz|test)\s+me\b|\b(?:give|make|write|create)\s+(?:me\s+)?(?:a\s+)?(?:quick\s+|short\s+)?(?:quiz|practice\s+(?:questions?|test)|self-test)\b/.test(text));
 }
 
 // The per-request policy sits next to the user's request, so a lane policy that
@@ -8186,7 +8206,7 @@ function promptPageChangePolicy(prompt: unknown) {
 		forbidsAllPageChanges ||
 		/\b(?:do not|don't|dont|no|without|avoid|skip)\s+(?:add(?:ing)?\s+)?(?:notes?)\b/.test(text) ||
 		new RegExp(`${negativeDirective.source}\\bnotes?\\b`).test(text);
-	return applyDecisionsPageMarks({ forbidsAllPageChanges, forbidsHighlights, forbidsNotes }, decisionsPageMarksForPrompt(prompt));
+	return applyDecisionsPageMarks({ forbidsAllPageChanges, forbidsHighlights, forbidsNotes }, decisionsRequestAnswersForPrompt(prompt));
 }
 
 function promptExplicitlyRequestsNote(prompt: unknown) {
@@ -11178,10 +11198,13 @@ export const __browserRuntimeTest = {
 	decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
 	decisionsIntentCutoffsForTest: {
 		...DECISIONS_INTENT_CUTOFFS,
-		...Object.fromEntries(Object.keys(DECISIONS_PAGE_MARKS_WORDING).map((name) => [name, { trueAt: DECISIONS_PAGE_MARKS_YES, falseBelow: DECISIONS_PAGE_MARKS_NO }])),
+		...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }])),
 	},
-	setDecisionsPageMarksForPromptForTest: setDecisionsPageMarksForPrompt,
+	setDecisionsRequestAnswersForPromptForTest: setDecisionsRequestAnswersForPrompt,
 	promptPageChangePolicyForTest: promptPageChangePolicy,
+	promptAsksForQuizForTest: promptAsksForQuiz,
+	promptAsksForHintForTest: promptAsksForHint,
+	promptAsksForCitedSourceForTest: promptAsksForCitedSource,
 	buildVoiceCommandRequestForTest: buildVoiceCommandRequest,
 	readVoiceCommandChoiceForTest: readVoiceCommandChoice,
 	setDecisionsFetchForTest(fetcher: typeof fetch | null) {
@@ -17312,10 +17335,10 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									preparationTiming.decisionsMs = Date.now() - decisionsStartedAt;
 									requestContext.abortController.signal.throwIfAborted();
 									// The page-marks answers count even when an intent field was unsure.
-									if (first.decided?.pageMarks && activeRequest === requestContext) {
-										setDecisionsPageMarksForPrompt(displayPrompt, first.decided.pageMarks);
-										if (prompt !== displayPrompt) setDecisionsPageMarksForPrompt(prompt, first.decided.pageMarks);
-										preparationTiming.decisionsPageMarks = Object.fromEntries(Object.entries(first.decided.pageMarks).map(([name, value]) => [name, Math.round(Number(value) * 100) / 100]));
+									if (first.decided?.requestAnswers && activeRequest === requestContext) {
+										setDecisionsRequestAnswersForPrompt(displayPrompt, first.decided.requestAnswers);
+										if (prompt !== displayPrompt) setDecisionsRequestAnswersForPrompt(prompt, first.decided.requestAnswers);
+										preparationTiming.decisionsRequestAnswers = Object.fromEntries(Object.entries(first.decided.requestAnswers).map(([name, value]) => [name, Math.round(Number(value) * 100) / 100]));
 									}
 									if (first.model) {
 										decisionsAbort.abort();

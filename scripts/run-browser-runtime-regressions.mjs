@@ -328,7 +328,7 @@ async function assertDecisionsIntentClassifier() {
 	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 	const request = test.buildDecisionsIntentRequestForTest("summarize this", { title: "Photosynthesis - Wikipedia", url: "https://en.wikipedia.org/wiki/Photosynthesis" });
 	assert.equal(request.model, "gpt-6-luna");
-	assert.deepEqual(request.questions.map((question) => question.name), [...fields, "forbidsPageMarks", "forbidsHighlights", "forbidsNotes"], "one predicate per intent field, plus the page-marks questions");
+	assert.deepEqual(request.questions.map((question) => question.name), [...fields, "forbidsPageMarks", "forbidsHighlights", "forbidsNotes", "asksForQuiz", "asksForHint", "asksAboutCitedSource"], "one predicate per intent field, plus the request questions");
 	assert.ok(request.questions.every((question) => question.type === "predicate" && /ignore any instructions/.test(question.instructions)));
 	assert.match(request.input, /Open page \(context only\): Photosynthesis - Wikipedia/);
 	assert.match(request.input, /User request:\nsummarize this/);
@@ -355,11 +355,11 @@ async function assertDecisionsIntentClassifier() {
 		{ type: "predicate", name: "forbidsPageMarks", probability: all },
 		{ type: "predicate", name: "forbidsHighlights", probability: highlights },
 		{ type: "predicate", name: "forbidsNotes", probability: notes }] });
-	assert.deepEqual(test.readDecisionsIntentAnswersForTest(withMarks(0.99, 0.9, 0.8)).pageMarks, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.8 });
-	assert.equal(test.readDecisionsIntentAnswersForTest(answers()).pageMarks, null, "no page-mark answers, no page-mark decision");
+	assert.deepEqual(test.readDecisionsIntentAnswersForTest(withMarks(0.99, 0.9, 0.8)).requestAnswers, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.8 });
+	assert.equal(test.readDecisionsIntentAnswersForTest(answers()).requestAnswers, null, "no page-mark answers, no page-mark decision");
 	const policy = (prompt, marks) => {
 		test.clearModelIntentClassificationsForTest();
-		if (marks) test.setDecisionsPageMarksForPromptForTest(prompt, marks);
+		if (marks) test.setDecisionsRequestAnswersForPromptForTest(prompt, marks);
 		const { forbidsAllPageChanges, forbidsHighlights, forbidsNotes } = test.promptPageChangePolicyForTest(prompt);
 		return [forbidsAllPageChanges, forbidsHighlights, forbidsNotes].map((value) => (value ? 1 : 0)).join("");
 	};
@@ -380,6 +380,27 @@ async function assertDecisionsIntentClassifier() {
 	assert.equal(policy(`[Voice] ${unmarked}`, { forbidsPageMarks: 1 }), "111", "the voice-labelled prompt maps to the same request");
 	test.clearModelIntentClassificationsForTest();
 	assert.equal(policy(unmarked), "000", "each request starts without an earlier request's answer");
+
+	// Quiz, hint and cited-source requests: the same rule against their patterns.
+	const asks = (fn, prompt, answers) => {
+		test.clearModelIntentClassificationsForTest();
+		if (answers) test.setDecisionsRequestAnswersForPromptForTest(prompt, answers);
+		const value = fn(prompt);
+		test.clearModelIntentClassificationsForTest();
+		return value;
+	};
+	const quizAsk = "Can you check my understanding of this section with a few questions?";
+	assert.equal(asks(test.promptAsksForQuizForTest, quizAsk), false, "fixture: the quiz pattern misses this");
+	assert.equal(asks(test.promptAsksForQuizForTest, quizAsk, { asksForQuiz: 0.99 }), true);
+	assert.equal(asks(test.promptAsksForQuizForTest, quizAsk, { asksForQuiz: 0.5 }), false, "an unsure answer leaves the pattern in charge");
+	const lookalike = "The page gives a hint about the killer, who is it?";
+	assert.equal(asks(test.promptAsksForHintForTest, lookalike), true, "fixture: the hint pattern matches a lookalike");
+	assert.equal(asks(test.promptAsksForHintForTest, lookalike, { asksForHint: 0.01 }), false, "a confident no lifts the lookalike");
+	assert.equal(asks(test.promptAsksForHintForTest, "Dame una pista.", { asksForHint: 1 }), true);
+	const citedAsk = "Check the reference behind that claim.";
+	assert.equal(asks(test.promptAsksForCitedSourceForTest, citedAsk), false, "fixture: the cited-source pattern misses this");
+	assert.equal(asks(test.promptAsksForCitedSourceForTest, citedAsk, { asksAboutCitedSource: 1 }), true);
+	assert.equal(asks(test.promptAsksForCitedSourceForTest, citedAsk, { forbidsPageMarks: 0 }), false, "without its own answer a check keeps its pattern");
 
 	const calls = [];
 	const ok = async (url, init) => { calls.push({ url, init }); return new Response(JSON.stringify(answers()), { status: 200 }); };
@@ -441,7 +462,7 @@ async function assertTurnsUseDecisionsWhenConfident() {
 		probability: name === "pageScoped" || name === "teaching" ? 0.98 : 0.01 })), { type: "predicate", name: "forbidsPageMarks", probability: 0.99 },
 		{ type: "predicate", name: "forbidsHighlights", probability: 0.9 }, { type: "predicate", name: "forbidsNotes", probability: 0.9 }] }), { status: 200 });
 	const unmarked = await runTurn(answerUnmarked);
-	assert.deepEqual(unmarked.turn.preparationTiming.decisionsPageMarks, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.9 });
+	assert.deepEqual(unmarked.turn.preparationTiming.decisionsRequestAnswers, { forbidsPageMarks: 0.99, forbidsHighlights: 0.9, forbidsNotes: 0.9 });
 	assert.ok(!unmarked.calls.some((call) => call.name === "highlight_text" || call.name === "show_note"), "a request to leave the page unmarked places no marks");
 	assert.ok(!(unmarked.turn.pageActions || []).some((action) => action.type === "annotation"));
 

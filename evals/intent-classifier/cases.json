@@ -12,7 +12,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -27,7 +30,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -42,7 +48,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -57,7 +66,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -72,7 +84,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -87,7 +102,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -102,7 +120,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -117,7 +138,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -132,7 +156,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -147,7 +174,10 @@
     "crossTabComparison": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -162,7 +192,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -173,7 +206,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -184,7 +220,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -199,7 +238,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -214,7 +256,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -229,7 +274,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -244,7 +292,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -259,7 +310,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -274,7 +328,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -289,7 +346,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -304,7 +364,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -319,7 +382,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -334,7 +400,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -349,7 +418,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -364,7 +436,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -379,7 +454,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -394,7 +472,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -409,7 +490,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -424,7 +508,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -439,7 +526,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -454,7 +544,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": null
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -469,7 +562,10 @@
     "crossTabComparison": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -484,7 +580,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -499,7 +598,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -514,7 +616,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -529,7 +634,10 @@
     "documentReviewMarkup": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -549,7 +657,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -569,7 +680,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -589,7 +703,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -609,7 +726,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": null,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -629,7 +749,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -649,7 +772,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -669,7 +795,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -689,7 +818,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -709,7 +841,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -729,7 +864,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -749,7 +887,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -769,7 +910,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -789,7 +933,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -809,7 +956,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -829,7 +979,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -849,7 +1002,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -869,7 +1025,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -889,7 +1048,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -909,7 +1071,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -929,7 +1094,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -949,7 +1117,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -969,7 +1140,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -989,7 +1163,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1009,7 +1186,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1029,7 +1209,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1049,7 +1232,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1069,7 +1255,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1089,7 +1278,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1109,7 +1301,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1129,7 +1324,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1149,7 +1347,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1169,7 +1370,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1189,7 +1393,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1209,7 +1416,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1229,7 +1439,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1249,7 +1462,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1269,7 +1485,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1289,7 +1508,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1309,7 +1531,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1329,7 +1554,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1349,7 +1577,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1369,7 +1600,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1389,7 +1623,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1409,7 +1646,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1429,7 +1669,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1449,7 +1692,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1469,7 +1715,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1489,7 +1738,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1509,7 +1761,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1529,7 +1784,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1549,7 +1807,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1569,7 +1830,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1589,7 +1853,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1609,7 +1876,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1629,7 +1899,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1649,7 +1922,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1669,7 +1945,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1689,7 +1968,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": null,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1709,7 +1991,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1729,7 +2014,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1749,7 +2037,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1769,7 +2060,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1789,7 +2083,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1809,7 +2106,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1829,7 +2129,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1849,7 +2152,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1869,7 +2175,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1889,7 +2198,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1909,7 +2221,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1929,7 +2244,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1949,7 +2267,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1969,7 +2290,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1986,7 +2310,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2006,7 +2333,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2026,7 +2356,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2046,7 +2379,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2066,7 +2402,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2086,7 +2425,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2106,7 +2448,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2126,7 +2471,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2146,7 +2494,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2166,7 +2517,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2186,7 +2540,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2206,7 +2563,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2226,7 +2586,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2246,7 +2609,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2266,7 +2632,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2286,7 +2655,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2306,7 +2678,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2326,7 +2701,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2346,7 +2724,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2366,7 +2747,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2386,7 +2770,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2406,7 +2793,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2426,7 +2816,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2446,7 +2839,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2466,7 +2862,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2486,7 +2885,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2506,7 +2908,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2526,7 +2931,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2546,7 +2954,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2566,7 +2977,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2586,7 +3000,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": null,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2606,7 +3023,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2625,7 +3045,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2645,7 +3068,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2665,7 +3091,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2685,7 +3114,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2705,7 +3137,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2725,7 +3160,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2745,7 +3183,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2765,7 +3206,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2785,7 +3229,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2805,7 +3252,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2824,7 +3274,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2844,7 +3297,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2864,7 +3320,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2884,7 +3343,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2902,7 +3364,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2922,7 +3387,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2942,7 +3410,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2962,7 +3433,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2982,7 +3456,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3002,7 +3479,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3022,7 +3502,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3042,7 +3525,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3062,7 +3548,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3082,7 +3571,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3101,7 +3593,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3121,7 +3616,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3141,7 +3639,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3161,7 +3662,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3181,7 +3685,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3201,7 +3708,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3221,7 +3731,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3241,7 +3754,10 @@
     "problemSolvingHelp": false,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3261,7 +3777,10 @@
     "problemSolvingHelp": true,
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -3274,7 +3793,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3287,7 +3809,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3300,7 +3825,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3313,7 +3841,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3326,7 +3857,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3339,7 +3873,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3352,7 +3889,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3365,7 +3905,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3378,7 +3921,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3391,7 +3937,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3404,7 +3953,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3417,7 +3969,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3430,7 +3985,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3443,7 +4001,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3456,7 +4017,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3469,7 +4033,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3482,7 +4049,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3495,7 +4065,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3508,7 +4081,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3521,7 +4097,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3534,7 +4113,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3547,7 +4129,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3560,7 +4145,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3573,7 +4161,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3586,7 +4177,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3599,7 +4193,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3612,7 +4209,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3625,7 +4225,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3638,7 +4241,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3651,7 +4257,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3664,7 +4273,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3677,7 +4289,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests"
   },
@@ -3690,7 +4305,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3703,7 +4321,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3716,7 +4337,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3729,7 +4353,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3742,7 +4369,10 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3755,7 +4385,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3768,7 +4401,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3781,7 +4417,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3794,7 +4433,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3807,7 +4449,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 page-mark requests, held out from wording tuning"
   },
@@ -3820,7 +4465,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": true,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3833,7 +4481,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": true,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3846,7 +4497,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3859,7 +4513,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3872,7 +4529,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3885,7 +4545,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3898,7 +4561,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3911,7 +4577,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3924,7 +4593,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3937,7 +4609,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests"
   },
@@ -3950,7 +4625,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": true,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -3963,7 +4641,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": true,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -3976,7 +4657,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -3989,7 +4673,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -4002,7 +4689,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -4015,7 +4705,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -4028,7 +4721,10 @@
    "expect": {
     "forbidsPageMarks": false,
     "forbidsHighlights": false,
-    "forbidsNotes": false
+    "forbidsNotes": false,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
   },
@@ -4041,9 +4737,688 @@
    "expect": {
     "forbidsPageMarks": true,
     "forbidsHighlights": true,
-    "forbidsNotes": true
+    "forbidsNotes": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
    },
    "source": "2026-10-07 highlight- and note-only requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Ask me some questions to check I understood this.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Can you check my understanding of this section with a few questions?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Test my knowledge of photosynthesis.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Let's do a practice round on this chapter.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Interroge-moi sur cette page.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Hazme preguntas sobre este artículo.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Give me three practice questions on this section and wait for my answers.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "What is on the quiz in this course page?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "How do they test the hypothesis?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Explain the test results in this paper.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Answer question 3 on this worksheet.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Summarize this for my exam.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Don't tell me the answer, just point me in the right direction.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Can you get me started without solving it?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Help me think about it but don't give it away.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Dame una pista.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Un indice ?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "I'm stuck on part b, can I get a nudge?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "The page gives a hint about the killer, who is it?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "What does this clue in the crossword mean?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Just give me the answer.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Solve this for me step by step.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "What hints does the author drop about the ending?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Check the reference behind that claim.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Open the study they link for this number and tell me what it found.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Is this claim actually supported by the paper footnoted here?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Que dit la source citée sur ce point ?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Look up citation 12 and tell me what it actually says.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "What does the original paper behind this statistic conclude?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Cite your sources.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "What sources does this page list?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Summarize this article.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Is this page a reliable source?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Find me other papers on this topic.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Add citations to your answer.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Who funded the study this page is based on?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": null
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Explain what the reference list at the bottom is for.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests"
+  },
+  {
+   "prompt": "Can you quiz me before my exam tomorrow?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Check whether I really get this, ask me a couple of questions.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Fais-moi un petit test sur ce chapitre.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": true,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "What kind of questions are on this practice test page?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Grade my answer to question 2.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "No spoilers, just a small hint please.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Point me toward the right formula but let me finish it.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Ich komme nicht weiter, gib mir einen Tipp.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": true,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "What does the author hint at in the last line?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Show me the full solution.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Does the cited study actually say that?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Follow footnote 4 and summarize what it says.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "¿Qué dice el estudio que cita el artículo?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Which sources would you recommend for this topic?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Who wrote this article?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
   }
  ]
 }

@@ -53,16 +53,22 @@ const CORPUS = JSON.parse(readFileSync(CORPUS_FILE, "utf8")).cases.map((entry) =
 // page to be left unmarked, or for no highlights or no notes. Only the regex
 // router and Decisions answer them; the model classifier does not.
 const PAGE_MARK_FIELDS = ["forbidsPageMarks", "forbidsHighlights", "forbidsNotes"];
-const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp", ...PAGE_MARK_FIELDS];
+// asksForQuiz / asksForHint / asksAboutCitedSource: likewise regex and Decisions only.
+const REQUEST_FIELDS = ["asksForQuiz", "asksForHint", "asksAboutCitedSource"];
+const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp", ...PAGE_MARK_FIELDS, ...REQUEST_FIELDS];
 
 // The page-change policy for a prompt: the English patterns alone, or combined
 // with Decisions' answers the way the runtime combines them.
 function pageMarkVerdicts(test, prompt, decided = null) {
 	test.clearModelIntentClassificationsForTest();
-	if (decided) test.setDecisionsPageMarksForPromptForTest(prompt, decided);
+	if (decided) test.setDecisionsRequestAnswersForPromptForTest(prompt, decided);
 	const policy = test.promptPageChangePolicyForTest(prompt);
+	const verdicts = {
+		forbidsPageMarks: policy.forbidsAllPageChanges, forbidsHighlights: policy.forbidsHighlights, forbidsNotes: policy.forbidsNotes,
+		asksForQuiz: test.promptAsksForQuizForTest(prompt), asksForHint: test.promptAsksForHintForTest(prompt), asksAboutCitedSource: test.promptAsksForCitedSourceForTest(prompt),
+	};
 	test.clearModelIntentClassificationsForTest();
-	return { forbidsPageMarks: policy.forbidsAllPageChanges, forbidsHighlights: policy.forbidsHighlights, forbidsNotes: policy.forbidsNotes };
+	return verdicts;
 }
 
 function regexVerdicts(test, prompt) {
@@ -232,7 +238,7 @@ if (process.argv.includes("--decisions")) {
 		for (const row of wrong) console.log(`    WRONG p=${row.probability.toFixed(2)} want ${row.want}: ${CORPUS[row.index][0].slice(0, 80).replace(/\n/g, " ")}`);
 	}
 	// In production Decisions' page-mark answers combine with the patterns.
-	const withPageMarks = (index, verdicts) => ({ ...verdicts, ...pageMarkVerdicts(test, CORPUS[index][0], payloads.get(index)?.pageMarks || null) });
+	const withPageMarks = (index, verdicts) => ({ ...verdicts, ...pageMarkVerdicts(test, CORPUS[index][0], payloads.get(index)?.requestAnswers || null) });
 	const decided = new Map([...payloads].filter(([, p]) => p.classification).map(([index, p]) => [index, withPageMarks(index, p.classification)]));
 	console.log(`\nDecisions confident on every field: ${decided.size}/${CORPUS.length} requests (the rest go to the model classifier)`);
 	score("Decisions, confident requests only", decided);
