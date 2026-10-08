@@ -11153,6 +11153,13 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	const rerankedDirective = test.buildLearningResearchDirectiveForTest({ ...rerankPlan, modelCorpusEvidence: rerankedEvidence });
 	assert.match(rerankedDirective, /separate model semantically selected/i);
 	assert.match(rerankedDirective, /Lecture 13, p\. 45/);
+	// A corpus search with no candidate passages skips the reranker; the agent
+	// is told the search found nothing rather than to search again.
+	const emptySearchDirective = test.buildLearningResearchDirectiveForTest({ ...rerankPlan, modelCorpusEvidence: rerankPlan.evidenceSlots.map((slot) => ({
+		id: slot.id, description: slot.description, coverage: "none", reason: "The linked-PDF search returned no candidate passages for this slot.", matches: [] })) });
+	assert.match(emptySearchDirective, /found no candidate passages for these evidence slots/);
+	assert.doesNotMatch(emptySearchDirective, /separate model semantically selected/i, "no model selected anything");
+	assert.doesNotMatch(emptySearchDirective, /call browser_search_linked_pdf_corpus once/, "the agent is not told to repeat the search");
 	const corpusPreflightCalls = [];
 	const hydratedPlan = await test.hydrateLearningResearchPlanWithCorpusForTest(
 		{ ...plan, candidateTabIds: [7] },

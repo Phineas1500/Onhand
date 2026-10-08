@@ -6622,7 +6622,9 @@ function buildLearningResearchDirective(plan: LearningResearchPlan | null) {
 		plan.evidenceNeeded.length ? `- Evidence needed before answering: ${plan.evidenceNeeded.join("; ")}` : "",
 		plan.evidenceSlots.length ? `- Evidence coverage slots: ${plan.evidenceSlots.map((slot) => `${slot.id}: ${slot.description || slot.queries.join(", ")}`).join("; ")}` : "",
 		plan.candidateTabIds.length ? `- Start with plausible tab ids: ${plan.candidateTabIds.join(", ")}` : "",
-		semanticEvidence
+		semanticEvidence && !modelEvidence.some((slot: any) => Array.isArray(slot?.matches) && slot.matches.length)
+			? `- The research preflight searched the linked PDF corpus (${corpusSummary}) and found no candidate passages for these evidence slots. Look for the evidence in the open sources themselves:\n${semanticEvidence}`
+			: semanticEvidence
 			? `- The research preflight searched the linked PDF corpus (${corpusSummary}). A separate model semantically selected the following evidence from a broad lexical recall pool. Use these selections, then open only the strongest sources needed for exact reading and annotation:\n${semanticEvidence}`
 			: recallCandidates
 				? `- The research preflight searched the linked PDF corpus (${corpusSummary}), but its separate semantic reranker did not return a usable selection. The following are UNRANKED recall candidates, not evidence. Semantically judge them yourself; do not infer relevance from order or keyword overlap:\n${recallCandidates}`
@@ -13921,6 +13923,21 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			);
 			timing.learningCorpusSearchMs = Date.now() - stepStartedAt;
 			if (!hydratedPlan?.corpusResults?.length) return hydratedPlan;
+			const candidates = flattenLearningCorpusCandidates(hydratedPlan);
+			timing.learningRerankCandidates = candidates.length;
+			// Nothing to rank: record that the search found no candidate passages
+			// instead of spending a reranker model call on an empty list (1.5 s in
+			// a Learning trajectory run).
+			if (!candidates.length) {
+				const modelCorpusEvidence = (hydratedPlan.evidenceSlots || []).map((slot) => ({
+					id: slot.id,
+					description: slot.description || slot.queries.join(", "),
+					coverage: "none",
+					reason: "The linked-PDF search returned no candidate passages for this slot.",
+					matches: [],
+				}));
+				return modelCorpusEvidence.length ? { ...hydratedPlan, modelCorpusEvidence } : hydratedPlan;
+			}
 			stepStartedAt = Date.now();
 			try {
 				const rerankedRaw = await runInternalTutorJsonPrompt(
@@ -13930,7 +13947,6 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					25000,
 				);
 				timing.learningRerankMs = Date.now() - stepStartedAt;
-				timing.learningRerankCandidates = flattenLearningCorpusCandidates(hydratedPlan).length;
 				const modelCorpusEvidence = parseLearningCorpusReranker(rerankedRaw, hydratedPlan);
 				return modelCorpusEvidence ? { ...hydratedPlan, modelCorpusEvidence } : hydratedPlan;
 			} catch (error) {

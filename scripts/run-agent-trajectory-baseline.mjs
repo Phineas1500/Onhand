@@ -667,6 +667,11 @@ async function main() {
 						elapsedMs: Date.now() - startedAt,
 						catalog: fixture.catalog,
 					});
+					// Where the time before the answer went (classifier, Learning
+					// research planner/search/reranker, evidence checks).
+					const turnRecord = result?.turn || result?.replay?.turns?.at?.(-1) || result?.state?.turns?.at?.(-1) || null;
+					trace.preparationTiming = turnRecord?.preparationTiming || null;
+					if (trace.preparationTiming) process.stderr.write(`[trajectory] ${testCase.id} iteration ${iteration}: timing ${JSON.stringify(trace.preparationTiming)}\n`);
 				} catch (error) {
 					await runCli(["stop", "--json"], options).catch(() => {});
 					await waitForIdle(options).catch((idleError) => {
