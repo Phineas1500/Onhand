@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -370,6 +371,7 @@ SELECT
   if(blob13 = '', 'unknown', blob13) AS ai_model,
   if(blob16 = '', 'unknown', blob16) AS turn_id,
   blob17 AS session_id,
+  if(blob8 = '', 'unknown', blob8) AS user_agent,
   SUM(_sample_interval) AS events,
   MIN(timestamp) AS first_seen,
   MAX(timestamp) AS last_seen
@@ -380,14 +382,19 @@ WHERE ${where}
     'chat_stream_complete',
     'chat_response_complete',
     'chat_quota_denied',
+    'chat_turn_quota_denied',
+    'chat_cost_quota_denied',
     'prompt_submitted',
     'prompt_succeeded',
     'prompt_failed',
     'prompt_stopped',
     'session_started',
-    'register_success'
+    'register_success',
+    'extension_installed',
+    'extension_updated',
+    'sidepanel_opened'
   )
-GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, session_id
+GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, session_id, user_agent
 ORDER BY device_hash, source, event`,
 		},
 		{
@@ -644,8 +651,10 @@ async function runReport(args) {
 	for (const query of queries) {
 		sections[query.name] = await runSql({ accountId: args.accountId, apiToken, sql: query.sql });
 	}
-	sections.quota_classification = classifyQuotaRows(sections.quota_and_rejections, testDeviceHashes);
-	sections.error_classification = classifyErrorRows(sections.top_errors, testDeviceHashes);
+	// Test runs register fresh Free devices, so known hashes alone miss most of them.
+	const likelyTestDeviceHashes = [...findLikelyTestDevices(sections.usage_devices, testDeviceHashes, { scripts: false })];
+	sections.quota_classification = classifyQuotaRows(sections.quota_and_rejections, likelyTestDeviceHashes);
+	sections.error_classification = classifyErrorRows(sections.top_errors, likelyTestDeviceHashes);
 	sections.tool_reliability_classification = classifyToolReliabilityRows(sections.tool_reliability);
 	sections.usage_summary = summarizeUsageDevices(sections.usage_devices, testDeviceHashes, args.days);
 
@@ -907,7 +916,9 @@ function printReport(report, args) {
 		console.log(
 			`Free-tier users: ${formatInteger(usage.estimated_non_test_free_tier_devices)} estimated non-test devices, ${formatInteger(
 				usage.non_test_worker_chat_devices,
-			)} completed-chat devices, ${formatInteger(usage.non_test_worker_chat_completions)} completed chats`,
+			)} completed-chat devices, ${formatInteger(usage.non_test_worker_chat_completions)} completed chats (${formatInteger(
+				usage.excluded_test_worker_chat_completions,
+			)} test chats excluded)`,
 		);
 	}
 	const toolReliability = healthToolReliabilityRows(report);
@@ -960,6 +971,7 @@ function renderMarkdown(report) {
 		lines.push(`- Estimated non-test free-tier devices: ${formatInteger(usage.estimated_non_test_free_tier_devices)}`);
 		lines.push(`- Non-test completed-chat devices: ${formatInteger(usage.non_test_worker_chat_devices)}`);
 		lines.push(`- Non-test completed chats: ${formatInteger(usage.non_test_worker_chat_completions)}`);
+		lines.push(`- Excluded test chats: ${formatInteger(usage.excluded_test_worker_chat_completions)}`);
 	}
 	lines.push("");
 
@@ -970,6 +982,7 @@ function renderMarkdown(report) {
 		"estimated_non_test_free_tier_devices",
 		"non_test_worker_chat_devices",
 		"non_test_worker_chat_completions",
+		"excluded_test_worker_chat_completions",
 		"non_test_extension_prompt_succeeded_devices",
 		"non_test_extension_prompt_succeeded_events",
 		"first_seen",
@@ -1084,7 +1097,18 @@ function isFreeTierUsageRow(row) {
 	const event = String(row?.event || "");
 	if (source === "free-tier" && (["chat_stream_complete", "chat_response_complete"].includes(event) || isQuotaDenial(row))) return true;
 	if (source === "extension" && rowAiProvider(row) === "onhand-free") {
-		return ["prompt_submitted", "prompt_succeeded", "prompt_failed", "prompt_stopped", "session_started", "register_success"].includes(event);
+		// Install and update events count installs that have not asked anything yet.
+		return [
+			"prompt_submitted",
+			"prompt_succeeded",
+			"prompt_failed",
+			"prompt_stopped",
+			"session_started",
+			"register_success",
+			"extension_installed",
+			"extension_updated",
+			"sidepanel_opened",
+		].includes(event);
 	}
 	return false;
 }
@@ -1100,9 +1124,64 @@ function isExtensionPromptSucceededUsageRow(row) {
 function isLikelyTestUsageRow(row, testDeviceHashes = []) {
 	if (rowHasKnownTestDevice(row, testDeviceHashes)) return true;
 	if (isProbeDiagnosticRow(row)) return true;
-	if (/(^|[-_:])(cli|acceptance|bypass|smoke|test)([-_:]|$)/i.test(rowSource(row))) return true;
+	// Debug-CLI asks tag their turns (cli, acceptance, agent-trajectory, prompt-eval:<variant>).
+	if (/(^|[-_:])(cli|acceptance|bypass|smoke|test|trajectory|eval|probe)([-_:]|$)/i.test(rowSource(row))) return true;
 	if (/codex-smoke|acceptance|probe/i.test(rowAiModel(row))) return true;
 	return false;
+}
+
+// The extension always calls the Worker from a browser; scripts and curl show up as "other".
+function isScriptWorkerRow(row) {
+	return rowSource(row) === "free-tier" && String(row?.user_agent || "") === "other";
+}
+
+// The Worker hashes the Free token and the extension hashes its diagnostics
+// client id, so one install appears under two device hashes. Turns and sessions
+// carry the same ids on both sides; link hashes that share one into an install.
+function linkDeviceInstalls(rows) {
+	const parent = new Map();
+	const find = (hash) => {
+		let root = hash;
+		while (parent.get(root) !== root) root = parent.get(root);
+		for (let next = hash; next !== root; ) {
+			const up = parent.get(next);
+			parent.set(next, root);
+			next = up;
+		}
+		return root;
+	};
+	const ownerById = new Map();
+	for (const row of Array.isArray(rows) ? rows : []) {
+		const deviceHash = rowDeviceHash(row);
+		if (!deviceHash) continue;
+		if (!parent.has(deviceHash)) parent.set(deviceHash, deviceHash);
+		for (const id of [`session:${rowSessionId(row)}`, `turn:${rowTurnId(row)}`]) {
+			if (isUnknownIdentifier(id.slice(id.indexOf(":") + 1))) continue;
+			const owner = ownerById.get(id);
+			if (!owner) ownerById.set(id, deviceHash);
+			else if (find(owner) !== find(deviceHash)) parent.set(find(deviceHash), find(owner));
+		}
+	}
+	return find;
+}
+
+// Scripts are not users, but an unknown script hitting caps still deserves an
+// alert, so health classification passes { scripts: false }.
+function findLikelyTestDevices(rows, testDeviceHashes = [], { scripts = true } = {}) {
+	const allRows = Array.isArray(rows) ? rows : [];
+	const installOf = linkDeviceInstalls(allRows);
+	const testInstalls = new Set();
+	for (const row of allRows) {
+		const deviceHash = rowDeviceHash(row);
+		if (!deviceHash) continue;
+		if (isLikelyTestUsageRow(row, testDeviceHashes) || (scripts && isScriptWorkerRow(row))) testInstalls.add(installOf(deviceHash));
+	}
+	const testDevices = new Set(testDeviceHashes || []);
+	for (const row of allRows) {
+		const deviceHash = rowDeviceHash(row);
+		if (deviceHash && testInstalls.has(installOf(deviceHash))) testDevices.add(deviceHash);
+	}
+	return testDevices;
 }
 
 function isUnknownIdentifier(value) {
@@ -1181,19 +1260,17 @@ function classifyToolReliabilityRows(rows) {
 
 function summarizeUsageDevices(rows, testDeviceHashes = [], days = 1) {
 	const allRows = Array.isArray(rows) ? rows : [];
-	const likelyTestDevices = new Set();
-	for (const row of allRows) {
-		const deviceHash = rowDeviceHash(row);
-		if (deviceHash && isLikelyTestUsageRow(row, testDeviceHashes)) likelyTestDevices.add(deviceHash);
-	}
+	const likelyTestDevices = findLikelyTestDevices(allRows, testDeviceHashes);
+	const installOf = linkDeviceInstalls(allRows);
 
 	const devices = new Map();
 	for (const row of allRows) {
 		if (!isFreeTierUsageRow(row)) continue;
 		const deviceHash = rowDeviceHash(row);
 		if (!deviceHash) continue;
-		const device = devices.get(deviceHash) || {
-			deviceHash,
+		const install = installOf(deviceHash);
+		const device = devices.get(install) || {
+			deviceHash: install,
 			isTest: false,
 			workerChatCompletions: 0,
 			extensionPromptSucceededEvents: 0,
@@ -1205,11 +1282,12 @@ function summarizeUsageDevices(rows, testDeviceHashes = [], days = 1) {
 		if (isExtensionPromptSucceededUsageRow(row)) device.extensionPromptSucceededEvents += numberValue(row.events);
 		device.firstSeen = earliestTimestamp(device.firstSeen, row.first_seen);
 		device.lastSeen = latestTimestamp(device.lastSeen, row.last_seen);
-		devices.set(deviceHash, device);
+		devices.set(install, device);
 	}
 
 	const allFreeTierDevices = [...devices.values()];
 	const nonTestDevices = allFreeTierDevices.filter((device) => !device.isTest);
+	const testDevices = allFreeTierDevices.filter((device) => device.isTest);
 	const firstSeen = nonTestDevices.reduce((current, device) => earliestTimestamp(current, device.firstSeen), "");
 	const lastSeen = nonTestDevices.reduce((current, device) => latestTimestamp(current, device.lastSeen), "");
 	return [
@@ -1220,6 +1298,7 @@ function summarizeUsageDevices(rows, testDeviceHashes = [], days = 1) {
 			estimated_non_test_free_tier_devices: nonTestDevices.length,
 			non_test_worker_chat_devices: nonTestDevices.filter((device) => device.workerChatCompletions > 0).length,
 			non_test_worker_chat_completions: sumRows(nonTestDevices, "workerChatCompletions"),
+			excluded_test_worker_chat_completions: sumRows(testDevices, "workerChatCompletions"),
 			non_test_extension_prompt_succeeded_devices: nonTestDevices.filter((device) => device.extensionPromptSucceededEvents > 0).length,
 			non_test_extension_prompt_succeeded_events: sumRows(nonTestDevices, "extensionPromptSucceededEvents"),
 			first_seen: firstSeen || "-",
@@ -1345,18 +1424,22 @@ function maskAccountId(value) {
 	return text.length <= 8 ? "set" : `${text.slice(0, 4)}...${text.slice(-4)}`;
 }
 
-try {
-	const args = parseArgs(process.argv.slice(2));
-	const report = await runReport(args);
-	const checkSummary = summarizeChecks(report.checks);
-	if (args.failOnAlert && checkSummary.critical + checkSummary.warn > 0) {
-		console.error(`Free tier ops check failed: ${checkSummary.critical} critical, ${checkSummary.warn} warning`);
-		process.exitCode = 1;
-	} else if (args.failOnCritical && checkSummary.critical > 0) {
-		console.error(`Free tier ops check failed: ${checkSummary.critical} critical`);
-		process.exitCode = 1;
+export { classifyQuotaRows, findLikelyTestDevices, summarizeUsageDevices };
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	try {
+		const args = parseArgs(process.argv.slice(2));
+		const report = await runReport(args);
+		const checkSummary = summarizeChecks(report.checks);
+		if (args.failOnAlert && checkSummary.critical + checkSummary.warn > 0) {
+			console.error(`Free tier ops check failed: ${checkSummary.critical} critical, ${checkSummary.warn} warning`);
+			process.exitCode = 1;
+		} else if (args.failOnCritical && checkSummary.critical > 0) {
+			console.error(`Free tier ops check failed: ${checkSummary.critical} critical`);
+			process.exitCode = 1;
+		}
+	} catch (error) {
+		console.error(error.stack || error.message);
+		process.exit(1);
 	}
-} catch (error) {
-	console.error(error.stack || error.message);
-	process.exit(1);
 }

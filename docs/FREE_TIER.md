@@ -150,13 +150,15 @@ this build and points the user at another provider.
 
 ```sh
 cd workers/free-tier
-echo 'OPENROUTER_API_KEY=sk-or-...' > .dev.vars   # gitignored
+echo 'OPENAI_API_KEY=sk-...' > .dev.vars   # gitignored
 npx wrangler dev --local --port 8787
 ```
 
 Set the extension override to `http://127.0.0.1:8787/v1`, select
-"Onhand Free (beta)" in options, and prompt normally. The
-`tmp/onhand-qa-driver.mjs` harness automates this flow.
+"Onhand Free (beta)" in options, and prompt normally.
+`npm run test:free-tier-worker-runtime` runs the Worker locally in Miniflare
+without a real key, and `npm run test:free-tier-worker-regressions` covers request
+shaping, caps, and accounting.
 
 ## Monitoring
 
@@ -261,10 +263,20 @@ crosses one of the configured heavy-turn thresholds.
 
 `npm run ops:free-tier` also derives an aggregate usage estimate from the
 Analytics Engine device hash, source, event, auth mode, AI provider, and AI
-model fields. The report counts non-test Onhand Free devices and completed
-free-tier chats, while excluding the current local test device, probe sessions,
-and CLI/acceptance/smoke traffic. The Markdown summary intentionally shows only
-aggregate counts; raw device hashes remain in the JSON artifact for debugging.
+model fields. The report counts non-test Onhand Free installs and completed
+free-tier chats. The Worker hashes the Free token and the extension hashes its
+diagnostics client id, so one install has two device hashes; the report joins
+them through the turn and session ids both sides record. An install is a test
+when any of its turns carries a debug-CLI source tag (`cli`, `acceptance`,
+`agent-trajectory`, `prompt-eval:<variant>`, smoke, probe, bypass), when a
+script called the Worker without a browser user agent, or when its hash is
+passed with `--test-device-hashes`. Their cap hits are classified as test cap
+hits, not health alerts, except a script's: it is not a user, but an unknown
+script hitting caps still alerts. Manual sidebar testing in a fresh profile carries no
+tag; pass that profile's hash with `--test-device-hashes`. Installs that only
+installed or updated count as devices without chats. The Markdown summary
+intentionally shows only aggregate counts; raw device hashes remain in the JSON
+artifact for debugging.
 
 Useful first queries:
 

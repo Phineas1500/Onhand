@@ -54,6 +54,7 @@
     "test:routing-probe": "node ./scripts/probe-routing.mjs --selftest",
     "test:free-tier-worker-regressions": "node ./scripts/run-free-tier-worker-regressions.mjs",
     "test:free-tier-worker-runtime": "node ./scripts/run-free-tier-worker-runtime.mjs",
+    "test:free-tier-ops-report": "node ./scripts/run-free-tier-ops-report-regressions.mjs",
     "test:real-sidebar-workflows": "node ./scripts/run-real-sidebar-workflows.mjs",
     "test:real-browser-anchoring": "node ./scripts/run-real-browser-anchoring.mjs",
     "test:real-runtime-review": "node ./scripts/run-real-runtime-review-regressions.mjs",
