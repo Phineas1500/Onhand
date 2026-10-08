@@ -99536,7 +99536,7 @@ function createOnhandBrowserRuntime(host) {
           return { classification: null, elapsedMs: Date.now() - startedAt2, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: error2 instanceof Error ? error2.message : String(error2) };
         }
       }
-      const model = options.provider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await getConfiguredModel(store2.settings);
+      const model = options.provider === ONHAND_FREE_PROVIDER ? await buildFreeTierModel() : await getConfiguredModel(options.model ? { ...store2.settings, aiModel: options.model } : store2.settings);
       const startedAt = Date.now();
       try {
         const classification = await classifyPromptIntentWithModel(model, prompt, void 0, page);

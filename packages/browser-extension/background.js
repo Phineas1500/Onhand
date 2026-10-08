@@ -15078,6 +15078,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				result: await runtime.classifyPromptIntentForEval(String(message.prompt || ""), {
 					provider: typeof message.provider === "string" ? message.provider : undefined,
 					engine: typeof message.engine === "string" ? message.engine : undefined,
+					model: typeof message.model === "string" && message.model ? message.model : undefined,
 					page: message.page && typeof message.page === "object"
 						? { title: String(message.page.title || "").slice(0, 300), url: String(message.page.url || "").slice(0, 500) }
 						: null,

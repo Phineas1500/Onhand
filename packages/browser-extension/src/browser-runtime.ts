@@ -16946,7 +16946,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 		// Used by scripts/run-lane-classifier-eval.mjs --browser; the provider
 		// override lets the eval score the free-tier model without switching
 		// the user's configured auth.
-		async classifyPromptIntentForEval(prompt: string, options: { provider?: string; engine?: string; page?: { title?: string; url?: string } | null } = {}) {
+		async classifyPromptIntentForEval(prompt: string, options: { provider?: string; engine?: string; model?: string; page?: { title?: string; url?: string } | null } = {}) {
 			const store = await loadStore();
 			const page = options.page?.title || options.page?.url ? { title: options.page.title, url: options.page.url } : null;
 			if (options.engine === "decisions") {
@@ -16963,10 +16963,12 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					return { classification: null, elapsedMs: Date.now() - startedAt, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: error instanceof Error ? error.message : String(error) };
 				}
 			}
+			// options.model runs the classifier on another model of the configured
+			// provider (e.g. the subscription's Luna while Sol answers).
 			const model =
 				options.provider === ONHAND_FREE_PROVIDER
 					? await buildFreeTierModel()
-					: await getConfiguredModel(store.settings as RuntimeSettings);
+					: await getConfiguredModel(options.model ? { ...(store.settings as RuntimeSettings), aiModel: options.model } : store.settings as RuntimeSettings);
 			const startedAt = Date.now();
 			try {
 				const classification = await classifyPromptIntentWithModel(model, prompt, undefined, page);

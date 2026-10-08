@@ -130,7 +130,7 @@ async function classifyLive(test, prompt) {
 	return test.parseModelIntentClassificationForTest(body?.choices?.[0]?.message?.content || "");
 }
 
-async function classifyThroughBrowser(port, { provider = "", engine = "" } = {}) {
+async function classifyThroughBrowser(port, { provider = "", engine = "", model = "" } = {}) {
 	const { default: WebSocket } = await import("ws");
 	const http = await import("node:http");
 	const getJson = (path) =>
@@ -177,7 +177,7 @@ async function classifyThroughBrowser(port, { provider = "", engine = "" } = {})
 	const latencies = [];
 	let modelLabel = "";
 	for (const [index, [prompt, , page]] of CORPUS.entries()) {
-		const message = { type: "browser-runtime:classify-intent-eval", prompt, provider: provider || undefined, engine: engine || undefined, page: page || undefined };
+		const message = { type: "browser-runtime:classify-intent-eval", prompt, provider: provider || undefined, engine: engine || undefined, model: model || undefined, page: page || undefined };
 		const response = await evalDriver(
 			`chrome.runtime.sendMessage(${JSON.stringify(message)}).catch(e => ({ ok: false, error: String(e && e.message || e) }))`,
 		);
@@ -211,7 +211,11 @@ const port = Number(portFlagIndex > -1 ? process.argv[portFlagIndex + 1] : proce
 let modelResults = null;
 if (process.argv.includes("--browser")) {
 	const providerOverride = process.argv.includes("--free") ? "onhand-free" : "";
-	({ results: modelResults } = await classifyThroughBrowser(port, { provider: providerOverride }));
+	// --model <id> runs the classifier on another model of the configured
+	// provider, e.g. --model gpt-6-luna on an openai-codex subscription.
+	const modelFlagIndex = process.argv.indexOf("--model");
+	const modelOverride = modelFlagIndex > -1 ? String(process.argv[modelFlagIndex + 1] || "") : "";
+	({ results: modelResults } = await classifyThroughBrowser(port, { provider: providerOverride, model: modelOverride }));
 	score(providerOverride ? "Model classifier (free tier)" : "Model classifier (via browser auth)", modelResults);
 }
 
