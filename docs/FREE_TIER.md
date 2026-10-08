@@ -40,6 +40,13 @@ key's OpenAI project and draws from its applicable API credits.
 - `ERROR_REPORTS_PER_IP_PER_DAY` (default 50 explicit error reports/day)
 - request body capped at ~2.5MB; either client output limit becomes
   `max_completion_tokens`, clamped to 16384
+- `POST /v1/decisions` (the extension's request classifier, about 3,500 input
+  tokens or $0.0003 a turn, no output charge): text input and at most 16
+  predicate/choice/score questions for `gpt-6-luna` only, body capped at 64KB.
+  It has its own per-device cap, `DAILY_DECISIONS_CAP` (default 400/day),
+  instead of `DAILY_REQUEST_CAP`, so the classifier no longer spends one of a
+  device's 80 model calls per turn; it stops at `DAILY_COST_CAP_USD` and records
+  its actual cost there. Warm calls took 180-250 ms end to end on 2026-10-07.
 
 The values in this repo are defaults. The deployed worker may run
 different caps (set via wrangler vars), so production limits can be

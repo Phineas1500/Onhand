@@ -7028,11 +7028,23 @@ function readDecisionsIntentAnswers(body: any) {
 	return { probabilities, unsureFields, requestAnswers: Object.keys(requestAnswers).length ? requestAnswers : null, classification: unsureFields.length ? null : (classification as ModelIntentClassification) };
 }
 
-async function postDecisions(apiKey: string, body: unknown, timeoutMs: number, signal?: AbortSignal, fetcher: typeof fetch = decisionsFetchForTest || fetch) {
+// Where Decisions calls go: OpenAI with a platform key, or Onhand's free-tier
+// server (POST /v1/decisions) with the device's free-tier token.
+interface DecisionsEndpoint {
+	url: string;
+	headers: Record<string, string>;
+}
+
+function openAIDecisionsEndpoint(apiKey: string): DecisionsEndpoint {
+	return { url: DECISIONS_API_URL, headers: { Authorization: `Bearer ${apiKey}`, "OpenAI-Safety-Identifier": "onhand-browser-extension" } };
+}
+
+async function postDecisions(endpoint: DecisionsEndpoint | string, body: unknown, timeoutMs: number, signal?: AbortSignal, fetcher: typeof fetch = decisionsFetchForTest || fetch) {
+	const target = typeof endpoint === "string" ? openAIDecisionsEndpoint(endpoint) : endpoint;
 	const timeout = AbortSignal.timeout(timeoutMs);
-	const response = await fetcher(DECISIONS_API_URL, {
+	const response = await fetcher(target.url, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
+		headers: { ...target.headers, "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 		signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
 	});
@@ -7042,13 +7054,13 @@ async function postDecisions(apiKey: string, body: unknown, timeoutMs: number, s
 }
 
 async function classifyPromptIntentWithDecisions(
-	apiKey: string,
+	endpoint: DecisionsEndpoint | string,
 	prompt: unknown,
 	page: { title?: string; url?: string } | null = null,
 	signal?: AbortSignal,
 	fetcher: typeof fetch = decisionsFetchForTest || fetch,
 ) {
-	return readDecisionsIntentAnswers(await postDecisions(apiKey, buildDecisionsIntentRequest(prompt, page), DECISIONS_INTENT_TIMEOUT_MS, signal, fetcher));
+	return readDecisionsIntentAnswers(await postDecisions(endpoint, buildDecisionsIntentRequest(prompt, page), DECISIONS_INTENT_TIMEOUT_MS, signal, fetcher));
 }
 
 // Spoken page commands ("next page", "show me the next highlight", "clear the
@@ -7097,6 +7109,22 @@ function decisionsIntentClassifierKey(settings: RuntimeSettings) {
 	if (settings.aiProvider === SMOKE_PROVIDER) return decisionsFetchForTest ? getApiKeyForProvider(settings, OPENAI_API_PROVIDER) : "";
 	if (settings.aiProvider !== OPENAI_API_PROVIDER && settings.aiProvider !== OPENAI_CODEX_PROVIDER) return "";
 	return getApiKeyForProvider(settings, OPENAI_API_PROVIDER);
+}
+
+// Onhand Free sends its Decisions calls through the free-tier server, which
+// already carries every Free request to OpenAI. No usable endpoint (another
+// provider, no platform key, or a build without the free-tier URL): none.
+async function resolveDecisionsEndpoint(settings: RuntimeSettings): Promise<DecisionsEndpoint | null> {
+	if (settings.aiProvider === ONHAND_FREE_PROVIDER) {
+		try {
+			const [baseUrl, token, quotaBypassSecret] = await Promise.all([getFreeTierBaseUrl(), getOrRegisterFreeTierToken(), getFreeTierQuotaBypassSecret()]);
+			return { url: `${baseUrl}/decisions`, headers: { Authorization: `Bearer ${token}`, ...(quotaBypassSecret ? { [ONHAND_FREE_QUOTA_BYPASS_HEADER]: quotaBypassSecret } : {}) } };
+		} catch {
+			return null;
+		}
+	}
+	const apiKey = decisionsIntentClassifierKey(settings);
+	return apiKey ? openAIDecisionsEndpoint(apiKey) : null;
 }
 
 function assistantMessageTextContent(message: any) {
@@ -11196,6 +11224,7 @@ export const __browserRuntimeTest = {
 	readDecisionsIntentAnswersForTest: readDecisionsIntentAnswers,
 	classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
 	decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
+	resolveDecisionsEndpointForTest: resolveDecisionsEndpoint,
 	decisionsIntentCutoffsForTest: {
 		...DECISIONS_INTENT_CUTOFFS,
 		...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }])),
@@ -16786,11 +16815,14 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			const store = await loadStore();
 			const page = options.page?.title || options.page?.url ? { title: options.page.title, url: options.page.url } : null;
 			if (options.engine === "decisions") {
-				const apiKey = getApiKeyForProvider(store.settings as RuntimeSettings, OPENAI_API_PROVIDER);
+				// options.provider "onhand-free" goes through the free-tier server.
+				const endpoint = options.provider === ONHAND_FREE_PROVIDER
+					? await resolveDecisionsEndpoint({ ...(store.settings as RuntimeSettings), aiProvider: ONHAND_FREE_PROVIDER })
+					: getApiKeyForProvider(store.settings as RuntimeSettings, OPENAI_API_PROVIDER);
 				const startedAt = Date.now();
-				if (!apiKey) return { classification: null, elapsedMs: 0, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: "No OpenAI platform API key is saved." };
+				if (!endpoint) return { classification: null, elapsedMs: 0, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: "No Decisions endpoint is available." };
 				try {
-					const decided = await classifyPromptIntentWithDecisions(apiKey, prompt, page);
+					const decided = await classifyPromptIntentWithDecisions(endpoint, prompt, page);
 					return { ...decided, elapsedMs: Date.now() - startedAt, model: `decisions/${DECISIONS_INTENT_MODEL}` };
 				} catch (error) {
 					return { classification: null, elapsedMs: Date.now() - startedAt, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: error instanceof Error ? error.message : String(error) };
@@ -17314,11 +17346,11 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									return await classifyPromptIntentWithModel(classifierModel, displayPrompt,
 										AbortSignal.any([requestContext.abortController.signal, modelClassifierAbort.signal]), page);
 								})());
-								const decisionsKey = decisionsIntentClassifierKey(requestSettings as RuntimeSettings);
-								if (decisionsKey) {
+								const decisionsEndpoint = await resolveDecisionsEndpoint(requestSettings as RuntimeSettings);
+								if (decisionsEndpoint) {
 									const decisionsStartedAt = Date.now();
 									const decisionsAbort = new AbortController();
-									const decisionsCall = classifyPromptIntentWithDecisions(decisionsKey, displayPrompt, page,
+									const decisionsCall = classifyPromptIntentWithDecisions(decisionsEndpoint, displayPrompt, page,
 										AbortSignal.any([requestContext.abortController.signal, decisionsAbort.signal]))
 										.then((decided) => ({ decided }), (error) => ({ error }));
 									// If Decisions is slow, the model classifier starts too and whichever

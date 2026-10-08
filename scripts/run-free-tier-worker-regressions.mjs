@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import worker, { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 
-import { FREE_TIER_MODEL, OPENAI_CHAT_URL, MAX_OUTPUT_TOKENS, prepareOpenAIRequestBody, openAIUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
+import { FREE_TIER_MODEL, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, MAX_OUTPUT_TOKENS, prepareOpenAIRequestBody, openAIUsageCost, prepareDecisionsRequestBody, decisionsUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
 const { MAX_BODY_BYTES, QUOTA_BYPASS_HEADER, quotaBypassAuthorized, timingSafeEqualText } = __freeTierTest;
 const FREE_TIER_TEXT_MODEL = FREE_TIER_MODEL;
 assert.equal(MAX_BODY_BYTES, 2_500_000);
@@ -369,7 +369,70 @@ try {
 		globalThis.fetch = async () => { throw new Error("Missing ledger must fail closed"); };
 		assert.equal((await handle(f)).status, 503);
 	}
-	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure)");
+	// Decisions: the extension's request classifier. Text-only requests for
+	// gpt-6-luna pass, cleaned; a separate per-device daily cap and the shared
+	// cost cap apply; the actual input-token cost is recorded.
+	{
+		const question = (name) => ({ type: "predicate", name, instructions: `Is ${name} true?` });
+		const valid = { model: FREE_TIER_MODEL, input: "User request:\nsummarize this", questions: [question("teaching"),
+			{ type: "choice", name: "action", instructions: "Pick one.", choices: [{ value: "a", description: "A" }, { value: "b" }] }], store: true, extra: 1 };
+		assert.deepEqual(prepareDecisionsRequestBody(valid), { model: FREE_TIER_MODEL, input: valid.input, questions: [valid.questions[0],
+			{ type: "choice", name: "action", instructions: "Pick one.", choices: [{ value: "a", description: "A" }, { value: "b" }] }] }, "only model, input and questions cross");
+		for (const bad of [{ ...valid, model: "gpt-6.1-sol" }, { ...valid, input: [{ role: "user", content: [{ type: "input_image", image_url: "data:," }] }] },
+			{ ...valid, questions: [] }, { ...valid, questions: Array.from({ length: 17 }, (_, i) => question(`q${i}`)) },
+			{ ...valid, questions: [{ type: "choice", name: "x", instructions: "y", choices: [{ value: "only" }] }] },
+			{ ...valid, questions: [{ type: "freeform", name: "x", instructions: "y" }] }, { ...valid, input: "x".repeat(24_001) }]) {
+			assert.equal(prepareDecisionsRequestBody(bad), null);
+		}
+		assert.equal(decisionsUsageCost({ input_tokens: 3000 }), 0.0003);
+		assert.equal(decisionsUsageCost({}), undefined);
+
+		const decisionsRequest = (headers = {}, body = valid) => new Request("https://worker.test/v1/decisions", {
+			method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+		let upstreamCalls = 0;
+		const decisionsProvider = async (url, init) => {
+			upstreamCalls++;
+			assert.equal(String(url), OPENAI_DECISIONS_URL);
+			assert.equal(init.headers.Authorization, "Bearer mock-openai-key");
+			assert.equal(JSON.parse(init.body).store, undefined);
+			return Response.json({ model: FREE_TIER_MODEL, answers: [{ type: "predicate", name: "teaching", probability: 0.97 }], usage: { input_tokens: 3000, output_tokens: 0 } });
+		};
+		const f = fixture();
+		globalThis.fetch = decisionsProvider;
+		const answered = await worker.fetch(decisionsRequest(), f.env, f.ctx);
+		assert.equal(answered.status, 200);
+		assert.equal((await answered.json()).answers[0].probability, 0.97, "the answer passes through");
+		await f.flush();
+		assert.equal(await f.cost(), 0.0003, "the actual Decisions cost reaches the daily total");
+		assert.ok(f.events.some((e) => e.indexes[0] === "decisions_response" && e.doubles[9] === 0.0003));
+		assert.equal([...f.data.keys()].some((key) => key.startsWith("use:")), false, "Decisions never uses the chat-request quota");
+
+		assert.equal((await worker.fetch(decisionsRequest({ Authorization: "" }), f.env, f.ctx)).status, 401);
+		assert.equal((await worker.fetch(decisionsRequest({ Authorization: "Bearer oft_unknown" }), f.env, f.ctx)).status, 401);
+		assert.equal((await worker.fetch(decisionsRequest({}, { ...valid, model: "gpt-6.1-sol" }), f.env, f.ctx)).status, 400);
+
+		const capped = fixture();
+		capped.env.DAILY_DECISIONS_CAP = "2";
+		upstreamCalls = 0;
+		const statuses = [];
+		for (let i = 0; i < 4; i++) statuses.push((await worker.fetch(decisionsRequest(), capped.env, capped.ctx)).status);
+		assert.deepEqual(statuses, [200, 200, 429, 429], "a per-device daily cap applies");
+		assert.equal(upstreamCalls, 2);
+		assert.equal((await worker.fetch(decisionsRequest({ [QUOTA_BYPASS_HEADER]: bypassSecret }), { ...capped.env, ...bypassEnv, ONHAND_FREE_QUOTA_BYPASS_DEVICE_HASHES: "" }, capped.ctx)).status, 429, "an unauthorized bypass changes nothing");
+
+		const spent = fixture(5);
+		upstreamCalls = 0;
+		const overBudget = await worker.fetch(decisionsRequest(), spent.env, spent.ctx);
+		assert.equal(overBudget.status, 429);
+		assert.equal((await overBudget.json()).error.code, "daily_cost_cap");
+		assert.equal(upstreamCalls, 0, "no call once the shared daily budget is spent");
+
+		const missingLedger = fixture(); delete missingLedger.env.FREE_TIER_COST_LEDGER;
+		console.error = () => {};
+		assert.equal((await worker.fetch(decisionsRequest(), missingLedger.env, missingLedger.ctx)).status, 503, "accounting outages fail closed");
+		console.error = originalConsoleError;
+	}
+	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure, decisions)");
 } finally {
 	globalThis.fetch = originalFetch;
 	Date.now = originalDateNow;

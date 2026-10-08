@@ -194,8 +194,10 @@
             OpenAI platform API key, Onhand also sends your request text and the
             open page's title and URL to OpenAI's Decisions API with that key, to
             decide quickly how to handle the request (for example, whether it is
-            about the open page). Page content is not included. With any other
-            provider, the configured model makes that decision instead. In voice
+            about the open page). Page content is not included. In Onhand Free
+            mode the same request goes to the Decisions API through Onhand's
+            Cloudflare Worker. With any other provider, the configured model
+            makes that decision instead. In voice
             calls, Onhand also sends each spoken request Live hands it, with the
             open page's title, the PDF page number, and recent conversation, to
             the Decisions API with your platform key, to recognize simple page

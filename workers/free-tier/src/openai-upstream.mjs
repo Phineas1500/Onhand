@@ -41,3 +41,47 @@ export function openAIUsageCost(usage) {
 	const outputRate = longContext ? 0.75 : 0.50;
 	return ((input - cached - written) * inputRate + cached * inputRate * 0.1 + written * inputRate * 1.25 + output * outputRate) / 1_000_000;
 }
+
+// Decisions (https://developers.openai.com/api/docs/guides/decisions): bills
+// input tokens only, at the model's input rate. Only text input and the three
+// question kinds cross to OpenAI; images, files and other fields are refused,
+// which bounds what one call can cost.
+export const OPENAI_DECISIONS_URL = "https://api.openai.com/v1/decisions";
+export const MAX_DECISIONS_QUESTIONS = 16;
+export const MAX_DECISIONS_INPUT_CHARS = 24_000;
+
+export function prepareDecisionsRequestBody(body) {
+	if (!body || typeof body !== "object" || body.model !== FREE_TIER_MODEL) return null;
+	const text = (value, max) => (typeof value === "string" && value.trim() && value.length <= max ? value : null);
+	const input = text(body.input, MAX_DECISIONS_INPUT_CHARS);
+	const questions = Array.isArray(body.questions) ? body.questions : [];
+	if (!input || !questions.length || questions.length > MAX_DECISIONS_QUESTIONS) return null;
+	const prepared = [];
+	for (const question of questions) {
+		const type = question?.type;
+		const name = text(question?.name, 64);
+		const instructions = text(question?.instructions, 2_000);
+		if (!["predicate", "choice", "score"].includes(type) || !name || !instructions) return null;
+		const item = { type, name, instructions };
+		const options = type === "choice" ? question.choices : type === "score" ? question.levels : null;
+		if (options) {
+			if (!Array.isArray(options) || options.length < 2 || options.length > 16) return null;
+			const key = type === "choice" ? "value" : "label";
+			const cleaned = options.map((option) => {
+				const value = text(option?.[key], 64);
+				const description = option?.description === undefined ? undefined : text(option.description, 500);
+				return value && description !== null ? { [key]: value, ...(description ? { description } : {}) } : null;
+			});
+			if (cleaned.some((option) => !option)) return null;
+			item[type === "choice" ? "choices" : "levels"] = cleaned;
+		} else if (type !== "predicate") return null;
+		prepared.push(item);
+	}
+	return { model: FREE_TIER_MODEL, input, questions: prepared };
+}
+
+export function decisionsUsageCost(usage) {
+	const input = usage?.input_tokens;
+	if (!Number.isSafeInteger(input) || input < 0) return undefined;
+	return (input * (input > 272_000 ? 0.20 : 0.10)) / 1_000_000;
+}

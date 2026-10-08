@@ -91132,19 +91132,23 @@ function readDecisionsIntentAnswers(body) {
   }
   return { probabilities: probabilities2, unsureFields, requestAnswers: Object.keys(requestAnswers).length ? requestAnswers : null, classification: unsureFields.length ? null : classification };
 }
-async function postDecisions(apiKey, body, timeoutMs, signal, fetcher = decisionsFetchForTest || fetch) {
+function openAIDecisionsEndpoint(apiKey) {
+  return { url: DECISIONS_API_URL, headers: { Authorization: `Bearer ${apiKey}`, "OpenAI-Safety-Identifier": "onhand-browser-extension" } };
+}
+async function postDecisions(endpoint, body, timeoutMs, signal, fetcher = decisionsFetchForTest || fetch) {
+  const target = typeof endpoint === "string" ? openAIDecisionsEndpoint(endpoint) : endpoint;
   const timeout = AbortSignal.timeout(timeoutMs);
-  const response = await fetcher(DECISIONS_API_URL, {
+  const response = await fetcher(target.url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
+    headers: { ...target.headers, "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout
   });
   if (!response.ok) throw new Error(`Decisions request failed (HTTP ${response.status})`);
   return await response.json();
 }
-async function classifyPromptIntentWithDecisions(apiKey, prompt, page = null, signal, fetcher = decisionsFetchForTest || fetch) {
-  return readDecisionsIntentAnswers(await postDecisions(apiKey, buildDecisionsIntentRequest(prompt, page), DECISIONS_INTENT_TIMEOUT_MS, signal, fetcher));
+async function classifyPromptIntentWithDecisions(endpoint, prompt, page = null, signal, fetcher = decisionsFetchForTest || fetch) {
+  return readDecisionsIntentAnswers(await postDecisions(endpoint, buildDecisionsIntentRequest(prompt, page), DECISIONS_INTENT_TIMEOUT_MS, signal, fetcher));
 }
 var VOICE_COMMAND_CONFIDENCE = 0.6;
 var VOICE_COMMAND_TIMEOUT_MS = 1500;
@@ -91178,6 +91182,18 @@ function decisionsIntentClassifierKey(settings2) {
   if (settings2.aiProvider === SMOKE_PROVIDER) return decisionsFetchForTest ? getApiKeyForProvider(settings2, OPENAI_API_PROVIDER) : "";
   if (settings2.aiProvider !== OPENAI_API_PROVIDER && settings2.aiProvider !== OPENAI_CODEX_PROVIDER) return "";
   return getApiKeyForProvider(settings2, OPENAI_API_PROVIDER);
+}
+async function resolveDecisionsEndpoint(settings2) {
+  if (settings2.aiProvider === ONHAND_FREE_PROVIDER) {
+    try {
+      const [baseUrl, token, quotaBypassSecret] = await Promise.all([getFreeTierBaseUrl(), getOrRegisterFreeTierToken(), getFreeTierQuotaBypassSecret()]);
+      return { url: `${baseUrl}/decisions`, headers: { Authorization: `Bearer ${token}`, ...quotaBypassSecret ? { [ONHAND_FREE_QUOTA_BYPASS_HEADER]: quotaBypassSecret } : {} } };
+    } catch {
+      return null;
+    }
+  }
+  const apiKey = decisionsIntentClassifierKey(settings2);
+  return apiKey ? openAIDecisionsEndpoint(apiKey) : null;
 }
 function assistantMessageTextContent(message) {
   if (!message) return "";
@@ -94365,6 +94381,7 @@ var __browserRuntimeTest = {
   readDecisionsIntentAnswersForTest: readDecisionsIntentAnswers,
   classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
   decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
+  resolveDecisionsEndpointForTest: resolveDecisionsEndpoint,
   decisionsIntentCutoffsForTest: {
     ...DECISIONS_INTENT_CUTOFFS,
     ...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }]))
@@ -99411,11 +99428,11 @@ function createOnhandBrowserRuntime(host) {
       const store2 = await loadStore();
       const page = options.page?.title || options.page?.url ? { title: options.page.title, url: options.page.url } : null;
       if (options.engine === "decisions") {
-        const apiKey = getApiKeyForProvider(store2.settings, OPENAI_API_PROVIDER);
+        const endpoint = options.provider === ONHAND_FREE_PROVIDER ? await resolveDecisionsEndpoint({ ...store2.settings, aiProvider: ONHAND_FREE_PROVIDER }) : getApiKeyForProvider(store2.settings, OPENAI_API_PROVIDER);
         const startedAt2 = Date.now();
-        if (!apiKey) return { classification: null, elapsedMs: 0, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: "No OpenAI platform API key is saved." };
+        if (!endpoint) return { classification: null, elapsedMs: 0, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: "No Decisions endpoint is available." };
         try {
-          const decided = await classifyPromptIntentWithDecisions(apiKey, prompt, page);
+          const decided = await classifyPromptIntentWithDecisions(endpoint, prompt, page);
           return { ...decided, elapsedMs: Date.now() - startedAt2, model: `decisions/${DECISIONS_INTENT_MODEL}` };
         } catch (error2) {
           return { classification: null, elapsedMs: Date.now() - startedAt2, model: `decisions/${DECISIONS_INTENT_MODEL}`, error: error2 instanceof Error ? error2.message : String(error2) };
@@ -99890,12 +99907,12 @@ function createOnhandBrowserRuntime(host) {
                 page
               );
             })();
-            const decisionsKey = decisionsIntentClassifierKey(requestSettings);
-            if (decisionsKey) {
+            const decisionsEndpoint = await resolveDecisionsEndpoint(requestSettings);
+            if (decisionsEndpoint) {
               const decisionsStartedAt = Date.now();
               const decisionsAbort = new AbortController();
               const decisionsCall = classifyPromptIntentWithDecisions(
-                decisionsKey,
+                decisionsEndpoint,
                 displayPrompt,
                 page,
                 AbortSignal.any([requestContext.abortController.signal, decisionsAbort.signal])

@@ -2,12 +2,13 @@
 //
 // Proxies text, image, and function-calling requests to OpenAI's official API.
 // POST /v1/register issues an anonymous token; /v1/chat/completions streams
-// completions; /v1/telemetry and /v1/error-reports collect diagnostics.
+// completions; /v1/decisions answers the extension's request classifier;
+// /v1/telemetry and /v1/error-reports collect diagnostics.
 // Per-device, per-turn, concurrency, and shared cost controls stay server-side.
 // Secrets/bindings: OPENAI_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
 
 import { fetchOpenRouterGenerationMetadata, reportedGenerationCost } from "./generation-metadata.mjs";
-import { ALLOWED_CLIENT_MODELS, OPENAI_CHAT_URL, prepareOpenAIRequestBody, openAIUsageCost } from "./openai-upstream.mjs";
+import { ALLOWED_CLIENT_MODELS, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, decisionsUsageCost, prepareDecisionsRequestBody, prepareOpenAIRequestBody, openAIUsageCost } from "./openai-upstream.mjs";
 
 const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
@@ -753,6 +754,72 @@ async function handleChatCompletions(request, env, ctx) {
 	return new Response(responseBody, { status: upstream.status, headers });
 }
 
+// POST /v1/decisions: the extension asks Decisions how to handle each request
+// (a few thousand input tokens, about $0.0003, no output charge). It has its
+// own per-device daily cap rather than the chat-request cap, so moving the
+// classifier here frees the chat request it used to cost; it stops at the
+// shared daily cost cap and records its actual cost there.
+const DEFAULT_DAILY_DECISIONS_CAP = 400;
+const DECISIONS_TIMEOUT_MS = 10_000;
+const MAX_DECISIONS_BODY_BYTES = 64_000;
+
+async function handleDecisions(request, env, ctx) {
+	const startedAt = Date.now();
+	const day = new Date(startedAt).toISOString().slice(0, 10);
+	const telemetryIds = requestTelemetryIds(request);
+	const fields = (extra) => ({ ...telemetryIds, durationMs: Date.now() - startedAt, model: "gpt-6-luna", provider: "openai", ...extra });
+	const refuse = (status, errorCode, message, extra = {}) => {
+		writeAnalytics(ctx, env, "decisions_denied", fields({ result: "denied", status, errorCode, ...extra }), request);
+		return json(status, { error: { message, code: errorCode } });
+	};
+	const auth = request.headers.get("Authorization") || "";
+	const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+	if (!token || !token.startsWith("oft_")) return refuse(401, "missing_token", "Missing free-tier token.");
+	const deviceHash = await hashIdentifier(token);
+	if (!(await env.FREE_TIER_KV.get(`token:${token}`))) return refuse(401, "unknown_token", "Unknown free-tier token.", { deviceHash });
+	const raw = await request.text();
+	if (raw.length > MAX_DECISIONS_BODY_BYTES) return refuse(413, "body_too_large", "Request too large for the free tier.", { deviceHash, bodyBytes: raw.length });
+	let body;
+	try { body = JSON.parse(raw); } catch { return refuse(400, "invalid_json", "Request body must be JSON.", { deviceHash }); }
+	const upstreamBody = prepareDecisionsRequestBody(body);
+	if (!upstreamBody) return refuse(400, "invalid_decisions_request", "The free tier answers text Decisions requests for gpt-6-luna only.", { deviceHash });
+	if (!env.OPENAI_API_KEY) return json(503, { error: { message: "Onhand Free is temporarily unavailable: the OpenAI funding key is not configured." } });
+	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
+	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";
+	if (!quotaBypassed) {
+		const cap = envNumber(env, "DAILY_DECISIONS_CAP", DEFAULT_DAILY_DECISIONS_CAP);
+		const counted = await bumpDailyCounter(env, `decisions:${token}:${day}`, cap);
+		if (counted.unavailable) return refuse(503, "ledger_unavailable", "Onhand Free usage accounting is temporarily unavailable.", { deviceHash });
+		if (!counted.allowed) return refuse(429, "decisions_daily_cap", "Today's Onhand Free classification limit is reached.", { deviceHash, current: counted.current, cap });
+		let spent;
+		try { spent = await ledgerOperation(env, day, "total", day); } catch { return refuse(503, "ledger_unavailable", "Onhand Free usage accounting is temporarily unavailable.", { deviceHash }); }
+		if (spent >= envNumber(env, "DAILY_COST_CAP_USD", DEFAULT_DAILY_COST_CAP_USD)) return refuse(429, "daily_cost_cap", "Onhand Free has reached today's shared compute allowance.", { deviceHash });
+	}
+	let upstream;
+	try {
+		upstream = await fetch(OPENAI_DECISIONS_URL, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+			body: JSON.stringify(upstreamBody),
+			signal: AbortSignal.any([AbortSignal.timeout(DECISIONS_TIMEOUT_MS), request.signal]),
+		});
+	} catch {
+		writeAnalytics(ctx, env, "decisions_error", fields({ source, deviceHash, result: "error", status: 502, errorCode: "upstream_fetch_error" }), request);
+		return json(502, { error: { message: "The Decisions connection failed." } });
+	}
+	const text = await upstream.text().catch(() => "");
+	let usage;
+	try { usage = JSON.parse(text)?.usage; } catch {}
+	const cost = decisionsUsageCost(usage);
+	if (cost) ctx.waitUntil(ledgerOperation(env, day, "record", { day, id: `decisions:${crypto.randomUUID()}`, cost }).catch(() => {}));
+	writeAnalytics(ctx, env, "decisions_response", fields({
+		source, deviceHash, status: upstream.status, result: upstream.ok ? "ok" : "error", cost: cost || 0,
+		promptTokens: Number(usage?.input_tokens) || 0, providerRequestId: upstream.headers.get("x-request-id") || "",
+		errorCode: upstream.ok ? "" : `upstream_${upstream.status}`,
+	}), request);
+	return new Response(text, { status: upstream.status, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+}
+
 function telemetryData(payload) {
 	const data = payload?.data && typeof payload.data === "object" ? payload.data : {};
 	return {
@@ -980,6 +1047,9 @@ export default {
 		}
 		if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
 			return await handleChatCompletions(request, env, ctx);
+		}
+		if (request.method === "POST" && url.pathname === "/v1/decisions") {
+			return await handleDecisions(request, env, ctx);
 		}
 		if (request.method === "POST" && url.pathname === "/v1/telemetry") {
 			return await handleTelemetry(request, env, ctx);

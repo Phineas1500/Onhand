@@ -418,6 +418,25 @@ async function assertDecisionsIntentClassifier() {
 	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiApiKeys: {} })), "", "no platform key, no Decisions");
 	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiProvider: "anthropic" })), "", "prompts never go to OpenAI when the chosen model is another company's");
 	assert.equal(test.decisionsIntentClassifierKeyForTest(settings({ aiProvider: "onhand-smoke" })), "", "the smoke provider never calls the real endpoint");
+	// Onhand Free: Decisions goes through the free-tier server with the device
+	// token, like every other Free request; without the server URL (a dev
+	// build) there is no Decisions call.
+	installChromeStorageStub();
+	Object.assign(globalThis.chrome.storage.local.data, { onhandFreeTierBaseUrl: "https://free.example.test/v1", onhandFreeTierToken: "oft_fixture_token" });
+	const freeEndpoint = await test.resolveDecisionsEndpointForTest({ aiProvider: "onhand-free", aiApiKeys: {} });
+	assert.deepEqual(freeEndpoint, { url: "https://free.example.test/v1/decisions", headers: { Authorization: "Bearer oft_fixture_token" } });
+	const freeCalls = [];
+	await test.classifyPromptIntentWithDecisionsForTest(freeEndpoint, "summarize this", null, undefined, async (url, init) => {
+		freeCalls.push({ url, init });
+		return new Response(JSON.stringify(answers()), { status: 200 });
+	});
+	assert.equal(freeCalls[0].url, "https://free.example.test/v1/decisions");
+	assert.equal(freeCalls[0].init.headers.Authorization, "Bearer oft_fixture_token");
+	assert.equal(freeCalls[0].init.headers["OpenAI-Safety-Identifier"], undefined, "the free-tier server holds the OpenAI side");
+	assert.deepEqual(await test.resolveDecisionsEndpointForTest({ aiProvider: "openai-codex", aiApiKeys: { openai: "sk-platform" } }),
+		{ url: "https://api.openai.com/v1/decisions", headers: { Authorization: "Bearer sk-platform", "OpenAI-Safety-Identifier": "onhand-browser-extension" } });
+	assert.equal(await test.resolveDecisionsEndpointForTest({ aiProvider: "anthropic", aiApiKeys: { openai: "sk-platform" } }), null);
+	installChromeStorageStub();
 	console.log("Decisions intent classifier: request, cutoffs, errors, and eligibility passed");
 }
 
