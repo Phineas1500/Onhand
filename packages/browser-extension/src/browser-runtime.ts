@@ -3869,6 +3869,18 @@ function traceUsesNonInitialSource(request: any, trace: any) {
 	return true;
 }
 
+// Distinct sources the research has read so far (pages and PDFs, not tool
+// calls), so a round that only re-searched them is visible.
+function learningResearchSourcesRead(request: any) {
+	const sources = new Set<string>();
+	for (const trace of Array.isArray(request?.toolTraces) ? request.toolTraces : []) {
+		if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(String(trace?.toolName || ""))) continue;
+		const url = normalizeOpenTabUrlForComparison(tracePageUrl(trace), { keepFragment: false });
+		if (url) sources.add(url);
+	}
+	return sources;
+}
+
 function hasCompletedNonActiveWorkspaceRead(request: any) {
 	return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some((trace: any) => {
 		if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(String(trace?.toolName || ""))) return false;
@@ -11300,6 +11312,7 @@ export const __browserRuntimeTest = {
 	learningReplyIsProgressUpdateForTest: learningReplyIsProgressUpdate,
 	buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
 	internalJsonFastModelSettingsForTest: internalJsonFastModelSettings,
+	learningResearchSourcesReadForTest: learningResearchSourcesRead,
 	buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
 	sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
 	workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -14634,8 +14647,18 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					if (!sufficient) {
 						const retryCount = Number(activeRequest.learningResearchPlanRetryCount || 0);
 						const retryLimit = Math.max(1, Math.min(3, Number(activeRequest.learningResearchPlan.maxSources || 3) - 1));
-						if (activeAgent && !activeRequest.aborted && retryCount < retryLimit) {
+						// A round that read no new source cannot change the verdict. In one
+						// Learning run the check repeated "the L0 slide doesn't explain the
+						// mechanism" four times while each round re-searched the same three
+						// PDFs (155 s, 49 model calls); keep the answer instead.
+						const sourcesRead = learningResearchSourcesRead(activeRequest).size;
+						const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number(activeRequest.learningResearchSourcesBeforeRound || 0);
+						if (roundReadNoNewSource && activeRequest.preparationTiming) {
+							activeRequest.preparationTiming.learningEvidenceVerdicts = [...(activeRequest.preparationTiming.learningEvidenceVerdicts || []), "stopped: the last research round read no new source"];
+						}
+						if (activeAgent && !activeRequest.aborted && retryCount < retryLimit && !roundReadNoNewSource) {
 							activeRequest.learningResearchPlanRetryCount = retryCount + 1;
+							activeRequest.learningResearchSourcesBeforeRound = sourcesRead;
 							resetAssistantDraftText(activeRequest);
 							await publishState({ status: "Checking the next relevant source..." });
 							const continuationAssessment: LearningEvidenceAssessment = assessment || {

@@ -89481,6 +89481,15 @@ function traceUsesNonInitialSource(request, trace) {
   if (initialSourceUrl && traceSourceUrl && initialSourceUrl === traceSourceUrl) return false;
   return true;
 }
+function learningResearchSourcesRead(request) {
+  const sources = /* @__PURE__ */ new Set();
+  for (const trace of Array.isArray(request?.toolTraces) ? request.toolTraces : []) {
+    if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(String(trace?.toolName || ""))) continue;
+    const url = normalizeOpenTabUrlForComparison(tracePageUrl(trace), { keepFragment: false });
+    if (url) sources.add(url);
+  }
+  return sources;
+}
 function hasCompletedNonActiveWorkspaceRead(request) {
   return (Array.isArray(request?.toolTraces) ? request.toolTraces : []).some((trace) => {
     if (trace?.state !== "complete" || !LEARNING_WORKSPACE_EVIDENCE_TOOL_NAMES.has(String(trace?.toolName || ""))) return false;
@@ -94435,6 +94444,7 @@ var __browserRuntimeTest = {
   learningReplyIsProgressUpdateForTest: learningReplyIsProgressUpdate,
   buildLearningFinalAnswerPromptForTest: buildLearningFinalAnswerPrompt,
   internalJsonFastModelSettingsForTest: internalJsonFastModelSettings,
+  learningResearchSourcesReadForTest: learningResearchSourcesRead,
   buildDuplicateTabNavigationGuardResultForTest: buildDuplicateTabNavigationGuardResult,
   sourceTabWasOpenedByRequestForTest: sourceTabWasOpenedByRequest,
   workspaceTabWasOpenedByRequestForTest: workspaceTabWasOpenedByRequest,
@@ -97450,8 +97460,14 @@ function createOnhandBrowserRuntime(host) {
       if (!sufficient) {
         const retryCount = Number(activeRequest.learningResearchPlanRetryCount || 0);
         const retryLimit = Math.max(1, Math.min(3, Number(activeRequest.learningResearchPlan.maxSources || 3) - 1));
-        if (activeAgent && !activeRequest.aborted && retryCount < retryLimit) {
+        const sourcesRead = learningResearchSourcesRead(activeRequest).size;
+        const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number(activeRequest.learningResearchSourcesBeforeRound || 0);
+        if (roundReadNoNewSource && activeRequest.preparationTiming) {
+          activeRequest.preparationTiming.learningEvidenceVerdicts = [...activeRequest.preparationTiming.learningEvidenceVerdicts || [], "stopped: the last research round read no new source"];
+        }
+        if (activeAgent && !activeRequest.aborted && retryCount < retryLimit && !roundReadNoNewSource) {
           activeRequest.learningResearchPlanRetryCount = retryCount + 1;
+          activeRequest.learningResearchSourcesBeforeRound = sourcesRead;
           resetAssistantDraftText(activeRequest);
           await publishState({ status: "Checking the next relevant source..." });
           const continuationAssessment = assessment || {

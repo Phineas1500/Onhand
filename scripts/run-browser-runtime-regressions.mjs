@@ -11320,11 +11320,24 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		{ aiProvider: "anthropic", aiModel: "claude-sonnet-4-5-20250929" },
 		{ aiProvider: "openrouter", aiModel: "deepseek/deepseek-v4-flash" },
 	]) assert.equal(test.internalJsonFastModelSettingsForTest(settings), null, `${settings.aiProvider}/${settings.aiModel} keeps its model`);
+	// Research rounds stop once a round reads no source it had not already
+	// read: re-searching the same PDFs cannot change the evidence verdict.
+	const readTrace = (toolName, url, state = "complete") => ({ toolName, state, resultDetails: { tab: { id: 1, url } } });
+	const sourcesRead = test.learningResearchSourcesReadForTest({ toolTraces: [
+		readTrace("browser_pdf_read_pages", "https://course.test/pruning.pdf"),
+		readTrace("browser_pdf_search", "https://course.test/pruning.pdf#page=28"),
+		readTrace("browser_search_linked_pdf_corpus", "https://course.test/"),
+		readTrace("browser_pdf_read_pages", "https://course.test/dropout.pdf", "error"),
+		readTrace("browser_highlight_text", "https://course.test/text.pdf"),
+	] });
+	assert.deepEqual([...sourcesRead].sort(), ["https://course.test", "https://course.test/pruning.pdf"], "reads count once per source; failed reads and marks do not count");
 	const runtimeFinalRoundSource = await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8");
 	assert.match(runtimeFinalRoundSource, /buildLearningResearchContinuationPrompt\(activeRequest, continuationAssessment, assistantText, retryCount \+ 1 >= retryLimit\)/);
 	assert.match(runtimeFinalRoundSource, /else if \(activeAgent && !activeRequest\.aborted && learningReplyIsProgressUpdate\(assistantText\)\) \{\s*activeRequest\.learningFinalAnswerRetry = true;/);
 	assert.match(runtimeFinalRoundSource, /if \(signal\?\.aborted \|\| \/Internal planner timed out\/\.test\(/, "a timed-out or aborted fast call is not retried");
 	assert.equal((runtimeFinalRoundSource.match(/\{ fastModel: true \}/g) || []).length, 2, "only the planner and reranker opt into the fast model");
+	assert.match(runtimeFinalRoundSource, /const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number\(activeRequest\.learningResearchSourcesBeforeRound \|\| 0\);/);
+	assert.match(runtimeFinalRoundSource, /retryCount < retryLimit && !roundReadNoNewSource\) \{\s*activeRequest\.learningResearchPlanRetryCount = retryCount \+ 1;\s*activeRequest\.learningResearchSourcesBeforeRound = sourcesRead;/, "a round that read no new source ends the research");
 	assert.match(runtimeFinalRoundSource, /buildLearningEvidenceAssessmentPrompt\(request, assistantText\),\s*request\.settings as RuntimeSettings,\s*500,\s*12000,\s*\);/, "the evidence check runs on the chosen model");
 	assert.match(runtimeFinalRoundSource, /retrying on the configured model", error\);\s*\}\s*\}\s*const model = await withAbortSignal\(signal, \(\) => getConfiguredModel\(settings\)\);/, "any other fast-model failure retries on the configured model");
 
