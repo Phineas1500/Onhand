@@ -5,21 +5,21 @@ const CODEX_MODEL = "gpt-5.5";
 const FREE_TIER_PROVIDER = "onhand-free";
 const API_PROVIDERS = {
 	openai: {
-		name: "OpenAI API",
+		name: "OpenAI",
 		defaultModel: "gpt-4.1-mini",
-		keyLabel: "OpenAI platform API key",
+		keyLabel: "OpenAI API key",
 		keyPlaceholder: "sk-...",
 		capabilities: { realtime: true, vision: true, tools: true, structuredOutput: true },
 	},
 	anthropic: {
-		name: "Anthropic API",
+		name: "Anthropic",
 		defaultModel: "claude-sonnet-4-5-20250929",
 		keyLabel: "Anthropic API key",
 		keyPlaceholder: "sk-ant-...",
 		capabilities: { realtime: false, vision: true, tools: true, structuredOutput: true },
 	},
 	google: {
-		name: "Google Gemini API",
+		name: "Google Gemini",
 		defaultModel: "gemini-2.5-flash",
 		keyLabel: "Gemini API key",
 		keyPlaceholder: "AIza...",
@@ -33,7 +33,7 @@ const API_PROVIDERS = {
 		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
 	},
 	"onhand-free": {
-		name: "Onhand Free (beta)",
+		name: "Onhand Free",
 		defaultModel: "gpt-6-luna",
 		keyLabel: "No key needed",
 		keyPlaceholder: "",
@@ -44,87 +44,119 @@ const API_PROVIDERS = {
 		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
 	},
 };
+const VOICE_MODEL = "GPT-Live 1";
+const VOICE_PRICE = "$0.05 per connected minute, plus model usage";
+const DIAGNOSTICS_OPTIONAL_HELP =
+	"Sends only the extension version, model category, event names, coarse errors, redacted crash reports and counts. Never prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
+const DIAGNOSTICS_FREE_HELP =
+	"Required for Onhand Free, so Onhand can watch reliability, usage limits, costs, crashes and abuse. Still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
+// Text fields save this long after the last keystroke, and right away when
+// they lose focus.
+const TYPING_SAVE_DELAY_MS = 1000;
 
+const authModeRadios = [...document.querySelectorAll('input[name="authMode"]')];
+const authModeInput = {
+	get value() {
+		return authModeRadios.find((radio) => radio.checked)?.value || "oauth";
+	},
+	set value(mode) {
+		for (const radio of authModeRadios) radio.checked = radio.value === mode;
+	},
+};
+const modePanels = [...document.querySelectorAll("[data-mode-panel]")];
 const providerInput = document.getElementById("aiProvider");
-const providerFieldEl = document.getElementById("providerField");
+const modelFieldEl = document.getElementById("modelField");
 const modelSelectEl = document.getElementById("aiModelSelect");
 const aiModelInput = document.getElementById("aiModel");
 const modelHelpEl = document.getElementById("modelHelp");
-const authModeInput = document.getElementById("authMode");
+const capabilityStatusEl = document.getElementById("capabilityStatus");
 const apiKeySectionEl = document.getElementById("apiKeySection");
-const apiKeyActionsEl = document.getElementById("apiKeyActions");
 const aiApiKeyInput = document.getElementById("aiApiKey");
 const apiKeyLabelEl = document.getElementById("apiKeyLabel");
 const apiKeyHelpEl = document.getElementById("apiKeyHelp");
-const capabilityStatusEl = document.getElementById("capabilityStatus");
-const liveDelegationInput = document.getElementById("liveDelegation");
-const liveInterruptionInput = document.getElementById("liveInterruptionEnabled");
-const liveResponsesModelInput = document.getElementById("liveResponsesModel");
-function syncLiveFields() {
-	document.getElementById("liveResponsesModelField").hidden = liveDelegationInput.value !== "responses";
-}
-const voiceModelName = () => "gpt-live-1";
-const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
-const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
-const realtimeOpenAiKeyFieldEl = document.getElementById("realtimeOpenAiKeyField");
+const removeKeyButton = document.getElementById("removeKey");
+const codexFastModeFieldEl = document.getElementById("codexFastModeField");
+const codexFastModeEnabledInput = document.getElementById("codexFastModeEnabled");
+const openAiKeyFieldEl = document.getElementById("openAiKeyField");
+const openAiKeyOptionalEl = document.getElementById("openAiKeyOptional");
+const openAiKeyHomeEl = document.getElementById("openAiKeyHome");
+const voiceOpenAiKeyHomeEl = document.getElementById("voiceOpenAiKeyHome");
 const realtimeOpenAiApiKeyInput = document.getElementById("realtimeOpenAiApiKey");
 const realtimeOpenAiKeyHelpEl = document.getElementById("realtimeOpenAiKeyHelp");
+const realtimeVoiceEnabledInput = document.getElementById("realtimeVoiceEnabled");
+const realtimeVoiceHelpEl = document.getElementById("realtimeVoiceHelp");
+const voiceOptionsEl = document.getElementById("voiceOptions");
+const liveDelegationInput = document.getElementById("liveDelegation");
+const liveResponsesModelFieldEl = document.getElementById("liveResponsesModelField");
+const liveResponsesModelInput = document.getElementById("liveResponsesModel");
+const liveInterruptionInput = document.getElementById("liveInterruptionEnabled");
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
-const codexFastModeEnabledInput = document.getElementById("codexFastModeEnabled");
 const experimentalModelLaneClassifierInput = document.getElementById("experimentalModelLaneClassifier");
 const statusEl = document.getElementById("status");
-const authStatusEl = document.getElementById("authStatus");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
+const authProgressEl = document.getElementById("authProgress");
 const codexSignInButton = document.querySelector(`[data-oauth-provider="${CODEX_PROVIDER}"]`);
 const signOutAuthButton = document.getElementById("signOutAuth");
-const CODEX_AUTH_DEFAULT_SUMMARY = codexAuthSummaryEl.textContent;
-const DIAGNOSTICS_OPTIONAL_HELP =
-	"Sends only extension version, provider/model category, event names, coarse errors, redacted crash reports, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
-const DIAGNOSTICS_FREE_HELP =
-	"Required for Onhand Free so Onhand can monitor hosted model reliability, quota pressure, costs, crashes, and abuse. It still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.";
+const toastEl = document.getElementById("toast");
 let runtimePublicSettings = null;
 let pendingApiKeys = {};
+let lastStatus = null;
+// The reader's own diagnostics choice. Onhand Free requires diagnostics and
+// shows the box ticked while it is selected, but with autosave a glance at
+// the Free option must not leave diagnostics on after switching away.
+let diagnosticsChoice = false;
 
 function applyOnhandTheme(value) {
-	const theme = String(value || "system").toLowerCase();
-	document.documentElement.dataset.onhandTheme = ["light", "dark", "system"].includes(theme) ? theme : "system";
+	const theme = String(value || "light").toLowerCase();
+	document.documentElement.dataset.onhandTheme = ["light", "dark", "system"].includes(theme) ? theme : "light";
 }
 
-chrome.storage.local.get({ [THEME_STORAGE_KEY]: "system" }).then((stored) => applyOnhandTheme(stored[THEME_STORAGE_KEY]));
+chrome.storage.local.get({ [THEME_STORAGE_KEY]: "light" }).then((stored) => applyOnhandTheme(stored[THEME_STORAGE_KEY]));
 chrome.storage.onChanged.addListener((changes, area) => {
 	if (area === "local" && changes[THEME_STORAGE_KEY]) applyOnhandTheme(changes[THEME_STORAGE_KEY].newValue);
 });
 
-function renderStatus(data, className = "") {
-	statusEl.className = className;
-	statusEl.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+let toastTimer = null;
+function showToast(message, kind = "") {
+	toastEl.textContent = message;
+	toastEl.className = `toast show${kind ? ` ${kind}` : ""}`;
+	clearTimeout(toastTimer);
+	toastTimer = setTimeout(() => {
+		toastEl.className = `toast${kind ? ` ${kind}` : ""}`;
+	}, kind === "error" ? 5000 : 1600);
 }
 
-function renderAuthStatus(data, className = "") {
-	authStatusEl.className = className;
-	authStatusEl.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+function renderStatus(data) {
+	statusEl.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
 }
 
 function renderAuthProgress(event) {
 	const lines = [
-		event.providerId ? `Provider: ${event.providerId}` : "",
-		event.status ? `Status: ${event.status}` : "",
-		event.detail ? `Detail: ${event.detail}` : "",
+		event.status ? `${event.status}` : "",
+		event.detail ? `${event.detail}` : "",
 		event.userCode ? `Code: ${event.userCode}` : "",
-		event.url ? `URL: ${event.url}` : "",
+		event.url ? `${event.url}` : "",
 	].filter(Boolean);
-	renderAuthStatus(lines.join("\n") || "Sign-in is running...");
+	authProgressEl.hidden = false;
+	authProgressEl.textContent = lines.join(" · ") || "Signing in…";
+}
+
+// Programmatic updates must not move the caret or overwrite what the reader
+// is typing while an autosave refreshes the form.
+function setInputValue(input, value) {
+	if (document.activeElement === input || input.value === value) return;
+	input.value = value;
 }
 
 function isCodexSignInMode() {
 	return authModeInput.value === "oauth";
 }
 
-// "Onhand Free" is its own authentication choice in the UI, but it is
-// stored as authMode "api-key" + provider "onhand-free" so the runtime
-// and the sidebar onboarding flow need no schema change.
+// "Onhand Free" is its own choice in the UI, but it is stored as authMode
+// "api-key" + provider "onhand-free" so the runtime and the sidebar onboarding
+// flow need no schema change.
 function isFreeTierMode() {
 	return authModeInput.value === "free";
 }
@@ -155,12 +187,15 @@ function selectedApiKeyProvider() {
 }
 
 function selectedModel() {
-	const providerId = selectedProvider();
-	return aiModelInput.value.trim() || getProviderDefaultModel(providerId);
+	return aiModelInput.value.trim() || getProviderDefaultModel(selectedProvider());
 }
 
 function providerModels(providerId) {
 	return runtimePublicSettings?.providerModels?.[providerId] || [];
+}
+
+function hasSavedKey(providerId) {
+	return Boolean(runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === providerId)?.hasApiKey);
 }
 
 function populateModelSelect(providerId, selectedId) {
@@ -183,109 +218,79 @@ function populateModelSelect(providerId, selectedId) {
 	if (!lockedModels) {
 		const customOption = document.createElement("option");
 		customOption.value = "__custom__";
-		customOption.textContent = models.length ? "Custom model…" : "Custom model id";
+		customOption.textContent = models.length ? "Other model…" : "Model id";
 		modelSelectEl.append(customOption);
 	}
 	if (models.some((model) => model.id === selectedId)) {
 		modelSelectEl.value = selectedId;
-		aiModelInput.value = selectedId;
+		setInputValue(aiModelInput, selectedId);
 		aiModelInput.hidden = true;
 	} else if (lockedModels) {
 		modelSelectEl.value = models[0]?.id || fallbackModelId;
-		aiModelInput.value = modelSelectEl.value;
+		setInputValue(aiModelInput, modelSelectEl.value);
 		aiModelInput.hidden = true;
 	} else {
 		modelSelectEl.value = "__custom__";
-		aiModelInput.value = selectedId || fallbackModelId;
+		setInputValue(aiModelInput, selectedId || fallbackModelId);
 		aiModelInput.hidden = false;
 	}
 }
 
 function isOpenAiApiKeyMode() {
-	return !isCodexSignInMode() && !isFreeTierMode() && (providerInput.value || "openai") === "openai";
+	return authModeInput.value === "api-key" && (providerInput.value || "openai") === "openai";
 }
 
 function isRealtimeVoiceEnabled() {
 	return Boolean(realtimeVoiceEnabledInput.checked);
 }
 
+// Only API-key models can lack a feature Onhand needs; say so, otherwise stay quiet.
 function syncCapabilityStatus() {
-	if (isCodexSignInMode()) {
-		const modelId = selectedModel();
-		capabilityStatusEl.textContent = isRealtimeVoiceEnabled()
-			? `Text chat uses OpenAI Codex sign-in with ${modelId}. Voice uses an OpenAI platform API key for ${voiceModelName()}.`
-			: `Text chat uses OpenAI Codex sign-in with ${modelId}. Voice is disabled.`;
-		capabilityStatusEl.className = "ok";
-		return;
-	}
+	capabilityStatusEl.hidden = true;
+	if (authModeInput.value !== "api-key") return;
 	const providerId = selectedProvider();
 	const modelId = selectedModel();
 	const meta = getProviderMeta(providerId);
 	const model = providerModels(providerId).find((candidate) => candidate.id === modelId);
 	const caps = model
-		? {
-				realtime: Boolean(model.realtime),
-				vision: model.input?.includes?.("image"),
-				tools: Boolean(model.tools),
-				structuredOutput: Boolean(model.structuredOutput),
-			}
+		? { vision: model.input?.includes?.("image"), tools: Boolean(model.tools), structuredOutput: Boolean(model.structuredOutput) }
 		: meta.capabilities;
-	const unsupported = [
-		caps.vision ? "" : "vision",
-		caps.tools ? "" : "page tools",
-		caps.structuredOutput ? "" : "structured output",
-	].filter(Boolean);
-	const realtimeText = isRealtimeVoiceEnabled()
-		? isOpenAiApiKeyMode()
-			? ` The same OpenAI API key is also used for ${voiceModelName()}.`
-			: ` Voice uses a separate OpenAI platform API key for ${voiceModelName()}.`
-		: " Voice is disabled.";
-	capabilityStatusEl.textContent = unsupported.length
-		? `${meta.name}/${modelId} may not support: ${unsupported.join(", ")}. Onhand will show an error instead of silently failing if a request needs one of these features.${realtimeText}`
-		: `${meta.name}/${modelId} supports Onhand text chat, page tools, vision inputs, and structured helper output.${realtimeText}`;
-	capabilityStatusEl.className = unsupported.length ? "warn" : "ok";
+	const unsupported = [caps.vision ? "" : "images", caps.tools ? "" : "page tools", caps.structuredOutput ? "" : "structured output"].filter(Boolean);
+	if (!unsupported.length) return;
+	capabilityStatusEl.hidden = false;
+	capabilityStatusEl.textContent = `${meta.name} ${modelId} may not support ${unsupported.join(", ")}. Onhand shows an error if a request needs one.`;
 }
 
 function syncAuthModeFields() {
-	if (isCodexSignInMode()) {
-		// The real provider is openai-codex, so a provider dropdown stuck
-		// on "OpenAI API" would be misleading; the field only applies to
-		// Provider API key mode.
-		providerFieldEl.hidden = true;
-		modelSelectEl.disabled = false;
-		aiModelInput.disabled = false;
-		const providerId = CODEX_PROVIDER;
+	const mode = authModeInput.value;
+	for (const panel of modePanels) panel.hidden = panel.dataset.modePanel !== mode;
+	codexFastModeFieldEl.hidden = mode !== "oauth";
+	if (mode === "oauth") {
+		modelFieldEl.hidden = false;
 		const currentModelId = aiModelInput.value.trim();
-		const models = providerModels(providerId);
+		const models = providerModels(CODEX_PROVIDER);
 		if (!currentModelId || (models.length && !models.some((model) => model.id === currentModelId))) {
-			aiModelInput.value = getProviderDefaultModel(providerId);
+			aiModelInput.value = getProviderDefaultModel(CODEX_PROVIDER);
 		}
-		populateModelSelect(providerId, aiModelInput.value.trim());
-		modelHelpEl.textContent = "Codex sign-in uses your selected OpenAI Codex model for text chat. GPT-5.6 availability follows your Codex plan. Switch Authentication to Provider API key if you want text chat to use an API key.";
-	} else if (isFreeTierMode()) {
-		providerFieldEl.hidden = true;
-		modelSelectEl.disabled = true;
-		aiModelInput.disabled = true;
+		populateModelSelect(CODEX_PROVIDER, aiModelInput.value.trim());
+		modelHelpEl.textContent = "Which models you can pick depends on your ChatGPT plan.";
+	} else if (mode === "free") {
+		modelFieldEl.hidden = true;
 		aiModelInput.value = getProviderDefaultModel(FREE_TIER_PROVIDER);
 		populateModelSelect(FREE_TIER_PROVIDER, aiModelInput.value);
-		const freeModel = providerModels(FREE_TIER_PROVIDER).find((model) => model.id === aiModelInput.value);
-		modelHelpEl.textContent = `Onhand Free uses ${freeModel?.name || aiModelInput.value} for text through Onhand's hosted endpoint. No API key or account needed. Daily usage is capped; switch to Provider API key or Codex sign-in to use your own access.`;
 	} else {
-		providerFieldEl.hidden = false;
-		modelSelectEl.disabled = false;
-		aiModelInput.disabled = false;
+		modelFieldEl.hidden = false;
 		const providerId = providerInput.value || "openai";
 		const currentModelId = aiModelInput.value.trim();
 		const isOtherModeModel =
 			currentModelId === CODEX_MODEL ||
 			providerModels(CODEX_PROVIDER).some((model) => model.id === currentModelId) ||
 			(currentModelId === getProviderDefaultModel(FREE_TIER_PROVIDER) && !providerModels(providerId).some((model) => model.id === currentModelId));
-		if (!currentModelId || isOtherModeModel) {
-			aiModelInput.value = getProviderMeta(providerId).defaultModel;
-		}
+		if (!currentModelId || isOtherModeModel) aiModelInput.value = getProviderMeta(providerId).defaultModel;
 		populateModelSelect(providerId, aiModelInput.value.trim());
-		modelHelpEl.textContent = "Provider API key mode uses your selected provider/model for text chat, learning, and page-tool requests.";
+		modelHelpEl.textContent = "";
 	}
+	modelHelpEl.hidden = !modelHelpEl.textContent;
 	syncDiagnosticsFields();
 	syncApiKeyFields();
 	syncCapabilityStatus();
@@ -298,6 +303,7 @@ function syncDiagnosticsFields() {
 		diagnosticsHelpEl.textContent = DIAGNOSTICS_FREE_HELP;
 		return;
 	}
+	diagnosticsEnabledInput.checked = diagnosticsChoice;
 	diagnosticsEnabledInput.disabled = false;
 	diagnosticsHelpEl.textContent = DIAGNOSTICS_OPTIONAL_HELP;
 }
@@ -305,46 +311,55 @@ function syncDiagnosticsFields() {
 function syncApiKeyFields() {
 	const providerId = selectedApiKeyProvider();
 	const meta = getProviderMeta(providerId);
-	const showApiKeySection = !isCodexSignInMode() && !meta.keyless;
-	apiKeySectionEl.hidden = !showApiKeySection;
-	apiKeyActionsEl.hidden = !showApiKeySection;
+	apiKeySectionEl.hidden = authModeInput.value !== "api-key" || Boolean(meta.keyless);
 	apiKeyLabelEl.textContent = meta.keyLabel;
 	aiApiKeyInput.placeholder = meta.keyPlaceholder;
-	aiApiKeyInput.value = pendingApiKeys[providerId] || "";
-	const saved = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === providerId)?.hasApiKey;
-	apiKeyHelpEl.textContent = meta.keyless
-		? "The free tier needs no key. Usage is capped per day; switch to your own API key any time for unlimited use."
-		: `${saved ? "Saved key exists. Enter a new key to update it, or remove it below." : "No saved key for this provider."} Keys are stored only in chrome.storage.local and are redacted from status diagnostics.`;
+	setInputValue(aiApiKeyInput, pendingApiKeys[providerId] || "");
+	const saved = hasSavedKey(providerId);
+	removeKeyButton.hidden = !saved;
+	apiKeyHelpEl.textContent = saved ? "Saved. Stored only in this browser." : "Stored only in this browser.";
 	syncRealtimeVoiceFields();
 }
 
+// One OpenAI API key field serves both voice and, with a ChatGPT plan, the
+// quick request check that lets answers start sooner. It sits under the
+// model in ChatGPT mode and under Voice otherwise; with OpenAI as the API-key
+// provider, that key already is the OpenAI key.
 function syncRealtimeVoiceFields() {
 	const enabled = isRealtimeVoiceEnabled();
-	const usingOpenAiApiKeyForText = isOpenAiApiKeyMode();
-	const showSeparateOpenAiKey = enabled && !usingOpenAiApiKeyForText;
-	realtimeOpenAiKeyFieldEl.hidden = !showSeparateOpenAiKey;
-	realtimeOpenAiApiKeyInput.value = pendingApiKeys.openai || "";
-	const savedOpenAiKey = runtimePublicSettings?.apiKeyProviders?.find((provider) => provider.id === "openai")?.hasApiKey;
-	realtimeOpenAiKeyHelpEl.textContent = `${savedOpenAiKey ? "Saved OpenAI key exists. Enter a new key to update it." : "No saved OpenAI key yet."} Voice uses this key for ${voiceModelName()}; text chat keeps using the selected authentication mode above.`;
+	const openAiKey = isOpenAiApiKeyMode() ? aiApiKeyInput.value.trim() : String(pendingApiKeys.openai || "");
+	const hasOpenAiKey = Boolean(openAiKey) || hasSavedKey("openai");
+	const showInModel = isCodexSignInMode();
+	const showInVoice = !showInModel && enabled && !isOpenAiApiKeyMode();
+	openAiKeyFieldEl.hidden = !showInModel && !showInVoice;
+	if (showInModel && openAiKeyFieldEl.parentElement !== openAiKeyHomeEl) openAiKeyHomeEl.append(openAiKeyFieldEl);
+	if (showInVoice && openAiKeyFieldEl.parentElement !== voiceOpenAiKeyHomeEl) voiceOpenAiKeyHomeEl.append(openAiKeyFieldEl);
+	openAiKeyOptionalEl.hidden = !showInModel;
+	setInputValue(realtimeOpenAiApiKeyInput, pendingApiKeys.openai || "");
+	const saved = hasSavedKey("openai") ? "Saved. " : "";
+	realtimeOpenAiKeyHelpEl.textContent = showInModel
+		? `${saved}Lets answers start up to 2 seconds sooner (Onhand uses it for a quick check of each request, about $0.0003) and turns on voice. Stored only in this browser.`
+		: `${saved}Voice uses this key for ${VOICE_MODEL}. Stored only in this browser.`;
+
+	voiceOptionsEl.hidden = !enabled;
+	realtimeVoiceHelpEl.classList.remove("warn");
 	if (!enabled) {
-		realtimeVoiceHelpEl.textContent = `Voice is disabled. Enable it to use ${voiceModelName()} with an OpenAI platform API key.`;
-		return;
+		realtimeVoiceHelpEl.textContent = `Talk with Onhand using ${VOICE_MODEL}: ${VOICE_PRICE}. Needs an OpenAI API key.`;
+	} else if (!hasOpenAiKey) {
+		realtimeVoiceHelpEl.textContent = `Add an OpenAI API key ${showInModel ? "above" : "below"} to start voice.`;
+		realtimeVoiceHelpEl.classList.add("warn");
+	} else {
+		realtimeVoiceHelpEl.textContent = `On. ${VOICE_PRICE[0].toUpperCase()}${VOICE_PRICE.slice(1)}.`;
 	}
-	if (usingOpenAiApiKeyForText) {
-		realtimeVoiceHelpEl.textContent = `Voice will use the same OpenAI platform API key selected for Provider API key mode to start ${voiceModelName()}.`;
-		return;
-	}
-	realtimeVoiceHelpEl.textContent = isCodexSignInMode()
-		? `Voice requires an OpenAI platform API key for ${voiceModelName()}. Text chat still uses OpenAI Codex sign-in.`
-		: `Voice requires an OpenAI platform API key for ${voiceModelName()}. Text chat still uses your selected provider API key.`;
+}
+
+function syncLiveFields() {
+	liveResponsesModelFieldEl.hidden = liveDelegationInput.value !== "responses";
 }
 
 function collectApiKeys() {
-	if (!apiKeySectionEl.hidden) {
-		const providerId = selectedApiKeyProvider();
-		pendingApiKeys[providerId] = aiApiKeyInput.value.trim();
-	}
-	if (!realtimeOpenAiKeyFieldEl.hidden) pendingApiKeys.openai = realtimeOpenAiApiKeyInput.value.trim();
+	if (!apiKeySectionEl.hidden) pendingApiKeys[selectedApiKeyProvider()] = aiApiKeyInput.value.trim();
+	if (!openAiKeyFieldEl.hidden) pendingApiKeys.openai = realtimeOpenAiApiKeyInput.value.trim();
 	return Object.fromEntries(Object.entries(pendingApiKeys).filter(([, key]) => key));
 }
 
@@ -365,12 +380,13 @@ async function loadForm() {
 	liveInterruptionInput.checked = Boolean(runtimeSettings.liveInterruptionEnabled);
 	liveResponsesModelInput.value = runtimeSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra";
 	syncLiveFields();
-	diagnosticsEnabledInput.checked = Boolean(runtimeSettings.diagnosticsEnabled);
+	diagnosticsChoice = Boolean(runtimeSettings.diagnosticsEnabled);
+	diagnosticsEnabledInput.checked = diagnosticsChoice;
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
 	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
-	// Default-on (see DEFAULT_SETTINGS): unset storage must render CHECKED, or a
-	// first-run Options save (e.g. adding an API key) would write an explicit
-	// false and silently opt the user out before their first turn.
+	// Default-on (see DEFAULT_SETTINGS): unset storage must render CHECKED, or
+	// the first autosave would write an explicit false and silently opt the
+	// user out before their first turn.
 	experimentalModelLaneClassifierInput.checked = runtimeSettings.experimentalModelLaneClassifier !== false;
 	const modelProviderId = isCodexSignInMode() ? CODEX_PROVIDER : isFreeTierMode() ? FREE_TIER_PROVIDER : providerInput.value;
 	aiModelInput.value = runtimeSettings.aiModel || getProviderDefaultModel(modelProviderId);
@@ -383,30 +399,25 @@ function syncCodexAuthCard() {
 	codexSignInButton.hidden = signedIn;
 	signOutAuthButton.hidden = !signedIn;
 	if (!signedIn) {
-		codexAuthSummaryEl.textContent = CODEX_AUTH_DEFAULT_SUMMARY;
+		codexAuthSummaryEl.textContent = "Not signed in.";
 		return;
 	}
 	const identity = codex.email || codex.accountId || "";
-	codexAuthSummaryEl.textContent = `Signed in${identity ? ` as ${identity}` : ""}.${codex.expired ? " Session expired — sign out and sign in again." : ""}`;
+	codexAuthSummaryEl.textContent = codex.expired
+		? "Session expired. Sign out, then sign in again."
+		: `Signed in${identity ? ` as ${identity}` : ""}.`;
 }
 
 async function refreshStatus() {
 	const response = await chrome.runtime.sendMessage({ type: "get-status" });
 	if (!response?.ok) {
-		renderStatus(response?.error || "Could not read background status", "error");
+		renderStatus(response?.error || "Could not read background status");
 		return;
 	}
+	lastStatus = response.status;
 	runtimePublicSettings = response.status?.browserRuntime || null;
 	syncCodexAuthCard();
 	renderStatus(response.status);
-	const browserRuntime = response.status?.browserRuntime;
-	if (browserRuntime?.signedInProviders || browserRuntime?.apiKeyProviders) {
-		const signedIn = (browserRuntime.signedInProviders || [])
-			.filter((provider) => provider.signedIn)
-			.map((provider) => `${provider.name}: ${provider.email || provider.accountId || provider.projectId || "signed in"}`);
-		const apiKeys = (browserRuntime.apiKeyProviders || []).map((provider) => `${provider.name}: ${provider.hasApiKey ? "API key saved" : "no API key"}`);
-		renderAuthStatus([...signedIn, ...apiKeys].join("\n") || "No credentials stored.");
-	}
 	syncAuthModeFields();
 }
 
@@ -421,48 +432,61 @@ async function save() {
 		liveDelegation: liveDelegationInput.value,
 		liveInterruptionEnabled: liveInterruptionInput.checked,
 		liveResponsesModel: liveResponsesModelInput.value,
-		diagnosticsEnabled: isFreeTierMode() || Boolean(diagnosticsEnabledInput.checked),
+		diagnosticsEnabled: isFreeTierMode() || diagnosticsChoice,
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
 		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
 		experimentalModelLaneClassifier: Boolean(experimentalModelLaneClassifierInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
 	});
-	if (!response?.ok) throw new Error(response?.error || "Could not save browser runtime settings.");
+	if (!response?.ok) throw new Error(response?.error || "Could not save settings.");
 	await refreshStatus();
 }
 
-async function validateSelectedKey() {
-	const providerId = selectedApiKeyProvider();
-	const response = await chrome.runtime.sendMessage({
-		type: "browser-runtime:validate-api-key",
-		providerId,
-		apiKey: aiApiKeyInput.value.trim() || pendingApiKeys[providerId] || "",
+// Every change saves itself. Saves run one at a time, so a quick run of
+// changes cannot finish out of order and leave an older value stored.
+let saveTimer = null;
+let saveQueue = Promise.resolve();
+function runSave() {
+	saveTimer = null;
+	saveQueue = saveQueue.then(async () => {
+		try {
+			await save();
+			showToast("Saved");
+		} catch (error) {
+			showToast(`Couldn't save: ${error?.message || String(error)}`, "error");
+		}
 	});
-	if (!response?.ok) throw new Error(response?.error || response?.result?.error || "API key validation failed.");
-	renderStatus(`${response.result.providerName} key shape looks valid.`, "ok");
+	return saveQueue;
+}
+
+function scheduleSave(delayMs = 0) {
+	clearTimeout(saveTimer);
+	saveTimer = setTimeout(runSave, delayMs);
 }
 
 async function removeSelectedKey() {
 	const providerId = selectedApiKeyProvider();
 	pendingApiKeys[providerId] = "";
+	aiApiKeyInput.value = "";
 	const response = await chrome.runtime.sendMessage({ type: "browser-runtime:remove-api-key", providerId });
-	if (!response?.ok) throw new Error(response?.error || "Could not remove API key.");
+	if (!response?.ok) throw new Error(response?.error || "Could not remove the API key.");
 	await refreshStatus();
+	showToast("Key removed");
 }
 
 async function signIn(providerId, defaultModel) {
-	if (!providerId) throw new Error("Provider id is required.");
-	if (providerId !== CODEX_PROVIDER) throw new Error("Only OpenAI Codex sign-in is supported.");
+	if (providerId !== CODEX_PROVIDER) throw new Error("Only ChatGPT sign-in is supported.");
 	authModeInput.value = "oauth";
 	if (!aiModelInput.value.trim()) aiModelInput.value = defaultModel || getProviderDefaultModel(CODEX_PROVIDER);
 	syncAuthModeFields();
-	renderAuthStatus(`Starting ${providerId} sign-in...`);
+	renderAuthProgress({ status: "Opening ChatGPT sign-in…" });
 	const response = await chrome.runtime.sendMessage({ type: "browser-runtime:oauth-sign-in", providerId, aiModel: selectedModel() });
-	if (!response?.ok) throw new Error(response?.error || "Direct sign-in failed.");
+	if (!response?.ok) throw new Error(response?.error || "Sign-in failed.");
+	authProgressEl.hidden = true;
 	await loadForm();
 	await refreshStatus();
-	renderAuthStatus(`Signed in to ${providerId}.`, "ok");
+	showToast("Signed in");
 }
 
 async function signOutSelectedProvider() {
@@ -470,7 +494,7 @@ async function signOutSelectedProvider() {
 	if (!response?.ok) throw new Error(response?.error || "Could not sign out.");
 	await loadForm();
 	await refreshStatus();
-	renderAuthStatus(`Signed out of ${CODEX_PROVIDER}.`, "ok");
+	showToast("Signed out");
 }
 
 async function trackOptionsOpened() {
@@ -483,48 +507,87 @@ async function trackOptionsOpened() {
 		.catch(() => {});
 }
 
-document.getElementById("save").addEventListener("click", () => save().catch((error) => renderStatus(error?.message || String(error), "error")));
-document.getElementById("validateKey").addEventListener("click", () => validateSelectedKey().catch((error) => renderStatus(error?.message || String(error), "error")));
-document.getElementById("removeKey").addEventListener("click", () => removeSelectedKey().catch((error) => renderStatus(error?.message || String(error), "error")));
-authModeInput.addEventListener("change", syncAuthModeFields);
+const reportError = (error) => showToast(error?.message || String(error), "error");
+
+for (const radio of authModeRadios) {
+	radio.addEventListener("change", () => {
+		syncAuthModeFields();
+		scheduleSave();
+	});
+}
 providerInput.addEventListener("change", () => {
 	aiModelInput.value = getProviderMeta(providerInput.value).defaultModel;
 	syncAuthModeFields();
+	scheduleSave();
 });
 modelSelectEl.addEventListener("change", () => {
 	if (modelSelectEl.value === "__custom__") {
 		aiModelInput.hidden = false;
 		aiModelInput.focus();
-	} else {
-		aiModelInput.value = modelSelectEl.value;
-		aiModelInput.hidden = true;
+		return;
 	}
+	aiModelInput.value = modelSelectEl.value;
+	aiModelInput.hidden = true;
 	syncCapabilityStatus();
+	scheduleSave();
 });
-aiModelInput.addEventListener("input", syncCapabilityStatus);
+aiModelInput.addEventListener("input", () => {
+	syncCapabilityStatus();
+	scheduleSave(TYPING_SAVE_DELAY_MS);
+});
 aiApiKeyInput.addEventListener("input", () => {
 	pendingApiKeys[selectedApiKeyProvider()] = aiApiKeyInput.value.trim();
 	syncRealtimeVoiceFields();
-	syncCapabilityStatus();
-});
-realtimeVoiceEnabledInput.addEventListener("change", () => {
-	syncRealtimeVoiceFields();
-	syncCapabilityStatus();
+	scheduleSave(TYPING_SAVE_DELAY_MS);
 });
 realtimeOpenAiApiKeyInput.addEventListener("input", () => {
 	pendingApiKeys.openai = realtimeOpenAiApiKeyInput.value.trim();
+	syncRealtimeVoiceFields();
+	scheduleSave(TYPING_SAVE_DELAY_MS);
 });
-document.getElementById("refresh").addEventListener("click", () => refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error")));
-document.getElementById("signOutAuth").addEventListener("click", () => signOutSelectedProvider().catch((error) => renderAuthStatus(error?.message || String(error), "error")));
-for (const button of document.querySelectorAll("[data-oauth-provider]")) {
-	button.addEventListener("click", () => signIn(button.dataset.oauthProvider, button.dataset.defaultModel).catch((error) => renderAuthStatus(error?.message || String(error), "error")));
+for (const input of [aiModelInput, aiApiKeyInput, realtimeOpenAiApiKeyInput]) {
+	input.addEventListener("change", () => scheduleSave());
 }
+realtimeVoiceEnabledInput.addEventListener("change", () => {
+	syncRealtimeVoiceFields();
+	scheduleSave();
+});
+liveDelegationInput.addEventListener("change", () => {
+	syncLiveFields();
+	scheduleSave();
+});
+diagnosticsEnabledInput.addEventListener("change", () => {
+	diagnosticsChoice = diagnosticsEnabledInput.checked;
+	scheduleSave();
+});
+for (const input of [liveResponsesModelInput, liveInterruptionInput, codexFastModeEnabledInput, advancedRuntimeInspectionEnabledInput, experimentalModelLaneClassifierInput]) {
+	input.addEventListener("change", () => scheduleSave());
+}
+removeKeyButton.addEventListener("click", () => removeSelectedKey().catch(reportError));
+signOutAuthButton.addEventListener("click", () => signOutSelectedProvider().catch(reportError));
+codexSignInButton.addEventListener("click", () =>
+	signIn(codexSignInButton.dataset.oauthProvider, codexSignInButton.dataset.defaultModel).catch((error) => {
+		authProgressEl.hidden = true;
+		reportError(error);
+	}),
+);
+document.getElementById("copyStatus").addEventListener("click", async () => {
+	try {
+		await refreshStatus();
+		await navigator.clipboard.writeText(JSON.stringify(lastStatus, null, 2));
+		showToast("Status copied");
+	} catch (error) {
+		reportError(error);
+	}
+});
 chrome.runtime.onMessage.addListener((message) => {
 	if (message?.type === "browser-runtime:auth-progress") renderAuthProgress(message.event || {});
 });
+// A change still waiting out the typing delay is saved when the page closes.
+window.addEventListener("pagehide", () => {
+	if (saveTimer) runSave();
+});
 
-await refreshStatus().catch((error) => renderStatus(error?.message || String(error), "error"));
-await loadForm().catch((error) => renderStatus(error?.message || String(error), "error"));
+await refreshStatus().catch((error) => renderStatus(error?.message || String(error)));
+await loadForm().catch(reportError);
 await trackOptionsOpened();
-
-liveDelegationInput.addEventListener("change", syncLiveFields);

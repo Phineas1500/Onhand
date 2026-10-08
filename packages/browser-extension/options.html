@@ -54,7 +54,7 @@
       }
 
       @media (prefers-color-scheme: dark) {
-        :root:not([data-onhand-theme="light"]) {
+        :root[data-onhand-theme="system"] {
           color-scheme: dark;
           --rm-base: #191724;
           --rm-mantle: #1f1d2e;
@@ -216,33 +216,6 @@
         gap: 12px;
       }
 
-      .auth-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 12px;
-        margin-top: 14px;
-      }
-
-      .auth-card {
-        border: 1px solid var(--rm-surface-2);
-        background: var(--rm-base);
-        border-radius: 3px;
-        padding: 12px;
-      }
-
-      .auth-card h3 {
-        margin: 0 0 4px;
-        font: 700 12px/1.3 var(--rm-font-mono);
-      }
-
-      .auth-card p {
-        min-height: 36px;
-        margin: 0 0 12px;
-        color: var(--rm-subtext);
-        font-size: 12.5px;
-        line-height: 1.45;
-      }
-
       .row {
         display: flex;
         flex-wrap: wrap;
@@ -282,8 +255,7 @@
         cursor: not-allowed;
       }
 
-      button.primary,
-      .auth-card button:not(.danger) {
+      button.primary {
         border: 0;
         border-radius: 3px;
         background: var(--rm-pine);
@@ -292,14 +264,8 @@
         padding: 9px 14px;
       }
 
-      button.primary:hover,
-      .auth-card button:not(.danger):hover {
+      button.primary:hover {
         background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
-      }
-
-      .auth-card button.danger {
-        padding: 9px 14px;
-        border-radius: 3px;
       }
 
       button.danger {
@@ -323,19 +289,12 @@
         font: 11px/1.5 var(--rm-font-mono);
       }
 
-      .status h2 {
-        margin-bottom: 0;
-      }
-
-      .status {
-        margin-top: 18px;
-      }
-
       .ok {
         color: var(--rm-foam);
       }
 
-      .warn {
+      .warn,
+      p.help.warn {
         color: var(--rm-gold);
       }
 
@@ -343,11 +302,145 @@
         color: var(--rm-love);
       }
 
-      /* options.js replaces this element's class list outright with
-         ok/warn, so style it by id rather than relying on .help */
       #capabilityStatus {
         margin: 6px 0 0;
-        font: 11px/1.5 var(--rm-font-mono);
+        font-size: 12.5px;
+        line-height: 1.45;
+      }
+
+      #status {
+        max-height: 320px;
+        overflow: auto;
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border: 1px solid var(--rm-surface-2);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 10px;
+      }
+
+      .segmented label {
+        margin: 0;
+        padding: 9px 8px;
+        text-align: center;
+        cursor: pointer;
+        color: var(--rm-text);
+        background: var(--rm-base);
+        font: 11px/1.2 var(--rm-font-mono);
+        letter-spacing: 0.04em;
+        text-transform: none;
+      }
+
+      .segmented label + label {
+        border-left: 1px solid var(--rm-surface-2);
+      }
+
+      .segmented input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .segmented label:has(input:checked) {
+        background: color-mix(in srgb, var(--rm-pine) 28%, var(--rm-base));
+        box-shadow: inset 0 0 0 1px var(--rm-pine);
+        color: var(--rm-text);
+        font-weight: 700;
+      }
+
+      .segmented label:has(input:focus-visible) {
+        outline: 1px solid var(--rm-pine);
+        outline-offset: -3px;
+      }
+
+      .panel {
+        margin-top: 12px;
+      }
+
+      .panel > p.help:first-child {
+        margin-top: 0;
+      }
+
+      .account-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid var(--rm-surface-2);
+        background: var(--rm-base);
+        border-radius: 3px;
+        padding: 10px 12px;
+      }
+
+      .account-row span {
+        font-size: 13px;
+      }
+
+      .key-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .key-row input {
+        flex: 1;
+      }
+
+      .toggle-field {
+        margin: 14px 0 0;
+      }
+
+      .toggle-field .toggle-row {
+        color: var(--rm-text);
+        font: 13.5px/1.4 var(--rm-font-serif);
+        letter-spacing: 0;
+        text-transform: none;
+        margin-bottom: 2px;
+      }
+
+      .toggle-field .help {
+        margin: 0 0 0 22px;
+      }
+
+      details {
+        margin-top: 14px;
+        border-top: 1px solid var(--rm-surface-2);
+        padding-top: 10px;
+      }
+
+      summary {
+        cursor: pointer;
+        color: var(--rm-subtext);
+        font: 11px/1.4 var(--rm-font-mono);
+        letter-spacing: 0.04em;
+      }
+
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 24px;
+        transform: translate(-50%, 12px);
+        opacity: 0;
+        pointer-events: none;
+        background: var(--rm-text);
+        color: var(--rm-base);
+        border-radius: 999px;
+        padding: 8px 16px;
+        font: 700 11px/1.2 var(--rm-font-mono);
+        letter-spacing: 0.04em;
+        transition: opacity 160ms ease, transform 160ms ease;
+        max-width: calc(100vw - 32px);
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+
+      .toast.error {
+        background: var(--rm-love);
       }
 
       @media (max-width: 640px) {
@@ -362,150 +455,155 @@
       <div class="head">
         <span class="logo-mark" aria-hidden="true">☞</span>
         <h1>Onhand</h1>
-        <span class="tagline">Runtime options</span>
+        <span class="tagline">Settings</span>
       </div>
 
       <section>
-        <h2>Browser Runtime</h2>
-        <p class="help">Onhand runs Pi directly inside the extension and calls browser tools without a localhost bridge.</p>
+        <h2>Model</h2>
+        <p class="help">How Onhand connects to a model for answers.</p>
+        <div class="segmented" role="radiogroup" aria-label="Connect with">
+          <label><input type="radio" name="authMode" value="free" />Onhand Free</label>
+          <label><input type="radio" name="authMode" value="oauth" />ChatGPT plan</label>
+          <label><input type="radio" name="authMode" value="api-key" />API key</label>
+        </div>
 
-        <div class="inline-grid">
-          <div class="field">
-            <label for="authMode">Authentication</label>
-            <select id="authMode">
-              <option value="oauth">OpenAI Codex sign-in</option>
-              <option value="api-key">Provider API key</option>
-              <option value="free">Onhand Free (beta)</option>
-            </select>
+        <div class="panel" data-mode-panel="free" hidden>
+          <p class="help">Free, with a daily limit that resets each day. No account or key needed.</p>
+        </div>
+
+        <div class="panel" data-mode-panel="oauth" hidden>
+          <div class="account-row">
+            <span id="codexAuthSummary">Not signed in.</span>
+            <span>
+              <button data-oauth-provider="openai-codex" data-default-model="gpt-5.5" class="primary">Sign in with ChatGPT</button>
+              <button id="signOutAuth" class="danger" hidden>Sign out</button>
+            </span>
           </div>
+          <p id="authProgress" class="help" hidden></p>
+        </div>
 
-          <div class="field" id="providerField">
-            <label for="aiProvider">Default provider</label>
+        <div class="panel" data-mode-panel="api-key" hidden>
+          <div class="field">
+            <label for="aiProvider">Provider</label>
             <select id="aiProvider">
-              <option value="openai">OpenAI API</option>
-              <option value="anthropic">Anthropic API</option>
-              <option value="google">Google Gemini API</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="google">Google Gemini</option>
               <option value="openrouter">OpenRouter</option>
             </select>
           </div>
+          <div id="apiKeySection" class="field">
+            <label id="apiKeyLabel" for="aiApiKey">API key</label>
+            <div class="key-row">
+              <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+              <button id="removeKey" class="danger" hidden>Remove</button>
+            </div>
+            <p id="apiKeyHelp" class="help">Stored only in this browser.</p>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="aiModelSelect">Default model</label>
+        <div id="modelField" class="field">
+          <label for="aiModelSelect">Model</label>
           <select id="aiModelSelect"></select>
-          <input id="aiModel" placeholder="gpt-5.5" />
-          <p id="modelHelp" class="help">Codex sign-in supports GPT-5.5 plus GPT-5.6 Sol, Terra, and Luna; model availability follows your Codex plan.</p>
-          <p id="capabilityStatus" class="help">Capability status loads with runtime settings.</p>
+          <input id="aiModel" placeholder="Model id" hidden />
+          <p id="modelHelp" class="help"></p>
+          <p id="capabilityStatus" class="warn" hidden></p>
         </div>
 
-        <div id="apiKeySection" class="field">
-          <label id="apiKeyLabel" for="aiApiKey">OpenAI platform API key</label>
-          <input id="aiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-          <p id="apiKeyHelp" class="help">Keys are stored only in chrome.storage.local and are redacted from status diagnostics.</p>
-        </div>
-        <div id="apiKeyActions" class="row">
-          <button id="validateKey">Validate key</button>
-          <button id="removeKey" class="danger">Remove key</button>
+        <div id="codexFastModeField" class="toggle-field" hidden>
+          <label class="toggle-row" for="codexFastModeEnabled">
+            <input id="codexFastModeEnabled" type="checkbox" />
+            <span>Fast mode</span>
+          </label>
+          <p class="help">Faster replies at the same quality, but uses your plan's limits about 2.5&times; faster.</p>
         </div>
 
-        <div class="field">
+        <div id="openAiKeyHome"></div>
+      </section>
+
+      <section>
+        <h2>Voice</h2>
+        <div class="toggle-field">
           <label class="toggle-row" for="realtimeVoiceEnabled">
             <input id="realtimeVoiceEnabled" type="checkbox" />
-            <span>Enable voice</span>
+            <span>Voice conversations</span>
           </label>
-          <p id="realtimeVoiceHelp" class="help">Enable voice to use <code>gpt-live-1</code> with an OpenAI platform API key.</p>
+          <p id="realtimeVoiceHelp" class="help">Talk with Onhand using GPT-Live 1: $0.05 per connected minute, plus model usage. Needs an OpenAI API key.</p>
         </div>
 
-        <p class="help">Voice uses GPT-Live 1, which keeps the conversation going while Onhand reads and uses tools. $0.05 per connected minute, including silence, plus backend model usage.</p>
+        <div id="voiceOpenAiKeyHome"></div>
 
-        <div id="liveDelegationField" class="field">
-          <label for="liveDelegation">Live backend</label>
-          <select id="liveDelegation">
-            <option value="client">Your text model (recommended)</option>
-            <option value="responses">Hosted GPT-5.6 Terra or Luna (experimental)</option>
-          </select>
-          <p class="help">By default, Live hands questions to the same Onhand agent as text chat, using your chosen text model and sign-in, and speaks a short version of its answer. The hosted option runs the work on GPT-5.6 through Live instead, billed to the OpenAI API key. Restart Voice after changing this setting.</p>
-        </div>
-        <div id="liveResponsesModelField" class="field" hidden>
-          <label for="liveResponsesModel">Live reasoning model</label>
-          <select id="liveResponsesModel">
-            <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
-            <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
-          </select>
-          <p class="help">Terra is the starting choice; Luna is a lower-cost alternative. Stop ends a managed Voice session and blocks further tool calls. Typed corrections continue through the backend conversation.</p>
-          <p class="help">Images and large source results use temporary files in your OpenAI account that expire after one hour. If a long call reaches Live's source limit, Onhand finishes from the evidence already read and keeps Voice connected.</p>
-          <label class="toggle-row" for="liveInterruptionEnabled">
-            <input id="liveInterruptionEnabled" type="checkbox" />
-            <span>Pause page work for spoken corrections (experimental)</span>
-          </label>
-          <p class="help">Uses brief GPT-5.6 Luna checks of your question and new speech, billed separately through your voice API key. Managed Terra remains in charge of research. New page actions pause when a correction is detected; an action already running may finish. Once the correction is clear, Terra continues with the updated question. If paused by mistake, use Resume page work in the voice transcript. Restart Voice after changing this setting.</p>
-        </div>
-
-        <div id="realtimeOpenAiKeyField" class="field" hidden>
-          <label for="realtimeOpenAiApiKey">OpenAI platform API key for voice</label>
+        <div id="openAiKeyField" class="field" hidden>
+          <label for="realtimeOpenAiApiKey">OpenAI API key<span id="openAiKeyOptional"> (optional)</span></label>
           <input id="realtimeOpenAiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
-          <p id="realtimeOpenAiKeyHelp" class="help">Voice uses this key for <code>gpt-live-1</code>. Text chat keeps using the selected authentication mode above.</p>
+          <p id="realtimeOpenAiKeyHelp" class="help"></p>
         </div>
 
-        <div class="field">
+        <details id="voiceOptions" hidden>
+          <summary>Voice options</summary>
+          <div class="field">
+            <label for="liveDelegation">Who answers</label>
+            <select id="liveDelegation">
+              <option value="client">Your model above (recommended)</option>
+              <option value="responses">Hosted GPT-5.6 Terra or Luna (experimental)</option>
+            </select>
+            <p class="help">The hosted option runs answers on GPT-5.6 through Live, billed to your OpenAI API key. Restart voice after changing this.</p>
+          </div>
+          <div id="liveResponsesModelField" hidden>
+            <div class="field">
+              <label for="liveResponsesModel">Hosted model</label>
+              <select id="liveResponsesModel">
+                <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+                <option value="gpt-5.6-luna">GPT-5.6 Luna (lower cost)</option>
+              </select>
+            </div>
+            <div class="toggle-field">
+              <label class="toggle-row" for="liveInterruptionEnabled">
+                <input id="liveInterruptionEnabled" type="checkbox" />
+                <span>Pause page work for spoken corrections (experimental)</span>
+              </label>
+              <p class="help">Uses brief GPT-5.6 Luna checks, billed to your OpenAI API key. Restart voice after changing this.</p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section>
+        <h2>Privacy</h2>
+        <div class="toggle-field">
           <label class="toggle-row" for="diagnosticsEnabled">
             <input id="diagnosticsEnabled" type="checkbox" />
             <span>Share anonymous diagnostics</span>
           </label>
-          <p id="diagnosticsHelp" class="help">Sends only extension version, provider/model category, event names, coarse errors, redacted crash reports, and aggregate counts. It never sends prompts, page content, URLs, screenshots, saved sessions, transcripts, or keys.</p>
+          <p id="diagnosticsHelp" class="help"></p>
         </div>
 
-        <div class="field">
-          <label class="toggle-row" for="advancedRuntimeInspectionEnabled">
-            <input id="advancedRuntimeInspectionEnabled" type="checkbox" />
-            <span>Allow advanced runtime inspection for complex websites</span>
-          </label>
-          <p class="help">Lets Onhand use read-only JavaScript on the active page only when normal page-reading, DOM, screenshot, console, network, or selector tools are not enough. Turn this off to prevent model-requested JavaScript inspection.</p>
-        </div>
-
-        <div class="field">
-          <label class="toggle-row" for="codexFastModeEnabled">
-            <input id="codexFastModeEnabled" type="checkbox" />
-            <span>Codex fast mode (priority inference)</span>
-          </label>
-          <p class="help">Runs the same model on OpenAI's priority tier for faster responses, with no change to answer quality. Uses your Codex plan's rate limits noticeably faster (about 2.5&times; on <code>gpt-5.5</code>). Applies to Codex sign-in only; other providers ignore it.</p>
-        </div>
-
-        <div class="field">
-          <label class="toggle-row" for="experimentalModelLaneClassifier">
-            <input id="experimentalModelLaneClassifier" type="checkbox" />
-            <span>Experimental: model-based intent routing</span>
-          </label>
-          <p class="help">Uses a small model call to classify each ask's intent (teaching, comparison, review markup, homework) for marker expectations and deliverable briefings, instead of keyword rules. Understands paraphrases and other languages, but adds a moment before responses start; falls back to keyword rules on any failure. Works best with Codex sign-in.</p>
-        </div>
-      </section>
-
-      <section>
-        <h2>OpenAI Codex Sign-In</h2>
-        <p class="help">Use your ChatGPT Plus/Pro Codex login for text chat, or switch Authentication to Provider API key if you want text chat to use an API key instead. Voice uses an OpenAI platform API key when enabled.</p>
-
-        <div class="auth-grid">
-          <div class="auth-card">
-            <h3>OpenAI Codex</h3>
-            <p id="codexAuthSummary">ChatGPT Plus/Pro OAuth for selectable Codex text models.</p>
-            <button data-oauth-provider="openai-codex" data-default-model="gpt-5.5">Sign in</button>
-            <button id="signOutAuth" class="danger" hidden>Sign out</button>
+        <details>
+          <summary>Advanced</summary>
+          <div class="toggle-field">
+            <label class="toggle-row" for="advancedRuntimeInspectionEnabled">
+              <input id="advancedRuntimeInspectionEnabled" type="checkbox" />
+              <span>Read-only page scripts on complex sites</span>
+            </label>
+            <p class="help">Lets Onhand run read-only JavaScript on the active page when its normal reading tools aren't enough.</p>
           </div>
-        </div>
-
-        <pre id="authStatus">No direct sign-in activity yet.</pre>
+          <div class="toggle-field">
+            <label class="toggle-row" for="experimentalModelLaneClassifier">
+              <input id="experimentalModelLaneClassifier" type="checkbox" />
+              <span>Model-based request routing</span>
+            </label>
+            <p class="help">A quick check of what each request asks for (a lesson, a comparison, marks on the page), instead of keyword rules. Falls back to the rules if it fails.</p>
+          </div>
+          <div class="field">
+            <label>Troubleshooting</label>
+            <button id="copyStatus">Copy status for support</button>
+            <pre id="status">Loading…</pre>
+          </div>
+        </details>
       </section>
-
-      <div class="row">
-        <button id="save" class="primary">Save</button>
-        <button id="refresh">Refresh status</button>
-      </div>
-
-      <div class="status">
-        <h2>Status</h2>
-        <pre id="status">Loading…</pre>
-      </div>
     </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script type="module" src="options.js"></script>
   </body>
