@@ -49,7 +49,9 @@ function installChromeStub() {
 const CORPUS_FILE = new URL("../evals/intent-classifier/cases.json", import.meta.url);
 const CORPUS = JSON.parse(readFileSync(CORPUS_FILE, "utf8")).cases.map((entry) => [entry.prompt, entry.expect, entry.page || null]);
 
-const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
+// forbidsPageMarks: the user asked for the page to be left unmarked. Only the
+// regex router and Decisions answer it; the model classifier does not.
+const FIELDS = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp", "forbidsPageMarks"];
 
 function regexVerdicts(test, prompt) {
 	// The predicates consult the model-intent cache first; keep it empty here
@@ -63,6 +65,7 @@ function regexVerdicts(test, prompt) {
 		crossTabComparison: test.promptAsksForCrossTabComparisonForTest(prompt),
 		documentReviewMarkup: test.promptAsksForDocumentReviewMarkupForTest(prompt),
 		problemSolvingHelp: null,
+		forbidsPageMarks: Boolean(test.buildNoPageChangesGuardResultForTest("browser_highlight_text", "highlight_text", prompt)),
 	};
 }
 
@@ -216,11 +219,14 @@ if (process.argv.includes("--decisions")) {
 		console.log(`  ${field.padEnd(21)} cutoffs >=${trueAt}/<${falseBelow}: confident ${sure.length}/${rows.length}, wrong when confident ${wrong.length}; best single threshold ${best[0]} -> ${best[1]}/${rows.length}`);
 		for (const row of wrong) console.log(`    WRONG p=${row.probability.toFixed(2)} want ${row.want}: ${CORPUS[row.index][0].slice(0, 80).replace(/\n/g, " ")}`);
 	}
-	const decided = new Map([...payloads].filter(([, p]) => p.classification).map(([index, p]) => [index, p.classification]));
+	// In production a confident Decisions "leave it unmarked" adds to the regex
+	// block; it never lifts one.
+	const withPageMarks = (index, verdicts) => ({ ...verdicts, forbidsPageMarks: Boolean(payloads.get(index)?.forbidsPageMarks || regexResults.get(index).forbidsPageMarks) });
+	const decided = new Map([...payloads].filter(([, p]) => p.classification).map(([index, p]) => [index, withPageMarks(index, p.classification)]));
 	console.log(`\nDecisions confident on every field: ${decided.size}/${CORPUS.length} requests (the rest go to the model classifier)`);
 	score("Decisions, confident requests only", decided);
 	if (modelResults) {
-		const policy = new Map(CORPUS.map((_, index) => [index, decided.get(index) || modelResults.get(index)]).filter(([, value]) => value));
+		const policy = new Map(CORPUS.map((_, index) => [index, decided.get(index) || (modelResults.get(index) && withPageMarks(index, modelResults.get(index)))]).filter(([, value]) => value));
 		score("Production policy (Decisions when confident, else model)", policy);
 	}
 }

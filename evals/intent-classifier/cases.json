@@ -9,7 +9,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -21,7 +22,8 @@
     "enumerableCoverage": null,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -33,7 +35,8 @@
     "enumerableCoverage": null,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -45,7 +48,8 @@
     "teaching": false,
     "enumerableCoverage": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -57,7 +61,8 @@
     "crossTabComparison": true,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -69,7 +74,8 @@
     "pageScoped": true,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -81,7 +87,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -93,7 +100,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -105,7 +113,8 @@
     "pageScoped": true,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -117,7 +126,8 @@
     "teaching": null,
     "enumerableCoverage": null,
     "comparison": false,
-    "crossTabComparison": false
+    "crossTabComparison": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -129,7 +139,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -137,7 +148,8 @@
    "prompt": "could you help me solve this?",
    "expect": {
     "pageScoped": true,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -145,7 +157,8 @@
    "prompt": "Help me troubleshoot why this page will not load.",
    "expect": {
     "pageScoped": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -157,7 +170,8 @@
     "crossTabComparison": true,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -169,7 +183,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -181,7 +196,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": true
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -193,7 +209,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -205,7 +222,8 @@
     "crossTabComparison": false,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -217,7 +235,8 @@
     "crossTabComparison": false,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -229,7 +248,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -241,7 +261,8 @@
     "enumerableCoverage": null,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -253,7 +274,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -265,7 +287,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -277,7 +300,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -289,7 +313,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -301,7 +326,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -313,7 +339,8 @@
     "teaching": null,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -325,7 +352,8 @@
     "teaching": null,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -337,7 +365,8 @@
     "crossTabComparison": false,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -349,7 +378,8 @@
     "crossTabComparison": false,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -361,7 +391,8 @@
     "comparison": null,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -373,7 +404,8 @@
     "teaching": null,
     "enumerableCoverage": null,
     "comparison": false,
-    "crossTabComparison": false
+    "crossTabComparison": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -385,7 +417,8 @@
     "crossTabComparison": false,
     "teaching": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -397,7 +430,8 @@
     "teaching": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -409,7 +443,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "enumerableCoverage": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -421,7 +456,8 @@
     "enumerableCoverage": false,
     "comparison": false,
     "crossTabComparison": false,
-    "documentReviewMarkup": false
+    "documentReviewMarkup": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-07 sessions and PR #52 review"
   },
@@ -438,7 +474,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -455,7 +492,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -472,7 +510,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -489,7 +528,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -506,7 +546,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": true
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -523,7 +564,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -540,7 +582,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -557,7 +600,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -574,7 +618,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -591,7 +636,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -608,7 +654,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -625,7 +672,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -642,7 +690,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -659,7 +708,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -676,7 +726,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -693,7 +744,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -710,7 +762,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -727,7 +780,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -744,7 +798,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -761,7 +816,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -778,7 +834,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -795,7 +852,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -812,7 +870,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -829,7 +888,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -846,7 +906,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -863,7 +924,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -880,7 +942,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -897,7 +960,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -914,7 +978,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -931,7 +996,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -948,7 +1014,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -965,7 +1032,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -982,7 +1050,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -999,7 +1068,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1016,7 +1086,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1033,7 +1104,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1050,7 +1122,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1067,7 +1140,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1084,7 +1158,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1101,7 +1176,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1118,7 +1194,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1135,7 +1212,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1152,7 +1230,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1169,7 +1248,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1186,7 +1266,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1203,7 +1284,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1220,7 +1302,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1237,7 +1320,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1254,7 +1338,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1271,7 +1356,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1288,7 +1374,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1305,7 +1392,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1322,7 +1410,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1339,7 +1428,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1356,7 +1446,8 @@
     "comparison": null,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1373,7 +1464,8 @@
     "comparison": null,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1390,7 +1482,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1407,7 +1500,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1424,7 +1518,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1441,7 +1536,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1458,7 +1554,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1475,7 +1572,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1492,7 +1590,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1509,7 +1608,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1526,7 +1626,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1543,7 +1644,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1560,7 +1662,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1577,7 +1680,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1594,7 +1698,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1611,7 +1716,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1628,7 +1734,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1645,7 +1752,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1659,7 +1767,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1676,7 +1785,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1693,7 +1803,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1710,7 +1821,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1727,7 +1839,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1744,7 +1857,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1761,7 +1875,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1778,7 +1893,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1795,7 +1911,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1812,7 +1929,8 @@
     "comparison": false,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1829,7 +1947,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1846,7 +1965,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1863,7 +1983,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1880,7 +2001,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1897,7 +2019,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1914,7 +2037,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1931,7 +2055,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1948,7 +2073,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1965,7 +2091,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1982,7 +2109,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -1999,7 +2127,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2016,7 +2145,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2033,7 +2163,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2050,7 +2181,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2067,7 +2199,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "eval suites and 2026-10 edge cases"
   },
@@ -2084,7 +2217,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2101,7 +2235,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2118,7 +2253,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2135,7 +2271,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2152,7 +2289,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2169,7 +2307,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2186,7 +2325,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2202,7 +2342,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2219,7 +2360,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2236,7 +2378,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2253,7 +2396,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2270,7 +2414,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2287,7 +2432,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2304,7 +2450,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2321,7 +2468,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2338,7 +2486,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2355,7 +2504,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2371,7 +2521,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2388,7 +2539,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2405,7 +2557,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2422,7 +2575,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2437,7 +2591,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2454,7 +2609,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2471,7 +2627,8 @@
     "comparison": null,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2488,7 +2645,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2505,7 +2663,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2522,7 +2681,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2539,7 +2699,8 @@
     "comparison": true,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2556,7 +2717,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2573,7 +2735,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2590,7 +2753,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2606,7 +2770,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": true,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2623,7 +2788,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2640,7 +2806,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2657,7 +2824,8 @@
     "comparison": true,
     "crossTabComparison": true,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2674,7 +2842,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2691,7 +2860,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2708,7 +2878,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2725,7 +2896,8 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": false
+    "problemSolvingHelp": false,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
   },
@@ -2742,9 +2914,472 @@
     "comparison": false,
     "crossTabComparison": false,
     "documentReviewMarkup": false,
-    "problemSolvingHelp": true
+    "problemSolvingHelp": true,
+    "forbidsPageMarks": false
    },
    "source": "2026-10-07 held out from Decisions wording tuning"
+  },
+  {
+   "prompt": "Answer in chat only, please don't touch the page.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Can you explain this paragraph without marking anything up?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "No highlights this time, just give me the gist.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Keep my page clean and tell me what the conclusion is.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Just answer here, don't annotate the article.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "I'm sharing my screen, so please don't add anything to the page. What does section 2 say?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Tell me what this is about. No notes or highlights.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Erkläre mir diesen Abschnitt, aber markiere nichts auf der Seite.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Spiega questa pagina senza evidenziare niente.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "请不要在页面上做任何标记，直接告诉我结论。",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Explique o argumento principal sem anotar a página.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "don't mark anything, just summarize",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Please don't put notes or highlights on my document, just tell me if the intro is clear.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Text answer only.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Without changing the page, what are the three main steps?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Highlight the definition, but don't add a note.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Only highlight the conclusion, not the whole page.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Don't highlight the whole paragraph, just the key sentence.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "What does 'chat only' mean in this API's docs?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "The article says 'do not annotate rare books'. Why?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Clear your highlights from the page.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Mark up my draft with comments.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Can you show me where it says that?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Don't worry about being brief, explain it fully.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Without using any jargon, explain this.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Summarize without spoilers.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Leave a note next to the key formula.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "I don't understand the second section, can you help?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "No need to be formal, just explain what this page says.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Do not translate, just explain the original text.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Ne surligne que la définition.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Point to the line where it says that, please.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests"
+  },
+  {
+   "prompt": "Tell me the answer but keep the page as it is.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Could you not draw on the page? What's the key idea here?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Antworte nur im Chat.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "no annotations pls. what's the takeaway",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Explain the chart without adding marks or notes.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": true
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Don't skip the details, walk me through it.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Highlight only the numbers you used.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "What does the author mean by 'leave no trace'?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Without looking anything up, what does this page claim?",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Mark the key sentence but don't scroll the page.",
+   "page": {
+    "title": "Photosynthesis - Wikipedia",
+    "url": "https://en.wikipedia.org/wiki/Photosynthesis"
+   },
+   "expect": {
+    "forbidsPageMarks": false
+   },
+   "source": "2026-10-07 page-mark requests, held out from wording tuning"
   }
  ]
 }

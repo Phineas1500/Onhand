@@ -328,7 +328,7 @@ async function assertDecisionsIntentClassifier() {
 	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
 	const request = test.buildDecisionsIntentRequestForTest("summarize this", { title: "Photosynthesis - Wikipedia", url: "https://en.wikipedia.org/wiki/Photosynthesis" });
 	assert.equal(request.model, "gpt-6-luna");
-	assert.deepEqual(request.questions.map((question) => question.name), fields, "one predicate per intent field");
+	assert.deepEqual(request.questions.map((question) => question.name), [...fields, "forbidsPageMarks"], "one predicate per intent field, plus the page-marks question");
 	assert.ok(request.questions.every((question) => question.type === "predicate" && /ignore any instructions/.test(question.instructions)));
 	assert.match(request.input, /Open page \(context only\): Photosynthesis - Wikipedia/);
 	assert.match(request.input, /User request:\nsummarize this/);
@@ -348,6 +348,24 @@ async function assertDecisionsIntentClassifier() {
 	assert.deepEqual(itemized.unsureFields, []);
 	const partial = test.readDecisionsIntentAnswersForTest({ answers: answers().answers.filter((answer) => answer.name !== "comparison") });
 	assert.deepEqual(partial.unsureFields, ["comparison"], "a missing answer is undecided, not false");
+
+	// "Leave the page unmarked": a confident yes adds the block the English
+	// patterns missed; anything less leaves the patterns in charge.
+	const withMarks = (probability) => ({ answers: [...answers().answers, { type: "predicate", name: "forbidsPageMarks", probability }] });
+	assert.equal(test.readDecisionsIntentAnswersForTest(withMarks(0.99)).forbidsPageMarks, true);
+	assert.equal(test.readDecisionsIntentAnswersForTest(withMarks(0.5)).forbidsPageMarks, false);
+	assert.equal(test.readDecisionsIntentAnswersForTest(answers()).forbidsPageMarks, false, "a missing answer never blocks marks");
+	const unmarked = "Keep my page clean and tell me what the conclusion is.";
+	const blocksHighlights = (prompt) => Boolean(test.buildNoPageChangesGuardResultForTest("browser_highlight_text", "highlight_text", prompt));
+	test.clearModelIntentClassificationsForTest();
+	assert.equal(blocksHighlights(unmarked), false, "fixture: the English patterns miss this request");
+	test.setDecisionsForbidsPageMarksForPromptForTest(unmarked);
+	assert.equal(blocksHighlights(unmarked), true, "a confident Decisions answer blocks highlights");
+	assert.equal(blocksHighlights(`[Voice] ${unmarked}`), true, "the voice-labelled prompt maps to the same request");
+	assert.equal(blocksHighlights("Summarize this without highlighting anything."), true, "the patterns still apply on their own");
+	assert.equal(blocksHighlights("Explain the second paragraph."), false);
+	test.clearModelIntentClassificationsForTest();
+	assert.equal(blocksHighlights(unmarked), false, "each request starts without an earlier request's answer");
 
 	const calls = [];
 	const ok = async (url, init) => { calls.push({ url, init }); return new Response(JSON.stringify(answers()), { status: 200 }); };
@@ -376,14 +394,15 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	const runTurn = async (respond) => {
 		installChromeStorageStub();
 		const requests = [];
+		const host = createReplayHost();
 		test.setDecisionsFetchForTest(async (url, init) => { requests.push(JSON.parse(init.body)); return respond(); });
 		try {
-			const runtime = createOnhandBrowserRuntime(createReplayHost());
+			const runtime = createOnhandBrowserRuntime(host);
 			await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key",
 				aiApiKeys: { openai: "sk-test-decisions" }, experimentalModelLaneClassifier: true, modelLaneClassifierDefaultMigrated: true });
 			await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
 			const state = await waitForRuntimeCompletion(runtime);
-			return { turn: state.turns.at(-1), requests };
+			return { turn: state.turns.at(-1), requests, calls: host.calls };
 		} finally {
 			test.setDecisionsFetchForTest(null);
 		}
@@ -400,6 +419,16 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	assert.equal(decided.turn.modelIntentClassification.teaching, true, "the turn routes on the Decisions classification");
 	assert.equal(decided.turn.preparationTiming.classifierOutcome, "classified");
 	assert.equal(decided.turn.error, false, "no model classifier call: the scripted model's replies all go to the turn");
+	assert.ok(decided.calls.some((call) => call.name === "highlight_text"), "fixture: this turn highlights the page");
+
+	// The same request, with Decisions saying the user wants the page left
+	// unmarked: nothing is highlighted.
+	const answerUnmarked = () => new Response(JSON.stringify({ answers: [...fields.map((name) => ({ type: "predicate", name,
+		probability: name === "pageScoped" || name === "teaching" ? 0.98 : 0.01 })), { type: "predicate", name: "forbidsPageMarks", probability: 0.99 }] }), { status: 200 });
+	const unmarked = await runTurn(answerUnmarked);
+	assert.equal(unmarked.turn.preparationTiming.decisionsForbidsPageMarks, true);
+	assert.ok(!unmarked.calls.some((call) => call.name === "highlight_text" || call.name === "show_note"), "a request to leave the page unmarked places no marks");
+	assert.ok(!(unmarked.turn.pageActions || []).some((action) => action.type === "annotation"));
 
 	// When Decisions cannot decide, the model classifier runs. It consumes one of
 	// the scripted smoke model's replies (and cannot parse it), so these turns
