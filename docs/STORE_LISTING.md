@@ -15,9 +15,9 @@ side panel on any webpage or PDF, ask a question, and Onhand answers
 from the material in front of you — and shows you where, highlighting
 the exact passages it used right on the page.
 
-Free to try: no API key, no account. The built-in Onhand Free tier
-works the moment you install, with a daily usage cap. For more, sign in
-with OpenAI Codex or bring your own API key (OpenAI, Anthropic, Google
+Free to try: no API key, no account. Choose Onhand Free in the side
+panel and start asking, with a daily usage cap. For more, sign in with
+your ChatGPT plan or bring your own API key (OpenAI, Anthropic, Google
 Gemini, or any OpenRouter model).
 
 WHAT IT DOES
@@ -50,9 +50,9 @@ Privacy note: Onhand starts with the active page. To answer your request it
 may rank titles and URLs of eligible open tabs and read clearly related open
 tabs — in any mode, without switching your view; unrelated tabs are not read
 merely because they are open.
-In API-key and Codex sign-in modes, relevant request and page content goes to your selected provider. In Onhand
+In API-key and ChatGPT sign-in modes, relevant request and page content goes to your selected provider. In Onhand
 Free mode, request content goes through Onhand's hosted Cloudflare
-Worker to OpenRouter; anonymous diagnostics are required for reliability,
+Worker to OpenAI's API; anonymous diagnostics are required for reliability,
 quota, cost, and abuse monitoring. Diagnostics and explicit error
 reports do not include prompts, page content, URLs, screenshots,
 transcripts, saved sessions, or keys.
@@ -215,7 +215,7 @@ Disclose collection/handling of:
 - Web history: titles and URLs of eligible open tabs, indexed locally for
   the workspace scan that finds clearly related sources; unrelated tabs
   are not read merely because they are open.
-- Authentication information: provider API keys and OpenAI Codex sign-in
+- Authentication information: provider API keys and ChatGPT (OpenAI Codex) sign-in
   state, stored locally in extension storage when the user chooses those
   modes.
 - User-generated content: saved highlights, notes, transcripts, local
@@ -230,7 +230,7 @@ Data use certifications:
   restore.
 - In direct-provider modes, request content is sent to the provider the
   user selected. In Onhand Free mode, request content goes through
-  Onhand's hosted Cloudflare Worker to OpenRouter.
+  Onhand's hosted Cloudflare Worker to OpenAI's API.
 - Anonymous diagnostics, Sentry crash events, and explicit error reports
   exclude prompts, page content, URLs, page titles, screenshots, saved
   sessions, transcripts, and keys.
