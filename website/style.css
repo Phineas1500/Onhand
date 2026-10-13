@@ -241,6 +241,10 @@ section:first-of-type{border-top:0}
 .feat p{font-size:15.5px;line-height:1.55;color:var(--fg);margin:0;max-width:42ch}
 .feat .meta{margin-top:auto;padding-top:14px;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}
 .feat .meta .badge{color:var(--rp-gold)}
+.faq-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 48px;margin-top:8px}
+@media (max-width:720px){.faq-list{grid-template-columns:1fr;gap:26px}}
+.faq-item h3{font-family:var(--font-serif);font-size:21px;font-weight:600;color:var(--fg);margin:0 0 8px;line-height:1.25;letter-spacing:-0.01em}
+.faq-item p{font-size:15.5px;line-height:1.6;color:var(--fg);margin:0;max-width:56ch}
 .feat .kbd{font-family:var(--font-mono);font-size:13px;background:var(--bg-elev);padding:1px 5px;border-radius:2px}
 
 /* INSTALL */

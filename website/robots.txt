@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://useonhand.com/sitemap.xml

@@ -3,22 +3,126 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Onhand: a reading companion that points</title>
-<meta name="description" content="Ask about the page you're reading. Onhand highlights the answer, leaves a note in the margin, and explains it in the side panel." />
+<title>Onhand: AI reading assistant for webpages and PDFs</title>
+<meta name="description" content="Onhand is a free AI Chrome extension for reading webpages, PDFs and research papers. Ask a question and it highlights the answer right on the page." />
+<link rel="canonical" href="https://useonhand.com/" />
 <meta property="og:url" content="https://useonhand.com/" />
-<meta property="og:title" content="Onhand — a reading companion that points" />
-<meta property="og:description" content="Ask about the page you're reading. Onhand highlights the answer, leaves a note in the margin, and explains it in the side panel." />
+<meta property="og:title" content="Onhand: AI reading assistant for webpages and PDFs" />
+<meta property="og:description" content="Onhand is a free AI Chrome extension for reading webpages, PDFs and research papers. Ask a question and it highlights the answer right on the page." />
 <meta property="og:image" content="https://useonhand.com/screenshots/promo/attention-screenshot.png" />
 <meta property="og:image:width" content="2863" />
 <meta property="og:image:height" content="1627" />
 <meta property="og:image:alt" content="Onhand highlighting a passage on the Annotated Transformer and answering in the side panel" />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Onhand — a reading companion that points" />
-<meta name="twitter:description" content="Ask about the page you're reading. Onhand highlights the answer, leaves a note in the margin, and explains it in the side panel." />
+<meta name="twitter:title" content="Onhand: AI reading assistant for webpages and PDFs" />
+<meta name="twitter:description" content="Onhand is a free AI Chrome extension for reading webpages, PDFs and research papers. Ask a question and it highlights the answer right on the page." />
 <meta name="twitter:image" content="https://useonhand.com/screenshots/promo/attention-screenshot.png" />
 <link rel="icon" type="image/png" href="./icons/onhand-128.png" />
 <link rel="apple-touch-icon" href="./icons/onhand-128.png" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://useonhand.com/#website",
+      "url": "https://useonhand.com/",
+      "name": "Onhand"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://useonhand.com/#app",
+      "name": "Onhand",
+      "alternateName": "Onhand AI reading assistant",
+      "description": "Onhand is a free AI Chrome extension for reading webpages, PDFs and research papers. Ask a question and it highlights the answer right on the page.",
+      "url": "https://useonhand.com/",
+      "applicationCategory": "EducationalApplication",
+      "applicationSubCategory": "Chrome extension",
+      "operatingSystem": "Google Chrome",
+      "installUrl": "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb",
+      "image": "https://useonhand.com/icons/onhand-128.png",
+      "screenshot": "https://useonhand.com/screenshots/promo/attention-screenshot.png",
+      "isAccessibleForFree": true,
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "Highlights the passages behind each answer on webpages and PDFs",
+        "Leaves short notes in the margin beside its highlights",
+        "PDF viewer with highlights and notes for research papers",
+        "Looks up and opens cited papers",
+        "Learning mode with guiding questions, hints and quizzes",
+        "Voice conversations about the page (with an OpenAI API key)",
+        "Study sessions saved in the browser",
+        "Onhand Free with no account, a ChatGPT plan, or your own OpenAI, Anthropic, Google Gemini or OpenRouter API key"
+      ],
+      "sameAs": [
+        "https://github.com/Phineas1500/Onhand",
+        "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb",
+        "https://www.producthunt.com/products/onhand-2"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://useonhand.com/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Onhand free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Onhand is free and open source under Apache 2.0. Onhand Free needs no account or API key and has a daily limit. For more, sign in with your ChatGPT plan or use your own OpenAI, Anthropic, Google Gemini or OpenRouter API key."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Onhand work with PDFs and research papers?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Onhand opens PDFs in its own viewer, so it can highlight passages and leave notes on them the same way it does on webpages. Ask what a reference like [14] says, and Onhand looks up the cited paper, opens it, and answers from it."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is Onhand different from ChatGPT?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "With a chatbot, you paste text in and read the answer somewhere else. Onhand works on the page you already have open: it highlights the passages it used and leaves short notes beside them, so you can check each point against the source."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can Onhand help me study?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Turn on Learning in the side panel and Onhand tutors instead of handing you the answer: it asks guiding questions, points to hints on the page, and quizzes you on what you're reading."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it work on every website?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "It works on articles, docs, course pages and PDFs. Chrome doesn't let extensions read its own pages, such as the Chrome Web Store or the new tab page."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does Onhand send, and where?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Onhand starts with the page you ask about and may read clearly related open tabs. It sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI. Saved sessions stay in your browser."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
 <script>try{var t=localStorage.getItem('onhand-theme');if(t==='dark'||t==='auto')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 <link rel="stylesheet" href="./style.css" />
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-JQ159C5BGF"></script>
@@ -76,8 +180,9 @@
 
       <div class="hero-side">
         <p class="hero-lede">
-          Ask about the page you're reading. Onhand highlights the answer, leaves
-          a note in the margin, and explains it in the side panel.
+          Onhand is an AI Chrome extension for reading webpages and PDFs. Ask
+          about the page you're reading, and it highlights the answer, leaves a
+          note in the margin, and explains it in the side panel.
         </p>
 
         <div class="hero-ctas">
@@ -389,6 +494,39 @@ return torch.matmul(p_attn, value)</code></pre>
     </div>
     <!-- browser-tool-manifest:end -->
     </details>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="container">
+    <div class="section-eyebrow"><span class="mc">☞</span><span>Questions</span></div>
+    <h2 class="section-title">Common questions.</h2>
+    <div class="faq-list">
+      <div class="faq-item">
+        <h3>Is Onhand free?</h3>
+        <p>Yes. Onhand is free and open source under Apache 2.0. Onhand Free needs no account or API key and has a daily limit. For more, sign in with your ChatGPT plan or use your own OpenAI, Anthropic, Google Gemini or OpenRouter API key.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Does Onhand work with PDFs and research papers?</h3>
+        <p>Yes. Onhand opens PDFs in its own viewer, so it can highlight passages and leave notes on them the same way it does on webpages. Ask what a reference like [14] says, and Onhand looks up the cited paper, opens it, and answers from it.</p>
+      </div>
+      <div class="faq-item">
+        <h3>How is Onhand different from ChatGPT?</h3>
+        <p>With a chatbot, you paste text in and read the answer somewhere else. Onhand works on the page you already have open: it highlights the passages it used and leaves short notes beside them, so you can check each point against the source.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Can Onhand help me study?</h3>
+        <p>Turn on Learning in the side panel and Onhand tutors instead of handing you the answer: it asks guiding questions, points to hints on the page, and quizzes you on what you're reading.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Does it work on every website?</h3>
+        <p>It works on articles, docs, course pages and PDFs. Chrome doesn't let extensions read its own pages, such as the Chrome Web Store or the new tab page.</p>
+      </div>
+      <div class="faq-item">
+        <h3>What does Onhand send, and where?</h3>
+        <p>Onhand starts with the page you ask about and may read clearly related open tabs. It sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI. Saved sessions stay in your browser. <a href="./privacy.html">Privacy details</a></p>
+      </div>
+    </div>
   </div>
 </section>
 

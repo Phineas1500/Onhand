@@ -7,7 +7,8 @@ than the shipped extension performs.
    (`test:browser-runtime-regressions`, `test:page-toolkit-regressions`,
    `test:routing-probe`, `test:agent-trajectory-eval`,
    `test:agent-runtime-modules`, `test:sidebar-regressions`,
-   `website:check-tools`, `website:check-store`, `smoke:browser-runtime`).
+   `website:check-tools`, `website:check-store`, `website:check-seo`,
+   `smoke:browser-runtime`).
 2. Bump the extension version; run `npm run website:sync-store` after the
    store serves it (the badge lags until then — `website:check-store` tells you).
 3. Deploy the website (privacy.html changes go live here) **with or before**

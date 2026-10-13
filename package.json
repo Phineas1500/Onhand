@@ -29,6 +29,7 @@
     "website:sync-release": "node ./scripts/sync-github-release-version.mjs",
     "website:check-release": "node ./scripts/sync-github-release-version.mjs --check",
     "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
+    "website:check-seo": "node ./scripts/check-website-seo.mjs",
     "website:sync-tools": "node ./scripts/sync-browser-tools.mjs",
     "website:check-tools": "node ./scripts/sync-browser-tools.mjs --check",
     "sentry:alerts": "node ./scripts/setup-sentry-alerts.mjs",
