@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 
 const DEFAULT_STORE_ID = "ogjmncmkpgdkkcibdiacmagaehjohljb";
 const SITE_JS_URL = new URL("../website/site.js", import.meta.url);
-const HTML_URLS = [
-	new URL("../website/index.html", import.meta.url),
-	new URL("../website/support.html", import.meta.url),
-	new URL("../website/welcome.html", import.meta.url),
-];
+const WEBSITE_DIR_URL = new URL("../website/", import.meta.url);
+const HTML_URLS = (await readdir(WEBSITE_DIR_URL))
+	.filter((name) => name.endsWith(".html"))
+	.map((name) => new URL(name, WEBSITE_DIR_URL));
 const CHECK_ONLY = process.argv.includes("--check");
 
 function updateUrlFor(storeId) {

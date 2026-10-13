@@ -33,13 +33,13 @@ jobs:
 
       - name: Commit website version update
         run: |
-          if git diff --quiet -- website/site.js website/index.html website/support.html website/welcome.html; then
+          if git diff --quiet -- website/site.js website/*.html; then
             echo "Website already matches Chrome Web Store."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add website/site.js website/index.html website/support.html website/welcome.html
+          git add website/site.js website/*.html
           git commit -m "Sync website Chrome Web Store version"
           git push

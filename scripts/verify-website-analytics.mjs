@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JSDOM } from "jsdom";
 
@@ -11,7 +11,7 @@ const EXPECTED_EVENTS = {
 	githubSourceEvent: "github_source_click",
 	sponsorEvent: "sponsor_click",
 };
-const WEBSITE_PAGES = ["index.html", "404.html", "privacy.html", "support.html", "welcome.html"];
+const WEBSITE_PAGES = (await readdir(WEBSITE_DIR)).filter((name) => name.endsWith(".html"));
 
 async function loadPage(fileName) {
 	const html = await readFile(join(WEBSITE_DIR, fileName), "utf8");
