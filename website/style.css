@@ -353,6 +353,7 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .compare-table thead th{font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}
 .compare-table tbody th{font-weight:600;color:var(--fg);width:22%}
 .compare-note{font-size:13.5px !important;color:var(--fg-muted) !important}
+@media (max-width:600px){.compare-table{min-width:0}.compare-table thead{display:none}.compare-table tr{display:block;padding:14px 0;border-bottom:1px solid var(--border-subtle)}.compare-table tbody th,.compare-table td{display:block;width:auto;padding:0;border:0}.compare-table tbody th{margin-bottom:8px}.compare-table td+td{margin-top:10px}.compare-table td::before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}}
 .faq-more{margin:34px 0 0;font-size:15px;line-height:1.7;color:var(--fg-muted)}
 
 /* Welcome page (opened once after a store install) */
