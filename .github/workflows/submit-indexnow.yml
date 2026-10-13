@@ -1,0 +1,42 @@
+name: Submit Changed Pages to IndexNow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/*.html"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submit-indexnow
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Submit pages changed by this push
+        if: github.event_name == 'push'
+        run: npm run website:indexnow -- "$BEFORE_SHA" "$AFTER_SHA"
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+
+      - name: Submit every page in the sitemap
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run website:indexnow -- --all
