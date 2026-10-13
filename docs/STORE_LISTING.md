@@ -10,58 +10,40 @@ highlights, notes, citation chasing. Free to try.
 
 ## Detailed description
 
-Onhand is a page-grounded AI tutor for learning and research. Open the
-side panel on any webpage or PDF, ask a question, and Onhand answers
-from the material in front of you — and shows you where, highlighting
-the exact passages it used right on the page.
+One paragraph per line, so it pastes into the dashboard without stray line breaks.
 
-Free to try: no API key, no account. Choose Onhand Free in the side
-panel and start asking, with a daily usage cap. For more, sign in with
-your ChatGPT plan or bring your own API key (OpenAI, Anthropic, Google
-Gemini, or any OpenRouter model).
+Onhand is a free AI reading assistant for Chrome. Ask a question about the webpage, PDF or research paper you're reading, and Onhand highlights the passage that answers it, leaves a note in the margin, and explains it in the side panel.
+
+Free to try: no API key, no account. Choose Onhand Free in the side panel and start asking, with a daily usage cap. For more, sign in with your ChatGPT plan or bring your own API key (OpenAI, Anthropic, Google Gemini, or any OpenRouter model).
 
 WHAT IT DOES
 
-— Answers anchored to the source. Every explanation points at the
-passage that supports it, with highlights and margin notes instead of a
-detached chat transcript.
+— Chat with any PDF or webpage, and see the source. Every answer points at the passage that supports it, highlighted on the page with a note in the margin, so you can check it yourself instead of trusting a chat transcript.
 
-— Reads PDFs properly. A built-in viewer handles research papers and
-large documents, with highlights and notes that work the same as on
-webpages.
+— Reads research papers properly. A built-in PDF viewer handles papers, textbooks and long documents, with the same highlights and notes as on webpages.
 
-— Chases citations. Ask "what does [14] actually say?" and Onhand finds
-the reference, opens the cited paper, and anchors the answer inside it.
+— Chases citations. Ask "what does [14] actually say?" and Onhand finds the reference, opens the cited paper, and highlights the answer inside it.
 
-— Compares sources. Ask how the paper you're reading relates to another
-open tab, and each claim is highlighted in the source it came from.
+— Compares sources. Ask how the paper you're reading relates to another open tab, and each claim is highlighted in the source it came from.
 
-— Helps you actually learn. Learning mode adds quick comprehension
-checks as you read and tracks the concepts you've covered, instead of
-just handing over answers.
+— Quizzes you while you study. Learning mode adds quick comprehension checks as you read and tracks the concepts you've covered, instead of just handing over answers.
 
-— Voice mode. Ask aloud while keeping your eyes on the page (uses an
-OpenAI API key).
+— Voice mode. Ask aloud while keeping your eyes on the page (uses an OpenAI API key).
 
-Study sessions are saved locally in your browser, so you can close a
-paper and pick the conversation back up later.
+Study sessions are saved locally in your browser, so you can close a paper and pick the conversation back up later.
 
-Privacy note: Onhand starts with the active page. To answer your request it
-may rank titles and URLs of eligible open tabs and read clearly related open
-tabs — in any mode, without switching your view; unrelated tabs are not read
-merely because they are open.
-In API-key and ChatGPT sign-in modes, relevant request and page content goes to your selected provider. In Onhand
-Free mode, request content goes through Onhand's hosted Cloudflare
-Worker to OpenAI's API; anonymous diagnostics are required for reliability,
-quota, cost, and abuse monitoring. Diagnostics and explicit error
-reports do not include prompts, page content, URLs, screenshots,
-transcripts, saved sessions, or keys.
+WHO IT'S FOR
 
-Onhand is designed for students, researchers, and deep readers who want
-explanations grounded in the source they're reading — not a chatbot in
-another tab.
+Students, researchers and anyone reading something hard: journal articles and preprints, textbooks and lecture slides, documentation, long reports. Onhand explains the source in front of you instead of sending you to a chatbot in another tab.
 
-Open source: github.com/Phineas1500/Onhand
+PRIVACY
+
+Onhand starts with the active page. To answer your request it may rank titles and URLs of eligible open tabs and read clearly related open tabs — in any mode, without switching your view; unrelated tabs are not read merely because they are open.
+
+In API-key and ChatGPT sign-in modes, relevant request and page content goes to your selected provider. In Onhand Free mode, request content goes through Onhand's hosted Cloudflare Worker to OpenAI's API; anonymous diagnostics are required for reliability, quota, cost, and abuse monitoring. Diagnostics and explicit error reports do not include prompts, page content, URLs, screenshots, transcripts, saved sessions, or keys.
+
+Open source (Apache 2.0): github.com/Phineas1500/Onhand
+Guides and comparisons: useonhand.com
 
 ## Chrome Web Store privacy fields
 
