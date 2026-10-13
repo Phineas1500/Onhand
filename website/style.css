@@ -340,6 +340,20 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .legal-section code{font-family:var(--font-mono);font-size:13px;background:var(--bg-deep);color:var(--rp-love);padding:1px 6px;border-radius:2px}
 .inline-action{display:inline-flex;align-items:center;gap:8px;margin-top:4px;font-family:var(--font-mono);font-size:12px;color:var(--rp-pine);text-transform:uppercase;letter-spacing:0.06em;font-weight:700}
 .inline-action:hover{color:var(--rp-foam)}
+.guide-page .legal-hero h1{max-width:20ch;font-size:clamp(34px,4.8vw,58px);line-height:1.08}
+.guide-ctas{margin:28px 0 12px}
+.guide-page .legal-hero .hero-note{font-size:11.5px;line-height:1.5;margin:0}
+.guide-figure{margin:0 0 34px}
+.guide-figure img{display:block;width:100%;height:auto;border:1px solid var(--border-subtle);border-radius:4px}
+.guide-figure figcaption{margin-top:10px;font-size:14px;line-height:1.5;color:var(--fg-muted)}
+.guide-more{margin:26px 0 0;font-size:15px;line-height:1.7;color:var(--fg-muted)}
+.compare-wrap{overflow-x:auto;margin:0 0 14px}
+.compare-table{width:100%;min-width:520px;border-collapse:collapse;font-size:15px;line-height:1.5;color:var(--fg)}
+.compare-table th,.compare-table td{padding:12px 14px;border-bottom:1px solid var(--border-subtle);text-align:left;vertical-align:top}
+.compare-table thead th{font-family:var(--font-mono);font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}
+.compare-table tbody th{font-weight:600;color:var(--fg);width:22%}
+.compare-note{font-size:13.5px !important;color:var(--fg-muted) !important}
+.faq-more{margin:34px 0 0;font-size:15px;line-height:1.7;color:var(--fg-muted)}
 
 /* Welcome page (opened once after a store install) */
 .welcome-hero h1{max-width:none}
