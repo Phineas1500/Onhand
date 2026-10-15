@@ -7921,9 +7921,10 @@ const createPageToolkit = (options = {}) => {
 		const findMathHighlightTargetForElement = (element) => {
 			if (!(element instanceof Element)) return null;
 			let mathElement = element.matches?.(MATH_CONTAINER_SELECTOR) ? element : element.closest?.(MATH_CONTAINER_SELECTOR);
-			// KaTeX and MathJax keep a visually hidden MathML copy for screen readers
-			// inside their visible container; a mark on that copy shows nothing.
-			const renderedContainer = mathElement?.closest?.(".katex, mjx-container, .MathJax");
+			// KaTeX, MathJax and Wikipedia keep a visually hidden MathML copy for
+			// screen readers inside their visible container; a mark on that copy
+			// shows nothing.
+			const renderedContainer = mathElement?.closest?.(".katex, mjx-container, .MathJax, .mwe-math-element");
 			if (renderedContainer instanceof Element) mathElement = renderedContainer;
 			if (!(mathElement instanceof Element) || !isVisible(mathElement)) return null;
 			const displayTarget = mathElement.closest?.(DISPLAY_MATH_HIGHLIGHT_TARGET_SELECTOR);
@@ -8437,10 +8438,12 @@ const createPageToolkit = (options = {}) => {
 			if (querySearch && searchText.includes(querySearch)) score += 500;
 			if (queryCompact && compactText.includes(queryCompact)) score += 400;
 			if (score <= 0) continue;
-			const rect = element.getBoundingClientRect();
+			const target = findMathHighlightTargetForElement(element);
+			if (!target) continue;
+			const rect = target.getBoundingClientRect();
 			score -= Math.abs(rect.top - window.innerHeight / 2) * 0.01;
 			if (!best || score > best.score) {
-				best = { element, score };
+				best = { element: target, score };
 			}
 		}
 		return best?.element || null;
@@ -8591,8 +8594,10 @@ const createPageToolkit = (options = {}) => {
 						const end = mode.positions[foundAt + mode.query.length - 1];
 						if (!start || !end) break;
 
-						const mathContainer = start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR);
-						if (mathContainer && isMathLikeHighlightQuery(rawQuery)) {
+						const mathContainer = isMathLikeHighlightQuery(rawQuery) && !isProseDominantHighlightQuery(rawQuery)
+							? findMathHighlightTargetForElement(start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR))
+							: null;
+						if (mathContainer) {
 							return await highlightBlockElement(mathContainer, rawQuery, {
 								scrollIntoView,
 								approximate: Boolean(mode.fallback),
@@ -8724,8 +8729,13 @@ const createPageToolkit = (options = {}) => {
 			const start = bestApproximateMatch.mappedText.positions[bestApproximateMatch.startIndex];
 			const end = bestApproximateMatch.mappedText.positions[bestApproximateMatch.endIndex - 1];
 			if (start && end) {
-				const mathContainer = start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR);
-				if (mathContainer && isMathLikeHighlightQuery(rawQuery)) {
+				// A prose sentence that merely mentions symbols is not a formula: on
+				// Wikipedia, "where x and ξ are n-dimensional vectors..." landed here
+				// and marked the hidden MathML of the equation above it.
+				const mathContainer = isMathLikeHighlightQuery(rawQuery) && !isProseDominantHighlightQuery(rawQuery)
+					? findMathHighlightTargetForElement(start.node?.parentElement?.closest?.(MATH_CONTAINER_SELECTOR))
+					: null;
+				if (mathContainer) {
 					return await highlightBlockElement(mathContainer, rawQuery, {
 						scrollIntoView,
 						approximate: true,

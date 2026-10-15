@@ -10986,6 +10986,11 @@ function looksLikeExpandedMathExtractionCandidate(candidate: unknown, proposed: 
 	if (!candidateText || !proposedText) return false;
 	if (candidateText.length <= proposedText.length) return false;
 	if (candidateText.toLowerCase() === proposedText.toLowerCase()) return false;
+	// Wikipedia's hidden MathML carries TeX ("{\displaystyle ...}"); expanding
+	// "where x and ξ are n-dimensional vectors..." to its "sentence" glued the
+	// whole equation above it onto the front.
+	const texMarkup = /\{\\[a-z]+|\\(?:displaystyle|mathbf|mathbb|mathcal|boldsymbol|widehat|frac)\b/u;
+	if (texMarkup.test(candidateText) && !texMarkup.test(proposedText)) return true;
 	return /\b[A-Z]\s*[A-Z]\s*[A-Z]\b/u.test(candidateText) || /(?:[A-Za-z]\([^)]{1,16}\)){2,}/u.test(candidateText);
 }
 

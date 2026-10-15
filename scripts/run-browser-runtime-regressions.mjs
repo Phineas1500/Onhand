@@ -1677,6 +1677,15 @@ async function assertSelectionFormatting() {
 		true,
 		"readable rewrite candidates with duplicated rendered-math tokens should be treated as extraction noise",
 	);
+	// Live (Wikipedia Fourier transform): the hidden MathML and TeX of the
+	// equation above the sentence were glued onto the model's quote, and the
+	// mark landed on that hidden copy.
+	const wikipediaMath = { toolTraces: [{ state: "complete", toolName: "browser_extract_content", resultSummary: "Readable content:\nf ^ ( ξ ) = F ( f ) ( ξ ) = ∫ R n f ( x ) e − i 2 π ξ ⋅ x d x {\\displaystyle {\\widehat {f}}({\\boldsymbol {\\xi }})=\\int _{\\mathbb {R} ^{n}}f(\\mathbf {x} )\\,d\\mathbf {x} } where x and ξ are n-dimensional vectors, and x · ξ is the dot product of the vectors." }] };
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("where x and ξ are n-dimensional vectors, and x · ξ is the dot product of the vectors.", wikipediaMath),
+		"",
+		"a quote is not expanded across an equation's hidden TeX",
+	);
 	assert.equal(
 		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
 			toolTraces: [

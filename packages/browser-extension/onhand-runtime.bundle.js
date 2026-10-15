@@ -94162,6 +94162,8 @@ function looksLikeExpandedMathExtractionCandidate(candidate, proposed) {
   if (!candidateText || !proposedText) return false;
   if (candidateText.length <= proposedText.length) return false;
   if (candidateText.toLowerCase() === proposedText.toLowerCase()) return false;
+  const texMarkup = /\{\\[a-z]+|\\(?:displaystyle|mathbf|mathbb|mathcal|boldsymbol|widehat|frac)\b/u;
+  if (texMarkup.test(candidateText) && !texMarkup.test(proposedText)) return true;
   return /\b[A-Z]\s*[A-Z]\s*[A-Z]\b/u.test(candidateText) || /(?:[A-Za-z]\([^)]{1,16}\)){2,}/u.test(candidateText);
 }
 function canRewriteToContainedReadablePhrase(candidate, proposed) {
