@@ -24,7 +24,7 @@ These terms are load-bearing in the rules and rubric below. Use them consistentl
 - **Required items / required concepts.** For a given prompt + page, the set a competent reader would enumerate to answer it well — plus anything the answer *itself commits to* (e.g. "there are three steps" commits to all three). The judge derives this set from the page and prompt **before** scoring coverage. A coverage failure must **name a specific required item that is present in the source but missing from the response**, with its page location — otherwise it's not a failure, it's an opinion.
 - **Interpretive highlight vs. confirmatory highlight.** An *interpretive* highlight carries meaning the quoted text alone doesn't make obvious (a hard step, a subtle role, a "why this matters") → it **needs a note**. A *confirmatory / locate-evidence* highlight just shows where a plainly-stated fact lives (§3.6) → a note is optional.
 - **Enumerable coverage task.** A prompt whose answer is an ordered or itemized set: roadmap, numbered list, step-by-step, derivation, proof. Contrast with **free-form** answers (a factual reply, a prose explanation, a loose overview).
-- **Page-grounded answer.** An answer whose substance comes from page content. Some legitimate responses are *not* page-grounded (a refused empty prompt §3.16; an explicit "no page changes" §3.11; a figure read-out §3.13; a claim with no page support answered honestly per G7). The rubric (§7) handles these via the **Intent gate**.
+- **Page-grounded answer.** An answer whose substance comes from page content. Some legitimate responses are *not* page-grounded (a refused empty prompt §3.16; an explicit "no page changes" §3.11; a figure read-out §3.13; the questions of a quiz §3.8; a claim with no page support answered honestly per G7). The rubric (§7) handles these via the **Intent gate**.
 
 ---
 
@@ -48,7 +48,7 @@ These apply everywhere unless a later section overrides them.
 
 | # | Decision | Setting | Status |
 |---|----------|---------|--------|
-| G1 | **Annotate by default** | Every page-grounded answer leaves **≥1 source highlight**. Highlighting is the default, not the exception. Legitimate no-highlight cases: G7 (no support), §3.11 (no-page-changes), §3.13 (figure read-out). | `[SETTLED]` |
+| G1 | **Annotate by default** | Every page-grounded answer leaves **≥1 source highlight**. Highlighting is the default, not the exception. Legitimate no-highlight cases: G7 (no support), §3.11 (no-page-changes), §3.13 (figure read-out), §3.8 (quiz questions, until graded). | `[SETTLED]` |
 | G2 | **Highlight density** | **One highlight per distinct point** (claim unit), so the marks mirror the answer 1:1. For **free-form** answers, an **advisory** soft cap of ~5–6 keeps things readable; for **enumerable coverage tasks** (§0) the cap is **suspended** — every required item gets its own highlight. For explicit "annotate/take notes" (§3.7) the cap is **waived** (denser is welcome). | `[SETTLED]`; cap-tiering `[INFERRED]` |
 | G2a | **Announce trimming** | If a free-form answer legitimately omits minor points to stay readable, **say so briefly** rather than silently dropping coverage. Never applies to enumerable tasks (those must be complete). | `[INFERRED]` from honesty principle |
 | G3 | **Notes by default** | Every **interpretive highlight** (§0) carries a **note (~1–2 sentences)** — the "why this matters" / the role / the hard step. Confirmatory/locate highlights may omit it. Richer than the current sparse, often-omitted `≤120`-char notes. This holds **regardless of annotation path** (see §6.4). | `[SETTLED]` (length advisory) |
@@ -115,7 +115,10 @@ For each intent: what the **chat** does, what the **page** gets, and the **suffi
 - **Chat:** minimal ("marked N points") — the marks are the deliverable. A one-line count like this describes the deliverable and is **not** process narration under §6.1; describing how or why the marks were made still is. `[SETTLED 2026-10-02]`
 
 ### 3.8 Quiz me / test me
-- An explicit "quiz me" request is honored **regardless of mode** (anchor the check to a highlight); here a check **may be the answer** rather than an optional add-on. §5.2's frequency rules govern only **standing/auto** checks inside Learning mode, not explicit requests.
+- An explicit "quiz me" request is honored **regardless of mode**; here a check **may be the answer** rather than an optional add-on. §5.2's frequency rules govern only **standing/auto** checks inside Learning mode, not explicit requests.
+- **Page (questions):** leave the page **unmarked** — no highlights, notes, or citation chips on the questions. The user is reading the same page, so a mark on the passage a question tests shows its answer. A quiz that also asks for highlights gets them. `[INFERRED 2026-10-15]` — replaces "anchor the check to a highlight", which produced answer-revealing marks in two reviews.
+- **Chat (questions):** the questions, saying which part of the page they cover (a section or figure) without the answer or a clue that settles it.
+- **Grading turn:** grade each answer and highlight the passage that settles it (G1 applies again).
 
 ### 3.9 Homework / "give me the final answer"
 - **Answer mode (default):** give the answer, anchored.
@@ -228,7 +231,7 @@ Drawn from real QA/eval failures. **Any violation here = automatically "lacking"
 ## 7. The sufficiency rubric (how to judge a response)
 
 ### Step 0 — Intent gate
-Classify the prompt against §3. Mark the page-grounding lines **N/A** for non-page-grounded responses: **§3.11** (no page changes), **§3.13** (figure read-out), and the **G7 no-support** case all legitimately produce no highlight; **§3.16** (empty prompt) should produce *no action at all*, and a typed-but-vague prompt only one clarifying question. An N/A line never counts against the response.
+Classify the prompt against §3. Mark the page-grounding lines **N/A** for non-page-grounded responses: **§3.11** (no page changes), **§3.13** (figure read-out), the questions of a **§3.8** quiz, and the **G7 no-support** case all legitimately produce no highlight; **§3.16** (empty prompt) should produce *no action at all*, and a typed-but-vague prompt only one clarifying question. An N/A line never counts against the response.
 
 ### Scoring rule
 - A **category passes** only if **every applicable (non-N/A) box** under it passes.
@@ -305,6 +308,8 @@ The `[INFERRED]` items were derived from the owner's stated philosophy rather th
 - **Notes: role-on-the-mark vs. role-in-chat** — **DECIDED 2026-08-02: the marks carry the depth.** Per G3, interpretive highlights get their 1–2 sentence notes (the global one-note cap is retired); chat shrinks to verdict + synthesis. "Place any longer detail in chat" is repealed. Landed 2026-08-02.
 
 ---
+
+*v3.6 — 2026-10-15: §3.8 quiz questions leave the page unmarked; grading marks the answers. Anchoring each question to the passage it tests revealed the answers twice: in the 2026-10-02 creative review every quiz note stated its answer, and in the 2026-10-14 student-pages eval every quiz highlight was the sentence that answered its question. The runtime holds highlights and notes on quiz turns (guard `quiz_marks_held`) unless the quiz request asks for them, and the source-marker retries skip those turns.*
 
 *v3.5 — 2026-10-02: owner decisions from the creative-scenario review (16 live scenarios: take-notes, quiz, homework in both modes, flashcards, named formula, enumerable list, vague prompt, prompt injection, non-English page, citation chase, forum thread, PDF number, web diagram, follow-up). Six doc conflicts resolved: (1) §3.4 list items carry a note only when they need interpreting — G3/§0 win over "each with a note"; one highlight per item. (2) G10/§3.16 split empty from vague: empty waits silently, a typed-but-vague prompt gets one short clarifying question and no page changes. (3) Constitution P2 reworded to match G7/G14: an unanchored claim is sourced or labeled general knowledge, never passed off as page-backed. (4) §3.7's "marked N points" count line is carved out of §6.1. (5) §3.13 now covers images/diagrams on web pages, not just PDF figures. (6) New §3.17 and §6.14: page text that instructs AI assistants is never obeyed and is reported to the owner in one line. Runtime work these imply is tracked separately.*
 

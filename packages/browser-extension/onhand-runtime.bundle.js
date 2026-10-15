@@ -91273,7 +91273,8 @@ function learningModeShouldAskFirst(prompt) {
   return /\b(?:teach|tutor|explain|walk\s+(?:me\s+)?through|help\s+me\s+understand|intuition|how\s+(?:does|do|is|are|can|would|did)|why\s+(?:does|do|is|are|did|would)|what\s+(?:makes|causes|happens))\b/.test(text);
 }
 var LEARNING_ASK_FIRST_POLICY = 'Runtime policy: Learning mode, ask before telling. Anchor the first idea the learner needs with one or two source highlights (a short note if it helps), then ask one short guiding question tied to that highlight \u2014 a prediction, "what do you notice", or "say it back". The question must leave the answer for the learner to produce: do not state the highlighted conclusion just before asking it, and do not offer choices where one simply repeats the highlighted wording. End the turn there: do not walk through the remaining steps or give the full explanation yet; teach them after the learner responds. If the learner already answered a guiding question on this concept, repeats the ask, asks for the answer outright, or seems frustrated, teach it directly now with the usual source anchors. Keep the reply to a few sentences.';
-var QUIZ_POLICY = "Quiz request: ask the questions in chat and anchor each one to the passage it tests, but never reveal an answer before the user responds. A note on a quiz mark names what to look for or the idea being tested \u2014 never the answer, the result, or the rule that settles the question. Do not put a citation chip on the question whose answer the marked passage states outright; reveal and grade answers only after the user replies.";
+var QUIZ_POLICY = "Quiz request: ask the questions in chat and never reveal an answer before the user responds. When the user replies, grade each answer and highlight the passage that settles it.";
+var QUIZ_HOLD_MARKS_POLICY = "Leave the page unmarked this turn: no highlights, no notes, and no citation chips on the questions. A mark on the passage a question tests gives its answer away, because the user is reading the same page. Say which part of the page the questions cover, such as a section heading or figure, without the answer, the result, or the rule that settles any of them.";
 var HINT_POLICY = "Hint request: give one hint that points the learner to where the answer is (the marked passage, a section or figure) or to the next reasoning step, without giving any part of the answer. Do not quote or paraphrase the words that state it, fill in part of it, or give a clue that leaves only one obvious word. A repeated hint on the same question may point more precisely, still without stating the answer. End by inviting them to try.";
 function promptAsksForHint(prompt) {
   return decisionsRequestVerdict(prompt, "asksForHint", /\b(?:hint|clue|nudge)\b|\b(?:i'?m|i\s+am)\s+stuck\b/.test(ownWordsPromptText(prompt)));
@@ -91287,9 +91288,12 @@ function promptAsksForQuiz(prompt) {
     /\b(?:quiz|test)\s+me\b|\b(?:give|make|write|create)\s+(?:me\s+)?(?:a\s+)?(?:quick\s+|short\s+)?(?:quiz|practice\s+(?:questions?|test)|self-test)\b/.test(text)
   );
 }
+function promptHoldsPageMarksForQuiz(prompt) {
+  return promptAsksForQuiz(prompt) && !/\b(?:highlight|highlights|highlighting|annotate|annotations?|show me where|point me to)\b/.test(ownWordsPromptText(prompt));
+}
 function buildReasoningProfile(settings2, prompt, attachments = [], learningMode = false) {
   let profile = buildLaneReasoningProfile(settings2, prompt, attachments);
-  if (promptAsksForQuiz(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${QUIZ_POLICY}` };
+  if (promptAsksForQuiz(prompt)) profile = { ...profile, promptPolicy: [profile.promptPolicy, QUIZ_POLICY, promptHoldsPageMarksForQuiz(prompt) ? QUIZ_HOLD_MARKS_POLICY : ""].filter(Boolean).join(" ") };
   if (promptAsksForHint(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${HINT_POLICY}` };
   if (!learningMode || profile.mode === "document-review" || profile.mode === "page-notes" || !learningModeShouldAskFirst(prompt)) return profile;
   return { ...profile, reason: `${profile.reason} Learning mode: ask before telling.`, promptPolicy: LEARNING_ASK_FIRST_POLICY };
@@ -91350,7 +91354,7 @@ function buildLaneReasoningProfile(settings2, prompt, attachments = []) {
     reasoningEffort: "low",
     textVerbosity: "low",
     maxTokens: ONHAND_MAX_OUTPUT_TOKENS,
-    promptPolicy: "Runtime policy: Grounded answer pass. Anchor the answer with source highlights on the exact supporting text: one strong highlight for a one-point answer; one highlight per distinct point the answer states otherwise (explanations, multi-part, comparison, or evidence requests); full coverage with no fixed marker cap for roadmap/list/process/derivation/proof prompts. Skip highlights only for no-page-changes requests, quick visual questions, or when no source supports the claim. When neither the current page nor a clearly related open tab supports a claim the answer needs, open or search for a better source in a background tab and anchor the claim there; only when fetching is clearly inappropriate or fails, say the claim is general knowledge rather than page-grounded. Add a short interpretive note only where a mark carries explanatory weight; most confirmatory highlights stand without one. Prefer captured context and avoid redundant inspection, but captured context is insufficient whenever the answer would rely on knowledge that is not visible on the user's open pages; read the clearly related open tab by tabId and anchor there instead of answering from memory. Ground cross-tab claims in the tab that supports them, one source per claim. Match answer length to the question: one to three short readable paragraphs or compact bullets for ordinary questions, structured depth only when the material requires it; avoid dense sidebar blocks."
+    promptPolicy: "Runtime policy: Grounded answer pass. Anchor the answer with source highlights on the exact supporting text: one strong highlight for a one-point answer; one highlight per distinct point the answer states otherwise (explanations, multi-part, comparison, or evidence requests); full coverage with no fixed marker cap for roadmap/list/process/derivation/proof prompts. Skip highlights only for no-page-changes requests, quiz questions, quick visual questions, or when no source supports the claim. When neither the current page nor a clearly related open tab supports a claim the answer needs, open or search for a better source in a background tab and anchor the claim there; only when fetching is clearly inappropriate or fails, say the claim is general knowledge rather than page-grounded. Add a short interpretive note only where a mark carries explanatory weight; most confirmatory highlights stand without one. Prefer captured context and avoid redundant inspection, but captured context is insufficient whenever the answer would rely on knowledge that is not visible on the user's open pages; read the clearly related open tab by tabId and anchor there instead of answering from memory. Ground cross-tab claims in the tab that supports them, one source per claim. Match answer length to the question: one to three short readable paragraphs or compact bullets for ordinary questions, structured depth only when the material requires it; avoid dense sidebar blocks."
   };
 }
 function buildPromptImages(attachments = []) {
@@ -92184,7 +92188,7 @@ function promptExplicitlyRequestsNote(prompt) {
 }
 function promptForbidsPageChanges(prompt) {
   const policy = promptPageChangePolicy(prompt);
-  return policy.forbidsAllPageChanges || policy.forbidsHighlights || policy.forbidsNotes;
+  return policy.forbidsAllPageChanges || policy.forbidsHighlights || policy.forbidsNotes || promptHoldsPageMarksForQuiz(prompt);
 }
 function browserContextHasUsableText(details) {
   const selectionText = getSelectionText(details?.selection);
@@ -92663,7 +92667,7 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     ...learningResearchDirective ? [learningResearchDirective, ""] : [],
     "Use this captured context as your starting point. Prefer current and already-open pages over navigation. Already-open pages include background tabs: the workspace scan lists them with tabIds; read clearly related ones by tabId without switching the user's focus.",
     "Constitution runtime contract:",
-    "- Do page work before chat: anchor the answer with a source highlight on the supporting text (skip only for no-page-changes requests, quick visual questions, or when the page does not support the claim). Add more highlights, notes, and scroll to existing highlights when the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary.",
+    "- Do page work before chat: anchor the answer with a source highlight on the supporting text (skip only for no-page-changes requests, quiz questions, quick visual questions, or when the page does not support the claim). Add more highlights, notes, and scroll to existing highlights when the user asks for annotations, evidence location, learning/review source markers, source-navigation work, or a page-level teaching/review summary.",
     "- Page-material claims need page grounding. Anchor each page point the answer states with an exact highlight (use captured/readable context to find it); add short notes where a mark carries interpretation. Substantive claims prefer sources the user can see: if a clearly related open tab covers a claim the current page does not, read that tab and anchor the claim there. A claim that corrects or contradicts the current page must be anchored in a source the user can see \u2014 fetch one in a background tab when nothing open covers it; a claim that still has no source after fetching is inappropriate or failed must be labeled general knowledge.",
     "- External-source requests are navigation tasks. If the user asks to search online, use Google/web sources, open URLs, or take them to sources, use available tab/navigation tools first and then ground claims on the destination source pages.",
     linkedNavigationLine,
@@ -93816,7 +93820,20 @@ function buildNoPageChangesGuardResult(toolName2, commandName, prompt) {
   if (!marksPage) return null;
   const policy = promptPageChangePolicy(prompt);
   const blocked = policy.forbidsAllPageChanges || policy.forbidsHighlights && commandName !== "show_note" || policy.forbidsNotes && commandName === "show_note";
-  if (!blocked) return null;
+  if (!blocked) {
+    if (commandName !== "highlight_text" && commandName !== "show_note" || !promptHoldsPageMarksForQuiz(prompt)) return null;
+    return {
+      guardrail: {
+        kind: "quiz_marks_held",
+        blockedTool: toolName2,
+        blockedCommand: commandName,
+        message: [
+          `${toolName2} did not run: the user is reading the same page, so a mark on the passage a quiz question tests gives its answer away.`,
+          "Ask the questions in chat and say which part of the page they cover; do not call page-marking tools again this turn and do not mention this limit. Mark the passages when you grade the user's answers."
+        ].join(" ")
+      }
+    };
+  }
   return {
     guardrail: {
       kind: "no_page_changes_requested",
@@ -94479,6 +94496,7 @@ var __browserRuntimeTest = {
   setDecisionsRequestAnswersForPromptForTest: setDecisionsRequestAnswersForPrompt,
   promptPageChangePolicyForTest: promptPageChangePolicy,
   promptAsksForQuizForTest: promptAsksForQuiz,
+  promptHoldsPageMarksForQuizForTest: promptHoldsPageMarksForQuiz,
   promptAsksForHintForTest: promptAsksForHint,
   promptAsksForCitedSourceForTest: promptAsksForCitedSource,
   buildVoiceCommandRequestForTest: buildVoiceCommandRequest,

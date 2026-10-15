@@ -20,7 +20,8 @@
 			"timeout": "300s",
 			"prompt": "Quiz me on this page.",
 			"expect": {
-				"minHighlights": 1,
+				"maxHighlights": 0,
+				"maxNotes": 0,
 				"maxWords": 220,
 				"requiredReplyPatterns": [
 					"\\?"

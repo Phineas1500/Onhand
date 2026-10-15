@@ -2383,6 +2383,21 @@ async function assertNoPageChangesIsEnforced() {
 	assert.equal(guard("browser_show_note", "show_note", "Leave the page alone and just tell me the thesis.")?.guardrail?.kind, "no_page_changes_requested");
 	assert.equal(guard("browser_highlight_text", "highlight_text", "How does changing the page size affect the layout?"), null, "talking about changing a page is not a ban");
 
+	// §3.8: every quiz highlight in the student-pages eval was the sentence
+	// that answered its question.
+	const { promptRequiresPageSourceMarkerForTest, shouldRequirePageSourceMarkerRetryForTest } = __browserRuntimeTest;
+	for (const quiz of ["Quiz me on this section.", "Test me on the highlighted part.", "[Voice] Quiz me on this page"]) {
+		assert.equal(guard("browser_highlight_text", "highlight_text", quiz)?.guardrail?.kind, "quiz_marks_held", `"${quiz}" holds highlights until grading`);
+		assert.equal(guard("browser_show_note", "show_note", quiz)?.guardrail?.kind, "quiz_marks_held", `"${quiz}" holds notes until grading`);
+		assert.equal(promptRequiresPageSourceMarkerForTest(quiz), false, `"${quiz}" does not retry for a missing highlight`);
+	}
+	const quizTurn = { displayPrompt: "Quiz me on this page.", toolTraces: [{ toolName: "browser_extract_content", state: "complete", resultSummary: "Readable content from Photosynthesis:\nLight energy initiates the process." }] };
+	assert.equal(shouldRequirePageSourceMarkerRetryForTest(quizTurn, "1. What starts photosynthesis?"), false, "nor does the finalize gate ask for one");
+	assert.match(guard("browser_highlight_text", "highlight_text", "Quiz me on this section.").guardrail.message, /gives its answer away[\s\S]*Mark the passages when you grade/);
+	assert.equal(guard("browser_clear_annotations", "clear_annotations", "Quiz me on this section."), null, "clearing old marks reveals nothing");
+	assert.equal(guard("browser_highlight_text", "highlight_text", "Quiz me and highlight where each answer is."), null, "a quiz that asks for highlights gets them");
+	assert.equal(guard("browser_highlight_text", "highlight_text", "1. pigments absorb light 2. shorter 3. green is reflected"), null, "the answers turn is graded with highlights");
+
 	// PDF viewer: "no selection" is not a failed handoff, and an already-open
 	// viewer says how to continue (models reopened it twice).
 	const tab = { id: 42, title: "1706.03762v7.pdf", url: "chrome-extension://x/pdf-viewer.html?url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762" };
@@ -2427,9 +2442,11 @@ async function assertQuizRepliesKeepAnswersAndFencesIntact() {
 
 	const settings = { aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" };
 	const quiz = buildProfile(settings, "Quiz me on this page.", [], false);
-	assert.match(quiz.promptPolicy, /never reveal an answer before the user responds/, "quiz turns carry the no-reveal note rule");
-	assert.match(quiz.promptPolicy, /never the answer/);
-	assert.match(buildProfile(settings, "Give me a quick quiz on this chapter", [], true).promptPolicy, /Quiz request/, "Learning mode quizzes carry it too");
+	assert.match(quiz.promptPolicy, /never reveal an answer before the user responds/, "quiz turns carry the no-reveal rule");
+	assert.match(quiz.promptPolicy, /Leave the page unmarked this turn/, "quiz questions leave the page unmarked");
+	assert.match(quiz.promptPolicy, /grade each answer and highlight the passage that settles it/, "grading marks the answers");
+	assert.match(buildProfile(settings, "Give me a quick quiz on this chapter", [], true).promptPolicy, /Quiz request[\s\S]*Leave the page unmarked/, "Learning mode quizzes carry it too");
+	assert.doesNotMatch(buildProfile(settings, "Quiz me and highlight where each answer is.", [], false).promptPolicy, /Leave the page unmarked/, "a quiz that asks for highlights gets them");
 	assert.doesNotMatch(buildProfile(settings, "What does the test suite check?", [], false).promptPolicy, /Quiz request/, "ordinary prompts do not");
 	for (const ask of ["I'm not sure. Can I get a hint?", "[Voice] Can I get a hint for the next one", "I'm stuck on this one", "Give me a clue"]) {
 		assert.match(buildProfile(settings, ask, [], true).promptPolicy, /Hint request: .*without giving any part of the answer/, `"${ask}" carries the hint rule`);
@@ -4754,7 +4771,6 @@ async function assertConstitutionPromptContract() {
 			"Give me a roadmap of the sampling methods in this lecture.",
 			"What are the main steps in the HMC algorithm on this page?",
 			"How does this page derive Bayes theorem?",
-			"Quiz me on this page.",
 			"What are the limitations of rejection sampling according to the page?",
 		]) {
 			assert.equal(promptAsksForStructuredPageSourceMarkerForTest(prompt), true, `${prompt} should be treated as structured page-grounded work`);

@@ -64,7 +64,10 @@
       "id": "openstax-quiz-me",
       "url": "https://openstax.org/books/biology-2e/pages/8-2-the-light-dependent-reactions-of-photosynthesis",
       "prompt": "Quiz me on this section.",
-      "expect": { "maxWords": 400, "requiredReplyPatterns": ["\\?"] }
+      "expect": { "maxHighlights": 0, "maxNotes": 0, "maxWords": 400, "requiredReplyPatterns": ["\\?"] },
+      "followUps": [
+        { "prompt": "I don't know any of these. What are the answers?", "expect": { "minHighlights": 1, "maxWords": 350 } }
+      ]
     },
     {
       "id": "openstax-psych-learning",
