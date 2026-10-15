@@ -2432,6 +2432,11 @@ async function assertQuizRepliesKeepAnswersAndFencesIntact() {
 	assert.match(bareBlock, /```\nnpm test\n```/, "a language-less code block keeps both fences");
 	assert.equal(sanitize("The answer is here.\n```"), "The answer is here.", "an unpaired bare fence is still an orphan");
 	assert.equal(sanitize("Bold claim.\n**\nNext line."), "Bold claim.\nNext line.", "orphaned emphasis delimiters are still stripped");
+	// A live grading reply read "start on **1**: pigments absorb...".
+	assert.equal(sanitize("Good start on **1**: pigments absorb light."), "Good start on **1**: pigments absorb light.", "an opener that is part of the sentence stays");
+	assert.equal(sanitize("Right-click the link to open it."), "Right-click the link to open it.");
+	assert.equal(sanitize("Okay, here's what the page says."), "Here's what the page says.", "a filler opener set off by punctuation is still dropped");
+	assert.equal(sanitize("Got it — the page says light drives it."), "The page says light drives it.");
 	// Live failure (requests README): code blocks indented inside list items
 	// lost their closing fences, "# comment" lines became headings, and the
 	// citation chips ended up inside the code.

@@ -89784,6 +89784,11 @@ function stripOrphanedMarkdownDelimiterLines(value) {
 function stripDanglingInlineMarkdownDelimiters(value) {
   return String(value || "").replace(/[ \t]+(?:\*\*|__|`{1,3})(?=\s*(?:\n|$))/g, "");
 }
+var LEADING_FILLER_PATTERN = /^\s*(?:(?:good|great|ok|okay|sure|right|got it)(?:\s*[.,:;!?\u2014\u2013]+|\s+-)\s*)+/i;
+function stripLeadingFiller(value) {
+  const stripped = value.replace(LEADING_FILLER_PATTERN, "");
+  return stripped === value ? value : stripped.replace(/^[a-z]{2,}\b/, (word) => word[0].toUpperCase() + word.slice(1));
+}
 function stripHorizontalRuleSeparators(value) {
   return String(value || "").replace(/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/gm, "\n").replace(/[ \t]+(?:-{3,}|_{3,}|\*{3,})[ \t]+/g, "\n\n");
 }
@@ -90027,7 +90032,7 @@ function stripTinyVisibleReplyArtifacts(value) {
   text = text.replace(/\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
   text = text.replace(/(?:^|\n)\s*(?:the\s+)?(?:source\s+)?markers?[^.\n]{0,220}\b(?:timed\s+out|failed|could(?:\s+not|n't)|cannot|can't|was\s+not|wasn't)\b[^.\n]*(?:[.!?]+)?\s*/gi, "\n");
   text = text.replace(/\b(?:though|although|while)?\s*(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-  text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
+  text = stripLeadingFiller(text);
   text = text.replace(/^\s*(?:the page lays this out clearly|now i have the page content)\.?\s*/i, "");
   text = text.replace(/^\s*the page is only\b[^.\n]*(?:scrolled|below)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
   text = text.replace(/^\s*good,\s+the page\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");

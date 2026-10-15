@@ -4311,7 +4311,7 @@ function stripAssistantProcessNarration(value: string) {
 		/\n{2,}\s*(?:there(?:'|’)s|there is)\s+already\b[^\n]{0,220}\bopen\s+in\s+(?:another|a)\s+tab[.!?]?(?:\n{2,}\s*(?:the|this)\s+[^.\n]{0,180}\bpage\b[^.\n]*(?:[.!?])?)?\s*$/i,
 		"",
 	);
-	text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
+	text = stripLeadingFiller(text);
 	text = text.replace(/^\s*[,.;:]\s*/i, "");
 	text = text.replace(/^\s*the page lays this out clearly\.?\s*/i, "");
 	text = text.replace(/^\s*(?:the\s+)?visible text\b[^.!?\n]*(?:[.!?]+)?\s*/i, "");
@@ -4328,6 +4328,16 @@ function stripAssistantProcessNarration(value: string) {
 	text = text.replace(/\b(?:good point|great question)\.\s*/gi, "");
 	text = text.replace(/\b(?:highlighted above|anchored above|source marker above)\b[.!?]?/gi, "");
 	return text;
+}
+
+// Filler openers ("Okay.", "Sure,", "Got it —") only when punctuation sets
+// them off: with it optional, a grading reply's "Good start on **1**" lost
+// "Good", and "Right-click the link" lost "Right-".
+const LEADING_FILLER_PATTERN = /^\s*(?:(?:good|great|ok|okay|sure|right|got it)(?:\s*[.,:;!?\u2014\u2013]+|\s+-)\s*)+/i;
+
+function stripLeadingFiller(value: string) {
+	const stripped = value.replace(LEADING_FILLER_PATTERN, "");
+	return stripped === value ? value : stripped.replace(/^[a-z]{2,}\b/, (word) => word[0].toUpperCase() + word.slice(1));
 }
 
 function stripLeadingOrphanedProcessFragment(value: string) {
@@ -5615,7 +5625,7 @@ function stripTinyVisibleReplyArtifacts(value: string) {
 	text = text.replace(/\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
 	text = text.replace(/(?:^|\n)\s*(?:the\s+)?(?:source\s+)?markers?[^.\n]{0,220}\b(?:timed\s+out|failed|could(?:\s+not|n't)|cannot|can't|was\s+not|wasn't)\b[^.\n]*(?:[.!?]+)?\s*/gi, "\n");
 	text = text.replace(/\b(?:though|although|while)?\s*(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b[^.!?\n]*(?:[.!?]+)?/gi, "");
-	text = text.replace(/^\s*(?:(?:good|great|ok|okay|sure|right|got it)[.,:;!?\u2014\u2013-]?\s*)+/i, "");
+	text = stripLeadingFiller(text);
 	text = text.replace(/^\s*(?:the page lays this out clearly|now i have the page content)\.?\s*/i, "");
 	text = text.replace(/^\s*the page is only\b[^.\n]*(?:scrolled|below)\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
 	text = text.replace(/^\s*good,\s+the page\b[^.!?\n]*(?:[.!?]+)?\s*$/gim, "");
