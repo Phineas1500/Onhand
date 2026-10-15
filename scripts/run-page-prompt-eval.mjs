@@ -273,6 +273,7 @@ Case object fields:
   id, url, prompt, learning, timeout, expect
   setupUrls                   URLs opened in their own tabs before the prompt (multi-page cases).
   followUps                   [{ prompt, expect }] asked in the same session after the first turn.
+  selectText                  Text to select on the page before asking (a question about a selection).
 
 Multi-page / research expect fields:
   requiredToolPatterns        Each regex must match a completed tool name.
@@ -1309,10 +1310,39 @@ function applyVoiceChecks(evaluation, raw, testCase) {
 	return { ...evaluation, score, failures, warnings, status: failures.length || score < minScore ? "fail" : evaluation.status, voice: { engine: voice.engine, spoken } };
 }
 
+// Selects the first occurrence of text in a page target, the way a reader drags
+// over a passage before asking about it.
+async function selectTextInTarget(args, targetId, text) {
+	const targets = JSON.parse(await cdpHttp(args.host, args.port, "/json/list"));
+	const target = (Array.isArray(targets) ? targets : []).find((entry) => entry?.id === targetId);
+	if (!target?.webSocketDebuggerUrl) throw new Error(`selectText: target ${targetId} not found`);
+	const session = await connectTarget(target.webSocketDebuggerUrl);
+	try {
+		const selected = await evaluateValue(session, `(() => {
+			const target = ${JSON.stringify(text)};
+			const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+			for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+				const index = node.data.indexOf(target);
+				if (index < 0) continue;
+				const range = document.createRange();
+				range.setStart(node, index);
+				range.setEnd(node, index + target.length);
+				getSelection().removeAllRanges();
+				getSelection().addRange(range);
+				node.parentElement?.scrollIntoView({ block: "center" });
+				return getSelection().toString();
+			}
+			return "";
+		})()`);
+		if (selected !== text) throw new Error(`selectText: could not select ${JSON.stringify(text.slice(0, 60))}`);
+	} finally {
+		session.close();
+	}
+}
+
 async function runOne(testCase, variant, args, runDir, rubric = "") {
 	const cliArgs = [
-		"ask-new-url",
-		testCase.url,
+		...(testCase.selectText ? ["ask", "--new"] : ["ask-new-url", testCase.url]),
 		testCase.prompt,
 		"--wait",
 		"--timeout",
@@ -1334,6 +1364,11 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 		for (const setupUrl of testCase.setupUrls || []) await runCli(["open-url", setupUrl, "--json"], args);
 		// Let setup tabs finish loading before the primary tab opens and takes focus.
 		if (testCase.setupUrls?.length) await sleep(3000);
+		if (testCase.selectText) {
+			const opened = await runCli(["open-url", testCase.url, "--new-tab", "--json"], args);
+			await sleep(3000);
+			await selectTextInTarget(args, opened.targetId, testCase.selectText);
+		}
 		let retriedBlankAnswer = false;
 		let retriedWeakNoSourceAnswer = false;
 		for (let attempt = 0; attempt < 2; attempt += 1) {

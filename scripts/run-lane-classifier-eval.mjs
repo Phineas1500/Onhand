@@ -13,8 +13,9 @@
 //              instead of the configured one (needs a registered free-tier
 //              device in that browser).
 //   --decisions  also classify with the Decisions API through the browser's
-//              saved OpenAI platform key (the key stays in the extension), and
-//              report per-field calibration against the runtime's cutoffs.
+//              saved OpenAI platform key (the key stays in the extension), or
+//              Onhand Free's endpoint with --free, and report per-field
+//              calibration against the runtime's cutoffs.
 //              With --browser too, it scores the production policy: Decisions
 //              when every field is confident, otherwise the model classifier.
 //   --live     also score an OpenAI-compatible endpoint directly:
@@ -220,7 +221,8 @@ if (process.argv.includes("--browser")) {
 }
 
 if (process.argv.includes("--decisions")) {
-	const { payloads } = await classifyThroughBrowser(port, { engine: "decisions" });
+	// --free scores Onhand Free's Decisions endpoint instead of a saved platform key.
+	const { payloads } = await classifyThroughBrowser(port, { engine: "decisions", provider: process.argv.includes("--free") ? "onhand-free" : "" });
 	const cutoffs = test.decisionsIntentCutoffsForTest;
 	// Raw accuracy at a single 0.5 threshold, to show the model's own calibration.
 	const atHalf = new Map([...payloads].filter(([, p]) => p.probabilities).map(([index, p]) =>

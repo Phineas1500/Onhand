@@ -1,0 +1,153 @@
+{
+  "description": "Pages and prompt styles students use that the other suites barely cover: lecture slides, long notes and papers as PDFs, open textbooks, journal articles, literature, vague and follow-up prompts, selections, quiz requests, a claim the page doesn't make, and a non-English prompt. Expectations are loose on purpose; review the replies and screenshots by hand against docs/ONHAND_BEHAVIOR_PREFERENCES.md.",
+  "cases": [
+    {
+      "id": "pdf-slides-word2vec",
+      "url": "https://web.stanford.edu/class/cs224n/slides/cs224n-spr2024-lecture01-wordvecs1.pdf",
+      "prompt": "Explain the main idea of word2vec from these slides.",
+      "expect": { "minHighlights": 1, "maxWords": 450, "requiredReplyPatterns": ["context|neighbo|surround"] }
+    },
+    {
+      "id": "pdf-slides-vague",
+      "url": "https://web.stanford.edu/class/cs224n/slides/cs224n-spr2024-lecture01-wordvecs1.pdf",
+      "prompt": "explain this",
+      "expect": { "maxWords": 450 }
+    },
+    {
+      "id": "pdf-long-notes-learning",
+      "url": "https://cs229.stanford.edu/main_notes.pdf",
+      "prompt": "I have a midterm on linear regression. Help me study the least squares part.",
+      "learning": true,
+      "timeout": "240s",
+      "expect": { "minHighlights": 1, "maxWords": 450, "requiredReplyPatterns": ["least.squares|cost function|J\\s*\\(|squared"] }
+    },
+    {
+      "id": "pdf-adam-bias-correction",
+      "url": "https://arxiv.org/pdf/1412.6980",
+      "prompt": "Explain the bias-correction step in Adam and point me to where the paper derives it.",
+      "expect": { "minHighlights": 1, "maxWords": 500, "requiredReplyPatterns": ["bias", "1\\s*-\\s*\\\\?beta|initiali[sz]"] }
+    },
+    {
+      "id": "pdf-adam-claim-not-made",
+      "url": "https://arxiv.org/pdf/1412.6980",
+      "prompt": "Does this paper say Adam always converges faster than SGD?",
+      "expect": { "maxWords": 300, "requiredReplyPatterns": ["\\bno\\b|not|doesn.t|does not"] }
+    },
+    {
+      "id": "pdf-adam-follow-up",
+      "url": "https://arxiv.org/pdf/1412.6980",
+      "prompt": "What are Adam's main hyperparameters?",
+      "expect": { "maxWords": 350, "requiredReplyPatterns": ["beta|β", "alpha|α|step.?size|learning rate"] },
+      "followUps": [
+        { "prompt": "what does the second one do?", "expect": { "maxWords": 300 } }
+      ]
+    },
+    {
+      "id": "pdf-shannon-entropy-definition",
+      "url": "https://people.math.harvard.edu/~ctm/home/text/others/shannon/entropy/entropy.pdf",
+      "prompt": "What is entropy according to Shannon here? Show me where he defines it.",
+      "expect": { "minHighlights": 1, "maxWords": 450, "requiredReplyPatterns": ["log|uncertain|choice|information"] }
+    },
+    {
+      "id": "pdf-local-file",
+      "url": "file:///private/tmp/onhand-student-eval/resnet.pdf",
+      "prompt": "Summarize the main contribution of this paper.",
+      "expect": { "maxWords": 400 }
+    },
+    {
+      "id": "openstax-vague",
+      "url": "https://openstax.org/books/biology-2e/pages/8-2-the-light-dependent-reactions-of-photosynthesis",
+      "prompt": "explain this",
+      "expect": { "maxWords": 450 }
+    },
+    {
+      "id": "openstax-quiz-me",
+      "url": "https://openstax.org/books/biology-2e/pages/8-2-the-light-dependent-reactions-of-photosynthesis",
+      "prompt": "Quiz me on this section.",
+      "expect": { "maxWords": 400, "requiredReplyPatterns": ["\\?"] }
+    },
+    {
+      "id": "openstax-psych-learning",
+      "url": "https://openstax.org/books/psychology-2e/pages/6-2-classical-conditioning",
+      "prompt": "Help me understand the difference between an unconditioned and a conditioned stimulus.",
+      "learning": true,
+      "expect": { "minHighlights": 1, "maxWords": 400, "requiredReplyPatterns": ["unconditioned|conditioned"] }
+    },
+    {
+      "id": "openstax-psych-flashcards",
+      "url": "https://openstax.org/books/psychology-2e/pages/6-2-classical-conditioning",
+      "prompt": "Make 5 flashcards from this section.",
+      "expect": { "maxWords": 450 }
+    },
+    {
+      "id": "khan-photosystem-ii",
+      "url": "https://www.khanacademy.org/science/biology/photosynthesis-in-plants/the-light-dependent-reactions-of-photosynthesis/a/light-dependent-reactions",
+      "prompt": "What's the role of photosystem II?",
+      "expect": { "minHighlights": 1, "maxWords": 400, "requiredReplyPatterns": ["water|electron|P680"] }
+    },
+    {
+      "id": "nature-alphafold-tldr",
+      "url": "https://www.nature.com/articles/s41586-021-03819-2",
+      "prompt": "tl;dr",
+      "expect": { "maxWords": 250 }
+    },
+    {
+      "id": "nature-alphafold-figure",
+      "url": "https://www.nature.com/articles/s41586-021-03819-2",
+      "prompt": "What does Figure 1 show?",
+      "expect": { "maxWords": 400, "requiredReplyPatterns": ["CASP|accura|GDT|lDDT|structure"] }
+    },
+    {
+      "id": "nature-alphafold-selection",
+      "url": "https://www.nature.com/articles/s41586-021-03819-2",
+      "selectText": "Structural coverage is bottlenecked by the months to years of painstaking effort required to determine a single protein structure.",
+      "prompt": "What does this mean in plain English?",
+      "expect": { "maxWords": 250 }
+    },
+    {
+      "id": "annotated-transformer-selection-math",
+      "url": "https://nlp.seas.harvard.edu/annotated-transformer/",
+      "selectText": "We call our particular attention “Scaled Dot-Product Attention”.",
+      "prompt": "What does this mean, and why is it scaled?",
+      "expect": { "minHighlights": 1, "maxWords": 400, "requiredReplyPatterns": ["sqrt|√|square root", "softmax"] }
+    },
+    {
+      "id": "wiki-fourier-symbols",
+      "url": "https://en.wikipedia.org/wiki/Fourier_transform",
+      "prompt": "Explain the definition of the Fourier transform and what each symbol in it means.",
+      "expect": { "minHighlights": 1, "maxWords": 450, "requiredReplyPatterns": ["frequency", "e\\^|exponential|complex"] }
+    },
+    {
+      "id": "wiki-ww2-causes-summary",
+      "url": "https://en.wikipedia.org/wiki/Causes_of_World_War_II",
+      "prompt": "Summarize the main causes in 5 bullets.",
+      "expect": { "minHighlights": 1, "maxWords": 400 }
+    },
+    {
+      "id": "gutenberg-first-sentence",
+      "url": "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm",
+      "prompt": "What's the significance of the first sentence of the novel?",
+      "expect": { "minHighlights": 1, "maxWords": 400, "requiredReplyPatterns": ["truth universally acknowledged|marriage|irony|ironic"] }
+    },
+    {
+      "id": "gutenberg-not-on-page",
+      "url": "https://www.gutenberg.org/files/1342/1342-h/1342-h.htm",
+      "prompt": "When was this novel first published, and how did critics receive it?",
+      "expect": { "maxWords": 350 }
+    },
+    {
+      "id": "compare-openstax-wikipedia",
+      "setupUrls": ["https://en.wikipedia.org/wiki/Photosynthesis"],
+      "url": "https://openstax.org/books/biology-2e/pages/8-2-the-light-dependent-reactions-of-photosynthesis",
+      "prompt": "How do this textbook and the Wikipedia article explain the light-dependent reactions differently?",
+      "timeout": "240s",
+      "expect": { "minAnnotatedTabs": 2, "maxWords": 550 }
+    },
+    {
+      "id": "wiki-photosynthesis-spanish",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "prompt": "Explícame la fase luminosa de la fotosíntesis en español.",
+      "expect": { "minHighlights": 1, "maxWords": 450, "requiredReplyPatterns": ["luz|luminosa|tilacoide|ATP"] }
+    }
+  ]
+}
