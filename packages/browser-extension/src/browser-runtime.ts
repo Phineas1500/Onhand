@@ -9840,7 +9840,13 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 			const fallback = details.highlightRetry?.originalText
 				? " Original highlight text did not match as one visible span; only this smaller item is highlighted."
 				: "";
-			return `Highlighted ${JSON.stringify(truncate(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}`;
+			// A paraphrase lands on the closest wording, which can sit in another
+			// section: on Wikipedia's Fourier page a made-up definition sentence
+			// marked a phrase under "Sampling", and the model put its note there.
+			const closest = details.annotation?.approximate && !details.annotation?.fallback && !details.highlightRetry?.originalText
+				? " These are the closest words on the page, not your quote: cite or note this mark only if it says what your point needs; otherwise leave it uncited and quote the page's exact words."
+				: "";
+			return `Highlighted ${JSON.stringify(truncate(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}${closest}`;
 		}
 		case "browser_show_note": {
 			if (details.guardrail?.message) return String(details.guardrail.message);

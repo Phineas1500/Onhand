@@ -93260,7 +93260,8 @@ ${nearby}` : "", message].filter(Boolean).join("\n");
       const annotationId = details.annotation?.annotationId || "(unknown annotation)";
       const matchedText = details.annotation?.matchedText || details.annotation?.text || "the requested text";
       const fallback = details.highlightRetry?.originalText ? " Original highlight text did not match as one visible span; only this smaller item is highlighted." : "";
-      return `Highlighted ${JSON.stringify(truncate2(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}`;
+      const closest = details.annotation?.approximate && !details.annotation?.fallback && !details.highlightRetry?.originalText ? " These are the closest words on the page, not your quote: cite or note this mark only if it says what your point needs; otherwise leave it uncited and quote the page's exact words." : "";
+      return `Highlighted ${JSON.stringify(truncate2(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}${closest}`;
     }
     case "browser_show_note": {
       if (details.guardrail?.message) return String(details.guardrail.message);

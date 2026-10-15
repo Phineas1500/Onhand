@@ -2407,6 +2407,13 @@ async function assertNoPageChangesIsEnforced() {
 	assert.equal(guard("browser_highlight_text", "highlight_text", "Quiz me and highlight where each answer is."), null, "a quiz that asks for highlights gets them");
 	assert.equal(guard("browser_highlight_text", "highlight_text", "1. pigments absorb light 2. shorter 3. green is reflected"), null, "the answers turn is graded with highlights");
 
+	// A fuzzy landing says so; a normalization-only one (citation markers,
+	// spacing) does not.
+	const landed = (annotation) => formatToolResultForModel("browser_highlight_text", { tab: { id: 7, title: "Fourier transform", url: "https://en.wikipedia.org/wiki/Fourier_transform" }, annotation: { annotationId: "a1", matchedText: "Fourier transform of an integrable function", ...annotation } });
+	assert.match(landed({ approximate: true }), /closest words on the page, not your quote/);
+	assert.doesNotMatch(landed({ approximate: true, fallback: "citation-stripped-text" }), /closest words/);
+	assert.doesNotMatch(landed({ approximate: false }), /closest words/);
+
 	// PDF viewer: "no selection" is not a failed handoff, and an already-open
 	// viewer says how to continue (models reopened it twice).
 	const tab = { id: 42, title: "1706.03762v7.pdf", url: "chrome-extension://x/pdf-viewer.html?url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762" };

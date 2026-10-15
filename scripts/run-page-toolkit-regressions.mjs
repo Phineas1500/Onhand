@@ -2731,6 +2731,33 @@ async function assertProseWithInlineKatexMarksItsParagraph() {
 	assert.ok(highlight.annotationId);
 }
 
+async function assertFuzzyMatchesKeepTheQuotesWordOrder() {
+	// Wikipedia's Fourier page: a paraphrase marked "defined. But for a
+	// square-integrable function the Fourier transform" in an unrelated
+	// section, with every word present but backwards and across a sentence.
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p>In higher dimensions it becomes interesting to study restriction problems. The restriction of this function to any set is defined. But for a square-integrable function the Fourier transform could be a general class of functions.</p>
+		</main>
+	`);
+	await assert.rejects(
+		() => toolkit.highlightText("The Fourier transform of an integrable function f(x) is defined by", { scrollIntoView: false }),
+		/No visible text matched/,
+		"a fuzzy match whose words run backwards across a sentence break is no match",
+	);
+	assert.equal(dom.window.document.querySelector("[data-onhand-annotation-id]"), null);
+
+	// A quote glued across two blocks still marks the part the page has.
+	const promises = await createToolkit(`
+		<main>
+			<ul><li>pending: initial state, neither fulfilled nor rejected</li><li>settled: the operation finished one way or the other</li></ul>
+		</main>
+	`);
+	const partial = await promises.toolkit.highlightText("pending: initial state, neither fulfilled nor rejected. fulfilled: meaning that the operation was completed successfully.", { scrollIntoView: false });
+	assert.equal(partial.approximate, true);
+	assert.match(promises.dom.window.document.querySelector("[data-onhand-annotation-id]")?.textContent || "", /pending: initial state, neither fulfilled nor rejected/);
+}
+
 async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -4543,6 +4570,7 @@ async function main() {
 	await assertMixedLabelAndRenderedMathUsesBlockHighlight();
 	await assertJournalReferenceLinksAreNotAScholarReader();
 	await assertProseWithInlineKatexMarksItsParagraph();
+	await assertFuzzyMatchesKeepTheQuotesWordOrder();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 	await assertImageRenderedMathMatchesTexAltSource();
 	await assertRenderedMathPageDoesNotWaitForMathJaxEngine();

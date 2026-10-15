@@ -7758,6 +7758,38 @@ const createPageToolkit = (options = {}) => {
 		return tokens;
 	};
 
+	// A fuzzy match must read like the quote, not just share its words. On
+	// Wikipedia's Fourier page, "The Fourier transform of an integrable
+	// function f(x) is defined by" (a paraphrase) marked "defined. But for a
+	// square-integrable function the Fourier transform" in another section:
+	// every word present, backwards, across a sentence break. A match passes
+	// when most of the quote reads in order in it, or most of it reads in
+	// order in the quote (a quote glued across two blocks still matches its
+	// first part). Replayed on 97 earlier fuzzy matches, this dropped 21: 18
+	// in the wrong place (an amendment's text matched to a summary of it, a
+	// Shanghai Tower table row to "Shanghai World Financial Center"), 3 near
+	// the right place that now fail and get retried.
+	const orderedSharedTokenCount = (leftTokens, rightTokens) => {
+		let previous = new Array(rightTokens.length + 1).fill(0);
+		for (const token of leftTokens) {
+			const current = [0];
+			for (let index = 0; index < rightTokens.length; index += 1) {
+				current.push(token === rightTokens[index] ? previous[index] + 1 : Math.max(previous[index + 1], current[index]));
+			}
+			previous = current;
+		}
+		return previous[rightTokens.length];
+	};
+	const SENTENCE_BREAK_PATTERN = /[.!?]["'”’)\]]*\s+["'“‘(]?[A-Z]/;
+	const approximateCandidateReadsLikeQuery = (queryTokens, query, candidateText) => {
+		if (SENTENCE_BREAK_PATTERN.test(candidateText) && !SENTENCE_BREAK_PATTERN.test(String(query || ""))) return false;
+		if (queryTokens.length < 4) return true;
+		const candidateTokens = tokenizeApproximateQuery(candidateText);
+		if (!candidateTokens.length) return false;
+		const shared = orderedSharedTokenCount(queryTokens, candidateTokens);
+		return shared / queryTokens.length >= 0.6 || (shared >= 3 && shared / candidateTokens.length >= 0.6);
+	};
+
 	const findBestTokenWindowHighlightRange = (mappedText, query) => {
 		const queryTokens = tokenizeApproximateQuery(query);
 		if (queryTokens.length < 2) return null;
@@ -7786,7 +7818,7 @@ const createPageToolkit = (options = {}) => {
 				const text = mappedText.text.slice(startIndex, endIndex).trim();
 				if (text.length < 12) continue;
 				const score = overlap * 150 + coverage * 80 + density * 45 + (hasPrimary ? 25 : 0) - text.length * 0.015;
-				if (!best || score > best.score) {
+				if ((!best || score > best.score) && approximateCandidateReadsLikeQuery(queryTokens, query, text)) {
 					best = { startIndex, endIndex, overlap, coverage, score, text };
 				}
 			}
@@ -7813,7 +7845,7 @@ const createPageToolkit = (options = {}) => {
 			const coverage = overlap / queryTokens.length;
 			const density = overlap / Math.max(segmentTokens.length, 1);
 			const score = overlap * 120 + coverage * 40 + density * 15 - segmentText.length * 0.02;
-			if (!best || score > best.score) {
+			if ((!best || score > best.score) && approximateCandidateReadsLikeQuery(queryTokens, query, segmentText)) {
 				best = { startIndex, endIndex, overlap, coverage, score, text: segmentText };
 			}
 		}
