@@ -1686,6 +1686,20 @@ async function assertSelectionFormatting() {
 		"",
 		"a quote is not expanded across an equation's hidden TeX",
 	);
+	// Bill of Rights and Photosynthesis: a complete quote was "rewritten" to
+	// extraction text with the infobox title or figure caption glued on front.
+	const gluedHeading = { toolTraces: [{ state: "complete", toolName: "browser_extract_content", resultSummary: "Readable content:\nEighth Amendment to the United States Constitution Excessive bail shall not be required, nor excessive fines imposed, nor cruel and unusual punishments inflicted." }] };
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("Excessive bail shall not be required, nor excessive fines imposed, nor cruel and unusual punishments inflicted.", gluedHeading),
+		"",
+		"a complete quote is not swapped for a longer near-match with a heading glued on",
+	);
+	const inlineSymbols = { toolTraces: [{ state: "complete", toolName: "browser_extract_content", resultSummary: "Readable content:\nThat is to say, there are two versions of the real line: one that is the range of t {\\displaystyle t} and measured in units of t {\\displaystyle t}." }] };
+	assert.match(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("there are two versions of the real line: one that is the range of t and measured in units of t", inlineSymbols),
+		/range of t \{\\displaystyle t\} and measured/,
+		"a sentence whose TeX is only inline symbols is still a rewrite target",
+	);
 	assert.equal(
 		rewriteHighlightTextToRecentReadableExactPhraseForTest("Metropolis-Hastings sampling will merge rejection sampling with the Markov chain sampling of Algorithm 1 and get rid of the problematic constant M.", {
 			toolTraces: [

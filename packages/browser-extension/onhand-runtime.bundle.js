@@ -94157,14 +94157,25 @@ function significantWordOverlap(left, right) {
   for (const word of leftWords) if (rightWords.has(word)) matches += 1;
   return matches / Math.max(1, leftWords.size);
 }
+function containsTexEquation(value) {
+  for (let start = value.indexOf("{\\displaystyle"); start >= 0; start = value.indexOf("{\\displaystyle", start + 1)) {
+    let depth = 0;
+    for (let index = start; index < value.length; index += 1) {
+      const char = value[index];
+      if (char === "{") depth += 1;
+      else if (char === "}" && --depth === 0) break;
+      else if (char === "=" && depth > 0) return true;
+    }
+  }
+  return false;
+}
 function looksLikeExpandedMathExtractionCandidate(candidate, proposed) {
   const candidateText = normalizeHighlightRetryCandidate(candidate);
   const proposedText = normalizeHighlightRetryCandidate(proposed);
   if (!candidateText || !proposedText) return false;
   if (candidateText.length <= proposedText.length) return false;
   if (candidateText.toLowerCase() === proposedText.toLowerCase()) return false;
-  const texMarkup = /\{\\[a-z]+|\\(?:displaystyle|mathbf|mathbb|mathcal|boldsymbol|widehat|frac)\b/u;
-  if (texMarkup.test(candidateText) && !texMarkup.test(proposedText)) return true;
+  if (containsTexEquation(candidateText) && !containsTexEquation(proposedText)) return true;
   return /\b[A-Z]\s*[A-Z]\s*[A-Z]\b/u.test(candidateText) || /(?:[A-Za-z]\([^)]{1,16}\)){2,}/u.test(candidateText);
 }
 function canRewriteToContainedReadablePhrase(candidate, proposed) {
@@ -94210,6 +94221,7 @@ function findRecentReadableExactPhrase(request, proposed) {
       }
       if (candidateLoose.includes(proposedLoose) && !looksLikeCompleteSentence(proposedText)) return candidate;
       if (proposedLoose.includes(candidateLoose) && canRewriteToContainedReadablePhrase(candidate, proposedText)) return candidate;
+      if (looksLikeCompleteSentence(proposedText) && entityWords(candidate).length > entityWords(proposedText).length + 3) continue;
       if (significantWordOverlap(proposedText, candidate) >= 0.82 && orderedSignificantWordOverlap(proposedText, candidate) >= 0.82) return candidate;
     }
   }

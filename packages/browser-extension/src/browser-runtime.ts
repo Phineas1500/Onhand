@@ -10986,6 +10986,19 @@ function significantWordOverlap(left: unknown, right: unknown) {
 	return matches / Math.max(1, leftWords.size);
 }
 
+function containsTexEquation(value: string) {
+	for (let start = value.indexOf("{\\displaystyle"); start >= 0; start = value.indexOf("{\\displaystyle", start + 1)) {
+		let depth = 0;
+		for (let index = start; index < value.length; index += 1) {
+			const char = value[index];
+			if (char === "{") depth += 1;
+			else if (char === "}" && --depth === 0) break;
+			else if (char === "=" && depth > 0) return true;
+		}
+	}
+	return false;
+}
+
 function looksLikeExpandedMathExtractionCandidate(candidate: unknown, proposed: unknown) {
 	const candidateText = normalizeHighlightRetryCandidate(candidate);
 	const proposedText = normalizeHighlightRetryCandidate(proposed);
@@ -10994,9 +11007,9 @@ function looksLikeExpandedMathExtractionCandidate(candidate: unknown, proposed: 
 	if (candidateText.toLowerCase() === proposedText.toLowerCase()) return false;
 	// Wikipedia's hidden MathML carries TeX ("{\displaystyle ...}"); expanding
 	// "where x and ξ are n-dimensional vectors..." to its "sentence" glued the
-	// whole equation above it onto the front.
-	const texMarkup = /\{\\[a-z]+|\\(?:displaystyle|mathbf|mathbb|mathcal|boldsymbol|widehat|frac)\b/u;
-	if (texMarkup.test(candidateText) && !texMarkup.test(proposedText)) return true;
+	// whole equation above it onto the front. Inline symbols ("range of t
+	// {\displaystyle t}") are part of the sentence and stay rewritable.
+	if (containsTexEquation(candidateText) && !containsTexEquation(proposedText)) return true;
 	return /\b[A-Z]\s*[A-Z]\s*[A-Z]\b/u.test(candidateText) || /(?:[A-Za-z]\([^)]{1,16}\)){2,}/u.test(candidateText);
 }
 
@@ -11053,6 +11066,11 @@ function findRecentReadableExactPhrase(request: any, proposed: unknown) {
 			// already-complete sentence only adds text the model did not quote.
 			if (candidateLoose.includes(proposedLoose) && !looksLikeCompleteSentence(proposedText)) return candidate;
 			if (proposedLoose.includes(candidateLoose) && canRewriteToContainedReadablePhrase(candidate, proposedText)) return candidate;
+			// The same holds for a near-match: extraction glues headings and
+			// captions onto the next sentence ("Eighth Amendment to the United
+			// States Constitution Excessive bail shall not be required..."), and
+			// that rewrite matched nowhere, so the mark drifted to a summary.
+			if (looksLikeCompleteSentence(proposedText) && entityWords(candidate).length > entityWords(proposedText).length + 3) continue;
 			if (significantWordOverlap(proposedText, candidate) >= 0.82 && orderedSignificantWordOverlap(proposedText, candidate) >= 0.82) return candidate;
 		}
 	}
