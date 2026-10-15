@@ -2684,6 +2684,53 @@ async function assertMixedLabelAndRenderedMathUsesBlockHighlight() {
 	);
 }
 
+async function assertJournalReferenceLinksAreNotAScholarReader() {
+	// Nature lists a "Google Scholar" link under every reference; that label made
+	// the article count as Google Scholar's PDF reader, and every highlight
+	// failed as an unsupported PDF surface (2026-10-14 student-pages eval).
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p id="abstract">Here we provide the first computational method that can regularly predict protein structures with atomic accuracy.</p>
+			<ol class="c-article-references">
+				<li>Thompson, M. C. et al. Advances in methods for atomic resolution macromolecular structure determination.
+					<a aria-label="Google Scholar reference 1" href="https://scholar.google.com/scholar_lookup">Google Scholar</a></li>
+			</ol>
+		</main>
+	`);
+	const highlight = await toolkit.highlightText("Here we provide the first computational method that can regularly predict protein structures", { scrollIntoView: false });
+	assert.equal(highlight.approximate, false);
+	assert.ok(dom.window.document.querySelector("#abstract [data-onhand-highlight-kind]"), "the abstract sentence carries the highlight");
+}
+
+// In a browser, KaTeX's visually hidden MathML copy reports a larger box than
+// the rendered formula (66x30 vs 20x18 on the Annotated Transformer), so the
+// largest-candidate pick landed on it.
+function sizeKatexLikeABrowser(document) {
+	const rect = (width, height) => () => ({ x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, width, height, toJSON() { return this; } });
+	for (const element of document.querySelectorAll(".katex-mathml math")) element.getBoundingClientRect = rect(66, 30);
+	for (const element of document.querySelectorAll(".katex")) element.getBoundingClientRect = rect(20, 18);
+}
+
+const KATEX_D_K = `<span class="katex"><span class="katex-mathml"><math><semantics><mrow><msub><mi>d</mi><mi>k</mi></msub></mrow><annotation encoding="application/x-tex">d_k</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="mord mathnormal">d</span><span class="msupsub"><span class="mord mathnormal">k</span></span></span></span>`;
+
+async function assertProseWithInlineKatexMarksItsParagraph() {
+	// The Annotated Transformer: a sentence quoting "d_k" landed as math-range on
+	// KaTeX's visually hidden MathML copy, so the "highlighted" sentence showed
+	// nothing (2026-10-14 student-pages eval).
+	const { dom, toolkit } = await createToolkit(`
+		<main>
+			<p id="attention">We call our particular attention Scaled Dot-Product Attention. The input consists of queries and keys of dimension ${KATEX_D_K}, and values of dimension dv.</p>
+		</main>
+	`);
+	sizeKatexLikeABrowser(dom.window.document);
+	const highlight = await toolkit.highlightText("The input consists of queries and keys of dimension d_k, and values of dimension", { scrollIntoView: false });
+	const marked = dom.window.document.querySelector("[data-onhand-annotation-id]");
+	assert.ok(marked, "the sentence gets a mark");
+	assert.equal(marked.closest("math, .katex-mathml"), null, "the mark is never on KaTeX's hidden MathML copy");
+	assert.match(marked.textContent, /The input consists of queries/, "the mark covers the sentence, not just the formula inside it");
+	assert.ok(highlight.annotationId);
+}
+
 async function assertMathJaxQueueSettlesBeforeMathSourceRestore() {
 	const { dom, toolkit } = await createToolkit(`
 		<main>
@@ -4494,6 +4541,8 @@ async function main() {
 	await assertNestedListHighlightUsesBlockContainer();
 	await assertExactMathSourceModeMatchesRenderedMathJax();
 	await assertMixedLabelAndRenderedMathUsesBlockHighlight();
+	await assertJournalReferenceLinksAreNotAScholarReader();
+	await assertProseWithInlineKatexMarksItsParagraph();
 	await assertMathJaxQueueSettlesBeforeMathSourceRestore();
 	await assertImageRenderedMathMatchesTexAltSource();
 	await assertRenderedMathPageDoesNotWaitForMathJaxEngine();

@@ -86070,6 +86070,17 @@ async function closeDevelopmentAgentObserver() {
 }
 
 // packages/browser-extension/src/browser-oauth.ts
+var BrowserOAuthSignInExpiredError = class extends Error {
+  constructor(providerId) {
+    super(
+      providerId === "openai-codex" ? "Your ChatGPT sign-in expired. Sign in again to keep using your ChatGPT plan." : "Your sign-in expired. Sign in again in Onhand options."
+    );
+    this.providerId = providerId;
+    this.name = "BrowserOAuthSignInExpiredError";
+  }
+  providerId;
+  code = "oauth_sign_in_expired";
+};
 var OAUTH_TIMEOUT_MS = 10 * 60 * 1e3;
 var OAUTH_EXPIRY_SKEW_MS = 5 * 60 * 1e3;
 var OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -86145,7 +86156,10 @@ async function fetchJson(url, init2 = {}) {
   } catch {
   }
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}: ${text || "empty response"}`);
+    const error2 = new Error(`${response.status} ${response.statusText}: ${text || "empty response"}`);
+    error2.status = response.status;
+    error2.body = text;
+    throw error2;
   }
   return json2;
 }
@@ -86292,15 +86306,24 @@ async function loginOpenAICodex(options) {
   };
 }
 async function refreshOpenAICodexToken(credentials) {
-  const tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: credentials.refresh,
-      client_id: OPENAI_CODEX.clientId
-    })
-  });
+  let tokenData;
+  try {
+    tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: credentials.refresh,
+        client_id: OPENAI_CODEX.clientId
+      })
+    });
+  } catch (error2) {
+    const { status, body } = error2;
+    if ((status === 400 || status === 401) && /refresh_token|invalid_grant/i.test(String(body || ""))) {
+      throw new BrowserOAuthSignInExpiredError("openai-codex");
+    }
+    throw error2;
+  }
   if (!tokenData?.access_token || !tokenData?.refresh_token) {
     throw new Error("OpenAI token refresh did not return access and refresh tokens.");
   }
@@ -87414,6 +87437,11 @@ function weakApproximateRetryLanding(originalText, highlighted) {
     "Quote the page's exact words for the point you mean, or say the page does not support it."
   ].join(" ");
 }
+function isFormulaOnlyHighlightText(value) {
+  const text = String(value || "").trim();
+  return Boolean(text) && (text.match(/[A-Za-z]{3,}/g) || []).length < 3 && /[=∫∑∏√^_\\]|[⁰-⁹₀-₉]/u.test(text);
+}
+var FORMULA_HIGHLIGHT_MISS_MESSAGE = "No visible text matched that formula: rendered math rarely reads back as the same text. Highlight the sentence that introduces or names the formula instead.";
 function buildHighlightRetryCandidates(value) {
   const raw = String(value || "").trim();
   if (!raw) return [];
@@ -89591,6 +89619,7 @@ function buildCitedSourceRetryPrompt(request, assistantText) {
   return [
     "You described what the cited source says without opening it. Follow the page's own citation now: call browser_find_citation with the claim's exact text to get the reference entry and its links, navigate to one of those exact URLs, read it, and answer from what the source itself says, with a highlight on the supporting passage there.",
     "Never compose or guess a source URL from memory. If the citation has no link or the link cannot be opened, say that plainly and answer from the page's own wording, labeled as the page's wording.",
+    "The user never saw the draft below. Write the complete answer to their question on its own, without referring to an earlier answer.",
     `Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
     assistantText ? `Draft answer (its claims about the source are unverified; keep them only if the source confirms them):
 ${truncateStructuredText(assistantText, 2e3)}` : ""
@@ -90073,7 +90102,7 @@ function shouldRecordFallbackOpenCheckForRequest(request, reply) {
 function humanizeProviderErrorMessage(rawMessage) {
   const raw = String(rawMessage || "").trim();
   if (!raw) return "";
-  const match2 = raw.match(/^(\d{3}):\s*(\{[\s\S]*\})$/);
+  const match2 = raw.match(/^(\d{3})(?: [^:{]*)?:\s*(\{[\s\S]*\})$/);
   if (!match2) return raw;
   try {
     const body = JSON.parse(match2[2]);
@@ -91086,7 +91115,7 @@ var DECISIONS_REQUEST_WORDING = {
   forbidsNotes: 'True only when the user explicitly asks Onhand not to add any notes to the open page (for example "no notes", "skip the notes", "just highlight, no margin notes", or a request to leave the page unmarked), in any language. False when the user wants notes or limits which notes to add, asks to remove existing notes, or mentions such phrases as content of the page or asks what they mean; and false for an ordinary question that says nothing about notes.',
   asksForQuiz: 'True when the user asks Onhand to quiz or test them on the open material: to ask them questions, practice questions, or a quick test and check their answers, in any language. A request for a hint is not a quiz. False when the user asks about a quiz or test that is part of the page, asks Onhand to answer or grade a question, asks for a summary or study notes, or uses "test" in another sense.',
   asksForHint: "True when the user wants a hint rather than the answer: a nudge, a clue, a pointer in the right direction, or help getting started without the solution being given away, in any language. False when the user wants the answer or a full solution, asks about hints or clues that are content of the page, or asks for an explanation with no wish to work it out themselves.",
-  asksAboutCitedSource: "True when the user asks what a source cited or linked by the open page actually says: the study, paper, report, or reference behind a claim, a numbered citation or footnote, or whether that source supports the claim, in any language. False when the user asks Onhand to cite sources for its own answer, asks which sources the page lists, asks whether the page itself is reliable, or wants other sources found."
+  asksAboutCitedSource: 'True when the user asks what a source cited or linked by the open page actually says: the study, paper, report, or reference behind a claim, a numbered citation or footnote, or whether that source supports the claim, in any language. False when the user asks what the open page or document itself says or claims, even when it is a paper, study, or report ("does this paper say...", "what does the study find?"); asks Onhand to cite sources for its own answer; asks which sources the page lists; asks whether the page itself is reliable; or wants other sources found.'
 };
 var decisionsRequestAnswersByKey = /* @__PURE__ */ new Map();
 function setDecisionsRequestAnswersForPrompt(prompt, pageMarks) {
@@ -94402,6 +94431,7 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
   createToolsForTest: createTools,
   renderBrowserContextDetailsForTest: renderBrowserContextDetails,
   pageInjectionNotice,
@@ -95042,6 +95072,9 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           }
         } catch (error2) {
           if (commandName !== "highlight_text") throw error2;
+          if (isFormulaOnlyHighlightText(params?.text) && /No visible text matched/i.test(String(error2?.message || error2))) {
+            throw new Error(FORMULA_HIGHLIGHT_MISS_MESSAGE);
+          }
           const attemptedCandidateKeys = /* @__PURE__ */ new Set();
           for (const candidate of buildHighlightRetryCandidates(params?.text)) {
             attemptedCandidateKeys.add(candidate.toLowerCase());
@@ -97877,9 +97910,27 @@ function createOnhandBrowserRuntime(host) {
     if (settings2.authMode !== "oauth") return void 0;
     const credentials = settings2.oauthCredentials?.[provider];
     if (!credentials) return void 0;
-    const result = await getBrowserOAuthApiKey(provider, credentials, {
-      onProgress: (event) => host.notifyAuthProgress?.(event)
-    });
+    let result;
+    try {
+      result = await getBrowserOAuthApiKey(provider, credentials, {
+        onProgress: (event) => host.notifyAuthProgress?.(event)
+      });
+    } catch (error2) {
+      if (error2 instanceof BrowserOAuthSignInExpiredError) {
+        const nextOAuthCredentials = { ...settings2.oauthCredentials || {} };
+        delete nextOAuthCredentials[provider];
+        settings2.oauthCredentials = nextOAuthCredentials;
+        store2.settings = settings2;
+        await saveStore(store2, {});
+        await publishState({
+          preferences: {
+            runtime: "browser-extension",
+            ...buildPublicSettings(settings2)
+          }
+        });
+      }
+      throw error2;
+    }
     if (JSON.stringify(result.credentials) !== JSON.stringify(credentials)) {
       settings2.oauthCredentials = {
         ...settings2.oauthCredentials || {},

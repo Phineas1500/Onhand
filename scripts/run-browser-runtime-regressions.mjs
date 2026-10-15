@@ -543,6 +543,52 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	console.log("Turns use Decisions when confident and fall back when unsure, failing or slow passed");
 }
 
+// A ChatGPT sign-in whose refresh token the provider rejects (2026-10-13: the
+// reply was the raw "Error: 401 : {...refresh_token_expired...}" JSON) fails the
+// turn with a plain sign-in-again message and drops the dead credentials, so the
+// sidebar offers the sign-in choices instead of failing every later turn.
+async function assertExpiredChatGPTSignInAsksToSignInAgain() {
+	installChromeStorageStub();
+	globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings = {
+		...globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings,
+		authMode: "oauth",
+		aiProvider: "openai-codex",
+		aiModel: "gpt-6-luna",
+		oauthCredentials: { "openai-codex": { refresh: "rt-test", access: "at-test", expires: 1, accountId: "acct-test" } },
+	};
+	const originalFetch = globalThis.fetch;
+	const tokenRequests = [];
+	globalThis.fetch = async (url, init = {}) => {
+		if (String(url).startsWith("https://auth.openai.com/oauth/token")) {
+			tokenRequests.push(String(init.body || ""));
+			return new Response(JSON.stringify({ error: { message: "Your session has expired. Please log in again.", type: "invalid_request_error", param: null, code: "refresh_token_expired" } }), { status: 401 });
+		}
+		throw new Error(`unexpected fetch in expired sign-in test: ${url}`);
+	};
+	try {
+		const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+		const runtime = createOnhandBrowserRuntime(createReplayHost());
+		assert.equal((await runtime.getState()).preferences.hasOAuthCredentials, true, "fixture: signed in before the turn");
+		await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+		const state = await waitForRuntimeCompletion(runtime);
+		const turn = state.turns.at(-1);
+		assert.ok(tokenRequests.some((body) => /grant_type=refresh_token/.test(body)), "the turn tried to refresh the expired access token");
+		assert.equal(turn.error, true);
+		assert.match(turn.reply, /^Error: Your ChatGPT sign-in expired\. Sign in again/);
+		assert.doesNotMatch(turn.reply, /refresh_token_expired|\{/, "no raw provider JSON in the reply");
+		assert.equal(state.preferences.hasOAuthCredentials, false, "the dead sign-in is dropped so the sidebar offers sign-in again");
+		assert.equal(globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings.oauthCredentials["openai-codex"], undefined, "the dropped credentials are saved");
+		assert.equal(
+			test.humanizeProviderErrorMessageForTest('401 : {"error":{"message":"Your session has expired. Please log in again."}}'),
+			"Your session has expired. Please log in again.",
+			"fetch's empty statusText leaves \"401 : {...}\", which must unwrap too",
+		);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+	console.log("An expired ChatGPT sign-in asks to sign in again passed");
+}
+
 // Spoken page commands Live hands off ("next page", "show me the next
 // highlight", "turn on Learning Mode") run directly instead of as an agent
 // turn. Decisions picks among the actions valid right now; anything else,
@@ -6023,6 +6069,15 @@ async function assertLearnerStateUpdates() {
 		);
 		assert.equal(humanizeProviderErrorMessageForTest("The model returned an empty answer."), "The model returned an empty answer.");
 		assert.equal(humanizeProviderErrorMessageForTest("500: not-json{"), "500: not-json{");
+		// A bare formula that missed fails fast instead of spending the tool budget
+		// on retries and a page scan (2026-10-14: a Wikipedia formula timed out and
+		// the timeout blocked every later highlight on the tab).
+		const { isFormulaOnlyHighlightTextForTest: formulaOnly } = __browserRuntimeTest;
+		assert.equal(formulaOnly("f̂(ξ) = ∫₋∞∞ f(x)e⁻ⁱ²πξx dx"), true);
+		assert.equal(formulaOnly("√d_k"), true);
+		assert.equal(formulaOnly("For an integrable function f(x), this article takes the definition:"), false, "a sentence around a formula still gets the normal retries");
+		assert.equal(formulaOnly("Bayes theorem: p(W|D)=p(D|W)P(W)/p(D)"), true);
+		assert.equal(formulaOnly("Adam converges as fast as Adagrad"), false);
 		const toggledOff = setLearnerStateModeForTest(staleMdnCheckState, "answer");
 		assert.equal(toggledOff.openChecks.length, 0, "toggling Learning mode off resets open checks (behavior doc \u00a75.4)");
 		assert.equal(toggledOff.conceptsIntroduced.length, 0, "toggling Learning mode off resets concepts");
@@ -12519,6 +12574,7 @@ async function main() {
 	await assertChromeWebStoreTabGetsPlainContextNote();
 	await assertTurnsUseDecisionsWhenConfident();
 	await assertVoiceCommandsRunDirectly();
+	await assertExpiredChatGPTSignInAsksToSignInAgain();
 	await assertAssistantStreamingTextBlocksStaySeparated();
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();

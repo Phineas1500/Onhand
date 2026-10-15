@@ -134,6 +134,11 @@
 	let authStatusKind = "";
 	// A question asked before the first-run choice waits in the composer.
 	let pendingAuthPrompt = false;
+	// The runtime drops a sign-in whose refresh token was rejected and fails the
+	// turn with this message (BrowserOAuthSignInExpiredError); the question is
+	// put back once per failed turn.
+	const SIGN_IN_EXPIRED_PATTERN = /\bsign-in expired\b/i;
+	let restoredSignInExpiredTurnId = "";
 	let sidebarTheme = "light";
 	let attachmentDrafts = [];
 	let messageTurnCache = [];
@@ -3877,10 +3882,28 @@
 		return Boolean(preferences.hasAiApiKey || preferences.hasOAuthCredentials || preferences.hasSelectedProviderApiKey);
 	}
 
+	function latestSignInExpiredTurn(state) {
+		const turns = Array.isArray(state?.turns) ? [...state.turns] : [];
+		const currentTurn = deriveCurrentTurn(state);
+		if (currentTurn && !turns.some((turn) => turn?.id === currentTurn.id)) turns.push(currentTurn);
+		const latest = turns.at(-1);
+		return latest?.error && !latest.pending && SIGN_IN_EXPIRED_PATTERN.test(String(latest.reply || "")) ? latest : null;
+	}
+
 	function renderAuthPanel(state) {
 		if (!(authPanelEl instanceof HTMLElement)) return;
 		const hiddenByView = replayState.open || pageIndexEl.hidden === false;
 		const needsAuth = !hasUsableOnhandAuth(state);
+		const expiredTurn = needsAuth ? latestSignInExpiredTurn(state) : null;
+		// Put the failed question back so signing in again sends it.
+		if (expiredTurn && restoredSignInExpiredTurnId !== String(expiredTurn.id || "")) {
+			restoredSignInExpiredTurnId = String(expiredTurn.id || "");
+			const question = String(expiredTurn.userPrompt || "").trim();
+			if (question && !/^\[Voice\]/i.test(question) && !input.value.trim()) {
+				input.value = question;
+				pendingAuthPrompt = true;
+			}
+		}
 		if (!needsAuth && pendingAuthPrompt) {
 			pendingAuthPrompt = false;
 			if (input.value.trim() || attachmentDrafts.length) queueMicrotask(submitComposerInput);
@@ -3891,11 +3914,15 @@
 			return;
 		}
 		const statusClass = authStatusKind ? ` ${escapeAttribute(authStatusKind)}` : "";
-		const authCopy = pendingAuthPrompt
-			? "Pick how Onhand should run, and your question will be sent right away."
-			: "Pick how Onhand should run. You can change this anytime in options.";
+		const authCopy = expiredTurn
+			? pendingAuthPrompt
+				? "Your ChatGPT sign-in expired. Sign in again, or pick another option, and your question will be sent right away."
+				: "Your ChatGPT sign-in expired. Sign in again, or pick another way to run Onhand."
+			: pendingAuthPrompt
+				? "Pick how Onhand should run, and your question will be sent right away."
+				: "Pick how Onhand should run. You can change this anytime in options.";
 		authPanelEl.innerHTML = `
-			<div class="onhand-auth-title">Get started</div>
+			<div class="onhand-auth-title">${expiredTurn ? "Sign in again" : "Get started"}</div>
 			<p class="onhand-auth-copy${pendingAuthPrompt ? " pending" : ""}">${authCopy}</p>
 			<div class="onhand-auth-choices">
 				<button id="authFreeTierButton" class="onhand-auth-choice" type="button" ${authSigningIn ? "disabled" : ""}>
@@ -5616,6 +5643,8 @@
 
 		function renderErrorReportButton(turn) {
 			if (!turn?.error || turn?.pending) return "";
+			// An expired sign-in is fixed by signing in again, not by a bug report.
+			if (SIGN_IN_EXPIRED_PATTERN.test(String(turn?.reply || ""))) return "";
 			const turnId = String(turn?.id || "").trim();
 			if (!turnId) return "";
 			const reportId = String(turn?.errorReport?.report_id || turn?.errorReport?.reportId || "").trim();

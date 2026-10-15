@@ -5490,19 +5490,22 @@ const createPageToolkit = (options = {}) => {
 		return null;
 	};
 
+	// Only the reader's own markup or name counts. A "Google Scholar" label alone
+	// is not a signal: journal article pages (Nature, Springer, ...) put a
+	// "Google Scholar" link under every reference, and highlighting on them failed
+	// as an unsupported PDF surface.
 	const isGoogleScholarPdfReader = () => {
+		if (document.querySelector(".gsr-page, .gsr-text-ctn")) return true;
 		const text = normalizeText(
 			[
 				document.title,
-				document.querySelector('[aria-label*="Google Scholar" i]')?.getAttribute?.("aria-label"),
-				document.querySelector('[title*="Google Scholar" i]')?.getAttribute?.("title"),
-				document.querySelector('[aria-label*="Scholar" i]')?.getAttribute?.("aria-label"),
-				document.querySelector('[title*="Scholar" i]')?.getAttribute?.("title"),
+				document.querySelector('[aria-label*="Scholar PDF Reader" i]')?.getAttribute?.("aria-label"),
+				document.querySelector('[title*="Scholar PDF Reader" i]')?.getAttribute?.("title"),
 			]
 				.filter(Boolean)
 				.join(" "),
 		);
-		return /\bgoogle scholar\b|\bscholar pdf reader\b/i.test(text);
+		return /\bscholar pdf reader\b/i.test(text);
 	};
 
 	const hasGoogleScholarReaderFrameEmbed = () => {
@@ -7294,6 +7297,11 @@ const createPageToolkit = (options = {}) => {
 
 	const compactMathSourceSearchText = (value) => compactHighlightSearchText(stripTexMarkupForSearch(value));
 
+	// A sentence that only contains some notation ("keys of dimension d_k, and
+	// values of dimension d_v") is prose: its mark belongs on the sentence's
+	// paragraph, not on one formula inside it (which marked KaTeX's hidden copy).
+	const isProseDominantHighlightQuery = (value) => (String(value || "").match(/[A-Za-z]{3,}/g) || []).length >= 6;
+
 	const isMathLikeHighlightQuery = (value) => {
 		const text = String(value || "").trim();
 		if (!text) return false;
@@ -7912,7 +7920,11 @@ const createPageToolkit = (options = {}) => {
 
 		const findMathHighlightTargetForElement = (element) => {
 			if (!(element instanceof Element)) return null;
-			const mathElement = element.matches?.(MATH_CONTAINER_SELECTOR) ? element : element.closest?.(MATH_CONTAINER_SELECTOR);
+			let mathElement = element.matches?.(MATH_CONTAINER_SELECTOR) ? element : element.closest?.(MATH_CONTAINER_SELECTOR);
+			// KaTeX and MathJax keep a visually hidden MathML copy for screen readers
+			// inside their visible container; a mark on that copy shows nothing.
+			const renderedContainer = mathElement?.closest?.(".katex, mjx-container, .MathJax");
+			if (renderedContainer instanceof Element) mathElement = renderedContainer;
 			if (!(mathElement instanceof Element) || !isVisible(mathElement)) return null;
 			const displayTarget = mathElement.closest?.(DISPLAY_MATH_HIGHLIGHT_TARGET_SELECTOR);
 			const target = displayTarget instanceof Element ? displayTarget : mathElement;
@@ -7950,11 +7962,12 @@ const createPageToolkit = (options = {}) => {
 				}
 			}
 			if (!candidates.length) return null;
-			if (!isMathLikeHighlightQuery(rawQuery)) {
+			if (!isMathLikeHighlightQuery(rawQuery) || isProseDominantHighlightQuery(rawQuery)) {
 				const sharedListItem = getSharedListItemForRange(range);
 				if (sharedListItem && isVisible(sharedListItem)) return sharedListItem;
 				const container = common?.closest?.(ANNOTATION_CONTAINER_SELECTOR);
 				if (container instanceof Element && isVisible(container)) return container;
+				if (isProseDominantHighlightQuery(rawQuery)) return null;
 			}
 			return candidates
 				.map((element) => ({ element, rect: element.getBoundingClientRect() }))

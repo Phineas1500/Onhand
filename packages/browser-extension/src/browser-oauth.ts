@@ -41,6 +41,20 @@ interface CallbackAuthResult {
 	redirectUrl: string;
 }
 
+// The provider rejected the saved refresh token (expired, revoked, or already
+// used), so only a new sign-in restores access.
+export class BrowserOAuthSignInExpiredError extends Error {
+	readonly code = "oauth_sign_in_expired";
+	constructor(readonly providerId: string) {
+		super(
+			providerId === "openai-codex"
+				? "Your ChatGPT sign-in expired. Sign in again to keep using your ChatGPT plan."
+				: "Your sign-in expired. Sign in again in Onhand options.",
+		);
+		this.name = "BrowserOAuthSignInExpiredError";
+	}
+}
+
 const OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
 const OAUTH_EXPIRY_SKEW_MS = 5 * 60 * 1000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
@@ -128,7 +142,10 @@ async function fetchJson(url: string, init: RequestInit = {}) {
 		// Keep the raw body for the error path below.
 	}
 	if (!response.ok) {
-		throw new Error(`${response.status} ${response.statusText}: ${text || "empty response"}`);
+		const error = new Error(`${response.status} ${response.statusText}: ${text || "empty response"}`) as Error & { status?: number; body?: string };
+		error.status = response.status;
+		error.body = text;
+		throw error;
 	}
 	return json;
 }
@@ -299,15 +316,25 @@ async function loginOpenAICodex(options: BrowserOAuthSignInOptions): Promise<Bro
 }
 
 async function refreshOpenAICodexToken(credentials: BrowserOAuthCredentials): Promise<BrowserOAuthCredentials> {
-	const tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
-		method: "POST",
-		headers: { "Content-Type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({
-			grant_type: "refresh_token",
-			refresh_token: credentials.refresh,
-			client_id: OPENAI_CODEX.clientId,
-		}),
-	});
+	let tokenData: any;
+	try {
+		tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
+			method: "POST",
+			headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				refresh_token: credentials.refresh,
+				client_id: OPENAI_CODEX.clientId,
+			}),
+		});
+	} catch (error) {
+		// e.g. 401 {"error":{"code":"refresh_token_expired"}}, or 400 invalid_grant.
+		const { status, body } = error as { status?: number; body?: string };
+		if ((status === 400 || status === 401) && /refresh_token|invalid_grant/i.test(String(body || ""))) {
+			throw new BrowserOAuthSignInExpiredError("openai-codex");
+		}
+		throw error;
+	}
 	if (!tokenData?.access_token || !tokenData?.refresh_token) {
 		throw new Error("OpenAI token refresh did not return access and refresh tokens.");
 	}

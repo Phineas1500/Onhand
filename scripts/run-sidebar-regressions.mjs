@@ -2270,6 +2270,43 @@ async function assertPromptBeforeFirstRunChoiceWaits() {
 	dom.window.close();
 }
 
+async function assertExpiredSignInOffersSignInAgain() {
+	// The runtime drops a ChatGPT sign-in whose refresh token was rejected and
+	// fails the turn with "sign-in expired". The panel asks to sign in again,
+	// puts the question back, and sends it once a choice lands.
+	const runtimeMessages = [];
+	const state = createState();
+	state.preferences.hasOAuthCredentials = false;
+	state.turns.push({
+		id: "turn-expired",
+		userPrompt: "What does this page say?",
+		reply: "Error: Your ChatGPT sign-in expired. Sign in again to keep using your ChatGPT plan.",
+		activities: [],
+		pageActions: [],
+		pending: false,
+		error: true,
+		createdAt: "2026-10-14T10:00:00.000Z",
+	});
+	const dom = await renderSidebar(state, runtimeMessages);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const authPanel = shadow.getElementById("authPanel");
+	assert.equal(authPanel.hidden, false);
+	assert.match(authPanel.querySelector(".onhand-auth-title").textContent, /Sign in again/);
+	assert.match(authPanel.textContent, /ChatGPT sign-in expired/);
+	assert.equal(shadow.getElementById("input").value, "What does this page say?", "the failed question is put back");
+	assert.equal(shadow.querySelector('[data-error-report-turn-id="turn-expired"]'), null, "an expired sign-in is not offered as a bug report");
+	state.preferences.hasOAuthCredentials = true;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	const submitted = runtimeMessages.filter((message) => message.type === "sidebar:submit-prompt");
+	assert.equal(submitted.length, 1, "signing in again sends the question once");
+	assert.equal(submitted[0].prompt, "What does this page say?");
+	dom.window.close();
+}
+
 async function assertRealtimeApiKeyErrorOpensOptions() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
@@ -2809,6 +2846,7 @@ await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
+await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();

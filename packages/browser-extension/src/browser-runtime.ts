@@ -15,6 +15,7 @@ import {
 	type DevelopmentAgentObserver,
 } from "./observability/development-agent-observer";
 import {
+	BrowserOAuthSignInExpiredError,
 	getBrowserOAuthApiKey,
 	getBrowserOAuthProvider,
 	getBrowserOAuthProviders,
@@ -1481,6 +1482,18 @@ function weakApproximateRetryLanding(originalText: string, highlighted: any) {
 		"Quote the page's exact words for the point you mean, or say the page does not support it.",
 	].join(" ");
 }
+
+// Rendered math rarely reads back as the same text, so a bare formula
+// ("f̂(ξ) = ∫ f(x)e⁻ⁱ²πξx dx") that missed won't match on a retry either. Its
+// retries and page scan once used a long Wikipedia article's whole tool budget,
+// and the timeout then blocked every later highlight on that tab.
+function isFormulaOnlyHighlightText(value: unknown) {
+	const text = String(value || "").trim();
+	return Boolean(text) && (text.match(/[A-Za-z]{3,}/g) || []).length < 3 && /[=∫∑∏√^_\\]|[⁰-⁹₀-₉]/u.test(text);
+}
+
+const FORMULA_HIGHLIGHT_MISS_MESSAGE =
+	"No visible text matched that formula: rendered math rarely reads back as the same text. Highlight the sentence that introduces or names the formula instead.";
 
 function buildHighlightRetryCandidates(value: unknown) {
 	const raw = String(value || "").trim();
@@ -4031,6 +4044,7 @@ function buildCitedSourceRetryPrompt(request: any, assistantText: string) {
 	return [
 		"You described what the cited source says without opening it. Follow the page's own citation now: call browser_find_citation with the claim's exact text to get the reference entry and its links, navigate to one of those exact URLs, read it, and answer from what the source itself says, with a highlight on the supporting passage there.",
 		"Never compose or guess a source URL from memory. If the citation has no link or the link cannot be opened, say that plainly and answer from the page's own wording, labeled as the page's wording.",
+		"The user never saw the draft below. Write the complete answer to their question on its own, without referring to an earlier answer.",
 		`Original user question: ${stripVoicePromptPrefix(request?.displayPrompt || "")}`,
 		assistantText ? `Draft answer (its claims about the source are unverified; keep them only if the source confirms them):\n${truncateStructuredText(assistantText, 2000)}` : "",
 	].filter(Boolean).join("\n\n");
@@ -5689,7 +5703,8 @@ function shouldRecordFallbackOpenCheckForRequest(request: any, reply: string) {
 function humanizeProviderErrorMessage(rawMessage: unknown) {
 	const raw = String(rawMessage || "").trim();
 	if (!raw) return "";
-	const match = raw.match(/^(\d{3}):\s*(\{[\s\S]*\})$/);
+	// "401: {...}" or, from fetch with an empty statusText, "401 : {...}".
+	const match = raw.match(/^(\d{3})(?: [^:{]*)?:\s*(\{[\s\S]*\})$/);
 	if (!match) return raw;
 	try {
 		const body = JSON.parse(match[2]);
@@ -6981,7 +6996,7 @@ const DECISIONS_REQUEST_WORDING = {
 	asksForHint:
 		"True when the user wants a hint rather than the answer: a nudge, a clue, a pointer in the right direction, or help getting started without the solution being given away, in any language. False when the user wants the answer or a full solution, asks about hints or clues that are content of the page, or asks for an explanation with no wish to work it out themselves.",
 	asksAboutCitedSource:
-		"True when the user asks what a source cited or linked by the open page actually says: the study, paper, report, or reference behind a claim, a numbered citation or footnote, or whether that source supports the claim, in any language. False when the user asks Onhand to cite sources for its own answer, asks which sources the page lists, asks whether the page itself is reliable, or wants other sources found.",
+		"True when the user asks what a source cited or linked by the open page actually says: the study, paper, report, or reference behind a claim, a numbered citation or footnote, or whether that source supports the claim, in any language. False when the user asks what the open page or document itself says or claims, even when it is a paper, study, or report (\"does this paper say...\", \"what does the study find?\"); asks Onhand to cite sources for its own answer; asks which sources the page lists; asks whether the page itself is reliable; or wants other sources found.",
 };
 type DecisionsRequestAnswers = Partial<Record<keyof typeof DECISIONS_REQUEST_WORDING, number>>;
 const decisionsRequestAnswersByKey = new Map<string, DecisionsRequestAnswers>();
@@ -11280,6 +11295,7 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
 	createToolsForTest: createTools,
 	renderBrowserContextDetailsForTest: renderBrowserContextDetails,
 	pageInjectionNotice,
@@ -12017,6 +12033,9 @@ function createTools(
 					}
 				} catch (error) {
 					if (commandName !== "highlight_text") throw error;
+					if (isFormulaOnlyHighlightText((params as any)?.text) && /No visible text matched/i.test(String((error as any)?.message || error))) {
+						throw new Error(FORMULA_HIGHLIGHT_MISS_MESSAGE);
+					}
 					const attemptedCandidateKeys = new Set<string>();
 					for (const candidate of buildHighlightRetryCandidates((params as any)?.text)) {
 						attemptedCandidateKeys.add(candidate.toLowerCase());
@@ -15115,9 +15134,29 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (settings.authMode !== "oauth") return undefined;
 		const credentials = settings.oauthCredentials?.[provider];
 		if (!credentials) return undefined;
-		const result = await getBrowserOAuthApiKey(provider, credentials, {
-			onProgress: (event) => host.notifyAuthProgress?.(event),
-		});
+		let result: Awaited<ReturnType<typeof getBrowserOAuthApiKey>>;
+		try {
+			result = await getBrowserOAuthApiKey(provider, credentials, {
+				onProgress: (event) => host.notifyAuthProgress?.(event),
+			});
+		} catch (error) {
+			// A dead refresh token can't be retried, so drop it: the sidebar then
+			// shows the sign-in choices again instead of failing every turn.
+			if (error instanceof BrowserOAuthSignInExpiredError) {
+				const nextOAuthCredentials = { ...(settings.oauthCredentials || {}) };
+				delete nextOAuthCredentials[provider];
+				settings.oauthCredentials = nextOAuthCredentials;
+				store.settings = settings;
+				await saveStore(store, {});
+				await publishState({
+					preferences: {
+						runtime: "browser-extension",
+						...buildPublicSettings(settings),
+					},
+				});
+			}
+			throw error;
+		}
 		if (JSON.stringify(result.credentials) !== JSON.stringify(credentials)) {
 			settings.oauthCredentials = {
 				...(settings.oauthCredentials || {}),

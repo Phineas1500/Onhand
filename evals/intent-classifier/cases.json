@@ -5419,6 +5419,34 @@
     "asksAboutCitedSource": false
    },
    "source": "2026-10-07 quiz, hint and cited-source requests, held out from wording tuning"
+  },
+  {
+   "prompt": "Does this paper say Adam always converges faster than SGD?",
+   "page": {
+    "title": "arXiv:1412.6980 — Adam: A Method for Stochastic Optimization",
+    "url": "https://arxiv.org/pdf/1412.6980"
+   },
+   "expect": {
+    "pageScoped": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": false
+   },
+   "source": "2026-10-14 student-pages eval: read as a cited-source question, so a retry chased a reference and replaced the answer"
+  },
+  {
+   "prompt": "Does reference [9] actually say Adam converges faster than SGD?",
+   "page": {
+    "title": "arXiv:1412.6980 — Adam: A Method for Stochastic Optimization",
+    "url": "https://arxiv.org/pdf/1412.6980"
+   },
+   "expect": {
+    "pageScoped": true,
+    "asksForQuiz": false,
+    "asksForHint": false,
+    "asksAboutCitedSource": true
+   },
+   "source": "2026-10-14 counterpart: a numbered reference is a cited source"
   }
  ]
 }
