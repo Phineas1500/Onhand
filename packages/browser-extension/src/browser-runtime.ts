@@ -1483,6 +1483,17 @@ function weakApproximateRetryLanding(originalText: string, highlighted: any) {
 	].join(" ");
 }
 
+// A fuzzy landing that leaves out much of the quote may not support the
+// point, so the model is told (see the highlight result text). Flagging
+// near-exact landings too ("frequency variable must have..." for "The
+// frequency variable must have...") made the model drop correct marks and
+// redo a Bill of Rights turn's highlights: 7 model calls instead of 2.
+function isLooseHighlightLanding(quote: unknown, highlighted: any) {
+	const annotation = highlighted?.annotation || {};
+	if (!annotation.approximate || annotation.fallback || highlighted?.highlightRetry?.originalText) return false;
+	return orderedSignificantWordOverlap(quote, annotation.matchedText || "") < 0.75;
+}
+
 // Rendered math rarely reads back as the same text, so a bare formula
 // ("f̂(ξ) = ∫ f(x)e⁻ⁱ²πξx dx") that missed won't match on a retry either. Its
 // retries and page scan once used a long Wikipedia article's whole tool budget,
@@ -9843,8 +9854,8 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 			// A paraphrase lands on the closest wording, which can sit in another
 			// section: on Wikipedia's Fourier page a made-up definition sentence
 			// marked a phrase under "Sampling", and the model put its note there.
-			const closest = details.annotation?.approximate && !details.annotation?.fallback && !details.highlightRetry?.originalText
-				? " These are the closest words on the page, not your quote: cite or note this mark only if it says what your point needs; otherwise leave it uncited and quote the page's exact words."
+			const closest = details.looseLanding
+				? " These are the closest words on the page, not your quote. Keep and cite this mark if it says what your point needs, even in other words; if it doesn't, leave it uncited and quote the page's exact words."
 				: "";
 			return `Highlighted ${JSON.stringify(truncate(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}${closest}`;
 		}
@@ -11483,6 +11494,7 @@ export const __browserRuntimeTest = {
 	promptAsksForPageNoteTakingForTest: promptAsksForPageNoteTaking,
 	buildNoPageChangesGuardResultForTest: buildNoPageChangesGuardResult,
 	weakApproximateRetryLandingForTest: weakApproximateRetryLanding,
+	isLooseHighlightLandingForTest: isLooseHighlightLanding,
 	stripDisplayMathDelimitersForTest: stripDisplayMathDelimiters,
 	buildStructuredHighlightBudgetGuardResultForTest: buildStructuredHighlightBudgetGuardResult,
 	buildStructuredNoteBudgetGuardResultForTest: buildStructuredNoteBudgetGuardResult,
@@ -12132,6 +12144,7 @@ function createTools(
 					}
 					if (!result) throw lastError;
 				}
+				if (commandName === "highlight_text" && isLooseHighlightLanding((params as any)?.text, result)) result = { ...result, looseLanding: true };
 				return {
 					content: [{ type: "text", text: toolResultTextForModel(name, result) }],
 					details: result,

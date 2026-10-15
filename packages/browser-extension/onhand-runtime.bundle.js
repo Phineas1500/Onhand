@@ -87437,6 +87437,11 @@ function weakApproximateRetryLanding(originalText, highlighted) {
     "Quote the page's exact words for the point you mean, or say the page does not support it."
   ].join(" ");
 }
+function isLooseHighlightLanding(quote, highlighted) {
+  const annotation = highlighted?.annotation || {};
+  if (!annotation.approximate || annotation.fallback || highlighted?.highlightRetry?.originalText) return false;
+  return orderedSignificantWordOverlap(quote, annotation.matchedText || "") < 0.75;
+}
 function isFormulaOnlyHighlightText(value) {
   const text = String(value || "").trim();
   return Boolean(text) && (text.match(/[A-Za-z]{3,}/g) || []).length < 3 && /[=∫∑∏√^_\\]|[⁰-⁹₀-₉]/u.test(text);
@@ -93260,7 +93265,7 @@ ${nearby}` : "", message].filter(Boolean).join("\n");
       const annotationId = details.annotation?.annotationId || "(unknown annotation)";
       const matchedText = details.annotation?.matchedText || details.annotation?.text || "the requested text";
       const fallback = details.highlightRetry?.originalText ? " Original highlight text did not match as one visible span; only this smaller item is highlighted." : "";
-      const closest = details.annotation?.approximate && !details.annotation?.fallback && !details.highlightRetry?.originalText ? " These are the closest words on the page, not your quote: cite or note this mark only if it says what your point needs; otherwise leave it uncited and quote the page's exact words." : "";
+      const closest = details.looseLanding ? " These are the closest words on the page, not your quote. Keep and cite this mark if it says what your point needs, even in other words; if it doesn't, leave it uncited and quote the page's exact words." : "";
       return `Highlighted ${JSON.stringify(truncate2(matchedText, 500))} on ${formatCompactTab(tab)}. annotationId: ${annotationId}.${fallback}${closest}`;
     }
     case "browser_show_note": {
@@ -94590,6 +94595,7 @@ var __browserRuntimeTest = {
   promptAsksForPageNoteTakingForTest: promptAsksForPageNoteTaking,
   buildNoPageChangesGuardResultForTest: buildNoPageChangesGuardResult,
   weakApproximateRetryLandingForTest: weakApproximateRetryLanding,
+  isLooseHighlightLandingForTest: isLooseHighlightLanding,
   stripDisplayMathDelimitersForTest: stripDisplayMathDelimiters,
   buildStructuredHighlightBudgetGuardResultForTest: buildStructuredHighlightBudgetGuardResult,
   buildStructuredNoteBudgetGuardResultForTest: buildStructuredNoteBudgetGuardResult,
@@ -95142,6 +95148,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           }
           if (!result) throw lastError;
         }
+        if (commandName === "highlight_text" && isLooseHighlightLanding(params?.text, result)) result = { ...result, looseLanding: true };
         return {
           content: [{ type: "text", text: toolResultTextForModel(name, result) }],
           details: result

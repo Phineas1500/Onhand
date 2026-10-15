@@ -2421,12 +2421,17 @@ async function assertNoPageChangesIsEnforced() {
 	assert.equal(guard("browser_highlight_text", "highlight_text", "Quiz me and highlight where each answer is."), null, "a quiz that asks for highlights gets them");
 	assert.equal(guard("browser_highlight_text", "highlight_text", "1. pigments absorb light 2. shorter 3. green is reflected"), null, "the answers turn is graded with highlights");
 
-	// A fuzzy landing says so; a normalization-only one (citation markers,
-	// spacing) does not.
-	const landed = (annotation) => formatToolResultForModel("browser_highlight_text", { tab: { id: 7, title: "Fourier transform", url: "https://en.wikipedia.org/wiki/Fourier_transform" }, annotation: { annotationId: "a1", matchedText: "Fourier transform of an integrable function", ...annotation } });
-	assert.match(landed({ approximate: true }), /closest words on the page, not your quote/);
-	assert.doesNotMatch(landed({ approximate: true, fallback: "citation-stripped-text" }), /closest words/);
-	assert.doesNotMatch(landed({ approximate: false }), /closest words/);
+	// A loose fuzzy landing says so; a near-exact or normalization-only one
+	// (citation markers, spacing) does not.
+	const { isLooseHighlightLandingForTest: isLoose } = __browserRuntimeTest;
+	const landing = (matchedText, extra = {}) => ({ annotation: { annotationId: "a1", approximate: true, matchedText, ...extra } });
+	assert.equal(isLoose("The Sixth Amendment guarantees the rights of criminal defendants, including a speedy and public trial and an impartial jury.", landing("Sixth Amendment establishes a number of rights of the defendant in a criminal trial")), true, "a summary that shares a third of the quote is loose");
+	assert.equal(isLoose("The frequency variable must have inverse units to the units of the original function's domain (typically named t or x).", landing("frequency variable must have inverse units to the units of the original function's domain (typically named")), false, "a near-exact landing is not");
+	assert.equal(isLoose("The Sixth Amendment guarantees the rights of criminal defendants.", landing("Sixth Amendment establishes rights", { fallback: "citation-stripped-text" })), false, "a normalization fallback is not");
+	assert.equal(isLoose("The Sixth Amendment guarantees the rights of criminal defendants.", { annotation: { approximate: false, matchedText: "x" } }), false);
+	const landed = (extra) => formatToolResultForModel("browser_highlight_text", { tab: { id: 7, title: "Fourier transform", url: "https://en.wikipedia.org/wiki/Fourier_transform" }, annotation: { annotationId: "a1", approximate: true, matchedText: "Fourier transform of an integrable function" }, ...extra });
+	assert.match(landed({ looseLanding: true }), /closest words on the page, not your quote\. Keep and cite this mark if it says what your point needs, even in other words/);
+	assert.doesNotMatch(landed({}), /closest words/);
 
 	// PDF viewer: "no selection" is not a failed handoff, and an already-open
 	// viewer says how to continue (models reopened it twice).
