@@ -3,9 +3,9 @@
 	"content_security_policy": {
 		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
 	},
-	"name": "Onhand",
-	"version": "0.4.7",
-	"description": "Ask about any webpage or PDF and get answers anchored to the source — highlights, notes, citation chasing. Free to try.",
+	"name": "Onhand: Chat with PDFs & Webpages, Answers Highlighted",
+	"version": "0.4.8",
+	"description": "Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up.",
 	"minimum_chrome_version": "116",
 	"icons": {
 		"16": "icons/onhand-16.png",

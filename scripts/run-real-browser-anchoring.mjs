@@ -198,7 +198,7 @@ async function openContext(port) {
 				discoverySession = (await cdp.send("Target.attachToTarget", { targetId: target.targetId, flatten: true })).sessionId;
 				const result = await cdp.send("Runtime.evaluate", { expression: "chrome.runtime.getManifest()", returnByValue: true }, discoverySession);
 				const manifest = result.result?.value;
-				if (manifest?.name === "Onhand" && manifest.background?.service_worker === "background.js") extId = new URL(target.url).host;
+				if (/^Onhand\b/.test(manifest?.name || "") && manifest.background?.service_worker === "background.js") extId = new URL(target.url).host;
 			} catch {
 				// The worker may be restarting while the extension loads.
 			} finally {

@@ -3,10 +3,18 @@
 Source of truth for the Onhand store listing. Paste the sections below
 into the Chrome Web Store dashboard when updating the listing.
 
+## Name (75-character field)
+
+Onhand: Chat with PDFs & Webpages, Answers Highlighted
+
+The store name is the manifest `name`, so it changes only with a release.
+Chrome also shows it in its extensions menu and side panel picker.
+
 ## Summary (132-character field)
 
-Ask about any webpage or PDF and get answers anchored to the source —
-highlights, notes, citation chasing. Free to try.
+Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up.
+
+The summary is the manifest `description`, so it also changes only with a release.
 
 ## Detailed description
 
