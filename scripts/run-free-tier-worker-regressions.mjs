@@ -187,6 +187,69 @@ try {
 		assert.equal(f.events.filter((event) => event.indexes[0] === "chat_stream_cancelled").length, 1);
 	}
 
+	// A client disconnect before the response body exists must release the
+	// admission's concurrency slot, even when production stops the handler at
+	// its pending await. Two leaked slots fill the per-device cap of 2 for the
+	// 5-minute lease, so every later Onhand Free call fails as "busy".
+	{
+		const activeSlots = async (f) => {
+			let total = 0;
+			for (const [key, value] of await f.env.FREE_TIER_COST_LEDGER.getByName(day).storage.list({ prefix: "active" })) total += key === "active" ? 0 : value;
+			return total;
+		};
+		const cancelledEvents = (f) => f.events.filter((event) => event.indexes[0] === "chat_stream_cancelled").map((event) => event.blobs[14]);
+
+		// The admission commits, but the handler never resumes (production's
+		// clientDisconnected invocation); only the disconnect cleanup runs.
+		{
+			const f = fixture();
+			const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
+			let admitted = 0;
+			ledger.admit = async (entry) => { await DailyCostLedger.prototype.admit.call(ledger, entry); admitted++; return new Promise(() => {}); };
+			globalThis.fetch = async () => { throw new Error("A request cancelled during admission must not contact the provider"); };
+			const abort = new AbortController();
+			void worker.fetch(new Request(chatRequest(), { signal: abort.signal }), f.env, f.ctx);
+			while (!admitted) await new Promise((resolve) => setTimeout(resolve, 5));
+			assert.equal(await activeSlots(f), 1);
+			abort.abort();
+			await f.flush();
+			assert.equal(await activeSlots(f), 0, "an interrupted admission releases its slot by id");
+			assert.deepEqual(cancelledEvents(f), ["client_cancelled_during_admission"]);
+		}
+
+		// The handler does resume after admission: one cancellation, no provider call.
+		{
+			const f = fixture();
+			const ledger = f.env.FREE_TIER_COST_LEDGER.getByName(day);
+			const abort = new AbortController();
+			ledger.admit = async (entry) => { const result = await DailyCostLedger.prototype.admit.call(ledger, entry); abort.abort(); return result; };
+			globalThis.fetch = async () => { throw new Error("A cancelled request must not contact the provider"); };
+			const response = await worker.fetch(new Request(chatRequest(), { signal: abort.signal }), f.env, f.ctx);
+			await f.flush();
+			assert.equal(response.status, 499);
+			assert.equal(await activeSlots(f), 0);
+			assert.deepEqual(cancelledEvents(f), ["client_cancelled"]);
+			assert.equal(await f.cost(), 0);
+		}
+
+		// The provider request is dispatched and the handler never resumes from
+		// it: the cleanup still aborts it and releases the slot (the reservation
+		// stays as an uncertain charge, as in admission-regressions).
+		{
+			const f = fixture();
+			const abort = new AbortController();
+			let providerSignal;
+			globalThis.fetch = (url, init) => { providerSignal = init.signal; return new Promise(() => {}); };
+			void worker.fetch(new Request(chatRequest(), { signal: abort.signal }), f.env, f.ctx);
+			while (!providerSignal) await new Promise((resolve) => setTimeout(resolve, 5));
+			abort.abort();
+			await f.flush();
+			assert.equal(providerSignal.aborted, true, "the provider request is aborted");
+			assert.equal(await activeSlots(f), 0);
+			assert.equal(f.events.filter((event) => event.indexes[0] === "chat_stream_error").length, 1);
+		}
+	}
+
 	// Cancelling a JSON body still collects its final usage, without forwarding
 	// further bytes to the cancelled client.
 	{

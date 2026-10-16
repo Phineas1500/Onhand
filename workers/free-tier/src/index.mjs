@@ -19,6 +19,9 @@ const DEFAULT_CONCURRENT_REQUEST_CAP = 4;
 const DEFAULT_DEVICE_CONCURRENT_REQUEST_CAP = 2;
 // Shorter than the durable five-minute admission lease, including stream time.
 const UPSTREAM_REQUEST_TIMEOUT_MS = 4 * 60_000;
+// How long a disconnected request waits for its interrupted admission call
+// before releasing the admission by id instead.
+const ADMISSION_DISCONNECT_WAIT_MS = 3_000;
 const DEFAULT_DAILY_REQUEST_CAP = 150;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
@@ -287,6 +290,29 @@ async function ledgerOperation(env, day, method, entry) {
 		catch (error) {
 			if (attempt === 3) throw error;
 			await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+		}
+	}
+}
+
+function withTimeout(promise, ms) {
+	let timer;
+	return Promise.race([
+		promise,
+		new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), ms); }),
+	]).finally(() => clearTimeout(timer));
+}
+
+// A disconnect cut off the admission call, so its outcome is unknown: settle
+// the id if the ledger admitted it. "Unknown admission" means it has not, or
+// not yet, so look again briefly before giving up to the lease alarm.
+async function releaseInterruptedAdmission(env, day, id) {
+	for (let attempt = 1; attempt <= 3; attempt += 1) {
+		try {
+			await dailyCostLedger(env, day).settle({ day, id, noCharge: true });
+			return;
+		} catch (error) {
+			if (!/Unknown admission/.test(String(error?.message || error))) return;
+			await new Promise((resolve) => setTimeout(resolve, 500));
 		}
 	}
 }
@@ -667,10 +693,48 @@ async function handleChatCompletions(request, env, ctx) {
 	const accountingId = crypto.randomUUID();
 	let upstreamTimeoutMs = UPSTREAM_REQUEST_TIMEOUT_MS;
 	if (request.signal.aborted) return json(499, { error: { message: "Request cancelled." } });
+	const fieldsFor = (admission = null) => ({ ...telemetryIds, source, quotaBypassed, accountingDay, accountingId, deviceHash,
+		startedAtMs: startedAt, current: admission?.current ?? usage.current, cap: dailyRequestCap,
+		actionCount: admission?.turnCurrent ?? turnUsage.current });
+	// Until the response body takes over its own disconnect handling, a client
+	// disconnect stops this handler at whichever await it is in: production
+	// records the invocation as clientDisconnected and never runs the code after
+	// that await. A disconnect during admission (Onhand cancels its hedged
+	// classifier call that early) then held a device concurrency slot for the
+	// whole lease. The release therefore runs from ctx.waitUntil.
+	const preHeaderAbort = new AbortController();
+	let admissionTask = null;
+	let upstreamStarted = false;
+	let handedOff = false;
+	let disconnectCleanup = null;
+	const onEarlyDisconnect = () => {
+		if (handedOff || disconnectCleanup) return;
+		preHeaderAbort.abort(request.signal.reason);
+		disconnectCleanup = (async () => {
+			let admission = null;
+			try { admission = await withTimeout(admissionTask, ADMISSION_DISCONNECT_WAIT_MS); } catch {}
+			if (quotaBypassed || admission?.allowed) {
+				// A dispatched provider request may still bill, so it keeps its
+				// reservation as an uncertain charge; an undispatched one cannot.
+				await writeCompletionAnalyticsAndAccounting(ctx, env, ...(upstreamStarted
+					? ["chat_stream_error", { ...fieldsFor(admission), provider: "openai", status: 502, result: "error", errorCode: "upstream_fetch_error" }]
+					: ["chat_stream_cancelled", { ...fieldsFor(admission), status: 499, noCharge: true, result: "cancelled", errorCode: "client_cancelled" }]), request);
+			} else if (admissionTask && !admission) {
+				await releaseInterruptedAdmission(env, accountingDay, accountingId);
+				writeAnalytics(ctx, env, "chat_stream_cancelled", { ...fieldsFor(), status: 499, result: "cancelled", errorCode: "client_cancelled_during_admission" }, request);
+			}
+		})().catch(() => {});
+		if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(disconnectCleanup);
+	};
+	const stopEarlyDisconnect = () => {
+		handedOff = true;
+		request.signal.removeEventListener("abort", onEarlyDisconnect);
+	};
+	request.signal.addEventListener("abort", onEarlyDisconnect, { once: true });
 	if (!quotaBypassed) {
 		let admission;
 		try {
-			admission = await ledgerOperation(env, accountingDay, "admit", {
+			admission = await (admissionTask = ledgerOperation(env, accountingDay, "admit", {
 				day: accountingDay, id: accountingId, deviceHash,
 				dailyKey: `use:${token}:${accountingDay}`,
 				turnKey: turnModelCallKey(deviceHash, telemetryIds, accountingDay),
@@ -680,12 +744,15 @@ async function handleChatCompletions(request, env, ctx) {
 				reserve: envNumber(env, "REQUEST_COST_RESERVATION_USD", DEFAULT_REQUEST_COST_RESERVATION_USD),
 				concurrencyCap: envNumber(env, "CONCURRENT_REQUEST_CAP", DEFAULT_CONCURRENT_REQUEST_CAP),
 				deviceConcurrencyCap: envNumber(env, "DEVICE_CONCURRENT_REQUEST_CAP", DEFAULT_DEVICE_CONCURRENT_REQUEST_CAP),
-			});
+			}));
 		} catch {
+			if (disconnectCleanup) return json(499, { error: { message: "Request cancelled." } });
+			stopEarlyDisconnect();
 			writeAnalytics(ctx, env, "free_tier_accounting_failed", { ...telemetryIds, result: "error", status: 503, errorCode: "ledger_unavailable" }, request);
 			return json(503, { error: { message: "Onhand Free usage accounting is temporarily unavailable. Please try again shortly." } });
 		}
 		if (!admission.allowed) {
+			stopEarlyDisconnect();
 			const messages = {
 				daily_cost_cap: "Onhand Free has reached today's shared compute allowance, including requests still running. Try again shortly, or switch to your own API key in options.",
 				daily_request_cap: "You've reached today's Onhand Free limit. It resets tomorrow, or switch to your own API key in options.",
@@ -703,24 +770,24 @@ async function handleChatCompletions(request, env, ctx) {
 		turnUsage.current = admission.turnCurrent;
 		upstreamTimeoutMs = Math.min(UPSTREAM_REQUEST_TIMEOUT_MS, admission.expiresAt - Date.now() - 60_000);
 	}
-	const baseFields = { ...telemetryIds, source, quotaBypassed, accountingDay, accountingId, deviceHash,
-		startedAtMs: startedAt, current: usage.current, cap: dailyRequestCap, actionCount: turnUsage.current };
+	const baseFields = fieldsFor();
 	if (request.signal.aborted) {
-		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_cancelled", { ...baseFields, status: 499, noCharge: true, result: "cancelled" }, request);
+		// onEarlyDisconnect has scheduled the cancellation's accounting.
+		onEarlyDisconnect();
 		return json(499, { error: { message: "Request cancelled." } });
 	}
 	if (upstreamTimeoutMs <= 0) {
+		stopEarlyDisconnect();
 		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, status: 503, noCharge: true, result: "error", errorCode: "admission_expired" }, request);
 		return json(503, { error: { message: "The request took too long to start. Please try again." } });
 	}
-	// Stop a request whose provider has not returned headers yet. Once headers
-	// arrive, the stream finalizer handles disconnects (and bounded JSON drain).
-	const preHeaderAbort = new AbortController();
-	const abortBeforeHeaders = () => preHeaderAbort.abort(request.signal.reason);
-	request.signal.addEventListener("abort", abortBeforeHeaders, { once: true });
+	// A disconnect before the provider returns headers aborts this request via
+	// onEarlyDisconnect. Once headers arrive, the stream finalizer handles
+	// disconnects (and bounded JSON drain).
 	const upstreamDeadline = AbortSignal.any([AbortSignal.timeout(Math.floor(upstreamTimeoutMs)), preHeaderAbort.signal]);
 	const upstreamBody = prepareOpenAIRequestBody(body);
 	let upstream;
+	upstreamStarted = true;
 	try {
 		upstream = await fetch(OPENAI_CHAT_URL, {
 			method: "POST",
@@ -728,11 +795,16 @@ async function handleChatCompletions(request, env, ctx) {
 			body: JSON.stringify(upstreamBody), signal: upstreamDeadline,
 		});
 	} catch {
-		request.signal.removeEventListener("abort", abortBeforeHeaders);
+		if (disconnectCleanup) return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
+		stopEarlyDisconnect();
 		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, provider: "openai", status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
 		return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
 	}
-	request.signal.removeEventListener("abort", abortBeforeHeaders);
+	if (disconnectCleanup) {
+		upstream.body?.cancel().catch(() => {});
+		return json(499, { error: { message: "Request cancelled." } });
+	}
+	stopEarlyDisconnect();
 	const metricBase = {
 		...baseFields, status: upstream.status, durationMs: Date.now() - startedAt,
 		bodyBytes: raw.length, model: upstreamBody.model, provider: "openai",

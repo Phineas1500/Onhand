@@ -61,6 +61,8 @@ async function runLocalWorkerAttempt(modulePath, day) {
 				assert.equal(url.host, "api.openai.com");
 				assert.equal(input.model, "gpt-6-luna");
 				const payload = { id: `chatcmpl-runtime-${++generation}`, usage: { prompt_tokens: 0, completion_tokens: 500000 }, choices: [] };
+				if (input.messages?.[0]?.content === "slow-headers-fixture") await new Promise((resolve) => setTimeout(resolve, 3000));
+				if (input.messages?.[0]?.content === "free-usage-fixture") payload.usage = { prompt_tokens: 0, completion_tokens: 0 };
 				if (input.messages?.[0]?.content === "disconnect-fixture") {
 					let cancelled = false;
 					let remainingChunks = 20;
@@ -179,7 +181,31 @@ async function runLocalWorkerAttempt(modulePath, day) {
 		await ledger({ day: admissionDay, op: "observe", id: "after-release", generationId: "gen-runtime-late" });
 		await ledger({ day: admissionDay, op: "settle", id: "after-release", generationId: "gen-runtime-late", cost: 0.25, resolved: true });
 		assert.equal((await ledger({ day: admissionDay })).total, 0.25, "late provider ID must not re-add provisional usage");
-		console.log("Local workerd SQLite Durable Object integration: PASS (parallel updates, idempotency, legacy import, restart persistence, RPC, cap enforcement, SSE/JSON accounting, HTTP disconnect accounting, alarm reconciliation)");
+
+		// A client that disconnects before the provider returns headers (Onhand
+		// cancelling its hedged classifier call) cancels the Worker's request
+		// context. Its admission must still release the device's concurrency slot:
+		// two leaked slots filled the per-device cap of 2 for the 5-minute lease.
+		await mf.setOptions(options("100"));
+		const chatBody = (content) => ({ ...request(), body: JSON.stringify({ model: "openai/gpt-5.6-luna", stream: true, messages: [{ role: "user", content }] }) });
+		const directUrl = new URL("/v1/chat/completions", await mf.unsafeGetDirectURL());
+		const eventsSoFar = async () => (await (await mf.dispatchFetch("https://fixture.test/fixture-events")).json());
+		const terminalEvents = async () => (await eventsSoFar()).filter((event) => ["chat_stream_cancelled", "chat_stream_error"].includes(event)).length;
+		const terminalBefore = await terminalEvents();
+		for (const waitMs of [100, 400]) {
+			const early = new AbortController();
+			const pending = fetch(directUrl, { ...chatBody("slow-headers-fixture"), signal: early.signal }).catch(() => null);
+			await new Promise((resolve) => setTimeout(resolve, waitMs));
+			early.abort();
+			assert.equal(await pending, null, "the slow provider has not answered before the client leaves");
+		}
+		const earlyDeadline = Date.now() + 8000;
+		while (await terminalEvents() - terminalBefore < 2 && Date.now() < earlyDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
+		assert.equal(await terminalEvents() - terminalBefore, 2, "each disconnect before provider headers is finalized once");
+		const afterEarly = await fetch(directUrl, chatBody("free-usage-fixture"));
+		assert.equal(afterEarly.status, 200, `disconnects before provider headers must release their concurrency slots: ${await afterEarly.clone().text()}`);
+		await afterEarly.text();
+		console.log("Local workerd SQLite Durable Object integration: PASS (parallel updates, idempotency, legacy import, restart persistence, RPC, cap enforcement, SSE/JSON accounting, HTTP disconnect accounting, pre-header disconnect slot release, alarm reconciliation)");
 	} finally {
 		await mf.dispose();
 	}
