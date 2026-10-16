@@ -34,7 +34,8 @@ export async function runAdmissionRegressions({ fixture, handle, providerMock, p
 			assert.equal(await ledger.storage.get("active"), 4);
 			assert.equal(await ledger.storage.get("reserved"), 1);
 			assert.equal(await ledger.total(day), 0, "reserved dollars are not reported as actual cost");
-			await ledger.settle({ day, id: "burst-0", noCharge: true });
+			// Which 4 of the 20 get in depends on scheduling; release one that did.
+			await ledger.settle({ day, id: `burst-${admitted.findIndex((r) => r.allowed)}`, noCharge: true });
 			assert.equal((await ledger.admit(input("after-release", { deviceHash: "new-device" }))).allowed, true);
 		}
 		{
