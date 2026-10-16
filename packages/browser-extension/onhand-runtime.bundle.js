@@ -91935,6 +91935,9 @@ var DECISIONS_API_URL = "https://api.openai.com/v1/decisions";
 var DECISIONS_INTENT_MODEL = "gpt-6-luna";
 var DECISIONS_INTENT_TIMEOUT_MS = 2500;
 var DECISIONS_INTENT_HEDGE_MS = 700;
+function decisionsHedgeStartsModelClassifier(settings2) {
+  return settings2?.aiProvider !== ONHAND_FREE_PROVIDER;
+}
 var decisionsFetchForTest = null;
 var DECISIONS_INTENT_CUTOFFS = {
   pageScoped: { trueAt: 0.7, falseBelow: 0.3 },
@@ -95348,6 +95351,7 @@ var __browserRuntimeTest = {
   classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
   decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
   resolveDecisionsEndpointForTest: resolveDecisionsEndpoint,
+  decisionsHedgeStartsModelClassifierForTest: decisionsHedgeStartsModelClassifier,
   decisionsIntentCutoffsForTest: {
     ...DECISIONS_INTENT_CUTOFFS,
     ...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }]))
@@ -100963,6 +100967,7 @@ function createOnhandBrowserRuntime(host) {
               ).then((decided) => ({ decided }), (error2) => ({ error: error2 }));
               let hedge;
               const hedgedModel = new Promise((resolve) => {
+                if (!decisionsHedgeStartsModelClassifier(requestSettings)) return;
                 hedge = setTimeout(() => {
                   preparationTiming.modelClassifierHedged = true;
                   startModelClassifier().then((model) => {

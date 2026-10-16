@@ -540,6 +540,11 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	assert.ok(slow.turn.preparationTiming.decisionsMs >= 1100);
 	const quick = decided.turn.preparationTiming;
 	assert.equal(quick.modelClassifierHedged, undefined, "a quick Decisions answer never starts the model classifier");
+	// On Onhand Free the hedge would be a chat call on the same server, costing a
+	// daily call and a concurrency slot; Free turns wait for Decisions instead.
+	assert.equal(test.decisionsHedgeStartsModelClassifierForTest({ aiProvider: "onhand-free" }), false);
+	assert.equal(test.decisionsHedgeStartsModelClassifierForTest({ aiProvider: "openai" }), true);
+	assert.equal(test.decisionsHedgeStartsModelClassifierForTest({ aiProvider: "onhand-smoke" }), true);
 	console.log("Turns use Decisions when confident and fall back when unsure, failing or slow passed");
 }
 

@@ -6968,6 +6968,15 @@ const DECISIONS_INTENT_TIMEOUT_MS = 2500;
 // timeout, then the model classifier, held one turn 6.7 s). Past this point
 // the model classifier starts too, so a stall costs at most this head start.
 const DECISIONS_INTENT_HEDGE_MS = 700;
+// On Onhand Free the hedge was a chat call through the same server as
+// Decisions: it spent one of the device's daily calls and one of its two
+// concurrent slots, and cancelling it early once Decisions answered held that
+// slot for 5 minutes (two such turns made every later turn "busy", 2026-10-16).
+// Free Decisions answers had a 0.8 s p95 and never reached the 2.5 s timeout
+// (398 calls, 2026-10-09 to 10-16), so Free turns wait for Decisions instead.
+function decisionsHedgeStartsModelClassifier(settings: RuntimeSettings) {
+	return settings?.aiProvider !== ONHAND_FREE_PROVIDER;
+}
 let decisionsFetchForTest: typeof fetch | null = null;
 const DECISIONS_INTENT_CUTOFFS: Record<keyof ModelIntentClassification, { trueAt: number; falseBelow: number }> = {
 	pageScoped: { trueAt: 0.7, falseBelow: 0.3 },
@@ -11413,6 +11422,7 @@ export const __browserRuntimeTest = {
 	classifyPromptIntentWithDecisionsForTest: classifyPromptIntentWithDecisions,
 	decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
 	resolveDecisionsEndpointForTest: resolveDecisionsEndpoint,
+	decisionsHedgeStartsModelClassifierForTest: decisionsHedgeStartsModelClassifier,
 	decisionsIntentCutoffsForTest: {
 		...DECISIONS_INTENT_CUTOFFS,
 		...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }])),
@@ -17639,6 +17649,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 									// settles the classification first wins.
 									let hedge: ReturnType<typeof setTimeout> | undefined;
 									const hedgedModel = new Promise<{ model: ModelIntentClassification }>((resolve) => {
+										if (!decisionsHedgeStartsModelClassifier(requestSettings as RuntimeSettings)) return;
 										hedge = setTimeout(() => {
 											preparationTiming.modelClassifierHedged = true;
 											startModelClassifier().then((model) => { if (model) resolve({ model }); }, () => {});
