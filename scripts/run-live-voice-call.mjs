@@ -153,14 +153,19 @@ function panelInstrumentation(roomToneDb) {
 			try {
 				const e = JSON.parse(raw);
 				const item = e.event?.item;
+				const answers = e.event?.decision?.answers;
 				events.push({
 					t: Date.now() - started,
 					d: direction,
 					type: e.type,
 					inner: e.event ? e.event.type + (item?.type ? "/" + item.type : "") : "",
 					phase: item?.phase || "",
-					text: typeof e.delta === "string" ? e.delta : String(e.transcript || e.content || item?.content?.[0]?.text || "").slice(0, 400),
+					text: typeof e.delta === "string" ? e.delta : String(e.transcript || e.content || item?.content?.[0]?.text || e.item?.content?.[0]?.text || "").slice(0, 400),
 					error: e.error?.message || e.event?.error?.message || "",
+					// Native Decisions delegation: which delegation, its target, and Live's pick.
+					delegationId: e.delegation_id || e.delegation?.id || "",
+					target: e.delegation?.target || e.session?.delegation?.type || "",
+					choice: Array.isArray(answers) ? answers.map((a) => a.name + "=" + a.choice + (a.confidence != null ? "@" + Number(a.confidence).toFixed(2) : "")).join(",") : "",
 				});
 			} catch {}
 		};
@@ -237,8 +242,16 @@ function analyzeQuestion(events, question, nextStart) {
 	const errors = events.filter((e) => e.error && e.t >= from && e.t < nextStart).map((e) => e.error);
 	const spoken = joined(events, "session.output_transcript.delta", from, nextStart);
 	const spokenAnswer = final ? speechAfterFinal.map((e) => e.text).join("").replace(/\s+/g, " ").trim() : spoken;
+	const decision = delegation && events.find((e) => e.type === "decision.event" && e.delegationId === delegation.delegationId);
 	return {
 		heard: joined(events, "session.input_transcript.delta", from, nextStart),
+		delegationTarget: delegation?.target || "",
+		// What Live said in a handed-off turn before Onhand's answer reached it:
+		// a short acknowledgment is fine; an answer of its own is not.
+		spokenBeforeAnswer: final ? joined(events, "session.output_transcript.delta", from, final.t) : "",
+		decision: decision ? decision.choice || decision.inner : "",
+		decisionMs: decision ? decision.t - delegation.t : null,
+		delegationToAnswerMs: delegation && final ? final.t - delegation.t : null,
 		spoken,
 		spokenAnswer,
 		delegated: Boolean(delegation),
@@ -414,6 +427,8 @@ async function main() {
 			console.log(`  spoken:  ${r.spoken || "(nothing)"}`);
 			console.log(`  handled: ${r.delegated ? "handed to the backend" : "answered by Live itself"}`);
 			if (r.delegated) console.log(`  answer:  ${r.answerSpoken ? `spoken ${r.answerSpeechDelayMs} ms after the ${r.backend === "hosted" ? "hosted backend" : "Onhand agent"} finished` : "NOT SPOKEN after the backend finished"}`);
+			if (r.decision) console.log(`  native decision: ${r.decision} (${r.decisionMs} ms after the delegation)`);
+			if (r.delegationToAnswerMs != null) console.log(`  Onhand's reply appended ${r.delegationToAnswerMs} ms after the delegation`);
 			if (r.backend === "onhand-agent") console.log(`  handed:  ${r.backendFinal}`);
 			if (r.speechProblems.length) console.log(`  speech:  ${r.speechProblems.join(", ")}`);
 			if (r.errors.length) console.log(`  errors:  ${r.errors.join("; ")}`);

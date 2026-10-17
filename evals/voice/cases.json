@@ -1,5 +1,5 @@
 {
-  "description": "Real Live voice calls through the side panel with a synthetic microphone (npm run eval:voice). Each turn is spoken in order within one call. expect: \"handoff\" means Live must delegate the turn to Onhand's backend; \"live\" means Live should answer it itself (small talk, repeats of returned results, thanks).",
+  "description": "Real Live voice calls through the side panel with a synthetic microphone (npm run eval:voice). Each turn is spoken in order within one call. expect: \"handoff\" means Live must delegate the turn to Onhand's backend; \"live\" means Live should answer it itself (small talk, repeats of returned results, thanks); \"command\" means Live delegates it and Onhand carries it out directly as a page command (next or previous page or highlight, clear marks, stop, Learning Mode), without an agent turn.",
   "cases": [
     {
       "id": "wiki-follow-ups",
@@ -87,6 +87,27 @@
       "turns": [
         { "say": "What is this page about?", "expect": "handoff" },
         { "say": "Okay, cool.", "expect": "live" }
+      ]
+    },
+    {
+      "id": "pdf-commands",
+      "url": "https://arxiv.org/pdf/1706.03762",
+      "turns": [
+        { "say": "What is this paper about?", "expect": "handoff" },
+        { "say": "Show me the next highlight.", "expect": "command" },
+        { "say": "Go to the next page.", "expect": "command" },
+        { "say": "Go back a page.", "expect": "command" },
+        { "say": "Clear the highlights.", "expect": "command" }
+      ]
+    },
+    {
+      "id": "wiki-commands",
+      "url": "https://en.wikipedia.org/wiki/Photosynthesis",
+      "turns": [
+        { "say": "What are the two stages of photosynthesis?", "expect": "handoff" },
+        { "say": "Show me the next highlight.", "expect": "command" },
+        { "say": "Why are leaves green?", "expect": "handoff" },
+        { "say": "Clear the highlights.", "expect": "command" }
       ]
     }
   ]

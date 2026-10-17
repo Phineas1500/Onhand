@@ -7297,6 +7297,22 @@
 				if (result.result?.handled) void requestState();
 				return result.result;
 			},
+			// Live's native Decisions delegation chose this command.
+			execute: async (task, decision) => {
+				if (liveVoice !== owner || getStateSessionPath(currentState) !== sessionPath) throw new Error("Voice conversation changed.");
+				const result = await chrome.runtime.sendMessage({
+					type: "sidebar:voice-command", prompt: task.prompt, action: decision.action, confidence: decision.confidence,
+					sessionId: task.sessionId, stoppedWork: Boolean(task.stoppedWork), windowId: await ensureCurrentWindowId(),
+				});
+				if (!result?.ok) throw new Error(result?.error || "Onhand could not run that voice command.");
+				if (result.result?.handled) void requestState();
+				return result.result;
+			},
+			commandState: async () => {
+				if (liveVoice !== owner) return null;
+				const result = await chrome.runtime.sendMessage({ type: "sidebar:voice-command-state", sessionId: sessionPath, windowId: await ensureCurrentWindowId() });
+				return result?.ok ? result.result : null;
+			},
 			stop: async (requestId) => {
 				const result = await chrome.runtime.sendMessage({ type: "sidebar:stop", requestId });
 				if (!result?.ok) throw new Error(result?.error || "Could not stop the previous request.");
@@ -7384,7 +7400,10 @@
 			const result = await chrome.runtime.sendMessage({ type: "sidebar:live-session", sessionId: sessionPath, sdp: pc.localDescription?.sdp });
 			if (liveVoice !== owner) return;
 			if (!result?.ok) throw new Error(result?.error || "Could not create GPT-Live session.");
-			if (result.result.delegation && result.result.delegation !== (managed ? "responses" : "client")) throw new Error("Voice settings changed during connection. Start Voice again.");
+			const delegation = result.result.delegation;
+			if (delegation && (managed ? delegation !== "responses" : delegation !== "client" && delegation !== "decisions")) throw new Error("Voice settings changed during connection. Start Voice again.");
+			if (!managed) owner.setDelegationMode?.(delegation);
+			if (result.result.nativeDecisionsError) liveDiagnostics.push({ type: "native_decisions_unavailable", detail: result.result.nativeDecisionsError });
 			await pc.setRemoteDescription({ type: "answer", sdp: result.result.sdp });
 		} catch (error) {
 			if (liveVoice !== owner) return;

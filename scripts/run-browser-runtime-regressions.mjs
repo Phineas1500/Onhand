@@ -679,6 +679,39 @@ async function assertVoiceCommandsRunDirectly() {
 
 		const turnsAfter = await turnCount();
 		assert.equal(turnsAfter, turnsBefore + 4, "only handled commands are saved");
+
+		// Live's native Decisions delegation already picked: run it without a
+		// Decisions call, with the same validity and confidence checks.
+		isPdf = true;
+		const requestsBefore = requests.length;
+		const native = await runtime.runVoiceCommand({ prompt: "previous page", action: "previous_page", confidence: 0.93, windowId: 3 });
+		assert.equal(native.handled, true);
+		assert.equal(native.message, `Page ${pdfPage} of 15.`);
+		assert.equal(requests.length, requestsBefore, "a native pick makes no Decisions call");
+		const bare = await runtime.runVoiceCommand({ prompt: "next highlight", action: "next_highlight", windowId: 3 });
+		assert.equal(bare.handled, true, "a native pick without a confidence is acted on");
+		const unsureNative = await runtime.runVoiceCommand({ prompt: "clear it", action: "clear_marks", confidence: 0.3, windowId: 3 });
+		assert.equal(unsureNative.handled, false); assert.equal(unsureNative.reason, "unsure");
+		const learningAgain = await runtime.runVoiceCommand({ prompt: "turn learning mode on", action: "learning_mode_on", confidence: 0.99, windowId: 3 });
+		assert.equal(learningAgain.handled, false, "a pick that is not valid now (Learning Mode is already on) goes to the agent");
+		isPdf = false;
+		const invalid = await runtime.runVoiceCommand({ prompt: "next page", action: "next_page", confidence: 0.99, windowId: 3 });
+		assert.equal(invalid.handled, false, "page commands never run off a PDF");
+		const asked = await runtime.runVoiceCommand({ prompt: "why?", action: "ask_onhand", confidence: 0.99, windowId: 3 });
+		assert.equal(asked.handled, false);
+
+		// The state message Decisions reads, and the session's fixed questions.
+		isPdf = true;
+		const state = await runtime.voiceCommandState({ windowId: 3 });
+		assert.match(state.text, /PDF in the Onhand viewer, on page \d+ of 15/);
+		assert.match(state.text, /Available actions now: .*next_highlight.*learning_mode_off, ask_onhand\./);
+		assert.ok(!state.actions.includes("learning_mode_on"));
+		const config = test.buildVoiceCommandDecisionsConfigForTest();
+		assert.equal(config.model, "gpt-6-luna");
+		assert.deepEqual(config.questions[0].choices.map((choice) => choice.value),
+			["next_page", "previous_page", "next_highlight", "previous_highlight", "clear_marks", "stop", "learning_mode_on", "learning_mode_off", "ask_onhand"]);
+		assert.match(config.questions[0].instructions, /latest state message lists as available now/);
+		assert.ok(config.questions[0].choices.every((choice) => choice.description), "every choice is described");
 	} finally {
 		test.setDecisionsFetchForTest(null);
 	}

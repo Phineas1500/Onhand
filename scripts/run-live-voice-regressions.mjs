@@ -3,9 +3,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import '../packages/browser-extension/live-voice.js';
 const api = globalThis.OnhandLiveVoice;
 let count = 0;
-function harness({ submit, route } = {}) {
+function harness({ submit, route, execute, commandState, decisionWaitMs } = {}) {
   const state = { currentSession: { sessionId: 'onhand-session' }, preferences: { learningMode: false }, turns: [], activeRequestId: null };
-  const sent = [], submitted = [], stopped = [], errors = [], captions = [], usages = [], routed = [];
+  const sent = [], submitted = [], stopped = [], errors = [], captions = [], usages = [], routed = [], executed = [];
   let eventId = 0, audioTime = 0;
   const coordinator = api.createCoordinator({
     getState: () => state, send: e => sent.push(e),
@@ -14,12 +14,16 @@ function harness({ submit, route } = {}) {
       return submit ? await submit(task) : { requestId: task.requestId };
     },
     ...(route ? { route: async task => { routed.push({ ...task }); return await route(task); } } : {}),
+    ...(execute ? { execute: async (task, decision) => { executed.push({ prompt: task.prompt, ...decision }); return await execute(task, decision); } } : {}),
+    ...(commandState ? { commandState } : {}),
     stop: async id => { stopped.push(id); }, onStatus() {}, onError: e => errors.push(e),
     onTranscript: e => captions.push(e), onUsage: e => usages.push(e),
-  }, { settleMs: 2 });
+  }, { settleMs: 2, ...(decisionWaitMs ? { decisionWaitMs } : {}) });
   const emit = event => coordinator.handle({ event_id: `server-${++eventId}`, ...event });
   const input = (delta, extra = {}) => emit({ type: 'session.input_transcript.delta', delta, start_ms: audioTime, end_ms: audioTime += 100, ...extra });
-  const delegate = (id, offset = audioTime) => emit({ type: 'session.delegation.created', offset_ms: offset, delegation: { id, target: 'client' } });
+  const delegate = (id, offset = audioTime, target = 'client') => emit({ type: 'session.delegation.created', offset_ms: offset, delegation: { id, target } });
+  const decide = (delegationId, choice, confidence) => emit({ type: 'decision.event', delegation_id: delegationId, trigger_id: null,
+    event: { type: 'decision.completed', decision: { answers: [{ type: 'choice', name: 'action', choice, ...(confidence === undefined ? {} : { confidence }) }] } } });
   const finish = (task, reply) => {
     state.activeRequestId = null;
     state.turns.push({ id: task.requestId, reply, pending: false, error: false });
@@ -27,7 +31,7 @@ function harness({ submit, route } = {}) {
   };
   const spoken = () => sent.filter(e => e.type === 'session.commentary.append');
   emit({ type: 'session.started', session: { id: 'live-session' } });
-  return { coordinator, state, sent, submitted, stopped, errors, captions, usages, routed, emit, input, delegate, finish, spoken };
+  return { coordinator, state, sent, submitted, stopped, errors, captions, usages, routed, executed, emit, input, delegate, decide, finish, spoken };
 }
 async function check(name, run) { await run(); count++; console.log(`PASS ${name}`); }
 await check('session setup preserves backend independence and compact role-labelled history', () => {
@@ -62,6 +66,74 @@ await check('a spoken page command is carried out directly; other requests still
   h.coordinator.text('next page');
   await delay(10);
   assert.equal(h.routed.length, 2, 'typed text is never routed');
+  h.coordinator.dispose();
+});
+await check('native Decisions delegation: session config and Live\'s pick run without a routing call', async () => {
+  const decisionsConfig = { model: 'gpt-6-luna', questions: [{ type: 'choice', name: 'action', instructions: 'x', choices: [{ value: 'next_page' }, { value: 'ask_onhand' }] }] };
+  assert.deepEqual(api.sessionConfig({}, null, decisionsConfig).delegation, { type: 'decisions', decisions: decisionsConfig });
+  assert.deepEqual(api.sessionConfig({}, { model: 'm' }, decisionsConfig).delegation.type, 'responses', 'hosted delegation keeps Responses');
+  assert.match(api.sessionConfig({}, null, decisionsConfig).instructions, /It is not Onhand's result/, 'native sessions tell Live a decision is not the answer');
+  assert.doesNotMatch(api.sessionConfig({}).instructions, /It is not Onhand's result/);
+  const h = harness({
+    route: async () => ({ handled: false }),
+    execute: async (task, decision) => ({ handled: decision.action === 'next_page', message: 'Page 4 of 15.' }),
+    commandState: async () => ({ text: 'Onhand state: idle. Available actions now: next_page, ask_onhand.' }),
+  });
+  h.coordinator.setDelegationMode('decisions');
+  await delay(5);
+  const stateItems = () => h.sent.filter(e => e.type === 'decision.item.create');
+  assert.equal(stateItems().length, 1, 'the state message is appended once the session is native');
+  assert.match(stateItems()[0].item.content[0].text, /Available actions now: next_page/);
+  // Live's native delegations target the app too; the decision arrives while the request settles.
+  h.input('Go to the next page.'); h.delegate('del-page', undefined, 'decisions'); h.decide('del-page', 'next_page', 0.96); await delay(10);
+  assert.equal(h.routed.length, 0, 'no routing call: Live already asked Decisions');
+  assert.deepEqual(h.executed.map(({ action, confidence }) => ({ action, confidence })), [{ action: 'next_page', confidence: 0.96 }]);
+  assert.equal(h.submitted.length, 0);
+  assert.equal(h.spoken().at(-1).content, 'Page 4 of 15.');
+  assert.equal(h.spoken().at(-1).delegation_id, 'del-page');
+  assert.equal(stateItems().length, 1, 'an unchanged state is not appended again');
+  // ask_onhand goes straight to the agent, also without a routing call, and
+  // Live is told at once to wait for Onhand rather than answer from the decision.
+  h.input('Why does attention scale by root d?'); h.delegate('del-question', undefined, 'decisions'); h.decide('del-question', 'ask_onhand', 0.99);
+  const waitNote = h.sent.find(e => e.type === 'session.thinking.append' && e.delegation_id === 'del-question');
+  assert.match(waitNote?.content || '', /working on this request now.*do not answer, quiz, hint or evaluate/);
+  await delay(10);
+  assert.equal(h.submitted.length, 1); assert.equal(h.routed.length, 0); assert.equal(h.executed.length, 1);
+  h.finish(h.submitted[0], 'To keep the softmax from saturating.'); await delay(5);
+  // A pick without a confidence is passed on as unknown; Onhand checks it.
+  h.input('Next page.'); h.delegate('del-bare', undefined, 'decisions'); h.decide('del-bare', 'next_page'); await delay(10);
+  assert.equal(h.executed.at(-1).confidence, null);
+  assert.equal(h.errors.length, 0);
+  h.coordinator.dispose();
+});
+await check('native delegation falls back to Onhand\'s own routing when no decision arrives or it failed', async () => {
+  const h = harness({
+    route: async task => ({ handled: /clear/i.test(task.prompt), message: 'Cleared.' }),
+    execute: async () => ({ handled: true, message: 'should not run' }),
+    decisionWaitMs: 20,
+  });
+  h.coordinator.setDelegationMode('decisions');
+  h.input('Clear the highlights.'); h.delegate('del-late', undefined, 'decisions'); await delay(60);
+  assert.equal(h.routed.length, 1, 'a decision that never arrives is routed by Onhand');
+  assert.equal(h.spoken().at(-1).content, 'Cleared.');
+  h.input('Clear them again.'); h.delegate('del-failed', undefined, 'decisions');
+  h.emit({ type: 'decision.event', delegation_id: 'del-failed', event: { type: 'decision.failed', error: { message: 'busy' } } }); await delay(30);
+  assert.equal(h.routed.length, 2, 'a failed decision is routed by Onhand');
+  assert.equal(h.executed.length, 0);
+  // Without native mode, decisions are never awaited: client sessions route as before.
+  const client = harness({ route: async () => ({ handled: false }), execute: async () => ({ handled: true, message: 'x' }) });
+  client.input('Next page.'); client.delegate('item-client'); await delay(10);
+  assert.equal(client.routed.length, 1); assert.equal(client.executed.length, 0); assert.equal(client.submitted.length, 1);
+  client.coordinator.dispose(); h.coordinator.dispose();
+});
+await check('a rejected state message is not shown as a voice error', async () => {
+  const h = harness({ route: async () => ({ handled: false }), commandState: async () => ({ text: 'Onhand state: idle.' }) });
+  h.coordinator.setDelegationMode('decisions'); await delay(5);
+  const item = h.sent.find(e => e.type === 'decision.item.create');
+  h.emit({ type: 'error', error: { event_id: item.event_id, message: 'decision.item.create is not supported' } });
+  assert.equal(h.errors.length, 0);
+  h.emit({ type: 'error', error: { event_id: 'other', message: 'Live rejected something else' } });
+  assert.equal(h.errors.length, 1, 'other errors still surface');
   h.coordinator.dispose();
 });
 await check('a failed route falls back to the agent, and a command after interrupted work says so', async () => {

@@ -27,6 +27,7 @@ const CONTROL_COMMANDS = new Set([
 	"scroll",
 	"free-tier-bypass",
 	"learning-mode",
+	"live-native-decisions",
 	"delete-session",
 	"rename-session",
 	"open-pdf-viewer",
@@ -73,6 +74,7 @@ function printUsage() {
   npm run debug:sessions -- scroll --annotation-id <id> [--target annotation|note] [options]
   npm run debug:sessions -- free-tier-bypass <status|enable|disable|device-hash> [options]
   npm run debug:sessions -- learning-mode [on|off|status] [options]
+  npm run debug:sessions -- live-native-decisions [on|off|status] [options]
   npm run debug:sessions -- delete-session <session_id|query> [options]
   npm run debug:sessions -- rename-session "New name" [options]
   npm run debug:sessions -- open-pdf-viewer [--tab-id <id>] [options]
@@ -1962,6 +1964,16 @@ async function main() {
 				};
 				await writeOutput(args, args.json ? `${JSON.stringify(output, null, 2)}\n` : `Activated saved action ${key} after direct scroll failed: ${firstErrorLine(error)}\n`);
 			}
+			return;
+		}
+		if (args.command === "live-native-decisions") {
+			const mode = String(args.positional[0] || "status").toLowerCase();
+			if (!["on", "off", "status"].includes(mode)) throw new Error("live-native-decisions takes on, off, or status.");
+			if (mode !== "status") await checkedMessage(driver.sendMessage, { type: "sidebar:set-live-native-decisions", enabled: mode === "on" });
+			const stateResponse = await checkedMessage(driver.sendMessage, { type: "sidebar:fetch-state", windowId: args.windowId });
+			const state = stateResponse.state || stateResponse;
+			const enabled = state?.preferences?.liveNativeDecisions !== false;
+			await writeOutput(args, args.json ? `${JSON.stringify({ liveNativeDecisions: enabled }, null, 2)}\n` : `Live native Decisions delegation: ${enabled ? "ON" : "OFF"}\n`);
 			return;
 		}
 		if (args.command === "learning-mode") {

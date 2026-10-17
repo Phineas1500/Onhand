@@ -87526,6 +87526,7 @@ var DEFAULT_SETTINGS = {
   // model and every per-request rule. Hosted Responses delegation is opt-in.
   liveDelegation: "client",
   liveInterruptionEnabled: false,
+  liveNativeDecisions: true,
   liveResponsesModel: "gpt-5.6-terra",
   aiProvider: OPENAI_CODEX_PROVIDER,
   aiModel: OPENAI_CODEX_MODEL,
@@ -89301,6 +89302,7 @@ function buildPublicSettings(settings2) {
     realtimeVoiceEnabled: settings2.realtimeVoiceEnabled,
     liveDelegation: settings2.liveDelegation === "responses" ? "responses" : "client",
     liveInterruptionEnabled: Boolean(settings2.liveInterruptionEnabled),
+    liveNativeDecisions: settings2.liveNativeDecisions !== false,
     liveResponsesModel: settings2.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
     diagnosticsEnabled: settings2.diagnosticsEnabled,
     advancedRuntimeInspectionEnabled: settings2.advancedRuntimeInspectionEnabled,
@@ -92069,6 +92071,28 @@ var ASK_ONHAND_ACTION = [
   "ask_onhand",
   "Anything else: questions, explanations, reading, finding or highlighting content, quizzes, a page number or target not listed above, or a request with more than one step."
 ];
+var VOICE_COMMAND_ACTIONS = {
+  next_page: "Go to the next page of the open PDF.",
+  previous_page: "Go to the previous page of the open PDF.",
+  next_highlight: "Scroll to Onhand's next highlight on this page.",
+  previous_highlight: "Scroll to Onhand's previous highlight on this page.",
+  clear_marks: "Remove all of Onhand's highlights and notes from this page.",
+  stop: "Stop what Onhand is doing or cancel the request; no other action.",
+  learning_mode_on: "Turn Learning Mode on.",
+  learning_mode_off: "Turn Learning Mode off."
+};
+var voiceCommandAction = (value) => [value, VOICE_COMMAND_ACTIONS[value]];
+function buildVoiceCommandDecisionsConfig() {
+  return {
+    model: DECISIONS_INTENT_MODEL,
+    questions: [{
+      type: "choice",
+      name: "action",
+      instructions: `${VOICE_COMMAND_INSTRUCTIONS} Use only an action that Onhand's latest state message lists as available now; otherwise choose ask_onhand.`,
+      choices: [...Object.keys(VOICE_COMMAND_ACTIONS).map(voiceCommandAction), ASK_ONHAND_ACTION].map(([value, description]) => ({ value, description }))
+    }]
+  };
+}
 function buildVoiceCommandRequest(prompt, stateLines, conversation, actions) {
   const history = conversation.slice(-6).map((entry) => `${entry?.role === "assistant" ? "Onhand" : "User"}: ${truncate2(String(entry?.text || "").replace(/\s+/g, " ").trim(), 300)}`).filter((line) => !/:\s*$/.test(line));
   return {
@@ -95352,6 +95376,7 @@ var __browserRuntimeTest = {
   decisionsIntentClassifierKeyForTest: decisionsIntentClassifierKey,
   resolveDecisionsEndpointForTest: resolveDecisionsEndpoint,
   decisionsHedgeStartsModelClassifierForTest: decisionsHedgeStartsModelClassifier,
+  buildVoiceCommandDecisionsConfigForTest: buildVoiceCommandDecisionsConfig,
   decisionsIntentCutoffsForTest: {
     ...DECISIONS_INTENT_CUTOFFS,
     ...Object.fromEntries(Object.keys(DECISIONS_REQUEST_WORDING).map((name) => [name, { trueAt: DECISIONS_REQUEST_YES, falseBelow: DECISIONS_REQUEST_NO }]))
@@ -96938,6 +96963,7 @@ function createOnhandBrowserRuntime(host) {
         realtimeVoiceEnabled: Boolean(rawSettings.realtimeVoiceEnabled),
         liveDelegation: voicePreviouslyMigrated && rawSettings.liveDelegation === "responses" ? "responses" : "client",
         liveInterruptionEnabled: Boolean(rawSettings.liveInterruptionEnabled),
+        liveNativeDecisions: rawSettings.liveNativeDecisions !== false,
         liveResponsesModel: rawSettings.liveResponsesModel === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
         aiProvider,
         aiModel: normalizeModelForProvider(rawModel, aiProvider, authMode),
@@ -97680,6 +97706,80 @@ function createOnhandBrowserRuntime(host) {
     return await result;
   }
   let voiceHighlightCursor = null;
+  async function gatherVoiceCommandContext(input, { forState = false } = {}) {
+    const prompt = String(input.prompt || "").replace(/\s+/g, " ").trim();
+    if (!forState && (!prompt || prompt.length > 300)) return { unhandled: "not a short spoken request" };
+    if (activeRequest && !forState) return { unhandled: "Onhand is working on a request" };
+    const store2 = await loadStore();
+    const settings2 = store2.settings;
+    const session = store2.sessions[store2.currentSessionId];
+    if (input.sessionId && session && input.sessionId !== store2.currentSessionId && input.sessionId !== buildSessionState(session).sessionFile) {
+      return { unhandled: "the conversation changed" };
+    }
+    const browserState = await host.snapshotState().catch(() => null);
+    const tab = browserState ? pickActiveTab(browserState, input.windowId) : null;
+    const pdf = tab?.id ? await host.runCommand("pdf_page_status", { tabId: tab.id }).catch(() => null) : null;
+    const highlights = (Array.isArray(session?.pageActions) ? session.pageActions : []).filter(
+      (action) => action?.type === "annotation" && action.annotationId && tab?.id && action.tabId === tab.id
+    );
+    const highlightKey = highlights.map((action) => action.annotationId).join("|");
+    if (voiceHighlightCursor?.key !== highlightKey) voiceHighlightCursor = { key: highlightKey, index: -1 };
+    const cursor = voiceHighlightCursor;
+    const actions = [];
+    if (pdf?.pageNumber) {
+      if (!pdf.pageCount || pdf.pageNumber < pdf.pageCount) actions.push(voiceCommandAction("next_page"));
+      if (pdf.pageNumber > 1) actions.push(voiceCommandAction("previous_page"));
+    }
+    if (highlights.length) actions.push(voiceCommandAction("next_highlight"), voiceCommandAction("previous_highlight"), voiceCommandAction("clear_marks"));
+    actions.push(voiceCommandAction("stop"));
+    actions.push(voiceCommandAction(settings2.learningMode ? "learning_mode_off" : "learning_mode_on"));
+    actions.push(ASK_ONHAND_ACTION);
+    const stateLines = [
+      `Open page: ${truncate2(String(tab?.title || "unknown"), 120)}`,
+      ...pdf?.pageNumber ? [`It is a PDF in the Onhand viewer, on page ${pdf.pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`] : [],
+      `Onhand's highlights on this page: ${highlights.length}${highlights.length && cursor.index >= 0 ? ` (highlight ${cursor.index + 1} was shown last)` : ""}.`,
+      `Learning Mode is ${settings2.learningMode ? "on" : "off"}.`,
+      input.stoppedWork ? "Onhand was working on an earlier request; it has been stopped." : activeRequest ? "Onhand is working on a request." : "Onhand is idle."
+    ];
+    return { prompt, settings: settings2, tab, pdf, highlights, cursor, actions, stateLines };
+  }
+  async function runVoiceCommandChoice(context, choice, runtime) {
+    const unhandled = (reason) => ({ handled: false, reason, ...choice });
+    const { prompt, pdf, tab, highlights, cursor } = context;
+    if (choice.action === "ask_onhand" || !context.actions.some(([value]) => value === choice.action)) return unhandled("not a page command");
+    if (choice.confidence < VOICE_COMMAND_CONFIDENCE) return unhandled("unsure");
+    let message = "";
+    try {
+      if (choice.action === "next_page" || choice.action === "previous_page") {
+        const pageNumber = pdf.pageNumber + (choice.action === "next_page" ? 1 : -1);
+        await host.runCommand("pdf_jump_to_page", { tabId: tab.id, pageNumber, pdfAnchor: { viewer: "onhand-pdf-viewer" } });
+        message = `Page ${pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`;
+      } else if (choice.action === "next_highlight" || choice.action === "previous_highlight") {
+        const step = choice.action === "next_highlight" ? 1 : -1;
+        const index = cursor.index < 0 ? step > 0 ? 0 : highlights.length - 1 : cursor.index + step;
+        if (index < 0 || index >= highlights.length) {
+          message = step > 0 ? "That was the last highlight." : "That was the first highlight.";
+        } else {
+          await host.runCommand("scroll_to_annotation", { tabId: tab.id, annotationId: highlights[index].annotationId });
+          cursor.index = index;
+          message = `Highlight ${index + 1} of ${highlights.length}: ${truncate2(String(highlights[index].citationText || highlights[index].detail || ""), 140)}`;
+        }
+      } else if (choice.action === "clear_marks") {
+        await host.runCommand("clear_annotations", { tabId: tab.id });
+        voiceHighlightCursor = null;
+        message = "Cleared Onhand's highlights and notes from this page.";
+      } else if (choice.action === "stop") {
+        message = context.stateLines.some((line) => /it has been stopped/.test(line)) ? "Stopped." : "Okay. Nothing was running.";
+      } else if (choice.action === "learning_mode_on" || choice.action === "learning_mode_off") {
+        await runtime.updateSettings({ learningMode: choice.action === "learning_mode_on" });
+        message = `Learning Mode is ${choice.action === "learning_mode_on" ? "on" : "off"}.`;
+      }
+    } catch (error2) {
+      return unhandled(`the ${choice.action} action failed: ${error2 instanceof Error ? error2.message : String(error2)}`);
+    }
+    await recordRealtimeVoiceTurn({ userPrompt: `[Voice] ${prompt}`, reply: message });
+    return { handled: true, action: choice.action, confidence: choice.confidence, message };
+  }
   async function recordRealtimeVoiceTurn(request = {}) {
     const store2 = await loadStore();
     const session = store2.sessions[store2.currentSessionId];
@@ -100302,88 +100402,43 @@ function createOnhandBrowserRuntime(host) {
     // unhandled, and the coordinator submits it to the agent as before.
     async routeVoiceCommand(input = {}) {
       const startedAt = Date.now();
-      const prompt = String(input.prompt || "").replace(/\s+/g, " ").trim();
-      const unhandled = (reason, extra = {}) => ({ handled: false, reason, ms: Date.now() - startedAt, ...extra });
-      if (!prompt || prompt.length > 300) return unhandled("not a short spoken request");
-      if (activeRequest) return unhandled("Onhand is working on a request");
-      const store2 = await loadStore();
-      const settings2 = store2.settings;
-      const apiKey = getApiKeyForProvider(settings2, OPENAI_API_PROVIDER);
-      if (!apiKey) return unhandled("no OpenAI platform key");
-      const session = store2.sessions[store2.currentSessionId];
-      if (input.sessionId && session && input.sessionId !== store2.currentSessionId && input.sessionId !== buildSessionState(session).sessionFile) {
-        return unhandled("the conversation changed");
-      }
-      const browserState = await host.snapshotState().catch(() => null);
-      const tab = browserState ? pickActiveTab(browserState, input.windowId) : null;
-      const pdf = tab?.id ? await host.runCommand("pdf_page_status", { tabId: tab.id }).catch(() => null) : null;
-      const highlights = (Array.isArray(session?.pageActions) ? session.pageActions : []).filter(
-        (action) => action?.type === "annotation" && action.annotationId && tab?.id && action.tabId === tab.id
-      );
-      const highlightKey = highlights.map((action) => action.annotationId).join("|");
-      if (voiceHighlightCursor?.key !== highlightKey) voiceHighlightCursor = { key: highlightKey, index: -1 };
-      const cursor = voiceHighlightCursor;
-      const actions = [];
-      if (pdf?.pageNumber) {
-        if (!pdf.pageCount || pdf.pageNumber < pdf.pageCount) actions.push(["next_page", "Go to the next page of the open PDF."]);
-        if (pdf.pageNumber > 1) actions.push(["previous_page", "Go to the previous page of the open PDF."]);
-      }
-      if (highlights.length) {
-        actions.push(
-          ["next_highlight", "Scroll to Onhand's next highlight on this page."],
-          ["previous_highlight", "Scroll to Onhand's previous highlight on this page."],
-          ["clear_marks", "Remove all of Onhand's highlights and notes from this page."]
-        );
-      }
-      actions.push(["stop", "Stop what Onhand is doing or cancel the request; no other action."]);
-      actions.push(settings2.learningMode ? ["learning_mode_off", "Turn Learning Mode off."] : ["learning_mode_on", "Turn Learning Mode on."]);
-      actions.push(ASK_ONHAND_ACTION);
-      const stateLines = [
-        `Open page: ${truncate2(String(tab?.title || "unknown"), 120)}`,
-        ...pdf?.pageNumber ? [`It is a PDF in the Onhand viewer, on page ${pdf.pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`] : [],
-        `Onhand's highlights on this page: ${highlights.length}${highlights.length && cursor.index >= 0 ? ` (highlight ${cursor.index + 1} was shown last)` : ""}.`,
-        `Learning Mode is ${settings2.learningMode ? "on" : "off"}.`,
-        input.stoppedWork ? "Onhand was working on an earlier request; it has been stopped." : "Onhand is idle."
-      ];
+      const context = await gatherVoiceCommandContext(input);
+      if ("unhandled" in context) return { handled: false, reason: context.unhandled, ms: Date.now() - startedAt };
+      const apiKey = getApiKeyForProvider(context.settings, OPENAI_API_PROVIDER);
+      if (!apiKey) return { handled: false, reason: "no OpenAI platform key", ms: Date.now() - startedAt };
       let choice;
       try {
-        choice = readVoiceCommandChoice(await postDecisions(apiKey, buildVoiceCommandRequest(prompt, stateLines, input.context || [], actions), VOICE_COMMAND_TIMEOUT_MS));
+        choice = readVoiceCommandChoice(await postDecisions(apiKey, buildVoiceCommandRequest(context.prompt, context.stateLines, input.context || [], context.actions), VOICE_COMMAND_TIMEOUT_MS));
       } catch (error2) {
-        return unhandled(error2 instanceof Error ? error2.message : String(error2));
+        return { handled: false, reason: error2 instanceof Error ? error2.message : String(error2), ms: Date.now() - startedAt };
       }
-      if (choice.action === "ask_onhand" || !actions.some(([value]) => value === choice.action)) return unhandled("not a page command", choice);
-      if (choice.confidence < VOICE_COMMAND_CONFIDENCE) return unhandled("unsure", choice);
-      let message = "";
-      try {
-        if (choice.action === "next_page" || choice.action === "previous_page") {
-          const pageNumber = pdf.pageNumber + (choice.action === "next_page" ? 1 : -1);
-          await host.runCommand("pdf_jump_to_page", { tabId: tab.id, pageNumber, pdfAnchor: { viewer: "onhand-pdf-viewer" } });
-          message = `Page ${pageNumber}${pdf.pageCount ? ` of ${pdf.pageCount}` : ""}.`;
-        } else if (choice.action === "next_highlight" || choice.action === "previous_highlight") {
-          const step = choice.action === "next_highlight" ? 1 : -1;
-          const index = cursor.index < 0 ? step > 0 ? 0 : highlights.length - 1 : cursor.index + step;
-          if (index < 0 || index >= highlights.length) {
-            message = step > 0 ? "That was the last highlight." : "That was the first highlight.";
-          } else {
-            await host.runCommand("scroll_to_annotation", { tabId: tab.id, annotationId: highlights[index].annotationId });
-            cursor.index = index;
-            message = `Highlight ${index + 1} of ${highlights.length}: ${truncate2(String(highlights[index].citationText || highlights[index].detail || ""), 140)}`;
-          }
-        } else if (choice.action === "clear_marks") {
-          await host.runCommand("clear_annotations", { tabId: tab.id });
-          voiceHighlightCursor = null;
-          message = "Cleared Onhand's highlights and notes from this page.";
-        } else if (choice.action === "stop") {
-          message = input.stoppedWork ? "Stopped." : "Okay. Nothing was running.";
-        } else if (choice.action === "learning_mode_on" || choice.action === "learning_mode_off") {
-          await this.updateSettings({ learningMode: choice.action === "learning_mode_on" });
-          message = `Learning Mode is ${choice.action === "learning_mode_on" ? "on" : "off"}.`;
-        }
-      } catch (error2) {
-        return unhandled(`the ${choice.action} action failed: ${error2 instanceof Error ? error2.message : String(error2)}`, choice);
-      }
-      await recordRealtimeVoiceTurn({ userPrompt: `[Voice] ${prompt}`, reply: message });
-      return { handled: true, action: choice.action, confidence: choice.confidence, message, ms: Date.now() - startedAt };
+      return { ...await runVoiceCommandChoice(context, choice, this), ms: Date.now() - startedAt };
+    },
+    // The choice came from GPT-Live's native Decisions delegation. It is
+    // checked against the actions valid right now, exactly as a routed one.
+    async runVoiceCommand(input = {}) {
+      const startedAt = Date.now();
+      const context = await gatherVoiceCommandContext(input);
+      if ("unhandled" in context) return { handled: false, reason: context.unhandled, ms: Date.now() - startedAt };
+      const confidence = input.confidence == null ? 1 : Number(input.confidence);
+      const choice = { action: String(input.action || ""), confidence: Number.isFinite(confidence) ? confidence : 0 };
+      return { ...await runVoiceCommandChoice(context, choice, this), ms: Date.now() - startedAt };
+    },
+    voiceCommandDecisionsConfig() {
+      return buildVoiceCommandDecisionsConfig();
+    },
+    // The state message Live's native Decisions delegation reads before
+    // choosing: what is open, and which commands are valid now.
+    async voiceCommandState(input = {}) {
+      const context = await gatherVoiceCommandContext(input, { forState: true });
+      if ("unhandled" in context) return { text: "", actions: [] };
+      const actions = context.actions.map(([value]) => value).filter((value) => value !== "ask_onhand");
+      return {
+        text: `Onhand state (newest message wins):
+${context.stateLines.join("\n")}
+Available actions now: ${actions.join(", ")}, ask_onhand.`,
+        actions
+      };
     },
     async recordLiveTranscriptTurns(request) {
       return await recordLiveTranscriptTurns(request);
@@ -100527,6 +100582,7 @@ function createOnhandBrowserRuntime(host) {
         realtimeVoiceEnabled: Boolean(nextPartial.realtimeVoiceEnabled ?? store2.settings.realtimeVoiceEnabled),
         liveDelegation: (nextPartial.liveDelegation ?? store2.settings.liveDelegation) === "responses" ? "responses" : "client",
         liveInterruptionEnabled: Boolean(nextPartial.liveInterruptionEnabled ?? store2.settings.liveInterruptionEnabled),
+        liveNativeDecisions: (nextPartial.liveNativeDecisions ?? store2.settings.liveNativeDecisions) !== false,
         liveResponsesModel: (nextPartial.liveResponsesModel ?? store2.settings.liveResponsesModel) === "gpt-5.6-luna" ? "gpt-5.6-luna" : "gpt-5.6-terra",
         aiProvider,
         aiModel,

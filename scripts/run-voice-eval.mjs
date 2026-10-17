@@ -13,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Onhand's direct replies to spoken page commands (runtime runVoiceCommandChoice).
+const COMMAND_REPLY = /^(Page \d+( of \d+)?\.|Highlight \d+ of \d+:|That was the (last|first) highlight\.|Cleared Onhand's highlights|Learning Mode is (on|off)\.|Stopped\.|Okay\. Nothing was running\.)/;
 const LIVE_VOICE = "packages/browser-extension/live-voice.js";
 
 function usage() {
@@ -22,6 +24,8 @@ Options:
   --cases-file <path>   Default: evals/voice/cases.json
   --case <id>           Run only this case (repeatable)
   --reps <n>            Calls per case and variant. Default: 1
+  --native-ab           Alternate calls with Live's native Decisions delegation on
+                        and off (Onhand's own routing call), to compare them
   --baseline <git-ref>  Also run Live's instructions from this ref, alternating
   --max-seconds <n>     Hard cap per call. Default: 360
   --out <file.jsonl>    Append raw per-call results here
@@ -48,6 +52,7 @@ function parseArgs(argv) {
 		else if (flag === "--case") args.cases.push(value());
 		else if (flag === "--reps") args.reps = Number(value());
 		else if (flag === "--baseline") args.baseline = value();
+		else if (flag === "--native-ab") args.nativeAb = true;
 		else if (flag === "--max-seconds") args.maxSeconds = Number(value());
 		else if (flag === "--out") args.out = value();
 		else if (flag === "--json") args.json = true;
@@ -57,6 +62,7 @@ function parseArgs(argv) {
 	}
 	if (!(Number.isInteger(args.reps) && args.reps > 0)) throw new Error("--reps must be a positive integer.");
 	if (!(args.maxSeconds > 0)) throw new Error("--max-seconds must be positive.");
+	if (args.nativeAb && args.baseline) throw new Error("Use --native-ab or --baseline, not both.");
 	return args;
 }
 
@@ -97,14 +103,22 @@ function main() {
 		swapped = false;
 		try { reload(); } catch (error) { console.error(`Restored ${LIVE_VOICE}, but the reload failed: ${error.message}`); }
 	};
+	const nativeDecisions = (mode) => {
+		const result = run(["scripts/dump-onhand-sessions.mjs", "live-native-decisions", mode, ...browserArgs]);
+		if (result.status !== 0) throw new Error(`live-native-decisions ${mode} failed: ${(result.stderr || result.stdout).trim()}`);
+		return /:\s*ON/i.test(result.stdout);
+	};
+	const nativeWasOn = args.nativeAb ? nativeDecisions("status") : true;
 	const learningWasOn = learningMode("status");
 	process.once("SIGINT", () => { restore(); try { learningMode(learningWasOn ? "on" : "off"); } catch {} process.exit(130); });
 
 	const calls = [];
 	try {
 		for (let rep = 1; rep <= args.reps; rep++) {
-			const variants = args.baseline ? (rep % 2 ? ["baseline", "current"] : ["current", "baseline"]) : ["current"];
+			const variants = args.nativeAb ? (rep % 2 ? ["native", "routed"] : ["routed", "native"])
+				: args.baseline ? (rep % 2 ? ["baseline", "current"] : ["current", "baseline"]) : ["current"];
 			for (const variant of variants) {
+				if (args.nativeAb) nativeDecisions(variant === "native" ? "on" : "off");
 				if (args.baseline) {
 					writeFileSync(path.join(ROOT, LIVE_VOICE), variant === "baseline" ? baselineCopy : workingCopy);
 					swapped = variant === "baseline";
@@ -126,7 +140,12 @@ function main() {
 					const turns = (report?.questions || []).map((q, i) => ({
 						say: testCase.turns[i].say,
 						expect: testCase.turns[i].expect,
-						got: q.delegated ? "handoff" : "live",
+						got: testCase.turns[i].expect === "command" && q.delegated && COMMAND_REPLY.test(q.backendFinal || "") ? "command" : q.delegated ? "handoff" : "live",
+						backendFinal: q.backendFinal,
+						spokenBeforeAnswer: q.spokenBeforeAnswer,
+						decision: q.decision,
+						decisionMs: q.decisionMs,
+						delegationToAnswerMs: q.delegationToAnswerMs,
 						heard: q.heard,
 						retried: q.retried,
 						spoken: q.spoken,
@@ -143,14 +162,17 @@ function main() {
 		}
 	} finally {
 		restore();
+		if (args.nativeAb) try { nativeDecisions(nativeWasOn ? "on" : "off"); } catch {}
 	}
 
+	const median = (values) => { const v = values.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
 	const summary = {};
-	for (const variant of args.baseline ? ["baseline", "current"] : ["current"]) {
+	for (const variant of args.nativeAb ? ["native", "routed"] : args.baseline ? ["baseline", "current"] : ["current"]) {
 		const variantCalls = calls.filter((c) => c.variant === variant);
 		const turns = variantCalls.flatMap((c) => c.turns.map((t) => ({ ...t, case: c.case, rep: c.rep })));
 		const heard = turns.filter((t) => t.heard);
 		const handoffs = heard.filter((t) => t.expect === "handoff");
+		const commands = heard.filter((t) => t.expect === "command");
 		const keeps = heard.filter((t) => t.expect === "live");
 		const delegated = heard.filter((t) => t.got === "handoff");
 		const missingTurns = variantCalls.reduce((n, c) => n + (cases.find((x) => x.id === c.case).turns.length - c.turns.length), 0);
@@ -162,11 +184,18 @@ function main() {
 			handoffsAsExpected: [handoffs.filter((t) => t.got === "handoff").length, handoffs.length],
 			keptByLiveAsExpected: [keeps.filter((t) => t.got === "live").length, keeps.length],
 			handoffAnswersSpoken: [delegated.filter((t) => t.answerSpoken).length, delegated.length],
+			commandsAsExpected: [commands.filter((t) => t.got === "command").length, commands.length],
+			// Delegation to Onhand's spoken reply for page commands: routing plus the action.
+			commandReplyMedianMs: median(commands.filter((t) => t.got === "command").map((t) => t.delegationToAnswerMs)),
+			// Live speaking more than a short acknowledgment before Onhand's answer arrived.
+			spokeBeforeAnswer: [delegated.filter((t) => String(t.spokenBeforeAnswer || "").split(/\s+/).filter(Boolean).length > 12).length, delegated.length],
+			nativeDecisions: heard.filter((t) => t.decision).length,
+			decisionMedianMs: median(heard.map((t) => t.decisionMs)),
 			speechProblems: heard.filter((t) => t.speechProblems?.length).map((t) => ({ case: t.case, say: t.say, problems: t.speechProblems })),
 			misses: heard.filter((t) => t.got !== t.expect).map((t) => ({ case: t.case, rep: t.rep, say: t.say, expect: t.expect, got: t.got, spoken: t.spoken })),
 		};
 	}
-	const current = summary.current;
+	const current = summary.current || summary.native;
 	const ok = !current.errors.length && !current.unheard && !current.misses.length && current.handoffAnswersSpoken[0] === current.handoffAnswersSpoken[1];
 	if (args.json) {
 		console.log(JSON.stringify({ ok, summary, calls }, null, 2));
@@ -177,6 +206,9 @@ function main() {
 			console.log(`  handed to the backend when expected: ${ratio(s.handoffsAsExpected)}`);
 			console.log(`  answered by Live when expected:      ${ratio(s.keptByLiveAsExpected)}`);
 			console.log(`  handoff answers spoken:              ${ratio(s.handoffAnswersSpoken)}`);
+			if (s.commandsAsExpected[1]) console.log(`  page commands run directly:          ${ratio(s.commandsAsExpected)} · median ${s.commandReplyMedianMs} ms from delegation to Onhand's reply`);
+			if (s.spokeBeforeAnswer[1]) console.log(`  Live answered before Onhand did:     ${ratio(s.spokeBeforeAnswer)} handed-off turns (over 12 words before Onhand's answer)`);
+			if (s.nativeDecisions) console.log(`  native decisions received:           ${s.nativeDecisions} · median ${s.decisionMedianMs} ms after the delegation`);
 			if (s.unheard || s.retried) console.log(`  unheard turns: ${s.unheard}; asked twice: ${s.retried}`);
 			for (const m of s.misses) console.log(`  MISS ${m.case} (rep ${m.rep}) "${m.say}": expected ${m.expect}, got ${m.got}. Live said: ${String(m.spoken || "").slice(0, 160)}`);
 			for (const p of s.speechProblems) console.log(`  SPEECH ${p.case} "${p.say}": ${p.problems.join(", ")}`);

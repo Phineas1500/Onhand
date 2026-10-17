@@ -14921,19 +14921,34 @@ async function createLiveCallWithStoredApiKey(browserSdp, options = {}) {
 	const state = await runtime.getState();
 	if (options.sessionId !== state.currentSession?.sessionId && options.sessionId !== state.currentSession?.sessionFile) throw new Error("Voice conversation changed.");
 	const responsesConfig = state.preferences?.liveDelegation !== "responses" ? null : await runtime.liveResponses({ operation: "config", sessionId: options.sessionId });
-	const response = await fetch("https://api.openai.com/v1/live/sessions", {
-		method: "POST",
-		headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
-		body: JSON.stringify({ session: globalThis.OnhandLiveVoice.sessionConfig(state, responsesConfig), transport: { type: "webrtc", sdp } }),
-		signal: AbortSignal.timeout(30000),
-	});
-	const result = await response.json().catch(() => null);
+	const createSession = async (decisionsConfig) => {
+		const response = await fetch("https://api.openai.com/v1/live/sessions", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${credential.apiKey}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": "onhand-browser-extension" },
+			body: JSON.stringify({ session: globalThis.OnhandLiveVoice.sessionConfig(state, responsesConfig, decisionsConfig), transport: { type: "webrtc", sdp } }),
+			signal: AbortSignal.timeout(30000),
+		});
+		return { response, result: await response.json().catch(() => null) };
+	};
+	// Client sessions use Live's native Decisions delegation: Live asks
+	// Decisions which spoken page command (if any) a handed-off request is, so
+	// Onhand no longer makes that call itself. A key or account that cannot use
+	// it (for example, a restricted key without Decisions access) falls back to
+	// plain client delegation and Onhand's own routing call.
+	const decisionsConfig = responsesConfig || state.preferences?.liveNativeDecisions === false ? null : runtime.voiceCommandDecisionsConfig();
+	let { response, result } = await createSession(decisionsConfig);
+	let delegation = responsesConfig ? "responses" : decisionsConfig ? "decisions" : "client", nativeDecisionsError = "";
+	if (!response.ok && decisionsConfig && response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429) {
+		nativeDecisionsError = String(result?.error?.message || `HTTP ${response.status}`).slice(0, 300);
+		({ response, result } = await createSession(null));
+		delegation = "client";
+	}
 	if (!response.ok) {
 		const detail = String(result?.error?.message || `HTTP ${response.status}`).slice(0, 600);
 		throw new Error(`GPT-Live session setup failed: ${detail}`);
 	}
 	if (!result?.session?.id || !result?.transport?.sdp) throw new Error("Live returned no session ID or SDP answer.");
-	return { sessionId: result.session.id, sdp: result.transport.sdp, model: "gpt-live-1", delegation: responsesConfig ? "responses" : "client" };
+	return { sessionId: result.session.id, sdp: result.transport.sdp, model: "gpt-live-1", delegation, nativeDecisionsError };
 }
 
 const REALTIME_BROWSER_TOOL_COMMANDS = Object.freeze({
@@ -15183,6 +15198,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				realtimeVoiceEnabled: message.realtimeVoiceEnabled,
 				liveDelegation: message.liveDelegation,
 				liveInterruptionEnabled: message.liveInterruptionEnabled,
+				liveNativeDecisions: message.liveNativeDecisions,
 				liveResponsesModel: message.liveResponsesModel,
 				diagnosticsEnabled: message.diagnosticsEnabled,
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
@@ -15446,6 +15462,44 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					stoppedWork: Boolean(message.stoppedWork),
 				}),
 			});
+			return;
+		}
+
+		// Live's native Decisions delegation already chose an action: carry it out
+		// when it is valid now and confident, otherwise report it unhandled.
+		if (message?.type === "sidebar:voice-command") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.runVoiceCommand({
+					prompt: String(message.prompt || ""),
+					action: String(message.action || ""),
+					confidence: message.confidence == null ? undefined : Number(message.confidence),
+					sessionId: typeof message.sessionId === "string" ? message.sessionId : "",
+					windowId: typeof message.windowId === "number" ? message.windowId : undefined,
+					stoppedWork: Boolean(message.stoppedWork),
+				}),
+			});
+			return;
+		}
+
+		if (message?.type === "sidebar:voice-command-state") {
+			const runtime = getOnhandBrowserRuntime();
+			sendResponse({
+				ok: true,
+				result: await runtime.voiceCommandState({
+					sessionId: typeof message.sessionId === "string" ? message.sessionId : "",
+					windowId: typeof message.windowId === "number" ? message.windowId : undefined,
+				}),
+			});
+			return;
+		}
+
+		// Test-only switch for Live's native Decisions delegation (no options UI).
+		if (message?.type === "sidebar:set-live-native-decisions") {
+			const runtime = getOnhandBrowserRuntime();
+			const settings = await runtime.updateSettings({ liveNativeDecisions: Boolean(message.enabled) });
+			sendResponse({ ok: true, liveNativeDecisions: settings?.liveNativeDecisions !== false });
 			return;
 		}
 
