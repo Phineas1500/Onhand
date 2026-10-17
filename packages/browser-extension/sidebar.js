@@ -5408,10 +5408,14 @@
 			`;
 	}
 
+	// Only the reader's click is a choice to keep the step log open or closed.
+	// A "toggle" event also fires when a working turn renders its <details>
+	// open, and recording that kept every finished step log expanded. The
+	// summary's click (keyboard activation clicks too) runs before it toggles.
 	function bindProgressToggles(root) {
-		root.querySelectorAll(".onhand-progress").forEach((detailsEl) => {
-			detailsEl.addEventListener("toggle", () => {
-				progressExpanded = detailsEl.open;
+		root.querySelectorAll(".onhand-progress > summary").forEach((summaryEl) => {
+			summaryEl.addEventListener("click", () => {
+				progressExpanded = !summaryEl.parentElement.open;
 			});
 		});
 	}

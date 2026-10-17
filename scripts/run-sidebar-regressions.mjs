@@ -488,6 +488,34 @@ async function assertProgressDistinguishesNewAndReusedSources() {
 	dom.window.close();
 }
 
+// The step log under an answer is open while Onhand works and closes when
+// the answer finishes. Browsers fire "toggle" for a <details> rendered open,
+// and recording that as the reader's choice kept every finished step log
+// expanded (first-run walkthrough, 2026-10-08). Only a real click is a choice.
+async function assertFinishedStepLogCollapses() {
+	const state = createState();
+	state.activeRequestId = "request-steps";
+	state.currentTurnId = "request-steps";
+	state.turns = [{
+		id: "request-steps", userPrompt: "Explain this page", reply: "", pending: true,
+		activities: [{ kind: "tool", toolName: "browser_extract_content", state: "complete", label: "Read the page" }], pageActions: [],
+	}];
+	const dom = await renderSidebar(state, []);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	const progress = () => shadow.querySelector(".onhand-progress");
+	assert.equal(progress().open, true, "a working turn shows its steps");
+	progress().dispatchEvent(new dom.window.Event("toggle"));
+	state.activeRequestId = null;
+	state.turns = [{ ...state.turns[0], pending: false, reply: "This page explains photosynthesis." }];
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.equal(progress().open, false, "the step log collapses when the answer finishes");
+	// A reader who opens it keeps it open.
+	progress().querySelector("summary").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.equal(progress().open, true, "a step log the reader opened stays open");
+	dom.window.close();
+}
+
 async function assertNativePanelAnnouncesOpened() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
@@ -2798,6 +2826,7 @@ await runSidebarScrollRegressions({ renderSidebar, createState });
 await runSidebarHistoryRegressions({ renderSidebar, createState });
 await assertNativePanelAnnouncesOpened();
 await assertProgressDistinguishesNewAndReusedSources();
+await assertFinishedStepLogCollapses();
 await assertSessionWideCitationNumbers();
 await assertCitationLinksSurviveAnnotationRecovery();
 await assertCitationTokenFoldingBridgesInflection();

@@ -73,7 +73,8 @@ async function assertStreamingPreservesCompletedEntries({ renderSidebar, createS
 		assert.equal(h.entries()[0], savedEntries[0], "opening sources must preserve completed response DOM");
 		assert.equal(sources.open, true);
 		const progress = savedEntries[0].querySelector(".onhand-progress");
-		setDisclosure(h.dom, progress, true);
+		// The reader's click on the summary is what sets the shared preference.
+		progress.querySelector("summary").dispatchEvent(new h.dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 		await h.refresh();
 		assert.equal(h.entries()[0], savedEntries[0], "progress toggles must not rebuild Markdown");
 		assert.ok(h.entries().every((entry) => entry.querySelector(".onhand-progress").open), "the shared progress preference must reach preserved and active entries");
@@ -108,7 +109,7 @@ async function assertStreamingPreservesCompletedEntries({ renderSidebar, createS
 		}
 		assert.equal(h.runtimeMessages.filter((message) => message.type === "sidebar:activate-action" && message.key === "highlight:saved-0").length, 1, "preserved delegation must activate a physical click once");
 
-		setDisclosure(h.dom, progress, false);
+		progress.querySelector("summary").dispatchEvent(new h.dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 		await h.refresh();
 		assert.ok(h.entries().every((entry) => !entry.querySelector(".onhand-progress").open));
 		const finalReply = state.messages[1].text;
