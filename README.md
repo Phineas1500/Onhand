@@ -2,6 +2,8 @@
 
 Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
 
+Install it free from the [Chrome Web Store](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb), or read more at [useonhand.com](https://useonhand.com).
+
 <p align="center">
   <img src="screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention with page highlights, notes, and a sidebar answer" width="960">
 </p>
@@ -13,6 +15,13 @@ The intended experience is:
 - ask a question about the page, PDF, file, or material already in front of you
 - have Onhand point to the relevant place, scroll to it, highlight it, and explain it in context
 - save the session so it can be replayed later with the relevant artifacts restored
+
+## Guides
+
+- [Chat with a PDF in Chrome and see the exact passage highlighted](https://useonhand.com/chat-with-pdf-chrome.html)
+- [An AI research paper reader that explains papers and follows citations](https://useonhand.com/ai-research-paper-reader.html)
+- [An AI study tool that quizzes you on what you're reading](https://useonhand.com/ai-study-quiz-extension.html)
+- Compared with [ChatPDF](https://useonhand.com/chatpdf-alternative.html), [NotebookLM](https://useonhand.com/notebooklm-alternative.html), [Sider](https://useonhand.com/sider-alternative.html) and [SciSpace](https://useonhand.com/scispace-alternative.html)
 
 ## Current status
 
