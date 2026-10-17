@@ -29,7 +29,7 @@ function resolveLocalRaindropWorkshopUrl(value) {
 
 const localRaindropWorkshopUrl = resolveLocalRaindropWorkshopUrl(process.env.ONHAND_RAINDROP_WORKSHOP_URL);
 
-// Only the release packager (scripts/package-chrome-extension.mjs) sets this, so
+// Only the release packager (scripts/package-extension.mjs) sets this, so
 // the tracked bundle never carries the hosted Worker URL. Ordinary builds leave
 // Onhand Free unconfigured unless a profile sets onhandFreeTierBaseUrl.
 function resolveFreeTierBaseUrl(value) {
@@ -51,6 +51,8 @@ await esbuild.build({
 	platform: "browser",
 	target: ["chrome116"],
 	sourcemap: false,
+	// The Firefox package minifies: addons.mozilla.org won't parse JavaScript files over 5 MB.
+	minify: process.env.ONHAND_RUNTIME_MINIFY === "1",
 	legalComments: "none",
 	mainFields: ["browser", "module", "main"],
 	banner: {

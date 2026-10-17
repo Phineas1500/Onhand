@@ -88392,7 +88392,7 @@ function highlightFailureBudgetTraceWindow(request) {
       lastNavigationIndex = index;
       return;
     }
-    if (tabUrl.startsWith("chrome-extension://")) return;
+    if (/^(?:chrome|moz)-extension:\/\//.test(tabUrl)) return;
     const navigationIdentity = normalizeUrlForPriorPageContext(tabUrl);
     if (navigationIdentity && navigationIdentity === lastNavigationIdentity) return;
     lastNavigationIdentity = navigationIdentity;
@@ -92582,7 +92582,7 @@ var CHROME_WEB_STORE_CONTEXT_NOTE = "The active tab is the Chrome Web Store. Chr
 function isOnhandPdfViewerUrl(url) {
   try {
     const parsed = new URL(String(url || ""));
-    if (parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname)) return true;
+    if (/^(?:chrome|moz)-extension:$/.test(parsed.protocol) && /\/pdf-viewer\.html$/i.test(parsed.pathname)) return true;
     return /\/onhand-pdf-viewer\.html$/i.test(parsed.pathname);
   } catch {
     return false;
@@ -92594,7 +92594,7 @@ function onhandPdfViewerSourceUrl(value) {
     if (!isOnhandPdfViewerUrl(parsed.href)) return "";
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
-    const extensionViewer = parsed.protocol === "chrome-extension:";
+    const extensionViewer = /^(?:chrome|moz)-extension:$/.test(parsed.protocol);
     const resolveCandidate = (candidate) => {
       if (/^file:/i.test(candidate)) return extensionViewer ? candidate : "";
       return /^https?:/i.test(candidate) ? candidate : "";
@@ -92809,7 +92809,7 @@ function rankOpenTabCandidates(state2, activeTab, prompt = "") {
   const activeUrl = openTabUrlParts(activeTab?.url);
   return flattenTabs(state2).filter((tab) => {
     if (!tab?.id || isPrivilegedUrl(tab.url)) return false;
-    if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || /^chrome-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url))) return false;
+    if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || /^(?:chrome|moz)-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url))) return false;
     return true;
   }).map((tab) => ({
     ...tab,
@@ -97122,14 +97122,14 @@ function createOnhandBrowserRuntime(host) {
   function redactDiagnosticText(value, maxLength = 1200) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
+    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
   function redactTraceText(value, maxLength = 3e3) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]");
+    text = text.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
@@ -97171,10 +97171,10 @@ function createOnhandBrowserRuntime(host) {
   }
   function normalizeSentryFramePath(value) {
     const redacted = redactDiagnosticText(value, 240);
-    return redacted.replace(/^chrome-extension:\/\/\[extension\]\//i, "app:///");
+    return redacted.replace(/^(?:chrome|moz)-extension:\/\/\[extension\]\//i, "app:///");
   }
   function redactDiagnosticStack(value, maxLength = 2400, extensionFramePrefix = "app:///") {
-    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/chrome-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
     const text = lines.join("\n");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
@@ -100164,7 +100164,7 @@ function createOnhandBrowserRuntime(host) {
     const isExtensionViewerUrl = (() => {
       try {
         const parsed = new URL(target);
-        return parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname);
+        return /^(?:chrome|moz)-extension:$/.test(parsed.protocol) && /\/pdf-viewer\.html$/i.test(parsed.pathname);
       } catch {
         return false;
       }
