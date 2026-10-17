@@ -35,6 +35,26 @@ const GOOGLE_SCHOLAR_READER_EXTENSION_ID = "dahenjhkoodjbpjheillcadbppiidmhp";
 const GOOGLE_SCHOLAR_READER_FRAME_PREFIX = `chrome-extension://${GOOGLE_SCHOLAR_READER_EXTENSION_ID}/reader.html`;
 const NATIVE_CHROME_PDF_VIEWER_EXTENSION_ID = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
 const NATIVE_CHROME_PDF_VIEWER_PREFIX = `chrome-extension://${NATIVE_CHROME_PDF_VIEWER_EXTENSION_ID}/`;
+// Firefox has no debugger API. Every debugger path has a scripting fallback
+// that runs when the debugger fails, so stand in an API that rejects cleanly
+// rather than throwing a TypeError on debuggerApi.
+// Firefox exposes runtime.getBrowserInfo; Chromium browsers don't.
+const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+const DEBUGGER_UNAVAILABLE_EVENT = Object.freeze({ addListener() {}, removeListener() {}, hasListener: () => false });
+const debuggerApi =
+	chrome.debugger ??
+	Object.freeze({
+		attach: async () => {
+			throw new Error("This browser doesn't support the debugger API.");
+		},
+		detach: async () => {},
+		sendCommand: async () => {
+			throw new Error("This browser doesn't support the debugger API.");
+		},
+		getTargets: async () => [],
+		onEvent: DEBUGGER_UNAVAILABLE_EVENT,
+		onDetach: DEBUGGER_UNAVAILABLE_EVENT,
+	});
 const FONT_ASSET_PATHS = Object.freeze({
 	newYorkRegular: "fonts/NewYork.woff2",
 	newYorkItalic: "fonts/NewYorkItalic.woff2",
@@ -84,6 +104,14 @@ function configureSidePanelActionClick() {
 	chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
 		log("Could not configure side panel action behavior", error?.message || String(error));
 	});
+}
+
+// Firefox shows the manifest's sidebar_action panel through browser.sidebarAction,
+// and only in response to a user action, so the toolbar click toggles it before
+// awaiting anything.
+function getFirefoxSidebarAction() {
+	const sidebarAction = globalThis.browser?.sidebarAction;
+	return typeof sidebarAction?.toggle === "function" ? sidebarAction : null;
 }
 
 function getOperaSidebarAction() {
@@ -282,6 +310,20 @@ async function openSidebarForWindow(windowId) {
 	}
 	if (!chrome.sidePanel?.open && getOperaSidebarAction()) {
 		return await handleOperaToolbarAction(windowId);
+	}
+	const firefoxSidebarAction = chrome.sidePanel?.open ? null : getFirefoxSidebarAction();
+	if (firefoxSidebarAction) {
+		try {
+			await firefoxSidebarAction.open();
+		} catch (error) {
+			const message = error?.message || String(error);
+			if (/user input|user action/i.test(message)) {
+				throw new Error("Firefox only opens the sidebar from a click. Click the Onhand toolbar button.");
+			}
+			throw error;
+		}
+		await setSidebarWindowOpen(windowId, true);
+		return { windowId, open: true };
 	}
 	if (!chrome.sidePanel?.open) {
 		throw new Error("This browser does not expose a native side panel API for Onhand.");
@@ -494,6 +536,10 @@ function isFileUrl(value) {
 }
 
 function localFileAccessMessage(tab, error = null) {
+	if (IS_FIREFOX) {
+		const firefoxSuffix = error ? ` Firefox reported: ${error?.message || String(error)}` : "";
+		return `This is a local file tab. Firefox doesn't let extensions read files on your computer, so Onhand can't open it. Serve the file over localhost and open the http://localhost URL instead.${firefoxSuffix}`;
+	}
 	const suffix = error ? ` Chrome reported: ${error?.message || String(error)}` : "";
 	return `This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.${suffix}`;
 }
@@ -662,7 +708,7 @@ async function loadAuthorizedPdfBytesFromTab(sender, pdfUrl) {
 		const frameId = frameTree?.frameTree?.frame?.id;
 		if (!frameId) throw new Error("Could not resolve the PDF tab's browser frame.");
 		const loaded = await withOperationTimeout(
-			chrome.debugger.sendCommand(target, "Network.loadNetworkResource", {
+			debuggerApi.sendCommand(target, "Network.loadNetworkResource", {
 				frameId,
 				url: pdfUrl,
 				options: {
@@ -1699,7 +1745,7 @@ function debuggerTargetLooksLikeGoogleScholarReader(targetInfo) {
 
 async function getNativeChromePdfViewerDebuggerTargets(tab = null) {
 	if (!chrome.debugger?.getTargets) return [];
-	const targets = await chrome.debugger.getTargets();
+	const targets = await debuggerApi.getTargets();
 	const tabId = typeof tab?.id === "number" ? tab.id : null;
 	const tabTitle = String(tab?.title || "");
 	const candidates = (Array.isArray(targets) ? targets : [])
@@ -1719,7 +1765,7 @@ async function getNativeChromePdfViewerDebuggerTargets(tab = null) {
 
 async function getGoogleScholarReaderDebuggerTargets(tab = null) {
 	if (!chrome.debugger?.getTargets) return [];
-	const targets = await chrome.debugger.getTargets();
+	const targets = await debuggerApi.getTargets();
 	const tabId = typeof tab?.id === "number" ? tab.id : null;
 	const tabUrl = String(tab?.url || "");
 	const candidates = (Array.isArray(targets) ? targets : [])
@@ -1782,7 +1828,7 @@ function markGoogleScholarReaderSelectionSurface(currentSelection, readerSurface
 
 async function getDebuggerPageTargetForTab(tab = null) {
 	if (!chrome.debugger?.getTargets || typeof tab?.id !== "number") return null;
-	const targets = await chrome.debugger.getTargets();
+	const targets = await debuggerApi.getTargets();
 	const tabUrl = String(tab?.url || "");
 	const candidates = (Array.isArray(targets) ? targets : [])
 		.filter((targetInfo) => debuggerTargetId(targetInfo) && typeof targetInfo.tabId === "number" && targetInfo.tabId === tab.id)
@@ -3291,7 +3337,7 @@ async function inferPdfPageNumberFromRelatedDebuggerTargets(tabId) {
 		const seenSessionIds = new Set();
 		const sendToSession = async (sessionId, method, params = {}) => {
 			return await withOperationTimeout(
-				chrome.debugger.sendCommand({ ...target, sessionId }, method, params),
+				debuggerApi.sendCommand({ ...target, sessionId }, method, params),
 				DEBUGGER_COMMAND_TIMEOUT_MS,
 				`Debugger session command timed out: ${method}`,
 			);
@@ -3307,9 +3353,9 @@ async function inferPdfPageNumberFromRelatedDebuggerTargets(tabId) {
 			addSession(sessionId, params?.targetInfo, "attached-target");
 			if (!sessionId) return;
 			const sessionTarget = { ...source, sessionId };
-			chrome.debugger.sendCommand(sessionTarget, "Runtime.enable").catch(() => {});
-			chrome.debugger.sendCommand(sessionTarget, "Accessibility.enable").catch(() => {});
-			chrome.debugger
+			debuggerApi.sendCommand(sessionTarget, "Runtime.enable").catch(() => {});
+			debuggerApi.sendCommand(sessionTarget, "Accessibility.enable").catch(() => {});
+			debuggerApi
 				.sendCommand(sessionTarget, "Target.setAutoAttach", {
 					autoAttach: true,
 					waitForDebuggerOnStart: false,
@@ -3317,7 +3363,7 @@ async function inferPdfPageNumberFromRelatedDebuggerTargets(tabId) {
 				})
 				.catch(() => {});
 		};
-		chrome.debugger.onEvent.addListener(onEvent);
+		debuggerApi.onEvent.addListener(onEvent);
 		try {
 			await send("Target.setAutoAttach", {
 				autoAttach: true,
@@ -3372,7 +3418,7 @@ async function inferPdfPageNumberFromRelatedDebuggerTargets(tabId) {
 			if (lastError) throw lastError;
 			return null;
 		} finally {
-			chrome.debugger.onEvent.removeListener(onEvent);
+			debuggerApi.onEvent.removeListener(onEvent);
 			try {
 				await send("Target.setAutoAttach", {
 					autoAttach: false,
@@ -3871,7 +3917,7 @@ async function attachDebuggerWithRetry(target) {
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
 			await withOperationTimeout(
-				chrome.debugger.attach(target, "1.3"),
+				debuggerApi.attach(target, "1.3"),
 				DEBUGGER_COMMAND_TIMEOUT_MS,
 				`Debugger attach timed out: ${target?.tabId || target?.targetId || "target"}`,
 			);
@@ -3880,7 +3926,7 @@ async function attachDebuggerWithRetry(target) {
 			lastError = error;
 			if (!isDebuggerAttachConflict(error)) throw error;
 			try {
-				await chrome.debugger.detach(target);
+				await debuggerApi.detach(target);
 			} catch {}
 			await delay(DEBUGGER_ATTACH_RETRY_DELAY_MS * (attempt + 1));
 		}
@@ -3900,7 +3946,7 @@ async function withDebugger(tabId, fn) {
 					target,
 					send: async (method, params = {}) => {
 						return await withOperationTimeout(
-							chrome.debugger.sendCommand(target, method, params),
+							debuggerApi.sendCommand(target, method, params),
 							DEBUGGER_COMMAND_TIMEOUT_MS,
 							`Debugger command timed out: ${method}`,
 						);
@@ -3908,7 +3954,7 @@ async function withDebugger(tabId, fn) {
 				});
 			} finally {
 				try {
-					await chrome.debugger.detach(target);
+					await debuggerApi.detach(target);
 				} catch {}
 			}
 		}),
@@ -3940,7 +3986,7 @@ async function withDebuggerTarget(target, fn) {
 					target,
 					send: async (method, params = {}) => {
 						return await withOperationTimeout(
-							chrome.debugger.sendCommand(target, method, params),
+							debuggerApi.sendCommand(target, method, params),
 							DEBUGGER_COMMAND_TIMEOUT_MS,
 							`Debugger command timed out: ${method}`,
 						);
@@ -3948,7 +3994,7 @@ async function withDebuggerTarget(target, fn) {
 				});
 			} finally {
 				try {
-					await chrome.debugger.detach(target);
+					await debuggerApi.detach(target);
 				} catch {}
 			}
 		}),
@@ -4014,6 +4060,43 @@ async function withOperationTimeout(promise, timeoutMs, timeoutMessage) {
 	} finally {
 		if (timeoutId) clearTimeout(timeoutId);
 	}
+}
+
+async function evaluateExpressionViaScripting(executeScript, tabId, expression, timeoutMs) {
+	const settledPayload = await withOperationTimeout(
+		executeScript(
+			tabId,
+			async (source) => {
+				try {
+					const value = await (0, eval)(source);
+					return {
+						ok: true,
+						value: (() => {
+							if (value == null) return value;
+							if (["string", "number", "boolean"].includes(typeof value)) return value;
+							try {
+								return JSON.parse(JSON.stringify(value));
+							} catch {
+								return String(value);
+							}
+						})(),
+					};
+				} catch (error) {
+					return {
+						ok: false,
+						error: error?.message || String(error),
+					};
+				}
+			},
+			[expression],
+		),
+		timeoutMs,
+		"Script evaluation timed out",
+	);
+	if (!settledPayload?.ok) {
+		throw new Error(settledPayload?.error || "Script evaluation failed");
+	}
+	return normalizeExecuteScriptValue(settledPayload.value);
 }
 
 async function executeScriptInTab(tabId, func, args = []) {
@@ -9673,44 +9756,15 @@ async function evaluateInTab(tabId, expression, options = {}) {
 	const timeoutMs = clampNumber(options.timeoutMs, SCRIPT_EXECUTION_TIMEOUT_MS, { min: SCRIPT_EXECUTION_TIMEOUT_MS, max: 120000 });
 	if (!options.skipScripting) {
 		try {
-			const settledPayload = await withOperationTimeout(
-				executeScriptInTabMainWorld(
-					tabId,
-					async (source) => {
-						try {
-							const value = await (0, eval)(source);
-							return {
-								ok: true,
-								value: (() => {
-									if (value == null) return value;
-									if (["string", "number", "boolean"].includes(typeof value)) return value;
-									try {
-										return JSON.parse(JSON.stringify(value));
-									} catch {
-										return String(value);
-									}
-								})(),
-							};
-						} catch (error) {
-							return {
-								ok: false,
-								error: error?.message || String(error),
-							};
-						}
-					},
-					[expression],
-				),
-				timeoutMs,
-				"Script evaluation timed out",
-			);
-			if (!settledPayload?.ok) {
-				throw new Error(settledPayload?.error || "Script evaluation failed");
-			}
-			return normalizeExecuteScriptValue(settledPayload.value);
+			return await evaluateExpressionViaScripting(executeScriptInTabMainWorld, tabId, expression, timeoutMs);
 		} catch (scriptError) {
 			if (isRestrictedScriptingError(scriptError)) {
 				throw scriptError;
 			}
+			// Without a debugger (Firefox), a page whose content security policy
+			// blocks eval in the page's own world can still be read from the
+			// extension's isolated world, which can't see the page's JS globals.
+			if (!chrome.debugger) return await evaluateExpressionViaScripting(executeScriptInTab, tabId, expression, timeoutMs);
 			return await withOperationTimeout(
 				withDebugger(tabId, async ({ send }) => {
 					const response = await send("Runtime.evaluate", {
@@ -9768,11 +9822,17 @@ async function getPageToolkitOptions(tab = null) {
 }
 
 async function executePageToolkitMethodViaScripting(tabId, methodName, args = [], toolkitOptions = {}) {
+	// Evaluating the toolkit source is slow in Firefox on long pages and can hit
+	// the script timeout, so load the prebuilt toolkit file into the page first.
+	const useToolkitFile = IS_FIREFOX && (await injectPageToolkitFactoryFile(tabId));
 	const payload = await executeScriptInTab(
 		tabId,
-		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions) => {
+		async (toolkitSource, targetMethodName, targetArgs, targetToolkitOptions, preferToolkitFile) => {
 			try {
-				const toolkitFactory = (0, eval)(`(${toolkitSource})`);
+				const toolkitFactory =
+					preferToolkitFile && typeof globalThis.__onhandPageToolkitFactory === "function"
+						? globalThis.__onhandPageToolkitFactory
+						: (0, eval)(`(${toolkitSource})`);
 				const toolkit = toolkitFactory(targetToolkitOptions);
 				return {
 					ok: true,
@@ -9785,12 +9845,21 @@ async function executePageToolkitMethodViaScripting(tabId, methodName, args = []
 				};
 			}
 		},
-		[createPageToolkit.toString(), methodName, args, toolkitOptions],
+		[createPageToolkit.toString(), methodName, args, toolkitOptions, useToolkitFile],
 	);
 	if (!payload?.ok) {
 		throw new Error(payload?.error || `Page toolkit method failed: ${methodName}`);
 	}
 	return payload.value;
+}
+
+async function injectPageToolkitFactoryFile(tabId) {
+	try {
+		await chrome.scripting.executeScript({ target: { tabId }, files: ["page-toolkit-content.js"] });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function pageToolkitExecutionTimeoutMs(methodName) {
@@ -9842,7 +9911,7 @@ function isInjectableFrameUrl(value) {
 		// Own-extension frames (the Onhand PDF viewer) are injectable; other
 		// extensions' frames — notably the browser's native PDF viewer — are
 		// not, and trying to inject into them aborts the whole allFrames call.
-		if (parsed.protocol === "chrome-extension:") return parsed.origin === new URL(chrome.runtime.getURL("")).origin;
+		if (/^(?:chrome|moz)-extension:$/.test(parsed.protocol)) return parsed.origin === new URL(chrome.runtime.getURL("")).origin;
 		return false;
 	} catch {
 		return false;
@@ -10210,7 +10279,7 @@ async function withDebuggerFrameContexts(tabId, findMatchingContexts, fn) {
 			if (method !== "Runtime.executionContextCreated") return;
 			if (params?.context) contexts.push(params.context);
 		};
-		chrome.debugger.onEvent.addListener(onEvent);
+		debuggerApi.onEvent.addListener(onEvent);
 		try {
 			await send("Page.enable");
 			await send("Runtime.enable");
@@ -10224,7 +10293,7 @@ async function withDebuggerFrameContexts(tabId, findMatchingContexts, fn) {
 			});
 			return await fn({ send, candidates });
 		} finally {
-			chrome.debugger.onEvent.removeListener(onEvent);
+			debuggerApi.onEvent.removeListener(onEvent);
 		}
 	});
 }
@@ -11441,6 +11510,16 @@ async function findExistingPdfViewerTab(pdfUrl, windowId) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
+	if (IS_FIREFOX && isFileUrl(pdfUrl)) {
+		// Firefox extensions can't read file:// URLs at all, so the viewer asks the
+		// reader to choose the file instead. Don't wait for it to finish loading.
+		// Report it as this step's error so the model relays it and stops calling PDF tools.
+		await chrome.tabs.update(sourceTab.id, { url: buildOnhandPdfViewerUrl(pdfUrl), active: args.active === false ? undefined : true });
+		const fileName = decodeURIComponent(pdfUrl.split("/").pop() || "") || "the PDF";
+		throw new Error(
+			`Firefox doesn't let extensions read files on your computer, so Onhand's PDF viewer is now open and asking the reader to choose ${fileName}. Ask them to click "Choose ${fileName}" in the viewer (or drop the file there) and then ask again. Don't call other PDF tools until they do.`,
+		);
+	}
 	if (isFileUrl(pdfUrl) && !(await isAllowedFileSchemeAccess())) {
 		// Actionable failure: without file access the viewer cannot read the bytes,
 		// so tell the model/user exactly what to enable instead of failing opaquely.
@@ -11642,7 +11721,34 @@ async function openPdfInOnhandViewer(args = {}) {
 		stepStartedAt = Date.now();
 		await ensureInlinePdfViewerBridgeToken(pdfUrl);
 		grantOnhandPdfViewerCredentialedSource(finalTab.id, pdfUrl);
-		const inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
+		let inlineViewer;
+		try {
+			inlineViewer = await installInlineOnhandPdfViewer(finalTab.id, pdfUrl, viewerOptions);
+		} catch (error) {
+			// Firefox's built-in PDF viewer can't be scripted, so Onhand's viewer
+			// can't be laid over it. Open Onhand's viewer in the tab instead.
+			if (!isRestrictedScriptingError(error)) throw error;
+			const viewerTab = await chrome.tabs.update(finalTab.id, { url: viewerUrl });
+			const loadedTab = waitForLoad ? await waitForTabComplete(viewerTab.id, timeoutMs) : await chrome.tabs.get(viewerTab.id);
+			const viewerReady =
+				waitForLoad && isOwnExtensionPdfViewerUrl(loadedTab?.url) ? await safeWaitForOnhandPdfViewerReady(loadedTab.id, timeoutMs) : null;
+			return {
+				tab: simplifyTab(loadedTab),
+				sourceTab: sourceTabSnapshot,
+				pdfUrl,
+				viewerUrl,
+				initialPageNumber,
+				initialPageSource,
+				initialScrollRatio,
+				selectionHandoff: await getSelectionHandoffResult(loadedTab.id),
+				viewerReady,
+				alreadyOpen: false,
+				opened: true,
+				replacedCurrentTab: !shouldOpenViewerInNewTab,
+				preservedSourceUrl: false,
+				pageLocationDiagnostics: diagnostics,
+			};
+		}
 		markStage("viewerInstall", stepStartedAt);
 		stepStartedAt = Date.now();
 		const viewerReady = waitForLoad ? await safeWaitForInlineOnhandPdfViewerReady(finalTab.id, timeoutMs, pdfUrl) : null;
@@ -13784,7 +13890,7 @@ async function collectConsoleEvents(tabId, options = {}) {
 			}
 		};
 
-		chrome.debugger.onEvent.addListener(onEvent);
+		debuggerApi.onEvent.addListener(onEvent);
 		try {
 			await send("Runtime.enable");
 			await send("Log.enable");
@@ -13797,7 +13903,7 @@ async function collectConsoleEvents(tabId, options = {}) {
 			await delay(durationMs);
 			return entries.sort((a, b) => a.timestamp - b.timestamp);
 		} finally {
-			chrome.debugger.onEvent.removeListener(onEvent);
+			debuggerApi.onEvent.removeListener(onEvent);
 		}
 	});
 }
@@ -13920,7 +14026,7 @@ async function collectNetworkEvents(tabId, options = {}) {
 			}
 		};
 
-		chrome.debugger.onEvent.addListener(onEvent);
+		debuggerApi.onEvent.addListener(onEvent);
 		try {
 			await send("Network.enable");
 			await send("Page.enable");
@@ -14011,7 +14117,7 @@ async function collectNetworkEvents(tabId, options = {}) {
 						: undefined,
 			}));
 		} finally {
-			chrome.debugger.onEvent.removeListener(onEvent);
+			debuggerApi.onEvent.removeListener(onEvent);
 		}
 	});
 }
@@ -14333,7 +14439,8 @@ async function handleCommandInner(name, args = {}) {
 			}
 			if (!viewerUrl) throw new Error("reopen_onhand_pdf_viewer requires a viewerUrl or pdfUrl.");
 			const sourcePdfUrl = extractPdfSourceUrlFromViewerLikeUrl(viewerUrl) || requestedPdfUrl;
-			if (isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
+			// Firefox's viewer asks the reader to choose a local file again; Chrome needs file access.
+			if (!IS_FIREFOX && isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
 				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
 			}
 			if (isFileUrl(sourcePdfUrl)) grantOnhandPdfViewerFileSource(sourcePdfUrl);
@@ -15785,6 +15892,11 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.action.onClicked.addListener((tab) => {
+	const firefoxSidebarAction = chrome.sidePanel?.open ? null : getFirefoxSidebarAction();
+	if (firefoxSidebarAction) {
+		firefoxSidebarAction.toggle().catch((error) => log("Could not toggle the Firefox sidebar", error?.message || String(error)));
+		return;
+	}
 	(async () => {
 		const windowId =
 			typeof tab?.windowId === "number" ? tab.windowId : await resolveSidebarWindowId({ windowId: tab?.windowId });

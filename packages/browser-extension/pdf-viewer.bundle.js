@@ -27379,6 +27379,47 @@ function decodeBase64PdfBytes(value) {
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
+var IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+function localPdfFileName(value) {
+  try {
+    return decodeURIComponent(new URL(value).pathname.split("/").pop() || "") || "the PDF";
+  } catch {
+    return "the PDF";
+  }
+}
+function promptForLocalPdfFile(value) {
+  const expectedName = localPdfFileName(value);
+  return new Promise((resolve) => {
+    viewer.replaceChildren();
+    const panel = document.createElement("section");
+    panel.className = "onhand-pdf-error onhand-pdf-file-prompt";
+    const message = document.createElement("p");
+    message.textContent = `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.`;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/pdf,.pdf";
+    input.hidden = true;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "onhand-pdf-file-choose";
+    button.textContent = `Choose ${expectedName}`;
+    button.addEventListener("click", () => input.click());
+    const accept = async (file) => {
+      if (!file) return;
+      setStatus(`Opening ${file.name}...`);
+      resolve(await file.arrayBuffer());
+    };
+    input.addEventListener("change", () => void accept(input.files?.[0]));
+    panel.addEventListener("dragover", (event) => event.preventDefault());
+    panel.addEventListener("drop", (event) => {
+      event.preventDefault();
+      void accept(event.dataTransfer?.files?.[0]);
+    });
+    panel.append(message, button, input);
+    viewer.append(panel);
+    setStatus("Choose the PDF");
+  });
+}
 async function loadPdfDocumentFromUrl(value) {
   const baseOptions = {
     url: value,
@@ -27386,6 +27427,11 @@ async function loadPdfDocumentFromUrl(value) {
     cMapPacked: true,
     standardFontDataUrl: extensionUrl("vendor/standard_fonts/")
   };
+  if (value.startsWith("file:") && IS_FIREFOX) {
+    const data = await promptForLocalPdfFile(value);
+    const { url: _url, ...optionsWithoutUrl } = baseOptions;
+    return await getPdfDocumentWithTimeout({ ...optionsWithoutUrl, data }, PDF_LOAD_TIMEOUT_MS);
+  }
   if (value.startsWith("file:")) {
     let authorized = false;
     try {
