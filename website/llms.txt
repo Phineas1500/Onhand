@@ -1,0 +1,30 @@
+# Onhand
+
+> Onhand is a free, open-source AI reading assistant for Chrome. Ask about the webpage, PDF or research paper you're reading, and Onhand highlights the passages that answer it right on the page, with a note in the margin beside each, and explains them in the side panel.
+
+- Install: Chrome Web Store, https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb (works in Chrome and other Chromium browsers).
+- Price: Onhand Free needs no account or API key and has a daily limit. For more, sign in with your ChatGPT plan or use your own OpenAI, Anthropic, Google Gemini or OpenRouter API key.
+- Features: answers highlighted on the page with margin notes; a built-in PDF viewer for papers and textbooks; following a paper's citations; reading clearly related open tabs; Learning mode, which tutors with guiding questions, hints and quizzes tied to the page; flashcards and summaries on request; voice (needs an OpenAI API key); saved sessions you can reopen.
+- Privacy: saved sessions and API keys stay in your browser. Onhand sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI.
+- Source code: https://github.com/Phineas1500/Onhand (Apache 2.0).
+- Not to be confused with "OnHand", an unrelated new-tab bookmarks extension.
+
+## Guides
+
+- [Chat with a PDF in Chrome](https://useonhand.com/chat-with-pdf-chrome.html): ask questions about a PDF, online or on your computer, and see the exact passage highlighted, without uploading it.
+- [AI research paper reader](https://useonhand.com/ai-research-paper-reader.html): explain papers, follow citations, compare papers in two tabs.
+- [AI study tool that quizzes you](https://useonhand.com/ai-study-quiz-extension.html): Learning mode, quizzes on the page, flashcards and summaries.
+
+## Comparisons
+
+- [ChatPDF alternative](https://useonhand.com/chatpdf-alternative.html): works on any webpage, not just PDFs.
+- [NotebookLM alternative](https://useonhand.com/notebooklm-alternative.html): works on the page you're reading instead of uploaded sources.
+- [Sider alternative](https://useonhand.com/sider-alternative.html): focused on reading and studying.
+- [SciSpace alternative](https://useonhand.com/scispace-alternative.html): any paper you open in Chrome, free and open source.
+- [Sidenote alternative](https://useonhand.com/sidenote-alternative.html): highlights the passages as it answers, with margin notes.
+
+## Optional
+
+- [Support](https://useonhand.com/support.html): setup, troubleshooting and contact.
+- [Privacy policy](https://useonhand.com/privacy.html): what Onhand handles and where it goes.
+- [Product Hunt](https://www.producthunt.com/products/onhand-2)

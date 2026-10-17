@@ -21,7 +21,7 @@ The intended experience is:
 - [Chat with a PDF in Chrome and see the exact passage highlighted](https://useonhand.com/chat-with-pdf-chrome.html)
 - [An AI research paper reader that explains papers and follows citations](https://useonhand.com/ai-research-paper-reader.html)
 - [An AI study tool that quizzes you on what you're reading](https://useonhand.com/ai-study-quiz-extension.html)
-- Compared with [ChatPDF](https://useonhand.com/chatpdf-alternative.html), [NotebookLM](https://useonhand.com/notebooklm-alternative.html), [Sider](https://useonhand.com/sider-alternative.html) and [SciSpace](https://useonhand.com/scispace-alternative.html)
+- Compared with [ChatPDF](https://useonhand.com/chatpdf-alternative.html), [NotebookLM](https://useonhand.com/notebooklm-alternative.html), [Sider](https://useonhand.com/sider-alternative.html), [SciSpace](https://useonhand.com/scispace-alternative.html) and [Sidenote](https://useonhand.com/sidenote-alternative.html)
 
 ## Current status
 
