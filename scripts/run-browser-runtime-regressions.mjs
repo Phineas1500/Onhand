@@ -1732,6 +1732,21 @@ async function assertSelectionFormatting() {
 		"",
 		"a complete quote is not swapped for a longer near-match with a heading glued on",
 	);
+	// Attention Is All You Need, page 1: PDF text puts the first footnote right
+	// after the abstract. The abstract's last sentence was "rewritten" to
+	// "...limited training data. ∗Equal contribution." and the viewer then marked
+	// the footnote too (Chrome smoke test 2026-10-09; reproduced 2026-10-17).
+	const gluedFootnote = { toolTraces: [{ state: "complete", toolName: "browser_pdf_read_pages", resultSummary: "Page 1:\nThe Transformer achieves this at a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. ∗Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention." }] };
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data.", gluedFootnote),
+		"",
+		"a complete quote is never swapped for a longer candidate that contains it (a footnote glued after it)",
+	);
+	assert.equal(
+		rewriteHighlightTextToRecentReadableExactPhraseForTest("generalizes well to other tasks by applying it successfully to English constituency parsing", gluedFootnote),
+		"We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data.",
+		"a fragment expands to its own sentence, which ends before a footnote marker",
+	);
 	const inlineSymbols = { toolTraces: [{ state: "complete", toolName: "browser_extract_content", resultSummary: "Readable content:\nThat is to say, there are two versions of the real line: one that is the range of t {\\displaystyle t} and measured in units of t {\\displaystyle t}." }] };
 	assert.match(
 		rewriteHighlightTextToRecentReadableExactPhraseForTest("there are two versions of the real line: one that is the range of t and measured in units of t", inlineSymbols),

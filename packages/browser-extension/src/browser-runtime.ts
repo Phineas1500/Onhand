@@ -10989,9 +10989,11 @@ function splitReadablePhraseCandidates(value: unknown) {
 	if (!text) return [];
 	// A footnote marker after a sentence ("exist. [1] Actually ...") still ends
 	// it; without this the next sentence was glued to the previous one and a
-	// quote of it was "expanded" backwards into the wrong paragraph.
+	// quote of it was "expanded" backwards into the wrong paragraph. So does a
+	// footnote that PDF text places right after a sentence ("...limited training
+	// data. ∗Equal contribution."): its marker starts a new candidate.
 	const sentenceCandidates = text
-		.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])/)
+		.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[A-Z])/)
 		.map((candidate) => candidate.trim())
 		.filter(Boolean);
 	const seeds = sentenceCandidates.length ? sentenceCandidates : [text];
@@ -11117,8 +11119,12 @@ function findRecentReadableExactPhrase(request: any, proposed: unknown) {
 				continue;
 			}
 			// Expanding a fragment to its sentence helps it anchor; expanding an
-			// already-complete sentence only adds text the model did not quote.
-			if (candidateLoose.includes(proposedLoose) && !looksLikeCompleteSentence(proposedText)) return candidate;
+			// already-complete sentence only adds text the model did not quote,
+			// and the near-match test below would accept any such superset.
+			if (candidateLoose.includes(proposedLoose)) {
+				if (!looksLikeCompleteSentence(proposedText)) return candidate;
+				continue;
+			}
 			if (proposedLoose.includes(candidateLoose) && canRewriteToContainedReadablePhrase(candidate, proposedText)) return candidate;
 			// The same holds for a near-match: extraction glues headings and
 			// captions onto the next sentence ("Eighth Amendment to the United

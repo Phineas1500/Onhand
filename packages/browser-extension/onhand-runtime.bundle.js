@@ -94986,7 +94986,7 @@ function recentReadableTraceBlocks(request) {
 function splitReadablePhraseCandidates(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (!text) return [];
-  const sentenceCandidates = text.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])/).map((candidate) => candidate.trim()).filter(Boolean);
+  const sentenceCandidates = text.split(/(?<=[.!?])\s*(?:\[\d{1,3}\]\s*)?\s+(?=[A-Z0-9"“])|(?<=[.!?]\s*\[\d{1,3}\])\s+(?=[A-Z0-9"“])|(?<=[.!?])\s+(?=[∗†‡§¶*]\s*[A-Z])/).map((candidate) => candidate.trim()).filter(Boolean);
   const seeds = sentenceCandidates.length ? sentenceCandidates : [text];
   const candidates = [];
   const addCandidate = (candidate) => {
@@ -95085,7 +95085,10 @@ function findRecentReadableExactPhrase(request, proposed) {
         if (candidate !== proposedText) return candidate;
         continue;
       }
-      if (candidateLoose.includes(proposedLoose) && !looksLikeCompleteSentence(proposedText)) return candidate;
+      if (candidateLoose.includes(proposedLoose)) {
+        if (!looksLikeCompleteSentence(proposedText)) return candidate;
+        continue;
+      }
       if (proposedLoose.includes(candidateLoose) && canRewriteToContainedReadablePhrase(candidate, proposedText)) return candidate;
       if (looksLikeCompleteSentence(proposedText) && entityWords(candidate).length > entityWords(proposedText).length + 3) continue;
       if (significantWordOverlap(proposedText, candidate) >= 0.82 && orderedSignificantWordOverlap(proposedText, candidate) >= 0.82) return candidate;
