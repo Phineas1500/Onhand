@@ -25120,6 +25120,7 @@ var nativeGestureStartScale = DEFAULT_SCALE;
 var transientZoomAnchor = null;
 var transientZoomGeometry = null;
 var transientZoomCentersHorizontally = false;
+var transientZoomScroll = null;
 var lastFitRenderWidth = 0;
 function inlinePdfViewerBridgeStorageKey(pdfUrl) {
   return `onhandInlinePdfViewerBridge:${encodeURIComponent(String(pdfUrl || ""))}`;
@@ -25295,6 +25296,7 @@ function applyTransientZoom(nextScale, anchor) {
   if (startsNewGesture) {
     transientZoomAnchor = anchor;
     transientZoomGeometry = captureTransientZoomGeometry(anchor);
+    transientZoomScroll = { x: window.scrollX, y: window.scrollY };
   }
   const ratio = currentScale / Math.max(1e-3, committedScale);
   const geometry = transientZoomGeometry;
@@ -25305,7 +25307,7 @@ function applyTransientZoom(nextScale, anchor) {
   }
   transientZoomCentersHorizontally = geometry.pageWidth * ratio <= geometry.availableWidth + 0.5;
   const horizontalRatio = transientZoomCentersHorizontally ? 0.5 : transientZoomAnchor.xRatio;
-  const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 : transientZoomAnchor.clientX;
+  const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 - pdfNoteShift : transientZoomAnchor.clientX;
   const localAnchorX = geometry.pageLeft + geometry.pageWidth * horizontalRatio;
   const localAnchorY = geometry.pageTop + geometry.pageHeight * transientZoomAnchor.yRatio;
   const translateX = targetClientX - geometry.viewerClientLeft - localAnchorX * ratio;
@@ -25316,7 +25318,8 @@ function applyTransientZoom(nextScale, anchor) {
 function commitTransientZoom() {
   if (!hasTransientZoom()) return;
   const ratio = currentScale / Math.max(1e-3, committedScale);
-  const anchor = centeredTransientZoomAnchor(transientZoomAnchor);
+  const scrolledDuringPreview = transientZoomScroll !== null && (Math.abs(window.scrollX - transientZoomScroll.x) > 1 || Math.abs(window.scrollY - transientZoomScroll.y) > 1);
+  const anchor = centeredTransientZoomAnchor(scrolledDuringPreview ? captureZoomAnchor() : transientZoomAnchor);
   if (Math.abs(ratio - 1) >= 1e-3) {
     for (const pageElement of getPdfPages()) {
       const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
@@ -25333,6 +25336,7 @@ function commitTransientZoom() {
   transientZoomAnchor = null;
   transientZoomGeometry = null;
   transientZoomCentersHorizontally = false;
+  transientZoomScroll = null;
   restoreZoomAnchor(anchor);
 }
 function canvasOutputScale(viewport) {

@@ -45,6 +45,8 @@ let nativeGestureStartScale = DEFAULT_SCALE;
 let transientZoomAnchor: PdfZoomAnchor | null = null;
 let transientZoomGeometry: PdfTransientZoomGeometry | null = null;
 let transientZoomCentersHorizontally = false;
+// Where the document was scrolled when the zoom preview began.
+let transientZoomScroll: { x: number; y: number } | null = null;
 let lastFitRenderWidth = 0;
 
 type PdfRect = {
@@ -312,6 +314,7 @@ function applyTransientZoom(nextScale: number, anchor: PdfZoomAnchor | null) {
 	if (startsNewGesture) {
 		transientZoomAnchor = anchor;
 		transientZoomGeometry = captureTransientZoomGeometry(anchor);
+		transientZoomScroll = { x: window.scrollX, y: window.scrollY };
 	}
 	const ratio = currentScale / Math.max(0.001, committedScale);
 	const geometry = transientZoomGeometry;
@@ -326,7 +329,8 @@ function applyTransientZoom(nextScale: number, anchor: PdfZoomAnchor | null) {
 	// pointer position. Once it overflows, preserve the point under the cursor.
 	transientZoomCentersHorizontally = geometry.pageWidth * ratio <= geometry.availableWidth + 0.5;
 	const horizontalRatio = transientZoomCentersHorizontally ? 0.5 : transientZoomAnchor.xRatio;
-	const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 : transientZoomAnchor.clientX;
+	// A page slid aside for notes (updatePdfNoteShift) stays aside in the preview.
+	const targetClientX = transientZoomCentersHorizontally ? visibleViewportWidth() / 2 - pdfNoteShift : transientZoomAnchor.clientX;
 	const localAnchorX = geometry.pageLeft + geometry.pageWidth * horizontalRatio;
 	const localAnchorY = geometry.pageTop + geometry.pageHeight * transientZoomAnchor.yRatio;
 	const translateX = targetClientX - geometry.viewerClientLeft - localAnchorX * ratio;
@@ -340,7 +344,12 @@ function applyTransientZoom(nextScale: number, anchor: PdfZoomAnchor | null) {
 function commitTransientZoom() {
 	if (!hasTransientZoom()) return;
 	const ratio = currentScale / Math.max(0.001, committedScale);
-	const anchor = centeredTransientZoomAnchor(transientZoomAnchor);
+	// A citation jump or note scroll during the preview (a resize refit runs
+	// one) moved the reader elsewhere; keep what is on screen now instead of
+	// returning to where the preview began.
+	const scrolledDuringPreview =
+		transientZoomScroll !== null && (Math.abs(window.scrollX - transientZoomScroll.x) > 1 || Math.abs(window.scrollY - transientZoomScroll.y) > 1);
+	const anchor = centeredTransientZoomAnchor(scrolledDuringPreview ? captureZoomAnchor() : transientZoomAnchor);
 	if (Math.abs(ratio - 1) >= 0.001) {
 		for (const pageElement of getPdfPages()) {
 			const width = Number.parseFloat(pageElement.style.width || "0") * ratio;
@@ -357,6 +366,7 @@ function commitTransientZoom() {
 	transientZoomAnchor = null;
 	transientZoomGeometry = null;
 	transientZoomCentersHorizontally = false;
+	transientZoomScroll = null;
 	restoreZoomAnchor(anchor);
 }
 

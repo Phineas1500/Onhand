@@ -390,6 +390,28 @@ function assertPdfPagesSlideForOneNoteColumn() {
 	} finally { dom.window.close(); }
 }
 
+// A window resize refits through a zoom preview. A citation jump during the
+// preview must survive the commit instead of snapping back to where the
+// preview began (the "citation 2 reaches its PDF note" CI flake).
+function assertZoomCommitKeepsScrollFromPreview() {
+	const commitWith = (scrollY) => {
+		const restored = [];
+		const zoom = loadFunctions(["hasTransientZoom", "centeredTransientZoomAnchor", "commitTransientZoom"], {
+			window: { scrollX: 0, scrollY }, viewer: { style: { transform: "translate3d(0px, 0px, 0) scale(0.9)", transformOrigin: "0 0", setProperty() {} } },
+			currentScale: 0.8, committedScale: 0.86, transientZoomAnchor: { pageNumber: 1, xRatio: 0.5, yRatio: 0.4, clientX: 270, clientY: 500 },
+			transientZoomGeometry: {}, transientZoomCentersHorizontally: false, transientZoomScroll: { x: 0, y: 0 },
+			getPdfPages: () => [], scaleAnnotationLayerForZoom() {}, visibleViewportWidth: () => 540,
+			captureZoomAnchor: () => ({ pageNumber: 3, xRatio: 0.5, yRatio: 0.1, clientX: 270, clientY: 500 }),
+			restoreZoomAnchor: (anchor) => restored.push(anchor),
+		});
+		zoom.commitTransientZoom();
+		return restored[0];
+	};
+	assert.equal(commitWith(0).pageNumber, 1, "an undisturbed preview restores its own anchor");
+	assert.equal(commitWith(1339).pageNumber, 3, "a scroll during the preview keeps the new reading position");
+}
+
+assertZoomCommitKeepsScrollFromPreview();
 assertNarrowPdfNotesFoldToTabs();
 assertPdfPagesSlideForOneNoteColumn();
 await assertExtractionCoverage();
