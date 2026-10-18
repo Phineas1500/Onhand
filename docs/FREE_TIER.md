@@ -122,6 +122,12 @@ endpoint to the repo. Keep it in your ignored local `.env`:
 ONHAND_FREE_TIER_BASE_URL=https://<your-worker>.workers.dev/v1
 ```
 
+The production Worker also answers on the custom domain `api.useonhand.com`
+(`routes` in `wrangler.toml`), and store builds from 0.4.10 use it, because
+school web filters often block `*.workers.dev` and many installs are on school
+Chromebooks. `workers_dev = true` keeps the workers.dev URL that earlier
+published versions call; don't remove it while those versions are in use.
+
 Store packages get the URL at packaging time, so Onhand Free works for store
 users without touching extension storage:
 

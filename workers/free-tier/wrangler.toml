@@ -2,6 +2,11 @@ name = "onhand-free-tier"
 main = "src/worker.mjs"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["enable_request_signal"]
+# Store builds from 0.4.10 call api.useonhand.com: school web filters often
+# block *.workers.dev. Published extensions still call the workers.dev URL, so
+# keep it on explicitly (adding routes can otherwise turn it off).
+workers_dev = true
+routes = [{ pattern = "api.useonhand.com", custom_domain = true }]
 
 # Create with: npx wrangler kv namespace create FREE_TIER_KV
 # then paste the returned id below before deploying.
