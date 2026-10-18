@@ -552,7 +552,7 @@ async function assertPdfViewerShowNoteKeepsExpandedLayoutOrder() {
 	assert.notEqual(end, -1, "pdfShowNote end marker not found");
 	const body = source.slice(start, end);
 	const collapseResetIndex = body.indexOf("setPdfNoteCollapsed(note, false);");
-	const positionIndex = body.indexOf("positionPdfNote(note, annotation, page);");
+	const positionIndex = body.indexOf("refreshPdfNotePositions([page], note);");
 	assert.notEqual(collapseResetIndex, -1, "pdfShowNote should explicitly normalize the expanded note state");
 	assert.notEqual(positionIndex, -1, "pdfShowNote should position the PDF note");
 	assert.ok(

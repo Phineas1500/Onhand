@@ -26186,6 +26186,7 @@ function setPdfNoteCollapsed(note, collapsed) {
   const label = note.querySelector("[data-onhand-note-part='label']");
   const toggle = note.querySelector("[data-onhand-note-toggle]");
   note.setAttribute("data-onhand-note-collapsed", collapsed ? "true" : "false");
+  if (!collapsed) note.removeAttribute(PDF_NOTE_FOLDED_ATTRIBUTE);
   if (body) body.hidden = collapsed;
   if (label) label.hidden = collapsed;
   if (toggle) {
@@ -26279,9 +26280,7 @@ function layoutPdfMarginNotes(page, sides) {
       setImportantStyles(note, {
         width: `${column.width}px`,
         "min-width": `${column.width}px`,
-        "max-width": `${column.width}px`,
-        padding: "10px 12px",
-        font: '13px/1.45 "New York", "Iowan Old Style", Charter, Georgia, serif'
+        "max-width": `${column.width}px`
       });
     }
     const top = Math.max(anchor, column.nextTop);
@@ -26292,72 +26291,134 @@ function layoutPdfMarginNotes(page, sides) {
     column.nextTop = top + (note.offsetHeight || 0) + PDF_MARGIN_NOTE_STACK_GAP;
   }
 }
-function refreshPdfNotePositions(pages = getPdfPages()) {
-  for (const page of pages) {
-    for (const note of Array.from(page.querySelectorAll(".onhand-pdf-annotation-layer [data-onhand-pdf-note]"))) {
-      const annotationId = note.getAttribute("data-onhand-note-for") || "";
-      const annotation = annotationId ? document.querySelector(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
-      if (annotation) positionPdfNote(note, annotation, page);
+var PDF_NOTE_SHIFT_KEEP_LEFT = 24;
+var pdfNoteShift = 0;
+function updatePdfNoteShift() {
+  const notedPage = document.querySelector(".onhand-pdf-annotation-layer [data-onhand-pdf-note]")?.closest(".page[data-page-number]");
+  let shift = 0;
+  if (notedPage) {
+    viewer.style.removeProperty("translate");
+    const pageRect = notedPage.getBoundingClientRect();
+    const sides = measurePdfMarginNoteSides(notedPage, pageRect);
+    if (!sides.right && !sides.left && pageRect.width) {
+      const layoutPerClientPx = getPageLayoutSize(notedPage, pageRect).width / pageRect.width;
+      const rightGutter = (document.documentElement.clientWidth || window.innerWidth || 0) - pageRect.right;
+      const spare = pageRect.left - PDF_NOTE_SHIFT_KEEP_LEFT;
+      const fits = (PDF_MARGIN_NOTE_MIN_WIDTH + PDF_MARGIN_NOTE_GAP * 2 + 1) / layoutPerClientPx;
+      const roomy = (PDF_MARGIN_NOTE_MAX_WIDTH + PDF_MARGIN_NOTE_GAP * 2 + 1) / layoutPerClientPx;
+      if (spare > 0 && rightGutter + spare >= fits) shift = Math.ceil(Math.min(spare, roomy - rightGutter));
     }
   }
+  if (shift > 0) viewer.style.setProperty("translate", `${-shift}px 0`);
+  else viewer.style.removeProperty("translate");
+  const changed = shift !== pdfNoteShift;
+  pdfNoteShift = shift;
+  return changed;
 }
-function positionPdfNote(note, annotation, page) {
-  const wasCollapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
-  if (!wasCollapsed) setPdfNoteCollapsed(note, false);
-  const annotationRect = annotation.getBoundingClientRect();
+function refreshPdfNotePositions(pages = getPdfPages(), open = null) {
+  const targets = updatePdfNoteShift() ? getPdfPages() : pages;
+  for (const page of targets) layoutPdfPageNotes(page, open && page.contains(open) ? open : null);
+}
+function layoutPdfPageNotes(page, open) {
+  const notes = Array.from(page.querySelectorAll(".onhand-pdf-annotation-layer [data-onhand-pdf-note]"));
+  if (!notes.length) {
+    page.removeAttribute("data-onhand-margin-notes");
+    return;
+  }
   const pageRect = page.getBoundingClientRect();
-  const pageSize = getPageLayoutSize(page, pageRect);
-  const maxWidth = Math.min(420, Math.max(220, pageSize.width - 32));
+  const marginSides = measurePdfMarginNoteSides(page, pageRect);
+  const inMargin = Boolean(marginSides.right || marginSides.left);
+  for (const note of notes) {
+    if (inMargin && note.hasAttribute(PDF_NOTE_FOLDED_ATTRIBUTE)) setPdfNoteCollapsed(note, false);
+    applyPdfNoteCardStyles(note, page, pageRect);
+  }
+  if (inMargin) layoutPdfMarginNotes(page, marginSides);
+  else layoutPdfInPageNotes(page, pageRect, open);
+}
+function applyPdfNoteCardStyles(note, page, pageRect) {
+  const collapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
+  if (!collapsed) setPdfNoteCollapsed(note, false);
+  const maxWidth = Math.min(360, Math.max(220, getPageLayoutSize(page, pageRect).width - 32));
   setImportantStyles(note, {
     position: "absolute",
     "max-width": `${maxWidth}px`,
     "min-width": "220px",
     "min-height": "76px",
     "box-sizing": "border-box",
-    padding: "12px 14px",
+    padding: "10px 12px",
     background: "#e6dbd1",
     color: "#575279",
     border: "1px solid #cac1b9",
     "border-left": "3px solid #286983",
     "border-radius": "0 4px 4px 0",
     "box-shadow": "0 1px 3px rgba(47, 44, 40, 0.16)",
-    font: '15px/1.55 "New York", "Iowan Old Style", Charter, Georgia, serif',
+    // Compact cards cover less and keep a stack close to its highlights.
+    font: '13px/1.45 "New York", "Iowan Old Style", Charter, Georgia, serif',
     "pointer-events": "auto",
     // Cards sit above highlights (z-index 1) in the shared layer.
     "z-index": "4",
     "scroll-margin-top": "22vh",
     "scroll-margin-bottom": "22vh"
   });
-  const marginSides = measurePdfMarginNoteSides(page, pageRect);
-  if (marginSides.right || marginSides.left) {
-    if (wasCollapsed) setPdfNoteCollapsed(note, true);
-    layoutPdfMarginNotes(page, marginSides);
-    return;
-  }
+  if (collapsed) setPdfNoteCollapsed(note, true);
+}
+var PDF_NOTE_FOLDED_ATTRIBUTE = "data-onhand-note-folded";
+var PDF_NOTE_OPENED_ATTRIBUTE = "data-onhand-note-opened";
+var PDF_NOTE_TAB_SIZE = 30;
+var PDF_NOTE_TAB_INSET = 6;
+var PDF_NOTE_TAB_GAP = 4;
+var pdfNoteOpenSequence = 0;
+function markPdfNoteOpened(note) {
+  pdfNoteOpenSequence += 1;
+  note.setAttribute(PDF_NOTE_OPENED_ATTRIBUTE, String(pdfNoteOpenSequence));
+}
+function layoutPdfInPageNotes(page, pageRect, open) {
   page.removeAttribute("data-onhand-margin-notes");
-  note.removeAttribute("data-onhand-margin-side");
-  const measuredRect = note.getBoundingClientRect();
-  const measuredHeight = measuredRect.height || note.offsetHeight || 0;
-  const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
-  const noteWidth = Math.max(220, Math.min(maxWidth, measuredRect.width || maxWidth));
-  const otherNoteRects = collectOtherPdfNoteRects(note, page, pageRect);
-  const positioned = choosePdfNotePosition(page, pageRect, toPageRect(annotationRect, page, pageRect), noteWidth, noteHeight, otherNoteRects);
-  if (positioned) {
-    setImportantStyle(note, "left", `${positioned.left}px`);
-    setImportantStyle(note, "top", `${positioned.top}px`);
+  const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
+  const isOpen = (note) => note.getAttribute("data-onhand-note-collapsed") !== "true";
+  const entries = Array.from(page.querySelectorAll(".onhand-pdf-annotation-layer [data-onhand-pdf-note]")).map((note) => {
+    note.removeAttribute("data-onhand-margin-side");
+    const annotationId = note.getAttribute("data-onhand-note-for") || "";
+    const annotation = annotationId ? document.querySelector(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
+    return { note, annotation, anchor: annotation ? toPageRect(annotation.getBoundingClientRect(), page, pageRect) : null };
+  }).sort((a, b) => (a.anchor?.top ?? Infinity) - (b.anchor?.top ?? Infinity));
+  const openedAt = (note) => Number(note.getAttribute(PDF_NOTE_OPENED_ATTRIBUTE) || 0);
+  const keep = open && isOpen(open) ? open : entries.map((entry) => entry.note).filter(isOpen).sort((a, b) => openedAt(b) - openedAt(a))[0] || null;
+  const nextTabTop = { left: 0, right: 0 };
+  for (const { note, anchor } of entries) {
+    if (note === keep) continue;
+    if (isOpen(note)) {
+      setPdfNoteCollapsed(note, true);
+      note.setAttribute(PDF_NOTE_FOLDED_ATTRIBUTE, "true");
+    }
+    if (note.hasAttribute(PDF_NOTE_FOLDED_ATTRIBUTE)) setImportantStyle(note, "opacity", "0.9");
+    const anchorRect = anchor || { left: 0, right: 0, top: 0 };
+    const side = anchorRect.left <= pageWidth - anchorRect.right ? "left" : "right";
+    const top = Math.max(0, Math.min(pageHeight - PDF_NOTE_TAB_SIZE, Math.max(anchorRect.top, nextTabTop[side])));
+    const left = side === "left" ? PDF_NOTE_TAB_INSET : pageWidth - PDF_NOTE_TAB_SIZE - PDF_NOTE_TAB_INSET;
+    setImportantStyle(note, "left", `${left}px`);
+    setImportantStyle(note, "top", `${top}px`);
+    nextTabTop[side] = top + PDF_NOTE_TAB_SIZE + PDF_NOTE_TAB_GAP;
   }
-  if (wasCollapsed) setPdfNoteCollapsed(note, true);
+  const kept = entries.find((entry) => entry.note === keep);
+  if (!kept?.anchor) return;
+  const measuredRect = kept.note.getBoundingClientRect();
+  const noteHeight = Math.max(76, Math.min(240, measuredRect.height || kept.note.offsetHeight || 96));
+  const noteWidth = Math.max(220, Math.min(360, measuredRect.width || 360));
+  const otherNoteRects = collectOtherPdfNoteRects(kept.note, page, pageRect);
+  const positioned = choosePdfNotePosition(page, pageRect, kept.anchor, noteWidth, noteHeight, otherNoteRects);
+  if (positioned) {
+    setImportantStyle(kept.note, "left", `${positioned.left}px`);
+    setImportantStyle(kept.note, "top", `${positioned.top}px`);
+  }
 }
 function expandPdfNoteForAnnotation(annotationId) {
   const note = findNoteForAnnotation(annotationId);
   if (!note) return null;
   setPdfNoteCollapsed(note, false);
-  try {
-    const annotation = findAnnotation(annotationId);
-    const page = annotation.closest(".page[data-page-number]");
-    if (page) positionPdfNote(note, annotation, page);
-  } catch {
-  }
+  markPdfNoteOpened(note);
+  const page = note.closest(".page[data-page-number]");
+  if (page) refreshPdfNotePositions([page], note);
   return note;
 }
 function attachPdfNoteInteractions(note, annotation) {
@@ -26375,7 +26436,7 @@ function attachPdfNoteInteractions(note, annotation) {
     if (!nextCollapsed) expandPdfNoteForAnnotation(annotationId);
     else {
       const page = note.closest(".page[data-page-number]");
-      if (page?.hasAttribute("data-onhand-margin-notes")) refreshPdfNotePositions([page]);
+      if (page) refreshPdfNotePositions([page]);
     }
   });
   note.addEventListener("click", (event) => {
@@ -26441,13 +26502,14 @@ async function pdfShowNote(annotationId, noteText, options = {}) {
     padding: "0"
   });
   setPdfNoteCollapsed(note, false);
+  markPdfNoteOpened(note);
   attachPdfNoteInteractions(note, annotation);
   overlay.append(note);
-  positionPdfNote(note, annotation, page);
+  refreshPdfNotePositions([page], note);
   if (options.scrollIntoView !== false) {
     note.scrollIntoView({ behavior: "auto", block: options.block || "center", inline: "nearest" });
     await waitForNextFrame();
-    positionPdfNote(note, annotation, page);
+    refreshPdfNotePositions([page], note);
     updatePageFromScroll();
   }
   return {
@@ -26481,6 +26543,7 @@ function pdfClearAnnotations() {
   const highlights = Array.from(document.querySelectorAll("[data-onhand-highlight-kind='pdf']"));
   const notes = Array.from(document.querySelectorAll("[data-onhand-note-kind='card']"));
   for (const element of [...highlights, ...notes]) element.remove();
+  refreshPdfNotePositions();
   return { clearedPdf: highlights.length, clearedNotes: notes.length, cleared: highlights.length + notes.length };
 }
 function pdfRemoveAnnotations(annotationIds) {
@@ -26498,6 +26561,7 @@ function pdfRemoveAnnotations(annotationIds) {
     removedCount += 1;
   }
   if (!removedCount) throw new Error(`No annotation found with id: ${ids.join(", ") || "(blank)"}`);
+  refreshPdfNotePositions();
   return { removedCount, requestedCount: ids.length };
 }
 function capturePdfAnnotationSnapshots() {
@@ -26516,7 +26580,8 @@ function capturePdfAnnotationSnapshots() {
       note: note && body ? {
         text: normalizeText(body.getAttribute("data-onhand-note-source") || body.textContent || ""),
         label: normalizeText(label?.textContent || "") || "Onhand",
-        collapsed: note.getAttribute("data-onhand-note-collapsed") === "true"
+        // A note folded for lack of room is not the reader's choice.
+        collapsed: note.getAttribute("data-onhand-note-collapsed") === "true" && !note.hasAttribute(PDF_NOTE_FOLDED_ATTRIBUTE)
       } : null
     };
   }).filter((snapshot) => Boolean(snapshot.text));
@@ -26588,10 +26653,9 @@ function refreshPdfAnnotationLayers() {
       annotation.replaceChildren();
       applyHighlightStyles(annotation, rects, unionRects(rects));
       annotation.setAttribute("data-onhand-pdf-anchor", JSON.stringify({ ...anchor, rects }));
-      const note = findNoteForAnnotation(annotation.getAttribute("data-onhand-annotation-id") || "");
-      if (note) positionPdfNote(note, annotation, page);
     }
   }
+  refreshPdfNotePositions();
 }
 async function restorePdfViewSnapshot(snapshot, sequence) {
   if (!snapshot) {

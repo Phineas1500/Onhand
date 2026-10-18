@@ -125,7 +125,7 @@ async function assertZoomPreservesLiveEdits(pendingPages) {
 		currentScale: 2, PDF_VIEWER_ANNOTATION_THEME: "light",
 		findNoteForAnnotation: (id) => document.querySelector(`[data-onhand-note-for="${id}"]`),
 		removeNotesForAnnotation: (id) => document.querySelector(`[data-onhand-note-for="${id}"]`)?.remove(),
-		positionPdfNote: (...args) => positioned.push(args),
+		refreshPdfNotePositions: (...args) => positioned.push(args),
 		window: { clearTimeout() {}, setTimeout(fn) { callback = fn; return 1; } },
 		zoomRenderTimer: null, renderSequence: 1, zoomRevision: 1, ZOOM_RENDER_DELAY_MS: 1,
 		commitTransientZoom() {}, countPendingPages: () => pendingPages,
@@ -144,7 +144,7 @@ async function assertZoomPreservesLiveEdits(pendingPages) {
 	assert.equal(layer.getAttribute("data-onhand-pdf-coordinate-scale"), "2");
 	assert.equal(document.querySelector('[data-onhand-note-for="keep"]'), note);
 	assert.equal(note.getAttribute("data-onhand-note-collapsed"), "true");
-	assert.equal(positioned.length, 1);
+	assert.equal(positioned.length, 1, "zoom lays out the notes once");
 	const added = addMark("created-during-sharpen");
 	viewer.pdfRemoveAnnotations(["delete-during-sharpen"]);
 	note.textContent = "Edited during sharpening";
@@ -219,7 +219,7 @@ function assertFirstAnnotationCreatedDuringTransientZoom() {
 			textSegmentRectsForPage: () => [],
 			parsePdfAnchor: (mark) => JSON.parse(mark.getAttribute("data-onhand-pdf-anchor")),
 			applyHighlightStyles: (mark, rects) => mark.setAttribute("painted", JSON.stringify(rects)),
-			findNoteForAnnotation: () => null,
+			refreshPdfNotePositions() {},
 		});
 		const rects = viewer.rangeRectsForPage({ getClientRects: () => [{ left: 20, top: 40, width: 60, height: 20 }] }, page);
 		assert.deepEqual(rects, [{ left: 10, top: 20, width: 30, height: 10 }]);
@@ -300,6 +300,98 @@ async function assertGenericScrollSettlesWithPausedFrames() {
 	} finally { clearTimeout(timeout); }
 }
 
+// Notes without room beside the page: one card stays open, the rest fold into
+// tabs at the page edge, level with their highlights.
+function assertNarrowPdfNotesFoldToTabs() {
+	const dom = new JSDOM('<section class="page" data-page-number="1"><div class="onhand-pdf-annotation-layer"></div></section>');
+	try {
+		const { document } = dom.window;
+		const page = document.querySelector(".page");
+		const layer = page.firstElementChild;
+		Object.defineProperties(page, { clientWidth: { get: () => 500 }, clientHeight: { get: () => 650 } });
+		const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+		page.getBoundingClientRect = () => rect(0, 0, 500, 650);
+		const notes = [200, 215, 230].map((top, index) => {
+			const id = `a${index + 1}`;
+			const mark = document.createElement("div");
+			mark.setAttribute("data-onhand-annotation-id", id);
+			mark.getBoundingClientRect = () => rect(80, top, 340, 12);
+			const note = document.createElement("div");
+			note.setAttribute("data-onhand-pdf-note", "true");
+			note.setAttribute("data-onhand-note-for", id);
+			note.setAttribute("data-onhand-note-collapsed", "false");
+			note.setAttribute("data-onhand-note-opened", String(index + 1));
+			note.getBoundingClientRect = () => {
+				const folded = note.getAttribute("data-onhand-note-collapsed") === "true";
+				return rect(parseFloat(note.style.left) || 0, parseFloat(note.style.top) || 0, folded ? 30 : 300, folded ? 30 : 90);
+			};
+			layer.append(mark, note);
+			return note;
+		});
+		const viewer = loadFunctions(
+			["setImportantStyle", "setImportantStyles", "setPdfNoteCollapsed", "getPageLayoutSize", "toPageRect", "rectOverlapArea", "getPdfTextRects", "scorePdfNoteCandidate", "collectOtherPdfNoteRects", "choosePdfNotePosition", "layoutPdfInPageNotes"],
+			{ document, CSS: { escape: (value) => value }, PDF_NOTE_FOLDED_ATTRIBUTE: "data-onhand-note-folded", PDF_NOTE_OPENED_ATTRIBUTE: "data-onhand-note-opened", PDF_NOTE_TAB_SIZE: 30, PDF_NOTE_TAB_INSET: 6, PDF_NOTE_TAB_GAP: 4 },
+		);
+		const open = () => notes.filter((note) => note.getAttribute("data-onhand-note-collapsed") !== "true");
+		viewer.layoutPdfInPageNotes(page, page.getBoundingClientRect(), null);
+		assert.deepEqual(open(), [notes[2]], "the latest note stays open");
+		const tabs = notes.slice(0, 2);
+		for (const tab of tabs) {
+			assert.equal(tab.getAttribute("data-onhand-note-folded"), "true");
+			assert.equal(tab.style.left, "6px", "a tab sits at the page edge nearer its highlight");
+			assert.equal(tab.style.opacity, "0.9");
+		}
+		assert.equal(tabs[0].style.top, "200px", "a tab is level with its highlight");
+		assert.equal(tabs[1].style.top, "234px", "tabs stack without covering each other");
+		viewer.setPdfNoteCollapsed(notes[0], false);
+		viewer.layoutPdfInPageNotes(page, page.getBoundingClientRect(), notes[0]);
+		assert.deepEqual(open(), [notes[0]], "opening a tab folds the open card");
+		assert.equal(notes[0].hasAttribute("data-onhand-note-folded"), false);
+		assert.equal(notes[2].getAttribute("data-onhand-note-folded"), "true");
+	} finally { dom.window.close(); }
+}
+
+// Centered pages split the spare width; when only the two gutters together fit
+// a note column, the pages slide left to make one.
+function assertPdfPagesSlideForOneNoteColumn() {
+	const dom = new JSDOM('<section class="page" data-page-number="1"><div class="onhand-pdf-annotation-layer"></div></section>');
+	try {
+		const { document } = dom.window;
+		const page = document.querySelector(".page");
+		const layer = page.firstElementChild;
+		let viewportWidth = 900, pageWidth = 509;
+		Object.defineProperty(document.documentElement, "clientWidth", { get: () => viewportWidth });
+		Object.defineProperties(page, { clientWidth: { get: () => pageWidth }, clientHeight: { get: () => 659 } });
+		const viewer = { style: { translate: "", setProperty(name, value) { this[name] = value; }, removeProperty(name) { this[name] = ""; } } };
+		page.getBoundingClientRect = () => {
+			const left = (viewportWidth - pageWidth) / 2 + (parseFloat(viewer.style.translate) || 0);
+			return { left, top: 0, width: pageWidth, height: 659, right: left + pageWidth, bottom: 659 };
+		};
+		const notes = loadFunctions(["getPageLayoutSize", "measurePdfMarginNoteSides", "updatePdfNoteShift"], {
+			document, window: { innerWidth: viewportWidth }, viewer, pdfNoteShift: 0,
+			PDF_MARGIN_NOTE_MIN_WIDTH: 180, PDF_MARGIN_NOTE_MAX_WIDTH: 300, PDF_MARGIN_NOTE_GAP: 16, PDF_NOTE_SHIFT_KEEP_LEFT: 24,
+		});
+		assert.equal(notes.updatePdfNoteShift(), false, "no notes, no shift");
+		assert.equal(viewer.style.translate, "");
+		const note = document.createElement("div");
+		note.setAttribute("data-onhand-pdf-note", "true");
+		layer.append(note);
+		// Gutters of 195.5 px: neither fits a 180 px column with its gaps, together they do.
+		assert.equal(notes.updatePdfNoteShift(), true);
+		assert.equal(viewer.style.translate, "-138px 0");
+		assert.deepEqual(notes.measurePdfMarginNoteSides(page, page.getBoundingClientRect()), { right: 300, left: 0 });
+		assert.equal(notes.updatePdfNoteShift(), false, "an unchanged layout keeps its shift");
+		viewportWidth = 1440;
+		assert.equal(notes.updatePdfNoteShift(), true);
+		assert.equal(viewer.style.translate, "", "wide windows keep the page centered");
+		viewportWidth = 900; pageWidth = 785;
+		notes.updatePdfNoteShift();
+		assert.equal(viewer.style.translate, "", "without room for a column the page stays put");
+	} finally { dom.window.close(); }
+}
+
+assertNarrowPdfNotesFoldToTabs();
+assertPdfPagesSlideForOneNoteColumn();
 await assertExtractionCoverage();
 await assertZoomPreservesLiveEdits(0);
 await assertZoomPreservesLiveEdits(1);
