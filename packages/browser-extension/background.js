@@ -14282,9 +14282,9 @@ async function handleCommandInner(name, args = {}) {
 			});
 		}
 		case "run_js": {
-			// Firefox's add-on policy forbids running code the add-on didn't ship;
-			// the runtime never offers this tool there.
-			if (IS_FIREFOX) throw new Error("browser_run_js isn't available in Firefox.");
+			// Also the runtime's own channel for scripts it builds (scroll restore,
+			// replay). In Firefox the model-facing browser_run_js tool is never
+			// offered (RUNTIME_JS_ALLOWED), so only those reach this command there.
 			if (typeof args.expression !== "string" || !args.expression.trim()) {
 				throw new Error("run_js requires a non-empty 'expression'");
 			}
