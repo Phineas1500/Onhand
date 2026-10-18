@@ -75,7 +75,7 @@ Skip for now:
 - **G2, Capterra, GetApp, Software Advice:** since G2 bought the other three in 2026, all four use one G2 form, and G2 doesn't accept consumer (B2C) products.
 - **Futurepedia:** no working submission route on 2026-10-17 (its submit page returns 404). Check again later.
 
-SaaSHub verification needs an email address at useonhand.com. Cloudflare Email Routing, on the DNS that already serves useonhand.com, can forward such an address to your inbox for free.
+SaaSHub verification needs an email address at useonhand.com. Use the existing useonhand.com alias, which Cloudflare Email Routing forwards to the maintainer's inbox; sign up for the directories with it too, so every listing is tied to the product's domain.
 
 ### AlternativeTo
 

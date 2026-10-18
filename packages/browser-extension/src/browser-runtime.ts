@@ -7829,6 +7829,19 @@ function isChromeWebStoreUrl(url: unknown) {
 
 const CHROME_WEB_STORE_CONTEXT_NOTE =
 	"The active tab is the Chrome Web Store. Chrome does not let extensions read or mark Web Store pages, so this page's text is unavailable and page tools will fail on it; do not call them on this tab. Say plainly that Onhand can't read Chrome Web Store pages, answer from general knowledge or other open tabs if the question allows, and suggest opening the article, PDF, or doc the user wants help with.";
+// New users land on Onhand's own listing right after installing, and the page
+// itself is unreadable, so give the model the facts they usually ask about.
+const ONHAND_CHROME_WEB_STORE_ID = "ogjmncmkpgdkkcibdiacmagaehjohljb";
+const ONHAND_OWN_LISTING_CONTEXT_NOTE =
+	"This Web Store page is Onhand's own listing, so answer questions about Onhand from these facts: Onhand is free to try with Onhand Free (no account or API key, with a daily limit); for more, users can sign in with their ChatGPT plan or use their own OpenAI, Anthropic, Google Gemini or OpenRouter key; it is open source (Apache 2.0). It answers questions about the webpage, PDF or research paper you're reading, highlights the passage that answers on the page with a note in the margin, follows citations into cited papers, compares related open tabs, and has a Learning mode that quizzes instead of handing over answers. To try it, open an article or PDF and ask a question there.";
+
+function isOnhandOwnWebStoreListing(url: unknown) {
+	try {
+		return isChromeWebStoreUrl(url) && new URL(String(url || "")).pathname.split("/").includes(ONHAND_CHROME_WEB_STORE_ID);
+	} catch {
+		return false;
+	}
+}
 
 function isOnhandPdfViewerUrl(url: unknown) {
 	try {
@@ -8283,7 +8296,7 @@ async function renderBrowserContextDetails(
 				}
 			}
 		} else if (activeTab?.url && isChromeWebStoreUrl(activeTab.url)) {
-			warning = CHROME_WEB_STORE_CONTEXT_NOTE;
+			warning = isOnhandOwnWebStoreListing(activeTab.url) ? `${CHROME_WEB_STORE_CONTEXT_NOTE} ${ONHAND_OWN_LISTING_CONTEXT_NOTE}` : CHROME_WEB_STORE_CONTEXT_NOTE;
 		} else if (activeTab?.url) {
 			warning = `Interactive page context is unavailable on privileged pages like ${activeTab.url}`;
 		}
