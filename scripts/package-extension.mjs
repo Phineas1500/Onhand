@@ -72,9 +72,11 @@ function toFirefoxManifest(manifest) {
 		gecko: {
 			id: FIREFOX_ADDON_ID,
 			strict_min_version: "140.0",
-			// Page content goes to the chosen AI provider to answer; Onhand Free's
-			// anonymous diagnostics are the technical data. See the privacy policy.
-			data_collection_permissions: { required: ["websiteContent"], optional: ["technicalAndInteraction"] },
+			// Page content, and the addresses and titles of the pages Onhand reads,
+			// go to the chosen AI provider to answer. Anonymous diagnostics are the
+			// technical data, which Mozilla only allows as optional, so the runtime
+			// sends them only when Firefox reports consent. See the privacy policy.
+			data_collection_permissions: { required: ["websiteContent", "browsingActivity"], optional: ["technicalAndInteraction"] },
 		},
 	};
 	return firefox;

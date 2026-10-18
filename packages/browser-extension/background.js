@@ -11088,6 +11088,9 @@ async function runPageToolkitMethod(tabId, methodName, ...args) {
 			if (onhandFrameFallbackError && !isMissingOnhandPdfViewerFrameError(onhandFrameFallbackError)) {
 				throw onhandFrameFallbackError;
 			}
+			// Without a debugger (Firefox) the fallback can't run, so the
+			// scripting error is the one that explains the failure.
+			if (!chrome.debugger) throw scriptError;
 			throw debuggerFallbackError;
 		}
 		return annotateGoogleScholarReaderFrameFallbackFailureIfRelevant(methodName, payload, readerFrameFallbackError);
@@ -14279,6 +14282,9 @@ async function handleCommandInner(name, args = {}) {
 			});
 		}
 		case "run_js": {
+			// Firefox's add-on policy forbids running code the add-on didn't ship;
+			// the runtime never offers this tool there.
+			if (IS_FIREFOX) throw new Error("browser_run_js isn't available in Firefox.");
 			if (typeof args.expression !== "string" || !args.expression.trim()) {
 				throw new Error("run_js requires a non-empty 'expression'");
 			}

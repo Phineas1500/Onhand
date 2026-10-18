@@ -87519,6 +87519,25 @@ var PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 var ONHAND_MAX_OUTPUT_TOKENS = 1100;
 var ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 1600;
 var COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
+var IS_FIREFOX_RUNTIME = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+var RUNTIME_JS_ALLOWED = !IS_FIREFOX_RUNTIME;
+var firefoxTechnicalDataGranted = false;
+async function refreshFirefoxTechnicalDataConsent() {
+  try {
+    const permissions = await globalThis.browser.permissions.getAll();
+    firefoxTechnicalDataGranted = Array.isArray(permissions?.data_collection) && permissions.data_collection.includes("technicalAndInteraction");
+  } catch {
+    firefoxTechnicalDataGranted = false;
+  }
+}
+if (IS_FIREFOX_RUNTIME) {
+  void refreshFirefoxTechnicalDataConsent();
+  globalThis.browser.permissions?.onAdded?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+  globalThis.browser.permissions?.onRemoved?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+}
+function diagnosticsSharingAllowed(settings2) {
+  return IS_FIREFOX_RUNTIME ? firefoxTechnicalDataGranted : Boolean(settings2.diagnosticsEnabled);
+}
 var DEFAULT_SETTINGS = {
   learningMode: false,
   realtimeVoiceEnabled: false,
@@ -87536,7 +87555,7 @@ var DEFAULT_SETTINGS = {
   oauthCredentials: {},
   diagnosticsEnabled: false,
   diagnosticsClientId: "",
-  advancedRuntimeInspectionEnabled: true,
+  advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED,
   // Model intent classifier is the default classification brain. It beats the
   // regex intent predicates 98.9% vs 88.9% on the labeled corpus
   // (eval:intent-classifier), fixing the whole class regex cannot —
@@ -96976,7 +96995,7 @@ function createOnhandBrowserRuntime(host) {
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
         diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
-        advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
+        advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && rawSettings.advancedRuntimeInspectionEnabled !== false,
         // On by default (see DEFAULT_SETTINGS). Once migrated, a stored false
         // is an authoritative opt-out (`!== false`); before migration, a
         // stored false is a legacy artifact of the old default, so adopt the
@@ -97251,7 +97270,7 @@ function createOnhandBrowserRuntime(host) {
     if (messageType) scope.setTag("message_type", messageType);
   }
   function captureSentryException(error2, settings2, kind, data = {}) {
-    const diagnosticsAllowed = Boolean(settings2.diagnosticsEnabled);
+    const diagnosticsAllowed = diagnosticsSharingAllowed(settings2);
     const explicitUserReport = Boolean(data.explicit_user_report);
     sentryDiagnosticsAllowed = diagnosticsAllowed;
     if (!diagnosticsAllowed && !explicitUserReport) return false;
@@ -97346,7 +97365,7 @@ function createOnhandBrowserRuntime(host) {
     if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
     const store2 = await loadStore();
     const settings2 = store2.settings;
-    if (!settings2.diagnosticsEnabled) return false;
+    if (!diagnosticsSharingAllowed(settings2)) return false;
     const clientId = await ensureDiagnosticsClientId(store2);
     const baseUrl = await getFreeTierBaseUrl();
     const manifest = chrome.runtime?.getManifest?.() || {};
@@ -100595,7 +100614,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         oauthCredentials: nextOAuthCredentials,
         diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store2.settings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store2.settings.diagnosticsClientId,
-        advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
+        advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
         experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store2.settings.experimentalModelLaneClassifier) === true,
         // Any settings save settles the migration: a subsequent stored false is
         // now an authoritative opt-out, not a legacy artifact.
@@ -100604,7 +100623,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
       delete store2.settings.voiceEngine;
-      sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
+      sentryDiagnosticsAllowed = diagnosticsSharingAllowed(store2.settings);
       const session = store2.sessions[store2.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
       store2.sessions[session.id] = session;

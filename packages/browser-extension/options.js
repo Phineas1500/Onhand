@@ -50,6 +50,12 @@ const DIAGNOSTICS_OPTIONAL_HELP =
 	"Sends only the extension version, model category, event names, coarse errors, redacted crash reports and counts. Never prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
 const DIAGNOSTICS_FREE_HELP =
 	"Required for Onhand Free, so Onhand can watch reliability, usage limits, costs, crashes and abuse. Still never sends prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
+const DIAGNOSTICS_FIREFOX_HELP =
+	"Firefox decides this: it asks whether to share technical data when you install Onhand, and you can change it in about:addons under Onhand's Permissions and data. Never sends prompts, page content, URLs, screenshots, saved sessions, transcripts or keys.";
+const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+// In Firefox, Mozilla's built-in consent for technical data replaces Onhand's
+// own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
+let firefoxTechnicalDataGranted = false;
 // Text fields save this long after the last keystroke, and right away when
 // they lose focus.
 const TYPING_SAVE_DELAY_MS = 1000;
@@ -93,6 +99,18 @@ const liveInterruptionInput = document.getElementById("liveInterruptionEnabled")
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
+if (IS_FIREFOX) {
+	// Firefox builds never run page scripts (see RUNTIME_JS_ALLOWED in
+	// browser-runtime.ts), so the switch has nothing to control there.
+	advancedRuntimeInspectionEnabledInput?.closest(".toggle-field")?.setAttribute("hidden", "");
+	globalThis.browser.permissions
+		.getAll()
+		.then((permissions) => {
+			firefoxTechnicalDataGranted = Array.isArray(permissions?.data_collection) && permissions.data_collection.includes("technicalAndInteraction");
+			syncDiagnosticsFields();
+		})
+		.catch(() => {});
+}
 const experimentalModelLaneClassifierInput = document.getElementById("experimentalModelLaneClassifier");
 const statusEl = document.getElementById("status");
 const codexAuthSummaryEl = document.getElementById("codexAuthSummary");
@@ -297,6 +315,12 @@ function syncAuthModeFields() {
 }
 
 function syncDiagnosticsFields() {
+	if (IS_FIREFOX) {
+		diagnosticsEnabledInput.checked = firefoxTechnicalDataGranted;
+		diagnosticsEnabledInput.disabled = true;
+		diagnosticsHelpEl.textContent = DIAGNOSTICS_FIREFOX_HELP;
+		return;
+	}
 	if (isFreeTierMode()) {
 		diagnosticsEnabledInput.checked = true;
 		diagnosticsEnabledInput.disabled = true;

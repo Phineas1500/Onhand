@@ -635,6 +635,32 @@ const ONHAND_MAX_OUTPUT_TOKENS = 1100;
 // tool calls drafted in one batched generation) plus the chat synthesis.
 const ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 1600;
 const COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
+// runtime.getBrowserInfo exists only in Firefox.
+const IS_FIREFOX_RUNTIME = typeof (globalThis as any).browser?.runtime?.getBrowserInfo === "function";
+// Firefox's add-on policy forbids running code the add-on didn't ship, so
+// browser_run_js (model-written JavaScript) is never offered there.
+const RUNTIME_JS_ALLOWED = !IS_FIREFOX_RUNTIME;
+// Firefox asks about technical data itself (an optional choice at install,
+// changeable in about:addons), and Mozilla doesn't let an add-on require it.
+// So in Firefox that choice, not Onhand's switch or mode, decides whether
+// diagnostics are sent.
+let firefoxTechnicalDataGranted = false;
+async function refreshFirefoxTechnicalDataConsent() {
+	try {
+		const permissions = await (globalThis as any).browser.permissions.getAll();
+		firefoxTechnicalDataGranted = Array.isArray(permissions?.data_collection) && permissions.data_collection.includes("technicalAndInteraction");
+	} catch {
+		firefoxTechnicalDataGranted = false;
+	}
+}
+if (IS_FIREFOX_RUNTIME) {
+	void refreshFirefoxTechnicalDataConsent();
+	(globalThis as any).browser.permissions?.onAdded?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+	(globalThis as any).browser.permissions?.onRemoved?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+}
+function diagnosticsSharingAllowed(settings: { diagnosticsEnabled?: boolean }) {
+	return IS_FIREFOX_RUNTIME ? firefoxTechnicalDataGranted : Boolean(settings.diagnosticsEnabled);
+}
 const DEFAULT_SETTINGS: RuntimeSettings = {
 	learningMode: false,
 	realtimeVoiceEnabled: false,
@@ -652,7 +678,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	oauthCredentials: {},
 	diagnosticsEnabled: false,
 	diagnosticsClientId: "",
-	advancedRuntimeInspectionEnabled: true,
+	advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED,
 	// Model intent classifier is the default classification brain. It beats the
 	// regex intent predicates 98.9% vs 88.9% on the labeled corpus
 	// (eval:intent-classifier), fixing the whole class regex cannot —
@@ -13216,7 +13242,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
-				advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
+				advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && rawSettings.advancedRuntimeInspectionEnabled !== false,
 				// On by default (see DEFAULT_SETTINGS). Once migrated, a stored false
 				// is an authoritative opt-out (`!== false`); before migration, a
 				// stored false is a legacy artifact of the old default, so adopt the
@@ -13557,7 +13583,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	function captureSentryException(error: unknown, settings: RuntimeSettings, kind: string, data: Record<string, unknown> = {}) {
-		const diagnosticsAllowed = Boolean(settings.diagnosticsEnabled);
+		const diagnosticsAllowed = diagnosticsSharingAllowed(settings);
 		const explicitUserReport = Boolean(data.explicit_user_report);
 		sentryDiagnosticsAllowed = diagnosticsAllowed;
 		if (!diagnosticsAllowed && !explicitUserReport) return false;
@@ -13662,7 +13688,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
 		const store = await loadStore();
 		const settings = store.settings as RuntimeSettings;
-		if (!settings.diagnosticsEnabled) return false;
+		if (!diagnosticsSharingAllowed(settings)) return false;
 		const clientId = await ensureDiagnosticsClientId(store);
 		const baseUrl = await getFreeTierBaseUrl();
 		const manifest = chrome.runtime?.getManifest?.() || {};
@@ -17264,7 +17290,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				oauthCredentials: nextOAuthCredentials,
 				diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store.settings.diagnosticsEnabled, authMode, aiProvider),
 				diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store.settings.diagnosticsClientId,
-				advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
+				advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && (nextPartial.advancedRuntimeInspectionEnabled ?? store.settings.advancedRuntimeInspectionEnabled) !== false,
 				experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store.settings.experimentalModelLaneClassifier) === true,
 				// Any settings save settles the migration: a subsequent stored false is
 				// now an authoritative opt-out, not a legacy artifact.
@@ -17273,7 +17299,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 			};
 			delete (store.settings as any).voiceEngine;
-			sentryDiagnosticsAllowed = Boolean(store.settings.diagnosticsEnabled);
+			sentryDiagnosticsAllowed = diagnosticsSharingAllowed(store.settings);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
 			store.sessions[session.id] = session;
