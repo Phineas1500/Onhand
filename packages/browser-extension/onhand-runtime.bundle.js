@@ -87519,6 +87519,25 @@ var PRIOR_PAGE_CONTEXT_MAX_SECTIONS = 6;
 var ONHAND_MAX_OUTPUT_TOKENS = 1100;
 var ONHAND_COMPACT_TEACHING_OUTPUT_TOKENS = 1600;
 var COMPACT_TEACHING_EXTRACT_MAX_CHARS = 5200;
+var IS_FIREFOX_RUNTIME = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+var RUNTIME_JS_ALLOWED = !IS_FIREFOX_RUNTIME;
+var firefoxTechnicalDataGranted = false;
+async function refreshFirefoxTechnicalDataConsent() {
+  try {
+    const permissions = await globalThis.browser.permissions.getAll();
+    firefoxTechnicalDataGranted = Array.isArray(permissions?.data_collection) && permissions.data_collection.includes("technicalAndInteraction");
+  } catch {
+    firefoxTechnicalDataGranted = false;
+  }
+}
+if (IS_FIREFOX_RUNTIME) {
+  void refreshFirefoxTechnicalDataConsent();
+  globalThis.browser.permissions?.onAdded?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+  globalThis.browser.permissions?.onRemoved?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
+}
+function diagnosticsSharingAllowed(settings2) {
+  return IS_FIREFOX_RUNTIME ? firefoxTechnicalDataGranted : Boolean(settings2.diagnosticsEnabled);
+}
 var DEFAULT_SETTINGS = {
   learningMode: false,
   realtimeVoiceEnabled: false,
@@ -87536,7 +87555,7 @@ var DEFAULT_SETTINGS = {
   oauthCredentials: {},
   diagnosticsEnabled: false,
   diagnosticsClientId: "",
-  advancedRuntimeInspectionEnabled: true,
+  advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED,
   // Model intent classifier is the default classification brain. It beats the
   // regex intent predicates 98.9% vs 88.9% on the labeled corpus
   // (eval:intent-classifier), fixing the whole class regex cannot —
@@ -88392,7 +88411,7 @@ function highlightFailureBudgetTraceWindow(request) {
       lastNavigationIndex = index;
       return;
     }
-    if (tabUrl.startsWith("chrome-extension://")) return;
+    if (/^(?:chrome|moz)-extension:\/\//.test(tabUrl)) return;
     const navigationIdentity = normalizeUrlForPriorPageContext(tabUrl);
     if (navigationIdentity && navigationIdentity === lastNavigationIdentity) return;
     lastNavigationIdentity = navigationIdentity;
@@ -92591,7 +92610,7 @@ function isOnhandOwnWebStoreListing(url) {
 function isOnhandPdfViewerUrl(url) {
   try {
     const parsed = new URL(String(url || ""));
-    if (parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname)) return true;
+    if (/^(?:chrome|moz)-extension:$/.test(parsed.protocol) && /\/pdf-viewer\.html$/i.test(parsed.pathname)) return true;
     return /\/onhand-pdf-viewer\.html$/i.test(parsed.pathname);
   } catch {
     return false;
@@ -92603,7 +92622,7 @@ function onhandPdfViewerSourceUrl(value) {
     if (!isOnhandPdfViewerUrl(parsed.href)) return "";
     const source = parsed.searchParams.get("url") || parsed.searchParams.get("file") || "";
     if (!source) return "";
-    const extensionViewer = parsed.protocol === "chrome-extension:";
+    const extensionViewer = /^(?:chrome|moz)-extension:$/.test(parsed.protocol);
     const resolveCandidate = (candidate) => {
       if (/^file:/i.test(candidate)) return extensionViewer ? candidate : "";
       return /^https?:/i.test(candidate) ? candidate : "";
@@ -92818,7 +92837,7 @@ function rankOpenTabCandidates(state2, activeTab, prompt = "") {
   const activeUrl = openTabUrlParts(activeTab?.url);
   return flattenTabs(state2).filter((tab) => {
     if (!tab?.id || isPrivilegedUrl(tab.url)) return false;
-    if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || /^chrome-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url))) return false;
+    if (tab.id !== activeTab?.id && (isChromeWebStoreUrl(tab.url) || /^(?:chrome|moz)-extension:/i.test(String(tab.url || "")) && !isOnhandPdfViewerUrl(tab.url))) return false;
     return true;
   }).map((tab) => ({
     ...tab,
@@ -96985,7 +97004,7 @@ function createOnhandBrowserRuntime(host) {
         oauthCredentials: normalizeOAuthCredentials(rawSettings.oauthCredentials),
         diagnosticsEnabled: normalizeDiagnosticsEnabled(rawSettings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof rawSettings.diagnosticsClientId === "string" ? rawSettings.diagnosticsClientId : "",
-        advancedRuntimeInspectionEnabled: rawSettings.advancedRuntimeInspectionEnabled !== false,
+        advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && rawSettings.advancedRuntimeInspectionEnabled !== false,
         // On by default (see DEFAULT_SETTINGS). Once migrated, a stored false
         // is an authoritative opt-out (`!== false`); before migration, a
         // stored false is a legacy artifact of the old default, so adopt the
@@ -97131,14 +97150,14 @@ function createOnhandBrowserRuntime(host) {
   function redactDiagnosticText(value, maxLength = 1200) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
+    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
   function redactTraceText(value, maxLength = 3e3) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]");
+    text = text.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
   }
@@ -97180,10 +97199,10 @@ function createOnhandBrowserRuntime(host) {
   }
   function normalizeSentryFramePath(value) {
     const redacted = redactDiagnosticText(value, 240);
-    return redacted.replace(/^chrome-extension:\/\/\[extension\]\//i, "app:///");
+    return redacted.replace(/^(?:chrome|moz)-extension:\/\/\[extension\]\//i, "app:///");
   }
   function redactDiagnosticStack(value, maxLength = 2400, extensionFramePrefix = "app:///") {
-    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/chrome-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
     const text = lines.join("\n");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
@@ -97260,7 +97279,7 @@ function createOnhandBrowserRuntime(host) {
     if (messageType) scope.setTag("message_type", messageType);
   }
   function captureSentryException(error2, settings2, kind, data = {}) {
-    const diagnosticsAllowed = Boolean(settings2.diagnosticsEnabled);
+    const diagnosticsAllowed = diagnosticsSharingAllowed(settings2);
     const explicitUserReport = Boolean(data.explicit_user_report);
     sentryDiagnosticsAllowed = diagnosticsAllowed;
     if (!diagnosticsAllowed && !explicitUserReport) return false;
@@ -97355,7 +97374,7 @@ function createOnhandBrowserRuntime(host) {
     if (!ONHAND_DIAGNOSTICS_EVENT_NAMES.has(name)) return false;
     const store2 = await loadStore();
     const settings2 = store2.settings;
-    if (!settings2.diagnosticsEnabled) return false;
+    if (!diagnosticsSharingAllowed(settings2)) return false;
     const clientId = await ensureDiagnosticsClientId(store2);
     const baseUrl = await getFreeTierBaseUrl();
     const manifest = chrome.runtime?.getManifest?.() || {};
@@ -100173,7 +100192,7 @@ function createOnhandBrowserRuntime(host) {
     const isExtensionViewerUrl = (() => {
       try {
         const parsed = new URL(target);
-        return parsed.protocol === "chrome-extension:" && /\/pdf-viewer\.html$/i.test(parsed.pathname);
+        return /^(?:chrome|moz)-extension:$/.test(parsed.protocol) && /\/pdf-viewer\.html$/i.test(parsed.pathname);
       } catch {
         return false;
       }
@@ -100604,7 +100623,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         oauthCredentials: nextOAuthCredentials,
         diagnosticsEnabled: normalizeDiagnosticsEnabled(nextPartial.diagnosticsEnabled ?? store2.settings.diagnosticsEnabled, authMode, aiProvider),
         diagnosticsClientId: typeof nextPartial.diagnosticsClientId === "string" ? nextPartial.diagnosticsClientId : store2.settings.diagnosticsClientId,
-        advancedRuntimeInspectionEnabled: (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
+        advancedRuntimeInspectionEnabled: RUNTIME_JS_ALLOWED && (nextPartial.advancedRuntimeInspectionEnabled ?? store2.settings.advancedRuntimeInspectionEnabled) !== false,
         experimentalModelLaneClassifier: (nextPartial.experimentalModelLaneClassifier ?? store2.settings.experimentalModelLaneClassifier) === true,
         // Any settings save settles the migration: a subsequent stored false is
         // now an authoritative opt-out, not a legacy artifact.
@@ -100613,7 +100632,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
       delete store2.settings.voiceEngine;
-      sentryDiagnosticsAllowed = Boolean(store2.settings.diagnosticsEnabled);
+      sentryDiagnosticsAllowed = diagnosticsSharingAllowed(store2.settings);
       const session = store2.sessions[store2.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
       store2.sessions[session.id] = session;

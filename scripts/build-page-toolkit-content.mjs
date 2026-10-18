@@ -33,5 +33,7 @@ const banner = [
 	"// (which block eval in the isolated world) can still run the page toolkit.",
 	"",
 ].join("\n");
-await writeFile(outPath, `${banner}globalThis.__onhandPageToolkitFactory = ${factorySource};\n`, "utf8");
+// End on a plain value: an injected file's last expression is its result, and
+// Firefox rejects a result it can't clone (here, the factory function).
+await writeFile(outPath, `${banner}globalThis.__onhandPageToolkitFactory = ${factorySource};\nvoid 0;\n`, "utf8");
 console.log(`page-toolkit-content.js generated (${factorySource.length} chars of factory source)`);

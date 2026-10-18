@@ -22,7 +22,7 @@ export async function runPdfViewerTabRegressions() {
 	const command = source.slice(caseStart, caseEnd);
 	const pdf = "https://papers.example.test/paper.pdf";
 	const exportUrl = "https://docs.google.com/document/d/test/export?format=pdf";
-	function harness(initialTabs, { existingViewer = null } = {}) {
+	function harness(initialTabs, { existingViewer = null, isFirefox = false, inlineInstallError = null } = {}) {
 		const tabs = new Map(initialTabs.map((tab) => [tab.id, { status: "complete", ...tab }]));
 		const created = [], installed = [], queues = [], inferred = [], updated = [];
 		let nextId = 100;
@@ -43,6 +43,8 @@ export async function runPdfViewerTabRegressions() {
 		};
 		const dependencies = {
 			chrome,
+			IS_FIREFOX: isFirefox,
+			isRestrictedScriptingError: (error) => /Missing host permission/.test(String(error?.message || error)),
 			isGoogleDocsDocumentUrl: (url) => String(url).startsWith("https://docs.google.com/document/d/") && !String(url).includes("/export"),
 			buildGoogleDocsPdfExportUrl: () => exportUrl,
 			isAllowedFileSchemeAccess: async () => false,
@@ -62,7 +64,11 @@ export async function runPdfViewerTabRegressions() {
 			waitForTabComplete: (id) => chrome.tabs.get(id),
 			ensureInlinePdfViewerBridgeToken: async () => {},
 			grantOnhandPdfViewerCredentialedSource: () => {},
-			installInlineOnhandPdfViewer: async (id, url, options) => { installed.push({ id, url, options }); return { ok: true }; },
+			installInlineOnhandPdfViewer: async (id, url, options) => {
+				if (inlineInstallError) throw inlineInstallError;
+				installed.push({ id, url, options });
+				return { ok: true };
+			},
 			safeWaitForInlineOnhandPdfViewerReady: async () => ({ ready: true }),
 			safeWaitForOnhandPdfViewerReady: async () => ({ ready: true }),
 			withTabCommand: async (id, run) => { queues.push(id); return await run(); },
@@ -132,5 +138,19 @@ export async function runPdfViewerTabRegressions() {
 		await assert.rejects(h.open({ tabId: 1, newTab: true }), /Allow access/);
 		assert.equal(h.created.length, 0, "local-file permission gates are preserved");
 	}
-	console.log("PDF tab handoff: native/inline/standalone reuse, page preservation, distinct URLs, window isolation, Docs and file gates passed");
+	{
+		// Firefox's built-in PDF viewer can't be scripted: open Onhand's viewer in the tab instead.
+		const h = harness([native], { inlineInstallError: new Error("Missing host permission for the tab") });
+		const result = await h.open({ tabId: 1, pdfUrl: pdf, newTab: false });
+		assert.equal(result.opened, true);
+		assert.equal(h.installed.length, 0);
+		assert.equal(h.tabs.get(1).url, `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent(pdf)}`);
+	}
+	{
+		// Firefox can't read file:// URLs; its viewer asks the reader to choose the file.
+		const h = harness([{ ...native, url: "file:///tmp/test.pdf" }], { isFirefox: true });
+		await assert.rejects(h.open({ tabId: 1 }), /asking the reader to choose test\.pdf/);
+		assert.equal(h.tabs.get(1).url, `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent("file:///tmp/test.pdf")}`);
+	}
+	console.log("PDF tab handoff: native/inline/standalone reuse, page preservation, distinct URLs, window isolation, Docs and file gates, Firefox viewer fallbacks passed");
 }

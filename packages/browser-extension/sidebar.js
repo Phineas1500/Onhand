@@ -26,7 +26,12 @@
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
 	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
 	const IS_NATIVE_SIDE_PANEL =
-		globalThis.location?.protocol === "chrome-extension:" && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
+		/^(?:chrome|moz)-extension:$/.test(globalThis.location?.protocol || "") && /\/sidepanel\.html$/.test(globalThis.location?.pathname || "");
+	// Firefox opens and closes its sidebar only through sidebarAction during a
+	// user action, so the close button calls it directly instead of messaging
+	// the background.
+	const FIREFOX_SIDEBAR_ACTION =
+		IS_NATIVE_SIDE_PANEL && typeof globalThis.browser?.sidebarAction?.close === "function" ? globalThis.browser.sidebarAction : null;
 	const FONT_ASSET_PATHS = Object.freeze({
 		newYorkRegular: "fonts/NewYork.woff2",
 		newYorkItalic: "fonts/NewYorkItalic.woff2",
@@ -7703,6 +7708,11 @@
 	});
 
 	closeButton.addEventListener("click", async () => {
+		if (FIREFOX_SIDEBAR_ACTION) {
+			// pagehide saves voice state and tells the background once Firefox closes the panel.
+			void FIREFOX_SIDEBAR_ACTION.close();
+			return;
+		}
 		await stopRealtimeVoice();
 		setOpen(false);
 		void ensureCurrentWindowId()
@@ -7713,6 +7723,11 @@
 		// Browser-owned panel close cannot await finalization. Save the latest
 		// cumulative usage as unconfirmed and request closure while still open.
 		if (liveVoice) { void saveLiveTranscript(); try { liveVoice.close(); } catch {} }
+		// Chrome reports its panel closing through sidePanel.onClosed; Firefox has no
+		// equivalent, so tell the background here.
+		if (FIREFOX_SIDEBAR_ACTION && typeof currentWindowId === "number") {
+			void chrome.runtime.sendMessage({ type: "sidebar:close", windowId: currentWindowId }).catch(() => {});
+		}
 	});
 
 	function handleSessionSelection() {

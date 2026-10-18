@@ -2799,6 +2799,52 @@ function decodeBase64PdfBytes(value: string) {
 	return bytes;
 }
 
+// Firefox extensions can't read file:// URLs, so a local PDF's bytes come from a
+// file the reader chooses (or drops) in the viewer.
+const IS_FIREFOX = typeof (globalThis as any).browser?.runtime?.getBrowserInfo === "function";
+
+function localPdfFileName(value: string) {
+	try {
+		return decodeURIComponent(new URL(value).pathname.split("/").pop() || "") || "the PDF";
+	} catch {
+		return "the PDF";
+	}
+}
+
+function promptForLocalPdfFile(value: string): Promise<ArrayBuffer> {
+	const expectedName = localPdfFileName(value);
+	return new Promise((resolve) => {
+		viewer.replaceChildren();
+		const panel = document.createElement("section");
+		panel.className = "onhand-pdf-error onhand-pdf-file-prompt";
+		const message = document.createElement("p");
+		message.textContent = `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.`;
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = "application/pdf,.pdf";
+		input.hidden = true;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "onhand-pdf-file-choose";
+		button.textContent = `Choose ${expectedName}`;
+		button.addEventListener("click", () => input.click());
+		const accept = async (file: File | null | undefined) => {
+			if (!file) return;
+			setStatus(`Opening ${file.name}...`);
+			resolve(await file.arrayBuffer());
+		};
+		input.addEventListener("change", () => void accept(input.files?.[0]));
+		panel.addEventListener("dragover", (event) => event.preventDefault());
+		panel.addEventListener("drop", (event) => {
+			event.preventDefault();
+			void accept(event.dataTransfer?.files?.[0]);
+		});
+		panel.append(message, button, input);
+		viewer.append(panel);
+		setStatus("Choose the PDF");
+	});
+}
+
 async function loadPdfDocumentFromUrl(value: string) {
 	const baseOptions = {
 		url: value,
@@ -2806,6 +2852,12 @@ async function loadPdfDocumentFromUrl(value: string) {
 		cMapPacked: true,
 		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
 	};
+	if (value.startsWith("file:") && IS_FIREFOX) {
+		// The reader picks the file, so no background grant is needed.
+		const data = await promptForLocalPdfFile(value);
+		const { url: _url, ...optionsWithoutUrl } = baseOptions;
+		return await getPdfDocumentWithTimeout({ ...optionsWithoutUrl, data }, PDF_LOAD_TIMEOUT_MS);
+	}
 	if (value.startsWith("file:")) {
 		// pdf-viewer.html is web-accessible, so any site can open it with a
 		// url=file:/// parameter. Only read local bytes when this launch was
