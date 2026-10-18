@@ -228,17 +228,23 @@ async function openPdf(ctx, base) {
 	await waitUntil(() => evaluate(ctx, viewer.sessionId, "document.querySelectorAll('.textLayer span').length>0"), "generated PDF text layer");
 	return { tab: opened.result.tab, viewer };
 }
+const VIEWER_EVENT_LOG_SCRIPT = `(()=>{const now=()=>Math.round(performance.now());window.__onhandCiLog=[[now(),'click',Math.round(scrollY),innerWidth]];if(!window.__onhandCiLogBound){window.__onhandCiLogBound=true;addEventListener('scroll',()=>window.__onhandCiLog.push([now(),'scroll',Math.round(scrollY),innerWidth]),{passive:true});addEventListener('resize',()=>window.__onhandCiLog.push([now(),'resize',Math.round(scrollY),innerWidth]))}return true})()`;
+const VIEWER_STATE_SCRIPT = `({scrollX,scrollY,innerWidth,innerHeight,scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight,zoom:document.getElementById('onhand-pdf-zoom-value')?.textContent,status:document.getElementById('onhand-pdf-status')?.textContent,marginPages:[...document.querySelectorAll('.page')].map(p=>p.hasAttribute('data-onhand-margin-notes')),log:(window.__onhandCiLog||[]).slice(-60)})`;
 async function assertCitationTargets(ctx, panel, viewer, actions, expectedChips) {
 	const { ev, state } = panelHelpers(ctx, panel);
 	for (let i = 0; i < 3; i++) {
 		const annotationId = actions[i * 2].annotationId;
+		// Record the viewer's scrolls and resizes around the click, so a failure
+		// shows what moved the viewer (or that nothing did).
+		const loggingViewer = await viewerForTab(ctx, actions[i * 2].tabId).catch(() => null);
+		if (loggingViewer) await evaluate(ctx, loggingViewer.sessionId, VIEWER_EVENT_LOG_SCRIPT).catch(() => {});
 		await ev(`(()=>{const b=[...${ROOT}.querySelectorAll('#messages .onhand-cite')].at(-${3 - i});b.scrollIntoView({block:'center'});b.click()})()`);
 		await waitUntil(() => ev(`![...${ROOT}.querySelectorAll('#messages .onhand-cite')].at(-${3 - i}).dataset.onhandActionPending`), `citation ${i + 1} activation finishes`);
 		const activeViewer = await viewerForTab(ctx, actions[i * 2].tabId);
 		try {
 			await waitUntil(() => evaluate(ctx, activeViewer.sessionId, `(()=>{const n=document.querySelector('[data-onhand-note-for='+CSS.escape(${JSON.stringify(annotationId)})+']'),r=n?.getBoundingClientRect();return !!r&&r.bottom>0&&r.top<innerHeight&&n.textContent.includes(${JSON.stringify(`Fixture explanation ${i + 1}`)})})()`), `citation ${i + 1} reaches its PDF note`);
 		} catch (error) {
-			const debug = { index: i, action: actions[i * 2], viewer: activeViewer, panel: await state(), notes: await evaluate(ctx, activeViewer.sessionId, "[...document.querySelectorAll('[data-onhand-note-for]')].map(n=>({id:n.getAttribute('data-onhand-note-for'),text:n.textContent,rect:n.getBoundingClientRect().toJSON()}))") };
+			const debug = { index: i, action: actions[i * 2], viewer: activeViewer, panel: await state(), notes: await evaluate(ctx, activeViewer.sessionId, "[...document.querySelectorAll('[data-onhand-note-for]')].map(n=>({id:n.getAttribute('data-onhand-note-for'),text:n.textContent,rect:n.getBoundingClientRect().toJSON()}))"), viewerState: await evaluate(ctx, activeViewer.sessionId, VIEWER_STATE_SCRIPT).catch((error) => String(error)) };
 			await writeFile(join(OUTPUT, "citation-target-debug.json"), JSON.stringify(debug, null, 2));
 			throw error;
 		}
