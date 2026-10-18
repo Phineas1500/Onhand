@@ -730,13 +730,18 @@
 		const source = String(text || "");
 		if (!source.includes("[[")) return { text: source, ids: [] };
 		const ids = [];
-		const cleaned = source.replace(CITATION_MARKER_PATTERN, (_match, inner) => {
-			for (const rawId of String(inner).split(",")) {
-				const id = rawId.trim();
-				if (id) ids.push(id);
-			}
-			return "";
-		});
+		// Removed markers leave a placeholder first, so the space before one can
+		// go too when punctuation follows ("retention [[cite:x]], and").
+		const cleaned = source
+			.replace(CITATION_MARKER_PATTERN, (_match, inner) => {
+				for (const rawId of String(inner).split(",")) {
+					const id = rawId.trim();
+					if (id) ids.push(id);
+				}
+				return "\u0000";
+			})
+			.replace(/[ \t]*\u0000+(?=[.,;:!?)\]])/g, "")
+			.replace(/\u0000/g, "");
 		return { text: cleaned.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1"), ids: [...new Set(ids)] };
 	}
 
@@ -5327,8 +5332,8 @@
 		if (turn?.pending) return running ? `Working · ${trimProgressLabel(running.label || running.toolName)}` : "Working";
 		const parts = [turn?.interrupted ? "Interrupted" : turn?.error ? "Failed" : "Done"];
 		if (tools.length) parts.push(pluralize(tools.length, "step"));
-		const recoveredCount = tools.filter((activity) => activity?.state === "recovered").length;
-		if (recoveredCount) parts.push(`recovered ${pluralize(recoveredCount, "retry")}`);
+		// A retry that recovered is internal; the expanded log still marks the
+		// step "Recovered", but the one-line summary reports only outcomes.
 		const annotations = actions.filter((action) => action?.type === "annotation");
 		const sourceKey = (action) => action.annotationId || action.key;
 		const isReused = (action) => action.reusedExisting || String(action.key || "").startsWith("scroll:");

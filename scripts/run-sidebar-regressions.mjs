@@ -635,6 +635,19 @@ async function assertEmptyCitationMarkerIsNotShown() {
 	dom.window.close();
 }
 
+async function assertRemovedCitationLeavesNoSpaceBeforePunctuation() {
+	// Stripping a marker that sat before punctuation once left "retention , and".
+	const state = createState();
+	state.turns = [{ ...state.turns[0], pageActions: [], reply: "Spacing supports retention [[cite:a-1]], and quizzes help [[cite:a-2]]. Plain text stays as is." }];
+	const dom = await renderSidebar(state, []);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	const text = shadow.getElementById("messages").textContent;
+	assert.match(text, /supports retention, and quizzes help\./);
+	assert.doesNotMatch(text, / [,.]/, "no space may be left before punctuation where a marker was removed");
+	dom.window.close();
+}
+
 async function assertReplyTokenPrefixCannotInjectHtml() {
 	const runtimeMessages = [];
 	const state = createState();
@@ -2877,6 +2890,7 @@ await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
 await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();
+await assertRemovedCitationLeavesNoSpaceBeforePunctuation();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
 
