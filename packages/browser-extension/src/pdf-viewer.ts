@@ -1426,90 +1426,6 @@ function setPdfNoteCollapsed(note: HTMLElement, collapsed: boolean) {
 	}
 }
 
-// Wide windows leave empty space beside the page. Notes go there, beside
-// their highlight, in two columns (right, then left) stacked in reading order,
-// instead of over the page's text; narrow windows keep the in-page placement.
-const PDF_MARGIN_NOTE_MIN_WIDTH = 180;
-const PDF_MARGIN_NOTE_MAX_WIDTH = 300;
-const PDF_MARGIN_NOTE_GAP = 16;
-const PDF_MARGIN_NOTE_STACK_GAP = 10;
-type PdfMarginSide = "right" | "left";
-
-function measurePdfMarginNoteSides(page: HTMLElement, pageRect: DOMRect): Record<PdfMarginSide, number> {
-	const layoutPerClientPx = pageRect.width ? getPageLayoutSize(page, pageRect).width / pageRect.width : 1;
-	const viewportRight = document.documentElement.clientWidth || window.innerWidth || 0;
-	const widthFor = (gutterClientPx: number) => {
-		const available = gutterClientPx * layoutPerClientPx - PDF_MARGIN_NOTE_GAP * 2;
-		return available < PDF_MARGIN_NOTE_MIN_WIDTH ? 0 : Math.floor(Math.min(PDF_MARGIN_NOTE_MAX_WIDTH, available));
-	};
-	return { right: widthFor(viewportRight - pageRect.right), left: widthFor(pageRect.left) };
-}
-
-// Notes from the page above can hang down beside this one; start below them.
-function pdfMarginStackStart(page: HTMLElement, pageRect: DOMRect, side: PdfMarginSide, layoutPerClientPx: number) {
-	let previous = page.previousElementSibling;
-	while (previous && !previous.matches(".page[data-page-number]")) previous = previous.previousElementSibling;
-	if (!previous) return 0;
-	let start = 0;
-	for (const note of Array.from(previous.querySelectorAll<HTMLElement>(`[data-onhand-pdf-note][data-onhand-margin-side="${side}"]`))) {
-		const overhang = (note.getBoundingClientRect().bottom - pageRect.top) * layoutPerClientPx + PDF_MARGIN_NOTE_STACK_GAP;
-		start = Math.max(start, overhang);
-	}
-	return start;
-}
-
-function layoutPdfMarginNotes(page: HTMLElement, sides: Record<PdfMarginSide, number>) {
-	const layer = page.querySelector<HTMLElement>(".onhand-pdf-annotation-layer");
-	if (!layer) return;
-	// The page clips its contents; margin notes sit just outside it.
-	page.setAttribute("data-onhand-margin-notes", "true");
-	const pageRect = page.getBoundingClientRect();
-	const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
-	const layoutPerClientPx = pageRect.height ? pageHeight / pageRect.height : 1;
-	const columns = (["right", "left"] as const)
-		.filter((side) => sides[side] > 0)
-		.map((side) => ({ side, width: sides[side], nextTop: pdfMarginStackStart(page, pageRect, side, layoutPerClientPx) }));
-	const entries = Array.from(layer.querySelectorAll<HTMLElement>("[data-onhand-pdf-note]"))
-		.map((note) => {
-			const annotationId = note.getAttribute("data-onhand-note-for") || "";
-			const annotation = annotationId ? document.querySelector<HTMLElement>(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
-			return { note, anchorTop: annotation ? toPageRect(annotation.getBoundingClientRect(), page, pageRect).top : Infinity };
-		})
-		.sort((a, b) => a.anchorTop - b.anchorTop);
-	for (const { note, anchorTop } of entries) {
-		const anchor = Number.isFinite(anchorTop) ? anchorTop : 0;
-		// The column that lets the note sit closest to its highlight; right wins ties.
-		const column = columns.reduce((best, candidate) => (Math.max(anchor, candidate.nextTop) < Math.max(anchor, best.nextTop) ? candidate : best));
-		const collapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
-		if (!collapsed) {
-			// Compact cards keep a stack of notes close to their highlights.
-			setImportantStyles(note, {
-				width: `${column.width}px`,
-				"min-width": `${column.width}px`,
-				"max-width": `${column.width}px`,
-				padding: "10px 12px",
-				font: '13px/1.45 "New York", "Iowan Old Style", Charter, Georgia, serif',
-			});
-		}
-		const top = Math.max(anchor, column.nextTop);
-		const left = column.side === "right" ? pageWidth + PDF_MARGIN_NOTE_GAP : -(collapsed ? 30 : column.width) - PDF_MARGIN_NOTE_GAP;
-		setImportantStyle(note, "left", `${left}px`);
-		setImportantStyle(note, "top", `${top}px`);
-		note.setAttribute("data-onhand-margin-side", column.side);
-		column.nextTop = top + (note.offsetHeight || 0) + PDF_MARGIN_NOTE_STACK_GAP;
-	}
-}
-
-function refreshPdfNotePositions(pages: HTMLElement[] = getPdfPages()) {
-	for (const page of pages) {
-		for (const note of Array.from(page.querySelectorAll<HTMLElement>(".onhand-pdf-annotation-layer [data-onhand-pdf-note]"))) {
-			const annotationId = note.getAttribute("data-onhand-note-for") || "";
-			const annotation = annotationId ? document.querySelector<HTMLElement>(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
-			if (annotation) positionPdfNote(note, annotation, page);
-		}
-	}
-}
-
 function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLElement) {
 	const wasCollapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
 	if (!wasCollapsed) setPdfNoteCollapsed(note, false);
@@ -1537,14 +1453,6 @@ function positionPdfNote(note: HTMLElement, annotation: HTMLElement, page: HTMLE
 		"scroll-margin-top": "22vh",
 		"scroll-margin-bottom": "22vh",
 	});
-	const marginSides = measurePdfMarginNoteSides(page, pageRect);
-	if (marginSides.right || marginSides.left) {
-		if (wasCollapsed) setPdfNoteCollapsed(note, true);
-		layoutPdfMarginNotes(page, marginSides);
-		return;
-	}
-	page.removeAttribute("data-onhand-margin-notes");
-	note.removeAttribute("data-onhand-margin-side");
 	const measuredRect = note.getBoundingClientRect();
 	const measuredHeight = measuredRect.height || note.offsetHeight || 0;
 	const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
@@ -1586,11 +1494,6 @@ function attachPdfNoteInteractions(note: HTMLElement, annotation: HTMLElement) {
 		const nextCollapsed = note.getAttribute("data-onhand-note-collapsed") !== "true";
 		setPdfNoteCollapsed(note, nextCollapsed);
 		if (!nextCollapsed) expandPdfNoteForAnnotation(annotationId);
-		else {
-			// A collapsed margin note frees space; restack the notes below it.
-			const page = note.closest<HTMLElement>(".page[data-page-number]");
-			if (page?.hasAttribute("data-onhand-margin-notes")) refreshPdfNotePositions([page]);
-		}
 	});
 	note.addEventListener("click", (event) => {
 		if (note.getAttribute("data-onhand-note-collapsed") !== "true") return;
@@ -3526,19 +3429,6 @@ window.addEventListener(
 	{ passive: true },
 );
 window.addEventListener("resize", scheduleResizeRender, { passive: true });
-// Width changes can open or close the space beside the page that margin notes use.
-let notePositionFrame = 0;
-window.addEventListener(
-	"resize",
-	() => {
-		if (notePositionFrame) return;
-		notePositionFrame = requestAnimationFrame(() => {
-			notePositionFrame = 0;
-			refreshPdfNotePositions();
-		});
-	},
-	{ passive: true },
-);
 
 loadPdf().catch((error) => {
 	showError(error?.message || String(error));
