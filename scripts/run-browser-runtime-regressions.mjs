@@ -337,6 +337,20 @@ async function assertChromeWebStoreTabGetsPlainContextNote() {
 	assert.match(details.text, /Chrome does not let extensions read or mark Web Store pages/);
 	assert.match(details.text, /do not call them on this tab/);
 	assert.doesNotMatch(details.text, /cannot be scripted/);
+	assert.doesNotMatch(details.text, /Onhand's own listing/, "another extension's listing gets no Onhand facts");
+	// On Onhand's own listing, where new users ask "is it free?", the model gets
+	// the facts the unreadable page would have shown.
+	const ownListing = await test.renderBrowserContextDetailsForTest(
+		{
+			snapshotState: async () => ({ windows: [{ focused: true, tabs: [{ id: 5, windowId: 1, active: true, title: "Onhand - Chrome Web Store", url: "https://chromewebstore.google.com/detail/onhand-chat-with-pdfs-web/ogjmncmkpgdkkcibdiacmagaehjohljb?hl=en" }] }] }),
+			runCommand: async () => {
+				throw new Error("The extensions gallery cannot be scripted.");
+			},
+		},
+		{ prompt: "Is this free?" },
+	);
+	assert.match(ownListing.text, /Onhand's own listing/);
+	assert.match(ownListing.text, /free to try with Onhand Free/);
 	const withOptions = {
 		snapshotState: async () => ({
 			windows: [
