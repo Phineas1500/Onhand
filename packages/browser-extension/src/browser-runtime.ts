@@ -1452,6 +1452,13 @@ const COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 3;
 const HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
 const HIGHLIGHT_COMMAND_TIMEOUT_MS = 6000;
 const HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12000;
+// A quote that isn't on the page fails its retry candidates in about a second,
+// then the page scan scrolls viewport by viewport retrying them, which on a
+// page a few screens long outlasts the call's 12 s cap. Hitting the cap reads
+// as a stalled page (buildHighlightTimeoutTabGuardResult) and blocks every
+// later highlight on the tab, so the model-issued scan stops starting new
+// attempts here and reports the plain miss instead.
+const HIGHLIGHT_SCAN_DEADLINE_MS = 8000;
 // Notes/scrolls get the same total allowance as a highlight tool call: on a
 // backgrounded or CPU-starved renderer every page command legitimately runs
 // 2-6s, and the note is the turn's primary payload — a late note beats a lost
@@ -12125,6 +12132,7 @@ function createTools(
 			}
 			const executeCommand = async () => {
 				let result: any;
+				const scanDeadline = Date.now() + HIGHLIGHT_SCAN_DEADLINE_MS;
 				const runCommandWithParams = async (requestedParams: any) => {
 					const effectiveParams = prepareCommandParams(requestedParams, commandName) as Record<string, unknown>;
 					recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
@@ -12170,7 +12178,7 @@ function createTools(
 					// the requested one.
 					if ((effectiveParams as any)?.__onhandUntrustedTabId != null) return null;
 					recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
-					return await runHighlightScanFallback(effectiveParams, lastError);
+					return await runHighlightScanFallback({ ...effectiveParams, scanDeadline }, lastError);
 				};
 				let attemptedCandidateCount = 0;
 				try {
@@ -16296,6 +16304,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	async function tryReplayHighlightCandidates(tabId: number, candidates: string[], options: any = {}) {
 		let lastError: any = null;
 		for (const candidate of candidates) {
+			if (replayScanDeadlinePassed(options)) break;
 			try {
 				const result = await host.runCommand("highlight_text", {
 					tabId,
@@ -16436,6 +16445,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	}
 
 	async function tryVisibleReplayTextCandidates(tabId: number, text: string, options: any = {}) {
+		if (replayScanDeadlinePassed(options)) return { result: null, lastError: null };
 		let response: any = null;
 		try {
 			response = await host.runCommand("run_js", {
@@ -16503,6 +16513,13 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return null;
 	}
 
+	// Model-issued scans carry a deadline (HIGHLIGHT_SCAN_DEADLINE_MS); session
+	// restore and replay don't, and scan the whole page.
+	function replayScanDeadlinePassed(options: any = {}) {
+		const deadline = Number(options?.scanDeadline || 0);
+		return deadline > 0 && Date.now() >= deadline;
+	}
+
 	async function scanPageForReplayHighlight(tabId: number, candidates: string[], options: any = {}) {
 		let metrics: Awaited<ReturnType<typeof readReplayScrollMetrics>>;
 		try {
@@ -16512,6 +16529,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 		let lastError: any = null;
 		for (const y of replayScrollScanPositions(metrics)) {
+			if (replayScanDeadlinePassed(options)) break;
 			try {
 				await host.runCommand("run_js", {
 					tabId,

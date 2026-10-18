@@ -7093,6 +7093,49 @@ async function assertSessionReplayRestore() {
 		);
 	}
 
+// A quote that isn't on a long page used to keep the page scan scrolling and
+// retrying until the 12 s tool cap fired. The timeout then read as a stalled
+// page and blocked every later highlight on the tab, so the miss has to come
+// back as a miss, before the cap.
+async function assertHighlightMissOnLongPageReturnsBeforeTimeout() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const host = createReplayHost({
+		rejectHighlightText: () => true,
+		runJsResult: (args) => {
+			const expression = String(args.expression || "");
+			if (expression.includes("visible-replay-text-candidates")) return { candidates: [] };
+			if (expression.includes("replay-source-presence")) return { present: false, reason: "empty" };
+			if (expression.includes("maxY")) return { scrollX: 0, scrollY: 0, innerHeight: 800, scrollHeight: 8000, maxY: 7200 };
+			return true;
+		},
+	});
+	const runCommand = host.runCommand.bind(host);
+	host.runCommand = async (name, args) => {
+		if (name === "highlight_text" || name === "run_js") await new Promise((resolve) => setTimeout(resolve, 400));
+		return await runCommand(name, args);
+	};
+	const runtime = createOnhandBrowserRuntime(host);
+	await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+	const startedAt = Date.now();
+	await runtime.submitPrompt({
+		prompt: "Highlight where the page says Alpha smoke content.",
+		displayPrompt: "Highlight where the page says Alpha smoke content.",
+		attachments: [],
+		learningMode: false,
+	});
+	const completedState = await waitForRuntimeCompletion(runtime);
+	assert.equal(completedState?.activeRequestId, null, "runtime did not complete the long-page highlight miss");
+	const store = getStoredStore();
+	const toolTrace = store.sessions[store.currentSessionId].turns[0].toolTraces?.find((trace) => trace.toolName === "browser_highlight_text");
+	assert.ok(toolTrace, "the missed highlight keeps a trace");
+	assert.equal(toolTrace.state, "error");
+	assert.doesNotMatch(`${toolTrace.error || ""} ${toolTrace.resultSummary || ""}`, /timed out/i, "a plain miss must not hit the tool timeout");
+	assert.match(`${toolTrace.error || ""}`, /No visible text matched|not currently loaded/);
+	assert.ok(host.calls.some((call) => call.name === "run_js" && String(call.args.expression || "").includes("maxY")), "the page scan ran");
+	assert.ok(Date.now() - startedAt < 12000, `the miss took ${Date.now() - startedAt} ms`);
+}
+
 async function assertFailedToolTraceSummarizesError() {
 	installChromeStorageStub();
 	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
@@ -12739,6 +12782,7 @@ async function main() {
 	await runRuntimeReviewRegressions({ createOnhandBrowserRuntime: (await import("../packages/browser-extension/onhand-runtime.bundle.js")).createOnhandBrowserRuntime, installChromeStorageStub, createReplayHost, replaySmokeTab, getStoredStore, storedStoreEntries });
 	await assertSessionReplayRestore();
 	await assertFailedToolTraceSummarizesError();
+	await assertHighlightMissOnLongPageReturnsBeforeTimeout();
 	await assertSelectedPdfAnchorIsReusedForPromptHighlight();
 	await assertSessionReplayDoesNotTrustStaleTabIds();
 	await assertSessionReplayDoesNotReuseSameTitleWrongUrl();

@@ -88202,6 +88202,7 @@ var COMPACT_TEACHING_HIGHLIGHT_FAILURE_ABORT_LIMIT = 3;
 var HIGHLIGHT_SKIP_ORIGINAL_OVER_CHARS = 320;
 var HIGHLIGHT_COMMAND_TIMEOUT_MS = 6e3;
 var HIGHLIGHT_TOOL_CALL_TIMEOUT_MS = 12e3;
+var HIGHLIGHT_SCAN_DEADLINE_MS = 8e3;
 var ANNOTATION_COMMAND_TIMEOUT_MS = 12e3;
 var TEACHING_SOURCE_HIGHLIGHT_MAX = 6;
 var TEACHING_SOURCE_NOTE_MAX = 6;
@@ -95943,6 +95944,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
       }
       const executeCommand = async () => {
         let result;
+        const scanDeadline = Date.now() + HIGHLIGHT_SCAN_DEADLINE_MS;
         const runCommandWithParams = async (requestedParams) => {
           const effectiveParams = prepareCommandParams(requestedParams, commandName);
           recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
@@ -95978,7 +95980,7 @@ function createTools(host, artifactHooks, prepareCommandParams = (params) => par
           if (!effectiveParams?.scanPage) return null;
           if (effectiveParams?.__onhandUntrustedTabId != null) return null;
           recordEffectiveCommandParams(name, String(_toolCallId || name), requestedParams, effectiveParams, commandName);
-          return await runHighlightScanFallback(effectiveParams, lastError);
+          return await runHighlightScanFallback({ ...effectiveParams, scanDeadline }, lastError);
         };
         let attemptedCandidateCount = 0;
         try {
@@ -99721,6 +99723,7 @@ function createOnhandBrowserRuntime(host) {
   async function tryReplayHighlightCandidates(tabId, candidates, options = {}) {
     let lastError = null;
     for (const candidate of candidates) {
+      if (replayScanDeadlinePassed(options)) break;
       try {
         const result = await host.runCommand("highlight_text", {
           tabId,
@@ -99859,6 +99862,7 @@ function createOnhandBrowserRuntime(host) {
 		})()`;
   }
   async function tryVisibleReplayTextCandidates(tabId, text, options = {}) {
+    if (replayScanDeadlinePassed(options)) return { result: null, lastError: null };
     let response = null;
     try {
       response = await host.runCommand("run_js", {
@@ -99923,6 +99927,10 @@ function createOnhandBrowserRuntime(host) {
     }
     return null;
   }
+  function replayScanDeadlinePassed(options = {}) {
+    const deadline = Number(options?.scanDeadline || 0);
+    return deadline > 0 && Date.now() >= deadline;
+  }
   async function scanPageForReplayHighlight(tabId, candidates, options = {}) {
     let metrics;
     try {
@@ -99932,6 +99940,7 @@ function createOnhandBrowserRuntime(host) {
     }
     let lastError = null;
     for (const y of replayScrollScanPositions(metrics)) {
+      if (replayScanDeadlinePassed(options)) break;
       try {
         await host.runCommand("run_js", {
           tabId,
