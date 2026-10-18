@@ -26234,73 +26234,6 @@ function setPdfNoteCollapsed(note, collapsed) {
     note.style.removeProperty(property);
   }
 }
-var PDF_MARGIN_NOTE_MIN_WIDTH = 180;
-var PDF_MARGIN_NOTE_MAX_WIDTH = 300;
-var PDF_MARGIN_NOTE_GAP = 16;
-var PDF_MARGIN_NOTE_STACK_GAP = 10;
-function measurePdfMarginNoteSides(page, pageRect) {
-  const layoutPerClientPx = pageRect.width ? getPageLayoutSize(page, pageRect).width / pageRect.width : 1;
-  const viewportRight = document.documentElement.clientWidth || window.innerWidth || 0;
-  const widthFor = (gutterClientPx) => {
-    const available = gutterClientPx * layoutPerClientPx - PDF_MARGIN_NOTE_GAP * 2;
-    return available < PDF_MARGIN_NOTE_MIN_WIDTH ? 0 : Math.floor(Math.min(PDF_MARGIN_NOTE_MAX_WIDTH, available));
-  };
-  return { right: widthFor(viewportRight - pageRect.right), left: widthFor(pageRect.left) };
-}
-function pdfMarginStackStart(page, pageRect, side, layoutPerClientPx) {
-  let previous = page.previousElementSibling;
-  while (previous && !previous.matches(".page[data-page-number]")) previous = previous.previousElementSibling;
-  if (!previous) return 0;
-  let start = 0;
-  for (const note of Array.from(previous.querySelectorAll(`[data-onhand-pdf-note][data-onhand-margin-side="${side}"]`))) {
-    const overhang = (note.getBoundingClientRect().bottom - pageRect.top) * layoutPerClientPx + PDF_MARGIN_NOTE_STACK_GAP;
-    start = Math.max(start, overhang);
-  }
-  return start;
-}
-function layoutPdfMarginNotes(page, sides) {
-  const layer = page.querySelector(".onhand-pdf-annotation-layer");
-  if (!layer) return;
-  page.setAttribute("data-onhand-margin-notes", "true");
-  const pageRect = page.getBoundingClientRect();
-  const { width: pageWidth, height: pageHeight } = getPageLayoutSize(page, pageRect);
-  const layoutPerClientPx = pageRect.height ? pageHeight / pageRect.height : 1;
-  const columns = ["right", "left"].filter((side) => sides[side] > 0).map((side) => ({ side, width: sides[side], nextTop: pdfMarginStackStart(page, pageRect, side, layoutPerClientPx) }));
-  const entries = Array.from(layer.querySelectorAll("[data-onhand-pdf-note]")).map((note) => {
-    const annotationId = note.getAttribute("data-onhand-note-for") || "";
-    const annotation = annotationId ? document.querySelector(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
-    return { note, anchorTop: annotation ? toPageRect(annotation.getBoundingClientRect(), page, pageRect).top : Infinity };
-  }).sort((a, b) => a.anchorTop - b.anchorTop);
-  for (const { note, anchorTop } of entries) {
-    const anchor = Number.isFinite(anchorTop) ? anchorTop : 0;
-    const column = columns.reduce((best, candidate) => Math.max(anchor, candidate.nextTop) < Math.max(anchor, best.nextTop) ? candidate : best);
-    const collapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
-    if (!collapsed) {
-      setImportantStyles(note, {
-        width: `${column.width}px`,
-        "min-width": `${column.width}px`,
-        "max-width": `${column.width}px`,
-        padding: "10px 12px",
-        font: '13px/1.45 "New York", "Iowan Old Style", Charter, Georgia, serif'
-      });
-    }
-    const top = Math.max(anchor, column.nextTop);
-    const left = column.side === "right" ? pageWidth + PDF_MARGIN_NOTE_GAP : -(collapsed ? 30 : column.width) - PDF_MARGIN_NOTE_GAP;
-    setImportantStyle(note, "left", `${left}px`);
-    setImportantStyle(note, "top", `${top}px`);
-    note.setAttribute("data-onhand-margin-side", column.side);
-    column.nextTop = top + (note.offsetHeight || 0) + PDF_MARGIN_NOTE_STACK_GAP;
-  }
-}
-function refreshPdfNotePositions(pages = getPdfPages()) {
-  for (const page of pages) {
-    for (const note of Array.from(page.querySelectorAll(".onhand-pdf-annotation-layer [data-onhand-pdf-note]"))) {
-      const annotationId = note.getAttribute("data-onhand-note-for") || "";
-      const annotation = annotationId ? document.querySelector(`[data-onhand-annotation-id="${CSS.escape(annotationId)}"]`) : null;
-      if (annotation) positionPdfNote(note, annotation, page);
-    }
-  }
-}
 function positionPdfNote(note, annotation, page) {
   const wasCollapsed = note.getAttribute("data-onhand-note-collapsed") === "true";
   if (!wasCollapsed) setPdfNoteCollapsed(note, false);
@@ -26328,14 +26261,6 @@ function positionPdfNote(note, annotation, page) {
     "scroll-margin-top": "22vh",
     "scroll-margin-bottom": "22vh"
   });
-  const marginSides = measurePdfMarginNoteSides(page, pageRect);
-  if (marginSides.right || marginSides.left) {
-    if (wasCollapsed) setPdfNoteCollapsed(note, true);
-    layoutPdfMarginNotes(page, marginSides);
-    return;
-  }
-  page.removeAttribute("data-onhand-margin-notes");
-  note.removeAttribute("data-onhand-margin-side");
   const measuredRect = note.getBoundingClientRect();
   const measuredHeight = measuredRect.height || note.offsetHeight || 0;
   const noteHeight = wasCollapsed ? 30 : Math.max(76, Math.min(240, measuredHeight || 96));
@@ -26373,10 +26298,6 @@ function attachPdfNoteInteractions(note, annotation) {
     const nextCollapsed = note.getAttribute("data-onhand-note-collapsed") !== "true";
     setPdfNoteCollapsed(note, nextCollapsed);
     if (!nextCollapsed) expandPdfNoteForAnnotation(annotationId);
-    else {
-      const page = note.closest(".page[data-page-number]");
-      if (page?.hasAttribute("data-onhand-margin-notes")) refreshPdfNotePositions([page]);
-    }
   });
   note.addEventListener("click", (event) => {
     if (note.getAttribute("data-onhand-note-collapsed") !== "true") return;
@@ -28039,18 +27960,6 @@ window.addEventListener(
   { passive: true }
 );
 window.addEventListener("resize", scheduleResizeRender, { passive: true });
-var notePositionFrame = 0;
-window.addEventListener(
-  "resize",
-  () => {
-    if (notePositionFrame) return;
-    notePositionFrame = requestAnimationFrame(() => {
-      notePositionFrame = 0;
-      refreshPdfNotePositions();
-    });
-  },
-  { passive: true }
-);
 loadPdf().catch((error) => {
   showError(error?.message || String(error));
 });
