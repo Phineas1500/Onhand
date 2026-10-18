@@ -9,8 +9,12 @@ than the shipped extension performs.
    `test:agent-runtime-modules`, `test:sidebar-regressions`,
    `website:check-tools`, `website:check-store`, `website:check-seo`,
    `smoke:browser-runtime`).
-2. Bump the extension version; run `npm run website:sync-store` after the
-   store serves it (the badge lags until then — `website:check-store` tells you).
+2. Bump the extension version and add its entry to
+   `packages/browser-extension/whats-new.js`: one to three short lines a
+   reader would notice, shown once in the side panel after the update, or an
+   empty list when nothing visible changed. Packaging refuses a version without
+   an entry. Run `npm run website:sync-store` after the store serves it (the
+   badge lags until then — `website:check-store` tells you).
 3. Deploy the website (privacy.html changes go live here) **with or before**
    the store submission — over-disclosing during the review window is fine,
    the reverse is not.

@@ -15887,8 +15887,22 @@ async function openWelcomePageAfterInstall(details) {
 	return true;
 }
 
+// After an update, the side panel shows what changed once (whats-new.js).
+// Updates that land before the panel opens keep the oldest version, so the
+// note covers all of them.
+const ONHAND_WHATS_NEW_SINCE_KEY = "onhandWhatsNewSince";
+
+async function rememberVersionBeforeUpdate(details) {
+	if (details?.reason !== "update" || !details.previousVersion) return false;
+	const stored = await chrome.storage.local.get(ONHAND_WHATS_NEW_SINCE_KEY);
+	if (stored?.[ONHAND_WHATS_NEW_SINCE_KEY]) return false;
+	await chrome.storage.local.set({ [ONHAND_WHATS_NEW_SINCE_KEY]: details.previousVersion });
+	return true;
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
 	void openWelcomePageAfterInstall(details).catch((error) => log("Could not open the welcome page", error?.message || String(error)));
+	void rememberVersionBeforeUpdate(details).catch((error) => log("Could not record the version before the update", error?.message || String(error)));
 	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
 	if (!reason) return;
 	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});

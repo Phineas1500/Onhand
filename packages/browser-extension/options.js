@@ -607,6 +607,23 @@ document.getElementById("copyStatus").addEventListener("click", async () => {
 chrome.runtime.onMessage.addListener((message) => {
 	if (message?.type === "browser-runtime:auth-progress") renderAuthProgress(message.event || {});
 });
+// The side panel's "don't show these" box writes the same key.
+const WHATS_NEW_OPT_OUT_STORAGE_KEY = "onhandWhatsNewOptOut";
+const whatsNewEnabledInput = document.getElementById("whatsNewEnabled");
+chrome.storage.local
+	.get({ [WHATS_NEW_OPT_OUT_STORAGE_KEY]: false })
+	.then((stored) => {
+		whatsNewEnabledInput.checked = !stored[WHATS_NEW_OPT_OUT_STORAGE_KEY];
+	})
+	.catch(reportError);
+whatsNewEnabledInput.addEventListener("change", async () => {
+	try {
+		await chrome.storage.local.set({ [WHATS_NEW_OPT_OUT_STORAGE_KEY]: !whatsNewEnabledInput.checked });
+		showToast("Saved");
+	} catch (error) {
+		reportError(error);
+	}
+});
 // A change still waiting out the typing delay is saved when the page closes.
 window.addEventListener("pagehide", () => {
 	if (saveTimer) runSave();

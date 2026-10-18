@@ -72,6 +72,25 @@ async function assertWelcomePageOpensOnlyAfterStoreInstall() {
 	assert.equal(created.length, 1);
 }
 
+async function assertUpdateRemembersVersionForWhatsNew() {
+	const stored = {};
+	const chrome = {
+		storage: {
+			local: {
+				get: async (key) => ({ [key]: stored[key] }),
+				set: async (items) => Object.assign(stored, items),
+			},
+		},
+	};
+	const remember = new Function("chrome", `const ONHAND_WHATS_NEW_SINCE_KEY = "onhandWhatsNewSince";\n${await loadBackgroundFunction("rememberVersionBeforeUpdate")}\nreturn rememberVersionBeforeUpdate;`)(chrome);
+	assert.equal(await remember({ reason: "install" }), false, "a new install has nothing new to show");
+	assert.equal(stored.onhandWhatsNewSince, undefined);
+	assert.equal(await remember({ reason: "update", previousVersion: "0.4.9" }), true);
+	assert.equal(stored.onhandWhatsNewSince, "0.4.9");
+	assert.equal(await remember({ reason: "update", previousVersion: "0.4.10" }), false, "a second update before the panel opens keeps the older version");
+	assert.equal(stored.onhandWhatsNewSince, "0.4.9");
+}
+
 async function assertChromeWebStoreTabsAreNamedUnreadable() {
 	// New users start on the Web Store listing, which Chrome forbids extensions
 	// to script. Every page tool failed there and the agent retried 8 times.
@@ -4488,6 +4507,7 @@ async function main() {
 	await assertDetachedPdfViewerOpenRouting();
 	await assertChromeWebStoreTabsAreNamedUnreadable();
 	await assertWelcomePageOpensOnlyAfterStoreInstall();
+	await assertUpdateRemembersVersionForWhatsNew();
 	await assertRemoveAnnotationsTargetsSingleMarks();
 	await assertPdfViewerShowNoteKeepsExpandedLayoutOrder();
 	await assertPdfViewerCitationNavigationAndRebuild();

@@ -453,6 +453,7 @@ async function renderSidebar(state, runtimeMessages, options = {}) {
 	window.eval(await readFile(new URL("../packages/browser-extension/live-voice.js", import.meta.url), "utf8"));
 	window.eval(await readFile(new URL("../packages/browser-extension/live-interruptions.js", import.meta.url), "utf8"));
 	window.eval(await readFile(new URL("../packages/browser-extension/live-responses.js", import.meta.url), "utf8"));
+	window.eval(await readFile(new URL("../packages/browser-extension/whats-new.js", import.meta.url), "utf8"));
 	options.setupWindow?.(window);
 	window.eval(await readFile(SIDEBAR_PATH, "utf8"));
 	await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -2872,6 +2873,93 @@ await assertRestoreResultShowsSnapshotFallback();
 await assertSnapshotViewerRendersSavedHtml();
 await assertRestoreResultShowsDetailOnFailure();
 await assertReviewArtifactStripKeepsScrollPositionAcrossRenders();
+// After an update the side panel shows what changed once, newest first, with
+// a box to stop these notes; sending a question clears it away.
+function whatsNewSetup(version) {
+	return (window) => {
+		window.chrome.runtime.getManifest = () => ({ version });
+		window.ONHAND_WHATS_NEW = [
+			{ version: "0.5.1", items: ["Newest line."] },
+			{ version: "0.5.0", items: ["Middle line A.", "Middle line B."] },
+			{ version: "0.4.9", items: ["Already seen."] },
+		];
+	};
+}
+
+async function assertWhatsNewShowsOnceAfterUpdate() {
+	const runtimeMessages = [];
+	const dom = await renderSidebar(createState(), runtimeMessages, { storage: { onhandWhatsNewSince: "0.4.9" }, setupWindow: whatsNewSetup("0.5.1") });
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await waitForSidebarTick(dom);
+	const note = shadow.getElementById("whatsNew");
+	assert.equal(note.hidden, false, "an update shows the note");
+	assert.match(note.textContent, /What's new in Onhand 0\.5\.1/);
+	assert.deepEqual([...note.querySelectorAll("li")].map((item) => item.textContent), ["Newest line.", "Middle line A.", "Middle line B."], "lines since the old version, newest first");
+	assert.equal(dom.getStorageValue("onhandWhatsNewSince"), undefined, "opening the panel uses the update up, so it shows once");
+	const optOut = note.querySelector("[data-whats-new-opt-out]");
+	optOut.checked = true;
+	optOut.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(dom.getStorageValue("onhandWhatsNewOptOut"), true, "the box turns these notes off");
+	note.querySelector("[data-whats-new-dismiss]").click();
+	assert.equal(note.hidden, true, "Got it closes the note");
+	dom.window.close();
+}
+
+async function assertWhatsNewStaysHiddenWithoutNews() {
+	const cases = [
+		["no update recorded", {}, "0.5.1"],
+		["the reader turned them off", { onhandWhatsNewSince: "0.4.9", onhandWhatsNewOptOut: true }, "0.5.1"],
+		["an unpacked reload of the same version", { onhandWhatsNewSince: "0.5.1" }, "0.5.1"],
+	];
+	for (const [label, storage, version] of cases) {
+		const dom = await renderSidebar(createState(), [], { storage, setupWindow: whatsNewSetup(version) });
+		const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+		await waitForSidebarTick(dom);
+		assert.equal(shadow.getElementById("whatsNew").hidden, true, `no note when ${label}`);
+		assert.equal(dom.getStorageValue("onhandWhatsNewSince"), undefined, `${label}: nothing is left to show later`);
+		dom.window.close();
+	}
+}
+
+async function assertWhatsNewClearsOnFirstQuestion() {
+	const runtimeMessages = [];
+	const state = createState();
+	const dom = await renderSidebar(state, runtimeMessages, { storage: { onhandWhatsNewSince: "0.5.0" }, setupWindow: whatsNewSetup("0.5.1") });
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(shadow.getElementById("whatsNew").hidden, false);
+	shadow.getElementById("input").value = "What does this page say?";
+	shadow.getElementById("sendButton").click();
+	await waitForSidebarTick(dom);
+	assert.equal(runtimeMessages.filter((message) => message.type === "sidebar:submit-prompt").length, 1);
+	assert.equal(shadow.getElementById("whatsNew").hidden, true, "asking a question clears the note");
+	dom.window.close();
+}
+
+// Every release writes its lines (or an empty list); packaging refuses a
+// version without an entry, and this catches it in CI first.
+async function assertWhatsNewCoversManifestVersion() {
+	const { runInNewContext } = await import("node:vm");
+	const context = {};
+	runInNewContext(await readFile(new URL("../packages/browser-extension/whats-new.js", import.meta.url), "utf8"), context);
+	const releases = context.ONHAND_WHATS_NEW;
+	const { version } = JSON.parse(await readFile(new URL("../packages/browser-extension/manifest.json", import.meta.url), "utf8"));
+	assert.ok(releases.some((release) => release.version === version), `whats-new.js needs an entry for ${version}: one to three short lines, or [] if nothing visible changed`);
+	const versions = releases.map((release) => release.version);
+	const numeric = (value) => value.split(".").map(Number);
+	for (let index = 1; index < versions.length; index += 1) {
+		const [a, b] = [numeric(versions[index - 1]), numeric(versions[index])];
+		const order = a.map((part, i) => part - (b[i] || 0)).find((difference) => difference !== 0) || 0;
+		assert.ok(order > 0, `whats-new.js lists versions newest first, once each (${versions[index - 1]} before ${versions[index]})`);
+	}
+	for (const release of releases) {
+		assert.ok(Array.isArray(release.items) && release.items.length <= 3, `${release.version}: at most three lines`);
+		for (const item of release.items) assert.ok(typeof item === "string" && item.trim() && item.length <= 140, `${release.version}: lines are short text`);
+	}
+}
+
 await assertPageIndexHighlightWithNoteJumpsToAnnotation();
 await assertPageIndexDoesNotShowStalePageActions();
 await assertLearningSessionPanelRendersState();
@@ -2893,6 +2981,10 @@ await assertEmptyCitationMarkerIsNotShown();
 await assertRemovedCitationLeavesNoSpaceBeforePunctuation();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
+await assertWhatsNewShowsOnceAfterUpdate();
+await assertWhatsNewStaysHiddenWithoutNews();
+await assertWhatsNewClearsOnFirstQuestion();
+await assertWhatsNewCoversManifestVersion();
 
 // The spoken layer stays free of grounding jargon (the runtime bans "let me
 // ground this" as process narration; Live makes its own brief acknowledgments).

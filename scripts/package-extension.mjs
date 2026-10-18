@@ -17,6 +17,7 @@ import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXTENSION_DIR = join(ROOT, "packages/browser-extension");
@@ -103,9 +104,20 @@ async function resolveFreeTierBaseUrl() {
 	return parsed.toString().replace(/\/+$/, "");
 }
 
+// Every release writes the side panel's What's new lines for its version, or
+// an explicit empty list when nothing visible changed.
+async function assertWhatsNewCoversVersion(version) {
+	const context = {};
+	runInNewContext(await readFile(join(EXTENSION_DIR, "whats-new.js"), "utf8"), context);
+	if (!Array.isArray(context.ONHAND_WHATS_NEW) || !context.ONHAND_WHATS_NEW.some((release) => release?.version === version)) {
+		throw new Error(`whats-new.js has no entry for ${version}. Add the release's What's new lines (or an empty list) before packaging.`);
+	}
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const manifest = JSON.parse(await readFile(join(EXTENSION_DIR, "manifest.json"), "utf8"));
+	await assertWhatsNewCoversVersion(manifest.version);
 	const zipPath = join(args.outDir, `onhand-v${manifest.version}-${args.browser}.zip`);
 	if (existsSync(zipPath) && !args.force) throw new Error(`${zipPath} already exists; bump the manifest version or pass --force.`);
 	const freeTierBaseUrl = await resolveFreeTierBaseUrl();

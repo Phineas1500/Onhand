@@ -13,6 +13,11 @@
 	// Spaced-review nudge is hidden for now; the scheduling backend
 	// (listDueReviews/snoozeReview) still runs so this can flip back on.
 	const REVIEW_NUDGE_ENABLED = false;
+	// Set by the background on update (the version updated from) and by the
+	// "don't show" box here or in Options.
+	const WHATS_NEW_SINCE_STORAGE_KEY = "onhandWhatsNewSince";
+	const WHATS_NEW_OPT_OUT_STORAGE_KEY = "onhandWhatsNewOptOut";
+	const WHATS_NEW_MAX_ITEMS = 4;
 	const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
 	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
@@ -2113,6 +2118,55 @@
 				font: 11px/1.4 var(--rm-font-mono);
 			}
 			.onhand-connection-notice[hidden] { display: none; }
+			.onhand-whats-new[hidden] { display: none; }
+			.onhand-whats-new {
+				border-bottom: 1px solid var(--rm-surface-2);
+				background: color-mix(in srgb, var(--rm-gold) 12%, transparent);
+				padding: 10px 16px 11px;
+				font: 12.5px/1.45 var(--rm-font-serif);
+				color: var(--rm-text);
+			}
+			.onhand-whats-new-title {
+				margin: 0 0 5px;
+				font: 700 11px/1.3 var(--rm-font-mono);
+				letter-spacing: 0.04em;
+				color: var(--rm-text);
+			}
+			.onhand-whats-new ul {
+				margin: 0;
+				padding-left: 18px;
+			}
+			.onhand-whats-new li + li {
+				margin-top: 3px;
+			}
+			.onhand-whats-new-foot {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+				flex-wrap: wrap;
+				margin-top: 9px;
+			}
+			.onhand-whats-new-foot label {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font: 11px/1.3 var(--rm-font-mono);
+				color: var(--rm-subtext);
+				cursor: pointer;
+			}
+			.onhand-whats-new-foot button {
+				border: 0;
+				border-radius: 3px;
+				padding: 6px 10px;
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				font: 700 11px/1 var(--rm-font-mono);
+				cursor: pointer;
+			}
+			.onhand-whats-new-foot button:hover {
+				background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
+			}
 			.onhand-connection-notice span { flex: 1; }
 			.onhand-connection-notice button,
 			.onhand-source-feedback button {
@@ -3588,6 +3642,7 @@
 						<span id="connectionStatus" role="status" aria-live="polite"></span>
 						<button id="reconnectButton" type="button">Reconnect</button>
 					</div>
+					<section id="whatsNew" class="onhand-whats-new" aria-label="What's new in Onhand" hidden></section>
 					<div class="onhand-scroll-wrap">
 					<div id="scroll" class="onhand-scroll" tabindex="-1" role="region" aria-label="Onhand conversation">
 					<section id="replayView" class="onhand-replay" hidden></section>
@@ -3694,6 +3749,7 @@
 	const actionsEl = shadow.getElementById("actions");
 	const learnerPanelEl = shadow.getElementById("learnerPanel");
 	const reviewNudgeEl = shadow.getElementById("reviewNudge");
+	const whatsNewEl = shadow.getElementById("whatsNew");
 	const dismissedReviewKeys = new Set();
 	const composer = shadow.getElementById("composer");
 	const attachButton = shadow.getElementById("attachButton");
@@ -4784,6 +4840,74 @@
 		renderReviewNudge(currentState || {});
 		const response = await chrome.runtime.sendMessage({ type: "sidebar:snooze-review", conceptKey: review.conceptKey, days: 3 });
 		if (!response?.ok) throw new Error(response?.error || "Could not snooze the review.");
+	}
+
+	// After an update the panel shows what changed, once: opening it uses up the
+	// version the background recorded. The lines come from whats-new.js.
+	function compareExtensionVersions(left, right) {
+		const leftParts = String(left || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+		const rightParts = String(right || "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+		for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+			const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+			if (difference) return Math.sign(difference);
+		}
+		return 0;
+	}
+
+	function pickWhatsNewItems(releases, sinceVersion, currentVersion) {
+		return (Array.isArray(releases) ? releases : [])
+			.filter(
+				(release) =>
+					compareExtensionVersions(release?.version, sinceVersion) > 0 && compareExtensionVersions(release?.version, currentVersion) <= 0,
+			)
+			.sort((left, right) => compareExtensionVersions(right.version, left.version))
+			.flatMap((release) => (Array.isArray(release.items) ? release.items : []))
+			.map((item) => String(item || "").trim())
+			.filter(Boolean)
+			.slice(0, WHATS_NEW_MAX_ITEMS);
+	}
+
+	function hideWhatsNew() {
+		whatsNewEl.hidden = true;
+		whatsNewEl.replaceChildren();
+	}
+
+	async function showWhatsNewAfterUpdate() {
+		const stored = await chrome.storage.local.get({ [WHATS_NEW_SINCE_STORAGE_KEY]: "", [WHATS_NEW_OPT_OUT_STORAGE_KEY]: false });
+		const sinceVersion = String(stored[WHATS_NEW_SINCE_STORAGE_KEY] || "");
+		if (!sinceVersion) return;
+		await chrome.storage.local.remove(WHATS_NEW_SINCE_STORAGE_KEY);
+		if (stored[WHATS_NEW_OPT_OUT_STORAGE_KEY]) return;
+		const currentVersion = String(chrome.runtime.getManifest?.()?.version || "");
+		const items = pickWhatsNewItems(globalThis.ONHAND_WHATS_NEW, sinceVersion, currentVersion);
+		if (!items.length) return;
+		const title = document.createElement("p");
+		title.className = "onhand-whats-new-title";
+		title.textContent = `What's new in Onhand ${currentVersion}`;
+		const list = document.createElement("ul");
+		for (const item of items) {
+			const entry = document.createElement("li");
+			entry.textContent = item;
+			list.append(entry);
+		}
+		const optOut = document.createElement("input");
+		optOut.type = "checkbox";
+		optOut.setAttribute("data-whats-new-opt-out", "");
+		optOut.addEventListener("change", () => {
+			void chrome.storage.local.set({ [WHATS_NEW_OPT_OUT_STORAGE_KEY]: optOut.checked }).catch(() => {});
+		});
+		const optOutLabel = document.createElement("label");
+		optOutLabel.append(optOut, document.createTextNode("Don't show these after updates"));
+		const dismiss = document.createElement("button");
+		dismiss.type = "button";
+		dismiss.textContent = "Got it";
+		dismiss.setAttribute("data-whats-new-dismiss", "");
+		dismiss.addEventListener("click", hideWhatsNew);
+		const foot = document.createElement("div");
+		foot.className = "onhand-whats-new-foot";
+		foot.append(optOutLabel, dismiss);
+		whatsNewEl.replaceChildren(title, list, foot);
+		whatsNewEl.hidden = false;
 	}
 
 	function renderReviewNudge(state) {
@@ -6438,6 +6562,8 @@
 			authPanelEl.scrollIntoView?.({ block: "nearest" });
 			return;
 		}
+		// The reader has moved on; give the conversation the room.
+		hideWhatsNew();
 		scrollToLatestAnswer();
 		const learningMode =
 			learningModeToggle instanceof HTMLInputElement ? Boolean(learningModeToggle.checked) : Boolean(currentState?.preferences?.learningMode);
@@ -8239,6 +8365,8 @@
 			if (quickOpenRequest) void handleQuickOpenRequest(quickOpenRequest);
 		});
 	}
+
+	void showWhatsNewAfterUpdate().catch(() => {});
 
 	try {
 		void ensureKatexLoaded();
