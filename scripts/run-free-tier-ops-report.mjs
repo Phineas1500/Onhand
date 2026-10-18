@@ -3,6 +3,22 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+	findLikelyTestDevices,
+	isExtensionPromptSucceededUsageRow,
+	isFreeTierUsageRow,
+	isProbeDiagnosticRow,
+	isQuotaDenial,
+	isUnknownIdentifier,
+	isWorkerChatCompletionUsageRow,
+	linkDeviceInstalls,
+	rowDeviceHash,
+	rowHasKnownTestDevice,
+	rowSource,
+	rowTurnId,
+	rowSessionId,
+	usageDevicesSql,
+} from "./lib/free-tier-usage.mjs";
 
 const DEFAULT_DATASET = "onhand_events";
 const DEFAULT_DAYS = 7;
@@ -361,41 +377,7 @@ ORDER BY completions DESC`,
 		{
 			name: "usage_devices",
 			description: "Device-level free-tier usage signals for real-user estimates.",
-			sql: `
-SELECT
-  blob14 AS device_hash,
-  ${sourceExpr} AS source,
-  blob1 AS event,
-  if(blob11 = '', 'unknown', blob11) AS auth_mode,
-  if(blob12 = '', 'unknown', blob12) AS ai_provider,
-  if(blob13 = '', 'unknown', blob13) AS ai_model,
-  if(blob16 = '', 'unknown', blob16) AS turn_id,
-  blob17 AS session_id,
-  if(blob8 = '', 'unknown', blob8) AS user_agent,
-  SUM(_sample_interval) AS events,
-  MIN(timestamp) AS first_seen,
-  MAX(timestamp) AS last_seen
-FROM ${dataset}
-WHERE ${where}
-  AND blob14 != ''
-  AND blob1 IN (
-    'chat_stream_complete',
-    'chat_response_complete',
-    'chat_quota_denied',
-    'chat_turn_quota_denied',
-    'chat_cost_quota_denied',
-    'prompt_submitted',
-    'prompt_succeeded',
-    'prompt_failed',
-    'prompt_stopped',
-    'session_started',
-    'register_success',
-    'extension_installed',
-    'extension_updated',
-    'sidepanel_opened'
-  )
-GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, session_id, user_agent
-ORDER BY device_hash, source, event`,
+			sql: usageDevicesSql({ dataset, days }),
 		},
 		{
 			name: "model_provider_health",
@@ -1068,136 +1050,6 @@ function first(rows) {
 	return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
-function rowSource(row) {
-	return String(row?.source || "unknown");
-}
-
-function rowDeviceHash(row) {
-	return String(row?.device_hash || row?.deviceHash || "");
-}
-
-function rowTurnId(row) {
-	return String(row?.turn_id || row?.turnId || "");
-}
-
-function rowSessionId(row) {
-	return String(row?.session_id || row?.sessionId || "");
-}
-
-function rowAiProvider(row) {
-	return String(row?.ai_provider || row?.aiProvider || "");
-}
-
-function rowAiModel(row) {
-	return String(row?.ai_model || row?.aiModel || "");
-}
-
-function isFreeTierUsageRow(row) {
-	const source = rowSource(row);
-	const event = String(row?.event || "");
-	if (source === "free-tier" && (["chat_stream_complete", "chat_response_complete"].includes(event) || isQuotaDenial(row))) return true;
-	if (source === "extension" && rowAiProvider(row) === "onhand-free") {
-		// Install and update events count installs that have not asked anything yet.
-		return [
-			"prompt_submitted",
-			"prompt_succeeded",
-			"prompt_failed",
-			"prompt_stopped",
-			"session_started",
-			"register_success",
-			"extension_installed",
-			"extension_updated",
-			"sidepanel_opened",
-		].includes(event);
-	}
-	return false;
-}
-
-function isWorkerChatCompletionUsageRow(row) {
-	return rowSource(row) === "free-tier" && ["chat_stream_complete", "chat_response_complete"].includes(String(row?.event || ""));
-}
-
-function isExtensionPromptSucceededUsageRow(row) {
-	return rowSource(row) === "extension" && rowAiProvider(row) === "onhand-free" && String(row?.event || "") === "prompt_succeeded";
-}
-
-function isLikelyTestUsageRow(row, testDeviceHashes = []) {
-	if (rowHasKnownTestDevice(row, testDeviceHashes)) return true;
-	if (isProbeDiagnosticRow(row)) return true;
-	// Debug-CLI asks tag their turns (cli, acceptance, agent-trajectory, prompt-eval:<variant>).
-	if (/(^|[-_:])(cli|acceptance|bypass|smoke|test|trajectory|eval|probe)([-_:]|$)/i.test(rowSource(row))) return true;
-	if (/codex-smoke|acceptance|probe/i.test(rowAiModel(row))) return true;
-	return false;
-}
-
-// The extension always calls the Worker from a browser; scripts and curl show up as "other".
-function isScriptWorkerRow(row) {
-	return rowSource(row) === "free-tier" && String(row?.user_agent || "") === "other";
-}
-
-// The Worker hashes the Free token and the extension hashes its diagnostics
-// client id, so one install appears under two device hashes. Turns and sessions
-// carry the same ids on both sides; link hashes that share one into an install.
-function linkDeviceInstalls(rows) {
-	const parent = new Map();
-	const find = (hash) => {
-		let root = hash;
-		while (parent.get(root) !== root) root = parent.get(root);
-		for (let next = hash; next !== root; ) {
-			const up = parent.get(next);
-			parent.set(next, root);
-			next = up;
-		}
-		return root;
-	};
-	const ownerById = new Map();
-	for (const row of Array.isArray(rows) ? rows : []) {
-		const deviceHash = rowDeviceHash(row);
-		if (!deviceHash) continue;
-		if (!parent.has(deviceHash)) parent.set(deviceHash, deviceHash);
-		for (const id of [`session:${rowSessionId(row)}`, `turn:${rowTurnId(row)}`]) {
-			if (isUnknownIdentifier(id.slice(id.indexOf(":") + 1))) continue;
-			const owner = ownerById.get(id);
-			if (!owner) ownerById.set(id, deviceHash);
-			else if (find(owner) !== find(deviceHash)) parent.set(find(deviceHash), find(owner));
-		}
-	}
-	return find;
-}
-
-// Scripts are not users, but an unknown script hitting caps still deserves an
-// alert, so health classification passes { scripts: false }.
-function findLikelyTestDevices(rows, testDeviceHashes = [], { scripts = true } = {}) {
-	const allRows = Array.isArray(rows) ? rows : [];
-	const installOf = linkDeviceInstalls(allRows);
-	const testInstalls = new Set();
-	for (const row of allRows) {
-		const deviceHash = rowDeviceHash(row);
-		if (!deviceHash) continue;
-		if (isLikelyTestUsageRow(row, testDeviceHashes) || (scripts && isScriptWorkerRow(row))) testInstalls.add(installOf(deviceHash));
-	}
-	const testDevices = new Set(testDeviceHashes || []);
-	for (const row of allRows) {
-		const deviceHash = rowDeviceHash(row);
-		if (deviceHash && testInstalls.has(installOf(deviceHash))) testDevices.add(deviceHash);
-	}
-	return testDevices;
-}
-
-function isUnknownIdentifier(value) {
-	const text = String(value || "").trim().toLowerCase();
-	return !text || text === "-" || text === "unknown";
-}
-
-function rowHasKnownTestDevice(row, testDeviceHashes = []) {
-	return new Set(testDeviceHashes || []).has(rowDeviceHash(row));
-}
-
-function isProbeDiagnosticRow(row) {
-	const text = `${rowTurnId(row)} ${rowSessionId(row)}`.toLowerCase();
-	return /\bprobe\b|codex-free-tier-probe|free-tier-probe|image-probe|probe-image/.test(text);
-}
-
 function isUnattributedExtensionError(row) {
 	return rowSource(row) === "extension" && isUnknownIdentifier(rowTurnId(row)) && isUnknownIdentifier(rowSessionId(row));
 }
@@ -1205,10 +1057,6 @@ function isUnattributedExtensionError(row) {
 function isProviderErrorRow(row) {
 	const event = String(row?.event || "");
 	return event === "chat_stream_error" || event === "chat_upstream_response" || event === "chat_request_rejected";
-}
-
-function isQuotaDenial(row) {
-	return String(row?.event || "").endsWith("_quota_denied");
 }
 
 function classifyQuotaRows(rows, testDeviceHashes = []) {

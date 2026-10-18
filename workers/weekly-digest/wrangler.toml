@@ -1,0 +1,23 @@
+name = "onhand-weekly-digest"
+main = "src/index.mjs"
+compatibility_date = "2026-05-01"
+# The URL only serves the manual trigger, which answers 404 without the secret.
+workers_dev = true
+
+[triggers]
+# Mondays 13:00 UTC: 9 am Eastern in summer, 8 am in winter.
+crons = ["0 13 * * MON"]
+
+# Email Routing on useonhand.com sends this. The recipient must be a verified
+# destination address; it is the DIGEST_TO secret, kept out of the repo.
+[[send_email]]
+name = "DIGEST_EMAIL"
+
+[vars]
+DIGEST_FROM = "digest@useonhand.com"
+ANALYTICS_DATASET = "onhand_events"
+
+# Secrets (npx wrangler secret put <NAME>):
+#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Account Analytics Read),
+#   DIGEST_TO, DIGEST_TRIGGER_SECRET, and optionally TEST_DEVICE_HASHES
+#   (comma-separated hashes of untagged manual test devices).

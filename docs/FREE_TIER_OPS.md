@@ -51,6 +51,26 @@ Override thresholds with flags such as `--max-daily-cost=2`,
 through `FREE_TIER_ALERT_MAX_*` environment variables; run
 `npm run ops:free-tier -- --help` for the exact names.
 
+## Weekly digest
+
+`workers/weekly-digest` emails a summary of real Onhand Free use every Monday at 13:00 UTC:
+- real installs seen that week, how many are new, and how many asked a question;
+- a ChromeOS count, plus breakdowns by OS, country and version;
+- each install's first-seen date and what it did.
+
+It uses the same real-versus-test classification as the ops report (`scripts/lib/free-tier-usage.mjs`).
+
+Setup, from `workers/weekly-digest`:
+- **Deploy:** `npx wrangler deploy`.
+- **Secrets:** set with `npx wrangler secret put`:
+  - `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (Account Analytics Read);
+  - `DIGEST_TO`, which must be a verified Email Routing destination address on the account;
+  - `DIGEST_TRIGGER_SECRET`;
+  - optionally `TEST_DEVICE_HASHES`.
+- **Send one now:** `curl -X POST -H "Authorization: Bearer $ONHAND_DIGEST_TRIGGER_SECRET" https://onhand-weekly-digest.<account>.workers.dev/`. Without the secret the URL answers 404.
+
+The OS comes from the Worker's user-agent field, recorded since 2026-10-18. Installs whose network blocks Onhand Free never reach the Worker, so compare the digest with installs in the Chrome Web Store dashboard.
+
 ## What To Watch
 
 - `chat_stream_complete` and `chat_response_complete` volume: successful streaming and JSON free-tier calls.

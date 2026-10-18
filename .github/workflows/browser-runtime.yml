@@ -43,6 +43,9 @@ jobs:
       - name: Run workerd SQLite and cancellation integration tests
         run: npm run test:free-tier-worker-runtime
 
+      - name: Run ops report and weekly digest regressions
+        run: npm run test:free-tier-ops-report && npm run test:weekly-digest
+
       - name: Verify website analytics instrumentation
         run: npm run website:verify-analytics
 
