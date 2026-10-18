@@ -174,12 +174,29 @@ function userAgentFamily(request) {
 	return ua ? "other" : "unknown";
 }
 
+// Coarse OS only. ChromeOS is the one that matters: most installs are on
+// school Chromebooks, whose web filters may block the Worker.
+function operatingSystemFamily(request) {
+	const ua = request.headers.get("User-Agent") || "";
+	if (/\bCrOS\b/.test(ua)) return "chromeos";
+	if (/Android/.test(ua)) return "android";
+	if (/iPhone|iPad|iPod/.test(ua)) return "ios";
+	if (/Windows/.test(ua)) return "windows";
+	if (/Macintosh|Mac OS X/.test(ua)) return "mac";
+	if (/Linux|X11/.test(ua)) return "linux";
+	return "other";
+}
+
 function analyticsContext(request) {
 	const cf = request?.cf || {};
+	const browser = request ? userAgentFamily(request) : "unknown";
 	return {
 		country: compactString(cf.country || "", 16),
 		colo: compactString(cf.colo || "", 16),
-		userAgentFamily: request ? userAgentFamily(request) : "unknown",
+		// Analytics Engine allows 20 blobs and all are taken, so browsers carry
+		// their OS here ("chrome/chromeos"). "other" (scripts) and "unknown"
+		// stay bare: the ops report matches them exactly.
+		userAgentFamily: browser === "other" || browser === "unknown" ? browser : `${browser}/${operatingSystemFamily(request)}`,
 	};
 }
 

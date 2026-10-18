@@ -427,6 +427,20 @@ try {
 		assert.equal(f.events.find((e) => e.indexes[0] === "chat_stream_complete").blobs[1], "free-tier-bypass");
 		assert.equal([...f.data.keys()].some((key) => key.startsWith("use:") || key.startsWith("turn-call:")), false);
 	}
+	// Analytics carry a coarse OS with the browser, so ChromeOS (school
+	// Chromebooks) can be told apart; scripts keep the bare "other" that the
+	// ops report matches.
+	for (const [userAgent, expected] of [
+		["Mozilla/5.0 (X11; CrOS x86_64 15917.71.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "chrome/chromeos"],
+		["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "chrome/windows"],
+		["Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0", "firefox/mac"],
+		["node", "other"],
+	]) {
+		const f = fixture();
+		globalThis.fetch = providerMock(completionPayload());
+		await (await handle(f, true, { "User-Agent": userAgent })).text(); await f.flush();
+		assert.equal(f.events.find((e) => e.indexes[0] === "chat_stream_complete").blobs[7], expected, userAgent);
+	}
 	{
 		const f = fixture(); delete f.env.FREE_TIER_COST_LEDGER;
 		globalThis.fetch = async () => { throw new Error("Missing ledger must fail closed"); };

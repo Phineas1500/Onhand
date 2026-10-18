@@ -252,7 +252,9 @@ Cloudflare dashboard or KV listing tools to inspect keys with the
 Analytics Engine columns are positional. The event name is stored as the
 index and `blob1`; source is `blob2`; result is `blob3`; model/provider
 are `blob4`/`blob5`; country/colo/user-agent-family are
-`blob6`/`blob7`/`blob8`; extension version/runtime revision/auth mode/
+`blob6`/`blob7`/`blob8` (since 2026-10-18 a browser's family carries a
+coarse OS, such as `chrome/chromeos` or `firefox/windows`; scripts stay
+`other`); extension version/runtime revision/auth mode/
 AI provider/AI model/device hash/error code are `blob9` through
 `blob15`; Onhand turn id/session id/provider generation id/upstream
 model/provider request id are `blob16` through `blob20`. Numeric fields
