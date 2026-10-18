@@ -4852,7 +4852,7 @@
 					visibleConcepts.length
 						? `
 							<div class="onhand-learner-group">
-								<span class="onhand-learner-group-title">Covered</span>
+								<span class="onhand-learner-group-title">Concepts</span>
 								<div class="onhand-learner-items">
 									${visibleConcepts.map(renderLearnerConceptItem).join("")}
 								</div>

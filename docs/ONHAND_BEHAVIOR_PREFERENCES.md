@@ -119,6 +119,7 @@ For each intent: what the **chat** does, what the **page** gets, and the **suffi
 - **Page (questions):** leave the page **unmarked** — no highlights, notes, or citation chips on the questions. The user is reading the same page, so a mark on the passage a question tests shows its answer. A quiz that also asks for highlights gets them. `[INFERRED 2026-10-15]` — replaces "anchor the check to a highlight", which produced answer-revealing marks in two reviews.
 - **Chat (questions):** the questions, saying which part of the page they cover (a section or figure) without the answer or a clue that settles it.
 - **Grading turn:** grade each answer and highlight the passage that settles it (G1 applies again).
+- **Quiz as you go:** "quiz me as we go" (or "keep testing me") is an ongoing request. A graded answer leads into the next part of the material, taught with its source highlight, and the turn ends with the next question, until the learner stops or the material is covered. `[INFERRED 2026-10-18]` — in the 2026-10-17 fresh-install walkthrough, Learning mode graded one correct answer and stopped.
 
 ### 3.9 Homework / "give me the final answer"
 - **Answer mode (default):** give the answer, anchored.
