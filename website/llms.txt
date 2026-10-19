@@ -17,7 +17,7 @@
 
 ## Comparisons
 
-- [ChatPDF alternative](https://useonhand.com/chatpdf-alternative.html): works on any webpage, not just PDFs.
+- [ChatPDF alternative](https://useonhand.com/chatpdf-alternative.html): free with no sign-up, and works on any webpage, not just PDFs.
 - [NotebookLM alternative](https://useonhand.com/notebooklm-alternative.html): works on the page you're reading instead of uploaded sources.
 - [Sider alternative](https://useonhand.com/sider-alternative.html): focused on reading and studying.
 - [SciSpace alternative](https://useonhand.com/scispace-alternative.html): any paper you open in Chrome, free and open source.
