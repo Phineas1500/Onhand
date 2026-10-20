@@ -28,3 +28,5 @@
 - [Support](https://useonhand.com/support.html): setup, troubleshooting and contact.
 - [Privacy policy](https://useonhand.com/privacy.html): what Onhand handles and where it goes.
 - [Product Hunt](https://www.producthunt.com/products/onhand-2)
+- [AlternativeTo](https://alternativeto.net/software/onhand/)
+- [PeerPush](https://peerpush.com/p/onhand)

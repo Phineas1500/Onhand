@@ -314,6 +314,7 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .foot-meta a{color:var(--fg-muted)}
 .foot-meta a:hover{color:var(--rp-pine)}
 .foot-meta em{color:var(--rp-foam);font-style:italic}
+.foot-also{margin-top:8px}
 @media (max-width:600px){.foot-meta{text-align:left;flex:none;width:100%}}
 
 /* LEGAL / SUPPORT */
