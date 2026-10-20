@@ -65,6 +65,9 @@ interface RuntimeHost {
 	resolveModel?: (provider: string, model: string) => any;
 	extensionVersion?: string;
 	runtimeRevision?: string;
+	// chrome.management.getSelf().installType; "development" marks an unpacked
+	// build, whose Sentry events are kept apart from production.
+	getInstallType?: () => Promise<string>;
 }
 
 interface RuntimeSession {
@@ -501,6 +504,17 @@ const ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 const ONHAND_SENTRY_DIST = "chrome";
 const ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
+// Requests sent by the CLI and the eval/acceptance scripts; their failures go
+// to Sentry's "test" environment instead of production.
+const AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|prompt-eval(?:[:_-].*)?)$/i;
+function sentryEnvironmentFor(requestSource: unknown, installType: string) {
+	if (AUTOMATED_REQUEST_SOURCE_PATTERN.test(String(requestSource || ""))) return "test";
+	return installType === "development" ? "development" : "production";
+}
+// Uncaught errors Chrome raises when a tab, frame, port or the browser itself
+// goes away mid-operation. They are not Onhand bugs.
+const SENTRY_EXPECTED_BROWSER_ERROR_PATTERN =
+	/the browser is shutting down|extension context invalidated|receiving end does not exist|message port closed before a response|no (?:tab|window|frame) with id|frame with id \d+ (?:was removed|is not)|tabs cannot be edited right now/i;
 const ONHAND_DIAGNOSTICS_EVENT_NAMES = new Set([
 	"diagnostics_enabled",
 	"extension_installed",
@@ -653,8 +667,8 @@ async function refreshFirefoxTechnicalDataConsent() {
 		firefoxTechnicalDataGranted = false;
 	}
 }
+const firefoxTechnicalDataConsentReady = IS_FIREFOX_RUNTIME ? refreshFirefoxTechnicalDataConsent() : Promise.resolve();
 if (IS_FIREFOX_RUNTIME) {
-	void refreshFirefoxTechnicalDataConsent();
 	(globalThis as any).browser.permissions?.onAdded?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
 	(globalThis as any).browser.permissions?.onRemoved?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
 }
@@ -11468,6 +11482,7 @@ function extractToolErrorText(result: unknown) {
 }
 
 export const __browserRuntimeTest = {
+	sentryEnvironmentForTest: sentryEnvironmentFor,
 	isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
 	createToolsForTest: createTools,
 	renderBrowserContextDetailsForTest: renderBrowserContextDetails,
@@ -13224,6 +13239,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	let sentryInitialized = false;
 	let sentryDiagnosticsAllowed = false;
 	let sentryExplicitEventAllowance = 0;
+	let sentryInstallTypePromise: Promise<string> | null = null;
 
 	async function loadStore() {
 		if (storePromise) return await storePromise;
@@ -13394,7 +13410,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 	function classifyTelemetryError(error: unknown) {
 		const message = compactTelemetryValue((error as any)?.message || error, 240).toLowerCase();
 		if (!message) return "";
-		if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current reply)/.test(message)) return "busy";
+		if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current (?:reply|onhand operation))/.test(message)) return "busy";
 		if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
 		if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
 		if (/network|fetch|connection|offline|reach/.test(message)) return "network";
@@ -13413,15 +13429,20 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
 			return true;
 		}
+		// Expected conditions: the daily Onhand Free limit (usage events already
+		// count those), and the browser closing mid-operation.
+		if (/daily_request_cap|today's onhand free limit|the browser is shutting down|extension context invalidated/.test(message)) return true;
 		if (kind !== "runtime_exception") return false;
 		if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
 		if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;
 		if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
 			return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
 		}
-		if (messageType === "sidebar:browser-tool") {
-			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
+		if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
+			return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible (?:pdf )?text matched|no image or figure matched/.test(message);
 		}
+		// A PDF link that no longer exists is the source site's problem.
+		if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
 		return false;
 	}
 
@@ -13437,10 +13458,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		text = text
 			.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]")
-			.replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]")
+			.replace(/(No visible (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]")
 			.replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]")
-			.replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]")
+			.replace(/(No element matches selector:|no longer exists for selector:)\s*[\s\S]+/gi, "$1 [redacted selector]")
 			.replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2")
 			.replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]")
 			.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]")
@@ -13452,6 +13473,35 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			.replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
 		if (text.length <= maxLength) return text;
 		return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+	}
+
+	// Error messages that leave the browser (Sentry events and error reports)
+	// often quote what the model looked for or text from the page, so every
+	// quoted span is redacted, not just the message shapes listed above. JSON
+	// keys and identifier-like JSON values stay, which keeps API error codes such
+	// as "daily_request_cap" readable. Local debug traces keep their quotes.
+	function redactQuotedErrorLine(line: string) {
+		let redacted = line
+			.replace(/(No image or figure matched)\s*[\s\S]+/gi, "$1 [redacted text]")
+			.replace(/"([^"]*)"(\s*:)?/g, (match, inner: string, keySuffix: string | undefined, offset: number) => {
+				const jsonValue = /"\s*:\s*$/.test(line.slice(0, offset));
+				if ((keySuffix || jsonValue) && /^[A-Za-z0-9_.-]{1,64}$/.test(inner)) return match;
+				return `"[redacted]"${keySuffix || ""}`;
+			})
+			.replace(/“[^”]*”/g, "“[redacted]”");
+		// A quote left open, usually by truncation, hides the rest of the line.
+		if ((redacted.match(/"/g) || []).length % 2 === 1) redacted = `${redacted.slice(0, redacted.lastIndexOf('"'))}"[redacted]`;
+		const openCurlyQuote = redacted.lastIndexOf("“");
+		if (openCurlyQuote > redacted.lastIndexOf("”")) redacted = `${redacted.slice(0, openCurlyQuote)}“[redacted]`;
+		return redacted;
+	}
+
+	function redactErrorText(value: unknown, maxLength = 1200) {
+		const text = String(value || "")
+			.split(/\r\n?|\n/)
+			.map(redactQuotedErrorLine)
+			.join("\n");
+		return redactDiagnosticText(text, maxLength);
 	}
 
 	function redactTraceText(value: unknown, maxLength = 3000) {
@@ -13522,7 +13572,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		const lines = String(value || "")
 			.replace(/\r\n?/g, "\n")
 			.split("\n")
-			.map((line) => redactDiagnosticText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix))
+			.map((line) => redactErrorText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix))
 			.filter(Boolean);
 		const text = lines.join("\n");
 		if (text.length <= maxLength) return text;
@@ -13534,10 +13584,28 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		return version ? `onhand-extension@${version}` : "onhand-extension";
 	}
 
+	function sentryEventsAllowed() {
+		// Firefox's technical-data choice can change in about:addons at any time.
+		return IS_FIREFOX_RUNTIME ? firefoxTechnicalDataGranted : sentryDiagnosticsAllowed;
+	}
+
+	function sentryInstallType() {
+		sentryInstallTypePromise ||= Promise.resolve()
+			.then(() => host.getInstallType?.() || "")
+			.then((installType) => compactTelemetryValue(installType, 40))
+			.catch(() => "");
+		return sentryInstallTypePromise;
+	}
+
 	function scrubSentryEvent(event: any) {
-		if (!sentryDiagnosticsAllowed) {
-			if (sentryExplicitEventAllowance <= 0) return null;
+		if (!sentryEventsAllowed()) {
+			// Only the report the user just asked to send gets through.
+			if (event.tags?.kind !== "explicit_error_report" || sentryExplicitEventAllowance <= 0) return null;
 			sentryExplicitEventAllowance -= 1;
+		}
+		if (event.tags?.kind === "uncaught") {
+			const uncaughtMessage = (Array.isArray(event.exception?.values) ? event.exception.values : []).map((value: any) => value?.value || "").join(" ");
+			if (SENTRY_EXPECTED_BROWSER_ERROR_PATTERN.test(`${uncaughtMessage} ${event.message || ""}`)) return null;
 		}
 		delete event.user;
 		delete event.request;
@@ -13545,10 +13613,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		delete event.extra;
 		if (event.contexts) event.contexts = event.contexts.onhand ? { onhand: event.contexts.onhand } : {};
 		event.transaction = redactDiagnosticText(event.transaction, 160);
-		if (event.message) event.message = redactDiagnosticText(event.message, 300);
+		if (event.message) event.message = redactErrorText(event.message, 300);
 		const values = Array.isArray(event.exception?.values) ? event.exception.values : [];
 		for (const value of values) {
-			if (value?.value) value.value = redactDiagnosticText(value.value, 500);
+			if (value?.value) value.value = redactErrorText(value.value, 500);
 			if (value?.type) value.type = compactTelemetryValue(value.type, 120);
 			const frames = Array.isArray(value?.stacktrace?.frames) ? value.stacktrace.frames : [];
 			for (const frame of frames) {
@@ -13566,6 +13634,8 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 
 	function initializeSentryIfNeeded() {
 		if (sentryInitialized) return;
+		const extensionVersion = compactTelemetryValue(host.extensionVersion || "", 40);
+		const runtimeRevision = compactTelemetryValue(host.runtimeRevision || "", 80);
 		Sentry.init({
 			dsn: ONHAND_SENTRY_DSN,
 			release: sentryRelease(),
@@ -13579,8 +13649,23 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				Sentry.dedupeIntegration(),
 				Sentry.globalHandlersIntegration({ onerror: true, onunhandledrejection: true }),
 			],
+			// Errors the global handlers catch carry kind=uncaught; captured ones
+			// overwrite these tags in their own scope.
+			initialScope: {
+				tags: {
+					surface: "browser_runtime",
+					kind: "uncaught",
+					...(extensionVersion ? { extension_version: extensionVersion } : {}),
+					...(runtimeRevision ? { runtime_revision: runtimeRevision } : {}),
+				},
+			},
 			beforeBreadcrumb: () => null,
-			beforeSend: scrubSentryEvent,
+			beforeSend: async (event) => {
+				const scrubbed = scrubSentryEvent(event);
+				if (!scrubbed) return null;
+				scrubbed.environment = sentryEnvironmentFor(scrubbed.tags?.request_source, await sentryInstallType());
+				return scrubbed;
+			},
 			tracesSampleRate: 0,
 			replaysSessionSampleRate: 0,
 			replaysOnErrorSampleRate: 0,
@@ -13602,6 +13687,16 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (reportId) scope.setTag("cloudflare_report_id", reportId);
 		const messageType = compactTelemetryValue((data as any).message_type || (data as any).messageType, 80);
 		if (messageType) scope.setTag("message_type", messageType);
+		const requestSource = compactTelemetryValue((data as any).request_source || (data as any).requestSource, 32);
+		if (requestSource) scope.setTag("request_source", requestSource);
+	}
+
+	// Starting Sentry when diagnostics are on installs its global handlers, so
+	// uncaught errors are reported from the moment the worker starts, not only
+	// after the first captured one.
+	function syncSentryDiagnostics(settings: RuntimeSettings) {
+		sentryDiagnosticsAllowed = diagnosticsSharingAllowed(settings);
+		if (sentryEventsAllowed()) initializeSentryIfNeeded();
 	}
 
 	function captureSentryException(error: unknown, settings: RuntimeSettings, kind: string, data: Record<string, unknown> = {}) {
@@ -13612,7 +13707,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (shouldSuppressSentryException(kind, error, data)) return false;
 		if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
 		initializeSentryIfNeeded();
-		const message = redactDiagnosticText((error as any)?.message || error || kind, 500);
+		const message = redactErrorText((error as any)?.message || error || kind, 500);
 		const capturedError = new Error(message || kind);
 		capturedError.name = compactTelemetryValue((error as any)?.name || "Error", 120) || "Error";
 		if ((error as any)?.stack) capturedError.stack = redactDiagnosticStack((error as any).stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
@@ -13651,7 +13746,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			realtime_voice_enabled: Boolean(settings.realtimeVoiceEnabled),
 			learning_mode: Boolean(request?.learningMode ?? settings.learningMode),
 			error_kind: classifyTelemetryError(error),
-			error_message: redactDiagnosticText(error?.message || error, 700),
+			error_message: redactErrorText(error?.message || error, 700),
 			error_stack: redactDiagnosticStack(error?.stack || "", 2400),
 			duration_ms: durationMs,
 			action_count: Array.isArray(request?.pageActions) ? request.pageActions.length : 0,
@@ -13680,7 +13775,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			realtime_voice_enabled: Boolean(settings.realtimeVoiceEnabled),
 			learning_mode: Boolean(settings.learningMode),
 			error_kind: "runtime_error",
-			error_message: redactDiagnosticText(String(turn.reply || "").replace(/^Error:\s*/i, ""), 700),
+			error_message: redactErrorText(String(turn.reply || "").replace(/^Error:\s*/i, ""), 700),
 			error_stack: "",
 			duration_ms: 0,
 			action_count: Array.isArray(turn.pageActions) ? turn.pageActions.length : 0,
@@ -15175,6 +15270,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (finalError) {
 			captureSentryException(finalError, activeRequest.settings as RuntimeSettings, "prompt_failed", {
 				error_kind: classifyTelemetryError(finalError),
+				request_source: requestSource,
 				duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
 				action_count: activeRequest.pageActions?.length || 0,
 				artifact_count: activeRequest.artifactIds?.length || 0,
@@ -17164,9 +17260,16 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 			return { tracked: await trackExtensionEvent(eventName, data) };
 		},
 
+		async startErrorReporting() {
+			await firefoxTechnicalDataConsentReady;
+			const store = await loadStore();
+			syncSentryDiagnostics(store.settings as RuntimeSettings);
+			return { enabled: sentryEventsAllowed() };
+		},
+
 		async captureRuntimeException(request: any = {}) {
 			const store = await loadStore();
-			const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
+			const message = redactErrorText(request?.message || request?.error || "Onhand runtime exception", 500);
 			const error = new Error(message || "Onhand runtime exception");
 			if (request?.stack) error.stack = redactDiagnosticStack(request.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
 			return {
@@ -17331,7 +17434,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
 			};
 			delete (store.settings as any).voiceEngine;
-			sentryDiagnosticsAllowed = diagnosticsSharingAllowed(store.settings);
+			syncSentryDiagnostics(store.settings as RuntimeSettings);
 			const session = store.sessions[store.currentSessionId] as RuntimeSession;
 			session.learnerState = setLearnerStateMode(session.learnerState, store.settings.learningMode ? "learning" : "answer");
 			store.sessions[session.id] = session;

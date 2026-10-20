@@ -73,6 +73,7 @@
 			"resources": [
 				"pdf-viewer.html",
 				"pdf-viewer.bundle.js",
+				"page-error-reporter.js",
 				"vendor/*",
 				"vendor/cmaps/*",
 				"vendor/standard_fonts/*",

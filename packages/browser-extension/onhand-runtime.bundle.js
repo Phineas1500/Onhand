@@ -87405,6 +87405,12 @@ var ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 var ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
 var ONHAND_SENTRY_DIST = "chrome";
 var ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
+var AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|prompt-eval(?:[:_-].*)?)$/i;
+function sentryEnvironmentFor(requestSource, installType) {
+  if (AUTOMATED_REQUEST_SOURCE_PATTERN.test(String(requestSource || ""))) return "test";
+  return installType === "development" ? "development" : "production";
+}
+var SENTRY_EXPECTED_BROWSER_ERROR_PATTERN = /the browser is shutting down|extension context invalidated|receiving end does not exist|message port closed before a response|no (?:tab|window|frame) with id|frame with id \d+ (?:was removed|is not)|tabs cannot be edited right now/i;
 var ONHAND_DIAGNOSTICS_EVENT_NAMES = /* @__PURE__ */ new Set([
   "diagnostics_enabled",
   "extension_installed",
@@ -87530,8 +87536,8 @@ async function refreshFirefoxTechnicalDataConsent() {
     firefoxTechnicalDataGranted = false;
   }
 }
+var firefoxTechnicalDataConsentReady = IS_FIREFOX_RUNTIME ? refreshFirefoxTechnicalDataConsent() : Promise.resolve();
 if (IS_FIREFOX_RUNTIME) {
-  void refreshFirefoxTechnicalDataConsent();
   globalThis.browser.permissions?.onAdded?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
   globalThis.browser.permissions?.onRemoved?.addListener?.(() => void refreshFirefoxTechnicalDataConsent());
 }
@@ -95367,6 +95373,7 @@ function extractToolErrorText(result) {
   return "Tool failed.";
 }
 var __browserRuntimeTest = {
+  sentryEnvironmentForTest: sentryEnvironmentFor,
   isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
   createToolsForTest: createTools,
   renderBrowserContextDetailsForTest: renderBrowserContextDetails,
@@ -96975,6 +96982,7 @@ function createOnhandBrowserRuntime(host) {
   let sentryInitialized = false;
   let sentryDiagnosticsAllowed = false;
   let sentryExplicitEventAllowance = 0;
+  let sentryInstallTypePromise = null;
   async function loadStore() {
     if (storePromise) return await storePromise;
     storePromise = (async () => {
@@ -97121,7 +97129,7 @@ function createOnhandBrowserRuntime(host) {
   function classifyTelemetryError(error2) {
     const message = compactTelemetryValue(error2?.message || error2, 240).toLowerCase();
     if (!message) return "";
-    if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current reply)/.test(message)) return "busy";
+    if (/already (?:responding|processing)|use steer\(\)|followup\(\)|wait for (?:completion|the current (?:reply|onhand operation))/.test(message)) return "busy";
     if (/api key|sign in|oauth|credential|auth/.test(message)) return "auth";
     if (/quota|limit|rate|429|free tier/.test(message)) return "quota";
     if (/network|fetch|connection|offline|reach/.test(message)) return "network";
@@ -97139,23 +97147,40 @@ function createOnhandBrowserRuntime(host) {
     if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
       return true;
     }
+    if (/daily_request_cap|today's onhand free limit|the browser is shutting down|extension context invalidated/.test(message)) return true;
     if (kind !== "runtime_exception") return false;
     if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
     if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;
     if (/^sidebar:(?:activate-action|scroll-to-annotation|jump-learner-source)$/.test(messageType)) {
       return /source not found|saved source text is not currently loaded|no annotation found|no visible text matched/.test(message);
     }
-    if (messageType === "sidebar:browser-tool") {
-      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible text matched/.test(message);
+    if (/^sidebar:(?:realtime-)?browser-tool$/.test(messageType)) {
+      return /only run on web or local-file tabs|not onhand sidebar|unsupported pdf|no pdf|source not found|no visible (?:pdf )?text matched|no image or figure matched/.test(message);
     }
+    if (messageType === "pdf-viewer:load-authorized-source" && /\(http (?:404|410)\)/.test(message)) return true;
     return false;
   }
   function redactDiagnosticText(value, maxLength = 1200) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     if (!text) return "";
-    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
+    text = text.replace(/(Source not found on this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(Saved source text is not currently loaded in this page:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible (?:PDF )?text matched:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No visible interactive element matched text:)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/(No editable field matched label:)\s*[\s\S]+/gi, "$1 [redacted label]").replace(/(No element matches selector:|no longer exists for selector:)\s*[\s\S]+/gi, "$1 [redacted selector]").replace(/(Element matched)\s+[\s\S]+?\s+(but is not visible|but is not text-editable)/gi, "$1 [redacted selector] $2").replace(/\b(?:sk|sk-or|sk-ant|AIza)[A-Za-z0-9._-]{12,}\b/g, "[redacted_key]").replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted_email]").replace(/https?:\/\/[^\s)'"<>]+/gi, "[redacted_url]").replace(/chrome-extension:\/\/[a-z]{32}/gi, "chrome-extension://[extension]").replace(/moz-extension:\/\/[0-9a-f-]{36}/gi, "moz-extension://[extension]").replace(/file:\/\/[^\s)'"<>]+/gi, "[redacted_file_url]").replace(/\/Users\/[^/\s)'"<>]+/g, "/Users/[redacted_user]").replace(/([?&](?:key|token|secret|api_key|access_token|refresh_token)=)[^&\s)'"<>]+/gi, "$1[redacted]");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  }
+  function redactQuotedErrorLine(line) {
+    let redacted = line.replace(/(No image or figure matched)\s*[\s\S]+/gi, "$1 [redacted text]").replace(/"([^"]*)"(\s*:)?/g, (match2, inner, keySuffix, offset) => {
+      const jsonValue = /"\s*:\s*$/.test(line.slice(0, offset));
+      if ((keySuffix || jsonValue) && /^[A-Za-z0-9_.-]{1,64}$/.test(inner)) return match2;
+      return `"[redacted]"${keySuffix || ""}`;
+    }).replace(/“[^”]*”/g, "\u201C[redacted]\u201D");
+    if ((redacted.match(/"/g) || []).length % 2 === 1) redacted = `${redacted.slice(0, redacted.lastIndexOf('"'))}"[redacted]`;
+    const openCurlyQuote = redacted.lastIndexOf("\u201C");
+    if (openCurlyQuote > redacted.lastIndexOf("\u201D")) redacted = `${redacted.slice(0, openCurlyQuote)}\u201C[redacted]`;
+    return redacted;
+  }
+  function redactErrorText(value, maxLength = 1200) {
+    const text = String(value || "").split(/\r\n?|\n/).map(redactQuotedErrorLine).join("\n");
+    return redactDiagnosticText(text, maxLength);
   }
   function redactTraceText(value, maxLength = 3e3) {
     let text = String(value || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -97205,7 +97230,7 @@ function createOnhandBrowserRuntime(host) {
     return redacted.replace(/^(?:chrome|moz)-extension:\/\/\[extension\]\//i, "app:///");
   }
   function redactDiagnosticStack(value, maxLength = 2400, extensionFramePrefix = "app:///") {
-    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactDiagnosticText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => redactErrorText(line, 700).replace(/(?:chrome|moz)-extension:\/\/\[extension\]\//gi, extensionFramePrefix)).filter(Boolean);
     const text = lines.join("\n");
     if (text.length <= maxLength) return text;
     return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
@@ -97214,10 +97239,21 @@ function createOnhandBrowserRuntime(host) {
     const version = compactTelemetryValue(host.extensionVersion || chrome.runtime?.getManifest?.()?.version || "", 40);
     return version ? `onhand-extension@${version}` : "onhand-extension";
   }
+  function sentryEventsAllowed() {
+    return IS_FIREFOX_RUNTIME ? firefoxTechnicalDataGranted : sentryDiagnosticsAllowed;
+  }
+  function sentryInstallType() {
+    sentryInstallTypePromise ||= Promise.resolve().then(() => host.getInstallType?.() || "").then((installType) => compactTelemetryValue(installType, 40)).catch(() => "");
+    return sentryInstallTypePromise;
+  }
   function scrubSentryEvent(event) {
-    if (!sentryDiagnosticsAllowed) {
-      if (sentryExplicitEventAllowance <= 0) return null;
+    if (!sentryEventsAllowed()) {
+      if (event.tags?.kind !== "explicit_error_report" || sentryExplicitEventAllowance <= 0) return null;
       sentryExplicitEventAllowance -= 1;
+    }
+    if (event.tags?.kind === "uncaught") {
+      const uncaughtMessage = (Array.isArray(event.exception?.values) ? event.exception.values : []).map((value) => value?.value || "").join(" ");
+      if (SENTRY_EXPECTED_BROWSER_ERROR_PATTERN.test(`${uncaughtMessage} ${event.message || ""}`)) return null;
     }
     delete event.user;
     delete event.request;
@@ -97225,10 +97261,10 @@ function createOnhandBrowserRuntime(host) {
     delete event.extra;
     if (event.contexts) event.contexts = event.contexts.onhand ? { onhand: event.contexts.onhand } : {};
     event.transaction = redactDiagnosticText(event.transaction, 160);
-    if (event.message) event.message = redactDiagnosticText(event.message, 300);
+    if (event.message) event.message = redactErrorText(event.message, 300);
     const values = Array.isArray(event.exception?.values) ? event.exception.values : [];
     for (const value of values) {
-      if (value?.value) value.value = redactDiagnosticText(value.value, 500);
+      if (value?.value) value.value = redactErrorText(value.value, 500);
       if (value?.type) value.type = compactTelemetryValue(value.type, 120);
       const frames = Array.isArray(value?.stacktrace?.frames) ? value.stacktrace.frames : [];
       for (const frame of frames) {
@@ -97245,6 +97281,8 @@ function createOnhandBrowserRuntime(host) {
   }
   function initializeSentryIfNeeded() {
     if (sentryInitialized) return;
+    const extensionVersion = compactTelemetryValue(host.extensionVersion || "", 40);
+    const runtimeRevision = compactTelemetryValue(host.runtimeRevision || "", 80);
     init({
       dsn: ONHAND_SENTRY_DSN,
       release: sentryRelease(),
@@ -97258,8 +97296,23 @@ function createOnhandBrowserRuntime(host) {
         dedupeIntegration(),
         globalHandlersIntegration({ onerror: true, onunhandledrejection: true })
       ],
+      // Errors the global handlers catch carry kind=uncaught; captured ones
+      // overwrite these tags in their own scope.
+      initialScope: {
+        tags: {
+          surface: "browser_runtime",
+          kind: "uncaught",
+          ...extensionVersion ? { extension_version: extensionVersion } : {},
+          ...runtimeRevision ? { runtime_revision: runtimeRevision } : {}
+        }
+      },
       beforeBreadcrumb: () => null,
-      beforeSend: scrubSentryEvent,
+      beforeSend: async (event) => {
+        const scrubbed = scrubSentryEvent(event);
+        if (!scrubbed) return null;
+        scrubbed.environment = sentryEnvironmentFor(scrubbed.tags?.request_source, await sentryInstallType());
+        return scrubbed;
+      },
       tracesSampleRate: 0,
       replaysSessionSampleRate: 0,
       replaysOnErrorSampleRate: 0
@@ -97280,6 +97333,12 @@ function createOnhandBrowserRuntime(host) {
     if (reportId) scope.setTag("cloudflare_report_id", reportId);
     const messageType = compactTelemetryValue(data.message_type || data.messageType, 80);
     if (messageType) scope.setTag("message_type", messageType);
+    const requestSource = compactTelemetryValue(data.request_source || data.requestSource, 32);
+    if (requestSource) scope.setTag("request_source", requestSource);
+  }
+  function syncSentryDiagnostics(settings2) {
+    sentryDiagnosticsAllowed = diagnosticsSharingAllowed(settings2);
+    if (sentryEventsAllowed()) initializeSentryIfNeeded();
   }
   function captureSentryException(error2, settings2, kind, data = {}) {
     const diagnosticsAllowed = diagnosticsSharingAllowed(settings2);
@@ -97289,7 +97348,7 @@ function createOnhandBrowserRuntime(host) {
     if (shouldSuppressSentryException(kind, error2, data)) return false;
     if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
     initializeSentryIfNeeded();
-    const message = redactDiagnosticText(error2?.message || error2 || kind, 500);
+    const message = redactErrorText(error2?.message || error2 || kind, 500);
     const capturedError = new Error(message || kind);
     capturedError.name = compactTelemetryValue(error2?.name || "Error", 120) || "Error";
     if (error2?.stack) capturedError.stack = redactDiagnosticStack(error2.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
@@ -97327,7 +97386,7 @@ function createOnhandBrowserRuntime(host) {
       realtime_voice_enabled: Boolean(settings2.realtimeVoiceEnabled),
       learning_mode: Boolean(request?.learningMode ?? settings2.learningMode),
       error_kind: classifyTelemetryError(error2),
-      error_message: redactDiagnosticText(error2?.message || error2, 700),
+      error_message: redactErrorText(error2?.message || error2, 700),
       error_stack: redactDiagnosticStack(error2?.stack || "", 2400),
       duration_ms: durationMs,
       action_count: Array.isArray(request?.pageActions) ? request.pageActions.length : 0,
@@ -97352,7 +97411,7 @@ function createOnhandBrowserRuntime(host) {
       realtime_voice_enabled: Boolean(settings2.realtimeVoiceEnabled),
       learning_mode: Boolean(settings2.learningMode),
       error_kind: "runtime_error",
-      error_message: redactDiagnosticText(String(turn.reply || "").replace(/^Error:\s*/i, ""), 700),
+      error_message: redactErrorText(String(turn.reply || "").replace(/^Error:\s*/i, ""), 700),
       error_stack: "",
       duration_ms: 0,
       action_count: Array.isArray(turn.pageActions) ? turn.pageActions.length : 0,
@@ -98726,6 +98785,7 @@ function createOnhandBrowserRuntime(host) {
     if (finalError) {
       captureSentryException(finalError, activeRequest.settings, "prompt_failed", {
         error_kind: classifyTelemetryError(finalError),
+        request_source: requestSource,
         duration_ms: Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0,
         action_count: activeRequest.pageActions?.length || 0,
         artifact_count: activeRequest.artifactIds?.length || 0,
@@ -100490,9 +100550,15 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
     async trackEvent(eventName, data = {}) {
       return { tracked: await trackExtensionEvent(eventName, data) };
     },
+    async startErrorReporting() {
+      await firefoxTechnicalDataConsentReady;
+      const store2 = await loadStore();
+      syncSentryDiagnostics(store2.settings);
+      return { enabled: sentryEventsAllowed() };
+    },
     async captureRuntimeException(request = {}) {
       const store2 = await loadStore();
-      const message = redactDiagnosticText(request?.message || request?.error || "Onhand runtime exception", 500);
+      const message = redactErrorText(request?.message || request?.error || "Onhand runtime exception", 500);
       const error2 = new Error(message || "Onhand runtime exception");
       if (request?.stack) error2.stack = redactDiagnosticStack(request.stack, 2400, ONHAND_SENTRY_STACK_EXTENSION_URL);
       return {
@@ -100642,7 +100708,7 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
       };
       delete store2.settings.voiceEngine;
-      sentryDiagnosticsAllowed = diagnosticsSharingAllowed(store2.settings);
+      syncSentryDiagnostics(store2.settings);
       const session = store2.sessions[store2.currentSessionId];
       session.learnerState = setLearnerStateMode(session.learnerState, store2.settings.learningMode ? "learning" : "answer");
       store2.sessions[session.id] = session;

@@ -186,6 +186,7 @@ function assertEventRedaction(event, smokeId) {
 	assertDoesNotContain(serialized, "file:///Users/sriram/private.pdf", "file URL");
 	assertDoesNotContain(serialized, "/Users/sriram", "local user path");
 	assertDoesNotContain(serialized, "sk-or-secret", "API key");
+	assertDoesNotContain(serialized, "quoted private words", "quoted text");
 	assertDoesNotContain(serialized, "sriram@example.com", "email address");
 	assertDoesNotContain(serialized, "chrome-extension://abcdefghijklmnopabcdefghijklmnop", "Chrome extension id");
 
@@ -209,6 +210,7 @@ const { createOnhandBrowserRuntime } = await import("../packages/browser-extensi
 const runtime = createOnhandBrowserRuntime(createSmokeHost(extensionVersion));
 const sensitiveMessage = [
 	`Onhand runtime Sentry smoke ${smokeId}.`,
+	'Looked for "quoted private words".',
 	"No visible text matched: private prompt text at https://example.test/private?token=secret-value",
 	"from file:///Users/sriram/private.pdf using sk-or-secret and sriram@example.com.",
 ].join(" ");

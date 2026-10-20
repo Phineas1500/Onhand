@@ -13,6 +13,25 @@ the extension does not load Sentry's remote loader script.
 - Sentry events exclude prompts, page text, URLs, page titles, screenshots,
   saved sessions, transcripts, keys, request data, breadcrumbs, and default
   browser contexts.
+- Error messages are redacted twice: known message shapes (such as "No visible
+  text matched: …") drop their text, and every quoted span is replaced with
+  `"[redacted]"`, so a new message that quotes the request or the page can't
+  leak it. JSON keys and identifier-like JSON values stay, which keeps API
+  error codes such as `daily_request_cap` readable. Local debug traces keep
+  their quotes.
+- When diagnostics are on, the runtime starts Sentry as the service worker
+  starts, so its global handlers report uncaught errors and unhandled
+  rejections (`kind=uncaught`). Chrome teardown errors ("No tab with id",
+  "Receiving end does not exist", "The browser is shutting down" and the like)
+  are dropped.
+- Onhand's own pages (side panel, options, PDF viewer, snapshot viewer,
+  offscreen document and microphone permission page) load
+  `page-error-reporter.js` first. It forwards up to five distinct uncaught
+  errors per page load to the background, which reports them as
+  `kind=runtime_exception` with `message_type=page:<page>`.
+- Expected conditions are not reported: aborted and busy requests, sign-in
+  cancellations, the daily Onhand Free limit, page-tool target misses, and PDF
+  links that return HTTP 404 or 410.
 - Stack-frame URLs from the extension are normalized to
   `app:///onhand-runtime.bundle.js` so source maps can be matched without
   exposing the Chrome extension ID.
@@ -23,7 +42,15 @@ The browser runtime sends:
 
 - `release`: `onhand-extension@<manifest version>`
 - `dist`: `chrome`
-- `environment`: `production`
+- `environment`:
+  - `test` for requests from the CLI and the eval and acceptance scripts
+    (`request_source` of `cli`, `acceptance`, `agent-trajectory` or
+    `prompt-eval:*`);
+  - `development` for unpacked builds (`chrome.management.getSelf()` reports
+    `installType: "development"`), which covers every test profile;
+  - `production` otherwise.
+
+Look at `environment:production` when judging real-user impact.
 
 For version `0.3.8`, the release is `onhand-extension@0.3.8`.
 
@@ -175,7 +202,9 @@ When a Sentry alert fires:
 
 1. Confirm it is not a smoke event. Smoke events have
    `kind=sentry_source_map_smoke` or `message_type=sentry_runtime_smoke`.
-2. Check `release`, `dist`, `extension_version`, and `runtime_revision` first.
+2. Check `environment` first: only `production` events come from store
+   installs. Then check `release`, `dist`, `extension_version`, and
+   `runtime_revision`.
    If the issue only affects a newly submitted version, treat it as a release
    regression.
 3. Check `kind`:
@@ -184,6 +213,10 @@ When a Sentry alert fires:
    - `runtime_exception`: direct runtime exception captured by diagnostics.
    - `explicit_error_report`: user clicked "Send anonymized error report" after
      a failed turn.
+   - `uncaught`: an uncaught error or unhandled rejection in the service
+     worker, caught by Sentry's global handlers.
+   - `message_type=page:<page>` on a `runtime_exception`: an uncaught error on
+     one of Onhand's pages, such as `page:sidepanel`.
 4. Check provider tags (`auth_mode`, `ai_provider`, `ai_model`) to distinguish
    free-tier, direct API key, and Codex sign-in failures.
 5. Check the `onhand` context counts. High `final_tool_failure_count` points to

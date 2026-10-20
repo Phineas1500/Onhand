@@ -94,6 +94,7 @@ function getOnhandBrowserRuntime() {
 			},
 			extensionVersion: chrome.runtime.getManifest().version,
 			runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
+			getInstallType: async () => (await chrome.management.getSelf())?.installType || "",
 		});
 	}
 	return onhandBrowserRuntime;
@@ -184,6 +185,9 @@ async function freeTierBypassState(action = "status") {
 
 function initializeExtensionSurface() {
 	restrictStorageToTrustedContexts();
+	getOnhandBrowserRuntime()
+		.startErrorReporting()
+		.catch((error) => log("Could not start error reporting", error?.message || String(error)));
 	configureSidePanelActionClick();
 	configureOperaSidebarAction();
 	ensureOffscreenDocument().catch((error) => {
@@ -15214,6 +15218,23 @@ function normalizeRealtimeBrowserToolArgs(args = {}) {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	if (message?.target === "offscreen" || message?.target === "sidebar") return false;
 	(async () => {
+		// Uncaught errors from Onhand's own pages (page-error-reporter.js). The
+		// runtime sends them to Sentry only when diagnostics are on.
+		if (message?.type === "page:runtime-error") {
+			if (!String(_sender?.url || "").startsWith(chrome.runtime.getURL(""))) {
+				sendResponse({ ok: false, error: "Only Onhand pages can report page errors." });
+				return;
+			}
+			const page = String(message.page || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40) || "page";
+			const result = await getOnhandBrowserRuntime().captureRuntimeException({
+				messageType: `page:${page}`,
+				message: message.message,
+				stack: message.stack,
+			});
+			sendResponse({ ok: true, captured: Boolean(result?.captured) });
+			return;
+		}
+
 		if (message?.type === "get-status") {
 			const runtime = getOnhandBrowserRuntime();
 			const browserRuntime = await runtime.getSettings().catch((error) => ({

@@ -1057,8 +1057,10 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		assert.match(sentryPayload, /app:\/\/\/onhand-runtime\.bundle\.js/);
 		assert.doesNotMatch(sentryPayload, /sk-or-secret/i);
 		assert.match(sentryPayload, /"dist":"chrome"/);
+		assert.match(sentryPayload, /"environment":"production"/);
 		assert.match(sentryPayload, /sentry_smoke/);
 		assert.match(sentryPayload, /openai-codex/);
+		assert.equal((await runtime.startErrorReporting()).enabled, true, "diagnostics-on runtimes should start Sentry at startup");
 
 		fetchCalls.length = 0;
 		const suppressedCases = [
@@ -1087,6 +1089,31 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				messageType: "sidebar:browser-tool",
 				message: "Onhand page tools only run on web or local-file tabs, not Onhand Sidebar",
 			},
+			{
+				label: "voice figure miss",
+				messageType: "sidebar:realtime-browser-tool",
+				message: 'No image or figure matched "diagram". Figures on this page include: "Schematic".',
+			},
+			{
+				label: "daily Free limit",
+				messageType: "sidebar:submit-prompt",
+				message: `429: {"message":"You've reached today's Onhand Free limit. It resets tomorrow, or switch to your own API key in options.","code":"daily_request_cap"}`,
+			},
+			{
+				label: "browser shutdown",
+				messageType: "sidebar:submit-prompt",
+				message: "The browser is shutting down.",
+			},
+			{
+				label: "session switch while busy",
+				messageType: "sidebar:switch-session",
+				message: "Wait for the current Onhand operation to finish before changing sessions.",
+			},
+			{
+				label: "dead PDF link",
+				messageType: "pdf-viewer:load-authorized-source",
+				message: "The authenticated browser tab could not load the PDF (HTTP 404).",
+			},
 		];
 		for (const entry of suppressedCases) {
 			const suppressed = await runtime.captureRuntimeException({
@@ -1105,6 +1132,58 @@ async function assertSentryDiagnosticsGateAndScrub() {
 			stack: `Error: Unexpected runtime explosion\n    at smoke (${extensionFrame})`,
 		});
 		assert.equal(unexpected.captured, true, "unexpected runtime exceptions should still create Sentry issues");
+
+		// Error text that quotes the request or the page is redacted whatever
+		// its shape; JSON keys and error codes stay readable.
+		const leakyMessages = [
+			'No image or figure matched "Krebs cycle diagram". Figures on this page include: "Schematic of photosynthesis"; "Global distribution of',
+			'No tab matched title "Private Lecture Notes"',
+			'400: {"error":{"message":"Private provider echo","code":"invalid_request_error"}}',
+			"Lookup failed for “curly private words” today",
+			"No visible PDF text matched: private pdf words",
+		];
+		fetchCalls.length = 0;
+		for (const message of leakyMessages) {
+			const leaky = await runtime.captureRuntimeException({
+				messageType: "sidebar:submit-prompt",
+				message,
+				stack: `Error: ${message}\n    at smoke (${extensionFrame})`,
+			});
+			assert.equal(leaky.captured, true, `expected capture for: ${message.slice(0, 40)}`);
+		}
+		// The earlier "unexpected" event can land after the reset above.
+		const sentryCalls = () => fetchCalls.filter((call) => /sentry\.io/i.test(call.url) && !/Unexpected runtime explosion/.test(call.body));
+		for (let attempt = 0; attempt < 40 && sentryCalls().length < leakyMessages.length; attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.equal(sentryCalls().length, leakyMessages.length, "every leaky message should still reach Sentry, redacted");
+		const leakyPayload = sentryCalls().map((call) => call.body).join("\n");
+		assert.doesNotMatch(leakyPayload, /Krebs|photosynthesis|Global distribution|Private Lecture|Private provider echo|curly private|private pdf words/i);
+		assert.match(leakyPayload, /No image or figure matched \[redacted text\]/);
+		assert.match(leakyPayload, /No visible PDF text matched: \[redacted text\]/);
+		assert.match(leakyPayload, /invalid_request_error/, "JSON error codes should survive quote redaction");
+
+		// Unpacked builds report to the development environment.
+		fetchCalls.length = 0;
+		const developmentRuntime = createOnhandBrowserRuntime({ ...createReplayHost(), getInstallType: async () => "development" });
+		await developmentRuntime.captureRuntimeException({
+			messageType: "sentry_smoke",
+			message: "Development build error",
+			stack: `Error: Development build error\n    at smoke (${extensionFrame})`,
+		});
+		for (let attempt = 0; attempt < 20 && fetchCalls.length === 0; attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.match(fetchCalls.map((call) => call.body).join("\n"), /"environment":"development"/);
+
+		const { __browserRuntimeTest } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+		const environmentFor = __browserRuntimeTest.sentryEnvironmentForTest;
+		assert.equal(environmentFor("agent-trajectory", "normal"), "test");
+		assert.equal(environmentFor("prompt-eval:baseline", "normal"), "test");
+		assert.equal(environmentFor("cli", "development"), "test");
+		assert.equal(environmentFor("sidebar", "development"), "development");
+		assert.equal(environmentFor("sidebar", "normal"), "production");
+		assert.equal(environmentFor("", ""), "production");
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
