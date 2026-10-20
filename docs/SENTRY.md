@@ -41,7 +41,8 @@ the extension does not load Sentry's remote loader script.
 The browser runtime sends:
 
 - `release`: `onhand-extension@<manifest version>`
-- `dist`: `chrome`
+- `dist`: `chrome`, or `firefox` in Firefox (from 0.4.12; earlier Firefox builds
+  report `chrome`)
 - `environment`:
   - `test` for requests from the CLI and the eval and acceptance scripts
     (`request_source` of `cli`, `acceptance`, `agent-trajectory` or
@@ -56,14 +57,16 @@ For version `0.3.8`, the release is `onhand-extension@0.3.8`.
 
 ## Alerts
 
-Create or refresh the project alert rules with:
+Sentry now keeps issue alerts as organization workflows (the old project
+rules API returns 404). Create or refresh Onhand's alerts with:
 
 ```sh
 npm run sentry:alerts
 npm run sentry:alerts -- --apply
 ```
 
-The command defaults to dry-run. `--apply` writes these issue-alert rules:
+The command defaults to dry-run. `--apply` writes these alerts, each limited to
+`environment:production` (`--environment=<name>` changes that):
 
 - `Send a notification for high priority issues`: updates the default high
   priority rule so source-map and runtime smoke events do not page/email.
@@ -72,15 +75,15 @@ The command defaults to dry-run. `--apply` writes these issue-alert rules:
 - `Onhand: regression or burst (non-smoke)`: emails on regressions, reappeared
   issues, or an issue seen more than 5 times in 1 hour.
 
-All rules filter to Sentry error issues and exclude:
+All alerts filter to Sentry error issues and exclude:
 
 - `kind=sentry_source_map_smoke`
 - `message_type=sentry_runtime_smoke`
 
 Alert setup uses `SENTRY_ALERT_AUTH_TOKEN` when present, then falls back to
 `SENTRY_SMOKE_AUTH_TOKEN`, then `SENTRY_AUTH_TOKEN`. Use a token with Sentry
-alert-rule read/write access, for example Project read plus Alerts write/admin.
-Tokens with only `event:read` and `project:read` can dry-run rule setup but
+alert read/write access, for example Project read plus Alerts write/admin.
+Tokens with only `event:read` and `project:read` can dry-run alert setup but
 cannot apply alert changes.
 
 Before relying on Sentry for production crash reporting, enable Sentry's
@@ -91,9 +94,14 @@ HTTP request unless project-side IP storage prevention is enabled.
 
 ## Source Maps
 
-Source maps are upload-only artifacts. They are generated under
-`tmp/sentry-sourcemaps/`, uploaded to Sentry, and ignored by git. They are not
-packaged into the Chrome extension.
+Source maps are upload-only artifacts. `npm run package:chrome` and
+`npm run package:firefox` build the runtime bundle with an external source map
+and write both, outside the zip, to
+`<out-dir>/sentry-sourcemaps/onhand-v<version>-<browser>/` (`dist/` by
+default, ignored by git). The map's sources are repo-relative paths. Uploading
+from the package means the map matches the exact bundle each store serves: the
+Chrome bundle carries the Onhand Free URL and the Firefox bundle is minified, so
+neither matches the tracked bundle.
 
 Required environment variables:
 
@@ -102,7 +110,7 @@ export SENTRY_ORG=<org-slug>
 export SENTRY_PROJECT=onhand-browser-extension
 export SENTRY_AUTH_TOKEN=<token-with-project-read-write-and-release-admin>
 export SENTRY_SMOKE_AUTH_TOKEN=<optional-token-with-project-event-read>
-export SENTRY_ALERT_AUTH_TOKEN=<optional-token-with-alert-rule-read-write>
+export SENTRY_ALERT_AUTH_TOKEN=<optional-token-with-alert-read-write>
 export SENTRY_ISSUE_AUTH_TOKEN=<optional-token-with-project-issue-read>
 ```
 
@@ -125,31 +133,29 @@ means:
 - Project: Read
 - Issue & Event: Read
 
-Dry-run the upload flow:
+Upload after packaging a release, as part of every release:
 
 ```sh
-npm run build:extension
+npm run package:chrome
+npm run package:firefox
 npm run sentry:sourcemaps -- --dry-run
-```
-
-Upload for the current manifest version:
-
-```sh
-npm run build:extension
 npm run sentry:sourcemaps
 npm run sentry:smoke
 npm run sentry:runtime-smoke
 ```
 
-The upload script builds a temporary `onhand-runtime.bundle.js` plus
-`onhand-runtime.bundle.js.map`, then verifies that the temporary JS matches the
-shipped `packages/browser-extension/onhand-runtime.bundle.js` after removing
-the source-map comment. If that check fails, rebuild the extension before
-uploading.
+Without `--browser`, `sentry:sourcemaps` uploads every browser packaged for the
+manifest version, each under its own `dist`. It first checks that the bundle
+beside each map is byte-identical to the one inside the zip; if not, repackage
+with `-- --force`. When the packages were written elsewhere, pass
+`--packages-dir=<out-dir>`.
 
 The smoke script sends one synthetic event with a frame at
 `app:///onhand-runtime.bundle.js`, then polls Sentry until that frame resolves
-to `packages/browser-extension/src/browser-runtime.ts`.
+to `packages/browser-extension/src/browser-runtime.ts`. It derives the frame
+from the tracked bundle, which matches the Chrome package line for line, and
+sends `dist=chrome`. For the minified Firefox build, pass `--dist=firefox` with
+an explicit `--line` and `--column`.
 
 The runtime smoke script sends a controlled event through the shipped Onhand
 browser runtime with diagnostics enabled, then reads the processed event back
@@ -167,9 +173,9 @@ privacy-ready.
 Useful overrides:
 
 ```sh
-npm run sentry:sourcemaps -- --release=onhand-extension@0.3.8
+npm run sentry:sourcemaps -- --browser=chrome
+npm run sentry:sourcemaps -- --packages-dir=<package out-dir>
 npm run sentry:sourcemaps -- --org=ramaway --project=onhand-browser-extension
-npm run sentry:sourcemaps -- --url-prefix=app:///
 npm run sentry:runtime-smoke -- --timeout-ms=120000
 ```
 

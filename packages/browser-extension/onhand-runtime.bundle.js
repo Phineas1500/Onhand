@@ -87403,7 +87403,8 @@ var ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY = "onhandFreeTierQuotaBypassSecret";
 var ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY = "onhandFreeTierQuotaBypassExpiresAt";
 var ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 var ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
-var ONHAND_SENTRY_DIST = "chrome";
+var ONHAND_SENTRY_CHROME_DIST = "chrome";
+var ONHAND_SENTRY_FIREFOX_DIST = "firefox";
 var ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
 var AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|prompt-eval(?:[:_-].*)?)$/i;
 function sentryEnvironmentFor(requestSource, installType) {
@@ -97286,7 +97287,7 @@ function createOnhandBrowserRuntime(host) {
     init({
       dsn: ONHAND_SENTRY_DSN,
       release: sentryRelease(),
-      dist: ONHAND_SENTRY_DIST,
+      dist: IS_FIREFOX_RUNTIME ? ONHAND_SENTRY_FIREFOX_DIST : ONHAND_SENTRY_CHROME_DIST,
       environment: "production",
       sendDefaultPii: false,
       maxBreadcrumbs: 0,

@@ -128,4 +128,4 @@ npm run acceptance:chrome -- --suite=all --run-id=merge-readiness-YYYY-MM-DD --j
 ```
 
 The acceptance command prints the manual Chrome prompt matrix; it does not itself drive the live OAuth side panel.
-Run the Sentry commands only when publishing or validating a release candidate with `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` configured.
+Run the Sentry commands only when publishing or validating a release candidate with `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN` configured. `sentry:sourcemaps` uploads the maps `npm run package:chrome` and `package:firefox` write, so package first.

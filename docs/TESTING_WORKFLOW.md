@@ -72,17 +72,18 @@ Use `--real-openai` only when `OPENAI_API_KEY` is available and the goal is to v
 
 ## Sentry Release Check
 
-Run this after building a release candidate and before publishing that same
-extension version:
+Run this after packaging a release and before publishing that same extension
+version:
 
 ```sh
-npm run build:extension
+npm run package:chrome
+npm run package:firefox
 npm run sentry:sourcemaps
 npm run sentry:smoke
 ```
 
-`npm run sentry:sourcemaps` uploads source maps for
-`onhand-extension@<manifest version>` with `dist=chrome`. `npm run sentry:smoke`
+`npm run sentry:sourcemaps` uploads each package's source map for
+`onhand-extension@<manifest version>`, with `dist=chrome` or `dist=firefox`. `npm run sentry:smoke`
 sends one synthetic privacy-safe event and fails unless Sentry resolves
 `app:///onhand-runtime.bundle.js` back to
 `packages/browser-extension/src/browser-runtime.ts`. See `docs/SENTRY.md`.

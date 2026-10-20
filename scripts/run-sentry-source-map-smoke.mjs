@@ -22,6 +22,10 @@ function parseArgs(argv) {
 		project: process.env.SENTRY_PROJECT || "onhand-browser-extension",
 		apiUrl: process.env.SENTRY_API_URL || process.env.SENTRY_URL || "https://sentry.io",
 		release: process.env.SENTRY_RELEASE || "",
+		// The derived frame comes from the unminified bundle, which matches the
+		// Chrome package line for line; the minified Firefox bundle needs
+		// --line and --column.
+		dist: "chrome",
 	};
 	for (const arg of argv) {
 		if (arg === "--print-frame") options.printFrame = true;
@@ -33,6 +37,7 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--project=")) options.project = arg.slice("--project=".length);
 		else if (arg.startsWith("--api-url=")) options.apiUrl = arg.slice("--api-url=".length);
 		else if (arg.startsWith("--release=")) options.release = arg.slice("--release=".length);
+		else if (arg.startsWith("--dist=")) options.dist = arg.slice("--dist=".length);
 		else throw new Error(`Unknown argument: ${arg}`);
 	}
 	if (options.line !== null && (!Number.isFinite(options.line) || options.line <= 0)) throw new Error("--line must be a positive number");
@@ -164,7 +169,7 @@ const smokeId = `onhand-source-map-smoke-${Date.now()}`;
 Sentry.init({
 	dsn: ONHAND_SENTRY_DSN,
 	release: options.release,
-	dist: "chrome",
+	dist: options.dist,
 	environment: "production",
 	sendDefaultPii: false,
 	defaultIntegrations: false,

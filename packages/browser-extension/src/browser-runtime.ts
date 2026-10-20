@@ -502,7 +502,9 @@ const ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY = "onhandFreeTierQuotaBypassSecret";
 const ONHAND_FREE_QUOTA_BYPASS_EXPIRES_AT_STORAGE_KEY = "onhandFreeTierQuotaBypassExpiresAt";
 const ONHAND_FREE_QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478144.ingest.us.sentry.io/4511565377110016";
-const ONHAND_SENTRY_DIST = "chrome";
+// Each store build uploads its own source map under its browser's dist.
+const ONHAND_SENTRY_CHROME_DIST = "chrome";
+const ONHAND_SENTRY_FIREFOX_DIST = "firefox";
 const ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
 // Requests sent by the CLI and the eval/acceptance scripts; their failures go
 // to Sentry's "test" environment instead of production.
@@ -13639,7 +13641,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		Sentry.init({
 			dsn: ONHAND_SENTRY_DSN,
 			release: sentryRelease(),
-			dist: ONHAND_SENTRY_DIST,
+			dist: IS_FIREFOX_RUNTIME ? ONHAND_SENTRY_FIREFOX_DIST : ONHAND_SENTRY_CHROME_DIST,
 			environment: "production",
 			sendDefaultPii: false,
 			maxBreadcrumbs: 0,

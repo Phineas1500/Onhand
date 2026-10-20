@@ -11,11 +11,15 @@
 // The Firefox package also rewrites the staged manifest for Firefox (see
 // toFirefoxManifest) and minifies the runtime bundle, since
 // addons.mozilla.org won't parse JavaScript files over 5 MB.
+//
+// Each package also writes the runtime bundle's source map, outside the zip, to
+// <out-dir>/sentry-sourcemaps/onhand-v<version>-<browser>/ for
+// `npm run sentry:sourcemaps` (see docs/SENTRY.md).
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 
@@ -114,6 +118,21 @@ async function assertWhatsNewCoversVersion(version) {
 	}
 }
 
+// Moves the staged bundle's source map out of the package, next to a copy of
+// the bundle it maps, with source paths relative to the repo instead of the
+// temporary staging directory.
+async function writeSentrySourceMap(stagedBundle, targetDir) {
+	const stagedMap = `${stagedBundle}.map`;
+	const map = JSON.parse(await readFile(stagedMap, "utf8"));
+	map.sources = map.sources.map((source) => relative(ROOT, resolve(dirname(stagedBundle), source)).replaceAll("\\", "/"));
+	await rm(targetDir, { recursive: true, force: true });
+	execFileSync("mkdir", ["-p", targetDir]);
+	await cp(stagedBundle, join(targetDir, "onhand-runtime.bundle.js"));
+	await writeFile(join(targetDir, "onhand-runtime.bundle.js.map"), JSON.stringify(map));
+	await rm(stagedMap);
+	return targetDir;
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const manifest = JSON.parse(await readFile(join(EXTENSION_DIR, "manifest.json"), "utf8"));
@@ -139,10 +158,12 @@ async function main() {
 				...process.env,
 				ONHAND_RUNTIME_OUTFILE: stagedBundle,
 				ONHAND_BUILD_FREE_TIER_BASE_URL: freeTierBaseUrl,
+				ONHAND_RUNTIME_SOURCEMAP: "1",
 				...(args.browser === "firefox" ? { ONHAND_RUNTIME_MINIFY: "1" } : {}),
 			},
 		});
 		if (!(await readFile(stagedBundle, "utf8")).includes(freeTierBaseUrl)) throw new Error("The staged runtime bundle is missing the free-tier URL.");
+		const sourceMapDir = await writeSentrySourceMap(stagedBundle, join(args.outDir, "sentry-sourcemaps", `onhand-v${manifest.version}-${args.browser}`));
 		if (args.browser === "firefox") {
 			await writeFile(join(stagedExtension, "manifest.json"), `${JSON.stringify(toFirefoxManifest(manifest), null, "\t")}\n`);
 			const { size: bundleSize } = await stat(stagedBundle);
@@ -153,6 +174,7 @@ async function main() {
 		execFileSync("zip", ["-r", "-X", "-q", zipPath, "."], { cwd: stagedExtension, stdio: "inherit" });
 		const { size } = await stat(zipPath);
 		console.log(`Packaged ${zipPath} (${(size / 1024 / 1024).toFixed(1)} MiB), Onhand Free -> ${new URL(freeTierBaseUrl).host}`);
+		console.log(`Sentry source map: ${sourceMapDir}`);
 	} finally {
 		await rm(staging, { recursive: true, force: true });
 	}

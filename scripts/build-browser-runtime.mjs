@@ -50,7 +50,10 @@ await esbuild.build({
 	format: "esm",
 	platform: "browser",
 	target: ["chrome116"],
-	sourcemap: false,
+	// The release packager also writes an external source map (no
+	// sourceMappingURL comment) for Sentry; it stays out of the zip.
+	sourcemap: process.env.ONHAND_RUNTIME_SOURCEMAP === "1" ? "external" : false,
+	sourcesContent: true,
 	// The Firefox package minifies: addons.mozilla.org won't parse JavaScript files over 5 MB.
 	minify: process.env.ONHAND_RUNTIME_MINIFY === "1",
 	legalComments: "none",
