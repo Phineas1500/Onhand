@@ -8,6 +8,10 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.12",
+		items: [],
+	},
+	{
 		version: "0.4.11",
 		items: [
 			"PDF notes stay beside the page in narrow windows. When there's no room, they fold into tabs you can click open.",

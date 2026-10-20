@@ -4,7 +4,7 @@
 		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
 	},
 	"name": "Onhand: Chat with PDFs & Webpages, Answers Highlighted",
-	"version": "0.4.11",
+	"version": "0.4.12",
 	"description": "Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up.",
 	"minimum_chrome_version": "116",
 	"icons": {
