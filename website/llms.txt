@@ -3,6 +3,7 @@
 > Onhand is a free, open-source AI reading assistant for Chrome. Ask about the webpage, PDF or research paper you're reading, and Onhand highlights the passages that answer it right on the page, with a note in the margin beside each, and explains them in the side panel.
 
 - Install: Chrome Web Store, https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb (works in Chrome and other Chromium browsers).
+- Install on Firefox: Firefox Add-ons, https://addons.mozilla.org/firefox/addon/onhand-ai/ (voice isn't available in Firefox yet).
 - Price: Onhand Free needs no account or API key and has a daily limit. For more, sign in with your ChatGPT plan or use your own OpenAI, Anthropic, Google Gemini or OpenRouter API key.
 - Features: answers highlighted on the page with margin notes; a built-in PDF viewer for papers and textbooks; following a paper's citations; reading clearly related open tabs; Learning mode, which tutors with guiding questions, hints and quizzes tied to the page; flashcards and summaries on request; voice (needs an OpenAI API key); saved sessions you can reopen.
 - Privacy: saved sessions and API keys stay in your browser. Onhand sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI.
@@ -27,6 +28,7 @@
 
 - [Support](https://useonhand.com/support.html): setup, troubleshooting and contact.
 - [Privacy policy](https://useonhand.com/privacy.html): what Onhand handles and where it goes.
+- [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/)
 - [Product Hunt](https://www.producthunt.com/products/onhand-2)
 - [AlternativeTo](https://alternativeto.net/software/onhand/)
 - [PeerPush](https://peerpush.com/p/onhand)
