@@ -2,7 +2,7 @@
 
 Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
 
-Install it free from the [Chrome Web Store](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb), or read more at [useonhand.com](https://useonhand.com).
+Install it free from the [Chrome Web Store](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb) or [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/), or read more at [useonhand.com](https://useonhand.com).
 
 <p align="center">
   <img src="screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention with page highlights, notes, and a sidebar answer" width="960">
@@ -62,7 +62,7 @@ See `docs/AGENT_TRAJECTORY_EVAL.md` for the evaluation contract, and `docs/AGENT
 - `docs/ONHAND_PLAN.md` - product and implementation plan
 - `packages/browser-extension/` - unpacked Chromium extension and browser-hosted Pi runtime
 - `scripts/` - browser-runtime build, smoke, fixture, preflight, and Chrome acceptance helpers
-- `website/` - static landing site, privacy policy, support page, and Chrome Web Store links
+- `website/` - static landing site, privacy policy, support page, and Chrome Web Store and Firefox Add-ons links
 
 ## Security and privacy model
 
