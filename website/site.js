@@ -11,6 +11,7 @@ const ONHAND_ANALYTICS = {
   releaseDownloadEvent: 'download_zip_click',
   githubSourceEvent: 'github_source_click',
   sponsorEvent: 'sponsor_click',
+  demoVideoEvent: 'demo_video_play',
 };
 
 const ONHAND_STORE = {
@@ -389,4 +390,33 @@ const ONHAND_STORE = {
       render(count);
     })
     .catch(() => {});
+})();
+
+// 4) Demo video: the page shows YouTube's preview image and loads the player
+//    (youtube-nocookie.com) only when someone presses play. Modified clicks
+//    fall through to the YouTube link.
+(function(){
+  document.querySelectorAll('[data-onhand-video]').forEach((link) => {
+    link.setAttribute('data-onhand-analytics-event', ONHAND_ANALYTICS.demoVideoEvent);
+    link.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      const id = link.getAttribute('data-onhand-video');
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0`;
+      iframe.title = link.getAttribute('data-onhand-video-title') || 'Onhand demo video';
+      iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      link.replaceWith(iframe);
+      iframe.focus();
+      const eventName = ONHAND_ANALYTICS.demoVideoEvent;
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', eventName, { event_category: 'video', event_label: id, video_id: id, transport_type: 'beacon' });
+      }
+      if (window.umami && typeof window.umami.track === 'function') {
+        window.umami.track(eventName, { video_id: id });
+      }
+    });
+  });
 })();

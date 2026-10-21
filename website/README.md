@@ -57,6 +57,7 @@ The site uses Google Analytics 4 (`G-JQ159C5BGF`) and Umami. Custom conversion e
 | `download_zip_click` | Manual ZIP download / load unpacked | `data-onhand-release-download` | `release` |
 | `github_source_click` | View repo / build from source | `data-onhand-source-link` | `source` |
 | `sponsor_click` | Open GitHub Sponsors | `data-onhand-sponsor-link` | `support` |
+| `demo_video_play` | Play the homepage demo video (loads the YouTube player) | `data-onhand-video` | `video` |
 
 Tracked elements also receive `data-onhand-analytics-event` with the event name for inspection in DevTools.
 

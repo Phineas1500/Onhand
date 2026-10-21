@@ -10,6 +10,7 @@ const EXPECTED_EVENTS = {
 	releaseDownloadEvent: "download_zip_click",
 	githubSourceEvent: "github_source_click",
 	sponsorEvent: "sponsor_click",
+	demoVideoEvent: "demo_video_play",
 };
 const WEBSITE_PAGES = (await readdir(WEBSITE_DIR)).filter((name) => name.endsWith(".html"));
 
@@ -77,6 +78,7 @@ async function verifyIndexPage() {
 	click(document.querySelector("[data-onhand-release-download]"), { ctrlKey: true });
 	click(document.querySelector("[data-onhand-source-link]"));
 	click(document.querySelector("[data-onhand-sponsor-link]"));
+	click(document.querySelector("[data-onhand-video]"));
 
 	for (const eventName of Object.values(EXPECTED_EVENTS)) {
 		assert(
@@ -103,6 +105,12 @@ async function verifyIndexPage() {
 	const sponsorEvent = gaEvents.find((event) => event.name === EXPECTED_EVENTS.sponsorEvent);
 	assert(sponsorEvent.data.event_category === "support", "sponsor_click should use support category");
 	assert(sponsorEvent.data.link_url.includes("github.com/sponsors"), "sponsor_click should include Sponsors URL");
+
+	const videoEvent = gaEvents.find((event) => event.name === EXPECTED_EVENTS.demoVideoEvent);
+	assert(videoEvent.data.event_category === "video", "demo_video_play should use video category");
+	const player = document.querySelector("#demo-video iframe");
+	assert(player?.src.startsWith("https://www.youtube-nocookie.com/embed/"), "pressing play should load the youtube-nocookie player");
+	assert(!document.querySelector("[data-onhand-video]"), "the preview link should be replaced by the player");
 }
 
 async function verifySupportPage() {
