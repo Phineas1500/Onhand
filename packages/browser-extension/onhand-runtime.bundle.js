@@ -93522,11 +93522,11 @@ function browserContextLooksLikePdf(details) {
   );
 }
 function selectToolsForPrompt(allTools, prompt, _attachments = [], learningMode = false, learnerState = null, options = {}) {
-  void prompt;
   void learnerState;
   const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
+  const runtimeJavaScriptRequested = runtimeInspectionEnabled && (promptNeedsRuntimeJavaScript(String(prompt || "").toLowerCase(), new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || [])) || Array.isArray(options.forceToolNames) && options.forceToolNames.includes("browser_run_js"));
   return allTools.filter((tool) => {
-    if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
+    if (!runtimeJavaScriptRequested && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
     if (!learningMode && LEARNING_TOOL_NAMES.includes(tool.name)) return false;
     return true;
   });

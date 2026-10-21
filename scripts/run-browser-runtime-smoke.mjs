@@ -453,7 +453,7 @@ async function main() {
 		prompt: args.realOpenAI
 			? "Reply with exactly these words and no punctuation: Onhand smoke ok"
 			: args.ports
-				? "Port smoke all browser tools: exercise every browser_* port once and then reply exactly Browser runtime ports ok."
+				? "Port smoke all browser tools: exercise every browser_* port once, including browser_run_js, and then reply exactly Browser runtime ports ok."
 				: "Use browser_highlight_text to highlight the exact text Alpha smoke content, then reply exactly Browser runtime smoke ok.",
 		displayPrompt: "browser runtime smoke",
 		attachments: [],

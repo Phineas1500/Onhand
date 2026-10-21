@@ -4812,11 +4812,11 @@ async function assertConstitutionPromptContract() {
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_find_elements"), true, "source-finding prompts should expose element discovery");
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_click"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 		assert.equal(firstPrinciplesSourceToolNames.includes("browser_type"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
-		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
+		assert.equal(firstPrinciplesSourceToolNames.includes("browser_run_js"), false, "runtime JS is offered only for JavaScript or runtime-state requests");
 		assert.equal(singularSourceToolNames.includes("browser_navigate"), true, "find a source that... should route to the source-navigation pack");
 		assert.equal(ordinarySourceToolNames.includes("browser_navigate"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
 		assert.equal(ordinarySourceToolNames.includes("browser_click"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
-		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
+		assert.equal(ordinarySourceToolNames.includes("browser_run_js"), false, "runtime JS is offered only for JavaScript or runtime-state requests");
 		const missingNavigationRetryTools = missingToolRetryToolNamesForTest(
 			"browser_navigate",
 			"could you find a source that derives it from first principles?",
@@ -5779,7 +5779,7 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.equal(answerAllToolNames.includes("browser_get_visible_region_image"), true, "explicit port smoke should expose all browser tools");
 	assert.equal(genericSmokeToolNames.includes("browser_get_visible_region_image"), true, "the ungated tool registry exposes this tool for every prompt; prompt policy and guards govern its use");
-	assert.equal(genericSmokeToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
+	assert.equal(genericSmokeToolNames.includes("browser_run_js"), false, "runtime JS is offered only for JavaScript or runtime-state requests");
 	assert.equal(noPageChangeToolNames.includes("browser_extract_content"), true, "no-page-change prompts still need read tools");
 	assert.equal(noPageChangeToolNames.includes("browser_highlight_text"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
 	assert.equal(noPageChangeToolNames.includes("browser_show_note"), true, "no-page-changes is enforced by prompt policy and marker suppression, not tool stripping");
@@ -5810,7 +5810,7 @@ async function assertConstitutionPromptContract() {
 	assert.equal(unrelatedActiveTabShouldNotUsePriorDocContext, "", "prior document context should not override an unrelated current-page question");
 	assert.equal(answerToolNames.includes("browser_pdf_search"), true, "PDF tools are part of the ungated registry");
 	assert.equal(debugToolNames.includes("browser_collect_console"), true, "debug prompts should get console inspection");
-	assert.equal(debugToolNames.includes("browser_run_js"), true, "runtime JS is gated only by the advanced runtime inspection setting");
+	assert.equal(debugToolNames.includes("browser_run_js"), false, "runtime JS is offered only for JavaScript or runtime-state requests");
 	assert.equal(explicitRuntimeToolNames.includes("browser_run_js"), true, "explicit JavaScript prompts should expose browser_run_js");
 	assert.equal(dynamicRuntimeToolNames.includes("browser_run_js"), true, "dynamic runtime-state prompts should expose browser_run_js");
 	assert.equal(disabledExplicitRuntimeToolNames.includes("browser_run_js"), false, "disabled advanced runtime inspection should hide browser_run_js even for explicit JavaScript prompts");
@@ -10651,7 +10651,7 @@ async function assertSidePanelPromptTargetsOriginWindow() {
 		authMode: "api-key",
 	});
 	await runtime.submitPrompt({
-		prompt: "Port smoke all browser tools: exercise every browser_* port once and then reply exactly Browser runtime ports ok.",
+		prompt: "Port smoke all browser tools: exercise every browser_* port once, including browser_run_js, and then reply exactly Browser runtime ports ok.",
 		displayPrompt: "side panel target window smoke",
 		attachments: [],
 		learningMode: false,

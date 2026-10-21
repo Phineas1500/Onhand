@@ -9055,15 +9055,20 @@ function selectToolsForPrompt(
 ) {
 	// Tool availability is deliberately not gated on prompt wording: the model
 	// sees the full registry and decides what to use. Behavioral constraints
-	// live in the system/launcher prompts and the runtime guards. The only
-	// exclusions are non-prompt-shaped gates — the advanced runtime inspection
-	// setting (browser_run_js) and the Learning Mode toggle (learning-event
-	// tools).
-	void prompt;
+	// live in the system/launcher prompts and the runtime guards. The
+	// exclusions are the Learning Mode toggle (learning-event tools) and
+	// browser_run_js. That tool runs model-written JavaScript, and the store
+	// listings promise it isn't used for ordinary page questions, so it needs
+	// the advanced runtime inspection setting and a request that asks about
+	// JavaScript or runtime state (or names the tool).
 	void learnerState;
 	const runtimeInspectionEnabled = options.advancedRuntimeInspectionEnabled !== false;
+	const runtimeJavaScriptRequested =
+		runtimeInspectionEnabled &&
+		(promptNeedsRuntimeJavaScript(String(prompt || "").toLowerCase(), new Set(String(prompt || "").match(EXACT_TOOL_NAME_PATTERN) || [])) ||
+			(Array.isArray(options.forceToolNames) && options.forceToolNames.includes("browser_run_js")));
 	return allTools.filter((tool) => {
-		if (!runtimeInspectionEnabled && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
+		if (!runtimeJavaScriptRequested && RUNTIME_JS_TOOL_NAMES.includes(tool.name)) return false;
 		if (!learningMode && LEARNING_TOOL_NAMES.includes(tool.name)) return false;
 		return true;
 	});
