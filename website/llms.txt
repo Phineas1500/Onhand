@@ -30,3 +30,4 @@
 - [Product Hunt](https://www.producthunt.com/products/onhand-2)
 - [AlternativeTo](https://alternativeto.net/software/onhand/)
 - [PeerPush](https://peerpush.com/p/onhand)
+- [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/)
