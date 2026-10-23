@@ -65,7 +65,7 @@
           <span class="welcome-num" aria-hidden="true">1</span>
           <div>
             <h2>Pin Onhand</h2>
-            <p>
+            <p data-welcome-pin>
               Chrome hides new extensions. Click the puzzle-piece
               <strong>Extensions</strong> button at the top right of Chrome,
               then the pin next to <strong>Onhand</strong>.
@@ -140,7 +140,7 @@
         <ul>
           <li><strong>Articles, docs and course pages:</strong> open the page, then ask.</li>
           <li><strong>PDFs:</strong> Onhand opens them in its own viewer so it can highlight them.</li>
-          <li><strong>Not on Chrome's own pages:</strong> Chrome doesn't let extensions read the Chrome Web Store or browser pages like the new tab page.</li>
+          <li><strong>Not on the browser's own pages:</strong> browsers don't let extensions read their add-on stores or pages like the new tab page.</li>
         </ul>
         <p>
           Stuck? <a href="./support.html">Support</a> covers setup, voice and PDFs.
@@ -174,6 +174,22 @@
     var mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
     var key = document.querySelector('[data-welcome-shortcut]');
     if (mac && key) key.textContent = '⌘';
+  })();
+  // The pin step names Chrome's menu; Firefox-based browsers (Zen, LibreWolf)
+  // and Edge pin from different controls.
+  (function () {
+    var ua = navigator.userAgent || '';
+    var pin = document.querySelector('[data-welcome-pin]');
+    if (!pin) return;
+    if (/Firefox\//.test(ua)) {
+      pin.innerHTML = 'New extensions start in the Extensions menu. Click the puzzle-piece ' +
+        '<strong>Extensions</strong> button in the toolbar, then the gear next to ' +
+        '<strong>Onhand</strong> and <strong>Pin to Toolbar</strong>.';
+    } else if (/Edg\//.test(ua)) {
+      pin.innerHTML = 'Edge hides new extensions. Click the puzzle-piece ' +
+        '<strong>Extensions</strong> button at the top right of Edge, then the eye ' +
+        'icon next to <strong>Onhand</strong>.';
+    }
   })();
 </script>
 <script src="./site.js?v=0.4.12-release"></script>
