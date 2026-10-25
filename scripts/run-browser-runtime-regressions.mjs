@@ -364,6 +364,23 @@ async function assertChromeWebStoreTabGetsPlainContextNote() {
 	assert.match(listed, /paper\.pdf/, "Onhand's own PDF viewer tabs stay in the open-tab list");
 	const extractText = test.toolResultTextForModelForTest("browser_extract_content", { content: { unsupported: true, surface: "chrome-web-store", reason: "This tab is the Chrome Web Store.", text: "This tab is the Chrome Web Store." } });
 	assert.match(extractText, /^Page text unavailable .*a browser limit, not page content/);
+	// A search page's readers attach its results' real URLs; without them a
+	// research turn guessed article URLs and opened 404s.
+	const searchResults = [{ title: "Android vs iPhone: here's what TechRadar readers prefer", url: "https://www.techradar.com/phones/android-vs-iphone", snippet: "Android Army wins." }];
+	const searchTab = { id: 7, title: "android vs iphone - Google Search", url: "https://www.google.com/search?q=android+vs+iphone" };
+	for (const [tool, details] of [
+		["browser_get_visible_text", { tab: searchTab, visible: { text: "Android vs iPhone: here's what TechRadar readers prefer", searchResults } }],
+		["browser_extract_content", { tab: searchTab, content: { markdown: "Android vs iPhone: here's what TechRadar readers prefer", searchResults } }],
+	]) {
+		const text = test.toolResultTextForModelForTest(tool, details);
+		assert.match(text, /Search result links \(open a source with browser_navigate on one of these exact URLs; never type a guessed URL\):\n1\. Android vs iPhone: here's what TechRadar readers prefer\n   https:\/\/www\.techradar\.com\/phones\/android-vs-iphone\n   Android Army wins\./, `${tool} lists each search result's real URL`);
+	}
+	assert.doesNotMatch(test.toolResultTextForModelForTest("browser_get_visible_text", { tab: searchTab, visible: { text: "Plain page" } }), /Search result links/, "ordinary pages add no link list");
+	assert.match(
+		test.toolResultTextForModelForTest("browser_get_visible_text", { tab: searchTab, visible: { text: "Results", searchResults: [{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAES", redirect: true, site: "https://www.tomsguide.com › Phones" }] } }),
+		/1\. The great Android vs\. iPhone debate\n   https:\/\/www\.google\.com\/goto\?url=CAES\n   \(Google's link to https:\/\/www\.tomsguide\.com › Phones; opening it lands on the article\)/,
+		"a Google redirect result says it opens the article",
+	);
 }
 
 // The Decisions API answers the intent classifier's seven questions in about
@@ -4426,6 +4443,20 @@ async function assertConstitutionPromptContract() {
 			collectUncitedTurnMarkRemovalsForTest(sweepRequest, `A. [[cite:${citedId}]][[cite:${orphanId}]] [[cite:onhand-pdf-zz1-1]]`),
 			[],
 			"stacked and pdf citation markers all count as citations",
+		);
+		// A marker with an invisible character or fullwidth brackets inside
+		// still cites its mark, and the final reply carries the canonical form.
+		const zeroWidthSpace = String.fromCharCode(0x200b);
+		const [fullOpen, fullClose] = [String.fromCharCode(0xff3b), String.fromCharCode(0xff3d)];
+		assert.deepEqual(
+			collectUncitedTurnMarkRemovalsForTest(sweepRequest, `A. [[${zeroWidthSpace}cite:${citedId}]] ${fullOpen}${fullOpen}cite:${orphanId}${fullClose}${fullClose} [[cite:onhand-pdf-zz1-1, ${notedId}]]`),
+			[],
+			"look-alike and comma-stacked markers count as citations",
+		);
+		assert.equal(
+			sanitizeAssistantVisibleReplyForTest(`Point one. [[cite:${zeroWidthSpace}${citedId}]]\nPoint two. ${fullOpen}${fullOpen}cite: ${orphanId}${fullClose}${fullClose}`),
+			`Point one. [[cite:${citedId}]]\nPoint two. [[cite:${orphanId}]]`,
+			"the final reply rewrites look-alike markers to the canonical form",
 		);
 		assert.deepEqual(
 			collectUncitedTurnMarkRemovalsForTest(sweepRequest, "Done — I marked the passage for you."),

@@ -751,7 +751,7 @@ Default answer mode:
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
 - Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. The reverse holds too: every sentence or bullet that states something from the page carries the chip of the mark that supports it — when several bullets rest on one mark, repeat that mark's chip on each — and a page point with no mark yet gets its supporting sentence highlighted before you answer, or is cut, or is labeled general knowledge. Only a lead-in line or a closing synthesis line may stand without a chip. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
 - If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
-- If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page.
+- If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page. Open a source only by an exact URL you have seen — in search results (reading a search page lists each result's link) or in a page's links — never by an article URL composed from memory or from a result's title or breadcrumb; those 404. To find sources, open a search page first.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
 - For PDFs, keep the same user-facing flow as normal pages. For selected/highlighted PDF text, use exact selected text from browser_get_selection, copied selection, or captured context first. Chrome's native PDF viewer is usually supported through selection, clipboard, or debugger fallbacks; do not claim it blocks selection merely because a fallback failed. If tool output says the reader is Google Scholar PDF Reader, describe it as Google Scholar PDF Reader even when the top-level tab URL is a direct PDF URL. If Google Scholar Reader or another third-party PDF reader blocks selected text, open browser_open_pdf_in_onhand_viewer and ask the user to highlight the passage there only if selected text did not transfer. Recommend Chrome's default PDF viewer or the Onhand viewer for smoother selected-text questions in the future. Open browser_open_pdf_in_onhand_viewer whenever analysis, offscreen/deeper PDF reading, full-PDF search, durable PDF source markers, highlights, or notes would help; skip it only for quick one-sentence or yes/no selected-text answers when selected text is already available in a supported reader. For visual PDF questions about the current figure, slide, equation, diagram, screenshot, or visible page, capture the current PDF page image and answer in the sidebar first; do not automatically search/read/highlight/note just because the user says "try here" or asks what the visible figure shows. Add PDF highlights/notes for visual questions only when the user asks to mark/save/review it, asks where supporting evidence is, needs durable learning context, or the answer depends on a specific text passage. Do not treat a selected named concept, term, section heading, formula label, or paper mechanism as a quick selected-text answer: search/read the explanatory PDF section, jump to the best page when useful, highlight the strongest supporting passage, add one short note under 280 characters, then answer. When opening the viewer from another PDF reader, preserve the current selected text/page whenever available. If you use browser_pdf_search or browser_pdf_read_pages to answer from offscreen/deeper PDF pages, add a durable source highlight on the most important supporting passage with browser_highlight_text and a short browser_show_note under 280 characters unless the user asked for no page changes or this is only a quick visual explanation. If the user accepts an offer to go deeper in a PDF with "yes", "please", or similar, complete the offered search/read/jump/highlight/note workflow before answering. Never say you will highlight or add a note unless the corresponding tool call already succeeded. For Google Docs, browser_extract_content reads the document export, and browser_highlight_text can open the current Doc's PDF export in Onhand's viewer before highlighting; use that viewer only when annotation is needed instead of claiming the Docs editor itself is annotatable. For questions about offscreen PDF content, slides, or "where does it discuss..." use browser_pdf_search and browser_pdf_read_pages before answering; use browser_pdf_jump_to_page, browser_highlight_text, and browser_show_note to mark important supporting passages. Use browser_pdf_capture_page_image for visual slide/equation/figure grounding when text is insufficient. If the viewer reports the PDF is a scanned image without extractable text, say so plainly, ground the answer from captured page images, and when a durable mark is warranted place a region mark: browser_highlight_text with a short descriptive label as the text and pdfAnchor { pageNumber, regionRect } in 0-1 page fractions from the captured image. Region marks are only for scanned pages; pages with extractable text must anchor to exact quotes.
 - For negative, absence, or whole-document PDF claims such as saying a rule is not stated anywhere, do not infer from the open section or one exact search. Search multiple conceptually distinct phrasings, check the tool's page-coverage and truncation metadata, and read the governing section plus every materially relevant matched page, eligibility/definitions section, and cross-reference. A complete exact-text search proves only that wording was not found. Never say you read or verified the entire PDF unless you actually read every page; otherwise state precisely that you searched the full extracted text and name the sections/pages you read. If coverage is incomplete or results are truncated, refine the query or read the remaining relevant pages before answering.
@@ -3674,14 +3674,41 @@ function timestampFromIso(value: string | undefined, fallback = Date.now()) {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// A model now and then writes a citation marker with an invisible character
+// inside it (zero-width space, word joiner, byte-order mark, soft hyphen) or
+// with fullwidth brackets. Exact readers miss it: on 2026-10-25 a GPT-6 Luna
+// reply showed "[[cite:onhand-…]]" verbatim in the sidebar, and the
+// uncited-mark sweep would count its mark as uncited. The final reply is
+// rewritten to the canonical form before anything reads it.
+const CITATION_MARKER_GAP = "[\\s\\u00ad\\u200b-\\u200d\\u2060\\ufeff]*";
+const LOOSE_CITATION_MARKER_PATTERN = new RegExp(
+	`[\\[［]${CITATION_MARKER_GAP}[\\[［]${CITATION_MARKER_GAP}cite${CITATION_MARKER_GAP}[:：]${CITATION_MARKER_GAP}([^\\]］]*?)${CITATION_MARKER_GAP}[\\]］]${CITATION_MARKER_GAP}[\\]］]`,
+	"gi",
+);
+
+function canonicalizeCitationMarkers(text: unknown) {
+	const value = String(text || "");
+	if (!/[\[［]/.test(value) || !/cite/i.test(value)) return value;
+	return value.replace(LOOSE_CITATION_MARKER_PATTERN, (_match, inner) => `[[cite:${String(inner).replace(/[\s\u00ad\u200b-\u200d\u2060\ufeff]+/g, "")}]]`);
+}
+
+// Annotation ids a reply cites, including stacked ("[[cite:a,b]]") markers.
+function citedAnnotationIds(text: unknown) {
+	return new Set(
+		Array.from(canonicalizeCitationMarkers(text).matchAll(/\[\[cite:([^\]]*)\]\]/g)).flatMap((match) =>
+			match[1].split(",").map((id) => id.trim()).filter(Boolean),
+		),
+	);
+}
+
 // A turn's stored reply keeps its [[cite:...]] provenance markers so the sidebar
 // can render citation chips; strip them before the reply is fed back to the
 // model as history/context, so stale internal ids don't leak into later prompts.
 function stripCitationProvenanceMarkers(text: unknown) {
-	const value = String(text || "");
+	const value = canonicalizeCitationMarkers(text);
 	if (!value.includes("[[")) return value;
 	return value
-		.replace(/\[\[\s*cite\s*:\s*[^\]]+?\s*\]\]/gi, "")
+		.replace(/\[\[\s*cite\s*:\s*[^\]]*?\s*\]\]/gi, "")
 		.replace(/[ \t]{2,}/g, " ")
 		.replace(/[ \t]+(\n|$)/g, "$1");
 }
@@ -4274,7 +4301,7 @@ function assessManagedAnswerGrounding(request: any, reply: string) {
 	for (const action of evidence.pageActions) {
 		if (String(action.key || "").startsWith("highlight:") && action.annotationId) ids.add(action.annotationId);
 	}
-	const cited = new Set(Array.from(String(reply || "").matchAll(/\[\[cite:([^\]\s]+)\]\]/g), match => match[1]));
+	const cited = citedAnnotationIds(reply);
 	const noted = new Set<string>(traces.filter((trace: any) => trace.state === "complete" && trace.toolName === "browser_show_note").map(markerGateAnnotationId).filter(Boolean));
 	for (const action of evidence.pageActions) {
 		if (String(action.key || "").startsWith("note:") && action.annotationId) noted.add(action.annotationId);
@@ -5753,7 +5780,7 @@ function sanitizeAssistantVisibleReply(value: unknown, _request: any = null) {
 }
 
 function sanitizeAssistantVisibleProse(value: string, original: string) {
-	let text = value;
+	let text = canonicalizeCitationMarkers(value);
 	if (!text) return "";
 	text = stripOrphanedMarkdownDelimiterLines(text);
 	text = stripTinyVisibleReplyArtifacts(text);
@@ -9740,6 +9767,20 @@ function toolResultTextForModel(toolName: string, result: any) {
 	return notice ? `${text}\n\n${notice}` : text;
 }
 
+// A search page's text names its results without their links; the readers
+// attach the real destination URLs (background.js getSearchResultLinks).
+function formatSearchResultLinksForModel(results: unknown) {
+	const list = (Array.isArray(results) ? results : []).filter((result: any) => result?.url);
+	if (!list.length) return "";
+	const lines = list.map((result: any, index: number) => {
+		const snippet = result.snippet ? `\n   ${truncate(String(result.snippet), 240)}` : "";
+		// Google sometimes exposes only its own redirect link, never the address.
+		const redirect = result.redirect ? `\n   (Google's link to ${result.site ? truncate(String(result.site), 100) : "this result"}; opening it lands on the article)` : "";
+		return `${index + 1}. ${truncate(String(result.title || "(untitled)"), 160)}\n   ${result.url}${redirect}${snippet}`;
+	});
+	return `\n\nSearch result links (open a source with browser_navigate on one of these exact URLs; never type a guessed URL):\n${lines.join("\n")}`;
+}
+
 function toolResultTextForModelRaw(toolName: string, result: any) {
 	const details = result?.details || result || {};
 	const tab = details.tab || null;
@@ -9844,7 +9885,8 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 			const visible = details.visible || {};
 			const text = formatVisibleTextForModel(visible, VISIBLE_TEXT_TOOL_MAX_CHARS);
 			const heading = `Visible text from ${formatCompactTab(tab || visible)}:`;
-			return text ? `${heading}\n${text}` : `${heading}\n(No visible text returned.)`;
+			const links = formatSearchResultLinksForModel(visible.searchResults);
+			return text ? `${heading}\n${text}${links}` : `${heading}\n(No visible text returned.)${links}`;
 		}
 		case "browser_get_visible_region_image": {
 			const region = details.region || {};
@@ -9893,12 +9935,13 @@ function toolResultTextForModelRaw(toolName: string, result: any) {
 					? `Source frame: ${[content.frameTitle || content.title, content.contextOrigin || content.frameUrl].filter(Boolean).join(" · ")}.\n`
 					: "";
 			const page = pageReadableExcerptForModel(content, text, startBlock);
+			const links = startBlock > 0 ? "" : formatSearchResultLinksForModel(content.searchResults);
 			if (!page.text) {
 				return startBlock > 0 && content.pagingSupported
 					? `${heading}\n${frameSource}(No readable content after block ${startBlock}: this is the end of the page.)`
-					: `${heading}\n${frameSource}${outline || "(No readable content returned.)"}`;
+					: `${heading}\n${frameSource}${outline || "(No readable content returned.)"}${links}`;
 			}
-			return `${heading}\n${frameSource}${outline}${startBlock > 0 ? `Readable body excerpt (continuing from block ${startBlock}):` : "Readable body excerpt:"}\n${page.text}${page.note}`;
+			return `${heading}\n${frameSource}${outline}${startBlock > 0 ? `Readable body excerpt (continuing from block ${startBlock}):` : "Readable body excerpt:"}\n${page.text}${page.note}${links}`;
 		}
 		case "browser_textbook_search": {
 			const search = details.search || details || {};
@@ -10424,9 +10467,7 @@ function sourceTabWasOpenedByRequest(request: any, tabId: unknown) {
 // timestamp as a second check.
 function collectUncitedTurnMarkRemovals(request: any, replyText: unknown) {
 	const traces = Array.isArray(request?.toolTraces) ? request.toolTraces : [];
-	const citedIds = new Set(
-		Array.from(String(replyText || "").matchAll(/\[\[cite:([^\]\s]+)\]\]/g)).map((match) => match[1].trim()),
-	);
+	const citedIds = citedAnnotationIds(replyText);
 	// A reply with no citations at all is not treated as "everything is an
 	// orphan": explicit highlight requests ("mark the flutter passage") can
 	// legitimately deliver marks without prose citations. The sweep targets

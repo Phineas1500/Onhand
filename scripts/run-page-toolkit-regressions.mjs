@@ -2053,6 +2053,43 @@ async function assertWebCitationLookup() {
 	console.log("Web citation lookup: claim, fragment, short reference, marker number, and missing claim passed");
 }
 
+async function assertSearchResultLinks() {
+	// A research turn read Google's results as text with no links, guessed
+	// article URLs from titles and breadcrumbs, and opened 404s until it ran
+	// out of model calls (2026-10-25). Results must come with real URLs.
+	const google = await createToolkitAtUrl(`<!doctype html><html><body><div id="search">
+		<div class="MjjYud"><div class="g"><a href="https://www.techradar.com/phones/android-vs-iphone"><h3>Android vs iPhone: here's what TechRadar readers prefer</h3><div><span>TechRadar</span><span>TechRadar</span><cite>https://www.techradar.com › Phones › iPhone</cite></div></a><div>Dec 4, 2025 — Android Army wins.</div></div></div>
+		<div class="MjjYud"><div class="g"><a href="/url?q=https://www.tomsguide.com/phones/iphone-vs-android&amp;sa=U"><h3>iPhone vs Android: which is better?</h3></a><div>We compare both platforms.</div></div></div>
+		<div class="MjjYud"><div class="g"><a href="/goto?url=CAESiAEB6zswFWDb1j0irokb"><h3>The great Android vs. iPhone debate</h3><div><cite>https://www.tomsguide.com › Phones › iPhones</cite></div></a><div>Most of us have nestled into a platform.</div></div></div>
+		<div class="MjjYud"><a href="https://www.google.com/search?q=android+vs+iphone+reddit"><h3>Related search</h3></a></div>
+		<div hidden><a href="https://hidden.example/page"><h3>Hidden result</h3></a></div>
+		<div class="MjjYud"><div class="g"><a href="https://www.techradar.com/phones/android-vs-iphone"><h3>Same page again</h3></a></div></div>
+	</div></body></html>`, "https://www.google.com/search?q=android+vs+iphone");
+	// The page realm's objects fail strict deepEqual on prototype; compare as JSON.
+	const googleLinks = JSON.parse(JSON.stringify(google.toolkit.getSearchResultLinks()));
+	assert.deepEqual(googleLinks.results, [
+		{ title: "Android vs iPhone: here's what TechRadar readers prefer", url: "https://www.techradar.com/phones/android-vs-iphone", snippet: "TechRadar · Dec 4, 2025 — Android Army wins." },
+		{ title: "iPhone vs Android: which is better?", url: "https://www.tomsguide.com/phones/iphone-vs-android", snippet: "We compare both platforms." },
+		{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAESiAEB6zswFWDb1j0irokb", redirect: true, site: "https://www.tomsguide.com › Phones › iPhones", snippet: "Most of us have nestled into a platform." },
+	], "Google results carry real, unwrapped URLs (or Google's opaque /goto link with its breadcrumb); engine links, hidden and duplicate results are skipped");
+	google.dom.window.close();
+
+	const bingTarget = "https://www.pcmag.com/comparisons/android-vs-ios";
+	const bingHref = `https://www.bing.com/ck/a?!&&p=abc&u=a1${Buffer.from(bingTarget).toString("base64url")}&ntb=1`;
+	const bing = await createToolkitAtUrl(`<!doctype html><html><body><ol id="b_results">
+		<li class="b_algo"><h2><a href="${bingHref}">Android vs. iOS: Which Smartphone Platform Is the Best?</a></h2><div class="b_caption"><cite>https://www.pcmag.com › comparisons</cite><p>Both platforms have their strengths.</p></div></li>
+	</ol></body></html>`, "https://www.bing.com/search?q=android+vs+ios");
+	assert.deepEqual(JSON.parse(JSON.stringify(bing.toolkit.getSearchResultLinks().results.map(({ title, url }) => ({ title, url })))), [
+		{ title: "Android vs. iOS: Which Smartphone Platform Is the Best?", url: bingTarget },
+	], "Bing's click-tracking links are decoded to the destination");
+	bing.dom.window.close();
+
+	const ddg = await createToolkitAtUrl(`<!doctype html><html><body><div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent("https://www.zdnet.com/article/iphone-vs-android/")}&amp;rut=x">iPhone vs Android</a><a class="result__snippet">Our verdict.</a></div></body></html>`, "https://html.duckduckgo.com/html/?q=iphone+vs+android");
+	assert.equal(ddg.toolkit.getSearchResultLinks().results[0]?.url, "https://www.zdnet.com/article/iphone-vs-android/", "DuckDuckGo redirect links are unwrapped");
+	ddg.dom.window.close();
+	console.log("Search result links: Google, Bing and DuckDuckGo results carry their real URLs passed");
+}
+
 async function createToolkit(html, toolkitOptions = {}) {
 	const dom = new JSDOM(html, {
 		url: "https://example.test/article",
@@ -4632,6 +4669,7 @@ async function main() {
 	await assertPdfSelectionIncludesAnchor();
 	await assertBlockedNavigationClassification();
 	await assertWebCitationLookup();
+	await assertSearchResultLinks();
 
 	console.log("Page toolkit regressions: PASS");
 }

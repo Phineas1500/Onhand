@@ -8936,6 +8936,71 @@ const createPageToolkit = (options = {}) => {
 		throw new Error(`No visible text matched: ${query}`);
 	};
 
+	// Search results pages: readable and visible text keep each result's title
+	// and snippet but not its link, so a research turn guessed article URLs from
+	// the titles and breadcrumbs and opened 404s until it ran out of model calls
+	// (2026-10-25). List the organic results with their real destination URLs.
+	const unwrapSearchResultHref = (href) => {
+		try {
+			const url = new URL(href, location.href);
+			if (/(^|\.)google\.[a-z.]+$/i.test(url.hostname) && url.pathname === "/url") return url.searchParams.get("q") || url.searchParams.get("url") || "";
+			if (/(^|\.)bing\.com$/i.test(url.hostname) && url.pathname === "/ck/a") {
+				const encoded = url.searchParams.get("u") || "";
+				if (!encoded.startsWith("a1")) return "";
+				const base64 = encoded.slice(2).replace(/-/g, "+").replace(/_/g, "/");
+				return atob(base64 + "===".slice((base64.length + 3) % 4));
+			}
+			if (/(^|\.)duckduckgo\.com$/i.test(url.hostname) && url.pathname === "/l/") return url.searchParams.get("uddg") || "";
+			return url.href;
+		} catch {
+			return "";
+		}
+	};
+
+	const getSearchResultLinks = (options = {}) => {
+		const limit = Math.max(1, Math.min(20, Number(options.limit || 10) || 10));
+		const host = location.hostname;
+		const isSearchEngineHost = (hostname) => /(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com)$/i.test(hostname);
+		const titleAnchors = /(^|\.)bing\.com$/i.test(host)
+			? Array.from(document.querySelectorAll("li.b_algo h2 a[href]"))
+			: /(^|\.)duckduckgo\.com$/i.test(host)
+				? Array.from(document.querySelectorAll('a[data-testid="result-title-a"][href], a.result__a[href]'))
+				: Array.from(document.querySelectorAll("a[href] h3"), (heading) => heading.closest("a[href]"));
+		const results = [];
+		const seen = new Set();
+		for (const anchor of titleAnchors) {
+			if (!anchor || results.length >= limit) continue;
+			if (anchor.closest("[hidden], [aria-hidden='true']")) continue;
+			let destination;
+			try {
+				destination = new URL(unwrapSearchResultHref(anchor.getAttribute("href") || ""));
+			} catch {
+				continue;
+			}
+			// Some Google pages carry no destination at all, only an opaque
+			// "/goto?url=<token>" link plus a shortened breadcrumb. Opening that
+			// link lands on the article, so list it as Google's link.
+			const googleRedirect = /(^|\.)google\.[a-z.]+$/i.test(destination.hostname) && destination.pathname === "/goto" && destination.searchParams.has("url");
+			if (!/^https?:$/.test(destination.protocol) || (isSearchEngineHost(destination.hostname) && !googleRedirect) || seen.has(destination.href)) continue;
+			seen.add(destination.href);
+			const title = normalizeText(anchor.querySelector("h3, h2")?.textContent || anchor.textContent).slice(0, 200);
+			const container = anchor.closest("li.b_algo, article, div.g, div.MjjYud, div.result") || anchor.parentElement?.parentElement || anchor.parentElement;
+			const site = googleRedirect ? normalizeText(container?.querySelector("cite")?.textContent || "").slice(0, 120) : "";
+			// The block's text minus the title and the "site › path" breadcrumb,
+			// which engines render in <cite> (DuckDuckGo: .result__url). Google
+			// prints the site name twice ("AviraAvira Jan 21, 2026 — ...").
+			const block = container?.cloneNode(true);
+			block?.querySelectorAll?.("h3, h2, cite, .result__url, script, style, svg").forEach((node) => node.remove());
+			const snippet = normalizeText(block?.textContent || "")
+				.replace(title, "")
+				.trim()
+				.replace(/^([A-Za-z].{1,59}?)\1(?=\S)/, "$1 · ")
+				.slice(0, 280);
+			results.push({ title, url: destination.href, ...(googleRedirect ? { redirect: true, ...(site ? { site } : {}) } : {}), ...(snippet ? { snippet } : {}) });
+		}
+		return { url: location.href, results };
+	};
+
 	const getVisibleText = (options = {}) => {
 		const pdfVisibleText = collectPdfVisibleText(options);
 		if (pdfVisibleText) return pdfVisibleText;
@@ -9743,6 +9808,7 @@ const createPageToolkit = (options = {}) => {
 		getAnnotationSurfaceInfo,
 		highlightText,
 		getVisibleText,
+		getSearchResultLinks,
 		getSelectionInfo,
 		getViewportHeadings,
 		getScrollState,
@@ -12322,6 +12388,30 @@ function normalizeGoogleDocsExportText(value) {
 		.trim();
 }
 
+function isSearchResultsPageUrl(value) {
+	try {
+		const url = new URL(String(value || ""));
+		if (/(^|\.)google\.[a-z.]+$/i.test(url.hostname)) return url.pathname === "/search" && url.searchParams.has("q");
+		if (/(^|\.)bing\.com$/i.test(url.hostname)) return url.pathname === "/search" && url.searchParams.has("q");
+		if (/(^|\.)duckduckgo\.com$/i.test(url.hostname)) return url.searchParams.has("q") || url.pathname.startsWith("/html");
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+// Result links ride along with a search page's text: without them a research
+// turn could only guess article URLs.
+async function searchResultLinksForTab(tab) {
+	if (!isSearchResultsPageUrl(tab?.url)) return null;
+	try {
+		const links = await runPageToolkitMethod(tab.id, "getSearchResultLinks", { limit: 10 });
+		return Array.isArray(links?.results) && links.results.length ? links.results : null;
+	} catch {
+		return null;
+	}
+}
+
 function isGoogleDocsDocumentUrl(value) {
 	try {
 		const url = new URL(String(value || ""));
@@ -14339,9 +14429,10 @@ async function handleCommandInner(name, args = {}) {
 					if (isUnreadableTabError(tab, error)) content = unsupportedTabPayload(tab, error);
 					else throw error;
 				}
+				const searchResults = await searchResultLinksForTab(tab);
 				return {
 					tab: simplifyTab(tab),
-					content,
+					content: searchResults && content && typeof content === "object" ? { ...content, searchResults } : content,
 				};
 			});
 		}
@@ -14521,9 +14612,10 @@ async function handleCommandInner(name, args = {}) {
 					maxChars: args.maxChars,
 					maxBlocks: args.maxBlocks,
 				});
+				const searchResults = await searchResultLinksForTab(tab);
 				return {
 					tab: simplifyTab(tab),
-					visible,
+					visible: searchResults && visible && typeof visible === "object" ? { ...visible, searchResults } : visible,
 				};
 			});
 		}

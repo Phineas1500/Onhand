@@ -733,23 +733,37 @@
 	// than reconstructed by token overlap. Markers are stripped from the rendered
 	// text; a block with no resolvable marker falls back to findCitationsForBlock.
 	// An empty [[cite:]] still has to be stripped, not shown to the reader.
-	const CITATION_MARKER_PATTERN = /\[\[\s*cite\s*:\s*([^\]]*?)\s*\]\]/gi;
+	// Markers with an invisible character inside (zero-width space, word joiner,
+	// byte-order mark, soft hyphen) or fullwidth brackets count too: a GPT-6
+	// Luna reply once showed "[[cite:onhand-…]]" verbatim (2026-10-25).
+	const CITATION_MARKER_GAP = "[\\s\\u00ad\\u200b-\\u200d\\u2060\\ufeff]*";
+	const CITATION_MARKER_PATTERN = new RegExp(
+		`[\\[\\uff3b]${CITATION_MARKER_GAP}[\\[\\uff3b]${CITATION_MARKER_GAP}cite${CITATION_MARKER_GAP}[:\\uff1a]${CITATION_MARKER_GAP}([^\\]\\uff3d]*?)${CITATION_MARKER_GAP}[\\]\\uff3d]${CITATION_MARKER_GAP}[\\]\\uff3d]`,
+		"gi",
+	);
+	// Whatever is still shaped like a marker after that (an unterminated
+	// "[[cite:x" mid-stream, a single-bracket "[cite:x]") is hidden too.
+	const CITATION_MARKER_FRAGMENT_PATTERN = new RegExp(
+		`[\\[\\uff3b]{1,2}${CITATION_MARKER_GAP}cite${CITATION_MARKER_GAP}[:\\uff1a][^\\s\\]\\uff3d]*[\\]\\uff3d]{0,2}`,
+		"gi",
+	);
 	const MAX_EXPLICIT_CITATIONS = 3;
 
 	function extractCitationMarkers(text) {
 		const source = String(text || "");
-		if (!source.includes("[[")) return { text: source, ids: [] };
+		if (!/[\[\uff3b]/.test(source) || !/cite/i.test(source)) return { text: source, ids: [] };
 		const ids = [];
 		// Removed markers leave a placeholder first, so the space before one can
 		// go too when punctuation follows ("retention [[cite:x]], and").
 		const cleaned = source
 			.replace(CITATION_MARKER_PATTERN, (_match, inner) => {
 				for (const rawId of String(inner).split(",")) {
-					const id = rawId.trim();
+					const id = rawId.replace(/[\s\u00ad\u200b-\u200d\u2060\ufeff]+/g, "");
 					if (id) ids.push(id);
 				}
 				return "\u0000";
 			})
+			.replace(CITATION_MARKER_FRAGMENT_PATTERN, "\u0000")
 			.replace(/[ \t]*\u0000+(?=[.,;:!?)\]])/g, "")
 			.replace(/\u0000/g, "");
 		return { text: cleaned.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1"), ids: [...new Set(ids)] };

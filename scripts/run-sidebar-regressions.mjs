@@ -636,6 +636,39 @@ async function assertEmptyCitationMarkerIsNotShown() {
 	dom.window.close();
 }
 
+async function assertLookAlikeCitationMarkersAreNotShown() {
+	// A GPT-6 Luna reply once showed "[[cite:onhand-…]]" verbatim beside its
+	// chip: the marker held a character the exact pattern didn't accept.
+	const zeroWidthSpace = String.fromCharCode(0x200b);
+	const wordJoiner = String.fromCharCode(0x2060);
+	const [fullOpen, fullClose] = [String.fromCharCode(0xff3b), String.fromCharCode(0xff3d)];
+	const variants = [
+		`[[${zeroWidthSpace}cite:ann-first]]`,
+		`[${wordJoiner}[cite:ann-first]]`,
+		`${fullOpen}${fullOpen}cite:ann-first${fullClose}${fullClose}`,
+		`[[cite:ann-${zeroWidthSpace}first]]`,
+	];
+	for (const marker of variants) {
+		const state = createState();
+		state.turns = [{ ...state.turns[0], reply: `Rejection sampling wastes most proposals. ${marker}` }];
+		const dom = await renderSidebar(state, []);
+		const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+		await dom.window.__onhandSidebarTestHooks.requestState();
+		const text = shadow.getElementById("messages").textContent;
+		assert.doesNotMatch(text, /cite\s*:/i, `look-alike marker ${JSON.stringify(marker)} must not be shown`);
+		assert.deepEqual([...shadow.querySelectorAll(".onhand-cite")].map((button) => button.dataset.actionKey), ["highlight:first"], `look-alike marker ${JSON.stringify(marker)} still resolves its chip`);
+		dom.window.close();
+	}
+	// An unterminated marker (mid-stream, or malformed) is hidden as well.
+	const state = createState();
+	state.turns = [{ ...state.turns[0], reply: "Rejection sampling wastes most proposals. [[cite:ann-fir" }];
+	const dom = await renderSidebar(state, []);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	assert.doesNotMatch(shadow.getElementById("messages").textContent, /cite\s*:/i, "an unterminated marker must not be shown");
+	dom.window.close();
+}
+
 async function assertRemovedCitationLeavesNoSpaceBeforePunctuation() {
 	// Stripping a marker that sat before punctuation once left "retention , and".
 	const state = createState();
@@ -2978,6 +3011,7 @@ await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
 await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();
+await assertLookAlikeCitationMarkersAreNotShown();
 await assertRemovedCitationLeavesNoSpaceBeforePunctuation();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
