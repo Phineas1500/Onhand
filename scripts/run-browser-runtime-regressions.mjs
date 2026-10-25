@@ -1100,6 +1100,16 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				message: `429: {"message":"You've reached today's Onhand Free limit. It resets tomorrow, or switch to your own API key in options.","code":"daily_request_cap"}`,
 			},
 			{
+				label: "Free not served in this region",
+				messageType: "sidebar:submit-prompt",
+				message: `403: {"error":{"message":"Onhand Free isn't available in your region, because OpenAI, which runs it, doesn't serve it there. To use Onhand, choose another AI provider in Onhand's settings.","code":"region_unavailable"}}`,
+			},
+			{
+				label: "provider refuses the region",
+				messageType: "sidebar:submit-prompt",
+				message: `403: {"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}`,
+			},
+			{
 				label: "browser shutdown",
 				messageType: "sidebar:submit-prompt",
 				message: "The browser is shutting down.",

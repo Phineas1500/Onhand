@@ -69,7 +69,7 @@
         you are reading. Sessions stay on your device, and content only goes to an
         AI provider when you ask Onhand to help.
       </p>
-      <p class="legal-updated">Last updated: October 17, 2026</p>
+      <p class="legal-updated">Last updated: October 25, 2026</p>
     </div>
   </section>
 
@@ -230,6 +230,11 @@
             commands such as "next page". In Onhand Free mode, the
             extension sends the content needed for your request to Onhand's
             Cloudflare Worker, which forwards the model request directly to OpenAI's official API (GPT-6 Luna).
+            OpenAI doesn't offer its API in Hong Kong or Macau, so for requests
+            from there the Worker sends the model request through OpenRouter to
+            DeepSeek V4.1 Flash instead. It is restricted to US-based hosts that
+            OpenRouter lists as not collecting prompts, and the Decisions request
+            is skipped.
             The hosted Worker streams the response and enforces quota limits; it
             does not store prompts, page content, screenshots, transcripts, or
             model responses as part of normal chat handling.

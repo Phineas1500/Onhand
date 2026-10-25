@@ -59,8 +59,14 @@ REGISTRATIONS_PER_IP_PER_DAY = "25"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 ERROR_REPORTS_PER_IP_PER_DAY = "50"
 
-# Secret (never in this file): npx wrangler secret put OPENAI_API_KEY
-# Keep OPENROUTER_API_KEY during the seven-day legacy charge-ledger retention.
+# Places OpenAI doesn't serve (ISO country codes, from Cloudflare's request.cf)
+# get REGION_FALLBACK_MODEL through OpenRouter instead; see
+# src/region-fallback.mjs for why the list stays this short. "" turns it off.
+REGION_FALLBACK_COUNTRIES = "HK,MO"
+REGION_FALLBACK_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+
+# Secrets (never in this file): npx wrangler secret put OPENAI_API_KEY, and
+# OPENROUTER_API_KEY for the region fallback and legacy generation lookups.
 
 # Sample runtime diagnostics without logging request bodies in application code.
 [observability]

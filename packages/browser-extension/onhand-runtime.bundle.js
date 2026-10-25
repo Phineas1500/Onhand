@@ -97148,7 +97148,7 @@ function createOnhandBrowserRuntime(host) {
     if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
       return true;
     }
-    if (/daily_request_cap|today's onhand free limit|the browser is shutting down|extension context invalidated/.test(message)) return true;
+    if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|the browser is shutting down|extension context invalidated/.test(message)) return true;
     if (kind !== "runtime_exception") return false;
     if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
     if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;

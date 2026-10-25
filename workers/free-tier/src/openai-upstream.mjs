@@ -8,6 +8,11 @@ export const MAX_OUTPUT_TOKENS = 16_384;
 // Existing published extensions keep working across the server rollout.
 export const ALLOWED_CLIENT_MODELS = new Set([FREE_TIER_MODEL, "openai/gpt-5.6-luna"]);
 
+export function clampOutputTokens(body) {
+	const requested = Number(body.max_completion_tokens ?? body.max_tokens);
+	return Number.isFinite(requested) && requested > 0 ? Math.max(1, Math.min(Math.floor(requested), MAX_OUTPUT_TOKENS)) : MAX_OUTPUT_TOKENS;
+}
+
 export function prepareOpenAIRequestBody(body) {
 	const next = {};
 	// An allowlist prevents provider routing, billing tiers, or unsupported
@@ -15,10 +20,9 @@ export function prepareOpenAIRequestBody(body) {
 	for (const key of ["messages", "tools", "tool_choice", "parallel_tool_calls", "response_format", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "verbosity"]) {
 		if (Object.hasOwn(body, key)) next[key] = structuredClone(body[key]);
 	}
-	const requested = Number(body.max_completion_tokens ?? body.max_tokens);
 	Object.assign(next, {
 		model: FREE_TIER_MODEL,
-		max_completion_tokens: Number.isFinite(requested) && requested > 0 ? Math.max(1, Math.min(Math.floor(requested), MAX_OUTPUT_TOKENS)) : MAX_OUTPUT_TOKENS,
+		max_completion_tokens: clampOutputTokens(body),
 		n: 1,
 		store: false,
 		service_tier: "default",

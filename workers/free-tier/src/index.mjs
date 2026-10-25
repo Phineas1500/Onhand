@@ -5,10 +5,13 @@
 // completions; /v1/decisions answers the extension's request classifier;
 // /v1/telemetry and /v1/error-reports collect diagnostics.
 // Per-device, per-turn, concurrency, and shared cost controls stay server-side.
-// Secrets/bindings: OPENAI_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
+// Places OpenAI doesn't serve get a different model through OpenRouter; see
+// region-fallback.mjs.
+// Secrets/bindings: OPENAI_API_KEY, OPENROUTER_API_KEY, FREE_TIER_KV, FREE_TIER_COST_LEDGER.
 
 import { fetchOpenRouterGenerationMetadata, reportedGenerationCost } from "./generation-metadata.mjs";
 import { ALLOWED_CLIENT_MODELS, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, decisionsUsageCost, prepareDecisionsRequestBody, prepareOpenAIRequestBody, openAIUsageCost } from "./openai-upstream.mjs";
+import { OPENROUTER_CHAT_URL, REGION_UNAVAILABLE_MESSAGE, isOpenAIRegionRefusal, openRouterUsageCost, prepareRegionFallbackRequestBody, regionFallbackModel } from "./region-fallback.mjs";
 
 const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
@@ -492,6 +495,7 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 	let activeRead = null;
 	let cancelTask = null;
 	const onRequestAbort = () => { cancel(request.signal.reason); };
+	const usageCost = baseFields.provider === "openrouter" ? openRouterUsageCost : openAIUsageCost;
 
 	function readPayload(payload) {
 		if (!payload || typeof payload !== "object") return;
@@ -539,8 +543,8 @@ function instrumentCompletionBody(body, env, ctx, baseFields, request, isSse) {
 			durationMs: startedAt > 0 ? Date.now() - startedAt : baseFields.durationMs,
 			provider, generationId, upstreamModel, providerRequestId,
 			promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens,
-			totalTokens: usage?.total_tokens, cost: openAIUsageCost(usage),
-			costResolved: openAIUsageCost(usage) !== undefined,
+			totalTokens: usage?.total_tokens, cost: usageCost(usage),
+			costResolved: usageCost(usage) !== undefined,
 		};
 		if (!fields.costResolved && baseFields.status < 400) {
 			writeAnalytics(ctx, env, "free_tier_accounting_unresolved", { ...fields, errorCode: "missing_generation_usage" }, request);
@@ -706,6 +710,8 @@ async function handleChatCompletions(request, env, ctx) {
 	}
 
 	if (!env.OPENAI_API_KEY) return json(503, { error: { message: "Onhand Free is temporarily unavailable: the OpenAI funding key is not configured." } });
+	const fallbackModel = regionFallbackModel(env, request);
+	const upstreamProvider = fallbackModel ? "openrouter" : "openai";
 
 	const accountingId = crypto.randomUUID();
 	let upstreamTimeoutMs = UPSTREAM_REQUEST_TIMEOUT_MS;
@@ -734,7 +740,7 @@ async function handleChatCompletions(request, env, ctx) {
 				// A dispatched provider request may still bill, so it keeps its
 				// reservation as an uncertain charge; an undispatched one cannot.
 				await writeCompletionAnalyticsAndAccounting(ctx, env, ...(upstreamStarted
-					? ["chat_stream_error", { ...fieldsFor(admission), provider: "openai", status: 502, result: "error", errorCode: "upstream_fetch_error" }]
+					? ["chat_stream_error", { ...fieldsFor(admission), provider: upstreamProvider, status: 502, result: "error", errorCode: "upstream_fetch_error" }]
 					: ["chat_stream_cancelled", { ...fieldsFor(admission), status: 499, noCharge: true, result: "cancelled", errorCode: "client_cancelled" }]), request);
 			} else if (admissionTask && !admission) {
 				await releaseInterruptedAdmission(env, accountingDay, accountingId);
@@ -802,19 +808,19 @@ async function handleChatCompletions(request, env, ctx) {
 	// onEarlyDisconnect. Once headers arrive, the stream finalizer handles
 	// disconnects (and bounded JSON drain).
 	const upstreamDeadline = AbortSignal.any([AbortSignal.timeout(Math.floor(upstreamTimeoutMs)), preHeaderAbort.signal]);
-	const upstreamBody = prepareOpenAIRequestBody(body);
+	const upstreamBody = fallbackModel ? prepareRegionFallbackRequestBody(body, fallbackModel) : prepareOpenAIRequestBody(body);
 	let upstream;
 	upstreamStarted = true;
 	try {
-		upstream = await fetch(OPENAI_CHAT_URL, {
+		upstream = await fetch(fallbackModel ? OPENROUTER_CHAT_URL : OPENAI_CHAT_URL, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.OPENAI_API_KEY}` },
+			headers: { "Content-Type": "application/json", Authorization: `Bearer ${fallbackModel ? env.OPENROUTER_API_KEY : env.OPENAI_API_KEY}` },
 			body: JSON.stringify(upstreamBody), signal: upstreamDeadline,
 		});
 	} catch {
 		if (disconnectCleanup) return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
 		stopEarlyDisconnect();
-		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, provider: "openai", status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...baseFields, provider: upstreamProvider, status: 502, result: "error", errorCode: "upstream_fetch_error" }, request);
 		return json(502, { error: { message: "The model connection failed. Please try again shortly." } });
 	}
 	if (disconnectCleanup) {
@@ -824,14 +830,26 @@ async function handleChatCompletions(request, env, ctx) {
 	stopEarlyDisconnect();
 	const metricBase = {
 		...baseFields, status: upstream.status, durationMs: Date.now() - startedAt,
-		bodyBytes: raw.length, model: upstreamBody.model, provider: "openai",
+		bodyBytes: raw.length, model: upstreamBody.model, provider: upstreamProvider,
 		providerRequestId: upstream.headers.get("x-request-id") || "",
 	};
+	// OpenAI's 403 for a place it doesn't serve reads "Country, region, or
+	// territory not supported", which gives the user no next step.
+	let regionRefused = false;
+	if (upstream.status === 403 && !fallbackModel) {
+		const text = await upstream.text().catch(() => "");
+		regionRefused = isOpenAIRegionRefusal(upstream.status, text);
+		upstream = new Response(text, { status: upstream.status, headers: upstream.headers });
+	}
 	writeAnalytics(ctx, env, "chat_upstream_response", {
 		...metricBase,
 		result: upstream.ok ? "ok" : "error",
-		errorCode: upstream.ok ? "" : `upstream_${upstream.status}`,
+		errorCode: regionRefused ? "region_unavailable" : upstream.ok ? "" : `upstream_${upstream.status}`,
 	}, request);
+	if (regionRefused) {
+		await writeCompletionAnalyticsAndAccounting(ctx, env, "chat_stream_error", { ...metricBase, result: "error", noCharge: true, errorCode: "region_unavailable" }, request);
+		return json(403, { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
+	}
 
 	const headers = new Headers(CORS_HEADERS);
 	const contentType = upstream.headers.get("Content-Type");
@@ -872,6 +890,9 @@ async function handleDecisions(request, env, ctx) {
 	try { body = JSON.parse(raw); } catch { return refuse(400, "invalid_json", "Request body must be JSON.", { deviceHash }); }
 	const upstreamBody = prepareDecisionsRequestBody(body);
 	if (!upstreamBody) return refuse(400, "invalid_decisions_request", "The free tier answers text Decisions requests for gpt-6-luna only.", { deviceHash });
+	// Decisions is OpenAI-only. Refusing at once lets the extension fall back
+	// to classifying with its chat model, which takes the region route.
+	if (regionFallbackModel(env, request)) return refuse(403, "region_fallback", "Decisions isn't available in this region; Onhand classifies requests with its chat model instead.", { deviceHash });
 	if (!env.OPENAI_API_KEY) return json(503, { error: { message: "Onhand Free is temporarily unavailable: the OpenAI funding key is not configured." } });
 	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
 	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";

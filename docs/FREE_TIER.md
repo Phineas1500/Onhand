@@ -8,8 +8,28 @@ key's OpenAI project and draws from its applicable API credits.
 
 ## Why this shape
 
-- Text, screenshots, and image-bearing tool results all use `gpt-6-luna`.
-  There is no new-request fallback to OpenRouter or Mistral.
+- Text, screenshots, and image-bearing tool results all use `gpt-6-luna`,
+  except in the places OpenAI doesn't serve (next item). There is no
+  fallback to another model when OpenAI fails.
+- **Region route.** OpenAI refuses requests from places it doesn't serve
+  (`403 unsupported_country_region_territory`), and its
+  [supported-countries page](https://developers.openai.com/api/docs/supported-countries)
+  warns that offering access there can get the account blocked. So never
+  route those requests to OpenAI through another location. Instead, requests
+  whose `request.cf.country` is in `REGION_FALLBACK_COUNTRIES` (default
+  `HK,MO`) go to `REGION_FALLBACK_MODEL` (DeepSeek V4.1 Flash) through
+  OpenRouter.
+  - **Hosts:** pinned to vetted US hosts with `data_collection: "deny"`.
+  - **Settings:** reasoning off; cost taken from OpenRouter's reported usage.
+  - **Decisions:** refused at once there, so the extension classifies with
+    its chat model.
+  - **What stays off the list:** mainland China, whose generative-AI rules
+    cover foreign services offered there, and sanctioned countries, which US
+    hosts can't serve.
+  - **Everywhere else:** OpenAI's refusal becomes a clear `region_unavailable`
+    message that points to another provider, and the request isn't charged.
+  - **History:** added 2026-10-25, after a Hong Kong user's first two
+    questions failed. Turn it off with `REGION_FALLBACK_COUNTRIES = ""`.
 - Chat Completions preserves the existing extension stream and function-call
   loop. The Worker explicitly sets `reasoning_effort: "none"`, as required for
   GPT-6 Luna function calling on that endpoint. Reasoning with tools would

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import worker, { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 
 import { FREE_TIER_MODEL, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, MAX_OUTPUT_TOKENS, prepareOpenAIRequestBody, openAIUsageCost, prepareDecisionsRequestBody, decisionsUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
+import { DEFAULT_REGION_FALLBACK_MODEL, OPENROUTER_CHAT_URL, REGION_FALLBACK_PROVIDERS, REGION_UNAVAILABLE_MESSAGE, prepareRegionFallbackRequestBody, regionFallbackModel } from "../workers/free-tier/src/region-fallback.mjs";
 const { MAX_BODY_BYTES, QUOTA_BYPASS_HEADER, quotaBypassAuthorized, timingSafeEqualText } = __freeTierTest;
 const FREE_TIER_TEXT_MODEL = FREE_TIER_MODEL;
 assert.equal(MAX_BODY_BYTES, 2_500_000);
@@ -509,7 +510,66 @@ try {
 		assert.equal((await worker.fetch(decisionsRequest(), missingLedger.env, missingLedger.ctx)).status, 503, "accounting outages fail closed");
 		console.error = originalConsoleError;
 	}
-	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure, decisions)");
+
+	// Places OpenAI doesn't serve: Hong Kong and Macau take the OpenRouter
+	// route, and a region refusal anywhere else becomes a clear, uncharged
+	// message instead of OpenAI's raw 403.
+	{
+		const fromCountry = (request, country) => Object.defineProperty(request, "cf", { value: { country } });
+		const fallbackBody = prepareRegionFallbackRequestBody({ model: FREE_TIER_TEXT_MODEL, messages, tools, stream: true, max_completion_tokens: 999999,
+			reasoning_effort: "high", service_tier: "priority", store: true, verbosity: "high", n: 9, provider: { only: ["other"] }, models: ["other"], transforms: ["middle-out"] }, "fixture/model");
+		assert.deepEqual(fallbackBody, { messages, tools, model: "fixture/model", max_tokens: MAX_OUTPUT_TOKENS, n: 1, stream: true,
+			reasoning: { enabled: false }, usage: { include: true }, provider: { only: REGION_FALLBACK_PROVIDERS, data_collection: "deny" } });
+		assert.equal(regionFallbackModel({ OPENROUTER_API_KEY: "k" }, { cf: { country: "mo" } }), DEFAULT_REGION_FALLBACK_MODEL);
+		for (const [env, cf] of [[{ OPENROUTER_API_KEY: "k" }, { country: "CN" }], [{ OPENROUTER_API_KEY: "k" }, {}], [{}, { country: "HK" }],
+			[{ OPENROUTER_API_KEY: "k", REGION_FALLBACK_COUNTRIES: "" }, { country: "HK" }]]) assert.equal(regionFallbackModel(env, { cf }), "");
+
+		const f = fixture();
+		let sent = null;
+		globalThis.fetch = async (url, init) => {
+			sent = { url: String(url), auth: init.headers.Authorization, body: JSON.parse(init.body) };
+			return providerResponse({ id: "gen-region-fixture", model: DEFAULT_REGION_FALLBACK_MODEL, provider: "DeepInfra",
+				choices: [{ delta: { content: "fixture" } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0002 } });
+		};
+		const routed = await worker.fetch(fromCountry(chatRequest(), "HK"), f.env, f.ctx);
+		assert.equal(routed.status, 200);
+		assert.match(await routed.text(), /fixture/);
+		await f.flush();
+		assert.equal(sent.url, OPENROUTER_CHAT_URL);
+		assert.equal(sent.auth, "Bearer mock-legacy-key");
+		assert.equal(sent.body.model, DEFAULT_REGION_FALLBACK_MODEL);
+		assert.equal(await f.cost(), 0.0002, "OpenRouter's reported cost reaches the daily total");
+		const complete = f.events.find((event) => event.indexes[0] === "chat_stream_complete");
+		assert.equal(complete.blobs[4], "DeepInfra", "the serving host is recorded");
+		assert.equal(complete.doubles[9], 0.0002);
+
+		// Other places still go to OpenAI, and its region refusal is translated.
+		const refusing = fixture();
+		globalThis.fetch = async (url) => {
+			assert.equal(String(url), OPENAI_CHAT_URL);
+			return Response.json({ error: { code: "unsupported_country_region_territory", message: "Country, region, or territory not supported", type: "request_forbidden" } }, { status: 403 });
+		};
+		const refused = await worker.fetch(fromCountry(chatRequest(), "VE"), refusing.env, refusing.ctx);
+		assert.equal(refused.status, 403);
+		assert.deepEqual(await refused.json(), { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
+		await refusing.flush();
+		assert.equal(await refusing.cost(), 0, "a refused request is not charged");
+		assert.ok(refusing.events.some((event) => event.indexes[0] === "chat_upstream_response" && event.blobs[14] === "region_unavailable"));
+		globalThis.fetch = async () => Response.json({ error: { code: "other_forbidden", message: "fixture" } }, { status: 403 });
+		const otherForbidden = await worker.fetch(fromCountry(chatRequest(), "US"), refusing.env, refusing.ctx);
+		assert.equal(otherForbidden.status, 403);
+		assert.equal((await otherForbidden.json()).error.code, "other_forbidden", "other 403s pass through unchanged");
+		await refusing.flush();
+
+		// Decisions is OpenAI-only: refuse at once so the extension falls back.
+		globalThis.fetch = async () => assert.fail("no Decisions call from a fallback region");
+		const decisions = await worker.fetch(fromCountry(new Request("https://worker.test/v1/decisions", { method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ model: FREE_TIER_MODEL, input: "fixture", questions: [{ type: "predicate", name: "teaching", instructions: "Is it?" }] }) }), "HK"), f.env, f.ctx);
+		assert.equal(decisions.status, 403);
+		assert.equal((await decisions.json()).error.code, "region_fallback");
+	}
+	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure, decisions, region fallback)");
 } finally {
 	globalThis.fetch = originalFetch;
 	Date.now = originalDateNow;
