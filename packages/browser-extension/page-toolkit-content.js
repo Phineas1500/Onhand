@@ -4600,7 +4600,12 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			seen.add(destination.href);
 			const title = normalizeText(anchor.querySelector("h3, h2")?.textContent || anchor.textContent).slice(0, 200);
 			const container = anchor.closest("li.b_algo, article, div.g, div.MjjYud, div.result") || anchor.parentElement?.parentElement || anchor.parentElement;
-			const site = googleRedirect ? normalizeText(container?.querySelector("cite")?.textContent || "").slice(0, 120) : "";
+			// Only the domain, never the "https://site › path" breadcrumb: shown
+			// that, the model opened the bare domain instead of Google's link.
+			// Some cites hold "140+ comments · 1 year ago" instead.
+			const site = googleRedirect
+				? normalizeText(container?.querySelector("cite")?.textContent || "").split(" › ")[0].replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "")
+				: "";
 			// The block's text minus the title and the "site › path" breadcrumb,
 			// which engines render in <cite> (DuckDuckGo: .result__url). Google
 			// prints the site name twice ("AviraAvira Jan 21, 2026 — ...").
@@ -4611,7 +4616,8 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 				.trim()
 				.replace(/^([A-Za-z].{1,59}?)\1(?=\S)/, "$1 · ")
 				.slice(0, 280);
-			results.push({ title, url: destination.href, ...(googleRedirect ? { redirect: true, ...(site ? { site } : {}) } : {}), ...(snippet ? { snippet } : {}) });
+			const siteLabel = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(site) ? site.toLowerCase() : "";
+			results.push({ title, url: destination.href, ...(googleRedirect ? { redirect: true, ...(siteLabel ? { site: siteLabel } : {}) } : {}), ...(snippet ? { snippet } : {}) });
 		}
 		return { url: location.href, results };
 	};

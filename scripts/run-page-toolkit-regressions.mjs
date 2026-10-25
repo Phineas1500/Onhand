@@ -2061,6 +2061,7 @@ async function assertSearchResultLinks() {
 		<div class="MjjYud"><div class="g"><a href="https://www.techradar.com/phones/android-vs-iphone"><h3>Android vs iPhone: here's what TechRadar readers prefer</h3><div><span>TechRadar</span><span>TechRadar</span><cite>https://www.techradar.com › Phones › iPhone</cite></div></a><div>Dec 4, 2025 — Android Army wins.</div></div></div>
 		<div class="MjjYud"><div class="g"><a href="/url?q=https://www.tomsguide.com/phones/iphone-vs-android&amp;sa=U"><h3>iPhone vs Android: which is better?</h3></a><div>We compare both platforms.</div></div></div>
 		<div class="MjjYud"><div class="g"><a href="/goto?url=CAESiAEB6zswFWDb1j0irokb"><h3>The great Android vs. iPhone debate</h3><div><cite>https://www.tomsguide.com › Phones › iPhones</cite></div></a><div>Most of us have nestled into a platform.</div></div></div>
+		<div class="MjjYud"><div class="g"><a href="/goto?url=CAESkgEB6zswFWHV7J"><h3>Are iOS apps still better?</h3><div><cite>140+ comments · 1 year ago</cite></div></a><div>Reddit · r/iOSProgramming</div></div></div>
 		<div class="MjjYud"><a href="https://www.google.com/search?q=android+vs+iphone+reddit"><h3>Related search</h3></a></div>
 		<div hidden><a href="https://hidden.example/page"><h3>Hidden result</h3></a></div>
 		<div class="MjjYud"><div class="g"><a href="https://www.techradar.com/phones/android-vs-iphone"><h3>Same page again</h3></a></div></div>
@@ -2070,7 +2071,8 @@ async function assertSearchResultLinks() {
 	assert.deepEqual(googleLinks.results, [
 		{ title: "Android vs iPhone: here's what TechRadar readers prefer", url: "https://www.techradar.com/phones/android-vs-iphone", snippet: "TechRadar · Dec 4, 2025 — Android Army wins." },
 		{ title: "iPhone vs Android: which is better?", url: "https://www.tomsguide.com/phones/iphone-vs-android", snippet: "We compare both platforms." },
-		{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAESiAEB6zswFWDb1j0irokb", redirect: true, site: "https://www.tomsguide.com › Phones › iPhones", snippet: "Most of us have nestled into a platform." },
+		{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAESiAEB6zswFWDb1j0irokb", redirect: true, site: "tomsguide.com", snippet: "Most of us have nestled into a platform." },
+		{ title: "Are iOS apps still better?", url: "https://www.google.com/goto?url=CAESkgEB6zswFWHV7J", redirect: true, snippet: "Reddit · r/iOSProgramming" },
 	], "Google results carry real, unwrapped URLs (or Google's opaque /goto link with its breadcrumb); engine links, hidden and duplicate results are skipped");
 	google.dom.window.close();
 

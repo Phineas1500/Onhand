@@ -377,8 +377,8 @@ async function assertChromeWebStoreTabGetsPlainContextNote() {
 	}
 	assert.doesNotMatch(test.toolResultTextForModelForTest("browser_get_visible_text", { tab: searchTab, visible: { text: "Plain page" } }), /Search result links/, "ordinary pages add no link list");
 	assert.match(
-		test.toolResultTextForModelForTest("browser_get_visible_text", { tab: searchTab, visible: { text: "Results", searchResults: [{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAES", redirect: true, site: "https://www.tomsguide.com › Phones" }] } }),
-		/1\. The great Android vs\. iPhone debate\n   https:\/\/www\.google\.com\/goto\?url=CAES\n   \(Google's link to https:\/\/www\.tomsguide\.com › Phones; opening it lands on the article\)/,
+		test.toolResultTextForModelForTest("browser_get_visible_text", { tab: searchTab, visible: { text: "Results", searchResults: [{ title: "The great Android vs. iPhone debate", url: "https://www.google.com/goto?url=CAES", redirect: true, site: "tomsguide.com" }] } }),
+		/1\. The great Android vs\. iPhone debate — tomsguide\.com\n   https:\/\/www\.google\.com\/goto\?url=CAES \(Google's redirect to the article: open this exact link, not the site's homepage\)/,
 		"a Google redirect result says it opens the article",
 	);
 }
@@ -2660,6 +2660,9 @@ async function assertQuizRepliesKeepAnswersAndFencesIntact() {
 	assert.match(quiz.promptPolicy, /grade each answer and highlight the passage that settles it/, "grading marks the answers");
 	assert.match(buildProfile(settings, "Give me a quick quiz on this chapter", [], true).promptPolicy, /Quiz request[\s\S]*Leave the page unmarked/, "Learning mode quizzes carry it too");
 	assert.doesNotMatch(buildProfile(settings, "Quiz me and highlight where each answer is.", [], false).promptPolicy, /Leave the page unmarked/, "a quiz that asks for highlights gets them");
+	// "Any more sources?" brought back one article in every test run.
+	assert.match(buildProfile(settings, "any more sources you can find that talk about the pros and cons of each platform?", [], false).promptPolicy, /Sources request: from the search results, open two or three distinct/, "a plural ask for sources asks for two or three");
+	assert.doesNotMatch(buildProfile(settings, "Can you look up when this came out?", [], false).promptPolicy, /Sources request/, "a lookup is not a sources request");
 	assert.doesNotMatch(buildProfile(settings, "What does the test suite check?", [], false).promptPolicy, /Quiz request/, "ordinary prompts do not");
 	for (const ask of ["I'm not sure. Can I get a hint?", "[Voice] Can I get a hint for the next one", "I'm stuck on this one", "Give me a clue"]) {
 		assert.match(buildProfile(settings, ask, [], true).promptPolicy, /Hint request: .*without giving any part of the answer/, `"${ask}" carries the hint rule`);
@@ -5349,6 +5352,27 @@ async function assertConstitutionPromptContract() {
 				},
 			);
 			assert.equal(explanatoryComparisonGuard?.guardrail?.kind, "surplus_comparison_highlight", "comparison highlights should stop once both sides have explanatory support");
+			// "Any more sources about the pros and cons?" is research across new
+			// pages: two marks on the first article blocked its second side.
+			const moreSourcesPrompt = "any more sources you can find that talk about the pros and cons of each platform?";
+			// The production classifier read it as a page-scoped comparison.
+			__browserRuntimeTest.setModelIntentClassificationForPromptForTest(moreSourcesPrompt, { pageScoped: true, teaching: false, enumerableCoverage: false,
+				comparison: true, crossTabComparison: false, documentReviewMarkup: false, problemSolvingHelp: false });
+			assert.equal(__browserRuntimeTest.promptAsksForSinglePageComparisonForTest(moreSourcesPrompt), true, "the fixture reproduces the comparison reading");
+			const moreSourcesGuard = buildSurplusHighlightGuardResultForTest(
+				"browser_highlight_text",
+				"highlight_text",
+				moreSourcesPrompt,
+				{
+					displayPrompt: moreSourcesPrompt,
+					pageActions: [
+						{ type: "annotation", annotationId: "goji-1", label: "Highlighted text", citationText: "Predictable performance and long updates." },
+						{ type: "annotation", annotationId: "goji-2", label: "Highlighted text", citationText: "More expensive to start." },
+					],
+				},
+			);
+			assert.equal(moreSourcesGuard, null, "a request for more sources is not capped like a single-page comparison");
+			__browserRuntimeTest.clearModelIntentClassificationsForTest();
 			const structuredBudgetRequest = {
 				displayPrompt: "Give me a roadmap of the sampling methods in this page.",
 				toolTraces: Array.from({ length: 5 }, (_, index) => ({

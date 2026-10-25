@@ -749,7 +749,7 @@ Default answer mode:
 - For explicit named formula/equation/theorem requests, locate that named formula or its section first. Do not substitute a nearby unrelated formula just because it is visible. If the named formula is not in the visible snapshot, call browser_extract_content once, then highlight the exact formula text or the nearest phrase that names the formula.
 - For list-shaped visible text, use the individual item wording for highlights. Markdown bullets and heading hashes in visible/readable text are structure cues; do not send a heading-plus-list block as one highlight.
 - If the user asks what a page-wide list contains and the visible snapshot appears partial, call browser_extract_content once before answering. Do not replace missing list items with nearby headings or sections.
-- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. The reverse holds too: every sentence or bullet that states something from the page carries the chip of the mark that supports it — when several bullets rest on one mark, repeat that mark's chip on each — and a page point with no mark yet gets its supporting sentence highlighted before you answer, or is cut, or is labeled general knowledge. Only a lead-in line or a closing synthesis line may stand without a chip. Only cite a mark that genuinely supports that specific point, and never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
+- Chat should be brief and tied to the page context: one to three short paragraphs or compact structured chunks for ordinary questions. When an answer needs depth, use headings, bullets, or numbered steps so it remains readable in the sidebar. Do not use horizontal rules as separators. For broad teaching/review summaries, avoid display equations unless the user asks for formula details; explain the relationship in prose when extracted math is dense or fragile. Do not add a long "other topics" or method-roadmap list that is not covered by the source highlights; offer to expand instead. When annotations are created, describe what those highlights show instead of giving a detached page summary. When a chat point is supported by a highlight you made, reuse a short exact phrase from that highlight inside the point — do not paraphrase every anchored phrase away — so each sentence visibly connects to its mark. Also tag that point with the highlight's annotation id inline as [[cite:ANNOTATION_ID]], using the exact annotationId that browser_highlight_text returned for the mark that supports it; put the marker at the end of the sentence or bullet, and use one marker per supporting mark ([[cite:id1]][[cite:id2]]) when two marks back the same point. Cite every mark you place this turn: if a highlight's claim does not survive into the final answer, do not place that highlight — an uncited mark is clutter on the user's page. The reverse holds too: every sentence or bullet that states something from the page carries the chip of the mark that supports it — when several bullets rest on one mark, repeat that mark's chip on each — and a page point with no mark yet gets its supporting sentence highlighted before you answer, or is cut, or is labeled general knowledge. Only a lead-in line or a closing synthesis line may stand without a chip. Only cite a mark that genuinely supports that specific point: a mark from an earlier turn backs only a point drawn from that same earlier page, never a point about a source you opened this turn. Never invent an id — a wrong or missing marker just falls back to text matching, but a fabricated id points the reader at the wrong evidence. The marker is stripped before display, so it does not need to read naturally; it is the provenance link, separate from the exact-phrase echo, which you still include. Do not also write your own visible footnote numbers like [1] or [2] in the prose: the sidebar renders the reference number from the [[cite:...]] marker automatically, so a literal bracketed number would duplicate the chip.
 - If the current page does not contain or settle the answer, inspect clearly related open tabs before answering from your own knowledge, asking the user, or navigating elsewhere. Browser tab metadata is a workspace index: the captured workspace scan lists candidate tabs with their tabIds; read likely candidates by tabId in small batches, use browser_list_tabs for the complete inventory when the scan is insufficient, and expand until the evidence is sufficient or no plausible candidate remains. Do not read clearly unrelated tabs merely because they are open, and do not expose unrelated tab titles or details in the answer. Do not fabricate page support.
 - If the user already asked for external sources, web search, Google, URLs, or to be taken to sources, do not ask again before navigating. Use browser_navigate with newTab true for a distinct destination URL, or activate/reuse an already-open matching tab, inspect the destination, and ground the answer on the destination page rather than the original page. Open a source only by an exact URL you have seen — in search results (reading a search page lists each result's link) or in a page's links — never by an article URL composed from memory or from a result's title or breadcrumb; those 404. To find sources, open a search page first.
 - If the user already asked to open or check relevant linked notes, readings, resources, articles, papers, or pages from the current page or a page used earlier in the session, do not keep only annotating the current page. If the current page is already a destination note, use browser_list_tabs to find the already-open course/index/master tab before asking the user for it; activate that tab, find or click the relevant links, open each distinct destination page once, inspect it, and place highlights/notes on the destination pages that support the answer.
@@ -7388,6 +7388,16 @@ function promptAsksForHint(prompt: unknown) {
 	return decisionsRequestVerdict(prompt, "asksForHint", /\b(?:hint|clue|nudge)\b|\b(?:i'?m|i\s+am)\s+stuck\b/.test(ownWordsPromptText(prompt)));
 }
 
+// "Any more sources?" got exactly one new source in every test run: the
+// grounded-answer policy's brevity and per-side marks read as "done" once one
+// article was marked. A plural ask for sources wants a few.
+const MORE_SOURCES_POLICY =
+	"Sources request: from the search results, open two or three distinct, credible sources this conversation has not used yet, and mark the passage behind each point you take from each one. Answer with one short entry per source, naming it, with its chips. Stop at three.";
+
+function promptAsksForMoreSources(prompt: unknown) {
+	return /\b(?:more|other|additional|further|several|some|a few)\s+(?:good\s+|reliable\s+|credible\s+)?(?:sources|articles|references|readings|websites|sites)\b|\bfind\s+(?:me\s+)?(?:some\s+)?(?:sources|articles|references)\b/.test(ownWordsPromptText(prompt));
+}
+
 function promptAsksForQuiz(prompt: unknown) {
 	const text = ownWordsPromptText(prompt);
 	if (!text) return false;
@@ -7410,6 +7420,7 @@ function buildReasoningProfile(settings: RuntimeSettings, prompt: string, attach
 	let profile = buildLaneReasoningProfile(settings, prompt, attachments);
 	if (promptAsksForQuiz(prompt)) profile = { ...profile, promptPolicy: [profile.promptPolicy, QUIZ_POLICY, promptHoldsPageMarksForQuiz(prompt) ? QUIZ_HOLD_MARKS_POLICY : ""].filter(Boolean).join(" ") };
 	if (promptAsksForHint(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${HINT_POLICY}` };
+	if (promptAsksForMoreSources(prompt)) profile = { ...profile, promptPolicy: `${profile.promptPolicy} ${MORE_SOURCES_POLICY}` };
 	if (!learningMode || profile.mode === "document-review" || profile.mode === "page-notes" || !learningModeShouldAskFirst(prompt)) return profile;
 	return { ...profile, reason: `${profile.reason} Learning mode: ask before telling.`, promptPolicy: LEARNING_ASK_FIRST_POLICY };
 }
@@ -9774,9 +9785,11 @@ function formatSearchResultLinksForModel(results: unknown) {
 	if (!list.length) return "";
 	const lines = list.map((result: any, index: number) => {
 		const snippet = result.snippet ? `\n   ${truncate(String(result.snippet), 240)}` : "";
-		// Google sometimes exposes only its own redirect link, never the address.
-		const redirect = result.redirect ? `\n   (Google's link to ${result.site ? truncate(String(result.site), 100) : "this result"}; opening it lands on the article)` : "";
-		return `${index + 1}. ${truncate(String(result.title || "(untitled)"), 160)}\n   ${result.url}${redirect}${snippet}`;
+		// Google sometimes exposes only its own redirect link, never the address;
+		// opening that exact link lands on the article.
+		const site = result.site ? ` — ${truncate(String(result.site), 80)}` : "";
+		const redirect = result.redirect ? " (Google's redirect to the article: open this exact link, not the site's homepage)" : "";
+		return `${index + 1}. ${truncate(String(result.title || "(untitled)"), 160)}${site}\n   ${result.url}${redirect}${snippet}`;
 	});
 	return `\n\nSearch result links (open a source with browser_navigate on one of these exact URLs; never type a guessed URL):\n${lines.join("\n")}`;
 }
@@ -10278,6 +10291,10 @@ function buildSurplusHighlightGuardResult(toolName: string, commandName: string,
 	// comparison against..."); the review lane has its own budget.
 	if (promptAsksForMarkupPass(prompt)) return null;
 	if (!promptAsksForSinglePageComparison(prompt)) return null;
+	// "Any more sources about the pros and cons?" reads as a comparison, but
+	// its marks belong on each new source: capping them at two blocked the
+	// second side, and the model cited an earlier page's mark for it instead.
+	if (promptAsksForExternalBrowsing(ownWordsPromptText(prompt))) return null;
 	const highlightCount = completedSourceHighlightCount(request);
 	if (highlightCount < 2) return null;
 	if (highlightCount >= COMPARISON_SOURCE_HIGHLIGHT_MAX) {
