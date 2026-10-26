@@ -27,7 +27,7 @@
 	const REALTIME_API_KEY_SETUP_MESSAGE =
 		"Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with voice API access in the OpenAI platform API key field, then Save.";
 	const CODEX_PROVIDER = "openai-codex";
-	const CODEX_MODEL = "gpt-5.5";
+	const CODEX_MODEL = "gpt-6-luna";
 	const TOKEN_PREFIX = "@@ONHAND_TOKEN_";
 	const SIDEBAR_THEME_VALUES = new Set(["system", "light", "dark"]);
 	const IS_NATIVE_SIDE_PANEL =

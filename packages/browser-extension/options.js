@@ -1,7 +1,7 @@
 const RUNTIME_STORAGE_KEY = "onhandBrowserRuntime";
 const THEME_STORAGE_KEY = "onhandSidebarTheme";
 const CODEX_PROVIDER = "openai-codex";
-const CODEX_MODEL = "gpt-5.5";
+const CODEX_MODEL = "gpt-6-luna";
 const FREE_TIER_PROVIDER = "onhand-free";
 const API_PROVIDERS = {
 	openai: {

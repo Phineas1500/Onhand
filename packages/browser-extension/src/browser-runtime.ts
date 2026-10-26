@@ -422,7 +422,12 @@ const SESSION_STORE_NAME = "runtimeSessions";
 const OPENAI_API_PROVIDER = "openai";
 const OPENAI_API_MODEL = "gpt-4.1-mini";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
-const OPENAI_CODEX_MODEL = "gpt-5.5";
+const OPENAI_CODEX_MODEL = "gpt-6-luna";
+// Codex stops serving older models to ChatGPT accounts ("The 'gpt-5.5' model
+// is not supported when using Codex with a ChatGPT account", October 2026), so
+// a retired id still saved in settings moves to the default instead of
+// failing every turn, and the picker stops offering it.
+const RETIRED_OPENAI_CODEX_MODELS = new Set(["gpt-5.5"]);
 // Keep newly released Codex models available even when the bundled pi-ai
 // catalog has not published them yet. These shapes match the Codex Responses
 // transport used by the catalog-backed models above/below them.
@@ -2715,7 +2720,10 @@ function getProviderModelOptions(providerId: string) {
 			providerId === OPENAI_CODEX_PROVIDER
 				? [
 						...OPENAI_CODEX_ADDITIONAL_MODELS,
-						...catalogModels.filter((model: any) => !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id)),
+						...catalogModels.filter(
+							(model: any) =>
+								!RETIRED_OPENAI_CODEX_MODELS.has(model?.id) && !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id),
+						),
 					]
 				: catalogModels;
 		return models
@@ -2764,7 +2772,10 @@ function normalizeProviderForAuthMode(provider: string, authMode: RuntimeSetting
 function normalizeModelForProvider(model: string, provider: string, authMode: RuntimeSettings["authMode"]) {
 	const trimmed = model.trim();
 	if (provider === SMOKE_PROVIDER) return trimmed || SMOKE_MODEL;
-	if (authMode === "oauth") return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
+	if (authMode === "oauth") {
+		if (provider === OPENAI_CODEX_PROVIDER && RETIRED_OPENAI_CODEX_MODELS.has(trimmed)) return OPENAI_CODEX_MODEL;
+		return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
+	}
 	return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
 
@@ -11729,6 +11740,7 @@ export const __browserRuntimeTest = {
 	buildOpenAICodexFallbackModel,
 	normalizeApiKeys,
 	normalizeProviderForAuthMode,
+	normalizeModelForProvider,
 	validateProviderApiKey,
 	getReplayHighlightCandidates,
 	getPublicActivities,

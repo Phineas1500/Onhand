@@ -63,7 +63,7 @@ const OAUTH_PROVIDER_CONFIGS: BrowserOAuthProviderConfig[] = [
 	{
 		id: "openai-codex",
 		name: "OpenAI Codex",
-		defaultModel: "gpt-5.5",
+		defaultModel: "gpt-6-luna",
 		authKind: "callback",
 	},
 ];

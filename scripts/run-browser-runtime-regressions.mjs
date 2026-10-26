@@ -759,6 +759,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 		buildOpenAICodexFallbackModel,
 		normalizeApiKeys,
 		normalizeProviderForAuthMode,
+		normalizeModelForProvider,
 		validateProviderApiKey,
 	} = __browserRuntimeTest || {};
 	assert.equal(typeof normalizeApiKeys, "function", "provider key normalizer export is missing");
@@ -789,6 +790,14 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6-sol")?.api, "openai-codex-responses");
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.6")?.id, "gpt-5.6", "the GPT-5.6 alias should resolve to the Sol transport shape");
 	assert.equal(buildOpenAICodexFallbackModel("gpt-5.5"), null, "catalog-backed Codex models should not use the fallback builder");
+	// Codex stopped serving gpt-5.5 to ChatGPT accounts, so every signed-in
+	// turn on it failed ("The 'gpt-5.5' model is not supported when using Codex
+	// with a ChatGPT account").
+	assert.ok(!codexModelIds.includes("gpt-5.5"), "Codex should not offer a model it no longer serves to ChatGPT accounts");
+	assert.ok(codexModelIds.includes("gpt-6-luna"), "Codex should offer GPT-6 Luna");
+	assert.equal(normalizeModelForProvider("", "openai-codex", "oauth"), "gpt-6-luna", "ChatGPT sign-in should default to GPT-6 Luna");
+	assert.equal(normalizeModelForProvider("gpt-5.5", "openai-codex", "oauth"), "gpt-6-luna", "a saved retired Codex model should move to the default");
+	assert.equal(normalizeModelForProvider("gpt-6.1-sol", "openai-codex", "oauth"), "gpt-6.1-sol", "a current Codex choice should stay");
 	{
 		// The free-tier worker rejects everything outside its allowlist, so
 		// the options page must not offer a custom-model entry for it.
@@ -821,6 +830,17 @@ async function assertProviderApiKeyStorageAndRouting() {
 	}
 	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
 	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
+
+	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
+		settings: { authMode: "oauth", aiProvider: "openai-codex", aiModel: "gpt-5.5" },
+		sessions: {},
+		currentSessionId: "",
+	};
+	assert.equal(
+		(await createOnhandBrowserRuntime(createReplayHost()).getSettings()).aiModel,
+		"gpt-6-luna",
+		"a signed-in user with gpt-5.5 saved should load on GPT-6 Luna",
+	);
 
 	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
 		settings: {

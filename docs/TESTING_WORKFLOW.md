@@ -24,7 +24,7 @@ Use Chrome for real side-panel validation, especially when OAuth, tool routing, 
 1. Run `npm run build:extension`.
 2. Reload the unpacked extension from `packages/browser-extension/` using Computer Use on `chrome://extensions`.
 3. Open the extension options page with Computer Use.
-4. Confirm `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-5.5"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON.
+4. Confirm `authMode: "oauth"`, `aiProvider: "openai-codex"`, `aiModel: "gpt-6-luna"`, `hasOAuthCredentials: true`, and `expired: false` in the status JSON.
 5. Print the acceptance matrix:
 
 ```sh

@@ -9,7 +9,10 @@
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
 		version: "0.4.13",
-		items: ["Onhand Free now works in Hong Kong and Macau, where OpenAI doesn't offer its service."],
+		items: [
+			"Signing in with ChatGPT works again. OpenAI stopped offering GPT-5.5 to ChatGPT accounts, so Onhand now uses GPT-6 Luna.",
+			"Onhand Free now works in Hong Kong and Macau, where OpenAI doesn't offer its service.",
+		],
 	},
 	{
 		version: "0.4.12",

@@ -86922,7 +86922,7 @@ var OAUTH_PROVIDER_CONFIGS = [
   {
     id: "openai-codex",
     name: "OpenAI Codex",
-    defaultModel: "gpt-5.5",
+    defaultModel: "gpt-6-luna",
     authKind: "callback"
   }
 ];
@@ -87331,7 +87331,8 @@ var SESSION_STORE_NAME = "runtimeSessions";
 var OPENAI_API_PROVIDER = "openai";
 var OPENAI_API_MODEL = "gpt-4.1-mini";
 var OPENAI_CODEX_PROVIDER = "openai-codex";
-var OPENAI_CODEX_MODEL = "gpt-5.5";
+var OPENAI_CODEX_MODEL = "gpt-6-luna";
+var RETIRED_OPENAI_CODEX_MODELS = /* @__PURE__ */ new Set(["gpt-5.5"]);
 var OPENAI_CODEX_ADDITIONAL_MODELS = [
   {
     id: "gpt-5.6-sol",
@@ -89273,7 +89274,9 @@ function getProviderModelOptions(providerId) {
     const catalogModels = getModels(providerId);
     const models = providerId === OPENAI_CODEX_PROVIDER ? [
       ...OPENAI_CODEX_ADDITIONAL_MODELS,
-      ...catalogModels.filter((model) => !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id))
+      ...catalogModels.filter(
+        (model) => !RETIRED_OPENAI_CODEX_MODELS.has(model?.id) && !OPENAI_CODEX_ADDITIONAL_MODELS.some((additional) => additional.id === model?.id)
+      )
     ] : catalogModels;
     return models.filter((model) => model?.input?.includes?.("text")).filter((model) => providerId !== OPENROUTER_API_PROVIDER || /^deepseek\/deepseek-v4-(flash|pro)$/.test(model.id)).map((model) => ({
       id: model.id,
@@ -89312,7 +89315,10 @@ function normalizeProviderForAuthMode(provider, authMode, allowSmokeProvider = f
 function normalizeModelForProvider(model, provider, authMode) {
   const trimmed = model.trim();
   if (provider === SMOKE_PROVIDER) return trimmed || SMOKE_MODEL;
-  if (authMode === "oauth") return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
+  if (authMode === "oauth") {
+    if (provider === OPENAI_CODEX_PROVIDER && RETIRED_OPENAI_CODEX_MODELS.has(trimmed)) return OPENAI_CODEX_MODEL;
+    return trimmed || getDefaultOAuthModel(provider) || OPENAI_CODEX_MODEL;
+  }
   return trimmed || getSupportedApiProvider(provider)?.defaultModel || OPENAI_API_MODEL;
 }
 function requiresDiagnostics(authMode, provider) {
@@ -95595,6 +95601,7 @@ var __browserRuntimeTest = {
   buildOpenAICodexFallbackModel,
   normalizeApiKeys,
   normalizeProviderForAuthMode,
+  normalizeModelForProvider,
   validateProviderApiKey,
   getReplayHighlightCandidates,
   getPublicActivities,
