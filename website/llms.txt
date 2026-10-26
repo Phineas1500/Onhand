@@ -9,6 +9,7 @@
 - Privacy: saved sessions and API keys stay in your browser. Onhand sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI.
 - Demo video: https://www.youtube.com/watch?v=bdaY4gJIGsY (2:47): Onhand fact-checks a physics textbook's account of the Tacoma Narrows Bridge collapse and finds the 1991 paper on why textbooks get it wrong.
 - Source code: https://github.com/Phineas1500/Onhand (Apache 2.0).
+- Markdown: every page on this site is also available as Markdown. Request its usual URL with `Accept: text/markdown`, or swap `.html` for `.md` (the homepage is https://useonhand.com/index.md).
 - Not to be confused with "OnHand", an unrelated new-tab bookmarks extension.
 
 ## Guides

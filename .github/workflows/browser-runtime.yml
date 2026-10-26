@@ -49,6 +49,9 @@ jobs:
       - name: Verify website analytics instrumentation
         run: npm run website:verify-analytics
 
+      - name: Check website Markdown copies
+        run: npm run website:check-markdown
+
       - name: Run browser runtime smoke
         run: npm run smoke:browser-runtime -- --ports --json
 

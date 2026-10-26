@@ -31,6 +31,8 @@
     "website:check-release": "node ./scripts/sync-github-release-version.mjs --check",
     "website:verify-analytics": "node ./scripts/verify-website-analytics.mjs",
     "website:check-seo": "node ./scripts/check-website-seo.mjs",
+    "website:sync-markdown": "node ./scripts/sync-website-markdown.mjs",
+    "website:check-markdown": "node ./scripts/sync-website-markdown.mjs --check",
     "website:indexnow": "node ./scripts/submit-indexnow.mjs",
     "website:sync-tools": "node ./scripts/sync-browser-tools.mjs",
     "website:check-tools": "node ./scripts/sync-browser-tools.mjs --check",

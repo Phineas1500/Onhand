@@ -1,0 +1,26 @@
+{
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"routes": [
+		{
+			"src": "^/$",
+			"has": [{ "type": "header", "key": "accept", "value": { "re": "text/markdown" } }],
+			"dest": "/index.md",
+			"headers": { "Content-Type": "text/markdown; charset=utf-8", "Vary": "Accept" }
+		},
+		{
+			"src": "^/([a-z0-9-]+)\\.html$",
+			"has": [{ "type": "header", "key": "accept", "value": { "re": "text/markdown" } }],
+			"dest": "/$1.md",
+			"headers": { "Content-Type": "text/markdown; charset=utf-8", "Vary": "Accept" }
+		}
+	],
+	"headers": [
+		{
+			"source": "/(.*)\\.md",
+			"headers": [
+				{ "key": "Content-Type", "value": "text/markdown; charset=utf-8" },
+				{ "key": "X-Robots-Tag", "value": "noindex" }
+			]
+		}
+	]
+}
