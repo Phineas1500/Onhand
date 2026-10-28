@@ -209,7 +209,10 @@ section:first-of-type{border-top:0}
 .demo-suggest-text{font-style:italic;font-size:13.5px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .demo-composer.is-used .demo-suggest{cursor:default;opacity:0.5}
 .demo-composer.is-used .demo-suggest:hover{border-color:var(--border);background:var(--bg)}
-.demo-ask-btn{align-self:flex-end;border:0;background:var(--rp-pine);color:var(--rp-base);border-radius:2px;padding:8px 12px;font:700 11px var(--font-mono)}
+.demo-ask-btn{align-self:flex-end;border:0;background:var(--rp-pine);color:var(--rp-base);border-radius:2px;padding:8px 12px;font:700 11px var(--font-mono);cursor:pointer;transition:background 160ms}
+.demo-ask-btn:hover{background:color-mix(in srgb,var(--rp-pine) 82%,var(--fg))}
+.demo-composer.is-used .demo-ask-btn{cursor:default;opacity:0.5}
+.demo-composer.is-used .demo-ask-btn:hover{background:var(--rp-pine)}
 [data-theme="dark"] .demo-ask-btn{color:#191724}
 @media (prefers-color-scheme: dark){:root[data-theme="auto"] .demo-ask-btn{color:#191724}}
 @media (max-width:900px){

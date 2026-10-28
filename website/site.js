@@ -174,7 +174,7 @@ const ONHAND_STORE = {
   const turn2 = demo.querySelector('[data-demo-turn="2"]');
   const source3 = demo.querySelector('[data-demo-reveal="src2"]');
   const sourcesLabel = demo.querySelector('[data-demo-sources-label]');
-  const askBtn = demo.querySelector('[data-demo-ask]');
+  const askButtons = Array.from(demo.querySelectorAll('[data-demo-ask]'));
   const composer = demo.querySelector('.demo-composer');
   const replayBtn = demo.querySelector('[data-demo-replay]');
 
@@ -254,10 +254,12 @@ const ONHAND_STORE = {
 
   // --- the follow-up turn, driven by the composer suggestion ---
   function playFollowup(){
-    if (followupPlayed || !demo.classList.contains('is-settled')) return;
+    if (followupPlayed) return;
+    // Asking before the first answer finishes skips straight to it.
+    if (!demo.classList.contains('is-settled')) settleInstant();
     followupPlayed = true;
     if (composer) composer.classList.add('is-used');
-    if (askBtn) askBtn.setAttribute('aria-disabled', 'true');
+    askButtons.forEach((b) => b.setAttribute('aria-disabled', 'true'));
     if (turn2) turn2.hidden = false;
     demo.classList.add('is-reading');
     at(520, () => { show(highlights.soft); demo.classList.remove('is-reading'); });
@@ -277,7 +279,7 @@ const ONHAND_STORE = {
     });
     at(1720, () => focusSource('demo-source-softmax'));
   }
-  if (askBtn) askBtn.addEventListener('click', playFollowup);
+  askButtons.forEach((b) => b.addEventListener('click', playFollowup));
 
   // --- reduced motion / no build: jump straight to the settled state ---
   function settleInstant(){
@@ -293,7 +295,7 @@ const ONHAND_STORE = {
     if (turn2) turn2.hidden = true;
     if (source3){ source3.hidden = true; hide(source3); }
     if (composer) composer.classList.remove('is-used');
-    if (askBtn) askBtn.removeAttribute('aria-disabled');
+    askButtons.forEach((b) => b.removeAttribute('aria-disabled'));
     if (sourcesLabel) sourcesLabel.textContent = 'On this page · 2 highlights, 1 note';
   }
   if (replayBtn) replayBtn.addEventListener('click', () => {
