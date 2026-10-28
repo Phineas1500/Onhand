@@ -84,8 +84,8 @@
     "test:weekly-digest": "node ./scripts/run-weekly-digest-regressions.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^1.3.0",
-    "@earendil-works/pi-ai": "^1.3.0",
+    "@earendil-works/pi-agent-core": "^1.4.0",
+    "@earendil-works/pi-ai": "^1.4.0",
     "@mozilla/readability": "^0.6.0",
     "@sentry/browser": "^10.57.0",
     "@vercel/speed-insights": "^2.0.0",

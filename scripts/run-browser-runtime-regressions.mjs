@@ -319,6 +319,35 @@ async function assertIntentClassifierSendsItsInstructions() {
 	assert.doesNotMatch(requestBodies[0], /You are a helpful assistant/, "the provider default prompt must not replace the classifier's instructions");
 }
 
+// pi-agent-core 1.4 attributes agent-loop requests to pi (OpenRouter's
+// HTTP-Referer https://pi.dev, app title "pi"). Onhand's requests must name
+// Onhand instead.
+async function assertOpenRouterRequestsIdentifyOnhand() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const runtime = createOnhandBrowserRuntime(createReplayHost());
+	await runtime.updateSettings({ aiProvider: "openrouter", aiModel: "deepseek/deepseek-v4-flash", authMode: "api-key", aiApiKeys: { openrouter: "sk-or-test" } });
+	const originalFetch = globalThis.fetch;
+	const requestHeaders = [];
+	globalThis.fetch = async (url, init = {}) => {
+		if (String(url).includes("openrouter.ai")) requestHeaders.push(new Headers(init.headers));
+		return new Response(JSON.stringify({ error: { message: "stubbed" } }), { status: 400, headers: { "content-type": "application/json" } });
+	};
+	try {
+		await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
+		await waitForRuntimeCompletion(runtime);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+	assert.ok(requestHeaders.length > 0, "the turn should reach OpenRouter");
+	for (const headers of requestHeaders) {
+		assert.equal(headers.get("http-referer"), "https://useonhand.com", "OpenRouter requests should be attributed to Onhand");
+		assert.equal(headers.get("x-openrouter-title"), "Onhand");
+		assert.equal(headers.get("x-openrouter-categories"), null, "pi's cli-agent category must not leak through");
+	}
+	console.log("OpenRouter requests identify Onhand passed");
+}
+
 // New users ask their first question on the Web Store listing, which Chrome
 // forbids extensions to script. The turn context must say so up front instead
 // of letting page reads fail and the model quote the refusal as page text.
@@ -797,6 +826,8 @@ async function assertProviderApiKeyStorageAndRouting() {
 	assert.ok(codexModelIds.includes("gpt-6-luna"), "Codex should offer GPT-6 Luna");
 	assert.equal(normalizeModelForProvider("", "openai-codex", "oauth"), "gpt-6-luna", "ChatGPT sign-in should default to GPT-6 Luna");
 	assert.equal(normalizeModelForProvider("gpt-5.5", "openai-codex", "oauth"), "gpt-6-luna", "a saved retired Codex model should move to the default");
+	assert.ok(!codexModelIds.includes("gpt-5.3-codex-spark"), "Codex should not offer Spark, which pi-ai 1.4 dropped");
+	assert.equal(normalizeModelForProvider("gpt-5.3-codex-spark", "openai-codex", "oauth"), "gpt-6-luna", "a saved Spark choice should move to the default");
 	assert.equal(normalizeModelForProvider("gpt-6.1-sol", "openai-codex", "oauth"), "gpt-6.1-sol", "a current Codex choice should stay");
 	{
 		// The free-tier worker rejects everything outside its allowlist, so
@@ -12900,6 +12931,7 @@ async function main() {
 	await assertDeletedSessionArtifactsAreRemovedWithoutDeletingSharedSources();
 	await assertProviderApiKeyStorageAndRouting();
 	await assertIntentClassifierSendsItsInstructions();
+	await assertOpenRouterRequestsIdentifyOnhand();
 	await assertDecisionsIntentClassifier();
 	await assertChromeWebStoreTabGetsPlainContextNote();
 	await assertTurnsUseDecisionsWhenConfident();

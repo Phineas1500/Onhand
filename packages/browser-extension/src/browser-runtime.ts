@@ -4,7 +4,7 @@ import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@eare
 // ./api/*). The ./compat surface re-exports the legacy names, so import them
 // there to keep this call site stable across the bump.
 import { fauxAssistantMessage, fauxText, fauxToolCall, getModel, getModels, registerFauxProvider, streamOpenAICodexResponses, streamOpenAIResponses, streamSimple, Type } from "@earendil-works/pi-ai/compat";
-import { createAssistantMessageEventStream, normalizeContext, validateToolArguments } from "@earendil-works/pi-ai";
+import { type ClientIdentity, createAssistantMessageEventStream, normalizeContext, validateToolArguments } from "@earendil-works/pi-ai";
 import * as Sentry from "@sentry/browser";
 import { assertConstitutionPrompt } from "./agent/constitution";
 import { MARK_POLICY } from "./agent/mark-policy";
@@ -426,8 +426,9 @@ const OPENAI_CODEX_MODEL = "gpt-6-luna";
 // Codex stops serving older models to ChatGPT accounts ("The 'gpt-5.5' model
 // is not supported when using Codex with a ChatGPT account", October 2026), so
 // a retired id still saved in settings moves to the default instead of
-// failing every turn, and the picker stops offering it.
-const RETIRED_OPENAI_CODEX_MODELS = new Set(["gpt-5.5"]);
+// failing every turn, and the picker stops offering it. pi-ai 1.4 also drops
+// gpt-5.3-codex-spark from its catalog for the same reason.
+const RETIRED_OPENAI_CODEX_MODELS = new Set(["gpt-5.5", "gpt-5.3-codex-spark"]);
 // Keep newly released Codex models available even when the bundled pi-ai
 // catalog has not published them yet. These shapes match the Codex Responses
 // transport used by the catalog-backed models above/below them.
@@ -479,6 +480,10 @@ const GOOGLE_API_MODEL = "gemini-2.5-flash";
 const OPENROUTER_API_PROVIDER = "openrouter";
 const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_PROVIDER = "onhand-free";
+// Since pi-agent-core 1.4, agent loops attribute requests to pi (OpenRouter's
+// HTTP-Referer https://pi.dev, a "pi" app title). Onhand is the app, so model
+// calls carry Onhand's attribution instead.
+const ONHAND_CLIENT_IDENTITY: ClientIdentity = { attribution: { name: "Onhand", url: "https://useonhand.com" } };
 const ONHAND_FREE_MODEL = "gpt-6-luna";
 const ONHAND_FREE_MODEL_LABEL = "Onhand Free (GPT-6 Luna)";
 const ONHAND_FREE_TEXT_CONTEXT_WINDOW = 1050000;
@@ -12051,6 +12056,7 @@ function streamOnhandProvider(model: any, context: any, options: any = {}) {
 	const telemetryOptions = withOnhandFreeTierTelemetryOptions(effectiveModel, streamOptions, onhandTelemetry);
 	const baseOptions = {
 		...telemetryOptions,
+		identity: ONHAND_CLIENT_IDENTITY,
 		// "short" lets pi-ai pass the session id as the prompt cache key so
 		// providers route the loop's repeated prefixes to the same cache
 		// shard; tool loops are mostly cache hits.
