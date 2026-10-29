@@ -12,6 +12,7 @@ const ONHAND_ANALYTICS = {
   githubSourceEvent: 'github_source_click',
   sponsorEvent: 'sponsor_click',
   demoVideoEvent: 'demo_video_play',
+  phoneShareEvent: 'phone_share_click',
 };
 
 const ONHAND_STORE = {
@@ -19,6 +20,96 @@ const ONHAND_STORE = {
   approvedVersion: '0.4.13',
   pendingVersion: null,
 };
+
+// Phones and tablets can't run browser extensions, so there the install
+// buttons send the site to the visitor's computer instead of opening a store
+// listing they can't use. The link is tagged so GA shows when it comes back.
+const ONHAND_SEND_TO_COMPUTER = {
+  url: 'https://useonhand.com/?utm_source=phone&utm_medium=share&utm_campaign=send-to-computer',
+  subject: 'Onhand, for my computer',
+  text: 'Install Onhand on my computer:',
+};
+
+function trackConversion(eventName, category, label, data){
+  if (typeof window.gtag === 'function') {
+    window.gtag('event', eventName, {
+      ...data,
+      event_category: category,
+      event_label: label,
+      transport_type: 'beacon',
+    });
+  }
+  if (window.umami && typeof window.umami.track === 'function') {
+    window.umami.track(eventName, data);
+  }
+}
+
+function isHandheldDevice(){
+  const ua = navigator.userAgent || '';
+  if (/CrOS/.test(ua)) return false;
+  if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+  if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua)) return true;
+  // iPadOS asks for desktop sites with a Mac user agent; Macs have no touch screen.
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+}
+
+// 0a) Phones: relabel the install buttons and send the link instead. Plain
+//     text links to the store (in support steps, say) stay as they are.
+(function(){
+  if (!isHandheldDevice()) return;
+  document.documentElement.classList.add('is-handheld');
+  const { url, subject, text } = ONHAND_SEND_TO_COMPUTER;
+  const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text} ${url}`)}`;
+  const labels = [
+    ['.nav-cta', '.nav-cta-label', 'Send link'],
+    ['.btn-primary, .release-download', 'span:not(.mc)', 'Send to my computer'],
+    ['.inline-action', null, 'Send Onhand to my computer ↗'],
+  ];
+
+  async function send(node){
+    let result = 'mailto';
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: subject, text, url });
+        result = 'shared';
+      } catch (error) {
+        // A closed share sheet is a choice; anything else falls back to email.
+        result = error && error.name === 'AbortError' ? 'cancelled' : 'mailto';
+      }
+    }
+    trackConversion(ONHAND_ANALYTICS.phoneShareEvent, 'install', url, {
+      result,
+      link_url: url,
+      link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+    });
+    if (result === 'mailto') window.location.href = mailto;
+  }
+
+  document.querySelectorAll('[data-onhand-store-link]').forEach((node) => {
+    const match = labels.find(([selector]) => node.matches(selector));
+    if (!match) return;
+    const [, labelSelector, label] = match;
+    const labelNode = labelSelector ? node.querySelector(labelSelector) : node;
+    if (!labelNode) return;
+    labelNode.textContent = label;
+    node.href = mailto;
+    node.removeAttribute('target');
+    node.setAttribute('data-onhand-send-to-computer', '');
+    node.setAttribute('data-onhand-analytics-event', ONHAND_ANALYTICS.phoneShareEvent);
+    node.addEventListener('click', (event) => {
+      event.preventDefault();
+      send(node);
+    });
+  });
+
+  const ctas = document.querySelector('.hero-ctas');
+  if (ctas && ctas.querySelector('[data-onhand-send-to-computer]')) {
+    const note = document.createElement('p');
+    note.className = 'handheld-note';
+    note.textContent = "Onhand runs in Chrome, Edge or Firefox on a computer. Phones can't add browser extensions, so send yourself the link and install it there.";
+    ctas.after(note);
+  }
+})();
 
 // 0) Release metadata: keep visible version labels and release links in sync.
 (function(){
@@ -95,21 +186,9 @@ const ONHAND_STORE = {
   document.querySelectorAll('[data-onhand-release-notes]').forEach((node) => {
     node.href = releaseUrl;
   });
-  function trackConversion(eventName, category, label, data){
-    if (typeof window.gtag === 'function') {
-      window.gtag('event', eventName, {
-        ...data,
-        event_category: category,
-        event_label: label,
-        transport_type: 'beacon',
-      });
-    }
-    if (window.umami && typeof window.umami.track === 'function') {
-      window.umami.track(eventName, data);
-    }
-  }
 
   document.querySelectorAll('[data-onhand-store-link]').forEach((node) => {
+    if (node.hasAttribute('data-onhand-send-to-computer')) return;
     node.href = ONHAND_STORE.url;
     node.setAttribute('data-onhand-analytics-event', chromeStoreEventName);
     node.addEventListener('click', () => {

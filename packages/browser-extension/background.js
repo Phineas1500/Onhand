@@ -95,6 +95,9 @@ function getOnhandBrowserRuntime() {
 			extensionVersion: chrome.runtime.getManifest().version,
 			runtimeRevision: ONHAND_EXTENSION_RUNTIME_REVISION,
 			getInstallType: async () => (await chrome.management.getSelf())?.installType || "",
+			onPromptFinished: (event) => {
+				void recordAnsweredQuestion(event).catch((error) => log("Could not count the answered question", error?.message || String(error)));
+			},
 		});
 	}
 	return onhandBrowserRuntime;
@@ -15437,6 +15440,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				codexFastModeEnabled: message.codexFastModeEnabled,
 			});
+			void updateUninstallUrl().catch(() => {});
 			sendResponse({
 				ok: true,
 				settings,
@@ -16006,6 +16010,63 @@ async function openWelcomePageAfterInstall(details) {
 	return true;
 }
 
+// Answered questions, counted on this device for the rating prompt
+// (sidebar.js) and the uninstall page. Only the number is kept.
+const ONHAND_ANSWERED_QUESTIONS_KEY = "onhandAnsweredQuestions";
+// Debug-CLI, eval and acceptance runs tag their source; they aren't a reader's questions.
+const TEST_PROMPT_SOURCE_PATTERN = /(^|[-_:])(cli|acceptance|bypass|smoke|test|trajectory|eval|probe)([-_:]|$)/i;
+
+async function recordAnsweredQuestion(event) {
+	if (event?.result !== "ok" || TEST_PROMPT_SOURCE_PATTERN.test(String(event.source || ""))) return false;
+	const stored = await chrome.storage.local.get(ONHAND_ANSWERED_QUESTIONS_KEY);
+	const count = (Number(stored?.[ONHAND_ANSWERED_QUESTIONS_KEY]) || 0) + 1;
+	await chrome.storage.local.set({ [ONHAND_ANSWERED_QUESTIONS_KEY]: count });
+	await updateUninstallUrl();
+	return true;
+}
+
+// Removing a store install opens a one-question survey on useonhand.com. Its
+// details ride in the URL fragment, which the browser never sends to a
+// server; the page sends them only with an answer the person submits.
+const ONHAND_UNINSTALL_URL = "https://useonhand.com/uninstalled.html";
+
+function answeredQuestionsBucket(count) {
+	if (count <= 0) return "0";
+	if (count === 1) return "1";
+	return count <= 5 ? "2-5" : "6+";
+}
+
+function onhandSetupKind(settings) {
+	if (!(settings?.hasAiApiKey || settings?.hasOAuthCredentials || settings?.hasSelectedProviderApiKey)) return "none";
+	if (settings.aiProvider === "onhand-free") return "free";
+	return settings.authMode === "oauth" ? "signin" : "key";
+}
+
+function browserKind() {
+	if (IS_FIREFOX) return "firefox";
+	const ua = navigator.userAgent || "";
+	if (/Edg\//.test(ua)) return "edge";
+	return /OPR\//.test(ua) ? "opera" : "chrome";
+}
+
+async function updateUninstallUrl() {
+	if (typeof chrome.runtime.setUninstallURL !== "function") return false;
+	const self = await chrome.management.getSelf();
+	if (!self || self.installType === "development") return false;
+	const [stored, settings] = await Promise.all([
+		chrome.storage.local.get(ONHAND_ANSWERED_QUESTIONS_KEY),
+		getOnhandBrowserRuntime().getSettings(),
+	]);
+	const details = new URLSearchParams({
+		v: chrome.runtime.getManifest().version,
+		b: browserKind(),
+		m: onhandSetupKind(settings),
+		q: answeredQuestionsBucket(Number(stored?.[ONHAND_ANSWERED_QUESTIONS_KEY]) || 0),
+	});
+	await chrome.runtime.setUninstallURL(`${ONHAND_UNINSTALL_URL}#${details}`);
+	return true;
+}
+
 // After an update, the side panel shows what changed once (whats-new.js).
 // Updates that land before the panel opens keep the oldest version, so the
 // note covers all of them.
@@ -16022,12 +16083,19 @@ async function rememberVersionBeforeUpdate(details) {
 chrome.runtime.onInstalled.addListener((details) => {
 	void openWelcomePageAfterInstall(details).catch((error) => log("Could not open the welcome page", error?.message || String(error)));
 	void rememberVersionBeforeUpdate(details).catch((error) => log("Could not record the version before the update", error?.message || String(error)));
+	void updateUninstallUrl().catch((error) => log("Could not set the uninstall page", error?.message || String(error)));
 	const reason = details?.reason === "update" ? "extension_updated" : details?.reason === "install" ? "extension_installed" : "";
 	if (!reason) return;
 	getOnhandBrowserRuntime().trackEvent(reason, { result: "ok" }).catch(() => {});
 	// Run the one-time classifier-default migration eagerly on install/update, so
 	// it lands before the options page (which reads raw storage) is opened.
 	getOnhandBrowserRuntime().getSettings().catch(() => {});
+});
+
+// The browser keeps the uninstall page between sessions; refreshing it at
+// startup catches a setup changed without a question since.
+chrome.runtime.onStartup?.addListener(() => {
+	void updateUninstallUrl().catch((error) => log("Could not set the uninstall page", error?.message || String(error)));
 });
 
 chrome.action.onClicked.addListener((tab) => {

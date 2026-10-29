@@ -3009,6 +3009,76 @@ async function assertWhatsNewClearsOnFirstQuestion() {
 	dom.window.close();
 }
 
+// A store install asks once for a rating, after its third answered question
+// (the background counts them); unpacked builds never ask.
+function ratingSetup(installType, id = "ogjmncmkpgdkkcibdiacmagaehjohljb") {
+	return (window) => {
+		window.chrome.management = { getSelf: async () => ({ installType }) };
+		window.chrome.runtime.id = id;
+	};
+}
+
+async function assertRatingPromptAsksOnceAfterThirdAnswer() {
+	const state = createState();
+	const dom = await renderSidebar(state, [], { storage: { onhandAnsweredQuestions: 2 }, setupWindow: ratingSetup("normal") });
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const prompt = shadow.getElementById("ratingPrompt");
+	assert.equal(prompt.hidden, true, "two answers are too few to ask");
+	await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: 3 });
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	assert.equal(prompt.hidden, false, "the third answer asks");
+	assert.match(prompt.textContent, /A quick rating on the Chrome Web Store/);
+	assert.equal(prompt.querySelector("[data-rating-rate]").href, "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb/reviews");
+	assert.equal(prompt.querySelector("[data-rating-rate]").target, "_blank");
+	assert.equal(dom.getStorageValue("onhandRatingPrompt"), "shown", "showing it records the ask");
+
+	// Out of the way while a question runs.
+	state.activeRequestId = "request-running";
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(prompt.hidden, true, "hidden while Onhand answers");
+	state.activeRequestId = null;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(prompt.hidden, false, "back once the answer is in");
+
+	prompt.querySelector("[data-rating-dismiss]").click();
+	await waitForSidebarTick(dom);
+	assert.equal(prompt.hidden, true, "Not now closes it");
+	assert.equal(dom.getStorageValue("onhandRatingPrompt"), "dismissed");
+	await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: 4 });
+	await waitForSidebarTick(dom);
+	assert.equal(prompt.hidden, true, "it doesn't ask again");
+	dom.window.close();
+
+	const cases = [
+		["it already asked", { onhandAnsweredQuestions: 5, onhandRatingPrompt: "shown" }, "normal"],
+		["an unpacked build", { onhandAnsweredQuestions: 5 }, "development"],
+	];
+	for (const [label, storage, installType] of cases) {
+		const quiet = await renderSidebar(createState(), [], { storage, setupWindow: ratingSetup(installType) });
+		await quiet.window.__onhandSidebarTestHooks.requestState();
+		await waitForSidebarTick(quiet);
+		await waitForSidebarTick(quiet);
+		assert.equal(quiet.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("ratingPrompt").hidden, true, `no rating prompt when ${label}`);
+		quiet.window.close();
+	}
+
+	// An Edge Add-ons install rates its own listing.
+	const edge = await renderSidebar(createState(), [], { storage: { onhandAnsweredQuestions: 3 }, setupWindow: ratingSetup("normal", "icbhigkjjhkcheejmdfkfhiljnkommoj") });
+	await edge.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(edge);
+	await waitForSidebarTick(edge);
+	const edgePrompt = edge.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("ratingPrompt");
+	assert.equal(edgePrompt.hidden, false);
+	assert.match(edgePrompt.textContent, /on Edge Add-ons/);
+	assert.equal(edgePrompt.querySelector("[data-rating-rate]").href, "https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj");
+	edge.window.close();
+}
+
 // Every release writes its lines (or an empty list); packaging refuses a
 // version without an entry, and this catches it in CI first.
 async function assertWhatsNewCoversManifestVersion() {
@@ -3058,6 +3128,7 @@ await assertWhatsNewShowsOnceAfterUpdate();
 await assertWhatsNewStaysHiddenWithoutNews();
 await assertWhatsNewClearsOnFirstQuestion();
 await assertWhatsNewCoversManifestVersion();
+await assertRatingPromptAsksOnceAfterThirdAnswer();
 
 // The spoken layer stays free of grounding jargon (the runtime bans "let me
 // ground this" as process narration; Live makes its own brief acknowledgments).

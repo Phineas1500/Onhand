@@ -3,7 +3,8 @@
 // Proxies text, image, and function-calling requests to OpenAI's official API.
 // POST /v1/register issues an anonymous token; /v1/chat/completions streams
 // completions; /v1/decisions answers the extension's request classifier;
-// /v1/telemetry and /v1/error-reports collect diagnostics.
+// /v1/telemetry and /v1/error-reports collect diagnostics; /v1/uninstall-feedback
+// takes answers from the survey page that opens when Onhand is removed.
 // Per-device, per-turn, concurrency, and shared cost controls stay server-side.
 // Places OpenAI doesn't serve get a different model through OpenRouter; see
 // region-fallback.mjs.
@@ -32,6 +33,14 @@ const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 const DEFAULT_HEAVY_TURN_COST_USD = 0.01;
 const DEFAULT_HEAVY_TURN_TOKENS = 100_000;
 const ERROR_REPORT_TTL_SECONDS = 60 * 60 * 24 * 90;
+const MAX_UNINSTALL_FEEDBACK_BODY_BYTES = 8_000;
+const MAX_UNINSTALL_FEEDBACK_COMMENT_CHARS = 1000;
+const UNINSTALL_FEEDBACK_TTL_SECONDS = 60 * 60 * 24 * 365;
+// Answers on website/uninstalled.html, and the details the extension passes it.
+const UNINSTALL_REASONS = new Set(["not_working", "answers", "slow", "unclear", "setup", "limit", "privacy", "trying", "other"]);
+const UNINSTALL_BROWSERS = new Set(["chrome", "edge", "firefox", "opera"]);
+const UNINSTALL_SETUPS = new Set(["free", "signin", "key", "none"]);
+const UNINSTALL_QUESTION_BUCKETS = new Set(["0", "1", "2-5", "6+"]);
 const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
 const QUOTA_BYPASS_HEADER = "X-Onhand-Quota-Bypass";
 const QUOTA_BYPASS_SOURCE = "free-tier-bypass";
@@ -1153,6 +1162,53 @@ async function handleErrorReport(request, env, ctx) {
 	return json(202, { ok: true, accepted: true, report_id: reportId });
 }
 
+function oneOf(values, value) {
+	const text = compactString(value, 40);
+	return values.has(text) ? text : "";
+}
+
+// The comment is free text a person chose to send; it is kept for a year and
+// read in the weekly digest. Everything else is a fixed choice.
+async function handleUninstallFeedback(request, env, ctx) {
+	const cap = envNumber(env, "UNINSTALL_FEEDBACK_PER_IP_PER_DAY", 10);
+	const quota = await bumpDailyCounter(env, `uninstall-feedback:${clientIp(request)}:${todayKey()}`, cap);
+	if (quota.unavailable) return json(202, { ok: true, accepted: false, reason: "temporarily_unavailable" });
+	if (!quota.allowed) return json(202, { ok: true, accepted: false, reason: "rate_limited" });
+
+	const raw = await request.text();
+	let payload = null;
+	if (raw.length <= MAX_UNINSTALL_FEEDBACK_BODY_BYTES) {
+		try { payload = JSON.parse(raw); } catch {}
+	}
+	const reason = oneOf(UNINSTALL_REASONS, payload?.reason);
+	if (!reason) return json(202, { ok: true, accepted: false, reason: "invalid_feedback" });
+
+	const receivedAt = new Date().toISOString();
+	const feedback = {
+		received_at: receivedAt,
+		reason,
+		comment: compactString(payload?.comment, MAX_UNINSTALL_FEEDBACK_COMMENT_CHARS),
+		extension_version: compactString(payload?.extension_version, 40).replace(/[^0-9.]/g, ""),
+		browser: oneOf(UNINSTALL_BROWSERS, payload?.browser),
+		setup: oneOf(UNINSTALL_SETUPS, payload?.setup),
+		questions: oneOf(UNINSTALL_QUESTION_BUCKETS, payload?.questions),
+		country: analyticsContext(request).country,
+	};
+	// Keys sort by time, so the digest lists a week with one prefix scan.
+	const id = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+	await env.FREE_TIER_KV.put(`uninstall-feedback:${receivedAt}:${id}`, JSON.stringify(feedback), { expirationTtl: UNINSTALL_FEEDBACK_TTL_SECONDS });
+	writeAnalytics(ctx, env, "uninstall_feedback", {
+		source: "website",
+		result: reason,
+		extensionVersion: feedback.extension_version,
+		authMode: feedback.setup,
+		aiProvider: feedback.browser,
+		errorCode: feedback.questions,
+		bodyBytes: feedback.comment.length,
+	}, request);
+	return json(202, { ok: true, accepted: true });
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
@@ -1173,6 +1229,9 @@ export default {
 		}
 		if (request.method === "POST" && url.pathname === "/v1/error-reports") {
 			return await handleErrorReport(request, env, ctx);
+		}
+		if (request.method === "POST" && url.pathname === "/v1/uninstall-feedback") {
+			return await handleUninstallFeedback(request, env, ctx);
 		}
 		return json(404, { error: { message: "Not found." } });
 	},

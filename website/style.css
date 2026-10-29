@@ -101,6 +101,8 @@ section:first-of-type{border-top:0}
   .nav-cta{padding:8px 10px;gap:6px;white-space:nowrap;flex:0 0 auto}
   .nav-cta-label{font-size:0}
   .nav-cta-label::after{content:"Install";font-size:11.5px}
+  .is-handheld .nav-cta-label{font-size:11.5px}
+  .is-handheld .nav-cta-label::after{content:none}
 }
 @media (max-width:360px){
   .nav-brand span{display:none}
@@ -122,6 +124,8 @@ section:first-of-type{border-top:0}
 
 .hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;align-items:center}
 .hero-note{margin:0;font-family:var(--font-mono);font-size:11.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}
+/* Phones get a "send to my computer" button instead of a store link (site.js). */
+.hero-ctas + .handheld-note{margin:0 0 14px;max-width:44ch;font-size:15px;line-height:1.5;color:var(--fg-muted)}
 .hero .hero-h1{margin-bottom:0}
 .btn-primary{display:inline-flex;align-items:center;gap:10px;padding:14px 22px;background:var(--rp-pine);color:var(--rp-base);font-family:var(--font-serif);font-size:17px;font-weight:600;border-radius:3px;border:0;cursor:pointer;letter-spacing:-0.005em;text-decoration:none}
 .btn-primary:hover{background:var(--rp-foam);color:var(--rp-base);text-decoration:none}
@@ -366,6 +370,26 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 .compare-note{font-size:13.5px !important;color:var(--fg-muted) !important}
 @media (max-width:600px){.compare-table{min-width:0}.compare-table thead{display:none}.compare-table tr{display:block;padding:14px 0;border-bottom:1px solid var(--border-subtle)}.compare-table tbody th,.compare-table td{display:block;width:auto;padding:0;border:0}.compare-table tbody th{margin-bottom:8px}.compare-table td+td{margin-top:10px}.compare-table td::before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.06em}}
 .faq-more{margin:34px 0 0;font-size:15px;line-height:1.7;color:var(--fg-muted)}
+
+/* Uninstall survey (opened when a store install is removed) */
+.uninstall-page .legal-hero h1{max-width:none}
+.uninstall-form{max-width:640px}
+.uninstall-form fieldset{border:0;margin:0 0 22px;padding:0;display:grid;gap:4px}
+.uninstall-form legend{font-family:var(--font-serif);font-size:clamp(22px,2.6vw,28px);font-weight:600;line-height:1.2;color:var(--fg);margin:0 0 12px;padding:0}
+.uninstall-form fieldset label{display:flex;gap:12px;align-items:flex-start;padding:9px 10px;border-radius:3px;font-size:16px;line-height:1.45;color:var(--fg);cursor:pointer}
+.uninstall-form fieldset label:hover{background:var(--bg-deep)}
+.uninstall-form input[type="radio"]{flex:none;margin:3px 0 0;width:16px;height:16px;accent-color:var(--rp-pine)}
+.uninstall-comment{display:grid;gap:8px;margin:0 0 12px;font-size:15px;color:var(--fg)}
+.uninstall-comment textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:96px;padding:10px 12px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);font:inherit;font-size:16px;line-height:1.5}
+.uninstall-comment textarea:focus{outline:2px solid var(--rp-pine);outline-offset:1px}
+.uninstall-fine{font-size:13.5px;line-height:1.55;color:var(--fg-muted);margin:0 0 18px;max-width:60ch}
+.uninstall-actions{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.uninstall-actions .btn-primary:disabled{opacity:0.5;cursor:default}
+.uninstall-actions .btn-primary:disabled:hover{background:var(--rp-pine)}
+.uninstall-status{font-size:15px;color:var(--fg-muted)}
+.uninstall-form.is-sent .uninstall-status{color:var(--rp-pine);font-weight:600}
+.uninstall-form.is-sent fieldset label{cursor:default}
+.uninstall-reinstall{margin:22px 0 0;font-size:15px;line-height:1.6;color:var(--fg-muted)}
 
 /* Welcome page (opened once after a store install) */
 .welcome-hero h1{max-width:none}

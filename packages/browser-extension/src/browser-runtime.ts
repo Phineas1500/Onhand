@@ -68,6 +68,9 @@ interface RuntimeHost {
 	// chrome.management.getSelf().installType; "development" marks an unpacked
 	// build, whose Sentry events are kept apart from production.
 	getInstallType?: () => Promise<string>;
+	// Called when a prompt finishes. The extension counts answered questions
+	// for the rating prompt and the uninstall page (background.js).
+	onPromptFinished?: (event: { result: "ok" | "error" | "stopped"; source: string }) => void;
 }
 
 interface RuntimeSession {
@@ -15351,6 +15354,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			...toolReliability,
 			error_kind: finalError ? classifyTelemetryError(finalError) : "",
 		}).catch(() => {});
+		try {
+			host.onPromptFinished?.({ result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok", source: requestSource || "sidebar" });
+		} catch {}
 		if (finalError) {
 			captureSentryException(finalError, activeRequest.settings as RuntimeSettings, "prompt_failed", {
 				error_kind: classifyTelemetryError(finalError),

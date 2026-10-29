@@ -269,6 +269,21 @@ The Worker stores accepted reports in `FREE_TIER_KV` under
 Cloudflare dashboard or KV listing tools to inspect keys with the
 `error-report:` prefix.
 
+Removing a store install opens `useonhand.com/uninstalled.html`
+(`chrome.runtime.setUninstallURL` in `background.js`; unpacked builds skip
+it). The extension puts its version, browser, setup (`free`, `signin`,
+`key` or `none`) and a bucket of answered questions (`0`, `1`, `2-5`,
+`6+`) in the URL fragment, which no server sees. If the person picks a
+reason and presses Send, the page posts those with the reason and an
+optional comment (1,000 characters at most) to
+`POST /v1/uninstall-feedback`, capped at
+`UNINSTALL_FEEDBACK_PER_IP_PER_DAY` (10). The Worker keeps each answer in
+`FREE_TIER_KV` under `uninstall-feedback:<received ISO time>:<id>` for a
+year, with the country but no IP, device or install id, and writes an
+`uninstall_feedback` event (reason in `blob3`, setup in `blob11`, browser
+in `blob12`, question bucket in `blob15`). The weekly digest lists the
+week's answers.
+
 Analytics Engine columns are positional. The event name is stored as the
 index and `blob1`; source is `blob2`; result is `blob3`; model/provider
 are `blob4`/`blob5`; country/colo/user-agent-family are

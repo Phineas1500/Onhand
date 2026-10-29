@@ -11,16 +11,22 @@ const EXPECTED_EVENTS = {
 	githubSourceEvent: "github_source_click",
 	sponsorEvent: "sponsor_click",
 	demoVideoEvent: "demo_video_play",
+	phoneShareEvent: "phone_share_click",
 };
+// Phones swap the store buttons for the share button, so desktop clicks never fire it.
+const DESKTOP_EVENTS = Object.fromEntries(Object.entries(EXPECTED_EVENTS).filter(([key]) => key !== "phoneShareEvent"));
+const PHONE_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const WEBSITE_PAGES = (await readdir(WEBSITE_DIR)).filter((name) => name.endsWith(".html"));
 
-async function loadPage(fileName) {
+async function loadPage(fileName, { userAgent = "", share } = {}) {
 	const html = await readFile(join(WEBSITE_DIR, fileName), "utf8");
 	const dom = new JSDOM(html, {
 		url: "https://useonhand.com/",
 		runScripts: "outside-only",
 	});
 	const { window } = dom;
+	if (userAgent) Object.defineProperty(window.navigator, "userAgent", { value: userAgent, configurable: true });
+	if (share) window.navigator.share = share;
 	const gaEvents = [];
 	const umamiEvents = [];
 
@@ -80,7 +86,7 @@ async function verifyIndexPage() {
 	click(document.querySelector("[data-onhand-sponsor-link]"));
 	click(document.querySelector("[data-onhand-video]"));
 
-	for (const eventName of Object.values(EXPECTED_EVENTS)) {
+	for (const eventName of Object.values(DESKTOP_EVENTS)) {
 		assert(
 			gaEvents.some((event) => event.name === eventName),
 			`GA should receive ${eventName}`,
@@ -111,6 +117,44 @@ async function verifyIndexPage() {
 	const player = document.querySelector("#demo-video iframe");
 	assert(player?.src.startsWith("https://www.youtube-nocookie.com/embed/"), "pressing play should load the youtube-nocookie player");
 	assert(!document.querySelector("[data-onhand-video]"), "the preview link should be replaced by the player");
+}
+
+async function verifyPhonePages() {
+	for (const fileName of ["index.html", "chatpdf-alternative.html"]) {
+		const shares = [];
+		const { window, gaEvents, umamiEvents } = await loadPage(fileName, {
+			userAgent: PHONE_USER_AGENT,
+			share: async (data) => { shares.push(data); },
+		});
+		const { document } = window;
+		const buttons = [...document.querySelectorAll("[data-onhand-send-to-computer]")];
+		assert(buttons.length >= 2, `${fileName} should turn its install buttons into send-to-computer buttons on phones`);
+		assert(buttons.every((node) => node.href.startsWith("mailto:") && !node.target), `${fileName} phone buttons should fall back to an email draft`);
+		assert(!buttons.some((node) => /Add to Chrome/.test(node.textContent)), `${fileName} phone buttons should not say Add to Chrome`);
+		assert(document.querySelector(".hero-ctas + .handheld-note"), `${fileName} should explain why phones get a link`);
+
+		click(document.querySelector(".hero-ctas [data-onhand-send-to-computer]"));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert(shares.length === 1 && shares[0].url.includes("utm_source=phone"), `${fileName} should share the tagged site link`);
+		const event = gaEvents.find((entry) => entry.name === EXPECTED_EVENTS.phoneShareEvent);
+		assert(event?.data.result === "shared" && event.data.event_category === "install", `${fileName} should record a shared phone_share_click`);
+		assert(umamiEvents.some((entry) => entry.name === EXPECTED_EVENTS.phoneShareEvent), `${fileName} should send phone_share_click to Umami`);
+		assert(!gaEvents.some((entry) => entry.name === EXPECTED_EVENTS.chromeStoreEvent), `${fileName} phone buttons should not count as store clicks`);
+	}
+
+	// A closed share sheet is not a failure: no email draft opens.
+	const { window, gaEvents } = await loadPage("index.html", {
+		userAgent: PHONE_USER_AGENT,
+		share: async () => { throw new window.DOMException("closed", "AbortError"); },
+	});
+	click(window.document.querySelector(".hero-ctas [data-onhand-send-to-computer]"));
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert(gaEvents.find((entry) => entry.name === EXPECTED_EVENTS.phoneShareEvent)?.data.result === "cancelled", "a closed share sheet should record cancelled");
+	assert(window.location.href === "https://useonhand.com/", "a closed share sheet should not open an email draft");
+
+	// Chromebooks install extensions: keep the store buttons.
+	const chromebook = await loadPage("index.html", { userAgent: "Mozilla/5.0 (X11; CrOS x86_64 15000.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36" });
+	assert(!chromebook.window.document.querySelector("[data-onhand-send-to-computer]"), "Chromebooks should keep the Add to Chrome buttons");
 }
 
 async function verifySupportPage() {
@@ -184,6 +228,7 @@ async function main() {
 	await verifyAnalyticsScriptTags();
 	await verifyEventNamesDocumented();
 	await verifyIndexPage();
+	await verifyPhonePages();
 	await verifySupportPage();
 	console.log("website analytics verification passed");
 	console.log(`events: ${Object.values(EXPECTED_EVENTS).join(", ")}`);

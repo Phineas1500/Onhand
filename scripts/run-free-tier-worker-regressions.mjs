@@ -579,6 +579,50 @@ try {
 	console.error = originalConsoleError;
 }
 
+// Uninstall survey answers: fixed choices are checked, the comment is kept,
+// and nothing that identifies the install or the IP is stored.
+{
+	const f = fixture();
+	const post = (body, ip = "203.0.113.7") => worker.fetch(new Request("https://worker.test/v1/uninstall-feedback", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip },
+		body: typeof body === "string" ? body : JSON.stringify(body),
+	}), f.env, f.ctx);
+	const answer = { reason: "slow", comment: "  took\n  too long ", extension_version: "0.4.14", browser: "edge", setup: "free", questions: "2-5", client_id: "should-not-be-kept" };
+	assert.deepEqual(await (await post(answer)).json(), { ok: true, accepted: true });
+	const keys = [...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:"));
+	assert.equal(keys.length, 1);
+	assert.match(keys[0], /^uninstall-feedback:\d{4}-\d{2}-\d{2}T[\d:.]+Z:[0-9a-f]{12}$/, "keys sort by time");
+	const stored = JSON.parse(f.data.get(keys[0]));
+	assert.deepEqual(
+		{ ...stored, received_at: "" },
+		{ received_at: "", reason: "slow", comment: "took too long", extension_version: "0.4.14", browser: "edge", setup: "free", questions: "2-5", country: "" },
+	);
+	assert.ok(!JSON.stringify(stored).includes("203.0.113.7"), "the IP is not stored");
+	await f.flush();
+	const event = f.events.find((point) => point.indexes[0] === "uninstall_feedback");
+	assert.equal(event.blobs[1], "website");
+	assert.equal(event.blobs[2], "slow");
+	assert.equal(event.blobs[10], "free");
+	assert.equal(event.blobs[11], "edge");
+	assert.equal(event.blobs[14], "2-5");
+
+	// Unknown choices are dropped; a missing or unknown reason, or a bad body, is refused.
+	assert.equal((await (await post({ ...answer, browser: "netscape", setup: "<b>", questions: "lots" })).json()).accepted, true);
+	const latest = JSON.parse(f.data.get([...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:")).sort().at(-1)));
+	assert.deepEqual([latest.browser, latest.setup, latest.questions], ["", "", ""]);
+	assert.equal((await (await post({ ...answer, reason: "bored" })).json()).reason, "invalid_feedback");
+	assert.equal((await (await post("{not json")).json()).reason, "invalid_feedback");
+	assert.equal((await (await post({ ...answer, comment: "x".repeat(9000) })).json()).reason, "invalid_feedback");
+	assert.equal(JSON.parse(f.data.get([...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:")).sort().at(-1))).comment.length, 13);
+
+	// Ten a day per IP (refused bodies count too).
+	for (let i = 0; i < 5; i += 1) assert.equal((await (await post(answer)).json()).accepted, true);
+	assert.equal((await (await post(answer)).json()).reason, "rate_limited");
+	assert.equal((await (await post(answer, "198.51.100.9")).json()).accepted, true, "another IP has its own cap");
+	console.log("Free-tier worker regressions: PASS (uninstall feedback)");
+}
+
 const { runAdmissionRegressions } = await import("../workers/free-tier/tests/admission-regressions.mjs");
 await runAdmissionRegressions({ fixture, handle, providerMock, providerResponse, completionPayload, worker, day, token });
 

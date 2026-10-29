@@ -37,7 +37,37 @@ function activity(install) {
 	return steps.join(", ") || "seen";
 }
 
-export function buildDigest(rows, { now = new Date(), testDeviceHashes = [] } = {}) {
+// Answers from the uninstall survey (website/uninstalled.html).
+const UNINSTALL_REASON_LABELS = {
+	not_working: "didn't work on their page or PDF",
+	answers: "answers not good enough",
+	slow: "too slow",
+	unclear: "not sure what to use it for",
+	setup: "setup was confusing",
+	limit: "ran out of Free questions",
+	privacy: "privacy worries",
+	trying: "only trying it out",
+	other: "something else",
+};
+const QUESTION_BUCKET_LABELS = { 0: "0 questions", 1: "1 question", "2-5": "2-5 questions", "6+": "6+ questions" };
+
+function feedbackLines(feedback) {
+	if (!feedback.length) return ["Uninstall survey: no answers this week.", ""];
+	const counts = new Map();
+	for (const answer of feedback) counts.set(answer.reason, (counts.get(answer.reason) || 0) + 1);
+	const lines = [
+		`Uninstall survey: ${feedback.length} ${feedback.length === 1 ? "answer" : "answers"}`,
+		`Reasons: ${[...counts].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${UNINSTALL_REASON_LABELS[reason] || reason} ${count}`).join(", ")}`,
+	];
+	for (const answer of feedback) {
+		const details = [answer.browser, answer.setup, QUESTION_BUCKET_LABELS[answer.questions], answer.extension_version, answer.country].filter(Boolean).join(", ");
+		lines.push(`- ${String(answer.received_at || "").slice(0, 10)}  ${UNINSTALL_REASON_LABELS[answer.reason] || answer.reason}${details ? ` (${details})` : ""}${answer.comment ? `: "${answer.comment}"` : ""}`);
+	}
+	lines.push("");
+	return lines;
+}
+
+export function buildDigest(rows, { now = new Date(), testDeviceHashes = [], feedback = [] } = {}) {
 	const { installs, testInstalls, testAnswers } = summarizeRealInstalls(rows, testDeviceHashes);
 	const weekStart = now.getTime() - 7 * DAY_MS;
 	const day = (time) => new Date(time).toISOString().slice(0, 10);
@@ -70,6 +100,7 @@ export function buildDigest(rows, { now = new Date(), testDeviceHashes = [] } = 
 		if (active.length > MAX_LISTED) lines.push(`  ...and ${active.length - MAX_LISTED} more`);
 		lines.push("");
 	}
+	lines.push(...feedbackLines(feedback));
 	lines.push(
 		`Left out as tests: ${testInstalls} installs, ${testAnswers} answers.`,
 		"",

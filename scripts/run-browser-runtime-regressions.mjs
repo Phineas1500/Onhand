@@ -542,6 +542,8 @@ async function assertTurnsUseDecisionsWhenConfident() {
 		installChromeStorageStub();
 		const requests = [];
 		const host = createReplayHost();
+		const finished = [];
+		host.onPromptFinished = (event) => finished.push(event);
 		test.setDecisionsFetchForTest(async (url, init) => { requests.push(JSON.parse(init.body)); return respond(); });
 		try {
 			const runtime = createOnhandBrowserRuntime(host);
@@ -549,7 +551,7 @@ async function assertTurnsUseDecisionsWhenConfident() {
 				aiApiKeys: { openai: "sk-test-decisions" }, experimentalModelLaneClassifier: true, modelLaneClassifierDefaultMigrated: true });
 			await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
 			const state = await waitForRuntimeCompletion(runtime);
-			return { turn: state.turns.at(-1), requests, calls: host.calls };
+			return { turn: state.turns.at(-1), requests, calls: host.calls, finished };
 		} finally {
 			test.setDecisionsFetchForTest(null);
 		}
@@ -567,6 +569,8 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	assert.equal(decided.turn.preparationTiming.classifierOutcome, "classified");
 	assert.equal(decided.turn.error, false, "no model classifier call: the scripted model's replies all go to the turn");
 	assert.ok(decided.calls.some((call) => call.name === "highlight_text"), "fixture: this turn highlights the page");
+	// background.js counts answered questions (rating prompt, uninstall page) from this hook.
+	assert.deepEqual(decided.finished, [{ result: "ok", source: "sidebar" }], "a finished prompt reports how it ended");
 
 	// The same request, with Decisions saying the user wants the page left
 	// unmarked: nothing is highlighted.

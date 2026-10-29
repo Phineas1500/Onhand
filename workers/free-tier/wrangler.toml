@@ -58,6 +58,7 @@ HEAVY_TURN_TOKENS = "100000"
 REGISTRATIONS_PER_IP_PER_DAY = "25"
 TELEMETRY_EVENTS_PER_IP_PER_DAY = "1000"
 ERROR_REPORTS_PER_IP_PER_DAY = "50"
+UNINSTALL_FEEDBACK_PER_IP_PER_DAY = "10"
 
 # Places OpenAI doesn't serve (ISO country codes, from Cloudflare's request.cf)
 # get REGION_FALLBACK_MODEL through OpenRouter instead; see

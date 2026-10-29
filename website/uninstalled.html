@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Onhand was removed</title>
+<meta name="description" content="Onhand was removed from your browser. Tell us what made you remove it." />
+<meta name="robots" content="noindex" />
+<link rel="icon" type="image/png" href="./icons/onhand-128.png" />
+<link rel="apple-touch-icon" href="./icons/onhand-128.png" />
+<script>
+  // The extension passes its version, browser, setup and a rough question
+  // count in the fragment. Keep them for the form and clear them from the
+  // address bar, so nothing sees them unless the person submits an answer.
+  window.onhandUninstallDetails = Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
+  if (location.hash) history.replaceState(null, '', location.pathname);
+</script>
+<script>try{var t=localStorage.getItem('onhand-theme');if(t==='dark'||t==='auto')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<link rel="stylesheet" href="./style.css" />
+<script>
+  window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/speed-insights/script.js"></script>
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="./">
+      <img src="./icons/onhand-128.png" alt="Onhand logo" />
+      <span>Onhand</span>
+    </a>
+    <div class="nav-links">
+      <a class="nav-link" href="./support.html">Support</a>
+      <a class="nav-link" href="./privacy.html">Privacy</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <button class="nav-ghost theme-toggle" data-theme-toggle data-mode="light" aria-label="Toggle theme" title="Toggle theme">
+      <span class="mc">◐</span>
+    </button>
+  </div>
+</nav>
+
+<main class="legal-page uninstall-page">
+  <section class="legal-hero">
+    <div class="container">
+      <div class="section-eyebrow"><span class="mc">☞</span><span>Removed</span></div>
+      <h1>Onhand was removed.</h1>
+      <p>Sorry it didn't work out. What made you remove it? One answer helps us fix the right thing.</p>
+    </div>
+  </section>
+
+  <section class="legal-body">
+    <div class="container">
+      <form class="legal-card uninstall-form" data-uninstall-form novalidate>
+        <fieldset>
+          <legend>Why did you remove Onhand?</legend>
+          <label><input type="radio" name="reason" value="not_working" /> It didn't work on the page or PDF I needed</label>
+          <label><input type="radio" name="reason" value="answers" /> The answers weren't good enough</label>
+          <label><input type="radio" name="reason" value="slow" /> It was too slow</label>
+          <label><input type="radio" name="reason" value="unclear" /> I wasn't sure what to use it for</label>
+          <label><input type="radio" name="reason" value="setup" /> Setting it up was confusing</label>
+          <label><input type="radio" name="reason" value="limit" /> I ran out of Onhand Free questions</label>
+          <label><input type="radio" name="reason" value="privacy" /> I was worried about privacy</label>
+          <label><input type="radio" name="reason" value="trying" /> I was only trying it out</label>
+          <label><input type="radio" name="reason" value="other" /> Something else</label>
+        </fieldset>
+        <label class="uninstall-comment">
+          <span>Anything else we should know? (optional)</span>
+          <textarea name="comment" rows="4" maxlength="1000" placeholder="What were you trying to do?"></textarea>
+        </label>
+        <p class="uninstall-fine">
+          Please leave out personal details. With your answer we get Onhand's
+          version, your browser, how you set Onhand up and roughly how many
+          questions you asked. Nothing else.
+        </p>
+        <div class="uninstall-actions">
+          <button type="submit" class="btn-primary" data-uninstall-submit disabled>Send</button>
+          <span class="uninstall-status" data-uninstall-status role="status" aria-live="polite"></span>
+        </div>
+      </form>
+      <p class="uninstall-reinstall">
+        Changed your mind? <a href="https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb" target="_blank" rel="noopener" data-uninstall-reinstall>Reinstall Onhand</a>.
+        Questions? See <a href="./support.html">Support</a>.
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <span class="mc">☞</span>
+      <span>Onhand</span>
+    </div>
+    <div class="foot-meta">
+      <a href="./">Home</a>
+      ·
+      <a href="./support.html">Support</a>
+      ·
+      <a href="./privacy.html">Privacy</a>
+      ·
+      © 2026
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var FEEDBACK_URL = 'https://api.useonhand.com/v1/uninstall-feedback';
+    var details = window.onhandUninstallDetails || {};
+    var form = document.querySelector('[data-uninstall-form]');
+    var submit = document.querySelector('[data-uninstall-submit]');
+    var status = document.querySelector('[data-uninstall-status]');
+    var reinstall = document.querySelector('[data-uninstall-reinstall]');
+    if (reinstall && details.b === 'firefox') reinstall.href = 'https://addons.mozilla.org/firefox/addon/onhand-ai/';
+    if (reinstall && details.b === 'edge') reinstall.href = 'https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj';
+    if (!form || !submit) return;
+
+    form.addEventListener('change', function () {
+      if (!form.classList.contains('is-sent')) submit.disabled = !form.querySelector('input[name="reason"]:checked');
+    });
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var reason = form.querySelector('input[name="reason"]:checked');
+      if (!reason || form.classList.contains('is-sent')) return;
+      submit.disabled = true;
+      status.textContent = 'Sending…';
+      fetch(FEEDBACK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: reason.value,
+          comment: form.elements.comment.value.trim(),
+          extension_version: details.v || '',
+          browser: details.b || '',
+          setup: details.m || '',
+          questions: details.q || '',
+        }),
+      })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (result) {
+          if (!result || !result.accepted) throw new Error('not accepted');
+          form.classList.add('is-sent');
+          form.querySelectorAll('input, textarea').forEach(function (field) { field.disabled = true; });
+          status.textContent = 'Thanks. That helps a lot.';
+        })
+        .catch(function () {
+          submit.disabled = false;
+          status.textContent = "That didn't send. Try again in a moment.";
+        });
+    });
+  })();
+</script>
+<script src="./site.js?v=0.4.13-release"></script>
+</body>
+</html>

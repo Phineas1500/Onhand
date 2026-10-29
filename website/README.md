@@ -46,6 +46,7 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 - **Hero copy:** `index.html`, sections starting at `<h1 class="hero-h1">`.
 - **Feature card text:** `index.html`, the four `<div class="feat">` blocks.
 - **Add to Chrome link:** generated from `ONHAND_STORE.url` for elements with `data-onhand-store-link`.
+- **On phones and tablets:** phones can't install extensions, so `site.js` relabels the `data-onhand-store-link` buttons "Send to my computer" and opens the share sheet with a link tagged `utm_source=phone` (an email draft where sharing isn't available). Chromebooks keep the store buttons. Text links to the store stay as they are.
 - **Open Graph image:** `<meta property="og:image">` — currently the attention screenshot. Replace with a 1200×630 dedicated card when you have one.
 
 ## Analytics events
@@ -59,6 +60,7 @@ The site uses Google Analytics 4 (`G-JQ159C5BGF`) and Umami. Custom conversion e
 | `github_source_click` | View repo / build from source | `data-onhand-source-link` | `source` |
 | `sponsor_click` | Open GitHub Sponsors | `data-onhand-sponsor-link` | `support` |
 | `demo_video_play` | Play the homepage demo video (loads the YouTube player) | `data-onhand-video` | `video` |
+| `phone_share_click` | On a phone or tablet, send the site to your computer (share sheet, or an email draft); `result` is `shared`, `cancelled` or `mailto` | `data-onhand-store-link` buttons, relabeled on phones | `install` |
 
 Tracked elements also receive `data-onhand-analytics-event` with the event name for inspection in DevTools.
 

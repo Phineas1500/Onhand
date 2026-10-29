@@ -27,4 +27,19 @@ assert.match(text, /- 2026-10-24 NEW {2}chromeos {2}US {2}0\.4\.10 {2}registered
 assert.match(text, /- 2026-10-01 {2}windows {2}IN {2}0\.4\.9 {2}opened the panel/);
 assert.match(text, /Left out as tests: 1 installs, 7 answers\./);
 assert.doesNotMatch(text, /ext-old|2026-10-02/);
-console.log("Weekly digest: counts, ChromeOS split, install list and test exclusion passed");
+assert.match(text, /Uninstall survey: no answers this week\./);
+
+// Uninstall survey answers: reasons tallied, each answer listed with its comment.
+const withFeedback = buildDigest(rows, {
+	now,
+	feedback: [
+		{ received_at: "2026-10-24T09:00:00.000Z", reason: "slow", comment: "", browser: "chrome", setup: "free", questions: "1", extension_version: "0.4.14", country: "US" },
+		{ received_at: "2026-10-25T10:00:00.000Z", reason: "not_working", comment: "my course site is blank", browser: "edge", setup: "none", questions: "0", extension_version: "0.4.14", country: "IN" },
+		{ received_at: "2026-10-25T11:00:00.000Z", reason: "slow", comment: "", browser: "", setup: "", questions: "", extension_version: "", country: "" },
+	],
+}).text;
+assert.match(withFeedback, /Uninstall survey: 3 answers\nReasons: too slow 2, didn't work on their page or PDF 1/);
+assert.match(withFeedback, /- 2026-10-24 {2}too slow \(chrome, free, 1 question, 0\.4\.14, US\)\n/);
+assert.match(withFeedback, /- 2026-10-25 {2}didn't work on their page or PDF \(edge, none, 0 questions, 0\.4\.14, IN\): "my course site is blank"/);
+assert.match(withFeedback, /- 2026-10-25 {2}too slow\n/);
+console.log("Weekly digest: counts, ChromeOS split, install list, test exclusion and uninstall answers passed");

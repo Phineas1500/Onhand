@@ -13,6 +13,12 @@ crons = ["0 13 * * MON"]
 [[send_email]]
 name = "DIGEST_EMAIL"
 
+# The free-tier Worker's KV namespace, read for the week's uninstall survey
+# answers (uninstall-feedback:<ISO time>:<id>).
+[[kv_namespaces]]
+binding = "FREE_TIER_KV"
+id = "7b951e234331464bb18b2d62c2d80266"
+
 [vars]
 DIGEST_FROM = "digest@useonhand.com"
 ANALYTICS_DATASET = "onhand_events"

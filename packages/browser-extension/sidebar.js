@@ -18,6 +18,12 @@
 	const WHATS_NEW_SINCE_STORAGE_KEY = "onhandWhatsNewSince";
 	const WHATS_NEW_OPT_OUT_STORAGE_KEY = "onhandWhatsNewOptOut";
 	const WHATS_NEW_MAX_ITEMS = 4;
+	// After a few answered questions (the background counts them), a store
+	// install asks once for a rating. The stored choice keeps it from asking again.
+	const ANSWERED_QUESTIONS_STORAGE_KEY = "onhandAnsweredQuestions";
+	const RATING_PROMPT_STORAGE_KEY = "onhandRatingPrompt";
+	const RATING_PROMPT_AFTER_ANSWERS = 3;
+	const EDGE_ADDONS_EXTENSION_ID = "icbhigkjjhkcheejmdfkfhiljnkommoj";
 	const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
 	const SIDEBAR_QUICK_OPEN_FOCUS_DELAYS_MS = [0, 80, 240, 600, 1200];
@@ -146,6 +152,7 @@
 	let pendingAuthPrompt = false;
 	// The first-run diagnostics box, ticked or not, while its save is in flight.
 	let authDiagnosticsChoice = null;
+	let ratingPromptVisible = false;
 	// In Firefox, Mozilla's install-time consent for technical data replaces
 	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
 	const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
@@ -2322,6 +2329,54 @@
 			.onhand-index[hidden] {
 				display: none;
 			}
+			.onhand-rating-prompt[hidden] {
+				display: none;
+			}
+			.onhand-rating-prompt {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 10px;
+				flex-wrap: wrap;
+				border-top: 1px solid var(--rm-surface-2);
+				background: color-mix(in srgb, var(--rm-gold) 12%, transparent);
+				padding: 9px 14px;
+				font: 12.5px/1.45 var(--rm-font-serif);
+				color: var(--rm-text);
+			}
+			.onhand-rating-text {
+				flex: 1 1 180px;
+			}
+			.onhand-rating-actions {
+				display: flex;
+				gap: 7px;
+				flex: 0 0 auto;
+			}
+			.onhand-rating-actions a,
+			.onhand-rating-actions button {
+				border-radius: 3px;
+				padding: 5px 8px;
+				font: 11px/1 var(--rm-font-mono);
+				cursor: pointer;
+				text-decoration: none;
+			}
+			.onhand-rating-actions a {
+				border: 0;
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				font-weight: 700;
+			}
+			.onhand-rating-actions a:hover {
+				background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
+			}
+			.onhand-rating-actions button {
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+			}
+			.onhand-rating-actions button:hover {
+				background: var(--rm-surface-0);
+			}
 			.onhand-review-nudge[hidden] {
 				display: none;
 			}
@@ -3698,6 +3753,7 @@
 			</div>
 				<button id="jumpToLatestButton" class="onhand-jump-latest" type="button" aria-label="Jump to latest answer" hidden>Jump to latest ↓</button>
 			</div>
+			<section id="ratingPrompt" class="onhand-rating-prompt" aria-label="Rate Onhand" hidden></section>
 			<section id="reviewNudge" class="onhand-review-nudge" hidden></section>
 			<section id="learnerPanel" class="onhand-learner-panel" hidden></section>
 			<form id="composer" class="onhand-compose">
@@ -3790,6 +3846,7 @@
 	const actionsEl = shadow.getElementById("actions");
 	const learnerPanelEl = shadow.getElementById("learnerPanel");
 	const reviewNudgeEl = shadow.getElementById("reviewNudge");
+	const ratingPromptEl = shadow.getElementById("ratingPrompt");
 	const whatsNewEl = shadow.getElementById("whatsNew");
 	const dismissedReviewKeys = new Set();
 	const composer = shadow.getElementById("composer");
@@ -4975,6 +5032,68 @@
 		foot.append(optOutLabel, dismiss);
 		whatsNewEl.replaceChildren(title, list, foot);
 		whatsNewEl.hidden = false;
+	}
+
+	// Where this install came from, so the rating lands on the right listing.
+	function ratingStore() {
+		if (IS_FIREFOX) return { name: "Firefox Add-ons", url: "https://addons.mozilla.org/firefox/addon/onhand-ai/" };
+		if (chrome.runtime?.id === EDGE_ADDONS_EXTENSION_ID) {
+			return { name: "Edge Add-ons", url: `https://microsoftedge.microsoft.com/addons/detail/${EDGE_ADDONS_EXTENSION_ID}` };
+		}
+		return { name: "the Chrome Web Store", url: "https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb/reviews" };
+	}
+
+	// Asks once: showing it records the ask, so a closed panel doesn't bring it back.
+	async function maybeShowRatingPrompt() {
+		if (ratingPromptVisible) return;
+		const stored = await chrome.storage.local.get({ [ANSWERED_QUESTIONS_STORAGE_KEY]: 0, [RATING_PROMPT_STORAGE_KEY]: "" });
+		if (stored[RATING_PROMPT_STORAGE_KEY] || (Number(stored[ANSWERED_QUESTIONS_STORAGE_KEY]) || 0) < RATING_PROMPT_AFTER_ANSWERS) return;
+		// Unpacked builds, including every test profile, have no listing to rate.
+		const self = await chrome.management?.getSelf?.();
+		if (!self || self.installType === "development" || ratingPromptVisible) return;
+		ratingPromptVisible = true;
+		await chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: "shown" });
+		renderRatingPrompt(currentState || {});
+	}
+
+	function closeRatingPrompt(choice) {
+		ratingPromptVisible = false;
+		renderRatingPrompt(currentState || {});
+		void chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: choice }).catch(() => {});
+	}
+
+	function renderRatingPrompt(state) {
+		if (!(ratingPromptEl instanceof HTMLElement)) return;
+		// Out of the way while a question runs, and off the first-run and replay views.
+		const busy = Boolean(state?.activeRequestId) || sending;
+		const show = ratingPromptVisible && !busy && !replayState.open && hasUsableOnhandAuth(state);
+		if (!show) {
+			ratingPromptEl.hidden = true;
+			ratingPromptEl.replaceChildren();
+			return;
+		}
+		if (!ratingPromptEl.hidden && ratingPromptEl.childElementCount) return;
+		const store = ratingStore();
+		const text = document.createElement("span");
+		text.className = "onhand-rating-text";
+		text.textContent = `Has Onhand been useful? A quick rating on ${store.name} helps other people find it.`;
+		const rate = document.createElement("a");
+		rate.href = store.url;
+		rate.target = "_blank";
+		rate.rel = "noopener";
+		rate.textContent = "Rate Onhand";
+		rate.setAttribute("data-rating-rate", "");
+		rate.addEventListener("click", () => closeRatingPrompt("rated"));
+		const later = document.createElement("button");
+		later.type = "button";
+		later.textContent = "Not now";
+		later.setAttribute("data-rating-dismiss", "");
+		later.addEventListener("click", () => closeRatingPrompt("dismissed"));
+		const actions = document.createElement("span");
+		actions.className = "onhand-rating-actions";
+		actions.append(rate, later);
+		ratingPromptEl.replaceChildren(text, actions);
+		ratingPromptEl.hidden = false;
 	}
 
 	function renderReviewNudge(state) {
@@ -6512,6 +6631,7 @@
 		renderRestoreResult();
 		renderReplayView();
 		renderAuthPanel(state);
+		renderRatingPrompt(state);
 		renderReviewNudge(state);
 		renderLearnerPanel(state, false);
 		pageIndexEl.hidden = true;
@@ -8440,10 +8560,12 @@
 			}
 			const quickOpenRequest = changes[SIDEBAR_QUICK_OPEN_REQUEST_KEY]?.newValue;
 			if (quickOpenRequest) void handleQuickOpenRequest(quickOpenRequest);
+			if (changes[ANSWERED_QUESTIONS_STORAGE_KEY]) void maybeShowRatingPrompt().catch(() => {});
 		});
 	}
 
 	void showWhatsNewAfterUpdate().catch(() => {});
+	void maybeShowRatingPrompt().catch(() => {});
 
 	try {
 		void ensureKatexLoaded();

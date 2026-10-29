@@ -99335,6 +99335,10 @@ function createOnhandBrowserRuntime(host) {
       error_kind: finalError ? classifyTelemetryError(finalError) : ""
     }).catch(() => {
     });
+    try {
+      host.onPromptFinished?.({ result: activeRequest.aborted ? "stopped" : finalError ? "error" : "ok", source: requestSource || "sidebar" });
+    } catch {
+    }
     if (finalError) {
       captureSentryException(finalError, activeRequest.settings, "prompt_failed", {
         error_kind: classifyTelemetryError(finalError),

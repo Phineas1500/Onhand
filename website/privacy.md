@@ -34,6 +34,8 @@ In Firefox, Firefox asks whether to share technical data when you install Onhand
 
 If Onhand shows an error, you may also choose to send a one-time anonymized error report even when diagnostics are off. Error reports include a redacted error message and stack trace, extension version, runtime revision, selected provider/model category, coarse error category, tool activity names/states, and aggregate counts. They do not include prompts, page content, URLs, page titles, screenshots, saved sessions, transcripts, or keys. The same redacted error may be sent to Sentry so repeated failures can be grouped by release.
 
+When you remove Onhand installed from a browser's add-on store, the browser opens a short survey on useonhand.com asking why. The page address carries Onhand's version, your browser, how you set Onhand up (Onhand Free, a sign-in, your own key, or not yet) and roughly how many questions it answered (none, one, two to five, or more). That part of the address is never sent to a server: the survey sends it only if you pick a reason and press Send, together with any comment you write. Answers include your country but not your IP address or any device or install identifier.
+
 ## Data Onhand handles
 
 -   Questions and instructions you type into the Onhand side panel.
@@ -50,6 +52,8 @@ If Onhand shows an error, you may also choose to send a one-time anonymized erro
 
 Onhand saves extension settings, provider configuration, sessions, highlights, notes, transcripts, and captured artifacts locally in browser extension storage. Removing the extension or clearing its extension storage removes this local data.
 
+Onhand also keeps a count of the questions it has answered, which it uses to ask once for a store rating and for the survey described above. The count stays in extension storage.
+
 Onhand does not intentionally upload saved sessions to an Onhand server. Provider credentials are stored by the extension so it can make user-requested model calls. The Onhand Free anonymous token is stored locally so the hosted Worker can enforce daily usage caps without requiring an account.
 
 ## AI providers
@@ -64,7 +68,7 @@ Content sent to an AI provider or to Onhand Free is handled under the relevant p
 
 Local sessions, highlights, notes, transcripts, screenshots, API keys, and provider settings remain in browser extension storage until you delete them or uninstall the extension.
 
-Onhand Free stores anonymous tokens and short-lived quota or abuse counters in Cloudflare storage, including daily counters based on the request IP address for registration, diagnostics, and explicit error report rate limits. Aggregate operations events may include country, Cloudflare data center, and user-agent family. Explicit anonymized error reports are stored for up to 90 days under a report id so they can be inspected for support and reliability work. Redacted Sentry crash and exception events are retained according to the Sentry project retention settings.
+Onhand Free stores anonymous tokens and short-lived quota or abuse counters in Cloudflare storage, including daily counters based on the request IP address for registration, diagnostics, explicit error report, and removal survey rate limits. Aggregate operations events may include country, Cloudflare data center, and user-agent family. Explicit anonymized error reports are stored for up to 90 days under a report id so they can be inspected for support and reliability work. Removal survey answers are stored for up to a year. Redacted Sentry crash and exception events are retained according to the Sentry project retention settings.
 
 Extension-to-provider and extension-to-Onhand Free requests use HTTPS. Onhand does not sell user data, use extension content for advertising, or share extension prompts, page content, screenshots, transcripts, saved sessions, or keys with website analytics services.
 
@@ -84,7 +88,7 @@ The extension uses powerful browser APIs, including debugging and scripting APIs
 -   You choose whether to send a one-time anonymized error report after an Onhand error.
 -   You can delete saved sessions from the extension UI or by clearing extension storage.
 -   You can remove provider credentials from the Onhand options page.
--   You can uninstall the extension at any time from your browser's extensions page.
+-   You can uninstall the extension at any time from your browser's extensions page, and skip or close the removal survey.
 
 ## Contact
 

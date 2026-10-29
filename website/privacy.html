@@ -173,6 +173,17 @@
             saved sessions, transcripts, or keys. The same redacted error may be
             sent to Sentry so repeated failures can be grouped by release.
           </p>
+          <p>
+            When you remove Onhand installed from a browser's add-on store, the
+            browser opens a short survey on useonhand.com asking why. The page
+            address carries Onhand's version, your browser, how you set Onhand up
+            (Onhand Free, a sign-in, your own key, or not yet) and roughly how
+            many questions it answered (none, one, two to five, or more). That
+            part of the address is never sent to a server: the survey sends it
+            only if you pick a reason and press Send, together with any comment
+            you write. Answers include your country but not your IP address or
+            any device or install identifier.
+          </p>
         </section>
 
         <section id="data" class="legal-section">
@@ -197,6 +208,11 @@
             highlights, notes, transcripts, and captured artifacts locally in
             browser extension storage. Removing the extension or clearing its
             extension storage removes this local data.
+          </p>
+          <p>
+            Onhand also keeps a count of the questions it has answered, which it
+            uses to ask once for a store rating and for the survey described
+            above. The count stays in extension storage.
           </p>
           <p>
             Onhand does not intentionally upload saved sessions to an Onhand server.
@@ -262,11 +278,12 @@
           <p>
             Onhand Free stores anonymous tokens and short-lived quota or abuse
             counters in Cloudflare storage, including daily counters based on the
-            request IP address for registration, diagnostics, and explicit error
-            report rate limits. Aggregate operations events may include country,
+            request IP address for registration, diagnostics, explicit error
+            report, and removal survey rate limits. Aggregate operations events may include country,
             Cloudflare data center, and user-agent family. Explicit anonymized
             error reports are stored for up to 90 days under a report id so they
-            can be inspected for support and reliability work. Redacted Sentry
+            can be inspected for support and reliability work. Removal survey
+            answers are stored for up to a year. Redacted Sentry
             crash and exception events are retained according to the Sentry
             project retention settings.
           </p>
@@ -305,7 +322,7 @@
             <li>You choose whether to send a one-time anonymized error report after an Onhand error.</li>
             <li>You can delete saved sessions from the extension UI or by clearing extension storage.</li>
             <li>You can remove provider credentials from the Onhand options page.</li>
-            <li>You can uninstall the extension at any time from your browser's extensions page.</li>
+            <li>You can uninstall the extension at any time from your browser's extensions page, and skip or close the removal survey.</li>
           </ul>
         </section>
 
