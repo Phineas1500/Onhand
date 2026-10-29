@@ -37,7 +37,8 @@ WHERE timestamp >= NOW() - INTERVAL '${days}' DAY
     'register_success',
     'extension_installed',
     'extension_updated',
-    'sidepanel_opened'
+    'sidepanel_opened',
+    'decisions_response'
   )
 GROUP BY device_hash, source, event, auth_mode, ai_provider, ai_model, turn_id, session_id, user_agent, extension_version, country
 ORDER BY device_hash, source, event`;
@@ -110,6 +111,13 @@ export function isScriptWorkerRow(row) {
 	return rowSource(row) === "free-tier" && String(row?.user_agent || "") === "other";
 }
 
+// Until the Worker learned Pi's User-Agent, Firefox chat calls were logged as
+// "other". The same install's Decisions and extension calls carry the real
+// browser, and any such row means the install is not a script.
+export function isBrowserRow(row) {
+	return !["", "other", "unknown"].includes(String(row?.user_agent || ""));
+}
+
 // The Worker hashes the Free token and the extension hashes its diagnostics
 // client id, so one install appears under two device hashes. Turns and sessions
 // carry the same ids on both sides; link hashes that share one into an install.
@@ -146,11 +154,16 @@ export function findLikelyTestDevices(rows, testDeviceHashes = [], { scripts = t
 	const allRows = Array.isArray(rows) ? rows : [];
 	const installOf = linkDeviceInstalls(allRows);
 	const testInstalls = new Set();
+	const scriptInstalls = new Set();
+	const browserInstalls = new Set();
 	for (const row of allRows) {
 		const deviceHash = rowDeviceHash(row);
 		if (!deviceHash) continue;
-		if (isLikelyTestUsageRow(row, testDeviceHashes) || (scripts && isScriptWorkerRow(row))) testInstalls.add(installOf(deviceHash));
+		if (isLikelyTestUsageRow(row, testDeviceHashes)) testInstalls.add(installOf(deviceHash));
+		if (scripts && isScriptWorkerRow(row)) scriptInstalls.add(installOf(deviceHash));
+		if (isBrowserRow(row)) browserInstalls.add(installOf(deviceHash));
 	}
+	for (const install of scriptInstalls) if (!browserInstalls.has(install)) testInstalls.add(install);
 	const testDevices = new Set(testDeviceHashes || []);
 	for (const row of allRows) {
 		const deviceHash = rowDeviceHash(row);

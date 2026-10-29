@@ -430,8 +430,11 @@ try {
 	}
 	// Analytics carry a coarse OS with the browser, so ChromeOS (school
 	// Chromebooks) can be told apart; scripts keep the bare "other" that the
-	// ops report matches.
+	// ops report matches. Firefox sends Pi's own User-Agent on chat calls.
 	for (const [userAgent, expected] of [
+		["pi (browser)", "firefox"],
+		["pi/1.4.0 (browser)", "firefox"],
+		["pi/1.4.0 (darwin; node/v22.12.0; arm64)", "other"],
 		["Mozilla/5.0 (X11; CrOS x86_64 15917.71.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "chrome/chromeos"],
 		["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "chrome/windows"],
 		["Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0", "firefox/mac"],

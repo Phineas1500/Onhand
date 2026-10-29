@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { classifyQuotaRows, findLikelyTestDevices, summarizeUsageDevices } from "./run-free-tier-ops-report.mjs";
+import { usageDevicesSql } from "./lib/free-tier-usage.mjs";
 
 // Worker rows carry the Free token hash; extension rows carry the diagnostics client hash.
 const worker = (device, session, turn, events, extra = {}) => ({
@@ -48,6 +49,19 @@ assert.equal(usage.non_test_worker_chat_devices, 2);
 assert.equal(usage.non_test_worker_chat_completions, 17);
 assert.equal(usage.excluded_test_worker_chat_completions, 117);
 assert.equal(usage.non_test_extension_prompt_succeeded_devices, 1);
+
+// Firefox chat calls logged as "other" are not a script when the install's
+// Decisions or extension calls carry the real browser.
+assert.match(usageDevicesSql({ dataset: "onhand_events", days: 7 }), /'decisions_response'/);
+const firefoxTestDevices = findLikelyTestDevices([
+	worker("w-firefox", "session_f", "turn_f", 28, { user_agent: "other" }),
+	worker("w-firefox", "session_f", "turn_f", 7, { event: "decisions_response", user_agent: "firefox/windows" }),
+	worker("w-firefox-linked", "session_g", "turn_g", 8, { user_agent: "other" }),
+	{ ...extension("e-firefox-linked", "extension", "prompt_succeeded", "session_g", "turn_g"), user_agent: "firefox/windows" },
+	worker("w-script", "", "unknown", 1, { event: "chat_response_complete", user_agent: "other" }),
+]);
+for (const hash of ["w-firefox", "w-firefox-linked", "e-firefox-linked"]) assert.ok(!firefoxTestDevices.has(hash), `${hash} is a real Firefox device`);
+assert.ok(firefoxTestDevices.has("w-script"));
 
 // A known hash still marks its install, and the cap hits of tagged test devices are not health alerts.
 assert.ok(findLikelyTestDevices(rows, ["e-user"]).has("w-user"));

@@ -167,8 +167,14 @@ function finiteBoolean(value) {
 	return Boolean(value);
 }
 
+// Pi stamps model calls with its own User-Agent ("pi (browser)", from 1.4
+// "pi/1.4.0 (browser)"). Chromium drops it, but Firefox sends it in place of
+// its own, so it marks a Firefox install's chat calls. It names no OS.
+const PI_BROWSER_USER_AGENT = /^pi(\/\S+)? \(browser\)$/;
+
 function userAgentFamily(request) {
 	const ua = request.headers.get("User-Agent") || "";
+	if (PI_BROWSER_USER_AGENT.test(ua)) return "firefox";
 	if (/Edg\//.test(ua)) return "edge";
 	if (/Chrome\//.test(ua) && !/Chromium\//.test(ua)) return "chrome";
 	if (/Chromium\//.test(ua)) return "chromium";
@@ -193,13 +199,14 @@ function operatingSystemFamily(request) {
 function analyticsContext(request) {
 	const cf = request?.cf || {};
 	const browser = request ? userAgentFamily(request) : "unknown";
+	const piBrowser = Boolean(request) && PI_BROWSER_USER_AGENT.test(request.headers.get("User-Agent") || "");
 	return {
 		country: compactString(cf.country || "", 16),
 		colo: compactString(cf.colo || "", 16),
 		// Analytics Engine allows 20 blobs and all are taken, so browsers carry
 		// their OS here ("chrome/chromeos"). "other" (scripts) and "unknown"
-		// stay bare: the ops report matches them exactly.
-		userAgentFamily: browser === "other" || browser === "unknown" ? browser : `${browser}/${operatingSystemFamily(request)}`,
+		// stay bare: the ops report matches them exactly. Pi's UA has no OS.
+		userAgentFamily: browser === "other" || browser === "unknown" || piBrowser ? browser : `${browser}/${operatingSystemFamily(request)}`,
 	};
 }
 
