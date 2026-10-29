@@ -476,5 +476,7 @@ try {
 	await writeFile(join(OUTPUT, "results.json"), `${JSON.stringify(results, null, 2)}\n`);
 	await stopBrowser().catch((error) => { console.error(error); process.exitCode = 1; });
 	if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
-	await rm(profile, { recursive: true, force: true });
+	// Chrome's helper processes can still write to the profile just after the
+	// browser exits (ENOTEMPTY on CI), so retry the removal briefly.
+	await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

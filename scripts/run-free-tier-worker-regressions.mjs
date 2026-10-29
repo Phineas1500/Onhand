@@ -583,6 +583,10 @@ try {
 // and nothing that identifies the install or the IP is stored.
 {
 	const f = fixture();
+	// Two answers in the same millisecond share a timestamp, so find the new key
+	// rather than sorting.
+	const feedbackKeys = () => [...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:"));
+	const addedFeedback = (before) => JSON.parse(f.data.get(feedbackKeys().find((key) => !before.includes(key))));
 	const post = (body, ip = "203.0.113.7") => worker.fetch(new Request("https://worker.test/v1/uninstall-feedback", {
 		method: "POST",
 		headers: { "Content-Type": "application/json", "CF-Connecting-IP": ip },
@@ -608,13 +612,14 @@ try {
 	assert.equal(event.blobs[14], "2-5");
 
 	// Unknown choices are dropped; a missing or unknown reason, or a bad body, is refused.
+	const beforeUnknown = feedbackKeys();
 	assert.equal((await (await post({ ...answer, browser: "netscape", setup: "<b>", questions: "lots" })).json()).accepted, true);
-	const latest = JSON.parse(f.data.get([...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:")).sort().at(-1)));
-	assert.deepEqual([latest.browser, latest.setup, latest.questions], ["", "", ""]);
+	const unknown = addedFeedback(beforeUnknown);
+	assert.deepEqual([unknown.browser, unknown.setup, unknown.questions], ["", "", ""]);
 	assert.equal((await (await post({ ...answer, reason: "bored" })).json()).reason, "invalid_feedback");
 	assert.equal((await (await post("{not json")).json()).reason, "invalid_feedback");
 	assert.equal((await (await post({ ...answer, comment: "x".repeat(9000) })).json()).reason, "invalid_feedback");
-	assert.equal(JSON.parse(f.data.get([...f.data.keys()].filter((key) => key.startsWith("uninstall-feedback:")).sort().at(-1))).comment.length, 13);
+	assert.equal(feedbackKeys().length, 2, "refused answers are not stored");
 
 	// Ten a day per IP (refused bodies count too).
 	for (let i = 0; i < 5; i += 1) assert.equal((await (await post(answer)).json()).accepted, true);
