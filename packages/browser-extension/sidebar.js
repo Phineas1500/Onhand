@@ -144,6 +144,11 @@
 	let authStatusKind = "";
 	// A question asked before the first-run choice waits in the composer.
 	let pendingAuthPrompt = false;
+	// The first-run diagnostics box, ticked or not, while its save is in flight.
+	let authDiagnosticsChoice = null;
+	// In Firefox, Mozilla's install-time consent for technical data replaces
+	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
+	const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
 	// The runtime drops a sign-in whose refresh token was rejected and fails the
 	// turn with this message (BrowserOAuthSignInExpiredError); the question is
 	// put back once per failed turn.
@@ -2080,6 +2085,28 @@
 				color: var(--rm-subtext);
 				font: 11.5px/1.4 var(--rm-font-serif);
 			}
+			.onhand-auth-diagnostics {
+				display: flex;
+				align-items: flex-start;
+				gap: 8px;
+				margin: 2px 0 8px;
+				cursor: pointer;
+			}
+			.onhand-auth-diagnostics input {
+				margin: 2px 0 0;
+				accent-color: var(--rm-pine);
+				cursor: pointer;
+			}
+			.onhand-auth-diagnostics-title {
+				display: block;
+				color: var(--rm-text);
+				font: 700 11px/1.35 var(--rm-font-mono);
+			}
+			.onhand-auth-diagnostics-copy {
+				display: block;
+				color: var(--rm-subtext);
+				font: 11px/1.4 var(--rm-font-serif);
+			}
 			.onhand-auth-button {
 				border: 0;
 				border-radius: 3px;
@@ -3994,6 +4021,9 @@
 			return;
 		}
 		const statusClass = authStatusKind ? ` ${escapeAttribute(authStatusKind)}` : "";
+		// Diagnostics are off by default; Onhand Free turns them on regardless.
+		const showDiagnosticsChoice = !expiredTurn && !IS_FIREFOX;
+		const diagnosticsChecked = authDiagnosticsChoice ?? Boolean(state?.preferences?.diagnosticsEnabled);
 		const authCopy = expiredTurn
 			? pendingAuthPrompt
 				? "Your ChatGPT sign-in expired. Sign in again, or pick another option, and your question will be sent right away."
@@ -4018,8 +4048,31 @@
 					<span class="onhand-auth-choice-copy">OpenAI, Anthropic, Gemini, or OpenRouter — opens options.</span>
 				</button>
 			</div>
+			${
+				showDiagnosticsChoice
+					? `<label class="onhand-auth-diagnostics" for="authDiagnosticsInput">
+				<input id="authDiagnosticsInput" type="checkbox" ${diagnosticsChecked ? "checked" : ""} />
+				<span>
+					<span class="onhand-auth-diagnostics-title">Share anonymous usage data</span>
+					<span class="onhand-auth-diagnostics-copy">Event names, counts and crash reports that help improve Onhand. Never prompts, pages, URLs or keys. Onhand Free always shares them. Change this anytime in options.</span>
+				</span>
+			</label>`
+					: ""
+			}
 			${authStatusText ? `<div class="onhand-auth-actions"><span class="onhand-auth-status${statusClass}">${escapeHtml(authStatusText)}</span></div>` : ""}
 		`;
+	}
+
+	async function saveDiagnosticsChoiceFromSidebar(enabled) {
+		authDiagnosticsChoice = enabled;
+		try {
+			const response = await chrome.runtime.sendMessage({ type: "browser-runtime:update-settings", diagnosticsEnabled: enabled });
+			if (!response?.ok) throw new Error(response?.error || "Could not save the diagnostics choice.");
+			await requestState();
+		} finally {
+			authDiagnosticsChoice = null;
+			renderAuthPanel(currentState || {});
+		}
 	}
 
 	async function chooseFreeTierFromSidebar() {
@@ -8139,6 +8192,16 @@
 		if (!(button instanceof HTMLElement)) return;
 		removeAttachmentDraft(button.dataset.attachmentId || "");
 		renderState(currentState || {});
+	});
+
+	authPanelEl.addEventListener("change", (event) => {
+		const target = event.target;
+		if (!(target instanceof HTMLInputElement) || target.id !== "authDiagnosticsInput") return;
+		void saveDiagnosticsChoiceFromSidebar(target.checked).catch((error) => {
+			authStatusText = error?.message || String(error);
+			authStatusKind = "error";
+			renderAuthPanel(currentState || {});
+		});
 	});
 
 	authPanelEl.addEventListener("click", (event) => {

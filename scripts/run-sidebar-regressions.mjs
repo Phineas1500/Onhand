@@ -2345,6 +2345,43 @@ async function assertPromptBeforeFirstRunChoiceWaits() {
 	dom.window.close();
 }
 
+async function assertFirstRunDiagnosticsIsOptIn() {
+	// Without diagnostics, ChatGPT sign-in and own-key installs are invisible;
+	// first run offers the switch, off unless ticked.
+	const runtimeMessages = [];
+	const state = createState();
+	state.preferences.hasOAuthCredentials = false;
+	const dom = await renderSidebar(state, runtimeMessages);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const box = shadow.getElementById("authDiagnosticsInput");
+	assert.ok(box, "first run offers the diagnostics choice");
+	assert.equal(box.checked, false, "diagnostics stay off unless ticked");
+	box.checked = true;
+	box.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+	state.preferences.diagnosticsEnabled = true;
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	const saves = runtimeMessages.filter((message) => message.type === "browser-runtime:update-settings");
+	assert.deepEqual(JSON.parse(JSON.stringify(saves)), [{ type: "browser-runtime:update-settings", diagnosticsEnabled: true }], "ticking saves only the diagnostics choice");
+	assert.equal(shadow.getElementById("authDiagnosticsInput").checked, true, "the saved choice stays ticked");
+	dom.window.close();
+
+	// Firefox asks about technical data at install, so its switch is not Onhand's.
+	const firefoxDom = await renderSidebar(state, [], {
+		setupWindow(window) {
+			window.browser = { runtime: { getBrowserInfo: async () => ({ name: "Firefox" }) } };
+		},
+	});
+	await firefoxDom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(firefoxDom);
+	const firefoxShadow = firefoxDom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	assert.equal(firefoxShadow.getElementById("authPanel").hidden, false);
+	assert.equal(firefoxShadow.getElementById("authDiagnosticsInput"), null, "Firefox shows no Onhand diagnostics switch");
+	firefoxDom.window.close();
+}
+
 async function assertExpiredSignInOffersSignInAgain() {
 	// The runtime drops a ChatGPT sign-in whose refresh token was rejected and
 	// fails the turn with "sign-in expired". The panel asks to sign in again,
@@ -2370,6 +2407,7 @@ async function assertExpiredSignInOffersSignInAgain() {
 	assert.equal(authPanel.hidden, false);
 	assert.match(authPanel.querySelector(".onhand-auth-title").textContent, /Sign in again/);
 	assert.match(authPanel.textContent, /ChatGPT sign-in expired/);
+	assert.equal(shadow.getElementById("authDiagnosticsInput"), null, "signing in again is not first run");
 	assert.equal(shadow.getElementById("input").value, "What does this page say?", "the failed question is put back");
 	assert.equal(shadow.querySelector('[data-error-report-turn-id="turn-expired"]'), null, "an expired sign-in is not offered as a bug report");
 	state.preferences.hasOAuthCredentials = true;
@@ -3009,6 +3047,7 @@ await assertRealtimeMicPickerConstrainsSelectedDevice();
 await assertRealtimeMicMuteControl();
 await assertRealtimeVoiceDisabledState();
 await assertPromptBeforeFirstRunChoiceWaits();
+await assertFirstRunDiagnosticsIsOptIn();
 await assertExpiredSignInOffersSignInAgain();
 await assertEmptyCitationMarkerIsNotShown();
 await assertLookAlikeCitationMarkersAreNotShown();
