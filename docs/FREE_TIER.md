@@ -47,8 +47,10 @@ key's OpenAI project and draws from its applicable API credits.
 
 - client-visible model allowlist: `gpt-6-luna`, plus `openai/gpt-5.6-luna`
   as a compatibility alias for published extensions; both route to GPT-6 Luna
-- `DAILY_REQUEST_CAP` (default 150 model calls ≈ 40-75 ordinary questions or
-  ~14-20 Learning research turns/day; raised from 80 on 2026-10-08)
+- `DAILY_REQUEST_CAP` (default 150 model calls ≈ 30-50 ordinary questions or
+  ~14-20 Learning research turns/day; raised from 80 on 2026-10-08). Each
+  answer adds one short call for the composer's follow-up suggestion, tagged
+  with that answer's turn id.
 - `DAILY_COST_CAP_USD` (default `$5` shared hosted-model spend/day)
 - `REQUEST_COST_RESERVATION_USD` (default `$0.25` estimated hold before dispatch)
 - `CONCURRENT_REQUEST_CAP` (default 4 active requests per UTC day)

@@ -1153,6 +1153,8 @@ function evaluateTurn(result, testCase, variant, elapsedMs) {
 		hasHighlightStatusNarration: /\bI(?:(?:'|’)ve| have)\s+(?:marked|highlighted)\b|\bEach\s+(?:section|item|source|passage|point)[^.]{0,160}\bhighlighted\b|\b(?:the\s+)?highlights?(?:\s+and\s+notes?)?\s+on\s+(?:the\s+)?page\s+(?:cover|show|mark|identify)\b|\b(?:a|an|another|separate|additional|the)?\s*(?:source\s+)?(?:highlight|marker)[^.!?\n]{0,120}\b(?:could(?:\s+not|n't)|cannot|can't|failed\s+to|was\s+not|wasn't)\b|\b(?:the\s+)?(?:one|two|three|four|five|six|\d+)\s+central\s+concepts?\s+are\s+highlighted\s+on\s+(?:the\s+)?page\b|\((?:the\s+)?(?:first|second|third|fourth|fifth|sixth|\d+(?:st|nd|rd|th))\s+(?:source\s+)?highlight|\(\s*\*?(?:not\s+)?highlight(?:ed)?[^)]{0,100}\*?\s*\)/i.test(reply),
 		hasMalformedTableArtifact: /^\s*[-*]\s+[^:\n]{1,80}:\s+Aspect:\s+/im.test(reply),
 		hasFragmentedMath: regex(FRAGMENTED_MATH_PATTERN, "im").test(reply) || regex(MALFORMED_DISPLAY_MATH_PATTERN, "im").test(reply),
+		// The composer's ghost-text follow-up suggestion, written after the answer.
+		suggestedFollowUp: typeof turn.suggestedFollowUp === "string" ? turn.suggestedFollowUp : "",
 	};
 	const failures = [];
 	const warnings = [];
@@ -1340,6 +1342,20 @@ async function selectTextInTarget(args, targetId, text) {
 	}
 }
 
+// The composer's follow-up suggestion comes from a separate call after the
+// answer lands, so give it a few seconds before the turn is scored.
+async function attachFollowUpSuggestion(raw, args) {
+	const turn = raw?.turn;
+	if (!turn?.id || turn.error || turn.suggestedFollowUp) return raw;
+	for (let attempt = 0; attempt < 12; attempt += 1) {
+		await sleep(500);
+		const state = await runCli(["state", "--json"], args).catch(() => null);
+		const latest = (Array.isArray(state?.turns) ? state.turns : []).find((entry) => entry?.id === turn.id);
+		if (latest?.suggestedFollowUp) return { ...raw, turn: { ...turn, suggestedFollowUp: latest.suggestedFollowUp } };
+	}
+	return raw;
+}
+
 async function runOne(testCase, variant, args, runDir, rubric = "") {
 	const cliArgs = [
 		...(testCase.selectText ? ["ask", "--new"] : ["ask-new-url", testCase.url]),
@@ -1374,7 +1390,9 @@ async function runOne(testCase, variant, args, runDir, rubric = "") {
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			const startedAt = Date.now();
 			raw = await runCli(cliArgs, args);
-			evaluation = evaluateTurn(raw, testCase, variant, Date.now() - startedAt);
+			const elapsedMs = Date.now() - startedAt;
+			if (!args.voice) raw = await attachFollowUpSuggestion(raw, args);
+			evaluation = evaluateTurn(raw, testCase, variant, elapsedMs);
 			if (args.voice) evaluation = applyVoiceChecks(evaluation, raw, testCase);
 			if (attempt === 0 && shouldRetryBlankPageAnswer(evaluation)) {
 				retriedBlankAnswer = true;
@@ -1561,6 +1579,7 @@ function markdownReport(plan, results, variantSummary) {
 		lines.push(`### ${result.caseId} / ${result.variantId}`, "");
 		if (testCase) lines.push(`Prompt: ${testCase.prompt}`, `URL: ${testCase.url}${testCase.setupUrls?.length ? ` (also open: ${testCase.setupUrls.join(", ")})` : ""}`, "");
 		lines.push("Reply:", "", ...String(result.reply || "(none)").split("\n").map((line) => `> ${line}`), "");
+		if (result.metrics?.suggestedFollowUp) lines.push(`Suggested follow-up: ${result.metrics.suggestedFollowUp}`, "");
 		if (result.voice) lines.push(`Spoken (${result.voice.engine}):`, "", `> ${result.voice.spoken || "(nothing)"}`, "");
 		if (result.highlights?.length) lines.push("Highlights:", ...result.highlights.map((text) => `- ${String(text).split("\n")[0]}`), "");
 		if (result.notes?.length) lines.push("Notes:", ...result.notes.map((text) => `- ${text}`), "");

@@ -99,6 +99,7 @@ const liveInterruptionInput = document.getElementById("liveInterruptionEnabled")
 const diagnosticsEnabledInput = document.getElementById("diagnosticsEnabled");
 const diagnosticsHelpEl = document.getElementById("diagnosticsHelp");
 const advancedRuntimeInspectionEnabledInput = document.getElementById("advancedRuntimeInspectionEnabled");
+const followUpSuggestionsEnabledInput = document.getElementById("followUpSuggestionsEnabled");
 if (IS_FIREFOX) {
 	// Firefox builds never run page scripts (see RUNTIME_JS_ALLOWED in
 	// browser-runtime.ts), so the switch has nothing to control there.
@@ -408,6 +409,8 @@ async function loadForm() {
 	diagnosticsEnabledInput.checked = diagnosticsChoice;
 	advancedRuntimeInspectionEnabledInput.checked = runtimeSettings.advancedRuntimeInspectionEnabled !== false;
 	codexFastModeEnabledInput.checked = runtimeSettings.codexFastModeEnabled === true;
+	// Default-on: unset storage renders checked, like the classifier below.
+	followUpSuggestionsEnabledInput.checked = runtimeSettings.followUpSuggestionsEnabled !== false;
 	// Default-on (see DEFAULT_SETTINGS): unset storage must render CHECKED, or
 	// the first autosave would write an explicit false and silently opt the
 	// user out before their first turn.
@@ -459,6 +462,7 @@ async function save() {
 		diagnosticsEnabled: isFreeTierMode() || diagnosticsChoice,
 		advancedRuntimeInspectionEnabled: Boolean(advancedRuntimeInspectionEnabledInput.checked),
 		codexFastModeEnabled: Boolean(codexFastModeEnabledInput.checked),
+		followUpSuggestionsEnabled: Boolean(followUpSuggestionsEnabledInput.checked),
 		experimentalModelLaneClassifier: Boolean(experimentalModelLaneClassifierInput.checked),
 		aiApiKey: aiApiKeys.openai || "",
 		aiApiKeys,
@@ -584,7 +588,7 @@ diagnosticsEnabledInput.addEventListener("change", () => {
 	diagnosticsChoice = diagnosticsEnabledInput.checked;
 	scheduleSave();
 });
-for (const input of [liveResponsesModelInput, liveInterruptionInput, codexFastModeEnabledInput, advancedRuntimeInspectionEnabledInput, experimentalModelLaneClassifierInput]) {
+for (const input of [liveResponsesModelInput, liveInterruptionInput, codexFastModeEnabledInput, followUpSuggestionsEnabledInput, advancedRuntimeInspectionEnabledInput, experimentalModelLaneClassifierInput]) {
 	input.addEventListener("change", () => scheduleSave());
 }
 removeKeyButton.addEventListener("click", () => removeSelectedKey().catch(reportError));

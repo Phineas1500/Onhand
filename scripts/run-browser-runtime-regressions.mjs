@@ -4,6 +4,7 @@ import { runVoiceTranscriptRegressions } from "./lib/voice-transcript-regression
 import { runSessionPageActionRestoreRegressions } from "./lib/session-page-action-restore-regressions.mjs";
 import { runPdfViewerTabRegressions } from "./lib/pdf-viewer-tab-regressions.mjs";
 import assert from "node:assert/strict";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
 import { rankPdfCorpusTextPages, searchPdfCorpus } from "../packages/browser-extension/pdf-corpus-search.bundle.js";
 
@@ -292,6 +293,15 @@ async function waitForRuntimeCompletion(runtime, timeoutMs = 10000) {
 	return state;
 }
 
+async function waitForCondition(check, message, timeoutMs = 5000) {
+	const startedAt = Date.now();
+	while (Date.now() - startedAt <= timeoutMs) {
+		if (await check()) return;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	assert.fail(`timed out: ${message}`);
+}
+
 
 async function assertIntentClassifierSendsItsInstructions() {
 	// pi-ai 1.0 providers read the system prompt only from transcript system
@@ -533,12 +543,48 @@ async function assertDecisionsIntentClassifier() {
 	console.log("Decisions intent classifier: request, cutoffs, errors, and eligibility passed");
 }
 
+// After an answer, one short separate call writes the question the reader
+// would likely ask next (composer ghost text). The answer's own prompt is
+// untouched; the call is skipped when the reply is waiting on the reader.
+async function assertFollowUpSuggestionRules() {
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const { shouldSuggestFollowUpForTest: should, buildFollowUpSuggestionPromptForTest: prompt, parseFollowUpSuggestionForTest: parse } = test;
+	const request = { source: "sidebar", settings: { aiProvider: "onhand-free" } };
+	assert.equal(should("The page argues X. [[cite:a]]", request, null), true);
+	assert.equal(should("The page argues X.\n\nCheck: Why does X follow from Y?", request, null), false,
+		"a reply waiting on the reader's answer (a Learning check) gets no new question");
+	assert.equal(should("Which section do you mean? [[cite:a]]", request, null), false, "nor does a clarifying question");
+	assert.equal(should("The page argues X.", request, new Error("boom")), false, "nor a failed turn");
+	assert.equal(should("The page argues X.", { ...request, aborted: true }, null), false, "nor a stopped one");
+	assert.equal(should("The page argues X.", { ...request, source: "live-responses" }, null), false, "voice calls get no suggestion");
+	assert.equal(should("(No reply generated.)", request, null), false);
+	assert.equal(should("The page argues X.", { ...request, settings: { ...request.settings, followUpSuggestionsEnabled: false } }, null), false,
+		"nor when the reader turned suggestions off");
+	assert.equal(should("Browser runtime smoke ok", { ...request, settings: { aiProvider: "onhand-smoke" } }, null), false,
+		"the scripted smoke model has no reply to spare for the call");
+
+	const text = prompt("Summarize this page.", "Retention drops after week one. [[cite:onhand-1]]");
+	assert.match(text, /Reader's question:\nSummarize this page\./);
+	assert.match(text, /Onhand's answer:\nRetention drops after week one\.$/m, "citation markers stay out of the call");
+	assert.match(text, /never ask for something the answer already covers/);
+	assert.match(text, /Never ask Onhand to list or repeat what it just wrote or marked/, "the reader can already see the marks");
+
+	assert.equal(parse('{"question": "What causes the week-one drop?"}', "Summarize this page."), "What causes the week-one drop?");
+	assert.equal(parse('```json\n{"question": " \u201cHow does it compare?\u201d "}\n```', "x"), "How does it compare?", "fences, spacing and quotes are forgiven");
+	assert.equal(parse('{"question": ""}', "x"), "", "no natural follow-up");
+	assert.equal(parse('{"question": "Ok"}', "x"), "", "too short");
+	assert.equal(parse('{"question": "See [[cite:a]]"}', "x"), "", "markup is never offered");
+	assert.equal(parse('{"question": "Summarize this page"}', "Summarize this page."), "", "repeating the reader's question is no suggestion");
+	assert.equal(parse("Sure! Here's one.", "x"), "", "prose instead of JSON");
+	console.log("Follow-up suggestion: gating, prompt and parsing passed");
+}
+
 // A full turn: Decisions decides when confident, and the model classifier takes
 // over when a field is unsure or the call fails. The turn records which.
 async function assertTurnsUseDecisionsWhenConfident() {
 	const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const fields = ["pageScoped", "teaching", "enumerableCoverage", "comparison", "crossTabComparison", "documentReviewMarkup", "problemSolvingHelp"];
-	const runTurn = async (respond) => {
+	const runTurn = async (respond, settings = {}) => {
 		installChromeStorageStub();
 		const requests = [];
 		const host = createReplayHost();
@@ -548,10 +594,10 @@ async function assertTurnsUseDecisionsWhenConfident() {
 		try {
 			const runtime = createOnhandBrowserRuntime(host);
 			await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key",
-				aiApiKeys: { openai: "sk-test-decisions" }, experimentalModelLaneClassifier: true, modelLaneClassifierDefaultMigrated: true });
+				aiApiKeys: { openai: "sk-test-decisions" }, experimentalModelLaneClassifier: true, modelLaneClassifierDefaultMigrated: true, ...settings });
 			await runtime.submitPrompt({ prompt: "Summarize this page.", displayPrompt: "Summarize this page.", attachments: [] });
 			const state = await waitForRuntimeCompletion(runtime);
-			return { turn: state.turns.at(-1), requests, calls: host.calls, finished };
+			return { turn: state.turns.at(-1), requests, calls: host.calls, finished, runtime };
 		} finally {
 			test.setDecisionsFetchForTest(null);
 		}
@@ -571,6 +617,44 @@ async function assertTurnsUseDecisionsWhenConfident() {
 	assert.ok(decided.calls.some((call) => call.name === "highlight_text"), "fixture: this turn highlights the page");
 	// background.js counts answered questions (rating prompt, uninstall page) from this hook.
 	assert.deepEqual(decided.finished, [{ result: "ok", source: "sidebar" }], "a finished prompt reports how it ended");
+	assert.equal(decided.turn.suggestedFollowUp, undefined, "smoke turns write no follow-up suggestion");
+
+	// With a stand-in model for the suggestion call, the answer is saved first
+	// and the suggestion is attached, saved and published after it.
+	const suggestionPrompts = [];
+	let releaseSuggestion;
+	const suggestionGate = new Promise((resolve) => { releaseSuggestion = resolve; });
+	test.setFollowUpSuggestionModelForTest(async (prompt) => {
+		suggestionPrompts.push(prompt);
+		await suggestionGate;
+		return '{"question": "What else does this page cover?"}';
+	});
+	try {
+		const suggested = await runTurn(() => answer());
+		assert.equal(suggested.turn.reply, "Browser runtime smoke ok");
+		assert.equal(suggested.turn.suggestedFollowUp, undefined, "the answer does not wait for the suggestion");
+		await waitForCondition(() => suggestionPrompts.length === 1, "the suggestion call runs after the answer");
+		assert.match(suggestionPrompts[0], /Reader's question:\nSummarize this page\.\n\nOnhand's answer:\nBrowser runtime smoke ok/);
+		releaseSuggestion();
+		let latest = null;
+		await waitForCondition(async () => {
+			latest = (await suggested.runtime.getState()).turns.at(-1);
+			return Boolean(latest?.suggestedFollowUp);
+		}, "the suggestion reaches the sidebar state");
+		assert.equal(latest.suggestedFollowUp, "What else does this page cover?");
+		const reloaded = createOnhandBrowserRuntime(createReplayHost());
+		assert.equal((await reloaded.getState()).turns.at(-1).suggestedFollowUp, "What else does this page cover?", "the suggestion is saved with the turn");
+
+		// Turned off in Settings: no extra call, and the sidebar is told.
+		const off = await runTurn(() => answer(), { followUpSuggestionsEnabled: false });
+		assert.equal(off.turn.reply, "Browser runtime smoke ok");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.equal(suggestionPrompts.length, 1, "an opted-out reader's answer makes no suggestion call");
+		assert.equal((await off.runtime.getState()).preferences.followUpSuggestionsEnabled, false);
+		assert.equal((await off.runtime.getSettings()).followUpSuggestionsEnabled, false, "the opt-out is saved");
+	} finally {
+		test.setFollowUpSuggestionModelForTest(null);
+	}
 
 	// The same request, with Decisions saying the user wants the page left
 	// unmarked: nothing is highlighted.
@@ -6813,6 +6897,7 @@ async function assertModelIntentClassifierDefaultsOn() {
 	let runtime = createOnhandBrowserRuntime(createReplayHost());
 	let settings = await runtime.getSettings();
 	assert.equal(settings.experimentalModelLaneClassifier, true, "model intent classifier should default ON for a fresh install");
+	assert.equal(settings.followUpSuggestionsEnabled, true, "follow-up suggestions are on for a fresh install");
 	// Legacy stored false with NO migration marker → adopt the new default (ON),
 	// because that false is an artifact of the old default, not a real opt-out.
 	globalThis.chrome.storage.local.data = {
@@ -11767,11 +11852,21 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	// model (Luna asked Sol turns for extra research rounds).
 	assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider: "openai-codex", aiModel: "gpt-6.1-sol", authMode: "oauth" }), { aiProvider: "openai-codex", aiModel: "gpt-6-luna", authMode: "oauth" });
 	assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider: "openai", aiModel: "gpt-6-sol" }), { aiProvider: "openai", aiModel: "gpt-6-luna" });
+	// Other key providers use their cheapest current model, which must exist in
+	// the bundled catalog or every call would pay a failed request first.
+	for (const [aiProvider, aiModel, fast] of [
+		["anthropic", "claude-sonnet-4-5-20250929", "claude-haiku-5-5"],
+		["google", "gemini-2.5-flash", "gemini-3.1-flash-lite"],
+		["openrouter", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"],
+	]) {
+		assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider, aiModel }), { aiProvider, aiModel: fast });
+		assert.ok(getModels(aiProvider).some((model) => model.id === fast), `${aiProvider}/${fast} is in the model catalog`);
+	}
 	for (const settings of [
 		{ aiProvider: "openai-codex", aiModel: "gpt-6-luna" },
 		{ aiProvider: "onhand-free", aiModel: "gpt-6-luna" },
-		{ aiProvider: "anthropic", aiModel: "claude-sonnet-4-5-20250929" },
-		{ aiProvider: "openrouter", aiModel: "deepseek/deepseek-v4-flash" },
+		{ aiProvider: "anthropic", aiModel: "claude-haiku-5-5" },
+		{ aiProvider: "openrouter", aiModel: "deepseek/deepseek-v4.1-flash" },
 	]) assert.equal(test.internalJsonFastModelSettingsForTest(settings), null, `${settings.aiProvider}/${settings.aiModel} keeps its model`);
 	// Research rounds stop once a round reads no source it had not already
 	// read: re-searching the same PDFs cannot change the evidence verdict.
@@ -11788,7 +11883,7 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.match(runtimeFinalRoundSource, /buildLearningResearchContinuationPrompt\(activeRequest, continuationAssessment, assistantText, retryCount \+ 1 >= retryLimit\)/);
 	assert.match(runtimeFinalRoundSource, /else if \(activeAgent && !activeRequest\.aborted && learningReplyIsProgressUpdate\(assistantText\)\) \{\s*activeRequest\.learningFinalAnswerRetry = true;/);
 	assert.match(runtimeFinalRoundSource, /if \(signal\?\.aborted \|\| \/Internal planner timed out\/\.test\(/, "a timed-out or aborted fast call is not retried");
-	assert.equal((runtimeFinalRoundSource.match(/\{ fastModel: true \}/g) || []).length, 2, "only the planner and reranker opt into the fast model");
+	assert.equal((runtimeFinalRoundSource.match(/\{ fastModel: true[ ,]/g) || []).length, 3, "only the planner, the reranker and the follow-up suggestion opt into the fast model");
 	assert.match(runtimeFinalRoundSource, /const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number\(activeRequest\.learningResearchSourcesBeforeRound \|\| 0\);/);
 	assert.match(runtimeFinalRoundSource, /retryCount < retryLimit && !roundReadNoNewSource\) \{\s*activeRequest\.learningResearchPlanRetryCount = retryCount \+ 1;\s*activeRequest\.learningResearchSourcesBeforeRound = sourcesRead;/, "a round that read no new source ends the research");
 	assert.match(runtimeFinalRoundSource, /buildLearningEvidenceAssessmentPrompt\(request, assistantText\),\s*request\.settings as RuntimeSettings,\s*500,\s*12000,\s*\);/, "the evidence check runs on the chosen model");
@@ -12938,6 +13033,7 @@ async function main() {
 	await assertOpenRouterRequestsIdentifyOnhand();
 	await assertDecisionsIntentClassifier();
 	await assertChromeWebStoreTabGetsPlainContextNote();
+	await assertFollowUpSuggestionRules();
 	await assertTurnsUseDecisionsWhenConfident();
 	await assertVoiceCommandsRunDirectly();
 	await assertExpiredChatGPTSignInAsksToSignInAgain();

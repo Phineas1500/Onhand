@@ -122,6 +122,9 @@ interface RuntimeSettings {
 	// the same model on faster inference. Off by default because the plan's
 	// usage is consumed faster (2.5x on gpt-5.5). Ignored by other providers.
 	codexFastModeEnabled: boolean;
+	// After each answer, one short model call suggests the reader's likely next
+	// question as composer ghost text. On by default; a stored false opts out.
+	followUpSuggestionsEnabled: boolean;
 }
 
 type ReasoningProfileName = "grounded" | "document-review" | "page-notes" | "compact-teaching";
@@ -176,6 +179,9 @@ interface UiTurn {
 	modelCalls?: number;
 	durationMs?: number;
 	provisionalAnswerExposed?: boolean;
+	// The question the model expects the reader to ask next, offered as ghost
+	// text in the composer. Never part of reply.
+	suggestedFollowUp?: string;
 	errorReport?: RuntimeErrorReportSnapshot | null;
 }
 
@@ -624,9 +630,14 @@ function buildOpenRouterFallbackModel(modelId: string) {
 // same sign-in or key. The evidence check stays on the reader's model: on Luna
 // it asked Sol turns for 2-4 research rounds instead of 1, and the extra
 // rounds wandered to outside sites (113-124 s turns instead of 70-101 s).
+// The other key providers use their cheapest current model; each passed the
+// planner, reranker and follow-up suggestion prompts in 0.3-2 s (2026-10-30).
 const INTERNAL_JSON_FAST_MODEL_BY_PROVIDER: Record<string, string> = {
 	[OPENAI_API_PROVIDER]: "gpt-6-luna",
 	[OPENAI_CODEX_PROVIDER]: "gpt-6-luna",
+	[ANTHROPIC_API_PROVIDER]: "claude-haiku-5-5",
+	[GOOGLE_API_PROVIDER]: "gemini-3.1-flash-lite",
+	[OPENROUTER_API_PROVIDER]: "deepseek/deepseek-v4.1-flash",
 };
 
 function internalJsonFastModelSettings<T extends { aiProvider: string; aiModel: string }>(settings: T): T | null {
@@ -720,6 +731,7 @@ const DEFAULT_SETTINGS: RuntimeSettings = {
 	modelLaneClassifierDefaultMigrated: false,
 	voiceDefaultsMigrated: false,
 	codexFastModeEnabled: false,
+	followUpSuggestionsEnabled: true,
 };
 
 const ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
@@ -2810,6 +2822,7 @@ function buildPublicSettings(settings: RuntimeSettings) {
 		advancedRuntimeInspectionEnabled: settings.advancedRuntimeInspectionEnabled,
 		experimentalModelLaneClassifier: settings.experimentalModelLaneClassifier,
 		codexFastModeEnabled: settings.codexFastModeEnabled,
+		followUpSuggestionsEnabled: settings.followUpSuggestionsEnabled !== false,
 		aiProvider: settings.aiProvider,
 		aiModel: settings.aiModel,
 		authMode: settings.authMode,
@@ -3730,6 +3743,55 @@ function stripCitationProvenanceMarkers(text: unknown) {
 		.replace(/\[\[\s*cite\s*:\s*[^\]]*?\s*\]\]/gi, "")
 		.replace(/[ \t]{2,}/g, " ")
 		.replace(/[ \t]+(\n|$)/g, "$1");
+}
+
+// After an answer is shown, one short model call writes the question the
+// reader would most likely ask next; the sidebar offers it as composer ghost
+// text (Tab fills it in). It runs apart from the answer so the answer's prompt
+// stays untouched: asked for inline, as a hidden last line of the answer, the
+// model sometimes held content back for the suggestion and offered one on only
+// a fifth of answers.
+const SUGGESTED_FOLLOW_UP_MAX_CHARS = 160;
+const SUGGESTED_FOLLOW_UP_ANSWER_MAX_CHARS = 3000;
+// The scripted smoke model has no reply to spare for this call, so smoke
+// turns suggest nothing unless a test supplies the model's answer.
+let followUpSuggestionModelForTest: ((prompt: string) => Promise<string>) | null = null;
+
+function shouldSuggestFollowUp(reply: string, request: any, finalError: unknown) {
+	if (finalError || request?.aborted || request?.superseded || request?.source === "live-responses") return false;
+	if (request?.settings?.followUpSuggestionsEnabled === false) return false;
+	if (request?.settings?.aiProvider === SMOKE_PROVIDER && !followUpSuggestionModelForTest) return false;
+	const text = stripCitationProvenanceMarkers(reply).trim();
+	if (!text || text === "(No reply generated.)") return false;
+	// A reply that ends by asking the reader something (a Learning check, a
+	// clarifying question) is waiting for their answer, not a new question.
+	const lastLine = text.split("\n").pop() || "";
+	return !/\?[\s*_)"'”’]*$/.test(lastLine);
+}
+
+function buildFollowUpSuggestionPrompt(question: string, reply: string) {
+	return [
+		"Write the question this reader would most likely type next in Onhand's browser side panel, after reading the answer below.",
+		"- It must go beyond the answer: never ask for something the answer already covers or that follows directly from it.",
+		"- Never ask Onhand to list or repeat what it just wrote or marked on the page; the reader can already see it.",
+		"- Write it as the reader would type it, in the language of their question, in under 15 words.",
+		"- Make it specific to this answer, not generic like \"Tell me more\".",
+		'- Return {"question": ""} when no follow-up is natural.',
+		"",
+		`Reader's question:\n${truncate(String(question || "").trim(), 600)}`,
+		"",
+		`Onhand's answer:\n${truncate(stripCitationProvenanceMarkers(reply).trim(), SUGGESTED_FOLLOW_UP_ANSWER_MAX_CHARS)}`,
+		"",
+		'Return JSON only: {"question": "..."}',
+	].join("\n");
+}
+
+function parseFollowUpSuggestion(raw: unknown, question: string) {
+	const value = (parseJsonObject(raw) as any).question;
+	const suggestion = String(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().replace(/^["'“‘]+|["'”’]+$/g, "").trim();
+	if (suggestion.length < 4 || suggestion.length > SUGGESTED_FOLLOW_UP_MAX_CHARS || /[\[\]<>]/.test(suggestion)) return "";
+	const words = (text: unknown) => String(text || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+	return words(suggestion) === words(question) ? "" : suggestion;
 }
 
 function createStoredConversationMessages(turns: UiTurn[] = []): AgentMessage[] {
@@ -11625,6 +11687,9 @@ export const __browserRuntimeTest = {
 	setDecisionsFetchForTest(fetcher: typeof fetch | null) {
 		decisionsFetchForTest = fetcher;
 	},
+	setFollowUpSuggestionModelForTest(model: ((prompt: string) => Promise<string>) | null) {
+		followUpSuggestionModelForTest = model;
+	},
 	buildLearningResearchPlannerPromptForTest: buildLearningResearchPlannerPrompt,
 	parseLearningResearchPlanForTest: parseLearningResearchPlan,
 	buildLearningResearchDirectiveForTest: buildLearningResearchDirective,
@@ -11734,6 +11799,9 @@ export const __browserRuntimeTest = {
 		shouldRequirePdfAnchorRetryForTest: shouldRequirePdfAnchorRetry,
 		buildPdfAnchorRetryPromptForTest: buildPdfAnchorRetryPrompt,
 	sanitizeAssistantVisibleReplyForTest: sanitizeAssistantVisibleReply,
+	shouldSuggestFollowUpForTest: shouldSuggestFollowUp,
+	buildFollowUpSuggestionPromptForTest: buildFollowUpSuggestionPrompt,
+	parseFollowUpSuggestionForTest: parseFollowUpSuggestion,
 	shouldRecordFallbackOpenCheckForTest: shouldRecordFallbackOpenCheckForRequest,
 	buildFinalAssistantReplyForTest: buildFinalAssistantReply,
 	buildBlankReplyRetryPromptForTest: buildBlankReplyRetryPrompt,
@@ -13377,6 +13445,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 				modelLaneClassifierDefaultMigrated: true,
 				voiceDefaultsMigrated: true,
 				codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
+				followUpSuggestionsEnabled: rawSettings.followUpSuggestionsEnabled !== false,
 			};
 			// Retired with the Realtime engine (October 2026); Live is the only engine.
 			delete (settings as any).voiceEngine;
@@ -14361,13 +14430,35 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		};
 	}
 
-	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = [], { fastModel = false } = {}) {
-		const signal = activeRequest?.abortController?.signal;
+	async function suggestFollowUpForTurn(sessionId: string, turn: UiTurn, settings: RuntimeSettings) {
+		try {
+			const prompt = buildFollowUpSuggestionPrompt(turn.userPrompt, turn.reply);
+			const raw = followUpSuggestionModelForTest
+				? await followUpSuggestionModelForTest(prompt)
+				: await runInternalTutorJsonPrompt(prompt, settings, 120, 10000, [], { fastModel: true, afterTurnId: turn.id });
+			const suggestion = parseFollowUpSuggestion(raw, turn.userPrompt);
+			if (!suggestion) return;
+			const store = await loadStore();
+			const session = store.sessions[sessionId] as RuntimeSession | undefined;
+			if (!session?.turns?.some((entry) => entry.id === turn.id)) return;
+			session.turns = session.turns.map((entry) => (entry.id === turn.id ? { ...entry, suggestedFollowUp: suggestion } : entry));
+			await saveStore(store, { sessions: [session] });
+			// Once a new question is under way, this suggestion is stale for the composer.
+			if (store.currentSessionId === sessionId && !activeRequest) await publishState({ turns: session.turns });
+		} catch (error) {
+			host.log?.("Follow-up suggestion failed", error);
+		}
+	}
+
+	// afterTurnId: the call follows that finished turn (the follow-up
+	// suggestion) and belongs to it, not to whatever request runs now.
+	async function runInternalTutorJsonPrompt(prompt: string, settings: RuntimeSettings, maxTokens = 900, timeoutMs = 15000, images: any[] = [], { fastModel = false, afterTurnId = "" } = {}) {
+		const signal = afterTurnId ? undefined : activeRequest?.abortController?.signal;
 		const fastSettings = fastModel ? internalJsonFastModelSettings(settings) : null;
 		if (fastSettings) {
 			try {
 				const fastModel = await withAbortSignal(signal, () => getConfiguredModel(fastSettings));
-				return await runInternalJsonPromptOnModel(fastModel, prompt, maxTokens, timeoutMs, images);
+				return await runInternalJsonPromptOnModel(fastModel, prompt, maxTokens, timeoutMs, images, afterTurnId);
 			} catch (error) {
 				// A timeout would only take longer on the slower model, and an
 				// aborted turn is over; anything else (the fast model missing from
@@ -14377,18 +14468,18 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 		}
 		const model = await withAbortSignal(signal, () => getConfiguredModel(settings));
-		return await runInternalJsonPromptOnModel(model, prompt, maxTokens, timeoutMs, images);
+		return await runInternalJsonPromptOnModel(model, prompt, maxTokens, timeoutMs, images, afterTurnId);
 	}
 
-	async function runInternalJsonPromptOnModel(model: any, prompt: string, maxTokens: number, timeoutMs: number, images: any[]) {
-		const request = activeRequest;
+	async function runInternalJsonPromptOnModel(model: any, prompt: string, maxTokens: number, timeoutMs: number, images: any[], afterTurnId = "") {
+		const request = afterTurnId ? null : activeRequest;
 		const signal = request?.abortController?.signal;
 		const timing = request?.preparationTiming;
 		if (timing && model?.id && !timing.internalJsonModels?.includes(model.id)) timing.internalJsonModels = [...(timing.internalJsonModels || []), String(model.id)];
 		const currentSession = await withAbortSignal(signal, () => getCurrentSession().catch(() => null));
-		if (activeRequest) activeRequest.internalModelCallCount = Number(activeRequest.internalModelCallCount || 0) + 1;
+		if (request) request.internalModelCallCount = Number(request.internalModelCallCount || 0) + 1;
 		const telemetry = {
-			turnId: activeRequest?.id || crypto.randomUUID(),
+			turnId: afterTurnId || request?.id || crypto.randomUUID(),
 			sessionId: currentSession?.id || "",
 		};
 		const agent = new Agent({
@@ -15388,7 +15479,10 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 			}
 		}
 		captureDebugTurnTrace(session, finalError, toolReliability);
+		const followUpSettings = activeRequest.settings as RuntimeSettings;
+		const suggestFollowUp = !persistenceError && shouldSuggestFollowUp(reply, activeRequest, finalError);
 		activeRequest = null;
+		if (suggestFollowUp) void suggestFollowUpForTurn(session.id, turn, followUpSettings);
 	}
 
 	function handleAgentEvent(session: RuntimeSession, requestId: string, event: AgentEvent) {
@@ -17522,6 +17616,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				modelLaneClassifierDefaultMigrated: true,
 				voiceDefaultsMigrated: true,
 				codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store.settings.codexFastModeEnabled) === true,
+				followUpSuggestionsEnabled: (nextPartial.followUpSuggestionsEnabled ?? store.settings.followUpSuggestionsEnabled) !== false,
 			};
 			delete (store.settings as any).voiceEngine;
 			syncSentryDiagnostics(store.settings as RuntimeSettings);

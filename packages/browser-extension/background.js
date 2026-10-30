@@ -15439,6 +15439,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 				advancedRuntimeInspectionEnabled: message.advancedRuntimeInspectionEnabled,
 				experimentalModelLaneClassifier: message.experimentalModelLaneClassifier,
 				codexFastModeEnabled: message.codexFastModeEnabled,
+				followUpSuggestionsEnabled: message.followUpSuggestionsEnabled,
 			});
 			void updateUninstallUrl().catch(() => {});
 			sendResponse({

@@ -153,6 +153,7 @@
 	// The first-run diagnostics box, ticked or not, while its save is in flight.
 	let authDiagnosticsChoice = null;
 	let ratingPromptVisible = false;
+	let followUpSuggestion = "";
 	// In Firefox, Mozilla's install-time consent for technical data replaces
 	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
 	const IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
@@ -3876,6 +3877,7 @@
 	const realtimeMicSelect = shadow.getElementById("realtimeMicSelect");
 	const attachmentList = shadow.getElementById("attachmentList");
 	const input = shadow.getElementById("input");
+	const defaultInputPlaceholder = input.placeholder;
 	const helper = shadow.getElementById("helper");
 	const sendButton = shadow.getElementById("sendButton");
 	themeSelect.value = sidebarTheme;
@@ -5060,6 +5062,25 @@
 		ratingPromptVisible = false;
 		renderRatingPrompt(currentState || {});
 		void chrome.storage.local.set({ [RATING_PROMPT_STORAGE_KEY]: choice }).catch(() => {});
+	}
+
+	// The latest finished answer can carry the question the reader would likely
+	// ask next. It shows as ghost text in the empty composer; Tab fills it in
+	// and Enter sends it like anything typed.
+	function renderFollowUpSuggestion(state, turns) {
+		const latest = turns[turns.length - 1];
+		const idle = !state?.activeRequestId && !sending && !liveVoice && !realtimeConnected && !replayState.open;
+		const enabled = state?.preferences?.followUpSuggestionsEnabled !== false;
+		followUpSuggestion = enabled && idle && latest && !latest.pending && !latest.error && typeof latest.suggestedFollowUp === "string"
+			? latest.suggestedFollowUp.trim()
+			: "";
+		input.placeholder = followUpSuggestion || defaultInputPlaceholder;
+	}
+
+	function composerIdleHint() {
+		return followUpSuggestion && !input.value
+			? "tab use suggestion · enter ask · shift+enter newline"
+			: "esc dismiss · enter ask · shift+enter newline";
 	}
 
 	function renderRatingPrompt(state) {
@@ -6640,6 +6661,7 @@
 		renderMessages(displayTurns, annotationCount);
 		renderLatestReply(state, currentTurn);
 		renderActions(state);
+		renderFollowUpSuggestion(state, displayTurns);
 
 		const activeRequest = Boolean(state?.activeRequestId);
 		const changingSession = creatingSession || sessionSwitching || deletingSession || restoringSession;
@@ -6659,7 +6681,7 @@
 				? liveVoice ? "Live · speak naturally, or type here" : "voice is live · speak then pause, or type here"
 			: attachmentDrafts.length
 				? "attachments ready · enter ask"
-				: "esc dismiss · enter ask · shift+enter newline";
+				: composerIdleHint();
 		// Continue following an answer only while the reader is at the bottom.
 		// An active request must not override scrolling up to read or cite.
 		if (followLatestAnswer || previousSessionPath !== nextSessionPath) scrollToLatestAnswer();
@@ -8396,6 +8418,13 @@
 	}
 
 	input.addEventListener("keydown", (event) => {
+		if (event.key === "Tab" && followUpSuggestion && !input.value && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
+			event.preventDefault();
+			input.value = followUpSuggestion;
+			input.setSelectionRange(input.value.length, input.value.length);
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+			return;
+		}
 		if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
 		event.preventDefault();
 		if (liveVoice && realtimeConnected && (input.value.trim() || attachmentDrafts.length)) {
@@ -8403,6 +8432,13 @@
 			return;
 		}
 		submitComposerInput();
+	});
+
+	// The idle hint mentions Tab only while the suggestion is showing.
+	input.addEventListener("input", () => {
+		if (followUpSuggestion && !currentState?.activeRequestId && !realtimeConnected && !attachmentDrafts.length) {
+			helper.textContent = composerIdleHint();
+		}
 	});
 
 	composer.addEventListener("submit", (event) => {

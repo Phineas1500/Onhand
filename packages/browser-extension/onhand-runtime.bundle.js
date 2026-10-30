@@ -88000,7 +88000,10 @@ function buildOpenRouterFallbackModel(modelId) {
 }
 var INTERNAL_JSON_FAST_MODEL_BY_PROVIDER = {
   [OPENAI_API_PROVIDER]: "gpt-6-luna",
-  [OPENAI_CODEX_PROVIDER]: "gpt-6-luna"
+  [OPENAI_CODEX_PROVIDER]: "gpt-6-luna",
+  [ANTHROPIC_API_PROVIDER]: "claude-haiku-5-5",
+  [GOOGLE_API_PROVIDER]: "gemini-3.1-flash-lite",
+  [OPENROUTER_API_PROVIDER]: "deepseek/deepseek-v4.1-flash"
 };
 function internalJsonFastModelSettings(settings2) {
   const fastModel = INTERNAL_JSON_FAST_MODEL_BY_PROVIDER[settings2.aiProvider];
@@ -88080,7 +88083,8 @@ var DEFAULT_SETTINGS = {
   experimentalModelLaneClassifier: true,
   modelLaneClassifierDefaultMigrated: false,
   voiceDefaultsMigrated: false,
-  codexFastModeEnabled: false
+  codexFastModeEnabled: false,
+  followUpSuggestionsEnabled: true
 };
 var ONHAND_INTERNAL_PROMPT_PREFIX = "[Onhand internal]";
 var ACTIVE_EXECUTION_PROFILE = resolveExecutionProfile({ legacyOnly: true }).profile;
@@ -89847,6 +89851,7 @@ function buildPublicSettings(settings2) {
     advancedRuntimeInspectionEnabled: settings2.advancedRuntimeInspectionEnabled,
     experimentalModelLaneClassifier: settings2.experimentalModelLaneClassifier,
     codexFastModeEnabled: settings2.codexFastModeEnabled,
+    followUpSuggestionsEnabled: settings2.followUpSuggestionsEnabled !== false,
     aiProvider: settings2.aiProvider,
     aiModel: settings2.aiModel,
     authMode: settings2.authMode,
@@ -90680,6 +90685,43 @@ function stripCitationProvenanceMarkers(text) {
   const value = canonicalizeCitationMarkers(text);
   if (!value.includes("[[")) return value;
   return value.replace(/\[\[\s*cite\s*:\s*[^\]]*?\s*\]\]/gi, "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1");
+}
+var SUGGESTED_FOLLOW_UP_MAX_CHARS = 160;
+var SUGGESTED_FOLLOW_UP_ANSWER_MAX_CHARS = 3e3;
+var followUpSuggestionModelForTest = null;
+function shouldSuggestFollowUp(reply, request2, finalError) {
+  if (finalError || request2?.aborted || request2?.superseded || request2?.source === "live-responses") return false;
+  if (request2?.settings?.followUpSuggestionsEnabled === false) return false;
+  if (request2?.settings?.aiProvider === SMOKE_PROVIDER && !followUpSuggestionModelForTest) return false;
+  const text = stripCitationProvenanceMarkers(reply).trim();
+  if (!text || text === "(No reply generated.)") return false;
+  const lastLine = text.split("\n").pop() || "";
+  return !/\?[\s*_)"'”’]*$/.test(lastLine);
+}
+function buildFollowUpSuggestionPrompt(question, reply) {
+  return [
+    "Write the question this reader would most likely type next in Onhand's browser side panel, after reading the answer below.",
+    "- It must go beyond the answer: never ask for something the answer already covers or that follows directly from it.",
+    "- Never ask Onhand to list or repeat what it just wrote or marked on the page; the reader can already see it.",
+    "- Write it as the reader would type it, in the language of their question, in under 15 words.",
+    '- Make it specific to this answer, not generic like "Tell me more".',
+    '- Return {"question": ""} when no follow-up is natural.',
+    "",
+    `Reader's question:
+${truncate2(String(question || "").trim(), 600)}`,
+    "",
+    `Onhand's answer:
+${truncate2(stripCitationProvenanceMarkers(reply).trim(), SUGGESTED_FOLLOW_UP_ANSWER_MAX_CHARS)}`,
+    "",
+    'Return JSON only: {"question": "..."}'
+  ].join("\n");
+}
+function parseFollowUpSuggestion(raw, question) {
+  const value = parseJsonObject(raw).question;
+  const suggestion = String(typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().replace(/^["'“‘]+|["'”’]+$/g, "").trim();
+  if (suggestion.length < 4 || suggestion.length > SUGGESTED_FOLLOW_UP_MAX_CHARS || /[\[\]<>]/.test(suggestion)) return "";
+  const words = (text) => String(text || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return words(suggestion) === words(question) ? "" : suggestion;
 }
 function createStoredConversationMessages(turns = []) {
   return turns.filter((turn) => turn && !turn.pending && String(turn.userPrompt || turn.reply || "").trim()).flatMap((turn) => {
@@ -95983,6 +96025,9 @@ var __browserRuntimeTest = {
   setDecisionsFetchForTest(fetcher) {
     decisionsFetchForTest = fetcher;
   },
+  setFollowUpSuggestionModelForTest(model2) {
+    followUpSuggestionModelForTest = model2;
+  },
   buildLearningResearchPlannerPromptForTest: buildLearningResearchPlannerPrompt,
   parseLearningResearchPlanForTest: parseLearningResearchPlan,
   buildLearningResearchDirectiveForTest: buildLearningResearchDirective,
@@ -96092,6 +96137,9 @@ var __browserRuntimeTest = {
   shouldRequirePdfAnchorRetryForTest: shouldRequirePdfAnchorRetry,
   buildPdfAnchorRetryPromptForTest: buildPdfAnchorRetryPrompt,
   sanitizeAssistantVisibleReplyForTest: sanitizeAssistantVisibleReply,
+  shouldSuggestFollowUpForTest: shouldSuggestFollowUp,
+  buildFollowUpSuggestionPromptForTest: buildFollowUpSuggestionPrompt,
+  parseFollowUpSuggestionForTest: parseFollowUpSuggestion,
   shouldRecordFallbackOpenCheckForTest: shouldRecordFallbackOpenCheckForRequest,
   buildFinalAssistantReplyForTest: buildFinalAssistantReply,
   buildBlankReplyRetryPromptForTest: buildBlankReplyRetryPrompt,
@@ -97576,7 +97624,8 @@ function createOnhandBrowserRuntime(host) {
         experimentalModelLaneClassifier: classifierPreviouslyMigrated ? rawSettings.experimentalModelLaneClassifier !== false : DEFAULT_SETTINGS.experimentalModelLaneClassifier,
         modelLaneClassifierDefaultMigrated: true,
         voiceDefaultsMigrated: true,
-        codexFastModeEnabled: rawSettings.codexFastModeEnabled === true
+        codexFastModeEnabled: rawSettings.codexFastModeEnabled === true,
+        followUpSuggestionsEnabled: rawSettings.followUpSuggestionsEnabled !== false
       };
       delete settings2.voiceEngine;
       const sessions = {};
@@ -98471,30 +98520,46 @@ function createOnhandBrowserRuntime(host) {
       turn
     };
   }
-  async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = [], { fastModel = false } = {}) {
-    const signal = activeRequest?.abortController?.signal;
+  async function suggestFollowUpForTurn(sessionId, turn, settings2) {
+    try {
+      const prompt = buildFollowUpSuggestionPrompt(turn.userPrompt, turn.reply);
+      const raw = followUpSuggestionModelForTest ? await followUpSuggestionModelForTest(prompt) : await runInternalTutorJsonPrompt(prompt, settings2, 120, 1e4, [], { fastModel: true, afterTurnId: turn.id });
+      const suggestion = parseFollowUpSuggestion(raw, turn.userPrompt);
+      if (!suggestion) return;
+      const store2 = await loadStore();
+      const session = store2.sessions[sessionId];
+      if (!session?.turns?.some((entry) => entry.id === turn.id)) return;
+      session.turns = session.turns.map((entry) => entry.id === turn.id ? { ...entry, suggestedFollowUp: suggestion } : entry);
+      await saveStore(store2, { sessions: [session] });
+      if (store2.currentSessionId === sessionId && !activeRequest) await publishState({ turns: session.turns });
+    } catch (error2) {
+      host.log?.("Follow-up suggestion failed", error2);
+    }
+  }
+  async function runInternalTutorJsonPrompt(prompt, settings2, maxTokens = 900, timeoutMs = 15e3, images = [], { fastModel = false, afterTurnId = "" } = {}) {
+    const signal = afterTurnId ? void 0 : activeRequest?.abortController?.signal;
     const fastSettings = fastModel ? internalJsonFastModelSettings(settings2) : null;
     if (fastSettings) {
       try {
         const fastModel2 = await withAbortSignal(signal, () => getConfiguredModel(fastSettings));
-        return await runInternalJsonPromptOnModel(fastModel2, prompt, maxTokens, timeoutMs, images);
+        return await runInternalJsonPromptOnModel(fastModel2, prompt, maxTokens, timeoutMs, images, afterTurnId);
       } catch (error2) {
         if (signal?.aborted || /Internal planner timed out/.test(String(error2?.message || ""))) throw error2;
         host.log?.("Internal planning call failed on the fast model; retrying on the configured model", error2);
       }
     }
     const model2 = await withAbortSignal(signal, () => getConfiguredModel(settings2));
-    return await runInternalJsonPromptOnModel(model2, prompt, maxTokens, timeoutMs, images);
+    return await runInternalJsonPromptOnModel(model2, prompt, maxTokens, timeoutMs, images, afterTurnId);
   }
-  async function runInternalJsonPromptOnModel(model2, prompt, maxTokens, timeoutMs, images) {
-    const request2 = activeRequest;
+  async function runInternalJsonPromptOnModel(model2, prompt, maxTokens, timeoutMs, images, afterTurnId = "") {
+    const request2 = afterTurnId ? null : activeRequest;
     const signal = request2?.abortController?.signal;
     const timing = request2?.preparationTiming;
     if (timing && model2?.id && !timing.internalJsonModels?.includes(model2.id)) timing.internalJsonModels = [...timing.internalJsonModels || [], String(model2.id)];
     const currentSession = await withAbortSignal(signal, () => getCurrentSession().catch(() => null));
-    if (activeRequest) activeRequest.internalModelCallCount = Number(activeRequest.internalModelCallCount || 0) + 1;
+    if (request2) request2.internalModelCallCount = Number(request2.internalModelCallCount || 0) + 1;
     const telemetry = {
-      turnId: activeRequest?.id || crypto.randomUUID(),
+      turnId: afterTurnId || request2?.id || crypto.randomUUID(),
       sessionId: currentSession?.id || ""
     };
     const agent = new Agent({
@@ -99371,7 +99436,10 @@ function createOnhandBrowserRuntime(host) {
       }
     }
     captureDebugTurnTrace(session, finalError, toolReliability);
+    const followUpSettings = activeRequest.settings;
+    const suggestFollowUp = !persistenceError && shouldSuggestFollowUp(reply, activeRequest, finalError);
     activeRequest = null;
+    if (suggestFollowUp) void suggestFollowUpForTurn(session.id, turn, followUpSettings);
   }
   function handleAgentEvent(session, requestId, event) {
     if (!activeRequest || activeRequest.id !== requestId) return;
@@ -101262,7 +101330,8 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         // now an authoritative opt-out, not a legacy artifact.
         modelLaneClassifierDefaultMigrated: true,
         voiceDefaultsMigrated: true,
-        codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true
+        codexFastModeEnabled: (nextPartial.codexFastModeEnabled ?? store2.settings.codexFastModeEnabled) === true,
+        followUpSuggestionsEnabled: (nextPartial.followUpSuggestionsEnabled ?? store2.settings.followUpSuggestionsEnabled) !== false
       };
       delete store2.settings.voiceEngine;
       syncSentryDiagnostics(store2.settings);

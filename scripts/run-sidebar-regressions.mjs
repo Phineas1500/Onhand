@@ -3018,6 +3018,56 @@ function ratingSetup(installType, id = "ogjmncmkpgdkkcibdiacmagaehjohljb") {
 	};
 }
 
+// The latest answer's suggested follow-up is ghost text in the empty
+// composer: Tab fills it in, Enter then sends it like anything typed.
+async function assertFollowUpSuggestionFillsComposerOnTab() {
+	const state = createState();
+	const latest = state.turns.at(-1);
+	latest.suggestedFollowUp = "Why do proposals get rejected so often?";
+	const dom = await renderSidebar(state, []);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const input = shadow.getElementById("input");
+	const helper = shadow.getElementById("helper");
+	const pressTab = (options = {}) => {
+		const event = new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true, ...options });
+		input.dispatchEvent(event);
+		return event.defaultPrevented;
+	};
+	assert.equal(input.placeholder, "Why do proposals get rejected so often?", "the suggestion shows as ghost text");
+	assert.match(helper.textContent, /^tab use suggestion/);
+	assert.equal(pressTab({ shiftKey: true }), false, "Shift+Tab still moves focus");
+	assert.equal(input.value, "");
+	assert.equal(pressTab(), true, "Tab takes the suggestion");
+	assert.equal(input.value, "Why do proposals get rejected so often?");
+	assert.equal(input.selectionStart, input.value.length, "the caret lands at the end, ready to edit or send");
+	assert.match(helper.textContent, /^esc dismiss/, "the Tab hint goes once there is text");
+	assert.equal(pressTab(), false, "with text in the box, Tab moves focus as usual");
+
+	input.value = "";
+	const hidden = [
+		["while Onhand answers", (next) => { next.activeRequestId = "request-running"; }],
+		["after an error", (next) => { next.turns.at(-1).error = true; }],
+		["without a suggestion", (next) => { delete next.turns.at(-1).suggestedFollowUp; }],
+		["once the reader turns suggestions off", (next) => { next.preferences = { ...next.preferences, followUpSuggestionsEnabled: false }; }],
+	];
+	for (const [label, change] of hidden) {
+		const next = structuredClone(state);
+		change(next);
+		Object.keys(state).forEach((key) => delete state[key]);
+		Object.assign(state, next);
+		await dom.window.__onhandSidebarTestHooks.requestState();
+		await waitForSidebarTick(dom);
+		assert.equal(input.placeholder, "Ask about this page or your selection...", `no ghost text ${label}`);
+		assert.equal(pressTab(), false, `Tab does nothing special ${label}`);
+		Object.keys(state).forEach((key) => delete state[key]);
+		Object.assign(state, createState(), { turns: createState().turns.map((turn, index, turns) =>
+			index === turns.length - 1 ? { ...turn, suggestedFollowUp: "Why do proposals get rejected so often?" } : turn) });
+	}
+	dom.window.close();
+}
+
 async function assertRatingPromptAsksOnceAfterThirdAnswer() {
 	const state = createState();
 	const dom = await renderSidebar(state, [], { storage: { onhandAnsweredQuestions: 2 }, setupWindow: ratingSetup("normal") });
@@ -3128,6 +3178,7 @@ await assertWhatsNewShowsOnceAfterUpdate();
 await assertWhatsNewStaysHiddenWithoutNews();
 await assertWhatsNewClearsOnFirstQuestion();
 await assertWhatsNewCoversManifestVersion();
+await assertFollowUpSuggestionFillsComposerOnTab();
 await assertRatingPromptAsksOnceAfterThirdAnswer();
 
 // The spoken layer stays free of grounding jargon (the runtime bans "let me
