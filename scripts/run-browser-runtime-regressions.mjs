@@ -947,7 +947,7 @@ async function assertProviderApiKeyStorageAndRouting() {
 		assert.doesNotMatch(runtimeSource, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "source must not hard-code a public free-tier Worker URL");
 		assert.doesNotMatch(runtimeBundle, /https:\/\/[^"'\s]+\.workers\.dev\/v1/, "bundle must not hard-code a public free-tier Worker URL");
 	}
-	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-2.5-flash"));
+	assert.ok(getProviderModelOptions("google").some((model) => model.id === "gemini-3.8-flash"), "the default Gemini model is in the catalog");
 	assert.match(getMissingApiKeyError("google"), /Set a Google Gemini API key/i);
 
 	globalThis.chrome.storage.local.data.onhandBrowserRuntime = {
@@ -3502,6 +3502,7 @@ async function assertConstitutionPromptContract() {
 			shouldPreserveTrustedWorkspaceTabIdForTest,
 			tabIdListedInWorkspaceScanForTest,
 			isTransientProviderErrorForTest,
+			providerRetryDelayMsForTest,
 			withModelStreamIdleTimeoutForTest,
 			collectResearchScaffoldingTabIdsForTest,
 			collectUncitedTurnMarkRemovalsForTest,
@@ -3774,7 +3775,7 @@ async function assertConstitutionPromptContract() {
 	);
 	assert.match(
 		runtimeSourceForHighlightPolicy,
-		/transientProviderRetry = true;[\s\S]{0,500}queueBlankReplyRetry/,
+		/transientProviderRetry = true;[\s\S]{0,1000}queueBlankReplyRetry/,
 		"transient provider failures should retry once before the raw error becomes the visible reply",
 	);
 	assert.match(
@@ -4455,6 +4456,54 @@ async function assertConstitutionPromptContract() {
 		assert.equal(isTransientProviderErrorForTest(new Error("Invalid API key provided")), false, "permanent auth failures must surface immediately");
 		assert.equal(isTransientProviderErrorForTest(new Error("Model context length exceeded")), false);
 		assert.equal(isTransientProviderErrorForTest(null), false);
+		{
+			// Gemini nests its error JSON as the message of another error. A free-tier
+			// key's per-minute limit clears in seconds; its daily limit does not
+			// (2026-10-30: a 1.5 s retry failed both, and the reply was raw JSON).
+			const geminiQuotaError = (window, limit, retry) => JSON.stringify({
+				error: {
+					message: `${JSON.stringify({ error: { code: 429, message: `You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: ${limit}, model: gemini-3.6-flash, description: Generate content requests per ${window} limit exceeded on Free Tier. See https://ai.google.dev/gemini-api/docs/rate-limits.\nPlease retry in ${retry}.`, status: "RESOURCE_EXHAUSTED" } }, null, 2)}\n`,
+					code: 429,
+					status: "",
+				},
+			});
+			const perMinute = geminiQuotaError("minute", 5, "31.71038682s");
+			const perDay = geminiQuotaError("day", 20, "16h11m25.009345815s");
+			assert.equal(providerRetryDelayMsForTest(perMinute), 31710);
+			assert.equal(providerRetryDelayMsForTest(perDay), 58285009);
+			assert.equal(providerRetryDelayMsForTest("Please try again later."), null);
+			assert.equal(isTransientProviderErrorForTest(new Error(perMinute)), true, "a per-minute limit earns the retry, after the wait Gemini asks for");
+			assert.equal(isTransientProviderErrorForTest(new Error(perDay)), false, "a used-up daily quota must surface instead of retrying");
+			assert.equal(
+				isTransientProviderErrorForTest(new Error("429 You exceeded your current quota, please check your plan and billing details.")),
+				false,
+				"an out-of-credit key is not a blip",
+			);
+			assert.equal(
+				isTransientProviderErrorForTest(new Error('429: {"error":{"message":"You’ve reached today’s Onhand Free limit. It resets tomorrow, or switch to your own API key in options.","code":"daily_request_cap"}}')),
+				false,
+			);
+			assert.equal(
+				isTransientProviderErrorForTest(new Error('429: {"error":{"code":429,"message":"Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projects to manage your project and billing.","status":"RESOURCE_EXHAUSTED"}}')),
+				false,
+				"an AI Studio project out of prepaid credit is not a blip",
+			);
+			assert.equal(
+				isTransientProviderErrorForTest(new Error('429: {"error":{"message":"Onhand Free is busy with requests already running. Wait for them to finish and try again.","code":"concurrency_cap"}}')),
+				true,
+			);
+			const humanize = __browserRuntimeTest.humanizeProviderErrorMessageForTest;
+			assert.equal(
+				humanize(perDay),
+				"Your Gemini API key is on Google's free tier, which allows 20 requests a day for gemini-3.6-flash, and each Onhand answer uses several requests. Try again in about 16 hours, or turn on billing for the key's project in Google AI Studio.",
+			);
+			assert.match(humanize(perMinute), /allows 5 requests a minute for gemini-3\.6-flash.* Try again in 32 seconds, or/);
+			const overloaded = JSON.stringify({
+				error: { message: JSON.stringify({ error: { code: 503, message: "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", status: "UNAVAILABLE" } }, null, 2), code: 503, status: "" },
+			});
+			assert.equal(humanize(overloaded), "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.");
+			assert.equal(isTransientProviderErrorForTest(new Error(overloaded)), true);
+		}
 		{
 			// A model call that goes silent must end as a retryable timeout instead
 			// of hanging the turn (a GPT-6.1 Sol Codex call stalled 4.7 minutes).
@@ -11856,7 +11905,7 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	// the bundled catalog or every call would pay a failed request first.
 	for (const [aiProvider, aiModel, fast] of [
 		["anthropic", "claude-sonnet-4-5-20250929", "claude-haiku-5-5"],
-		["google", "gemini-2.5-flash", "gemini-3.1-flash-lite"],
+		["google", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
 		["openrouter", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"],
 	]) {
 		assert.deepEqual(test.internalJsonFastModelSettingsForTest({ aiProvider, aiModel }), { aiProvider, aiModel: fast });

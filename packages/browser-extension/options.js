@@ -20,7 +20,7 @@ const API_PROVIDERS = {
 	},
 	google: {
 		name: "Google Gemini",
-		defaultModel: "gemini-2.5-flash",
+		defaultModel: "gemini-3.8-flash",
 		keyLabel: "Gemini API key",
 		keyPlaceholder: "AIza...",
 		capabilities: { realtime: false, vision: true, tools: true, structuredOutput: true },

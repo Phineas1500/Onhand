@@ -485,7 +485,9 @@ const OPENAI_CODEX_ADDITIONAL_MODELS = [
 const ANTHROPIC_API_PROVIDER = "anthropic";
 const ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 const GOOGLE_API_PROVIDER = "google";
-const GOOGLE_API_MODEL = "gemini-2.5-flash";
+// gemini-2.5-flash answers new keys with a 404 ("no longer available to new
+// users"; 2026-10-30) and Google points to 3.8 Flash.
+const GOOGLE_API_MODEL = "gemini-3.8-flash";
 const OPENROUTER_API_PROVIDER = "openrouter";
 const OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 const ONHAND_FREE_PROVIDER = "onhand-free";
@@ -1265,11 +1267,49 @@ function shouldPreserveTrustedWorkspaceTabId(commandName: string, tabId: unknown
 
 // Transient provider failures (overloaded, rate-limited, 5xx, dropped
 // sockets) deserve one quiet retry before the raw provider error becomes the
-// user-visible reply. Permanent failures (bad key, context overflow) do not.
+// user-visible reply. Permanent failures (bad key, context overflow) do not,
+// and neither does a used-up quota: a free-tier Gemini key out of its daily
+// requests says to retry in 16 hours (2026-10-30), a Gemini project out of
+// prepaid credit needs a top-up, and an Onhand Free daily cap resets tomorrow.
 function isTransientProviderError(error: unknown) {
 	const message = String((error as any)?.message || error || "").toLowerCase();
 	if (!message) return false;
+	const retryDelayMs = providerRetryDelayMs(message);
+	if (retryDelayMs !== null) return retryDelayMs <= MAX_PROVIDER_RETRY_DELAY_MS;
+	if (/exceeded your current quota|insufficient_quota|credits are depleted|resets tomorrow|try again tomorrow|switch to your own api key/.test(message)) return false;
 	return /overloaded|rate limit|too many requests|temporarily unavailable|please try again|timed out|timeout|econnreset|socket hang up|\b(429|500|502|503|504|529)\b/.test(message);
+}
+
+// Waiting longer than this inside a turn is a used-up quota, not a blip.
+const MAX_PROVIDER_RETRY_DELAY_MS = 60_000;
+
+// Gemini says how long to back off: "Please retry in 31.71s." for its
+// per-minute limit, "Please retry in 16h11m25.0s." for its daily one.
+// Retrying sooner only fails again.
+function providerRetryDelayMs(message: string) {
+	const match = String(message || "").match(/retry in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
+	if (!match || !(match[1] || match[2] || match[3])) return null;
+	return Math.round(((Number(match[1] || 0) * 60 + Number(match[2] || 0)) * 60 + Number(match[3] || 0)) * 1000);
+}
+
+function formatProviderRetryDelay(delayMs: number) {
+	const minutes = delayMs / 60_000;
+	if (minutes >= 90) return `about ${Math.round(minutes / 60)} hours`;
+	if (minutes >= 1.5) return `${Math.ceil(minutes)} minutes`;
+	return `${Math.max(1, Math.ceil(delayMs / 1000))} seconds`;
+}
+
+function sleepUnlessAborted(delayMs: number, signal?: AbortSignal | null) {
+	return new Promise<void>((resolve) => {
+		if (signal?.aborted) return resolve();
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, delayMs);
+		signal?.addEventListener("abort", done, { once: true });
+	});
 }
 
 function nowIso() {
@@ -5887,15 +5927,42 @@ function shouldRecordFallbackOpenCheckForRequest(request: any, reply: string) {
 function humanizeProviderErrorMessage(rawMessage: unknown) {
 	const raw = String(rawMessage || "").trim();
 	if (!raw) return "";
-	// "401: {...}" or, from fetch with an empty statusText, "401 : {...}".
-	const match = raw.match(/^(\d{3})(?: [^:{]*)?:\s*(\{[\s\S]*\})$/);
-	if (!match) return raw;
-	try {
-		const body = JSON.parse(match[2]);
-		const inner = body?.error?.message || body?.message;
-		if (typeof inner === "string" && inner.trim()) return inner.trim();
-	} catch {}
-	return raw;
+	let message = raw;
+	// "401: {...}", "401 : {...}" (fetch with an empty statusText) or a bare
+	// "{...}". Gemini nests its error JSON inside another error's message
+	// ({"error":{"message":"{\n  \"error\": {...}}","code":429}}), so unwrap
+	// until the message is plain text.
+	for (let depth = 0; depth < 4; depth += 1) {
+		const match = message.match(/^(?:\d{3}(?: [^:{]*)?:\s*)?(\{[\s\S]*\})$/);
+		if (!match) break;
+		let inner: unknown;
+		try {
+			const body = JSON.parse(match[1]);
+			inner = body?.error?.message || body?.message;
+		} catch {
+			break;
+		}
+		if (typeof inner !== "string" || !inner.trim()) break;
+		message = inner.trim();
+	}
+	return describeGeminiQuotaError(message) || message;
+}
+
+// Gemini's quota errors run to a paragraph of metric names and links. Most
+// personal Gemini keys are on the free tier (no billing on the key's project):
+// 5 requests a minute and 20 a day per model for gemini-3.6-flash, and an
+// Onhand answer takes several requests, so a free key runs out quickly.
+function describeGeminiQuotaError(message: string) {
+	if (!/exceeded your current quota/i.test(message) || !/generativelanguage\.googleapis\.com/i.test(message)) return "";
+	const limit = message.match(/\blimit: (\d+)/)?.[1];
+	const model = message.match(/\bmodel: ([\w.-]+)/)?.[1];
+	const allowance = limit ? `${limit} requests a ${/requests per day/i.test(message) ? "day" : "minute"}${model ? ` for ${model}` : ""}` : "";
+	const delayMs = providerRetryDelayMs(message);
+	const retry = delayMs !== null ? `Try again in ${formatProviderRetryDelay(delayMs)}, or` : "Try again later, or";
+	if (/free tier/i.test(message)) {
+		return `Your Gemini API key is on Google's free tier${allowance ? `, which allows ${allowance}` : ""}, and each Onhand answer uses several requests. ${retry} turn on billing for the key's project in Google AI Studio.`;
+	}
+	return `Your Gemini API key has used up its quota${allowance ? ` (${allowance})` : ""}. ${retry} check the key's plan and billing in Google AI Studio.`;
 }
 
 function replyMakesPdfAbsenceClaim(value: unknown) {
@@ -11652,6 +11719,7 @@ export const __browserRuntimeTest = {
 	shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
 	tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
 	isTransientProviderErrorForTest: isTransientProviderError,
+	providerRetryDelayMsForTest: providerRetryDelayMs,
 	withModelStreamIdleTimeoutForTest: withModelStreamIdleTimeout,
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
@@ -15163,8 +15231,12 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 					// the final answer.
 					resetAssistantDraftText(activeRequest);
 					blankSupersededAssistantDraft(requestId);
-					await publishState({ status: "Model provider is busy — retrying..." });
-					await new Promise((resolve) => setTimeout(resolve, 1500));
+					const providerDelayMs = providerRetryDelayMs(String((finalError as any)?.message || finalError));
+					const retryDelayMs = providerDelayMs !== null ? providerDelayMs + 1000 : 1500;
+					await publishState({
+						status: retryDelayMs > 5000 ? `Model provider rate limit — retrying in ${Math.ceil(retryDelayMs / 1000)} s...` : "Model provider is busy — retrying...",
+					});
+					await sleepUnlessAborted(retryDelayMs, activeRequest.abortController?.signal);
 					if (!activeRequest.aborted) {
 					queueBlankReplyRetry(activeAgent, "The previous model call failed with a temporary provider error. Continue now and answer the user's question.", (retryError) => {
 						void finalizeRequest(session, requestId, retryError);

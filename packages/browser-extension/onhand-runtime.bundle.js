@@ -87881,7 +87881,7 @@ var OPENAI_CODEX_ADDITIONAL_MODELS = [
 var ANTHROPIC_API_PROVIDER = "anthropic";
 var ANTHROPIC_API_MODEL = "claude-sonnet-4-5-20250929";
 var GOOGLE_API_PROVIDER = "google";
-var GOOGLE_API_MODEL = "gemini-2.5-flash";
+var GOOGLE_API_MODEL = "gemini-3.8-flash";
 var OPENROUTER_API_PROVIDER = "openrouter";
 var OPENROUTER_API_MODEL = "deepseek/deepseek-v4-flash";
 var ONHAND_FREE_PROVIDER = "onhand-free";
@@ -88543,7 +88543,34 @@ function shouldPreserveTrustedWorkspaceTabId(commandName, tabId, request2) {
 function isTransientProviderError(error2) {
   const message = String(error2?.message || error2 || "").toLowerCase();
   if (!message) return false;
+  const retryDelayMs = providerRetryDelayMs(message);
+  if (retryDelayMs !== null) return retryDelayMs <= MAX_PROVIDER_RETRY_DELAY_MS;
+  if (/exceeded your current quota|insufficient_quota|credits are depleted|resets tomorrow|try again tomorrow|switch to your own api key/.test(message)) return false;
   return /overloaded|rate limit|too many requests|temporarily unavailable|please try again|timed out|timeout|econnreset|socket hang up|\b(429|500|502|503|504|529)\b/.test(message);
+}
+var MAX_PROVIDER_RETRY_DELAY_MS = 6e4;
+function providerRetryDelayMs(message) {
+  const match2 = String(message || "").match(/retry in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
+  if (!match2 || !(match2[1] || match2[2] || match2[3])) return null;
+  return Math.round(((Number(match2[1] || 0) * 60 + Number(match2[2] || 0)) * 60 + Number(match2[3] || 0)) * 1e3);
+}
+function formatProviderRetryDelay(delayMs) {
+  const minutes = delayMs / 6e4;
+  if (minutes >= 90) return `about ${Math.round(minutes / 60)} hours`;
+  if (minutes >= 1.5) return `${Math.ceil(minutes)} minutes`;
+  return `${Math.max(1, Math.ceil(delayMs / 1e3))} seconds`;
+}
+function sleepUnlessAborted(delayMs, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, delayMs);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 function nowIso() {
   return (/* @__PURE__ */ new Date()).toISOString();
@@ -91546,15 +91573,33 @@ function shouldRecordFallbackOpenCheckForRequest(request2, reply) {
 function humanizeProviderErrorMessage(rawMessage) {
   const raw = String(rawMessage || "").trim();
   if (!raw) return "";
-  const match2 = raw.match(/^(\d{3})(?: [^:{]*)?:\s*(\{[\s\S]*\})$/);
-  if (!match2) return raw;
-  try {
-    const body = JSON.parse(match2[2]);
-    const inner = body?.error?.message || body?.message;
-    if (typeof inner === "string" && inner.trim()) return inner.trim();
-  } catch {
+  let message = raw;
+  for (let depth = 0; depth < 4; depth += 1) {
+    const match2 = message.match(/^(?:\d{3}(?: [^:{]*)?:\s*)?(\{[\s\S]*\})$/);
+    if (!match2) break;
+    let inner;
+    try {
+      const body = JSON.parse(match2[1]);
+      inner = body?.error?.message || body?.message;
+    } catch {
+      break;
+    }
+    if (typeof inner !== "string" || !inner.trim()) break;
+    message = inner.trim();
   }
-  return raw;
+  return describeGeminiQuotaError(message) || message;
+}
+function describeGeminiQuotaError(message) {
+  if (!/exceeded your current quota/i.test(message) || !/generativelanguage\.googleapis\.com/i.test(message)) return "";
+  const limit3 = message.match(/\blimit: (\d+)/)?.[1];
+  const model2 = message.match(/\bmodel: ([\w.-]+)/)?.[1];
+  const allowance = limit3 ? `${limit3} requests a ${/requests per day/i.test(message) ? "day" : "minute"}${model2 ? ` for ${model2}` : ""}` : "";
+  const delayMs = providerRetryDelayMs(message);
+  const retry2 = delayMs !== null ? `Try again in ${formatProviderRetryDelay(delayMs)}, or` : "Try again later, or";
+  if (/free tier/i.test(message)) {
+    return `Your Gemini API key is on Google's free tier${allowance ? `, which allows ${allowance}` : ""}, and each Onhand answer uses several requests. ${retry2} turn on billing for the key's project in Google AI Studio.`;
+  }
+  return `Your Gemini API key has used up its quota${allowance ? ` (${allowance})` : ""}. ${retry2} check the key's plan and billing in Google AI Studio.`;
 }
 function replyMakesPdfAbsenceClaim(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -95990,6 +96035,7 @@ var __browserRuntimeTest = {
   shouldPreserveTrustedWorkspaceTabIdForTest: shouldPreserveTrustedWorkspaceTabId,
   tabIdListedInWorkspaceScanForTest: tabIdListedInWorkspaceScan,
   isTransientProviderErrorForTest: isTransientProviderError,
+  providerRetryDelayMsForTest: providerRetryDelayMs,
   withModelStreamIdleTimeoutForTest: withModelStreamIdleTimeout,
   collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
   collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
@@ -99140,8 +99186,12 @@ function createOnhandBrowserRuntime(host) {
       activeRequest.transientProviderRetry = true;
       resetAssistantDraftText(activeRequest);
       blankSupersededAssistantDraft(requestId);
-      await publishState({ status: "Model provider is busy \u2014 retrying..." });
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const providerDelayMs = providerRetryDelayMs(String(finalError?.message || finalError));
+      const retryDelayMs = providerDelayMs !== null ? providerDelayMs + 1e3 : 1500;
+      await publishState({
+        status: retryDelayMs > 5e3 ? `Model provider rate limit \u2014 retrying in ${Math.ceil(retryDelayMs / 1e3)} s...` : "Model provider is busy \u2014 retrying..."
+      });
+      await sleepUnlessAborted(retryDelayMs, activeRequest.abortController?.signal);
       if (!activeRequest.aborted) {
         queueBlankReplyRetry(activeAgent, "The previous model call failed with a temporary provider error. Continue now and answer the user's question.", (retryError) => {
           void finalizeRequest(session, requestId, retryError);
