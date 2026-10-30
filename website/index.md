@@ -10,7 +10,7 @@ Onhand is an AI Chrome extension for reading webpages and PDFs. Ask about the pa
 
 [Add to Chrome](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb) [View on GitHub ↗](https://github.com/Phineas1500/Onhand)
 
-Free to start. No account needed. Open source. Also on [Firefox](https://addons.mozilla.org/firefox/addon/onhand-ai/).
+Free to start. No account needed. Open source. Also on [Firefox](https://addons.mozilla.org/firefox/addon/onhand-ai/) and [Edge](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj).
 
 > The **manicule**, a small pointing hand in the margin, has meant *"look here, this part matters"* in books since the twelfth century. Onhand brings the gesture back, with the model holding the pen.
 
@@ -50,7 +50,7 @@ A real session: Onhand checks a physics textbook's account of the Tacoma Narrows
 
 Or [download the ZIP](https://github.com/Phineas1500/Onhand/releases/latest), unzip it, and load it from `chrome://extensions` with developer mode on. [Release notes ↗](https://github.com/Phineas1500/Onhand/releases/latest)
 
-On Firefox? Get Onhand from [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/).
+On Firefox or Edge? Get Onhand from [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj).
 
 Build from source
 
@@ -159,4 +159,4 @@ Onhand
 
 [GitHub](https://github.com/Phineas1500/Onhand) · [Docs](https://github.com/Phineas1500/Onhand/tree/main/docs) · [Sponsor](https://github.com/sponsors/Phineas1500) · [Apache 2.0](https://github.com/Phineas1500/Onhand/blob/main/LICENSE) · [Privacy](https://useonhand.com/privacy.html) · [Support](https://useonhand.com/support.html) · themed on *Rosé Pine Dawn* · © 2026
 
-Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)
+Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)

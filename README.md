@@ -2,7 +2,7 @@
 
 Onhand is a contextual AI assistant for learning and research. The goal is to help users understand what is already open on their computer instead of pulling them away into a separate chatbot interface.
 
-Install it free from the [Chrome Web Store](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb) or [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/), or read more at [useonhand.com](https://useonhand.com).
+Install it free from the [Chrome Web Store](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb), [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj), or read more at [useonhand.com](https://useonhand.com).
 
 <p align="center">
   <img src="screenshots/promo/attention-screenshot.png" alt="Onhand explaining scaled dot-product attention with page highlights, notes, and a sidebar answer" width="960">

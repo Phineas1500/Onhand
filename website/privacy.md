@@ -98,4 +98,4 @@ Onhand
 
 [Home](https://useonhand.com/) · [Support](https://useonhand.com/support.html) · [GitHub](https://github.com/Phineas1500/Onhand) · [Sponsor](https://github.com/sponsors/Phineas1500) · © 2026
 
-Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)
+Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)

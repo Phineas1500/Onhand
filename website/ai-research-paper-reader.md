@@ -10,7 +10,7 @@ Onhand is a free AI Chrome extension for reading research papers. Ask about the 
 
 [Add to Chrome](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb)
 
-Free to start. No account needed. Open source. Also on [Firefox](https://addons.mozilla.org/firefox/addon/onhand-ai/).
+Free to start. No account needed. Open source. Also on [Firefox](https://addons.mozilla.org/firefox/addon/onhand-ai/) and [Edge](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj).
 
 ![Onhand explaining scaled dot-product attention on the Annotated Transformer, with highlights and a margin note on the page and the answer in the side panel](https://useonhand.com/screenshots/promo/attention-screenshot.png)
 
@@ -45,4 +45,4 @@ Onhand
 
 [Home](https://useonhand.com/) · [Support](https://useonhand.com/support.html) · [Privacy](https://useonhand.com/privacy.html) · [GitHub](https://github.com/Phineas1500/Onhand) · © 2026
 
-Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)
+Also on [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/onhand-ai/) · [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj) · [AlternativeTo](https://alternativeto.net/software/onhand/) · [PeerPush](https://peerpush.com/p/onhand) · [Product Hunt](https://www.producthunt.com/products/onhand-2) · [EasyWithAI](https://easywithai.com/ai-research-tools/onhand/) · [SaaSHub](https://www.saashub.com/useonhand)
