@@ -8,6 +8,13 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.14",
+		items: [
+			"After each answer, Onhand suggests a next question in the input box. Press Tab to use it, or turn this off in Settings.",
+			"Gemini API keys now use Gemini 3.8 Flash, and running out of Google's free-tier requests shows a clear message instead of an error code.",
+		],
+	},
+	{
 		version: "0.4.13",
 		items: [
 			"Signing in with ChatGPT works again. OpenAI stopped offering GPT-5.5 to ChatGPT accounts, so Onhand now uses GPT-6 Luna.",
