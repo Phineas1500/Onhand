@@ -22,6 +22,8 @@ import {
 	getDefaultOAuthModel,
 	isBrowserOAuthProvider,
 	loginBrowserOAuthProvider,
+	describeAuthPageForTest,
+	setOAuthTimeoutMsForTest,
 	summarizeOAuthCredentials,
 	type BrowserOAuthCredentials,
 	type BrowserOAuthProgressEvent,
@@ -11696,6 +11698,9 @@ function extractToolErrorText(result: unknown) {
 
 export const __browserRuntimeTest = {
 	sentryEnvironmentForTest: sentryEnvironmentFor,
+	describeAuthPageForTest,
+	setOAuthTimeoutMsForTest,
+	loginBrowserOAuthProviderForTest: loginBrowserOAuthProvider,
 	isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
 	createToolsForTest: createTools,
 	renderBrowserContextDetailsForTest: renderBrowserContextDetails,
@@ -13913,6 +13918,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (messageType) scope.setTag("message_type", messageType);
 		const requestSource = compactTelemetryValue((data as any).request_source || (data as any).requestSource, 32);
 		if (requestSource) scope.setTag("request_source", requestSource);
+		// The last page of a timed-out sign-in tab, as host and path only.
+		const authPage = compactTelemetryValue((data as any).auth_page, 120);
+		if (authPage) scope.setTag("auth_page", authPage);
 	}
 
 	// Starting Sentry when diagnostics are on installs its global handlers, so
@@ -17532,6 +17540,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				captured: captureSentryException(error, store.settings as RuntimeSettings, "runtime_exception", {
 					message_type: request?.messageType,
 					error_kind: classifyTelemetryError(message),
+					auth_page: request?.authPage,
 				}),
 			};
 		},

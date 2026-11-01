@@ -1329,6 +1329,20 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		assert.match(leakyPayload, /No visible PDF text matched: \[redacted text\]/);
 		assert.match(leakyPayload, /invalid_request_error/, "JSON error codes should survive quote redaction");
 
+		// A timed-out sign-in reports the sign-in tab's last page as a tag.
+		fetchCalls.length = 0;
+		const timedOut = await runtime.captureRuntimeException({
+			messageType: "browser-runtime:oauth-sign-in",
+			message: "OAuth sign-in timed out.",
+			stack: `Error: OAuth sign-in timed out.\n    at smoke (${extensionFrame})`,
+			authPage: "auth.openai.com/log-in/password",
+		});
+		assert.equal(timedOut.captured, true, "a sign-in timeout should reach Sentry");
+		for (let attempt = 0; attempt < 20 && fetchCalls.length === 0; attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		assert.match(fetchCalls.map((call) => call.body).join("\n"), /"auth_page":"auth\.openai\.com\/log-in\/password"/);
+
 		// Unpacked builds report to the development environment.
 		fetchCalls.length = 0;
 		const developmentRuntime = createOnhandBrowserRuntime({ ...createReplayHost(), getInstallType: async () => "development" });
@@ -1351,6 +1365,110 @@ async function assertSentryDiagnosticsGateAndScrub() {
 		assert.equal(environmentFor("sidebar", "normal"), "production");
 		assert.equal(environmentFor("", ""), "production");
 	} finally {
+		globalThis.fetch = originalFetch;
+	}
+}
+
+function installOAuthTabsStub() {
+	installChromeStorageStub();
+	const tabs = {
+		created: [],
+		updated: [],
+		removed: [],
+		focusedWindows: [],
+		onUpdatedListeners: new Set(),
+		onRemovedListeners: new Set(),
+		fireUpdated(tabId, url) {
+			for (const listener of [...this.onUpdatedListeners]) listener(tabId, { url }, { id: tabId, url });
+		},
+	};
+	globalThis.chrome.tabs = {
+		async create({ url }) {
+			const tab = { id: 700 + tabs.created.length, windowId: 7, url };
+			tabs.created.push(tab);
+			return tab;
+		},
+		async update(tabId, props) {
+			tabs.updated.push({ tabId, props });
+			return { id: tabId, windowId: 7 };
+		},
+		async remove(tabId) {
+			tabs.removed.push(tabId);
+		},
+		onUpdated: { addListener: (fn) => tabs.onUpdatedListeners.add(fn), removeListener: (fn) => tabs.onUpdatedListeners.delete(fn) },
+		onRemoved: { addListener: (fn) => tabs.onRemovedListeners.add(fn), removeListener: (fn) => tabs.onRemovedListeners.delete(fn) },
+	};
+	globalThis.chrome.windows = {
+		async update(windowId, props) {
+			tabs.focusedWindows.push({ windowId, props });
+		},
+	};
+	return tabs;
+}
+
+async function waitFor(check, label) {
+	for (let attempt = 0; attempt < 100; attempt += 1) {
+		if (check()) return;
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	throw new Error(`Timed out waiting for ${label}`);
+}
+
+// Starting ChatGPT sign-in from the side panel and again from Options opened
+// two OpenAI tabs that both timed out (Sentry ONHAND-BROWSER-EXTENSION-24).
+// A second start now focuses the open tab and shares its result, and a
+// timeout names the sign-in tab's last page without query or other tabs.
+async function assertOAuthSignInSharesOneTabAndRecordsTimeoutPage() {
+	const tabs = installOAuthTabsStub();
+	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const originalFetch = globalThis.fetch;
+	const tokenRequests = [];
+	const claims = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-test" } })).toString("base64url");
+	globalThis.fetch = async (url, options = {}) => {
+		tokenRequests.push({ url: String(url), body: String(options.body || "") });
+		return new Response(JSON.stringify({ access_token: `h.${claims}.s`, refresh_token: "refresh-test", expires_in: 3600 }), { status: 200 });
+	};
+	try {
+		const first = test.loginBrowserOAuthProviderForTest({ providerId: "openai-codex" });
+		await waitFor(() => tabs.created.length === 1 && tabs.onUpdatedListeners.size === 1, "the sign-in tab");
+		const progress = [];
+		const second = test.loginBrowserOAuthProviderForTest({ providerId: "openai-codex", onProgress: (event) => progress.push(event.status) });
+		await waitFor(() => tabs.updated.length === 1, "the open sign-in tab to be focused");
+		assert.equal(tabs.created.length, 1, "a second sign-in start should not open another tab");
+		assert.deepEqual(tabs.updated[0], { tabId: 700, props: { active: true } });
+		assert.deepEqual(tabs.focusedWindows, [{ windowId: 7, props: { focused: true } }]);
+		assert.deepEqual(progress, ["Sign-in already open"]);
+
+		const state = new URL(tabs.created[0].url).searchParams.get("state");
+		tabs.fireUpdated(700, "https://auth.openai.com/log-in/password");
+		tabs.fireUpdated(700, `http://localhost:1455/auth/callback?code=code-test&state=${state}`);
+		const [firstCredentials, secondCredentials] = await Promise.all([first, second]);
+		assert.equal(firstCredentials.accountId, "acct-test");
+		assert.equal(secondCredentials, firstCredentials, "both starts should get the same sign-in");
+		assert.equal(tokenRequests.length, 1, "one sign-in should exchange one code");
+		assert.deepEqual(tabs.removed, [700]);
+
+		// After it settles, a new start opens a new tab.
+		test.setOAuthTimeoutMsForTest(60);
+		const timedOut = test.loginBrowserOAuthProviderForTest({ providerId: "openai-codex" });
+		await waitFor(() => tabs.created.length === 2 && tabs.onUpdatedListeners.size === 1, "a second sign-in tab");
+		tabs.fireUpdated(999, "https://mail.example.test/inbox/private-thread");
+		tabs.fireUpdated(701, "https://auth.openai.com/email-verification?login_challenge=private-challenge");
+		await assert.rejects(timedOut, (error) => {
+			assert.equal(error.message, "OAuth sign-in timed out.");
+			assert.equal(error.authPage, "auth.openai.com/email-verification");
+			return true;
+		});
+		assert.deepEqual(tabs.removed, [700, 701]);
+
+		const describe = test.describeAuthPageForTest;
+		assert.equal(describe("https://auth.openai.com/oauth/authorize?state=secret"), "auth.openai.com/oauth/authorize");
+		assert.equal(describe("https://accounts.example.test/u/person@example.test/challenge"), "accounts.example.test/u/…/challenge");
+		assert.equal(describe(`https://auth.openai.com/session/${"x".repeat(40)}`), "auth.openai.com/session/…");
+		assert.equal(describe("about:blank"), "about");
+		assert.equal(describe("not a url"), "");
+	} finally {
+		test.setOAuthTimeoutMsForTest(null);
 		globalThis.fetch = originalFetch;
 	}
 }
@@ -13090,6 +13208,7 @@ async function main() {
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
+	await assertOAuthSignInSharesOneTabAndRecordsTimeoutPage();
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();
 	await assertPageNoteTakingLane();

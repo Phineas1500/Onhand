@@ -15316,6 +15316,8 @@ function normalizeRealtimeBrowserToolArgs(args = {}) {
 	return raw;
 }
 
+const reportedMessageErrors = new WeakSet();
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 	if (message?.target === "offscreen" || message?.target === "sidebar") return false;
 	(async () => {
@@ -15986,11 +15988,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 		sendResponse({ ok: false, error: "Unknown message" });
 	})().catch((error) => {
-		getOnhandBrowserRuntime().captureRuntimeException({
-			messageType: message?.type || "unknown",
-			message: error?.message || String(error),
-			stack: error?.stack || "",
-		}).catch(() => {});
+		// Two messages can share one failure (a second sign-in start waits on the
+		// first), so each error object is reported once.
+		if (!(error && typeof error === "object" && reportedMessageErrors.has(error))) {
+			if (error && typeof error === "object") reportedMessageErrors.add(error);
+			getOnhandBrowserRuntime().captureRuntimeException({
+				messageType: message?.type || "unknown",
+				message: error?.message || String(error),
+				stack: error?.stack || "",
+				authPage: error?.authPage || "",
+			}).catch(() => {});
+		}
 		sendResponse({ ok: false, error: error?.message || String(error) });
 	});
 

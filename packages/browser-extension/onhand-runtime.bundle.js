@@ -87420,6 +87420,7 @@ var BrowserOAuthSignInExpiredError = class extends Error {
   code = "oauth_sign_in_expired";
 };
 var OAUTH_TIMEOUT_MS = 10 * 60 * 1e3;
+var oauthTimeoutMsForTest = null;
 var OAUTH_EXPIRY_SKEW_MS = 5 * 60 * 1e3;
 var OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 var OAUTH_PROVIDER_CONFIGS = [
@@ -87507,11 +87508,29 @@ async function createTab(url) {
   }
   return await chrome.tabs.create({ url, active: true });
 }
+async function focusTab(tabId) {
+  if (typeof tabId !== "number") return;
+  try {
+    const tab = await chrome.tabs.update(tabId, { active: true });
+    if (typeof tab?.windowId === "number") await chrome.windows?.update?.(tab.windowId, { focused: true });
+  } catch {
+  }
+}
 async function closeTab(tabId) {
   if (typeof tabId !== "number") return;
   try {
     await chrome.tabs.remove(tabId);
   } catch {
+  }
+}
+function describeAuthPage(urlValue) {
+  try {
+    const url = new URL(String(urlValue || ""));
+    if (url.protocol !== "https:" && url.protocol !== "http:") return url.protocol.replace(/:$/, "");
+    const path4 = url.pathname.split("/").map((segment) => segment.length > 32 || segment.includes("@") ? "\u2026" : segment).join("/");
+    return `${url.host}${path4}`.slice(0, 120);
+  } catch {
+    return "";
   }
 }
 function matchesRedirect(urlValue, redirectUri) {
@@ -87526,9 +87545,11 @@ function matchesRedirect(urlValue, redirectUri) {
     return false;
   }
 }
-async function openAuthTabAndWaitForRedirect(providerId, authUrl, redirectUri, expectedState, options) {
+async function openAuthTabAndWaitForRedirect(providerId, authUrl, redirectUri, expectedState, options, onAuthTab = () => {
+}) {
   notify(options, providerId, "Opening sign-in page", "Complete the sign-in in the tab that just opened.", { url: authUrl });
   let authTabId;
+  let lastAuthPage = "";
   return await new Promise((resolve, reject) => {
     let settled = false;
     let timeoutId = null;
@@ -87573,9 +87594,14 @@ async function openAuthTabAndWaitForRedirect(providerId, authUrl, redirectUri, e
       settle(() => resolve({ code, state: state2, redirectUrl: urlValue }));
       void closeTab(authTabId);
     };
+    const recordAuthPage = (urlValue) => {
+      lastAuthPage = describeAuthPage(urlValue) || lastAuthPage;
+    };
     const onUpdated = (tabId, changeInfo, tab) => {
       if (authTabId !== void 0 && tabId !== authTabId) return;
-      inspectUrl(changeInfo?.url || tab?.url);
+      const urlValue = changeInfo?.url || tab?.url;
+      if (tabId === authTabId) recordAuthPage(urlValue);
+      inspectUrl(urlValue);
     };
     const onRemoved = (tabId) => {
       if (authTabId !== void 0 && tabId !== authTabId) return;
@@ -87584,11 +87610,13 @@ async function openAuthTabAndWaitForRedirect(providerId, authUrl, redirectUri, e
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.onRemoved.addListener(onRemoved);
     timeoutId = setTimeout(() => {
-      settle(() => reject(new Error("OAuth sign-in timed out.")));
+      settle(() => reject(Object.assign(new Error("OAuth sign-in timed out."), { authPage: lastAuthPage })));
       void closeTab(authTabId);
-    }, OAUTH_TIMEOUT_MS);
+    }, oauthTimeoutMsForTest ?? OAUTH_TIMEOUT_MS);
     createTab(authUrl).then((tab) => {
       authTabId = tab?.id;
+      onAuthTab(authTabId);
+      recordAuthPage(tab?.url);
       inspectUrl(tab?.url);
     }).catch((error2) => {
       settle(() => reject(error2 instanceof Error ? error2 : new Error(String(error2))));
@@ -87602,7 +87630,7 @@ function buildAuthUrl(baseUrl, params) {
   }
   return url.toString();
 }
-async function loginOpenAICodex(options) {
+async function loginOpenAICodex(options, onAuthTab) {
   const { verifier, challenge } = await generatePKCE();
   const state2 = randomBase64Url(16);
   const authUrl = buildAuthUrl(OPENAI_CODEX.authorizeUrl, {
@@ -87617,7 +87645,7 @@ async function loginOpenAICodex(options) {
     codex_cli_simplified_flow: "true",
     originator: "pi"
   });
-  const result = await openAuthTabAndWaitForRedirect("openai-codex", authUrl, OPENAI_CODEX.redirectUri, state2, options);
+  const result = await openAuthTabAndWaitForRedirect("openai-codex", authUrl, OPENAI_CODEX.redirectUri, state2, options, onAuthTab);
   const tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -87689,16 +87717,37 @@ function isBrowserOAuthProvider(providerId) {
 function getDefaultOAuthModel(providerId) {
   return getBrowserOAuthProvider(providerId)?.defaultModel || "";
 }
+var pendingLogins = /* @__PURE__ */ new Map();
 async function loginBrowserOAuthProvider(options) {
   const provider2 = getBrowserOAuthProvider(options.providerId);
   if (!provider2) throw new Error(`Unknown direct sign-in provider: ${options.providerId}`);
-  switch (provider2.id) {
-    case "openai-codex":
-      return await loginOpenAICodex(options);
-    default:
-      throw new Error(`Unsupported direct sign-in provider: ${provider2.id}`);
+  const pending = pendingLogins.get(provider2.id);
+  if (pending) {
+    notify(options, provider2.id, "Sign-in already open", "Finish signing in in the tab that's already open.");
+    await focusTab(pending.tabId);
+    return await pending.promise;
   }
+  const entry = { promise: Promise.resolve(null) };
+  const onAuthTab = (tabId) => {
+    entry.tabId = tabId;
+  };
+  entry.promise = (async () => {
+    switch (provider2.id) {
+      case "openai-codex":
+        return await loginOpenAICodex(options, onAuthTab);
+      default:
+        throw new Error(`Unsupported direct sign-in provider: ${provider2.id}`);
+    }
+  })().finally(() => {
+    if (pendingLogins.get(provider2.id) === entry) pendingLogins.delete(provider2.id);
+  });
+  pendingLogins.set(provider2.id, entry);
+  return await entry.promise;
 }
+function setOAuthTimeoutMsForTest(timeoutMs) {
+  oauthTimeoutMsForTest = timeoutMs;
+}
+var describeAuthPageForTest = describeAuthPage;
 async function getBrowserOAuthApiKey(providerId, credentials, options = {}) {
   let nextCredentials = credentials;
   if (Date.now() >= Number(credentials.expires || 0)) {
@@ -96012,6 +96061,9 @@ function extractToolErrorText(result) {
 }
 var __browserRuntimeTest = {
   sentryEnvironmentForTest: sentryEnvironmentFor,
+  describeAuthPageForTest,
+  setOAuthTimeoutMsForTest,
+  loginBrowserOAuthProviderForTest: loginBrowserOAuthProvider,
   isFormulaOnlyHighlightTextForTest: isFormulaOnlyHighlightText,
   createToolsForTest: createTools,
   renderBrowserContextDetailsForTest: renderBrowserContextDetails,
@@ -97983,6 +98035,8 @@ function createOnhandBrowserRuntime(host) {
     if (messageType) scope.setTag("message_type", messageType);
     const requestSource = compactTelemetryValue(data.request_source || data.requestSource, 32);
     if (requestSource) scope.setTag("request_source", requestSource);
+    const authPage = compactTelemetryValue(data.auth_page, 120);
+    if (authPage) scope.setTag("auth_page", authPage);
   }
   function syncSentryDiagnostics(settings2) {
     sentryDiagnosticsAllowed = diagnosticsSharingAllowed(settings2);
@@ -101239,7 +101293,8 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
       return {
         captured: captureSentryException(error2, store2.settings, "runtime_exception", {
           message_type: request2?.messageType,
-          error_kind: classifyTelemetryError(message)
+          error_kind: classifyTelemetryError(message),
+          auth_page: request2?.authPage
         })
       };
     },

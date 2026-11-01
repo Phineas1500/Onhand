@@ -56,6 +56,7 @@ export class BrowserOAuthSignInExpiredError extends Error {
 }
 
 const OAUTH_TIMEOUT_MS = 10 * 60 * 1000;
+let oauthTimeoutMsForTest: number | null = null;
 const OAUTH_EXPIRY_SKEW_MS = 5 * 60 * 1000;
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 
@@ -157,12 +158,40 @@ async function createTab(url: string) {
 	return await chrome.tabs.create({ url, active: true });
 }
 
+async function focusTab(tabId: number | undefined) {
+	if (typeof tabId !== "number") return;
+	try {
+		const tab = await chrome.tabs.update(tabId, { active: true });
+		if (typeof tab?.windowId === "number") await chrome.windows?.update?.(tab.windowId, { focused: true });
+	} catch {
+		// The tab may be closing; its sign-in settles on its own.
+	}
+}
+
 async function closeTab(tabId: number | undefined | null) {
 	if (typeof tabId !== "number") return;
 	try {
 		await chrome.tabs.remove(tabId);
 	} catch {
 		// The user may have closed the tab already.
+	}
+}
+
+// Where a sign-in tab is, as host and path only: the query carries the OAuth
+// state and code, and long or email-like path segments are dropped. A timeout
+// report then shows whether people stop at the password, a verification code
+// or an error page.
+function describeAuthPage(urlValue: string | undefined) {
+	try {
+		const url = new URL(String(urlValue || ""));
+		if (url.protocol !== "https:" && url.protocol !== "http:") return url.protocol.replace(/:$/, "");
+		const path = url.pathname
+			.split("/")
+			.map((segment) => (segment.length > 32 || segment.includes("@") ? "…" : segment))
+			.join("/");
+		return `${url.host}${path}`.slice(0, 120);
+	} catch {
+		return "";
 	}
 }
 
@@ -185,9 +214,11 @@ async function openAuthTabAndWaitForRedirect(
 	redirectUri: string,
 	expectedState: string,
 	options: BrowserOAuthSignInOptions,
+	onAuthTab: (tabId: number | undefined) => void = () => {},
 ): Promise<CallbackAuthResult> {
 	notify(options, providerId, "Opening sign-in page", "Complete the sign-in in the tab that just opened.", { url: authUrl });
 	let authTabId: number | undefined;
+	let lastAuthPage = "";
 
 	return await new Promise((resolve, reject) => {
 		let settled = false;
@@ -237,9 +268,16 @@ async function openAuthTabAndWaitForRedirect(
 			void closeTab(authTabId);
 		};
 
+		// Only the sign-in tab's own pages are recorded, never another tab's.
+		const recordAuthPage = (urlValue: string | undefined) => {
+			lastAuthPage = describeAuthPage(urlValue) || lastAuthPage;
+		};
+
 		const onUpdated = (tabId: number, changeInfo: any, tab: any) => {
 			if (authTabId !== undefined && tabId !== authTabId) return;
-			inspectUrl(changeInfo?.url || tab?.url);
+			const urlValue = changeInfo?.url || tab?.url;
+			if (tabId === authTabId) recordAuthPage(urlValue);
+			inspectUrl(urlValue);
 		};
 
 		const onRemoved = (tabId: number) => {
@@ -250,13 +288,15 @@ async function openAuthTabAndWaitForRedirect(
 		chrome.tabs.onUpdated.addListener(onUpdated);
 		chrome.tabs.onRemoved.addListener(onRemoved);
 		timeoutId = setTimeout(() => {
-			settle(() => reject(new Error("OAuth sign-in timed out.")));
+			settle(() => reject(Object.assign(new Error("OAuth sign-in timed out."), { authPage: lastAuthPage })));
 			void closeTab(authTabId);
-		}, OAUTH_TIMEOUT_MS);
+		}, oauthTimeoutMsForTest ?? OAUTH_TIMEOUT_MS);
 
 		createTab(authUrl)
 			.then((tab) => {
 				authTabId = tab?.id;
+				onAuthTab(authTabId);
+				recordAuthPage(tab?.url);
 				inspectUrl(tab?.url);
 			})
 			.catch((error) => {
@@ -273,7 +313,7 @@ function buildAuthUrl(baseUrl: string, params: Record<string, string>) {
 	return url.toString();
 }
 
-async function loginOpenAICodex(options: BrowserOAuthSignInOptions): Promise<BrowserOAuthCredentials> {
+async function loginOpenAICodex(options: BrowserOAuthSignInOptions, onAuthTab?: (tabId: number | undefined) => void): Promise<BrowserOAuthCredentials> {
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomBase64Url(16);
 	const authUrl = buildAuthUrl(OPENAI_CODEX.authorizeUrl, {
@@ -288,7 +328,7 @@ async function loginOpenAICodex(options: BrowserOAuthSignInOptions): Promise<Bro
 		codex_cli_simplified_flow: "true",
 		originator: "pi",
 	});
-	const result = await openAuthTabAndWaitForRedirect("openai-codex", authUrl, OPENAI_CODEX.redirectUri, state, options);
+	const result = await openAuthTabAndWaitForRedirect("openai-codex", authUrl, OPENAI_CODEX.redirectUri, state, options, onAuthTab);
 	const tokenData = await fetchJson(OPENAI_CODEX.tokenUrl, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -367,16 +407,43 @@ export function getDefaultOAuthModel(providerId: string) {
 	return getBrowserOAuthProvider(providerId)?.defaultModel || "";
 }
 
+// One sign-in per provider at a time. The side panel and Options can each
+// start one, and two at once opened two sign-in tabs that both timed out. A
+// second start brings the open sign-in tab to the front and waits on it.
+const pendingLogins = new Map<string, { promise: Promise<BrowserOAuthCredentials>; tabId?: number }>();
+
 export async function loginBrowserOAuthProvider(options: BrowserOAuthSignInOptions): Promise<BrowserOAuthCredentials> {
 	const provider = getBrowserOAuthProvider(options.providerId);
 	if (!provider) throw new Error(`Unknown direct sign-in provider: ${options.providerId}`);
-	switch (provider.id) {
-		case "openai-codex":
-			return await loginOpenAICodex(options);
-		default:
-			throw new Error(`Unsupported direct sign-in provider: ${provider.id}`);
+	const pending = pendingLogins.get(provider.id);
+	if (pending) {
+		notify(options, provider.id, "Sign-in already open", "Finish signing in in the tab that's already open.");
+		await focusTab(pending.tabId);
+		return await pending.promise;
 	}
+	const entry: { promise: Promise<BrowserOAuthCredentials>; tabId?: number } = { promise: Promise.resolve(null as any) };
+	const onAuthTab = (tabId: number | undefined) => {
+		entry.tabId = tabId;
+	};
+	entry.promise = (async () => {
+		switch (provider.id) {
+			case "openai-codex":
+				return await loginOpenAICodex(options, onAuthTab);
+			default:
+				throw new Error(`Unsupported direct sign-in provider: ${provider.id}`);
+		}
+	})().finally(() => {
+		if (pendingLogins.get(provider.id) === entry) pendingLogins.delete(provider.id);
+	});
+	pendingLogins.set(provider.id, entry);
+	return await entry.promise;
 }
+
+export function setOAuthTimeoutMsForTest(timeoutMs: number | null) {
+	oauthTimeoutMsForTest = timeoutMs;
+}
+
+export const describeAuthPageForTest = describeAuthPage;
 
 export async function getBrowserOAuthApiKey(
 	providerId: string,
