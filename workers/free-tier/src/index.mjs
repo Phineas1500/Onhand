@@ -26,7 +26,7 @@ const UPSTREAM_REQUEST_TIMEOUT_MS = 4 * 60_000;
 // How long a disconnected request waits for its interrupted admission call
 // before releasing the admission by id instead.
 const ADMISSION_DISCONNECT_WAIT_MS = 3_000;
-const DEFAULT_DAILY_REQUEST_CAP = 150;
+const DEFAULT_DAILY_REQUEST_CAP = 300;
 const DEFAULT_TURN_MODEL_CALL_CAP = 50;
 const DEFAULT_HEAVY_TURN_MODEL_CALLS = 10;
 // Warning threshold remains independently configurable from model pricing.
