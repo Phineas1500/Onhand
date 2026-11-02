@@ -1280,6 +1280,32 @@ async function assertSentryDiagnosticsGateAndScrub() {
 				messageType: "pdf-viewer:load-authorized-source",
 				message: "The authenticated browser tab could not load the PDF (HTTP 404).",
 			},
+			{
+				label: "Voice without an OpenAI key",
+				messageType: "sidebar:live-session",
+				message: "Voice needs an OpenAI platform API key. Open Onhand options, paste a platform key with voice API access in the OpenAI platform API key field, then Save.",
+			},
+			{
+				label: "Voice on Onhand Free",
+				messageType: "sidebar:live-session",
+				message: "Voice isn't part of Onhand Free. It runs on your own OpenAI API key: open Onhand options, paste a platform key in the OpenAI platform API key field, then Save.",
+			},
+			{
+				label: "local file without file access",
+				messageType: "sidebar:open-pdf-viewer",
+				message:
+					'This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.',
+			},
+			{
+				label: "Web Store tab",
+				messageType: "sidebar:submit-prompt",
+				message: "This tab is the Chrome Web Store. Chrome doesn't let extensions read or mark Web Store pages, so Onhand can't see it.",
+			},
+			{
+				label: "Restore pages in a new session",
+				messageType: "sidebar:restore-session",
+				message: "This session has no saved pages or highlights to restore yet.",
+			},
 		];
 		for (const entry of suppressedCases) {
 			const suppressed = await runtime.captureRuntimeException({

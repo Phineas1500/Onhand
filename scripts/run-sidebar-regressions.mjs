@@ -2496,6 +2496,54 @@ async function assertRealtimeApiKeyErrorFallsBackToOptionsTab() {
 	dom.window.close();
 }
 
+async function assertVoiceWithoutKeyExplainsOnhandFree() {
+	// Voice runs only on the user's own OpenAI key. On Onhand Free the sidebar
+	// says so itself instead of asking the runtime for a credential it can't have.
+	const runtimeMessages = [];
+	const state = createState();
+	Object.assign(state.preferences, {
+		hasOAuthCredentials: false,
+		hasAiApiKey: false,
+		hasSelectedProviderApiKey: true,
+		aiProvider: "onhand-free",
+		authMode: "api-key",
+	});
+	const dom = await renderSidebar(state, runtimeMessages);
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	const voiceButton = shadow.getElementById("realtimeVoiceButton");
+	const status = shadow.getElementById("realtimeStatus");
+	voiceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+	assert.match(status.textContent, /Voice isn't part of Onhand Free\. It runs on your own OpenAI API key/);
+	assert.equal(voiceButton.textContent, "Setup", "the next click opens options");
+	assert.equal(runtimeMessages.some((message) => message?.type === "sidebar:live-session"), false, "no voice session is requested without a key");
+	assert.equal(dom.getOpenOptionsCalls(), 0, "the first click explains instead of leaving the page");
+	voiceButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+	await waitForSidebarTick(dom);
+	assert.equal(dom.getOpenOptionsCalls(), 1);
+	dom.window.close();
+}
+
+async function assertRestorePagesNeedsSomethingToRestore() {
+	const freshState = createState();
+	freshState.turns = [];
+	freshState.pageActions = [];
+	freshState.activities = [];
+	const freshDom = await renderSidebar(freshState, []);
+	await waitForSidebarTick(freshDom);
+	const freshButton = freshDom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("restoreSessionButton");
+	assert.equal(freshButton.disabled, true, "a new session has nothing to restore");
+	assert.match(freshButton.title, /no saved pages or highlights/);
+	freshDom.window.close();
+
+	const dom = await renderSidebar(createState(), []);
+	await waitForSidebarTick(dom);
+	const button = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("restoreSessionButton");
+	assert.equal(button.disabled, false, "a session with highlights can be restored");
+	assert.equal(button.title, "");
+	dom.window.close();
+}
+
 async function assertQuickOpenFocusesComposer() {
 	const runtimeMessages = [];
 	const dom = await renderSidebar(createState(), runtimeMessages);
@@ -3174,6 +3222,8 @@ await assertLookAlikeCitationMarkersAreNotShown();
 await assertRemovedCitationLeavesNoSpaceBeforePunctuation();
 await assertRealtimeApiKeyErrorOpensOptions();
 await assertRealtimeApiKeyErrorFallsBackToOptionsTab();
+await assertVoiceWithoutKeyExplainsOnhandFree();
+await assertRestorePagesNeedsSomethingToRestore();
 await assertWhatsNewShowsOnceAfterUpdate();
 await assertWhatsNewStaysHiddenWithoutNews();
 await assertWhatsNewClearsOnFirstQuestion();

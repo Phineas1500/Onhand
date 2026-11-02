@@ -3970,6 +3970,20 @@
 		});
 	}
 
+	// Restore pages has nothing to reopen in a session without saved pages or
+	// highlights (a new one), so it stays off rather than answering with an error.
+	// The session list loads when the panel opens, so the current session's own
+	// page actions decide for it.
+	function selectedSessionHasNothingToRestore(state, selectedPath, currentPath, sessions) {
+		const listed = sessions.find((session) => (session?.path || session?.id || session?.sessionId || "") === selectedPath);
+		if (selectedPath !== currentPath) return listed?.canRestore === false;
+		const turns = Array.isArray(state?.turns) ? state.turns : [];
+		const hasPageActions =
+			(Array.isArray(state?.pageActions) && state.pageActions.length > 0) ||
+			turns.some((turn) => Array.isArray(turn?.pageActions) && turn.pageActions.length > 0);
+		return !hasPageActions && listed?.canRestore !== true;
+	}
+
 	function isFreshCurrentSession(state) {
 		if (!state?.currentSession) return false;
 		return !(
@@ -4031,7 +4045,10 @@
 		openPdfViewerButton.title = canOpenCurrentPdfInViewer(state)
 			? "Open this PDF in Onhand's viewer"
 			: "Open a PDF tab to use Onhand's PDF viewer";
-		restoreSessionButton.disabled = restoringSession || creatingSession || sessionSwitching || deletingSession || activeRequest || !currentPath;
+		const nothingToRestore = selectedSessionHasNothingToRestore(state, selectedPath, currentPath, sessions);
+		restoreSessionButton.disabled =
+			restoringSession || creatingSession || sessionSwitching || deletingSession || activeRequest || !currentPath || nothingToRestore;
+		restoreSessionButton.title = nothingToRestore ? "This session has no saved pages or highlights to restore yet." : "";
 		const selectedSessionPath = getSelectedSessionPath();
 		deleteSessionButton.disabled = deletingSession || creatingSession || sessionSwitching || restoringSession || activeRequest || !selectedSessionPath;
 		deleteSessionButton.textContent = deletingSession ? "Deleting..." : "Delete";
@@ -6363,6 +6380,8 @@
 			replayState.loading || replayState.session ? pluralize(artifacts.length, "snapshot") : "",
 			replayState.loading || replayState.session ? pluralize(Array.isArray(annotations) ? annotations.length : 0, "highlight") : "",
 		].filter(Boolean);
+		const replayNothingToRestore =
+			!replayState.loading && Boolean(replayState.session) && !artifacts.length && !(Array.isArray(annotations) && annotations.length);
 		replayViewEl.innerHTML = `
 			<div class="onhand-replay-head">
 				<button class="onhand-replay-toggle" data-replay-toggle type="button" aria-expanded="${replayState.open ? "true" : "false"}">
@@ -6374,7 +6393,7 @@
 			</div>
 			<div class="onhand-replay-body" ${replayState.open ? "" : "hidden"}>
 				<div class="onhand-replay-actions">
-					<button class="onhand-replay-button" data-replay-restore type="button" ${restoringSession ? "disabled" : ""}>${restoringSession ? "Restoring..." : "Restore pages"}</button>
+					<button class="onhand-replay-button" data-replay-restore type="button" ${restoringSession || replayNothingToRestore ? "disabled" : ""}${replayNothingToRestore ? ' title="This session has no saved pages or highlights to restore yet."' : ""}>${restoringSession ? "Restoring..." : "Restore pages"}</button>
 				</div>
 				<div class="onhand-replay-meta">
 					${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
@@ -7044,9 +7063,19 @@
 		);
 	}
 
+	// Voice runs only on the user's own OpenAI API key. Onhand Free and the
+	// ChatGPT sign-in don't cover it, so their users are told that, not just
+	// asked for a key.
+	function realtimeKeySetupMessage(state = currentState) {
+		const preferences = state?.preferences || {};
+		const plan = preferences.aiProvider === "onhand-free" ? "Onhand Free" : preferences.authMode === "oauth" ? "the ChatGPT sign-in" : "";
+		if (!plan) return REALTIME_API_KEY_SETUP_MESSAGE;
+		return `Voice isn't part of ${plan}. It runs on your own OpenAI API key: open Onhand options, paste a platform key in the OpenAI platform API key field, then Save.`;
+	}
+
 	function realtimeVoiceErrorMessage(error) {
 		const message = String(error?.message || error || "").trim();
-		if (isRealtimeApiKeySetupError(message)) return REALTIME_API_KEY_SETUP_MESSAGE;
+		if (isRealtimeApiKeySetupError(message)) return realtimeKeySetupMessage();
 		return message || "Could not start Voice.";
 	}
 
@@ -7546,6 +7575,8 @@
 	async function startLiveVoice() {
 		if (!isRealtimeVoiceEnabledInPreferences()) throw new Error("Enable Voice in Onhand options first.");
 		if (realtimeConnected || realtimeConnecting || liveVoice) return;
+		// Without a saved OpenAI key the runtime can only refuse, so say why here.
+		if (currentState?.preferences && !currentState.preferences.hasAiApiKey) throw new Error(realtimeKeySetupMessage());
 		if (!globalThis.OnhandLiveVoice) throw new Error("Reload Onhand to load GPT-Live support.");
 		realtimeConnecting = true; realtimeError = "";
 		setRealtimeStatus("Connecting GPT-Live...");

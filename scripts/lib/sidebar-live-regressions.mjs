@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
-export async function runLiveSidebarRegressions({ renderSidebar, createState }) {
+export async function runLiveSidebarRegressions({ renderSidebar, createState: createBaseState }) {
+	// Voice runs on the user's own OpenAI key, so every Live test has one saved.
+	const createState = () => { const state = createBaseState(); state.preferences.hasAiApiKey = true; return state; };
 	const tick = () => new Promise(resolve => setTimeout(resolve, 20));
 	const state = createState(); state.preferences.liveDelegation = "client";
 	const messages = [], sent = [], tracks = [];

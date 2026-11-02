@@ -97848,6 +97848,7 @@ function createOnhandBrowserRuntime(host) {
       return true;
     }
     if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|the browser is shutting down|extension context invalidated/.test(message)) return true;
+    if (/voice needs an openai|runs on your own openai api key|this is a local file tab|this tab is the chrome web store|no saved pages or highlights to restore/.test(message)) return true;
     if (kind !== "runtime_exception") return false;
     if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
     if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;
@@ -101027,7 +101028,7 @@ function createOnhandBrowserRuntime(host) {
   }
   async function restoreSessionPageActions(session, params = {}) {
     const replayAnnotations = Array.isArray(params.annotations) && params.annotations.length ? params.annotations : buildReplayAnnotationsFromPageActions(collectSessionPageActions(session));
-    if (!replayAnnotations.length) throw new Error("No saved browser artifacts or replayable page actions were found for this session.");
+    if (!replayAnnotations.length) throw new Error("This session has no saved pages or highlights to restore yet.");
     const state2 = await host.snapshotState();
     const tabs = flattenTabs(state2);
     const activeTab = pickActiveTab(state2);
