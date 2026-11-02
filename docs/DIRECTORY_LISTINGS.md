@@ -12,7 +12,7 @@ Keep the facts in step with `docs/STORE_LISTING.md` and the homepage FAQ. When a
 
 **One line (92 characters):** Ask about any webpage or PDF and Onhand highlights the answer right on the page, with notes.
 
-**Summary (126 characters, same as the store):** Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up.
+**Summary (128 characters, same as the store):** Ask about any webpage, PDF or research paper: Onhand highlights the answer on the page and can quiz you on it. Free, no sign-up.
 
 **Short description (313 characters):**
 

@@ -12,7 +12,7 @@ Chrome also shows it in its extensions menu and side panel picker.
 
 ## Summary (132-character field)
 
-Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up.
+Ask about any webpage, PDF or research paper: Onhand highlights the answer on the page and can quiz you on it. Free, no sign-up.
 
 The summary is the manifest `description`, so it also changes only with a release.
 

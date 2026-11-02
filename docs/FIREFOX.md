@@ -70,7 +70,7 @@ Submit `dist/onhand-v<version>-firefox.zip` at addons.mozilla.org/developers as 
 
 - **URL slug:** `onhand-ai`. `onhand` belongs to an unrelated bookmarks add-on.
 - **Name:** comes from the manifest.
-- **Summary (250 characters):** Ask about any webpage, PDF or research paper and Onhand highlights the answer right on the page, with notes. Free, no sign-up, open source.
+- **Summary (250 characters):** Ask about any webpage, PDF or research paper: Onhand highlights the answer on the page and can quiz you on it. Free, no sign-up, open source.
 - **Categories:** Other, Search Tools. Similar add-ons, Sidenote included, use Other.
 - **Homepage:** https://useonhand.com
 - **Support site:** https://useonhand.com/support.html. Use the useonhand.com alias as the support email.
