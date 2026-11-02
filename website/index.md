@@ -153,7 +153,7 @@ It works on articles, docs, course pages and PDFs. Chrome doesn't let extensions
 Onhand starts with the page you ask about and may read clearly related open tabs. It sends your question and the relevant page content to the AI provider you chose; with Onhand Free, that goes through Onhand's server to OpenAI. Saved sessions stay in your browser. [Privacy details](https://useonhand.com/privacy.html)
 
 Guides: [Chat with a PDF in Chrome](https://useonhand.com/chat-with-pdf-chrome.html) · [AI research paper reader](https://useonhand.com/ai-research-paper-reader.html) · [AI study quizzes](https://useonhand.com/ai-study-quiz-extension.html)  
-Compare: [ChatPDF](https://useonhand.com/chatpdf-alternative.html) · [NotebookLM](https://useonhand.com/notebooklm-alternative.html) · [Sider](https://useonhand.com/sider-alternative.html) · [SciSpace](https://useonhand.com/scispace-alternative.html) · [Sidenote](https://useonhand.com/sidenote-alternative.html)
+Compare: [AI PDF extensions](https://useonhand.com/best-ai-pdf-chrome-extensions.html) · [ChatPDF](https://useonhand.com/chatpdf-alternative.html) · [NotebookLM](https://useonhand.com/notebooklm-alternative.html) · [Sider](https://useonhand.com/sider-alternative.html) · [SciSpace](https://useonhand.com/scispace-alternative.html) · [Sidenote](https://useonhand.com/sidenote-alternative.html)
 
 Onhand
 

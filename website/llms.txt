@@ -21,6 +21,7 @@
 
 ## Comparisons
 
+- [AI Chrome extensions for reading PDFs, compared](https://useonhand.com/best-ai-pdf-chrome-extensions.html): Onhand, Gemini in Chrome, Adobe Acrobat, Sider, SciSpace, Sidenote, Glasp and PDF.ai, with when to pick each.
 - [ChatPDF alternative](https://useonhand.com/chatpdf-alternative.html): free with no sign-up, and works on the webpage or PDF you're reading, including pages you're signed in to, instead of files you upload.
 - [NotebookLM (Gemini Notebook) alternative](https://useonhand.com/notebooklm-alternative.html): works on the page you're reading instead of uploaded sources. Google renamed NotebookLM to Gemini Notebook in July 2026.
 - [Sider alternative](https://useonhand.com/sider-alternative.html): focused on reading and studying.

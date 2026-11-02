@@ -42,7 +42,7 @@ Add Onhand to Chrome, open the page you're reading, and click the Onhand icon or
 [Add Onhand to Chrome ↗](https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb)
 
 Guides: [Chat with a PDF](https://useonhand.com/chat-with-pdf-chrome.html) · [Research papers](https://useonhand.com/ai-research-paper-reader.html) · [Studying with quizzes](https://useonhand.com/ai-study-quiz-extension.html)  
-Compare: [NotebookLM](https://useonhand.com/notebooklm-alternative.html) · [Sider](https://useonhand.com/sider-alternative.html) · [SciSpace](https://useonhand.com/scispace-alternative.html) · [Sidenote](https://useonhand.com/sidenote-alternative.html)
+Compare: [AI PDF extensions](https://useonhand.com/best-ai-pdf-chrome-extensions.html) · [NotebookLM](https://useonhand.com/notebooklm-alternative.html) · [Sider](https://useonhand.com/sider-alternative.html) · [SciSpace](https://useonhand.com/scispace-alternative.html) · [Sidenote](https://useonhand.com/sidenote-alternative.html)
 
 Onhand
 
