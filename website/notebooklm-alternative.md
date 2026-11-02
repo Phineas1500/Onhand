@@ -1,6 +1,6 @@
 ---
-title: "A NotebookLM alternative for the page you're reading — Onhand"
-description: "Onhand is a free, open-source NotebookLM alternative for Chrome: ask about the page or PDF you're reading and see the answer highlighted on it."
+title: "A NotebookLM (Gemini Notebook) alternative for the page you're reading — Onhand"
+description: "Onhand is a free, open-source alternative to NotebookLM (now Gemini Notebook) for Chrome: ask about the page or PDF you're reading and see the answer highlighted."
 url: https://useonhand.com/notebooklm-alternative.html
 ---
 
@@ -12,9 +12,9 @@ Onhand is a free, open-source AI Chrome extension that answers questions about t
 
 Free to start. No account needed. Open source. Also on [Firefox](https://addons.mozilla.org/firefox/addon/onhand-ai/) and [Edge](https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj).
 
-## How Onhand and NotebookLM differ
+## How Onhand and Gemini Notebook differ
 
-|  | Onhand | NotebookLM (Gemini Notebook) |
+|  | Onhand | Gemini Notebook (formerly NotebookLM) |
 | --- | --- | --- |
 | Where you work | On the page itself in Chrome, with answers in a side panel | In its own web and phone apps, or the Gemini app, after you add sources to a notebook |
 | Sources | The webpage or PDF you have open, plus clearly related open tabs, including pages you're signed in to | Sources you add or it finds on the web: PDFs, websites, YouTube videos, audio, Google Docs, Slides and Sheets, Word and PowerPoint files, images and more; paywalled pages aren't supported |
@@ -22,7 +22,7 @@ Free to start. No account needed. Open source. Also on [Firefox](https://addons.
 | Study tools | Learning mode: guiding questions, quizzes graded against highlighted passages, and a This session panel | Audio and video overviews, flashcards and quizzes, study guides and reports, mind maps, slide decks and infographics |
 | Price and code | Free tier with a daily limit, or your ChatGPT plan or own API key; open source | Free with a Google account; higher limits with Google AI Plus, Pro or Ultra plans |
 
-NotebookLM details are from Google's [Gemini Notebook page](https://notebook.google/) and its help pages on [sources](https://support.google.com/gemininotebook/answer/16215270), [study tools](https://support.google.com/gemininotebook/answer/16206563) and [plans](https://support.google.com/gemininotebook/answer/16213268), checked October 21, 2026. NotebookLM and Gemini Notebook are trademarks of Google; Onhand isn't affiliated with Google.
+Gemini Notebook details are from Google's [Gemini Notebook page](https://notebook.google/) and its help pages on [sources](https://support.google.com/gemininotebook/answer/16215270), [study tools](https://support.google.com/gemininotebook/answer/16206563) and [plans](https://support.google.com/gemininotebook/answer/16213268), checked November 2, 2026. NotebookLM and Gemini Notebook are trademarks of Google; Onhand isn't affiliated with Google.
 
 ## Ask while you read, without building a notebook
 
@@ -31,13 +31,13 @@ NotebookLM details are from Google's [Gemini Notebook page](https://notebook.goo
 -   **Pages behind a sign-in work:** course sites and library journal access, because Onhand reads the page in your browser.
 -   **Pick up later:** sessions are saved in your browser with their highlights, notes and answers.
 
-## When NotebookLM fits better
+## When Gemini Notebook fits better
 
-If you want to gather a whole course's sources into one place and ask across all of them, or you want audio and video overviews, mind maps or slide decks made from your sources, NotebookLM is built for that. It also has phone apps; Onhand is a browser extension.
+If you want to gather a whole course's sources into one place and ask across all of them, or you want audio and video overviews, mind maps or slide decks made from your sources, Gemini Notebook is built for that. It also has phone apps; Onhand is a browser extension.
 
 ## Using both
 
-They work well together: use NotebookLM for an overview of a stack of sources, and Onhand when you sit down to read one of them closely.
+They work well together: use Gemini Notebook for an overview of a stack of sources, and Onhand when you sit down to read one of them closely.
 
 ## Try it
 
