@@ -8,6 +8,13 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.15",
+		items: [
+			"Voice now tells you before it starts that it runs on your own OpenAI API key, instead of failing after you click it.",
+			"Starting ChatGPT sign-in a second time brings you back to the sign-in tab that's already open.",
+		],
+	},
+	{
 		version: "0.4.14",
 		items: [
 			"After each answer, Onhand suggests a next question in the input box. Press Tab to use it, or turn this off in Settings.",
