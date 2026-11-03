@@ -8,6 +8,8 @@ const ONHAND_RELEASE = {
 
 const ONHAND_ANALYTICS = {
   chromeStoreEvent: 'chrome_store_click',
+  firefoxStoreEvent: 'firefox_store_click',
+  edgeStoreEvent: 'edge_store_click',
   releaseDownloadEvent: 'download_zip_click',
   githubSourceEvent: 'github_source_click',
   sponsorEvent: 'sponsor_click',
@@ -19,6 +21,24 @@ const ONHAND_STORE = {
   url: 'https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb',
   approvedVersion: '0.4.14',
   pendingVersion: null,
+};
+
+// Firefox and Edge visitors install from their own browser's store. Every
+// other desktop browser (Chrome, Brave, Opera, Vivaldi, Arc) uses the Chrome
+// Web Store.
+const ONHAND_BROWSER_STORES = {
+  firefox: {
+    url: 'https://addons.mozilla.org/firefox/addon/onhand-ai/',
+    browser: 'Firefox',
+    store: 'Firefox Add-ons',
+    event: ONHAND_ANALYTICS.firefoxStoreEvent,
+  },
+  edge: {
+    url: 'https://microsoftedge.microsoft.com/addons/detail/icbhigkjjhkcheejmdfkfhiljnkommoj',
+    browser: 'Edge',
+    store: 'Edge Add-ons',
+    event: ONHAND_ANALYTICS.edgeStoreEvent,
+  },
 };
 
 // Phones and tablets can't run browser extensions, so there the install
@@ -51,6 +71,16 @@ function isHandheldDevice(){
   if (/Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua)) return true;
   // iPadOS asks for desktop sites with a Mac user agent; Macs have no touch screen.
   return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+}
+
+// Firefox forks (LibreWolf, Zen, Waterfox) keep "Firefox/" in their user
+// agent and install from Firefox Add-ons too.
+function storeBrowser(){
+  const ua = navigator.userAgent || '';
+  const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
+  if (/\bEdg\//.test(ua) || brands.some(({ brand }) => brand === 'Microsoft Edge')) return 'edge';
+  if (/\bFirefox\//.test(ua)) return 'firefox';
+  return 'chrome';
 }
 
 // 0a) Phones: relabel the install buttons and send the link instead. Plain
@@ -187,19 +217,51 @@ function isHandheldDevice(){
     node.href = releaseUrl;
   });
 
+  // In Firefox and Edge the install buttons say "Add to Firefox" or "Add to
+  // Edge" and open that browser's store. Text links that name the Chrome Web
+  // Store (the support page's update steps) keep pointing there.
+  const browserStore = isHandheldDevice() ? null : ONHAND_BROWSER_STORES[storeBrowser()];
   document.querySelectorAll('[data-onhand-store-link]').forEach((node) => {
     if (node.hasAttribute('data-onhand-send-to-computer')) return;
-    node.href = ONHAND_STORE.url;
-    node.setAttribute('data-onhand-analytics-event', chromeStoreEventName);
+    const store = browserStore && node.matches('.nav-cta, .btn-primary, .release-download, .inline-action') ? browserStore : null;
+    if (store) {
+      const labelNode = node.querySelector('.nav-cta-label, span:not(.mc)') || node;
+      labelNode.textContent = labelNode.textContent.replace('Chrome', store.browser);
+    }
+    const url = store ? store.url : ONHAND_STORE.url;
+    const eventName = store ? store.event : chromeStoreEventName;
+    node.href = url;
+    node.setAttribute('data-onhand-analytics-event', eventName);
     node.addEventListener('click', () => {
-      trackConversion(chromeStoreEventName, 'install', ONHAND_STORE.url, {
+      const linkData = {
+        link_url: url,
+        link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+      };
+      trackConversion(eventName, 'install', url, store ? linkData : {
         store_version: ONHAND_STORE.approvedVersion,
         pending_version: ONHAND_STORE.pendingVersion || '',
-        link_url: ONHAND_STORE.url,
-        link_text: node.textContent.replace(/\s+/g, ' ').trim(),
+        ...linkData,
       });
     });
   });
+  // Then "Also on Firefox and Edge" reads "Also on Chrome and Edge" in
+  // Firefox, and the install steps name the visitor's store.
+  if (browserStore) {
+    const chromeNames = { [browserStore.browser]: 'Chrome', [browserStore.store]: 'Chrome Web Store' };
+    document.querySelectorAll(`a[href="${browserStore.url}"]:not([data-onhand-store-link])`).forEach((node) => {
+      node.href = ONHAND_STORE.url;
+      node.textContent = chromeNames[node.textContent.trim()] || node.textContent;
+    });
+    document.querySelectorAll('[data-onhand-browser-name]').forEach((node) => {
+      node.textContent = browserStore.browser;
+    });
+    document.querySelectorAll('[data-onhand-store-name]').forEach((node) => {
+      node.textContent = browserStore.store;
+    });
+    document.querySelectorAll('[data-onhand-other-browsers]').forEach((node) => {
+      node.textContent = node.textContent.replace(browserStore.browser, 'Chrome');
+    });
+  }
   document.querySelectorAll('[data-onhand-source-link]').forEach((node) => {
     node.href = ONHAND_RELEASE.repo;
     node.setAttribute('data-onhand-analytics-event', githubSourceEventName);

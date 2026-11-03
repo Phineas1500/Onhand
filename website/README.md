@@ -46,6 +46,7 @@ aws s3 sync website/ s3://onhand-site/ --acl public-read
 - **Hero copy:** `index.html`, sections starting at `<h1 class="hero-h1">`.
 - **Feature card text:** `index.html`, the four `<div class="feat">` blocks.
 - **Add to Chrome link:** generated from `ONHAND_STORE.url` for elements with `data-onhand-store-link`.
+- **In Firefox and Edge:** `site.js` relabels the install buttons "Add to Firefox" or "Add to Edge" and links them to that browser's store (`ONHAND_BROWSER_STORES`). Links to the visitor's own store elsewhere on the page ("Also on Firefox and Edge", the footer) point to the Chrome Web Store instead, and the homepage install steps name the visitor's store (`data-onhand-browser-name`, `data-onhand-store-name`, `data-onhand-other-browsers`). Text links that name the Chrome Web Store stay as they are. Other Chromium browsers (Brave, Opera, Vivaldi, Arc) keep the Chrome Web Store.
 - **On phones and tablets:** phones can't install extensions, so `site.js` relabels the `data-onhand-store-link` buttons "Send to my computer" and opens the share sheet with a link tagged `utm_source=phone` (an email draft where sharing isn't available). Chromebooks keep the store buttons. Text links to the store stay as they are.
 - **Open Graph image:** `<meta property="og:image">` — currently the attention screenshot. Replace with a 1200×630 dedicated card when you have one.
 
@@ -56,6 +57,8 @@ The site uses Google Analytics 4 (`G-JQ159C5BGF`) and Umami. Custom conversion e
 | Event name | Intent | Hook attribute | GA category |
 |------------|--------|----------------|-------------|
 | `chrome_store_click` | Chrome Web Store install | `data-onhand-store-link` | `install` |
+| `firefox_store_click` | Firefox Add-ons install, from the install buttons in Firefox | `data-onhand-store-link` buttons, relabeled in Firefox | `install` |
+| `edge_store_click` | Edge Add-ons install, from the install buttons in Edge | `data-onhand-store-link` buttons, relabeled in Edge | `install` |
 | `download_zip_click` | Manual ZIP download / load unpacked | `data-onhand-release-download` | `release` |
 | `github_source_click` | View repo / build from source | `data-onhand-source-link` | `source` |
 | `sponsor_click` | Open GitHub Sponsors | `data-onhand-sponsor-link` | `support` |
