@@ -666,6 +666,9 @@ const REALTIME_READABLE_CONTEXT_MAX_CHARS = 9000;
 const REALTIME_ANCHOR_CONTEXT_MAX_CHARS = 4200;
 const TOOL_RESULT_MAX_CHARS = 1800;
 const VISIBLE_TEXT_TOOL_MAX_CHARS = 2400;
+// The model sees at most 8000 characters of a PDF page read (formatPdfPagesForModel).
+const PDF_READ_PREFLIGHT_MAX_PAGES = 12;
+const PDF_READ_PREFLIGHT_MAX_CHARS = 8000;
 const RECENT_CONTEXT_TURN_LIMIT = 4;
 const RECENT_CONTEXT_PROMPT_MAX_CHARS = 260;
 const RECENT_CONTEXT_REPLY_MAX_CHARS = 700;
@@ -910,7 +913,7 @@ const PDF_FIND_CITATION_SCHEMA = Type.Object({
 
 const PDF_READ_PAGES_SCHEMA = Type.Object({
 	...TAB_MATCH_SCHEMA,
-	pages: Type.Optional(Type.String({ description: "Comma-separated PDF page numbers to read, for example '2,8,9'. Use this or startPage/endPage." })),
+	pages: Type.Optional(Type.String({ description: "PDF page numbers or ranges to read, for example '2,8,9' or '1-6'. Use this or startPage/endPage." })),
 	page: Type.Optional(Type.Number({ description: "Single PDF page number to read" })),
 	pageNumber: Type.Optional(Type.Number({ description: "Single PDF page number to read" })),
 	startPage: Type.Optional(Type.Number({ description: "First PDF page number in a page range to read" })),
@@ -4328,8 +4331,12 @@ function shouldRequirePageSourceMarkerRetry(request: any, draftText: unknown = "
 	// Explicit three-plus phrasings ("compare all open docs") raise the
 	// cross-tab floor. The gate cannot know the true source count, so this
 	// remains a floor — the retry prompt still demands every source tab.
+	// "Each" only distributes over the named sources ("these two papers ...
+	// mark the evidence in each"), and two/both cap them at two, so neither
+	// raises it: an unreachable third mark forced a duplicate re-marking pass.
+	const promptText = ownWordsPromptText(request.displayPrompt);
 	const requiredHighlights = Math.max(
-		crossTab && textHasAny(ownWordsPromptText(request.displayPrompt), /\b(?:all|every|each|three|four|five)\b/)
+		crossTab && textHasAny(promptText, /\b(?:all|every|three|four|five)\b/) && !textHasAny(promptText, /\b(?:two|both|pair)\b/)
 			? Math.max(3, baselineRequiredHighlights)
 			: baselineRequiredHighlights,
 		structuredListMarkFloor(request, draftText),
@@ -7606,7 +7613,7 @@ function buildLaneReasoningProfile(settings: RuntimeSettings, prompt: string, at
 			promptPolicy: [
 				"Runtime policy: Page note-taking. The user asked for notes on this page, and the on-page marks are the deliverable.",
 				"Read the ENTIRE piece before placing any marks: call browser_extract_content (no small maxChars), and while its excerpt says the page continues, call it again with the startBlock it reports until you reach the end. The captured snapshot covers only the visible top of the page.",
-				`Then mark the piece start to end: one highlight per key point someone reviewing it would want — the thesis, each main argument or turn, the key evidence or examples, and the conclusion — spread across the whole piece rather than clustered at the top; typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks for an essay or article, more for a long one.`,
+				`Then mark the piece start to end, placing all the marks in one step of parallel browser_highlight_text calls: one highlight per key point someone reviewing it would want — the thesis, each main argument or turn, the key evidence or examples, and the conclusion — spread across the whole piece rather than clustered at the top; typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks for an essay or article, more for a long one.`,
 				"Highlight one exact sentence or clause per mark: never glue a heading onto body text, never cut a word, and leave out footnote markers.",
 				"Give each interpretive highlight a browser_show_note (one to two sentences) saying why the point matters or how it connects to the rest; a plainly stated fact may stand without one. Notes interpret — they never paraphrase the highlight.",
 				"Keep the chat reply to one or two lines: how many points you marked and the piece's main takeaway in a sentence. The takeaway synthesizes the whole piece, so it carries no citation chips. Do not list or restate the marks or notes in chat. Never mention internal budgets, guardrails, or tool limits in the reply.",
@@ -8619,9 +8626,14 @@ function promptReferencesVisiblePdfSelectionOrPage(prompt: unknown) {
 }
 
 function promptExplicitlyMentionsVisibleSelection(prompt: unknown) {
-	const text = String(prompt || "");
 	// "Highlight the findings" creates marks; it does not refer to a selection
 	// that must transfer from another PDF reader. Bare highlight is a verb here.
+	// "The highlighted blue curve in Figure 3" describes the figure itself, so
+	// a highlighted/marked figure element is not a reader selection either.
+	const text = String(prompt || "").replace(
+		/\b(?:highlighted|marked)\s+(?:[a-z-]+\s+){0,2}(?:curves?|lines?|bars?|regions?|areas?|boxes|box|points?|plots?|graphs?|charts?|panels?|cells?|rows?|columns?|arrows?|shapes?|series|nodes?|edges?|peaks?)\b/gi,
+		" ",
+	);
 	return /\b(?:selected|selection|highlighted|marked|text\s+i\s+selected|passage\s+i\s+selected)\b/i.test(text) ||
 		/\b(?:this|that|the|my|these|those|your)\s+highlights?\b/i.test(text);
 }
@@ -9343,7 +9355,7 @@ function buildLauncherPrompt(
 		"- If the captured context already includes the needed text, answer from it without extra read tools; still anchor each page point you state with a highlight.",
 			`- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, highlight each key point you actually explain; do not add extra highlights just to increase source count. ${MARK_POLICY.comparisonMarks} For roadmap/list/process/derivation/proof prompts, mark every required top-level item before child/subtopic items; do not silently drop required items that the page contains. Do not highlight full algorithms or every sub-step unless asked. Keep the answer concise.`,
 		"- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only highlight. Each named step/item in chat needs its own source highlight, or one highlighted source list/table/span that literally contains every named item. If a heading-only highlight is blocked, retry with the item's explanatory sentence under that heading. If a required item still cannot be highlighted after retry, keep it in the answer without a user-facing marker note — never silently omit the item itself.",
-		"- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
+		"- For list-shaped visible/readable text, highlight the exact item words one item at a time: one highlight per item, all placed in the same step as parallel calls. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
 		"- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
 		"- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.",
 		"- Do not call browser_extract_content more than once unless the first result is unusable. Finish any reading before your first highlight, so each point is marked once from the text you will quote.",
@@ -15047,6 +15059,56 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		}
 	}
 
+	// PDF questions spent their first 2-4 model rounds only getting the text
+	// (reopening the viewer, an empty extract, a search for "the", then
+	// pdf_read_pages): after the handoff the context still held the native
+	// viewer's "no readable text layer" note. Read the opening pages from
+	// Onhand's viewer during preparation, recorded as that same completed
+	// tool call, so the first model step can answer and mark.
+	async function runPdfReadPreflight(prompt: string, details: any, pdfHandoff: any, targetWindowId?: number, requestHost: RuntimeHost = host) {
+		if (!activeRequest) return "";
+		const handoffTabId = Number(pdfHandoff?.tab?.id || 0);
+		const activeTab = details?.activeTab;
+		const tabId = handoffTabId > 0 ? handoffTabId : isOnhandPdfViewerUrl(activeTab?.url) ? Number(activeTab?.id || 0) : 0;
+		if (!(tabId > 0)) return "";
+		if (ownWordsPromptText(prompt).split(/\s+/).filter(Boolean).length < 3) return "";
+		if (promptReferencesVisiblePdfSelectionOrPage(prompt)) return "";
+		const intent = getModelIntentClassificationForPrompt(prompt);
+		if (intent && !intent.pageScoped) return "";
+		const toolName = "browser_pdf_read_pages";
+		const activityId = `tool:preflight:${toolName}:${tabId}`;
+		const requested = { tabId, startPage: 1, endPage: PDF_READ_PREFLIGHT_MAX_PAGES, maxChars: PDF_READ_PREFLIGHT_MAX_CHARS };
+		const params = withTargetWindowId(requested, targetWindowId);
+		appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "running" });
+		recordToolTraceStart(toolName, activityId, requested);
+		recordToolTraceEffectiveArgs(toolName, activityId, params);
+		try {
+			const result = await requestHost.runCommand("pdf_read_pages", params);
+			const pages = result?.pages || {};
+			const readPages = (Array.isArray(pages.readPageNumbers) ? pages.readPageNumbers : []).map(Number).filter((page: number) => page > 0);
+			if (!readPages.length || !Number(pages.charCount || 0)) throw new Error("No PDF page text returned.");
+			recordToolTraceEnd(toolName, activityId, { details: result }, false);
+			appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "complete" });
+			const lastRead = Math.max(...readPages);
+			const pageCount = Number(pages.pageCount || 0);
+			const coverage = pages.truncated
+				? `the start of this PDF (up to page ${lastRead}${pageCount ? ` of ${pageCount}` : ""})`
+				: pageCount && lastRead >= pageCount
+				? `all ${pageCount} page${pageCount === 1 ? "" : "s"} of this PDF`
+				: `pages 1-${lastRead}${pageCount ? ` of ${pageCount}` : ""} of this PDF`;
+			return [
+				`Onhand already read ${coverage} in its viewer for you (a completed browser_pdf_read_pages call on tabId ${tabId}). The PDF reader notes above describe the browser's own viewer before the handoff; this is the text.`,
+				toolResultTextForModel(toolName, result),
+				"Answer and mark from this text. Call browser_pdf_search or browser_pdf_read_pages only for pages beyond it, and do that reading before your first highlight.",
+			].join("\n");
+		} catch (error) {
+			host.log?.("PDF read preflight failed", error);
+			recordToolTraceEnd(toolName, activityId, { details: { error: (error as any)?.message || String(error) } }, true);
+			appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName), toolName, state: "error" });
+			return "";
+		}
+	}
+
 	async function runPdfVisualCapturePreflight(prompt: string, details: any, targetWindowId?: number, pdfHandoff?: any, requestHost: RuntimeHost = host) {
 		if (!activeRequest || !promptAsksAboutVisualRegion(prompt)) return null;
 		if (!browserContextLooksLikePdf(details) && !pdfHandoff) return null;
@@ -18289,6 +18351,8 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					requestContext.abortController.signal.throwIfAborted();
 					const readablePage = pdfHandoff ? "" : await runReadablePagePreflight(prompt, browserContextDetails, targetWindowId, preparationHost);
 					requestContext.abortController.signal.throwIfAborted();
+					const pdfPagesContext = await runPdfReadPreflight(prompt, browserContextDetails, pdfHandoff, targetWindowId, preparationHost);
+					requestContext.abortController.signal.throwIfAborted();
 					const readablePageContext = readablePage
 						? `Onhand already read this page for you (a completed browser_extract_content call):\n${readablePage}\nMark and answer from this text. Call browser_extract_content again only to continue past this excerpt (startBlock) or to search a long page with a query, and do that reading before your first highlight: marks you place and then replace cost the user time and are removed.`
 						: "";
@@ -18302,7 +18366,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					const pdfHandoffContext = pdfHandoffTabId > 0
 						? `Onhand already opened this PDF in its viewer (tabId ${pdfHandoffTabId}). Do not call browser_open_pdf_in_onhand_viewer again; use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${pdfHandoffTabId}.`
 						: "";
-					const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext, readablePageContext].filter(Boolean).join("\n\n");
+					const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext, readablePageContext, pdfPagesContext].filter(Boolean).join("\n\n");
 					const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
 					const existingAnchorContext = buildExistingAnchorContext(session);
 					const liveVoiceContext = rawSource === "live-voice"

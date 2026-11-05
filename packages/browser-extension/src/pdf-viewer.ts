@@ -2180,7 +2180,18 @@ function parsePdfPageNumbers(options: Record<string, any> = {}) {
 			if (Number.isFinite(pageNumber) && pageNumber > 0) values.push(clamp(pageNumber));
 		}
 	} else if (typeof rawPages === "string") {
-		for (const part of rawPages.split(/[\s,]+/)) {
+		// Models write ranges ("1-6") as often as lists. An unparsed range fell
+		// back to the current page, so "read pages 1-6" silently returned one
+		// page and the agent went on searching for text it never saw.
+		const normalized = rawPages.replace(/\s*(?:[-–—]|\bto\b)\s*/gi, "-");
+		for (const part of normalized.split(/[\s,]+/)) {
+			const range = /^(\d+)-(\d+)$/.exec(part);
+			if (range) {
+				const start = clamp(Math.min(Number(range[1]), Number(range[2])));
+				const end = clamp(Math.max(Number(range[1]), Number(range[2])));
+				for (let pageNumber = start; pageNumber <= end && values.length < 200; pageNumber += 1) values.push(pageNumber);
+				continue;
+			}
 			const pageNumber = Number(part);
 			if (Number.isFinite(pageNumber) && pageNumber > 0) values.push(clamp(pageNumber));
 		}
@@ -2359,6 +2370,7 @@ async function pdfReadPages(options: Record<string, any> = {}) {
 		viewer: "onhand-pdf-viewer",
 		url: sourceUrl,
 		title: document.title,
+		pageCount: Number(pdfDocument?.numPages || getPdfPages().length || 0),
 		pageNumbers,
 		readPageNumbers,
 		failedPageNumbers,

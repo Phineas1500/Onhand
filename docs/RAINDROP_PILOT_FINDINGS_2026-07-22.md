@@ -176,3 +176,57 @@ evaluator receipt fixes below. Scores are honest measurements now, not floors.
 - Note for future reads: regression-suite smoke runs also emit Workshop spans
   while the pilot bundle is loaded; filter by fixture URLs when querying the
   database.
+
+## Refresh — 2026-11-05 (Workshop 0.1.23, adapter 0.2.5, GPT-6 Luna Free)
+
+Prompted by slow Onhand Free answers in real use. Aggregate per-turn shape from
+the Free worker (no content): most answers take 3-4 model calls, but a few take
+10-36, and every call resends the ~16k-token cached system prompt and tools, so
+the number of rounds sets both latency and cost. The matrix added five starter
+cases (the sidebar's starter questions on a six-page study PDF and a web
+article) to the core cases. Fixture-only profile, extension 0.4.15 plus the
+fixes below.
+
+### Fixed this round
+
+- **Unreachable cross-tab floor.** "Compare how these two papers ... mark the
+  key evidence in each" required three marked tabs because "each" counted as a
+  three-plus phrasing, so every two-PDF comparison ran a second pass that
+  re-marked both papers and rewrote the answer. "Each" no longer raises the
+  floor, and "two/both" cap it at two (two-paper: 7 calls/23 s → 5 calls/15 s).
+- **PDF text missing from the first model call.** After Onhand opened a PDF in
+  its viewer, the context still held only the native viewer's "no readable text
+  layer" note, so PDF questions spent 2-4 rounds just getting the text
+  (reopening the viewer, an empty extract, a search for "the", then a page
+  read). Preparation now reads the opening pages (up to 8,000 characters) as a
+  completed `browser_pdf_read_pages` call. Starter rounds: summarize-and-highlight
+  6 → 2, explain-the-hardest-part 4 → 2, quiz 5 → 1-2.
+- **Page ranges read one page.** `pages: "1-6"` fell back to the current page,
+  so the agent searched in circles for text it never saw and once highlighted a
+  page title. The viewer now parses ranges ("1-6", "2, 5–7", "6 to 12").
+- **"The highlighted blue curve" ended the turn.** A highlighted figure element
+  counted as a reader selection; with nothing to transfer, the turn ended with
+  the canned "could not transfer selected or highlighted text" reply.
+  visual-pdf-figure: 0.35 → 0.95.
+- **One highlight per round.** "Highlight the key points" placed six marks in
+  six rounds: the page-notes policy and a list rule ("one item at a time") read
+  as one call per round. Both now say to place the marks in one step of parallel
+  calls (7 rounds → 3).
+
+### Remaining
+
+- **Learning research loop.** The homework case once ran three research passes
+  (6, 19 and 19 rounds; it hit the 180 s timeout). The sufficiency judge found a
+  new gap each time (L0 instead of L1/L2, mechanism detail, unannotated
+  sources). The same case finished in one pass earlier the same day, so the
+  judge is the variable; it needs a bound or a stable rubric.
+- **Serial single-tool rounds.** Multi-source searches still often issue one
+  `browser_pdf_search` per round (1.2-2 s plus the cached prompt each time).
+- **Hidden PDF viewer stalls.** In that third pass, five parallel searches on one
+  background viewer tab timed out (8.7 s frame timeout, then 15 s queue
+  timeouts). Not reproduced yet.
+- **Evaluator quote mismatch.** The two-paper fixture PDF renders "an
+  approximate" as "a approximate", so the paper-A slot can miss even when the
+  mark is placed.
+- Model-call latency varied 4x within the session (1.2-2.5 s vs 5-10 s per call,
+  with Decisions 503s), so compare rounds, not seconds, across runs.

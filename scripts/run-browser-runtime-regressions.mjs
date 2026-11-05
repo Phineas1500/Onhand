@@ -197,6 +197,7 @@ function createReplayHost(options = {}) {
 					return { tab, result: runJsResult ?? true };
 			}
 			if (name === "get_selection") return { selection: options.selection || { text: "" } };
+			if (name === "pdf_read_pages" && options.pdfReadPages) return { tab, pages: options.pdfReadPages };
 			if (name === "pdf_restore_scroll") return { tab, scroll: { surface: "pdf", viewer: "onhand-pdf-viewer", scrollX: args.scrollX, scrollY: args.scrollY } };
 			if (name === "get_visible_text") {
 				return {
@@ -3860,7 +3861,7 @@ async function assertConstitutionPromptContract() {
 	assert.match(contract.answerPrompt, /explicit named formula\/equation\/theorem requests/);
 	assert.match(contract.answerPrompt, /do not substitute a nearby unrelated formula/);
 	assert.match(contract.answerPrompt, /block formula highlight/);
-	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time/);
+	assert.match(contract.answerPrompt, /highlight the exact item words one item at a time: one highlight per item, all placed in the same step as parallel calls/);
 	const runtimeSourceForHighlightPolicy = [
 		await (await import("node:fs/promises")).readFile(new URL("../packages/browser-extension/src/browser-runtime.ts", import.meta.url), "utf8"),
 		// Policy wording shared by multiple prompt surfaces lives in the
@@ -5433,6 +5434,27 @@ async function assertConstitutionPromptContract() {
 			}),
 			true,
 			"cross-tab prompts still require anchors on distinct tabs even when one is reused",
+		);
+		const twoTabMarks = [
+			...pageTeachingWithoutSourceRequest.toolTraces,
+			{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text [tabId 5]. annotationId: onhand-pdf-a-1" },
+			{ toolName: "browser_highlight_text", state: "complete", resultSummary: "Highlighted text [tabId 7]. annotationId: onhand-pdf-b-1" },
+		];
+		for (const prompt of [
+			"Compare how these two papers reduce retrieval latency, and mark the key evidence in each.",
+			"Compare these papers and mark the key evidence in each.",
+			"Compare both papers and highlight all the key evidence.",
+		]) {
+			assert.equal(
+				shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, displayPrompt: prompt, toolTraces: twoTabMarks }),
+				false,
+				`a mark in each of two compared tabs finishes the answer: ${prompt}`,
+			);
+		}
+		assert.equal(
+			shouldRequirePageSourceMarkerRetryForTest({ ...pageTeachingWithoutSourceRequest, displayPrompt: "Compare all my open docs on this topic and highlight the evidence.", toolTraces: twoTabMarks }),
+			true,
+			"\"all open docs\" still asks for a third source mark",
 		);
 		assert.equal(
 			shouldRequirePageSourceMarkerRetryForTest({
@@ -11137,6 +11159,47 @@ async function assertExactExtractContentPromptsInjectQuery() {
 	assert.equal(extractTrace.effectiveArgs.maxChars >= 30000, true);
 }
 
+async function assertPdfQuestionsReadOpeningPagesDuringPreparation() {
+	// Raindrop traces (2026-11-05): PDF starters spent their first 2-4 model
+	// rounds just getting the text, because nothing from Onhand's viewer was
+	// in the first model call's context.
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent("https://example.test/lecture7.pdf")}`;
+	const pdfReadPages = {
+		surface: "pdf",
+		viewer: "onhand-pdf-viewer",
+		pageCount: 6,
+		readPageNumbers: [1, 2, 3, 4, 5, 6],
+		charCount: 64,
+		truncated: false,
+		blocks: [{ tag: "pdf-page", pageNumber: 1, text: "Alpha smoke content: spacing beats cramming for long-term recall." }],
+	};
+	const run = async (prompt) => {
+		const host = createReplayHost({
+			tabs: [replaySmokeTab({ id: 31, windowId: 4, title: "lecture7.pdf", url: viewerUrl })],
+			pdfReadPages,
+		});
+		const runtime = createOnhandBrowserRuntime(host);
+		await runtime.updateSettings({ aiProvider: "onhand-smoke", aiModel: "onhand-smoke-1", aiApiKey: "test", authMode: "api-key" });
+		await runtime.submitPrompt({ prompt, displayPrompt: prompt, attachments: [], learningMode: false, targetWindowId: 4 });
+		const completed = await waitForRuntimeCompletion(runtime);
+		assert.equal(completed?.activeRequestId, null, `runtime did not complete: ${prompt}`);
+		const store = getStoredStore();
+		return { host, turn: store.sessions[store.currentSessionId].turns.at(-1) };
+	};
+	const summary = await run("Summarize this and highlight the key points");
+	const read = summary.host.calls.find((call) => call.name === "pdf_read_pages");
+	assert.ok(read, "a PDF page question reads the opening pages during preparation");
+	assert.equal(read.args.tabId, 31);
+	assert.equal(read.args.startPage, 1);
+	assert.equal(read.args.maxChars, 8000, "the read stays within what the model is shown");
+	const trace = summary.turn.toolTraces?.find((candidate) => candidate.toolName === "browser_pdf_read_pages" && String(candidate.toolCallId || candidate.id || "").startsWith("tool:preflight:"));
+	assert.equal(trace?.state, "complete", "the read is recorded as a completed browser_pdf_read_pages call");
+	const selection = await run("What does this mean?");
+	assert.equal(selection.host.calls.some((call) => call.name === "pdf_read_pages" && call.args.startPage === 1 && call.args.maxChars === 8000), false, "selection questions keep using the selection");
+}
+
 async function assertMarkupWithMarginNotesBypassesOptionalNoteBudget() {
 	const { __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
 	const prompts = [
@@ -11180,6 +11243,12 @@ async function assertPdfMarkupRequestDoesNotRequireExistingSelection() {
 		assert.equal(test.promptCouldReferToHighlightedPdfText(request), true, request);
 		assert.equal(test.shouldOpenPdfViewerForUnknownPdfSelection(request, details), true, request);
 	}
+	// A highlighted figure element is part of the figure, not a reader selection.
+	for (const request of ["What trend does the highlighted blue curve show in Figure 3, and what does the caption say it represents?", "Why is the marked region in the chart so flat?"]) {
+		assert.equal(test.promptCouldReferToHighlightedPdfText(request), false, request);
+		assert.equal(test.shouldOpenPdfViewerForUnknownPdfSelection(request, details), false, request);
+	}
+	assert.equal(test.promptCouldReferToHighlightedPdfText("What does the highlighted curve label mean? Explain the highlighted text."), true, "a real selection mention still counts next to a figure mention");
 	const host = createReplayHost({
 		tabs: [replaySmokeTab({ url: details.activeTab.url, title: "Recommendations PDF" })],
 		selection, visibleText: "PDF viewer page 2 / 3",
@@ -13325,6 +13394,7 @@ async function main() {
 	await assertReplayActionActivationDoesNotUseLooseSourceCandidates();
 	await assertSidePanelPromptTargetsOriginWindow();
 	await assertExactExtractContentPromptsInjectQuery();
+	await assertPdfQuestionsReadOpeningPagesDuringPreparation();
 	await assertUnknownPdfSelectionOpensViewerAndAsksForReselect();
 	await assertVisualPdfQuestionsCaptureCurrentPageImageBeforeAnswering();
 	await assertExplicitPdfHandoffRunsBeforeAgentContext();

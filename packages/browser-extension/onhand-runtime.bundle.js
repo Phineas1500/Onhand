@@ -88075,6 +88075,8 @@ var REALTIME_READABLE_CONTEXT_MAX_CHARS = 9e3;
 var REALTIME_ANCHOR_CONTEXT_MAX_CHARS = 4200;
 var TOOL_RESULT_MAX_CHARS = 1800;
 var VISIBLE_TEXT_TOOL_MAX_CHARS = 2400;
+var PDF_READ_PREFLIGHT_MAX_PAGES = 12;
+var PDF_READ_PREFLIGHT_MAX_CHARS = 8e3;
 var RECENT_CONTEXT_TURN_LIMIT = 4;
 var RECENT_CONTEXT_PROMPT_MAX_CHARS = 260;
 var RECENT_CONTEXT_REPLY_MAX_CHARS = 700;
@@ -88288,7 +88290,7 @@ var PDF_FIND_CITATION_SCHEMA = typebox_exports.Object({
 });
 var PDF_READ_PAGES_SCHEMA = typebox_exports.Object({
   ...TAB_MATCH_SCHEMA,
-  pages: typebox_exports.Optional(typebox_exports.String({ description: "Comma-separated PDF page numbers to read, for example '2,8,9'. Use this or startPage/endPage." })),
+  pages: typebox_exports.Optional(typebox_exports.String({ description: "PDF page numbers or ranges to read, for example '2,8,9' or '1-6'. Use this or startPage/endPage." })),
   page: typebox_exports.Optional(typebox_exports.Number({ description: "Single PDF page number to read" })),
   pageNumber: typebox_exports.Optional(typebox_exports.Number({ description: "Single PDF page number to read" })),
   startPage: typebox_exports.Optional(typebox_exports.Number({ description: "First PDF page number in a page range to read" })),
@@ -91177,8 +91179,9 @@ function shouldRequirePageSourceMarkerRetry(request2, draftText = "") {
   const crossTab = promptAsksForCrossTabComparison(request2.displayPrompt);
   if (hasCompletedToolTrace(request2, "browser_pdf_read_pages") && !crossTab) return false;
   const baselineRequiredHighlights = promptAsksForStructuredPageSourceMarker(request2.displayPrompt) || promptAsksForSinglePageComparison(request2.displayPrompt) || crossTab ? 2 : 1;
+  const promptText = ownWordsPromptText(request2.displayPrompt);
   const requiredHighlights = Math.max(
-    crossTab && textHasAny(ownWordsPromptText(request2.displayPrompt), /\b(?:all|every|each|three|four|five)\b/) ? Math.max(3, baselineRequiredHighlights) : baselineRequiredHighlights,
+    crossTab && textHasAny(promptText, /\b(?:all|every|three|four|five)\b/) && !textHasAny(promptText, /\b(?:two|both|pair)\b/) ? Math.max(3, baselineRequiredHighlights) : baselineRequiredHighlights,
     structuredListMarkFloor(request2, draftText)
   );
   const completedCount = crossTab ? distinctCompletedSourceHighlightTabCount(request2) : Math.max(completedSourceHighlightCount(request2), completedSourceHighlightTraceCount(request2) + completedReusedAnchorCount(request2));
@@ -92894,7 +92897,7 @@ function buildLaneReasoningProfile(settings2, prompt, attachments = []) {
       promptPolicy: [
         "Runtime policy: Page note-taking. The user asked for notes on this page, and the on-page marks are the deliverable.",
         "Read the ENTIRE piece before placing any marks: call browser_extract_content (no small maxChars), and while its excerpt says the page continues, call it again with the startBlock it reports until you reach the end. The captured snapshot covers only the visible top of the page.",
-        `Then mark the piece start to end: one highlight per key point someone reviewing it would want \u2014 the thesis, each main argument or turn, the key evidence or examples, and the conclusion \u2014 spread across the whole piece rather than clustered at the top; typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks for an essay or article, more for a long one.`,
+        `Then mark the piece start to end, placing all the marks in one step of parallel browser_highlight_text calls: one highlight per key point someone reviewing it would want \u2014 the thesis, each main argument or turn, the key evidence or examples, and the conclusion \u2014 spread across the whole piece rather than clustered at the top; typically around ${REVIEW_SOURCE_HIGHLIGHT_SOFT_TARGET} marks for an essay or article, more for a long one.`,
         "Highlight one exact sentence or clause per mark: never glue a heading onto body text, never cut a word, and leave out footnote markers.",
         "Give each interpretive highlight a browser_show_note (one to two sentences) saying why the point matters or how it connects to the rest; a plainly stated fact may stand without one. Notes interpret \u2014 they never paraphrase the highlight.",
         "Keep the chat reply to one or two lines: how many points you marked and the piece's main takeaway in a sentence. The takeaway synthesizes the whole piece, so it carries no citation chips. Do not list or restate the marks or notes in chat. Never mention internal budgets, guardrails, or tool limits in the reply."
@@ -93736,7 +93739,10 @@ function promptReferencesVisiblePdfSelectionOrPage(prompt) {
   return false;
 }
 function promptExplicitlyMentionsVisibleSelection(prompt) {
-  const text = String(prompt || "");
+  const text = String(prompt || "").replace(
+    /\b(?:highlighted|marked)\s+(?:[a-z-]+\s+){0,2}(?:curves?|lines?|bars?|regions?|areas?|boxes|box|points?|plots?|graphs?|charts?|panels?|cells?|rows?|columns?|arrows?|shapes?|series|nodes?|edges?|peaks?)\b/gi,
+    " "
+  );
   return /\b(?:selected|selection|highlighted|marked|text\s+i\s+selected|passage\s+i\s+selected)\b/i.test(text) || /\b(?:this|that|the|my|these|those|your)\s+highlights?\b/i.test(text);
 }
 function promptCouldReferToHighlightedPdfText(prompt) {
@@ -94256,7 +94262,7 @@ ${String(prompt || "").trim() || "(See attached files.)"}`,
     "- If the captured context already includes the needed text, answer from it without extra read tools; still anchor each page point you state with a highlight.",
     `- Source-thorough path: if the question has distinct subclaims or asks for support/evidence, highlight each key point you actually explain; do not add extra highlights just to increase source count. ${MARK_POLICY.comparisonMarks} For roadmap/list/process/derivation/proof prompts, mark every required top-level item before child/subtopic items; do not silently drop required items that the page contains. Do not highlight full algorithms or every sub-step unless asked. Keep the answer concise.`,
     "- Roadmap/list/navigation answers need the actual supporting list or linked items, not a heading-only highlight. Each named step/item in chat needs its own source highlight, or one highlighted source list/table/span that literally contains every named item. If a heading-only highlight is blocked, retry with the item's explanatory sentence under that heading. If a required item still cannot be highlighted after retry, keep it in the answer without a user-facing marker note \u2014 never silently omit the item itself.",
-    "- For list-shaped visible/readable text, highlight the exact item words one item at a time. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
+    "- For list-shaped visible/readable text, highlight the exact item words one item at a time: one highlight per item, all placed in the same step as parallel calls. Treat Markdown bullets and heading markers in tool output as structure cues, not part of the page text to quote.",
     "- If a page-wide list appears partial in the visible snapshot, use browser_extract_content once before answering. Do not substitute nearby headings for missing list items.",
     "- If the user asks about a named section, heading, phrase, table, row, value, tensor, or item that is not in the visible snapshot, use browser_extract_content once before saying it is missing, not visible, or asking the user to scroll. A visible-text-only read is not enough to rule out offscreen page content.",
     "- Do not call browser_extract_content more than once unless the first result is unusable. Finish any reading before your first highlight, so each point is marked once from the text you will quote.",
@@ -99098,6 +99104,45 @@ function createOnhandBrowserRuntime(host) {
       return "";
     }
   }
+  async function runPdfReadPreflight(prompt, details, pdfHandoff, targetWindowId, requestHost = host) {
+    if (!activeRequest) return "";
+    const handoffTabId = Number(pdfHandoff?.tab?.id || 0);
+    const activeTab = details?.activeTab;
+    const tabId = handoffTabId > 0 ? handoffTabId : isOnhandPdfViewerUrl(activeTab?.url) ? Number(activeTab?.id || 0) : 0;
+    if (!(tabId > 0)) return "";
+    if (ownWordsPromptText(prompt).split(/\s+/).filter(Boolean).length < 3) return "";
+    if (promptReferencesVisiblePdfSelectionOrPage(prompt)) return "";
+    const intent = getModelIntentClassificationForPrompt(prompt);
+    if (intent && !intent.pageScoped) return "";
+    const toolName2 = "browser_pdf_read_pages";
+    const activityId = `tool:preflight:${toolName2}:${tabId}`;
+    const requested = { tabId, startPage: 1, endPage: PDF_READ_PREFLIGHT_MAX_PAGES, maxChars: PDF_READ_PREFLIGHT_MAX_CHARS };
+    const params = withTargetWindowId(requested, targetWindowId);
+    appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName2), toolName: toolName2, state: "running" });
+    recordToolTraceStart(toolName2, activityId, requested);
+    recordToolTraceEffectiveArgs(toolName2, activityId, params);
+    try {
+      const result = await requestHost.runCommand("pdf_read_pages", params);
+      const pages = result?.pages || {};
+      const readPages = (Array.isArray(pages.readPageNumbers) ? pages.readPageNumbers : []).map(Number).filter((page) => page > 0);
+      if (!readPages.length || !Number(pages.charCount || 0)) throw new Error("No PDF page text returned.");
+      recordToolTraceEnd(toolName2, activityId, { details: result }, false);
+      appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName2), toolName: toolName2, state: "complete" });
+      const lastRead = Math.max(...readPages);
+      const pageCount = Number(pages.pageCount || 0);
+      const coverage = pages.truncated ? `the start of this PDF (up to page ${lastRead}${pageCount ? ` of ${pageCount}` : ""})` : pageCount && lastRead >= pageCount ? `all ${pageCount} page${pageCount === 1 ? "" : "s"} of this PDF` : `pages 1-${lastRead}${pageCount ? ` of ${pageCount}` : ""} of this PDF`;
+      return [
+        `Onhand already read ${coverage} in its viewer for you (a completed browser_pdf_read_pages call on tabId ${tabId}). The PDF reader notes above describe the browser's own viewer before the handoff; this is the text.`,
+        toolResultTextForModel(toolName2, result),
+        "Answer and mark from this text. Call browser_pdf_search or browser_pdf_read_pages only for pages beyond it, and do that reading before your first highlight."
+      ].join("\n");
+    } catch (error2) {
+      host.log?.("PDF read preflight failed", error2);
+      recordToolTraceEnd(toolName2, activityId, { details: { error: error2?.message || String(error2) } }, true);
+      appendActivity({ id: activityId, kind: "tool", label: getToolStatusMessage(toolName2), toolName: toolName2, state: "error" });
+      return "";
+    }
+  }
   async function runPdfVisualCapturePreflight(prompt, details, targetWindowId, pdfHandoff, requestHost = host) {
     if (!activeRequest || !promptAsksAboutVisualRegion(prompt)) return null;
     if (!browserContextLooksLikePdf(details) && !pdfHandoff) return null;
@@ -101980,6 +102025,8 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
           requestContext.abortController.signal.throwIfAborted();
           const readablePage = pdfHandoff ? "" : await runReadablePagePreflight(prompt, browserContextDetails, targetWindowId, preparationHost);
           requestContext.abortController.signal.throwIfAborted();
+          const pdfPagesContext = await runPdfReadPreflight(prompt, browserContextDetails, pdfHandoff, targetWindowId, preparationHost);
+          requestContext.abortController.signal.throwIfAborted();
           const readablePageContext = readablePage ? `Onhand already read this page for you (a completed browser_extract_content call):
 ${readablePage}
 Mark and answer from this text. Call browser_extract_content again only to continue past this excerpt (startBlock) or to search a long page with a query, and do that reading before your first highlight: marks you place and then replace cost the user time and are removed.` : "";
@@ -101987,7 +102034,7 @@ Mark and answer from this text. Call browser_extract_content again only to conti
           const responseFormatRequirement = buildVisualResponseFormatRequirement(prompt, browserContextDetails, pdfVisualCapture);
           const pdfHandoffTabId = Number(pdfHandoff?.tab?.id || 0);
           const pdfHandoffContext = pdfHandoffTabId > 0 ? `Onhand already opened this PDF in its viewer (tabId ${pdfHandoffTabId}). Do not call browser_open_pdf_in_onhand_viewer again; use browser_pdf_search, browser_pdf_read_pages, and browser_highlight_text with tabId ${pdfHandoffTabId}.` : "";
-          const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext, readablePageContext].filter(Boolean).join("\n\n");
+          const browserContext = [browserContextDetails.text, pageInjectionNotice(browserContextDetails.text), pdfHandoffContext, pdfVisualCaptureContext, readablePageContext, pdfPagesContext].filter(Boolean).join("\n\n");
           const priorPageContext = buildPriorExtractedPageContext(session, browserContextDetails.activeTab, prompt);
           const existingAnchorContext = buildExistingAnchorContext(session);
           const liveVoiceContext = rawSource === "live-voice" ? 'This answer will also be spoken. Ground it exactly as you would a typed answer: the same reading, highlights, notes and inline citations. Speech changes only how the reply opens. Start with a self-contained paragraph of at most 45 words, including essential qualifications, and write any math or symbols in that paragraph as spoken words ("x squared", "a over b"), never LaTeX. In Learning Mode, put the single learning question or evaluation first without revealing an unrequested solution. Citation markers are removed from speech, so cite the opening paragraph as usual; further detail can follow in the sidebar.\nLive conversation reference data (fragments may be incomplete; apply the latest correction and keep speaker roles distinct):\n' + JSON.stringify((Array.isArray(request2.voiceContext) ? request2.voiceContext : []).slice(-40).map((entry) => ({ role: entry.role === "assistant" ? "assistant" : "user", text: String(entry.text || "").slice(0, 350) }))) : "";

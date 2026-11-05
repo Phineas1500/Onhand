@@ -25,6 +25,21 @@ function loadFunctions(names, dependencies) {
 	return new Function(...Object.keys(dependencies), `${names.map((name) => declaration(name)).join("\n")}\nreturn { ${names.join(", ")} };`)(...Object.values(dependencies));
 }
 
+function assertPageRangesParse() {
+	// "pages": "1-6" used to fall back to the current page alone.
+	const { parsePdfPageNumbers } = loadFunctions(["parsePdfPageNumbers"], {
+		pdfDocument: { numPages: 8 },
+		getPdfPages: () => [],
+		pageInput: { value: "2" },
+	});
+	assert.deepEqual(parsePdfPageNumbers({ pages: "1-6" }), [1, 2, 3, 4, 5, 6]);
+	assert.deepEqual(parsePdfPageNumbers({ pages: "2, 5–7" }), [2, 5, 6, 7], "en dash ranges mix with single pages");
+	assert.deepEqual(parsePdfPageNumbers({ pages: "3 - 4,8" }), [3, 4, 8]);
+	assert.deepEqual(parsePdfPageNumbers({ pages: "6 to 12" }), [6, 7, 8], "ranges clamp to the page count");
+	assert.deepEqual(parsePdfPageNumbers({ pages: "2,8,9" }), [2, 8]);
+	assert.deepEqual(parsePdfPageNumbers({}), [2], "no pages still reads the current page");
+}
+
 async function assertExtractionCoverage() {
 	const failures = new Set([2]);
 	const pageTextContentCache = new Map();
@@ -414,6 +429,7 @@ function assertZoomCommitKeepsScrollFromPreview() {
 assertZoomCommitKeepsScrollFromPreview();
 assertNarrowPdfNotesFoldToTabs();
 assertPdfPagesSlideForOneNoteColumn();
+assertPageRangesParse();
 await assertExtractionCoverage();
 await assertZoomPreservesLiveEdits(0);
 await assertZoomPreservesLiveEdits(1);

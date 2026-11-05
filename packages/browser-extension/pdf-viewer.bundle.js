@@ -26886,7 +26886,15 @@ function parsePdfPageNumbers(options = {}) {
       if (Number.isFinite(pageNumber) && pageNumber > 0) values.push(clamp(pageNumber));
     }
   } else if (typeof rawPages === "string") {
-    for (const part of rawPages.split(/[\s,]+/)) {
+    const normalized = rawPages.replace(/\s*(?:[-–—]|\bto\b)\s*/gi, "-");
+    for (const part of normalized.split(/[\s,]+/)) {
+      const range = /^(\d+)-(\d+)$/.exec(part);
+      if (range) {
+        const start = clamp(Math.min(Number(range[1]), Number(range[2])));
+        const end = clamp(Math.max(Number(range[1]), Number(range[2])));
+        for (let pageNumber2 = start; pageNumber2 <= end && values.length < 200; pageNumber2 += 1) values.push(pageNumber2);
+        continue;
+      }
       const pageNumber = Number(part);
       if (Number.isFinite(pageNumber) && pageNumber > 0) values.push(clamp(pageNumber));
     }
@@ -27051,6 +27059,7 @@ async function pdfReadPages(options = {}) {
     viewer: "onhand-pdf-viewer",
     url: sourceUrl,
     title: document.title,
+    pageCount: Number(pdfDocument?.numPages || getPdfPages().length || 0),
     pageNumbers,
     readPageNumbers,
     failedPageNumbers,
