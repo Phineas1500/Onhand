@@ -13663,8 +13663,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|the browser is shutting down|extension context invalidated/.test(message)) return true;
 		// Setup steps the message already walks the user through: Voice without an
 		// OpenAI key, a local file or Web Store tab Chrome won't let Onhand read,
-		// and Restore pages in a session with nothing saved.
-		if (/voice needs an openai|runs on your own openai api key|this is a local file tab|this tab is the chrome web store|no saved pages or highlights to restore/.test(message)) return true;
+		// a local PDF the viewer asks the reader to choose, and Restore pages in a
+		// session with nothing saved.
+		if (/voice needs an openai|runs on your own openai api key|this is a local file tab|asking the reader to choose|this tab is the chrome web store|no saved pages or highlights to restore/.test(message)) return true;
 		if (kind !== "runtime_exception") return false;
 		if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
 		if (messageType === "browser-runtime:oauth-sign-in" && /closed before authorization completed/.test(message)) return true;

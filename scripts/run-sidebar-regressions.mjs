@@ -3177,6 +3177,158 @@ async function assertRatingPromptAsksOnceAfterThirdAnswer() {
 	edge.window.close();
 }
 
+// The browser's answer to "may Onhand read file:// pages?".
+function fileAccessSetup(allowed) {
+	return (window) => {
+		window.chrome.extension = { isAllowedFileSchemeAccess: (callback) => callback(allowed) };
+		window.chrome.runtime.id = "ogjmncmkpgdkkcibdiacmagaehjohljb";
+	};
+}
+
+function setPage(state, url, page) {
+	state.tab = { id: 7, windowId: 1, url, title: "Page" };
+	state.page = page;
+}
+
+// An empty conversation offers a few questions that fit the page (a reader
+// who uninstalled wasn't sure what to use Onhand for). One click asks.
+async function assertStarterQuestionsFitThePageAndAsk() {
+	const runtimeMessages = [];
+	const state = { ...createState(), turns: [], messages: [] };
+	setPage(state, "https://example.test/article", { surface: "web" });
+	const dom = await renderSidebar(state, runtimeMessages, { setupWindow: fileAccessSetup(false) });
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	const starters = async () => {
+		await dom.window.__onhandSidebarTestHooks.requestState();
+		await waitForSidebarTick(dom);
+		return [...shadow.querySelectorAll("[data-starter-prompt]")].map((button) => button.textContent);
+	};
+	assert.deepEqual(await starters(), ["What's the main idea here?", "Highlight the key points", "Quiz me on this page"]);
+	setPage(state, "https://example.test/paper.pdf", { surface: "pdf", pdfUrl: "https://example.test/paper.pdf" });
+	assert.deepEqual(await starters(), ["Summarize this and highlight the key points", "Explain the hardest part simply", "Quiz me on this"]);
+	setPage(state, "https://docs.google.com/document/d/test/edit", { surface: "google-docs" });
+	assert.deepEqual(await starters(), ["What's the main point of this doc?", "Highlight the key points", "Quiz me on this"]);
+	for (const [label, url, page] of [
+		["the Web Store", "https://chromewebstore.google.com/detail/test", { surface: "chrome-web-store", unsupported: true }],
+		["the browser's own pages", "chrome://newtab/", null],
+		["a local file Onhand can't read", "file:///Users/test/paper.pdf", { surface: "local-file", unsupported: true }],
+	]) {
+		setPage(state, url, page);
+		assert.deepEqual(await starters(), [], `no starter questions on ${label}`);
+	}
+
+	setPage(state, "https://example.test/article", { surface: "web" });
+	await starters();
+	shadow.querySelector("[data-starter-prompt]").click();
+	await waitForSidebarTick(dom);
+	const submitted = runtimeMessages.filter((message) => message?.type === "sidebar:submit-prompt");
+	assert.equal(submitted.length, 1, "one click asks");
+	assert.equal(submitted[0].prompt, "What's the main idea here?");
+	dom.window.close();
+
+	// Before the first-run choice, the question waits in the composer like a typed one.
+	const firstRunMessages = [];
+	const firstRun = { ...createState(), turns: [], messages: [], preferences: { extensionVersion: "test", runtimeRevision: "test" } };
+	setPage(firstRun, "https://example.test/article", { surface: "web" });
+	const fresh = await renderSidebar(firstRun, firstRunMessages, { setupWindow: fileAccessSetup(false) });
+	const freshShadow = fresh.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await fresh.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(fresh);
+	freshShadow.querySelector("[data-starter-prompt]").click();
+	await waitForSidebarTick(fresh);
+	assert.equal(firstRunMessages.filter((message) => message?.type === "sidebar:submit-prompt").length, 0, "nothing is sent before a mode is picked");
+	assert.equal(freshShadow.getElementById("input").value, "What's the main idea here?");
+	fresh.window.close();
+}
+
+// A local file tab without file access: a PDF can be opened by picking the
+// file in Onhand's viewer, and Chrome can allow access once (a reader who
+// uninstalled got a paragraph of instructions instead).
+async function assertLocalFileNoticeOffersPickAndAllow() {
+	const runtimeMessages = [];
+	const state = { ...createState(), turns: [], messages: [] };
+	setPage(state, "file:///Users/test/paper.pdf", { surface: "local-file", unsupported: true });
+	const dom = await renderSidebar(state, runtimeMessages, {
+		setupWindow: fileAccessSetup(false),
+		openPdfViewerResponse: () => ({ ok: true, result: { opened: true, localFileChoice: { fileName: "paper.pdf" } } }),
+	});
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const notice = shadow.getElementById("localFileNotice");
+	assert.equal(notice.hidden, false, "a local PDF without access shows the notice");
+	assert.match(notice.textContent, /This PDF is on your computer\. Pick the file/);
+	notice.querySelector("[data-local-file-pick]").click();
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	const open = runtimeMessages.find((message) => message?.type === "sidebar:open-pdf-viewer");
+	assert.equal(open?.tabId, 7, "Pick the file opens Onhand's viewer in this tab");
+	assert.match(shadow.getElementById("meta").textContent, /Pick paper\.pdf in Onhand.s viewer/);
+
+	notice.querySelector("[data-local-file-allow]").click();
+	await waitForSidebarTick(dom);
+	assert.deepEqual(dom.getCreatedTabs().at(-1), { url: "chrome://extensions/?id=ogjmncmkpgdkkcibdiacmagaehjohljb" });
+	assert.match(notice.textContent, /turn on “Allow access to file URLs”/, "after Allow access, the notice says which switch");
+
+	// A local page that isn't a PDF can only be allowed.
+	setPage(state, "file:///Users/test/notes.html", { surface: "local-file", unsupported: true });
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(notice.querySelector("[data-local-file-pick]"), null);
+	assert.ok(notice.querySelector("[data-local-file-allow]"));
+	setPage(state, "https://example.test/article", { surface: "web" });
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	assert.equal(notice.hidden, true, "web pages show no notice");
+	dom.window.close();
+
+	// With access, a local file is an ordinary page.
+	const allowedState = { ...createState(), turns: [], messages: [] };
+	setPage(allowedState, "file:///Users/test/paper.pdf", { surface: "pdf", pdfUrl: "file:///Users/test/paper.pdf" });
+	const allowed = await renderSidebar(allowedState, [], { setupWindow: fileAccessSetup(true) });
+	const allowedShadow = allowed.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await allowed.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(allowed);
+	assert.equal(allowedShadow.getElementById("localFileNotice").hidden, true);
+	assert.equal(allowedShadow.querySelectorAll("[data-starter-prompt]").length, 3, "a readable local PDF gets starter questions");
+	allowed.window.close();
+}
+
+// The first answered question on an install brings one tip about what else
+// Onhand does; later answers and later panels don't.
+async function assertFirstAnswerTipShowsOnce() {
+	const state = createState();
+	const dom = await renderSidebar(state, [], { storage: { onhandAnsweredQuestions: 0 }, setupWindow: fileAccessSetup(false) });
+	const shadow = dom.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot;
+	await dom.window.__onhandSidebarTestHooks.requestState();
+	await waitForSidebarTick(dom);
+	const tip = shadow.getElementById("firstAnswerTip");
+	assert.equal(tip.hidden, true, "no tip before an answer");
+	await dom.window.chrome.storage.local.set({ onhandAnsweredQuestions: 1 });
+	await waitForSidebarTick(dom);
+	await waitForSidebarTick(dom);
+	assert.equal(tip.hidden, false, "the first answer shows the tip");
+	assert.match(tip.textContent, /quiz you on a page/);
+	assert.equal(dom.getStorageValue("onhandFirstAnswerTip"), "shown");
+	tip.querySelector("[data-first-answer-tip-dismiss]").click();
+	await waitForSidebarTick(dom);
+	assert.equal(tip.hidden, true, "Got it closes it");
+	dom.window.close();
+
+	for (const [label, storage, next] of [
+		["it already showed", { onhandAnsweredQuestions: 0, onhandFirstAnswerTip: "shown" }, 1],
+		["an existing reader answers again", { onhandAnsweredQuestions: 4 }, 5],
+	]) {
+		const quiet = await renderSidebar(createState(), [], { storage, setupWindow: fileAccessSetup(false) });
+		await quiet.window.__onhandSidebarTestHooks.requestState();
+		await quiet.window.chrome.storage.local.set({ onhandAnsweredQuestions: next });
+		await waitForSidebarTick(quiet);
+		await waitForSidebarTick(quiet);
+		assert.equal(quiet.window.document.querySelector("#onhand-extension-sidebar-host").shadowRoot.getElementById("firstAnswerTip").hidden, true, `no tip when ${label}`);
+		quiet.window.close();
+	}
+}
+
 // Every release writes its lines (or an empty list); packaging refuses a
 // version without an entry, and this catches it in CI first.
 async function assertWhatsNewCoversManifestVersion() {
@@ -3230,6 +3382,9 @@ await assertWhatsNewClearsOnFirstQuestion();
 await assertWhatsNewCoversManifestVersion();
 await assertFollowUpSuggestionFillsComposerOnTab();
 await assertRatingPromptAsksOnceAfterThirdAnswer();
+await assertStarterQuestionsFitThePageAndAsk();
+await assertLocalFileNoticeOffersPickAndAllow();
+await assertFirstAnswerTipShowsOnce();
 
 // The spoken layer stays free of grounding jargon (the runtime bans "let me
 // ground this" as process narration; Live makes its own brief acknowledgments).

@@ -23,6 +23,15 @@
 	const ANSWERED_QUESTIONS_STORAGE_KEY = "onhandAnsweredQuestions";
 	const RATING_PROMPT_STORAGE_KEY = "onhandRatingPrompt";
 	const RATING_PROMPT_AFTER_ANSWERS = 3;
+	// The first answered question on this install brings one tip about what
+	// else Onhand does. The stored value keeps it from showing again.
+	const FIRST_ANSWER_TIP_STORAGE_KEY = "onhandFirstAnswerTip";
+	// An empty conversation offers a few questions that fit the page. One click asks.
+	const STARTER_QUESTIONS = {
+		pdf: ["Summarize this and highlight the key points", "Explain the hardest part simply", "Quiz me on this"],
+		doc: ["What's the main point of this doc?", "Highlight the key points", "Quiz me on this"],
+		web: ["What's the main idea here?", "Highlight the key points", "Quiz me on this page"],
+	};
 	const EDGE_ADDONS_EXTENSION_ID = "icbhigkjjhkcheejmdfkfhiljnkommoj";
 	const SIDEBAR_QUICK_OPEN_REQUEST_KEY = "onhandSidebarQuickOpenRequest";
 	const SIDEBAR_QUICK_OPEN_MAX_AGE_MS = 30 * 1000;
@@ -153,6 +162,12 @@
 	// The first-run diagnostics box, ticked or not, while its save is in flight.
 	let authDiagnosticsChoice = null;
 	let ratingPromptVisible = false;
+	let firstAnswerTipVisible = false;
+	// Whether the browser lets Onhand read file:// pages (null until known).
+	// Changing it restarts Onhand and this panel, so it is read once.
+	let localFileAccess = null;
+	// The local-file notice after its Allow access button opened the setting.
+	let localFileAccessRequested = false;
 	let followUpSuggestion = "";
 	// In Firefox, Mozilla's install-time consent for technical data replaces
 	// Onhand's own switch (see diagnosticsSharingAllowed in browser-runtime.ts).
@@ -2378,6 +2393,18 @@
 			.onhand-rating-actions button:hover {
 				background: var(--rm-surface-0);
 			}
+			.onhand-rating-actions button.primary {
+				border: 0;
+				background: var(--rm-pine);
+				color: var(--rm-base);
+				font-weight: 700;
+			}
+			.onhand-rating-actions button.primary:hover {
+				background: color-mix(in srgb, var(--rm-pine) 88%, var(--rm-text));
+			}
+			.onhand-first-answer-tip {
+				background: color-mix(in srgb, var(--rm-pine) 8%, transparent);
+			}
 			.onhand-review-nudge[hidden] {
 				display: none;
 			}
@@ -3698,6 +3725,30 @@
 				color: var(--rm-subtext);
 				font-style: italic;
 			}
+			.onhand-starters {
+				display: flex;
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 6px;
+				margin-top: 14px;
+			}
+			.onhand-starter {
+				border: 1px solid var(--rm-surface-2);
+				background: var(--rm-mantle);
+				color: var(--rm-text);
+				border-radius: 3px;
+				padding: 6px 10px;
+				font: 13px/1.35 var(--rm-font-serif);
+				text-align: left;
+				cursor: pointer;
+			}
+			.onhand-starter:hover {
+				background: var(--rm-surface-0);
+			}
+			.onhand-starter:disabled {
+				opacity: 0.55;
+				cursor: default;
+			}
 		</style>
 		<div class="onhand-sidebar panel" data-onhand-sidebar>
 			<header class="onhand-head">
@@ -3754,6 +3805,8 @@
 			</div>
 				<button id="jumpToLatestButton" class="onhand-jump-latest" type="button" aria-label="Jump to latest answer" hidden>Jump to latest ↓</button>
 			</div>
+			<section id="localFileNotice" class="onhand-rating-prompt onhand-local-file-notice" aria-label="File on your computer" hidden></section>
+			<section id="firstAnswerTip" class="onhand-rating-prompt onhand-first-answer-tip" aria-label="Tip" hidden></section>
 			<section id="ratingPrompt" class="onhand-rating-prompt" aria-label="Rate Onhand" hidden></section>
 			<section id="reviewNudge" class="onhand-review-nudge" hidden></section>
 			<section id="learnerPanel" class="onhand-learner-panel" hidden></section>
@@ -3848,6 +3901,8 @@
 	const learnerPanelEl = shadow.getElementById("learnerPanel");
 	const reviewNudgeEl = shadow.getElementById("reviewNudge");
 	const ratingPromptEl = shadow.getElementById("ratingPrompt");
+	const localFileNoticeEl = shadow.getElementById("localFileNotice");
+	const firstAnswerTipEl = shadow.getElementById("firstAnswerTip");
 	const whatsNewEl = shadow.getElementById("whatsNew");
 	const dismissedReviewKeys = new Set();
 	const composer = shadow.getElementById("composer");
@@ -4379,6 +4434,12 @@
 			}
 			setMenuOpen(false);
 			await requestState();
+			const localFileChoice = response.result?.localFileChoice;
+			if (localFileChoice) {
+				// The viewer is open in this tab and asking for the file.
+				renderState({ ...(currentState || {}), status: `Pick ${localFileChoice.fileName || "the PDF"} in Onhand's viewer to open it.` });
+				return response.result;
+			}
 			const initialPageNumber = Number(response.result?.initialPageNumber);
 			const pageSuffix = Number.isFinite(initialPageNumber) && initialPageNumber > 0 ? ` at page ${initialPageNumber}` : "";
 			const sourceSuffix = response.result?.initialPageSource ? ` (${response.result.initialPageSource})` : "";
@@ -5132,6 +5193,139 @@
 		actions.append(rate, later);
 		ratingPromptEl.replaceChildren(text, actions);
 		ratingPromptEl.hidden = false;
+	}
+
+	async function readLocalFileAccess() {
+		if (IS_FIREFOX) return false;
+		return await new Promise((resolve) => chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(Boolean(allowed))));
+	}
+
+	function isLocalFileTab(state) {
+		return /^file:/i.test(String(state?.tab?.url || ""));
+	}
+
+	function openLocalFileAccessSetting() {
+		localFileAccessRequested = true;
+		renderLocalFileNotice(currentState || {});
+		void chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }).catch((error) => {
+			renderState({ ...(currentState || {}), status: error?.message || String(error) });
+		});
+	}
+
+	// A file:// tab the browser won't let Onhand read. A PDF can still be opened
+	// by picking the file in Onhand's viewer; Chrome can also allow file access.
+	function renderLocalFileNotice(state) {
+		if (!(localFileNoticeEl instanceof HTMLElement)) return;
+		const show = isLocalFileTab(state) && localFileAccess === false && !replayState.open && hasUsableOnhandAuth(state);
+		if (!show) {
+			localFileNoticeEl.hidden = true;
+			localFileNoticeEl.replaceChildren();
+			return;
+		}
+		const pdf = isLikelyPdfUrl(state.tab.url);
+		const busy = Boolean(state?.activeRequestId) || sending || openingPdfViewer;
+		// State polls re-render often; rebuilding the buttons mid-click would drop the click.
+		const key = `${pdf}|${busy}|${localFileAccessRequested}`;
+		if (!localFileNoticeEl.hidden && localFileNoticeEl.dataset.key === key) return;
+		localFileNoticeEl.dataset.key = key;
+		const text = document.createElement("span");
+		text.className = "onhand-rating-text";
+		const actions = document.createElement("span");
+		actions.className = "onhand-rating-actions";
+		if (pdf) {
+			const pick = document.createElement("button");
+			pick.type = "button";
+			pick.className = "primary";
+			pick.textContent = "Pick the file";
+			pick.disabled = busy;
+			pick.setAttribute("data-local-file-pick", "");
+			pick.addEventListener("click", () => {
+				void openCurrentPdfInViewer().catch((error) => renderState({ ...(currentState || {}), status: error?.message || String(error) }));
+			});
+			actions.append(pick);
+		}
+		if (!IS_FIREFOX) {
+			const allow = document.createElement("button");
+			allow.type = "button";
+			if (!pdf) allow.className = "primary";
+			allow.textContent = "Allow access";
+			allow.setAttribute("data-local-file-allow", "");
+			allow.addEventListener("click", openLocalFileAccessSetting);
+			actions.append(allow);
+		}
+		if (localFileAccessRequested && !IS_FIREFOX) {
+			text.textContent = "On the page that opened, turn on “Allow access to file URLs”. Onhand restarts when you do, so open it again on this file.";
+		} else if (IS_FIREFOX) {
+			text.textContent = pdf
+				? "This PDF is on your computer. Firefox doesn't let add-ons read files there, so pick the file to open it in Onhand."
+				: "This page is a file on your computer. Firefox doesn't let add-ons read files there, so Onhand can't read it.";
+		} else {
+			text.textContent = pdf
+				? "This PDF is on your computer. Pick the file to open it in Onhand, or allow access to local files once."
+				: "This page is a file on your computer. Onhand can read it once you allow access to local files.";
+		}
+		localFileNoticeEl.replaceChildren(...(actions.childElementCount ? [text, actions] : [text]));
+		localFileNoticeEl.hidden = false;
+	}
+
+	// Shows once, when the first question on this install has been answered.
+	async function maybeShowFirstAnswerTip(answered) {
+		if (firstAnswerTipVisible || Number(answered) !== 1) return;
+		const stored = await chrome.storage.local.get({ [FIRST_ANSWER_TIP_STORAGE_KEY]: "" });
+		if (stored[FIRST_ANSWER_TIP_STORAGE_KEY] || firstAnswerTipVisible) return;
+		firstAnswerTipVisible = true;
+		await chrome.storage.local.set({ [FIRST_ANSWER_TIP_STORAGE_KEY]: "shown" });
+		renderFirstAnswerTip(currentState || {});
+	}
+
+	function renderFirstAnswerTip(state) {
+		if (!(firstAnswerTipEl instanceof HTMLElement)) return;
+		const busy = Boolean(state?.activeRequestId) || sending;
+		if (!firstAnswerTipVisible || busy || replayState.open) {
+			firstAnswerTipEl.hidden = true;
+			firstAnswerTipEl.replaceChildren();
+			return;
+		}
+		if (!firstAnswerTipEl.hidden && firstAnswerTipEl.childElementCount) return;
+		const text = document.createElement("span");
+		text.className = "onhand-rating-text";
+		text.textContent =
+			"Onhand can also quiz you on a page (ask “Quiz me on this”), explain a passage you select first, and highlight PDFs in its own viewer.";
+		const dismiss = document.createElement("button");
+		dismiss.type = "button";
+		dismiss.textContent = "Got it";
+		dismiss.setAttribute("data-first-answer-tip-dismiss", "");
+		dismiss.addEventListener("click", () => {
+			firstAnswerTipVisible = false;
+			renderFirstAnswerTip(currentState || {});
+		});
+		const actions = document.createElement("span");
+		actions.className = "onhand-rating-actions";
+		actions.append(dismiss);
+		firstAnswerTipEl.replaceChildren(text, actions);
+		firstAnswerTipEl.hidden = false;
+	}
+
+	// The kind of page the starter questions should fit, or "" for none.
+	function starterPageKind(state) {
+		const page = state?.page && typeof state.page === "object" ? state.page : null;
+		const url = String(state?.tab?.url || page?.url || "");
+		// The browser's own pages and the Web Store can't be read; a local file
+		// without access gets the local-file notice instead.
+		if (!url || page?.unsupported || state?.pageCaptureError) return "";
+		if (isLocalFileTab(state) && localFileAccess !== true) return "";
+		if (canOpenCurrentPdfInViewer(state)) return "pdf";
+		if (page?.surface === "google-docs") return "doc";
+		return /^(?:https?|file):/i.test(url) ? "web" : "";
+	}
+
+	function starterQuestionsMarkup(state) {
+		const questions = STARTER_QUESTIONS[starterPageKind(state)];
+		if (!questions) return "";
+		const buttons = questions
+			.map((question) => `<button type="button" class="onhand-starter" data-starter-prompt="${escapeHtml(question)}">${escapeHtml(question)}</button>`)
+			.join("");
+		return `<div class="onhand-starters" role="group" aria-label="Try asking">${buttons}</div>`;
 	}
 
 	function renderReviewNudge(state) {
@@ -6204,7 +6398,9 @@
 	function renderMessages(turns, annotationCount = 0) {
 		// Chrome messages are cloned: compare content, not object identity.
 		const context = JSON.stringify([getStateSessionPath(currentState), Boolean(katexModule)]);
-		const input = JSON.stringify([context, turns, Boolean(annotationCount), progressExpanded, [...sourceDisclosureOpenKeys]]);
+		// The empty state's starter questions depend on the page.
+		const starterKind = turns.length ? "" : starterPageKind(currentState);
+		const input = JSON.stringify([context, turns, Boolean(annotationCount), progressExpanded, [...sourceDisclosureOpenKeys], starterKind]);
 		if (input === lastMessagesInput) return;
 		lastMessagesInput = input;
 		messageRenderCount += 1;
@@ -6220,6 +6416,7 @@
 				<div class="onhand-empty">
 					<div class="lede">Ask about this page.</div>
 					<div class="empty-body">Onhand answers by highlighting the exact passages it used, right on the page — with notes in the margins and citations you can click. Select text first to ask about a specific part.</div>
+					${starterQuestionsMarkup(currentState)}
 				</div>`;
 			if (messageTurnCache.length || markup !== lastEmptyMessagesMarkup) messagesEl.innerHTML = markup;
 			messageTurnCache = [];
@@ -6671,6 +6868,8 @@
 		renderRestoreResult();
 		renderReplayView();
 		renderAuthPanel(state);
+		renderLocalFileNotice(state);
+		renderFirstAnswerTip(state);
 		renderRatingPrompt(state);
 		renderReviewNudge(state);
 		renderLearnerPanel(state, false);
@@ -8477,6 +8676,15 @@
 		submitComposerInput();
 	});
 
+	messagesEl.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		const starter = target?.closest("[data-starter-prompt]");
+		if (!(starter instanceof HTMLElement) || currentState?.activeRequestId || sending) return;
+		// Asks like a typed question, so it waits for a first-run choice the same way.
+		input.value = starter.dataset.starterPrompt || "";
+		submitComposerInput();
+	});
+
 	actionsEl.addEventListener("click", (event) => {
 		const target = event.target instanceof Element ? event.target : null;
 		const button = target?.closest("[data-action-key]");
@@ -8627,12 +8835,21 @@
 			}
 			const quickOpenRequest = changes[SIDEBAR_QUICK_OPEN_REQUEST_KEY]?.newValue;
 			if (quickOpenRequest) void handleQuickOpenRequest(quickOpenRequest);
-			if (changes[ANSWERED_QUESTIONS_STORAGE_KEY]) void maybeShowRatingPrompt().catch(() => {});
+			if (changes[ANSWERED_QUESTIONS_STORAGE_KEY]) {
+				void maybeShowRatingPrompt().catch(() => {});
+				void maybeShowFirstAnswerTip(changes[ANSWERED_QUESTIONS_STORAGE_KEY].newValue).catch(() => {});
+			}
 		});
 	}
 
 	void showWhatsNewAfterUpdate().catch(() => {});
 	void maybeShowRatingPrompt().catch(() => {});
+	void readLocalFileAccess()
+		.catch(() => false)
+		.then((allowed) => {
+			localFileAccess = allowed;
+			if (currentState) renderState(currentState);
+		});
 
 	try {
 		void ensureKatexLoaded();

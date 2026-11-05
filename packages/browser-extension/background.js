@@ -548,7 +548,7 @@ function localFileAccessMessage(tab, error = null) {
 		return `This is a local file tab. Firefox doesn't let extensions read files on your computer, so Onhand can't open it. Serve the file over localhost and open the http://localhost URL instead.${firefoxSuffix}`;
 	}
 	const suffix = error ? ` Chrome reported: ${error?.message || String(error)}` : "";
-	return `This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.${suffix}`;
+	return `This is a local file tab. Onhand can read files on your computer only after you allow it: click "Allow access to local files" in Onhand's options (or open chrome://extensions, find Onhand and turn on "Allow access to file URLs"), then reload this tab. A local PDF can also be opened without that: choose Open PDF in Onhand's menu and pick the file.${suffix}`;
 }
 
 async function isAllowedFileSchemeAccess() {
@@ -11592,20 +11592,21 @@ async function findExistingPdfViewerTab(pdfUrl, windowId) {
 async function openPdfInOnhandViewer(args = {}) {
 	const sourceTab = await resolveTargetTab(args);
 	const pdfUrl = resolvePdfSourceUrlForViewer(args, sourceTab);
-	if (IS_FIREFOX && isFileUrl(pdfUrl)) {
-		// Firefox extensions can't read file:// URLs at all, so the viewer asks the
+	if (isFileUrl(pdfUrl) && (IS_FIREFOX || !(await isAllowedFileSchemeAccess()))) {
+		// Firefox extensions can't read file:// URLs at all, and Chrome lets them
+		// only after the reader allows file access. Either way the viewer asks the
 		// reader to choose the file instead. Don't wait for it to finish loading.
-		// Report it as this step's error so the model relays it and stops calling PDF tools.
 		await chrome.tabs.update(sourceTab.id, { url: buildOnhandPdfViewerUrl(pdfUrl), active: args.active === false ? undefined : true });
 		const fileName = decodeURIComponent(pdfUrl.split("/").pop() || "") || "the PDF";
+		// The sidebar's Open PDF button is done once the viewer asks for the file.
+		if (args.localFileChoiceResult === true) return { tab: simplifyTab(sourceTab), opened: true, localFileChoice: { fileName } };
+		// Report it as this step's error so the model relays it and stops calling PDF tools.
+		const reason = IS_FIREFOX
+			? "Firefox doesn't let extensions read files on your computer"
+			: "Onhand doesn't have access to files on this computer yet";
 		throw new Error(
-			`Firefox doesn't let extensions read files on your computer, so Onhand's PDF viewer is now open and asking the reader to choose ${fileName}. Ask them to click "Choose ${fileName}" in the viewer (or drop the file there) and then ask again. Don't call other PDF tools until they do.`,
+			`${reason}, so Onhand's PDF viewer is now open and asking the reader to choose ${fileName}. Ask them to click "Choose ${fileName}" in the viewer (or drop the file there) and then ask again. Don't call other PDF tools until they do.`,
 		);
-	}
-	if (isFileUrl(pdfUrl) && !(await isAllowedFileSchemeAccess())) {
-		// Actionable failure: without file access the viewer cannot read the bytes,
-		// so tell the model/user exactly what to enable instead of failing opaquely.
-		throw new Error(localFileAccessMessage(sourceTab));
 	}
 	if (isFileUrl(pdfUrl)) grantOnhandPdfViewerFileSource(pdfUrl);
 	const diagnostics = createPdfViewerHandoffDiagnostics(args, sourceTab, pdfUrl);
@@ -14549,10 +14550,8 @@ async function handleCommandInner(name, args = {}) {
 			}
 			if (!viewerUrl) throw new Error("reopen_onhand_pdf_viewer requires a viewerUrl or pdfUrl.");
 			const sourcePdfUrl = extractPdfSourceUrlFromViewerLikeUrl(viewerUrl) || requestedPdfUrl;
-			// Firefox's viewer asks the reader to choose a local file again; Chrome needs file access.
-			if (!IS_FIREFOX && isFileUrl(sourcePdfUrl) && !(await isAllowedFileSchemeAccess())) {
-				throw new Error(localFileAccessMessage({ url: sourcePdfUrl }));
-			}
+			// Without file access (always on Firefox), the viewer asks the reader
+			// to choose the local file again.
 			if (isFileUrl(sourcePdfUrl)) grantOnhandPdfViewerFileSource(sourcePdfUrl);
 			let created = await chrome.tabs.create({
 				url: isHttpsUrl(sourcePdfUrl) ? "about:blank" : viewerUrl,
@@ -15882,6 +15881,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 					windowId: typeof message.windowId === "number" ? message.windowId : undefined,
 					forceReload: true,
 					includeDiagnostics: true,
+					localFileChoiceResult: true,
 				});
 				sendResponse({
 					ok: true,

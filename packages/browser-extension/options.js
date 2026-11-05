@@ -628,6 +628,30 @@ whatsNewEnabledInput.addEventListener("change", async () => {
 		reportError(error);
 	}
 });
+// Chrome lets Onhand read file:// pages only after the reader turns on file
+// access for it. Changing that restarts Onhand, which closes this page, so the
+// state is read once. Firefox can't grant it; its viewer asks for a local PDF.
+const localFilesStatusEl = document.getElementById("localFilesStatus");
+const localFilesAllowEl = document.getElementById("localFilesAllow");
+async function renderLocalFileAccess() {
+	if (IS_FIREFOX) {
+		localFilesStatusEl.textContent =
+			"Firefox doesn't let add-ons read files on your computer. To use Onhand on a PDF you saved, choose Open PDF in Onhand's menu and pick the file.";
+		return;
+	}
+	const allowed = await new Promise((resolve) => chrome.extension.isAllowedFileSchemeAccess((value) => resolve(Boolean(value))));
+	localFilesStatusEl.textContent = allowed
+		? "On. Onhand can read PDFs and pages you open from your computer."
+		: "Off. Onhand can't read pages you open from your computer. For a PDF, Open PDF in Onhand's menu can ask you to pick the file instead.";
+	localFilesAllowEl.hidden = allowed;
+}
+document.getElementById("allowLocalFiles").addEventListener("click", () => {
+	chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` }).catch(reportError);
+});
+renderLocalFileAccess().catch((error) => {
+	localFilesStatusEl.textContent = "";
+	reportError(error);
+});
 // A change still waiting out the typing delay is saved when the page closes.
 window.addEventListener("pagehide", () => {
 	if (saveTimer) runSave();

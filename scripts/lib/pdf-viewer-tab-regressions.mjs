@@ -134,9 +134,18 @@ export async function runPdfViewerTabRegressions() {
 		assert.equal(h.tabs.get(1).url, "https://docs.google.com/document/d/test/edit");
 	}
 	{
+		// Without file access Chrome can't read the PDF either: the viewer asks
+		// the reader to choose it, and the agent is told to wait for that.
+		const viewerUrl = `chrome-extension://onhand-test/pdf-viewer.html?url=${encodeURIComponent("file:///tmp/test.pdf")}`;
 		const h = harness([{ ...native, url: "file:///tmp/test.pdf" }]);
-		await assert.rejects(h.open({ tabId: 1, newTab: true }), /Allow access/);
-		assert.equal(h.created.length, 0, "local-file permission gates are preserved");
+		await assert.rejects(h.open({ tabId: 1, newTab: true }), /doesn't have access to files on this computer yet.*asking the reader to choose test\.pdf/);
+		assert.equal(h.created.length, 0, "the chooser replaces the local file tab");
+		assert.equal(h.tabs.get(1).url, viewerUrl);
+		// The sidebar's Open PDF button gets a result instead of an error.
+		const button = harness([{ ...native, url: "file:///tmp/test.pdf" }]);
+		const result = await button.open({ tabId: 1, localFileChoiceResult: true });
+		assert.deepEqual(result.localFileChoice, { fileName: "test.pdf" });
+		assert.equal(button.tabs.get(1).url, viewerUrl);
 	}
 	{
 		// Firefox's built-in PDF viewer can't be scripted: open Onhand's viewer in the tab instead.

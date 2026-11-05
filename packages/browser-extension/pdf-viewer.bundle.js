@@ -27527,6 +27527,14 @@ function decodeBase64PdfBytes(value) {
   return bytes;
 }
 var IS_FIREFOX = typeof globalThis.browser?.runtime?.getBrowserInfo === "function";
+async function canReadLocalFiles() {
+  if (IS_FIREFOX) return false;
+  try {
+    return await new Promise((resolve) => chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(Boolean(allowed))));
+  } catch {
+    return false;
+  }
+}
 function localPdfFileName(value) {
   try {
     return decodeURIComponent(new URL(value).pathname.split("/").pop() || "") || "the PDF";
@@ -27541,7 +27549,7 @@ function promptForLocalPdfFile(value) {
     const panel = document.createElement("section");
     panel.className = "onhand-pdf-error onhand-pdf-file-prompt";
     const message = document.createElement("p");
-    message.textContent = `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.`;
+    message.textContent = IS_FIREFOX ? `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.` : `Onhand doesn't have access to files on your computer, so choose ${expectedName}, or drop it here, to open it in Onhand. To skip this step next time, use "Allow access to local files" in Onhand's options.`;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/pdf,.pdf";
@@ -27574,7 +27582,7 @@ async function loadPdfDocumentFromUrl(value) {
     cMapPacked: true,
     standardFontDataUrl: extensionUrl("vendor/standard_fonts/")
   };
-  if (value.startsWith("file:") && IS_FIREFOX) {
+  if (value.startsWith("file:") && !await canReadLocalFiles()) {
     const data = await promptForLocalPdfFile(value);
     const { url: _url, ...optionsWithoutUrl } = baseOptions;
     return await getPdfDocumentWithTimeout({ ...optionsWithoutUrl, data }, PDF_LOAD_TIMEOUT_MS);

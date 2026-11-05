@@ -2903,9 +2903,19 @@ function decodeBase64PdfBytes(value: string) {
 	return bytes;
 }
 
-// Firefox extensions can't read file:// URLs, so a local PDF's bytes come from a
-// file the reader chooses (or drops) in the viewer.
+// Firefox extensions can't read file:// URLs, and Chrome reads them only after
+// the reader allows file access. Otherwise a local PDF's bytes come from a file
+// the reader chooses (or drops) in the viewer.
 const IS_FIREFOX = typeof (globalThis as any).browser?.runtime?.getBrowserInfo === "function";
+
+async function canReadLocalFiles() {
+	if (IS_FIREFOX) return false;
+	try {
+		return await new Promise<boolean>((resolve) => chrome.extension.isAllowedFileSchemeAccess((allowed: boolean) => resolve(Boolean(allowed))));
+	} catch {
+		return false;
+	}
+}
 
 function localPdfFileName(value: string) {
 	try {
@@ -2922,7 +2932,9 @@ function promptForLocalPdfFile(value: string): Promise<ArrayBuffer> {
 		const panel = document.createElement("section");
 		panel.className = "onhand-pdf-error onhand-pdf-file-prompt";
 		const message = document.createElement("p");
-		message.textContent = `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.`;
+		message.textContent = IS_FIREFOX
+			? `Firefox doesn't let extensions open files on your computer directly. Choose ${expectedName}, or drop it here, to open it in Onhand.`
+			: `Onhand doesn't have access to files on your computer, so choose ${expectedName}, or drop it here, to open it in Onhand. To skip this step next time, use "Allow access to local files" in Onhand's options.`;
 		const input = document.createElement("input");
 		input.type = "file";
 		input.accept = "application/pdf,.pdf";
@@ -2956,7 +2968,7 @@ async function loadPdfDocumentFromUrl(value: string) {
 		cMapPacked: true,
 		standardFontDataUrl: extensionUrl("vendor/standard_fonts/"),
 	};
-	if (value.startsWith("file:") && IS_FIREFOX) {
+	if (value.startsWith("file:") && !(await canReadLocalFiles())) {
 		// The reader picks the file, so no background grant is needed.
 		const data = await promptForLocalPdfFile(value);
 		const { url: _url, ...optionsWithoutUrl } = baseOptions;

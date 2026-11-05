@@ -1297,6 +1297,12 @@ async function assertSentryDiagnosticsGateAndScrub() {
 					'This is a local file tab. Onhand can read file:// pages only after Chrome grants the extension file access. Open chrome://extensions, find Onhand, enable "Allow access to file URLs", then reload this tab. You can also serve the file over localhost and open the http://localhost URL.',
 			},
 			{
+				label: "local PDF the viewer asks the reader to choose",
+				messageType: "sidebar:submit-prompt",
+				message:
+					"Onhand doesn't have access to files on this computer yet, so Onhand's PDF viewer is now open and asking the reader to choose paper.pdf. Ask them to click \"Choose paper.pdf\" in the viewer (or drop the file there) and then ask again. Don't call other PDF tools until they do.",
+			},
+			{
 				label: "Web Store tab",
 				messageType: "sidebar:submit-prompt",
 				message: "This tab is the Chrome Web Store. Chrome doesn't let extensions read or mark Web Store pages, so Onhand can't see it.",
