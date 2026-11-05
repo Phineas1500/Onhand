@@ -98,7 +98,7 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "@raindrop-ai/pi-agent": "0.1.0",
+    "@raindrop-ai/pi-agent": "0.2.5",
     "@sentry/cli": "^3.5.0",
     "esbuild": "^0.28.1",
     "wrangler": "4.129.1",

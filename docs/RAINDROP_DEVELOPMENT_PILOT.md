@@ -5,10 +5,17 @@ agent trajectories. It is development-only: the normal extension build excludes
 the Raindrop SDK, no Raindrop write key is configured, and the runtime rejects
 every Workshop endpoint except loopback HTTP.
 
-The initial pinned versions are:
+The pinned versions (updated 2026-11-05, from Workshop `0.1.16` and adapter
+`0.1.0`) are:
 
-- Raindrop Workshop `0.1.16`
-- `@raindrop-ai/pi-agent` `0.1.0`
+- Raindrop Workshop `0.1.23`
+- `@raindrop-ai/pi-agent` `0.2.5`
+
+Both are the newest releases that were at least a week old on that date;
+Workshop `0.1.24` and adapter `0.2.6` had been published that day. Adapter
+`0.2.x` imports `child_process` and `path` for optional Git enrichment: the
+observer passes `appGit: false`, and the pilot build resolves both imports to
+small browser shims.
 
 ## What is captured
 
@@ -42,17 +49,17 @@ directory instead of modifying the shell profile or agent configuration:
 
 ```sh
 mkdir -p tmp/raindrop-pilot/bin tmp/raindrop-pilot/home
-curl -L https://github.com/raindrop-ai/workshop/releases/download/v0.1.16/raindrop-bun-darwin-arm64.gz \
+curl -L https://github.com/raindrop-ai/workshop/releases/download/v0.1.23/raindrop-bun-darwin-arm64.gz \
   -o tmp/raindrop-pilot/raindrop-bun-darwin-arm64.gz
 shasum -a 256 tmp/raindrop-pilot/raindrop-bun-darwin-arm64.gz
-# Expected: 7ef29da7e0a8f6ba340ddd5ba3338c07e49dd1a68c112580822551f28fc7f695
+# Expected: fcec201ad7605a08906f6012d2449c4df744a24943a81b31ba17c37abdc29c08
 gzip -dc tmp/raindrop-pilot/raindrop-bun-darwin-arm64.gz \
   > tmp/raindrop-pilot/bin/raindrop
 chmod +x tmp/raindrop-pilot/bin/raindrop
 tmp/raindrop-pilot/bin/raindrop --version
 ```
 
-For another platform, use the matching `0.1.16` artifact and checksum from the
+For another platform, use the matching `0.1.23` artifact and checksum from the
 official Workshop release manifest rather than reusing the arm64 artifact.
 
 ## Run the pilot
@@ -93,10 +100,12 @@ fixture workspace. Set `ONHAND_TEST_BROWSER` or pass `--browser <path>` if the
 browser is not in a standard location. Use `--keep-browser` only for visual
 inspection.
 
-Workshop `0.1.16` with `@raindrop-ai/pi-agent` `0.1.0` currently reports token
-usage on both the run root and its nested model spans. The Workshop run-total
-therefore double-counts input and output tokens. Use the individual model-span
-values for analysis until the upstream adapter or Workshop aggregation changes.
+Workshop `0.1.16` with adapter `0.1.0` double-counted run-total tokens. With
+`0.1.23` and `0.2.5` the run totals equal the sum of the model spans. A model
+span's input tokens exclude cached prompt tokens; the cached counts are in its
+`gen_ai.usage.cache_read_input_tokens` and `cache_write_input_tokens`
+attributes. Onhand's ~16k-token system prompt and tools are cached after the
+first call of a turn, so most calls show single-digit uncached input.
 
 Run the build-boundary regression whenever this integration changes:
 

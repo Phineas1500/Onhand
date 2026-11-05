@@ -4,6 +4,8 @@ import { readFile, writeFile } from "node:fs/promises";
 const typeboxCompileShim = new URL("../packages/browser-extension/src/typebox-compile-shim.ts", import.meta.url).pathname;
 const asyncHooksBrowserShim = new URL("../packages/browser-extension/src/observability/async-hooks-browser-shim.ts", import.meta.url).pathname;
 const nodeOsBrowserShim = new URL("../packages/browser-extension/src/observability/node-os-browser-shim.ts", import.meta.url).pathname;
+const nodeChildProcessBrowserShim = new URL("../packages/browser-extension/src/observability/node-child-process-browser-shim.ts", import.meta.url).pathname;
+const nodePathBrowserShim = new URL("../packages/browser-extension/src/observability/node-path-browser-shim.ts", import.meta.url).pathname;
 const developmentAgentObserverDisabledShim = new URL(
 	"../packages/browser-extension/src/observability/development-agent-observer-disabled-shim.ts",
 	import.meta.url,
@@ -75,6 +77,12 @@ await esbuild.build({
 				);
 				build.onResolve({ filter: /^(?:node:)?os$/ }, (args) =>
 					isRaindropPiAgentImporter(args.importer) ? { path: nodeOsBrowserShim } : undefined,
+				);
+				build.onResolve({ filter: /^(?:node:)?child_process$/ }, (args) =>
+					isRaindropPiAgentImporter(args.importer) ? { path: nodeChildProcessBrowserShim } : undefined,
+				);
+				build.onResolve({ filter: /^(?:node:)?path$/ }, (args) =>
+					isRaindropPiAgentImporter(args.importer) ? { path: nodePathBrowserShim } : undefined,
 				);
 			},
 		},

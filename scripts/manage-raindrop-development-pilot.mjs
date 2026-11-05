@@ -17,28 +17,28 @@ const LOG_PATH = join(PILOT_DIR, "workshop.log");
 const PID_PATH = join(PILOT_DIR, "workshop-process.json");
 const DB_PATH = join(PILOT_DIR, "workshop.db");
 const PORT = Number(process.env.RAINDROP_WORKSHOP_PORT || 5899);
-const VERSION = "0.1.16";
+const VERSION = "0.1.23";
 
 const RELEASES = {
 	"darwin-arm64": {
 		url: `https://github.com/raindrop-ai/workshop/releases/download/v${VERSION}/raindrop-bun-darwin-arm64.gz`,
-		sha256: "7ef29da7e0a8f6ba340ddd5ba3338c07e49dd1a68c112580822551f28fc7f695",
+		sha256: "fcec201ad7605a08906f6012d2449c4df744a24943a81b31ba17c37abdc29c08",
 	},
 	"darwin-x64": {
 		url: `https://github.com/raindrop-ai/workshop/releases/download/v${VERSION}/raindrop-bun-darwin-x64.gz`,
-		sha256: "26c1096ee8ab1bfa9cfb3c64a93f44684c806287a4411f8ac14047b6f8500eec",
+		sha256: "4b336cb4fcaaba48cee7880ef8610e541ab940a692b0066a807fa2acf0adcdb4",
 	},
 	"linux-arm64": {
 		url: `https://github.com/raindrop-ai/workshop/releases/download/v${VERSION}/raindrop-bun-linux-arm64.gz`,
-		sha256: "e5f231c79bcedbf051cfb5c39dac5110fc731abfe0510e779fb5752b01655e9b",
+		sha256: "e9f40c72c8868a821965b4a280ebd77c91cb1888ccfd3d9efb2077a7ce307367",
 	},
 	"linux-x64": {
 		url: `https://github.com/raindrop-ai/workshop/releases/download/v${VERSION}/raindrop-bun-linux-x64.gz`,
-		sha256: "5f8583e9432da44a9be6081b62d30b6929983ebbb316f24419885a5426a2cfd8",
+		sha256: "09be0eaa647db6060603e9d8e5c119903fff75f3de20cc591a802027c6cfdfe3",
 	},
 	"win32-x64": {
 		url: `https://github.com/raindrop-ai/workshop/releases/download/v${VERSION}/raindrop-bun-windows-x64.exe.gz`,
-		sha256: "d25f0d03049c5924b9f53a9c5799e26e1350d5b785619bed6073ba7ac885a154",
+		sha256: "33987b7c4571a3f03de367bcbb87623db545a22c88c4e2720f7a837d5235e89f",
 	},
 };
 

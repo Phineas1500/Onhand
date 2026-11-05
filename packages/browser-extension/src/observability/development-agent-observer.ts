@@ -50,6 +50,7 @@ export async function attachDevelopmentAgentObserver(
 		const { createRaindropPiAgent } = await import("@raindrop-ai/pi-agent");
 		const client = createRaindropPiAgent({
 			localWorkshopUrl: workshopUrl,
+			appGit: false,
 			userId: "onhand-local-development",
 			convoId: context.sessionId,
 			eventName: "onhand_browser_turn",
