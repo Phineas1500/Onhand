@@ -12090,13 +12090,25 @@ async function assertModelIntentClassifierOverridesPredicates() {
 		],
 	};
 	const assessment = test.parseLearningEvidenceAssessmentForTest(
-		'{"sufficient":false,"reason":"The first lecture does not explain the three required categories.","nextQueries":["dropout regularization"],"nextCandidateTabIds":[7,999]}',
+		'{"sufficient":false,"reason":"The first lecture does not explain the three required categories.","uncoveredSlotIds":["loss","training","made-up"],"nextQueries":["dropout regularization"],"nextCandidateTabIds":[7,999]}',
 		assessmentRequest,
 	);
 	assert.equal(assessment.sufficient, false);
+	assert.deepEqual(assessment.uncoveredSlotIds, ["loss", "training"], "only the plan's slot ids count as uncovered");
 	assert.deepEqual(assessment.nextCandidateTabIds, [7]);
-	assert.match(test.buildLearningEvidenceAssessmentPromptForTest(assessmentRequest, "Use dropout."), /semantic evidence quality/i);
+	// A fixed rubric: an "insufficient" verdict that names no uncovered slot
+	// raised the bar (L1/L2 over the course's L0 penalty, more depth, marks)
+	// instead of finding a gap, so it does not start another research round.
+	for (const raisedBar of [
+		'{"sufficient":false,"reason":"The loss-function evidence only describes an L0 sparsity penalty, not L1/L2.","uncoveredSlotIds":[],"nextQueries":["L2 regularization"]}',
+		'{"sufficient":false,"reason":"The mechanism is not explained in enough detail.","nextQueries":["weight decay"]}',
+	]) assert.equal(test.parseLearningEvidenceAssessmentForTest(raisedBar, assessmentRequest).sufficient, true, raisedBar);
+	const assessmentPrompt = test.buildLearningEvidenceAssessmentPromptForTest(assessmentRequest, "Use dropout.");
+	assert.match(assessmentPrompt, /semantic evidence quality/i);
+	assert.match(assessmentPrompt, /Do not ask for a preferred example, more depth, or marks and annotations/);
+	assert.match(assessmentPrompt, /"uncoveredSlotIds":string\[\]/);
 	assert.match(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout."), /Do not emit answer prose until the research tools finish/);
+	assert.match(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout."), /Uncovered evidence slots: loss, training\. Search only for these/);
 	// The last research round says its reply is final; a status line that
 	// still ends the turn gets one answer-now pass instead of being shipped.
 	assert.doesNotMatch(test.buildLearningResearchContinuationPromptForTest(assessmentRequest, assessment, "Use dropout."), /last research round/);
@@ -12153,6 +12165,8 @@ async function assertModelIntentClassifierOverridesPredicates() {
 	assert.match(runtimeFinalRoundSource, /if \(signal\?\.aborted \|\| \/Internal planner timed out\/\.test\(/, "a timed-out or aborted fast call is not retried");
 	assert.equal((runtimeFinalRoundSource.match(/\{ fastModel: true[ ,]/g) || []).length, 3, "only the planner, the reranker and the follow-up suggestion opt into the fast model");
 	assert.match(runtimeFinalRoundSource, /const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number\(activeRequest\.learningResearchSourcesBeforeRound \|\| 0\);/);
+	assert.match(runtimeFinalRoundSource, /const retryLimit = LEARNING_RESEARCH_EXTRA_ROUNDS;/);
+	assert.match(runtimeFinalRoundSource, /const LEARNING_RESEARCH_EXTRA_ROUNDS = 1;/, "at most one extra research round");
 	assert.match(runtimeFinalRoundSource, /retryCount < retryLimit && !roundReadNoNewSource\) \{\s*activeRequest\.learningResearchPlanRetryCount = retryCount \+ 1;\s*activeRequest\.learningResearchSourcesBeforeRound = sourcesRead;/, "a round that read no new source ends the research");
 	assert.match(runtimeFinalRoundSource, /buildLearningEvidenceAssessmentPrompt\(request, assistantText\),\s*request\.settings as RuntimeSettings,\s*500,\s*12000,\s*\);/, "the evidence check runs on the chosen model");
 	assert.match(runtimeFinalRoundSource, /retrying on the configured model", error\);\s*\}\s*\}\s*const model = await withAbortSignal\(signal, \(\) => getConfiguredModel\(settings\)\);/, "any other fast-model failure retries on the configured model");

@@ -23,6 +23,8 @@ export interface LearningEvidenceAssessment {
 	reason: string;
 	nextQueries: string[];
 	nextCandidateTabIds: number[];
+	// Evidence slot ids the check found no inspected source for.
+	uncoveredSlotIds?: string[];
 }
 
 export interface PdfCorpusSource {

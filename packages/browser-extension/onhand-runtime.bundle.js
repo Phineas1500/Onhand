@@ -92479,8 +92479,9 @@ function buildLearningEvidenceAssessmentPrompt(request2, assistantText) {
   const plan = request2?.learningResearchPlan;
   return [
     "Evaluate whether browser research is sufficient to answer one Learning Mode problem. Return ONLY JSON:",
-    '{"sufficient":boolean,"reason":string,"nextQueries":string[],"nextCandidateTabIds":number[]}',
-    "Judge semantic evidence quality, not whether a minimum tool count was met. One inspected source is insufficient when it does not explain the concepts the selected problem requires. If other plausible open sources remain, set sufficient false and identify the next searches or tabs. A transparent answer that the available materials do not contain the needed explanation is sufficient only after a reasonable search across the strongest candidates.",
+    '{"sufficient":boolean,"reason":string,"uncoveredSlotIds":string[],"nextQueries":string[],"nextCandidateTabIds":number[]}',
+    "Judge semantic evidence quality, not whether a minimum tool count was met, with this fixed rubric. Check each evidence slot once. A slot is covered when a source inspected this turn states something that answers it as the problem words it: a valid example or a brief explanation counts, even when it is not the most common example or the fullest treatment. Do not ask for a preferred example, more depth, or marks and annotations; the final answer explains from the covered sources.",
+    "Set sufficient false only when a slot has no inspected source that addresses it at all and a plausible open source for it remains. List exactly those slot ids in uncoveredSlotIds and aim nextQueries and nextCandidateTabIds at them. A transparent answer that the available materials do not cover a slot is sufficient once the strongest candidates were searched.",
     `Resolved target: ${plan?.target || ""}`,
     `Evidence needed: ${(plan?.evidenceNeeded || []).join("; ")}`,
     `Evidence slots: ${(plan?.evidenceSlots || []).map((slot) => `${slot.id}: ${slot.description || slot.queries.join(", ")}`).join("; ")}`,
@@ -92498,9 +92499,13 @@ function parseLearningEvidenceAssessment(text, request2) {
   const parsed = parseLearningJsonObject(text);
   if (!parsed || typeof parsed.sufficient !== "boolean") return null;
   const allowed = new Set((request2?.learningResearchPlan?.candidateTabIds || []).map((id) => Number(id || 0)));
+  const slotIds = new Set((request2?.learningResearchPlan?.evidenceSlots || []).map((slot) => String(slot?.id || "")));
+  const uncoveredSlotIds = compactStringArray(parsed.uncoveredSlotIds, 8, 80).filter((id) => slotIds.has(id));
+  const sufficient = parsed.sufficient === true || slotIds.size > 0 && !uncoveredSlotIds.length;
   return {
-    sufficient: parsed.sufficient === true,
+    sufficient,
     reason: String(parsed.reason || "").replace(/\s+/g, " ").trim().slice(0, 700),
+    uncoveredSlotIds,
     nextQueries: compactStringArray(parsed.nextQueries, 6, 180),
     nextCandidateTabIds: (Array.isArray(parsed.nextCandidateTabIds) ? parsed.nextCandidateTabIds : []).map((id) => Number(id || 0)).filter((id, index, ids) => id > 0 && allowed.has(id) && ids.indexOf(id) === index).slice(0, 6)
   };
@@ -92511,6 +92516,7 @@ function buildLearningResearchContinuationPrompt(request2, assessment, assistant
     "Continue the model-led Learning research preflight before answering. Do not emit answer prose until the research tools finish.",
     `Resolved selected problem: ${plan?.target || "the selected problem"}`,
     `Why current evidence is insufficient: ${assessment.reason || "The required concepts are not yet supported."}`,
+    assessment.uncoveredSlotIds?.length ? `Uncovered evidence slots: ${assessment.uncoveredSlotIds.join(", ")}. Search only for these; the other slots are already covered.` : "",
     assessment.nextQueries.length ? `Next searches: ${assessment.nextQueries.join("; ")}` : "",
     assessment.nextCandidateTabIds.length ? `Next candidate tab ids: ${assessment.nextCandidateTabIds.join(", ")}` : "",
     plan?.evidenceSlots?.length ? `If a candidate is an index page, call browser_search_linked_pdf_corpus with: ${JSON.stringify(plan.evidenceSlots)}` : "",
@@ -92521,6 +92527,7 @@ function buildLearningResearchContinuationPrompt(request2, assessment, assistant
 ${truncateStructuredText(assistantText, 1800)}` : ""
   ].filter(Boolean).join("\n\n");
 }
+var LEARNING_RESEARCH_EXTRA_ROUNDS = 1;
 var LEARNING_FINAL_ROUND_NOTICE = `This is the last research round: the reply you write after it is shown to the student as the final answer. Answer the problem from what the sources support and say plainly which parts they do not cover. Never end on a status update such as "I'm checking another source".`;
 var LEARNING_PROGRESS_UPDATE_MAX_CHARS = 700;
 var LEARNING_PROGRESS_UPDATE_PATTERN = /\b(?:I['’]m|I am|I['’]ll|I will|let me)\s+(?:now\s+|also\s+|still\s+|next\s+)?(?:check|look|search|open|read|try|pull|find|verify|consult|switch|go)(?:ing)?\b/i;
@@ -99361,7 +99368,7 @@ function createOnhandBrowserRuntime(host) {
       const sufficient = assessment?.sufficient ?? hasCompletedNonActiveWorkspaceRead(activeRequest);
       if (!sufficient) {
         const retryCount = Number(activeRequest.learningResearchPlanRetryCount || 0);
-        const retryLimit = Math.max(1, Math.min(3, Number(activeRequest.learningResearchPlan.maxSources || 3) - 1));
+        const retryLimit = LEARNING_RESEARCH_EXTRA_ROUNDS;
         const sourcesRead = learningResearchSourcesRead(activeRequest).size;
         const roundReadNoNewSource = retryCount > 0 && sourcesRead <= Number(activeRequest.learningResearchSourcesBeforeRound || 0);
         if (roundReadNoNewSource && activeRequest.preparationTiming) {

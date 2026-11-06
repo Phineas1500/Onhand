@@ -215,11 +215,6 @@ fixes below.
 
 ### Remaining
 
-- **Learning research loop.** The homework case once ran three research passes
-  (6, 19 and 19 rounds; it hit the 180 s timeout). The sufficiency judge found a
-  new gap each time (L0 instead of L1/L2, mechanism detail, unannotated
-  sources). The same case finished in one pass earlier the same day, so the
-  judge is the variable; it needs a bound or a stable rubric.
 - **Serial single-tool rounds.** Multi-source searches still often issue one
   `browser_pdf_search` per round (1.2-2 s plus the cached prompt each time).
 - **Hidden PDF viewer stalls.** In that third pass, five parallel searches on one
@@ -230,3 +225,24 @@ fixes below.
   mark is placed.
 - Model-call latency varied 4x within the session (1.2-2.5 s vs 5-10 s per call,
   with Decisions 503s), so compare rounds, not seconds, across runs.
+
+### Learning research loop, bounded
+
+The homework case once ran three research passes (6, 19 and 19 rounds) and hit
+the 180 s timeout. The sufficiency check found a new gap each time: L1/L2
+instead of the course's L0 penalty, then more mechanism detail, then
+unannotated sources.
+
+- The check now uses a fixed rubric: each evidence slot is checked once, and a
+  slot counts as covered when an inspected source answers it as the problem
+  words it. It must name the uncovered slot ids; a "not sufficient" verdict
+  that names none is read as sufficient.
+- At most one extra research round (`LEARNING_RESEARCH_EXTRA_ROUNDS`), down
+  from up to three. The continuation prompt names the uncovered slots only.
+
+Re-measured on the same case, three iterations: one evidence check each, all
+sufficient on the first check, 5-7 model calls, 23-27 s, score 0.90-0.95
+(before: 0.35 with the timeout; 0.90 at 30 s on a one-pass run). The case still
+fails its workspace-discovery tool group and the 14-tool-call cap.
+relevant-background-tab is unchanged (0.70-0.75): it still highlights "gradient
+clipping" on a tab whose text isn't loaded.
