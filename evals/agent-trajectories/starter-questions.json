@@ -1,0 +1,654 @@
+{
+  "schemaVersion": 1,
+  "suiteId": "onhand-starter-questions-v1",
+  "description": "The sidebar starter questions on a six-page study PDF and a web article. Their budgets measure model rounds: one strong reading plus one marking step should answer each.",
+  "cases": [
+    {
+      "id": "starter-pdf-summarize-highlight",
+      "description": "PDF starter: summarize and highlight key points.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Summarize this and highlight the key points"
+      },
+      "workspace": {
+        "activeTabId": "notes",
+        "tabs": [
+          {
+            "id": "notes",
+            "title": "PSY 210 Lecture 7: Memory and Study",
+            "url": "https://fixtures.onhand.test/course/lecture7.pdf"
+          }
+        ],
+        "resources": [
+          {
+            "id": "memory-notes-pdf",
+            "tabId": "notes",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "intro",
+                "location": "page:1",
+                "text": "Lecture 7 covers why some study habits produce durable memories while others fade within days."
+              },
+              {
+                "id": "forgetting-curve",
+                "location": "page:1",
+                "text": "Without review, most newly learned material is forgotten quickly: recall drops steeply in the first day and then levels off."
+              },
+              {
+                "id": "goal",
+                "location": "page:1",
+                "text": "The aim of this lecture is to connect four techniques to the memory processes they strengthen."
+              },
+              {
+                "id": "encoding",
+                "location": "page:2",
+                "text": "Encoding turns an experience into a memory trace; deeper processing, such as explaining an idea in your own words, produces stronger traces."
+              },
+              {
+                "id": "consolidation",
+                "location": "page:2",
+                "text": "Consolidation stabilizes a trace over hours to days, and much of it happens during sleep, when the hippocampus replays recent experiences."
+              },
+              {
+                "id": "retrieval-def",
+                "location": "page:2",
+                "text": "Retrieval is the act of bringing a memory back to mind, and each successful retrieval changes the memory it accesses."
+              },
+              {
+                "id": "spacing",
+                "location": "page:3",
+                "text": "The spacing effect: reviewing material in several sessions spread over days produces better long-term recall than the same total time in one session."
+              },
+              {
+                "id": "spacing-why",
+                "location": "page:3",
+                "text": "Spacing works because each review happens after some forgetting, so reconstructing the memory takes effort and strengthens it more."
+              },
+              {
+                "id": "cramming",
+                "location": "page:3",
+                "text": "Cramming can raise scores on a test the next morning, but most of that gain is lost within a week."
+              },
+              {
+                "id": "testing",
+                "location": "page:4",
+                "text": "Retrieval practice: testing yourself without looking at the answer improves later recall more than rereading the same material."
+              },
+              {
+                "id": "testing-feedback",
+                "location": "page:4",
+                "text": "Retrieval practice works best with feedback, so that errors are corrected before they are rehearsed."
+              },
+              {
+                "id": "fluency",
+                "location": "page:4",
+                "text": "Rereading feels productive because the text becomes familiar, but this fluency is a poor guide to what you will remember."
+              },
+              {
+                "id": "interleaving",
+                "location": "page:5",
+                "text": "Interleaving mixes different problem types in one session instead of practicing one type at a time."
+              },
+              {
+                "id": "interleaving-why",
+                "location": "page:5",
+                "text": "Interleaving is harder because each problem first requires deciding which method applies, and that choice is exactly the skill exams test."
+              },
+              {
+                "id": "desirable-difficulty",
+                "location": "page:5",
+                "text": "Spacing, testing and interleaving are called desirable difficulties: they slow down practice but improve long-term retention."
+              },
+              {
+                "id": "sleep",
+                "location": "page:6",
+                "text": "Sleeping after study protects new memories from interference, and a night of sleep deprivation reduces next-day learning."
+              },
+              {
+                "id": "plan",
+                "location": "page:6",
+                "text": "A practical plan: test yourself on each lecture within a day, again after three days, and again after a week, mixing topics in each session."
+              },
+              {
+                "id": "summary",
+                "location": "page:6",
+                "text": "In short, effortful retrieval spread over time, followed by sleep, is what turns studying into lasting memory."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "spacing",
+            "description": "Spacing effect.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "memory-notes-pdf",
+                "passageIds": [
+                  "spacing",
+                  "spacing-why"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "testing",
+            "description": "Retrieval practice.",
+            "requireCitation": true,
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "memory-notes-pdf",
+                "passageIds": [
+                  "testing"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "interleaving",
+            "description": "Interleaving.",
+            "requireCitation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "memory-notes-pdf",
+                "passageIds": [
+                  "interleaving",
+                  "interleaving-why"
+                ]
+              }
+            ]
+          }
+        ],
+        "minAnnotations": 2,
+        "maxAnnotations": 6,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "starter-pdf-hardest-part",
+      "description": "PDF starter: explain the hardest part simply.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Explain the hardest part simply"
+      },
+      "workspace": {
+        "activeTabId": "notes",
+        "tabs": [
+          {
+            "id": "notes",
+            "title": "PSY 210 Lecture 7: Memory and Study",
+            "url": "https://fixtures.onhand.test/course/lecture7.pdf"
+          }
+        ],
+        "resources": [
+          {
+            "id": "memory-notes-pdf",
+            "tabId": "notes",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "intro",
+                "location": "page:1",
+                "text": "Lecture 7 covers why some study habits produce durable memories while others fade within days."
+              },
+              {
+                "id": "forgetting-curve",
+                "location": "page:1",
+                "text": "Without review, most newly learned material is forgotten quickly: recall drops steeply in the first day and then levels off."
+              },
+              {
+                "id": "goal",
+                "location": "page:1",
+                "text": "The aim of this lecture is to connect four techniques to the memory processes they strengthen."
+              },
+              {
+                "id": "encoding",
+                "location": "page:2",
+                "text": "Encoding turns an experience into a memory trace; deeper processing, such as explaining an idea in your own words, produces stronger traces."
+              },
+              {
+                "id": "consolidation",
+                "location": "page:2",
+                "text": "Consolidation stabilizes a trace over hours to days, and much of it happens during sleep, when the hippocampus replays recent experiences."
+              },
+              {
+                "id": "retrieval-def",
+                "location": "page:2",
+                "text": "Retrieval is the act of bringing a memory back to mind, and each successful retrieval changes the memory it accesses."
+              },
+              {
+                "id": "spacing",
+                "location": "page:3",
+                "text": "The spacing effect: reviewing material in several sessions spread over days produces better long-term recall than the same total time in one session."
+              },
+              {
+                "id": "spacing-why",
+                "location": "page:3",
+                "text": "Spacing works because each review happens after some forgetting, so reconstructing the memory takes effort and strengthens it more."
+              },
+              {
+                "id": "cramming",
+                "location": "page:3",
+                "text": "Cramming can raise scores on a test the next morning, but most of that gain is lost within a week."
+              },
+              {
+                "id": "testing",
+                "location": "page:4",
+                "text": "Retrieval practice: testing yourself without looking at the answer improves later recall more than rereading the same material."
+              },
+              {
+                "id": "testing-feedback",
+                "location": "page:4",
+                "text": "Retrieval practice works best with feedback, so that errors are corrected before they are rehearsed."
+              },
+              {
+                "id": "fluency",
+                "location": "page:4",
+                "text": "Rereading feels productive because the text becomes familiar, but this fluency is a poor guide to what you will remember."
+              },
+              {
+                "id": "interleaving",
+                "location": "page:5",
+                "text": "Interleaving mixes different problem types in one session instead of practicing one type at a time."
+              },
+              {
+                "id": "interleaving-why",
+                "location": "page:5",
+                "text": "Interleaving is harder because each problem first requires deciding which method applies, and that choice is exactly the skill exams test."
+              },
+              {
+                "id": "desirable-difficulty",
+                "location": "page:5",
+                "text": "Spacing, testing and interleaving are called desirable difficulties: they slow down practice but improve long-term retention."
+              },
+              {
+                "id": "sleep",
+                "location": "page:6",
+                "text": "Sleeping after study protects new memories from interference, and a night of sleep deprivation reduces next-day learning."
+              },
+              {
+                "id": "plan",
+                "location": "page:6",
+                "text": "A practical plan: test yourself on each lecture within a day, again after three days, and again after a week, mixing topics in each session."
+              },
+              {
+                "id": "summary",
+                "location": "page:6",
+                "text": "In short, effortful retrieval spread over time, followed by sleep, is what turns studying into lasting memory."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "hard-concept",
+            "description": "A difficult idea such as desirable difficulty, consolidation or interleaving.",
+            "requireCitation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "memory-notes-pdf",
+                "passageIds": [
+                  "desirable-difficulty",
+                  "interleaving-why",
+                  "consolidation",
+                  "spacing-why"
+                ]
+              }
+            ]
+          }
+        ],
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "starter-pdf-quiz",
+      "description": "PDF starter: quiz me.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Quiz me on this"
+      },
+      "workspace": {
+        "activeTabId": "notes",
+        "tabs": [
+          {
+            "id": "notes",
+            "title": "PSY 210 Lecture 7: Memory and Study",
+            "url": "https://fixtures.onhand.test/course/lecture7.pdf"
+          }
+        ],
+        "resources": [
+          {
+            "id": "memory-notes-pdf",
+            "tabId": "notes",
+            "kind": "pdf",
+            "passages": [
+              {
+                "id": "intro",
+                "location": "page:1",
+                "text": "Lecture 7 covers why some study habits produce durable memories while others fade within days."
+              },
+              {
+                "id": "forgetting-curve",
+                "location": "page:1",
+                "text": "Without review, most newly learned material is forgotten quickly: recall drops steeply in the first day and then levels off."
+              },
+              {
+                "id": "goal",
+                "location": "page:1",
+                "text": "The aim of this lecture is to connect four techniques to the memory processes they strengthen."
+              },
+              {
+                "id": "encoding",
+                "location": "page:2",
+                "text": "Encoding turns an experience into a memory trace; deeper processing, such as explaining an idea in your own words, produces stronger traces."
+              },
+              {
+                "id": "consolidation",
+                "location": "page:2",
+                "text": "Consolidation stabilizes a trace over hours to days, and much of it happens during sleep, when the hippocampus replays recent experiences."
+              },
+              {
+                "id": "retrieval-def",
+                "location": "page:2",
+                "text": "Retrieval is the act of bringing a memory back to mind, and each successful retrieval changes the memory it accesses."
+              },
+              {
+                "id": "spacing",
+                "location": "page:3",
+                "text": "The spacing effect: reviewing material in several sessions spread over days produces better long-term recall than the same total time in one session."
+              },
+              {
+                "id": "spacing-why",
+                "location": "page:3",
+                "text": "Spacing works because each review happens after some forgetting, so reconstructing the memory takes effort and strengthens it more."
+              },
+              {
+                "id": "cramming",
+                "location": "page:3",
+                "text": "Cramming can raise scores on a test the next morning, but most of that gain is lost within a week."
+              },
+              {
+                "id": "testing",
+                "location": "page:4",
+                "text": "Retrieval practice: testing yourself without looking at the answer improves later recall more than rereading the same material."
+              },
+              {
+                "id": "testing-feedback",
+                "location": "page:4",
+                "text": "Retrieval practice works best with feedback, so that errors are corrected before they are rehearsed."
+              },
+              {
+                "id": "fluency",
+                "location": "page:4",
+                "text": "Rereading feels productive because the text becomes familiar, but this fluency is a poor guide to what you will remember."
+              },
+              {
+                "id": "interleaving",
+                "location": "page:5",
+                "text": "Interleaving mixes different problem types in one session instead of practicing one type at a time."
+              },
+              {
+                "id": "interleaving-why",
+                "location": "page:5",
+                "text": "Interleaving is harder because each problem first requires deciding which method applies, and that choice is exactly the skill exams test."
+              },
+              {
+                "id": "desirable-difficulty",
+                "location": "page:5",
+                "text": "Spacing, testing and interleaving are called desirable difficulties: they slow down practice but improve long-term retention."
+              },
+              {
+                "id": "sleep",
+                "location": "page:6",
+                "text": "Sleeping after study protects new memories from interference, and a night of sleep deprivation reduces next-day learning."
+              },
+              {
+                "id": "plan",
+                "location": "page:6",
+                "text": "A practical plan: test yourself on each lecture within a day, again after three days, and again after a week, mixing topics in each session."
+              },
+              {
+                "id": "summary",
+                "location": "page:6",
+                "text": "In short, effortful retrieval spread over time, followed by sleep, is what turns studying into lasting memory."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [],
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "starter-web-main-idea",
+      "description": "Web starter: main idea.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "What's the main idea here?"
+      },
+      "workspace": {
+        "activeTabId": "article",
+        "tabs": [
+          {
+            "id": "article",
+            "title": "Why cities are planting tiny forests",
+            "url": "https://fixtures.onhand.test/news/tiny-forests"
+          }
+        ],
+        "resources": [
+          {
+            "id": "forest-article",
+            "tabId": "article",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "lede",
+                "location": "section: Intro",
+                "text": "Cities from Paris to Chennai are planting tiny forests, dense patches of native trees no bigger than a tennis court."
+              },
+              {
+                "id": "main-claim",
+                "location": "section: Intro",
+                "text": "Supporters argue that these small forests cool streets and support wildlife faster than conventional parks."
+              },
+              {
+                "id": "method",
+                "location": "section: How it works",
+                "text": "The method plants three to five saplings per square meter in improved soil, so the trees compete for light and grow quickly."
+              },
+              {
+                "id": "evidence",
+                "location": "section: Evidence",
+                "text": "A two-year study of twelve sites found surface temperatures up to 2 degrees Celsius lower than nearby paved areas."
+              },
+              {
+                "id": "caveat",
+                "location": "section: Evidence",
+                "text": "Researchers caution that the forests need watering and weeding for the first three years, and many early plantings failed without it."
+              },
+              {
+                "id": "cost",
+                "location": "section: Cost",
+                "text": "Each forest costs roughly the same as resurfacing a small parking lot, which has made them popular with neighborhood groups."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "main",
+            "description": "Main claim.",
+            "requireCitation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "forest-article",
+                "passageIds": [
+                  "main-claim",
+                  "lede"
+                ]
+              }
+            ]
+          }
+        ],
+        "maxAnnotations": 3,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    },
+    {
+      "id": "starter-web-highlight",
+      "description": "Web starter: highlight key points.",
+      "profiles": [
+        "legacy",
+        "full-agent",
+        "guided-agent"
+      ],
+      "turn": {
+        "mode": "answer",
+        "prompt": "Highlight the key points"
+      },
+      "workspace": {
+        "activeTabId": "article",
+        "tabs": [
+          {
+            "id": "article",
+            "title": "Why cities are planting tiny forests",
+            "url": "https://fixtures.onhand.test/news/tiny-forests"
+          }
+        ],
+        "resources": [
+          {
+            "id": "forest-article",
+            "tabId": "article",
+            "kind": "html",
+            "passages": [
+              {
+                "id": "lede",
+                "location": "section: Intro",
+                "text": "Cities from Paris to Chennai are planting tiny forests, dense patches of native trees no bigger than a tennis court."
+              },
+              {
+                "id": "main-claim",
+                "location": "section: Intro",
+                "text": "Supporters argue that these small forests cool streets and support wildlife faster than conventional parks."
+              },
+              {
+                "id": "method",
+                "location": "section: How it works",
+                "text": "The method plants three to five saplings per square meter in improved soil, so the trees compete for light and grow quickly."
+              },
+              {
+                "id": "evidence",
+                "location": "section: Evidence",
+                "text": "A two-year study of twelve sites found surface temperatures up to 2 degrees Celsius lower than nearby paved areas."
+              },
+              {
+                "id": "caveat",
+                "location": "section: Evidence",
+                "text": "Researchers caution that the forests need watering and weeding for the first three years, and many early plantings failed without it."
+              },
+              {
+                "id": "cost",
+                "location": "section: Cost",
+                "text": "Each forest costs roughly the same as resurfacing a small parking lot, which has made them popular with neighborhood groups."
+              }
+            ]
+          }
+        ]
+      },
+      "expectations": {
+        "completion": "answer",
+        "mutations": "annotations-allowed",
+        "evidenceSlots": [
+          {
+            "id": "evidence",
+            "description": "Temperature evidence.",
+            "requireAnnotation": true,
+            "acceptableEvidence": [
+              {
+                "sourceId": "forest-article",
+                "passageIds": [
+                  "evidence"
+                ]
+              }
+            ]
+          }
+        ],
+        "minAnnotations": 2,
+        "maxAnnotations": 6,
+        "maxModelCalls": 4,
+        "maxToolCalls": 8,
+        "maxToolErrors": 0,
+        "maxDuplicateSources": 0,
+        "maxFocusChanges": 0,
+        "maxLatencyMs": 30000,
+        "requireNoProvisionalAnswer": true
+      }
+    }
+  ]
+}

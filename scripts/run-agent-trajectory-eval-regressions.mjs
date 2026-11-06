@@ -21,6 +21,7 @@ import {
 } from "./lib/agent-trajectory-fixtures.mjs";
 
 const SUITE_PATH = fileURLToPath(new URL("../evals/agent-trajectories/cases.json", import.meta.url));
+const STARTER_SUITE_PATH = fileURLToPath(new URL("../evals/agent-trajectories/starter-questions.json", import.meta.url));
 
 function passingCurrentPageTrace() {
 	return {
@@ -56,6 +57,11 @@ async function main() {
 	const suite = await loadTrajectorySuite(SUITE_PATH);
 	assert.equal(suite.schemaVersion, 1);
 	assert.equal(suite.cases.length, 11);
+	// The sidebar's starter questions, used to measure model rounds
+	// (npm run eval:agent-trajectories:live -- --suite <this file>).
+	const starterSuite = await loadTrajectorySuite(STARTER_SUITE_PATH);
+	assert.deepEqual(starterSuite.cases.map((testCase) => testCase.id), ["starter-pdf-summarize-highlight", "starter-pdf-hardest-part", "starter-pdf-quiz", "starter-web-main-idea", "starter-web-highlight"]);
+	assert.ok(createTrajectoryFixtureCatalog(starterSuite, "http://127.0.0.1:8765"), "starter fixtures build");
 	assert.equal(new Set(suite.cases.map((testCase) => testCase.id)).size, suite.cases.length);
 
 	const currentPageCase = suite.cases.find((testCase) => testCase.id === "current-page-grounded-answer");

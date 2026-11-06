@@ -95,6 +95,17 @@ npm run eval:agent-trajectories:live -- \
   --profile legacy
 ```
 
+The sidebar's starter questions have their own suite, on a six-page study PDF
+and a web article. Their budgets count model rounds, which drive Free latency:
+
+```sh
+npm run eval:agent-trajectories:live -- \
+  --launch-isolated --free-tier \
+  --suite evals/agent-trajectories/starter-questions.json \
+  --case starter-pdf-summarize-highlight --case starter-pdf-hardest-part \
+  --case starter-pdf-quiz --case starter-web-main-idea --case starter-web-highlight
+```
+
 This launches Helium/Chromium with only the unpacked Onhand extension and the
 fixture workspace. Set `ONHAND_TEST_BROWSER` or pass `--browser <path>` if the
 browser is not in a standard location. Use `--keep-browser` only for visual
