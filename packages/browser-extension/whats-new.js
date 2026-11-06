@@ -8,6 +8,14 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.16",
+		items: [
+			"Open a PDF saved on your computer by picking the file when Onhand asks. No browser setting to change.",
+			"A new conversation suggests three questions that fit the page. Click one to ask it.",
+			"Answers about PDFs and homework take fewer steps, so they arrive sooner.",
+		],
+	},
+	{
 		version: "0.4.15",
 		items: [
 			"Voice now tells you before it starts that it runs on your own OpenAI API key, instead of failing after you click it.",

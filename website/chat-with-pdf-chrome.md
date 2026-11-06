@@ -29,7 +29,7 @@ Free to start. No account needed. Open source. Also on [Firefox](https://addons.
 ## Which PDFs it works on
 
 -   **Papers and readings online:** arXiv, journal sites, course pages and other PDFs you open in Chrome.
--   **PDFs on your computer:** turn on **Allow access to file URLs** for Onhand in `chrome://extensions`, then open the file in Chrome.
+-   **PDFs on your computer:** open the file in Chrome and pick it when Onhand asks; no settings to change. To skip that step, turn on **Allow access to file URLs** for Onhand in `chrome://extensions`.
 -   **Scanned PDFs:** when a page has no selectable text, Onhand marks the region of the page instead of the words.
 
 ## No upload, no copy and paste
