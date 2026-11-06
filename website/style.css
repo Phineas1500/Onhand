@@ -70,7 +70,8 @@ section:first-of-type{border-top:0}
 .nav-inner{max-width:1140px;margin:0 auto;padding:0 clamp(20px,4vw,40px);display:flex;align-items:center;gap:24px;height:60px}
 .nav-brand{display:flex;align-items:center;gap:10px;color:var(--fg);font-family:var(--font-serif);font-weight:700;font-size:19px;letter-spacing:-0.01em;text-decoration:none}
 .nav-brand:hover{color:var(--fg);text-decoration:none}
-.nav-brand img{width:26px;height:26px;border-radius:5px;background:var(--bg-elev);padding:2px}
+/* The icon brings its own tile; the negative margin trims its transparent edge */
+.nav-brand img{width:30px;height:30px;margin:-2px}
 [data-theme="dark"] .nav-brand img{filter:invert(0.88) hue-rotate(180deg)}
 @media (prefers-color-scheme: dark){:root[data-theme="auto"] .nav-brand img{filter:invert(0.88) hue-rotate(180deg)}}
 .nav-links{display:flex;gap:4px;margin-left:14px}
@@ -93,7 +94,7 @@ section:first-of-type{border-top:0}
 @media (max-width:640px){
   .nav-inner{height:58px;padding:0 16px;gap:8px;width:100%;max-width:390px;margin:0}
   .nav-brand{gap:8px;font-size:18px;min-width:0}
-  .nav-brand img{width:24px;height:24px;flex:0 0 auto}
+  .nav-brand img{width:28px;height:28px;flex:0 0 auto}
   .nav-spacer{min-width:0}
   .theme-toggle{width:32px;height:32px;flex-basis:32px}
   .nav-ghost{padding:8px 10px}
