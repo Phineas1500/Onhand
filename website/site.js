@@ -19,7 +19,7 @@ const ONHAND_ANALYTICS = {
 
 const ONHAND_STORE = {
   url: 'https://chromewebstore.google.com/detail/ogjmncmkpgdkkcibdiacmagaehjohljb',
-  approvedVersion: '0.4.15',
+  approvedVersion: '0.4.16',
   pendingVersion: null,
 };
 
