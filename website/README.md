@@ -75,6 +75,8 @@ If the brand mark changes, replace `icons/onhand-128.png` and `icons/onhand-48.p
 
 The promo screenshot can be swapped in `screenshots/promo/attention-screenshot.png` at any time — the page sizes it responsively.
 
+Link previews (the `og:image` and `twitter:image` tags on every page) use `og-image.jpg`, a 1200×630 card. Keep a replacement at that size and under ~300 KB so messaging apps show it.
+
 ## License
 
 Apache 2.0, same as the rest of the Onhand project. New York and Ioskeley Mono are bundled under their respective licenses (verify before public distribution if you're concerned).
