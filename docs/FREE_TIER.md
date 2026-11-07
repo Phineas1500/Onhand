@@ -26,6 +26,12 @@ key's OpenAI project and draws from its applicable API credits.
   - **What stays off the list:** mainland China, whose generative-AI rules
     cover foreign services offered there, and sanctioned countries, which US
     hosts can't serve.
+  - **Refused up front:** `REGION_UNAVAILABLE_COUNTRIES` (default
+    `CN,RU,BY,VE,IR,KP,SY,CU`: places off OpenAI's list that the fallback
+    doesn't take) get the `region_unavailable` message at registration,
+    which the extension does when Onhand Free is chosen, and on every chat
+    and Decisions request, without calling OpenAI. Added 2026-11-07, after a
+    mainland China user's first question failed.
   - **Everywhere else:** OpenAI's refusal becomes a clear `region_unavailable`
     message that points to another provider, and the request isn't charged.
   - **History:** added 2026-10-25, after a Hong Kong user's first two
@@ -213,6 +219,7 @@ Worker-side events:
 
 - `register_success`
 - `register_rate_limited`
+- `register_denied`
 - `chat_auth_denied`
 - `chat_quota_denied`
 - `chat_turn_quota_denied`

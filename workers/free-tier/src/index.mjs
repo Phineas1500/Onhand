@@ -12,7 +12,7 @@
 
 import { fetchOpenRouterGenerationMetadata, reportedGenerationCost } from "./generation-metadata.mjs";
 import { ALLOWED_CLIENT_MODELS, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, decisionsUsageCost, prepareDecisionsRequestBody, prepareOpenAIRequestBody, openAIUsageCost } from "./openai-upstream.mjs";
-import { OPENROUTER_CHAT_URL, REGION_UNAVAILABLE_MESSAGE, isOpenAIRegionRefusal, openRouterUsageCost, prepareRegionFallbackRequestBody, regionFallbackModel } from "./region-fallback.mjs";
+import { OPENROUTER_CHAT_URL, REGION_UNAVAILABLE_MESSAGE, isOpenAIRegionRefusal, openRouterUsageCost, prepareRegionFallbackRequestBody, regionFallbackModel, regionUnavailable } from "./region-fallback.mjs";
 
 const MAX_BODY_BYTES = 2_500_000;
 const MAX_TELEMETRY_BODY_BYTES = 32_000;
@@ -422,6 +422,15 @@ function requestTelemetryIds(request) {
 
 async function handleRegister(request, env, ctx) {
 	const startedAt = Date.now();
+	if (regionUnavailable(env, request)) {
+		writeAnalytics(ctx, env, "register_denied", {
+			result: "denied",
+			status: 403,
+			durationMs: Date.now() - startedAt,
+			errorCode: "region_unavailable",
+		}, request);
+		return json(403, { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
+	}
 	const cap = envNumber(env, "REGISTRATIONS_PER_IP_PER_DAY", 5);
 	const ipKey = `reg:${clientIp(request)}:${todayKey()}`;
 	const { allowed, current, unavailable } = await bumpDailyCounter(env, ipKey, cap);
@@ -668,6 +677,19 @@ async function handleChatCompletions(request, env, ctx) {
 	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
 	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";
 	const dailyRequestCap = envNumber(env, "DAILY_REQUEST_CAP", DEFAULT_DAILY_REQUEST_CAP);
+	if (regionUnavailable(env, request)) {
+		writeAnalytics(ctx, env, "chat_request_rejected", {
+			...telemetryIds,
+			source,
+			result: "denied",
+			status: 403,
+			durationMs: Date.now() - startedAt,
+			deviceHash,
+			cap: dailyRequestCap,
+			errorCode: "region_unavailable",
+		}, request);
+		return json(403, { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
+	}
 	let usage = { current: 0 };
 	let turnUsage = { current: 0 };
 
@@ -909,6 +931,7 @@ async function handleDecisions(request, env, ctx) {
 	// Decisions is OpenAI-only. Refusing at once lets the extension fall back
 	// to classifying with its chat model, which takes the region route.
 	if (regionFallbackModel(env, request)) return refuse(403, "region_fallback", "Decisions isn't available in this region; Onhand classifies requests with its chat model instead.", { deviceHash });
+	if (regionUnavailable(env, request)) return refuse(403, "region_unavailable", REGION_UNAVAILABLE_MESSAGE, { deviceHash });
 	if (!env.OPENAI_API_KEY) return json(503, { error: { message: "Onhand Free is temporarily unavailable: the OpenAI funding key is not configured." } });
 	const quotaBypassed = quotaBypassAuthorized(request, env, deviceHash);
 	const source = quotaBypassed ? QUOTA_BYPASS_SOURCE : "free-tier";

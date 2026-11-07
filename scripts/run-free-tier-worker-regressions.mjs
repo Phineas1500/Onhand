@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import worker, { __freeTierTest } from "../workers/free-tier/src/index.mjs";
 
 import { FREE_TIER_MODEL, OPENAI_CHAT_URL, OPENAI_DECISIONS_URL, MAX_OUTPUT_TOKENS, prepareOpenAIRequestBody, openAIUsageCost, prepareDecisionsRequestBody, decisionsUsageCost } from "../workers/free-tier/src/openai-upstream.mjs";
-import { DEFAULT_REGION_FALLBACK_MODEL, OPENROUTER_CHAT_URL, REGION_FALLBACK_PROVIDERS, REGION_UNAVAILABLE_MESSAGE, prepareRegionFallbackRequestBody, regionFallbackModel } from "../workers/free-tier/src/region-fallback.mjs";
+import { DEFAULT_REGION_FALLBACK_MODEL, OPENROUTER_CHAT_URL, REGION_FALLBACK_PROVIDERS, REGION_UNAVAILABLE_MESSAGE, prepareRegionFallbackRequestBody, regionFallbackModel, regionUnavailable } from "../workers/free-tier/src/region-fallback.mjs";
 const { MAX_BODY_BYTES, QUOTA_BYPASS_HEADER, quotaBypassAuthorized, timingSafeEqualText } = __freeTierTest;
 const FREE_TIER_TEXT_MODEL = FREE_TIER_MODEL;
 assert.equal(MAX_BODY_BYTES, 2_500_000);
@@ -552,7 +552,7 @@ try {
 			assert.equal(String(url), OPENAI_CHAT_URL);
 			return Response.json({ error: { code: "unsupported_country_region_territory", message: "Country, region, or territory not supported", type: "request_forbidden" } }, { status: 403 });
 		};
-		const refused = await worker.fetch(fromCountry(chatRequest(), "VE"), refusing.env, refusing.ctx);
+		const refused = await worker.fetch(fromCountry(chatRequest(), "XK"), refusing.env, refusing.ctx);
 		assert.equal(refused.status, 403);
 		assert.deepEqual(await refused.json(), { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
 		await refusing.flush();
@@ -571,8 +571,34 @@ try {
 			body: JSON.stringify({ model: FREE_TIER_MODEL, input: "fixture", questions: [{ type: "predicate", name: "teaching", instructions: "Is it?" }] }) }), "HK"), f.env, f.ctx);
 		assert.equal(decisions.status, 403);
 		assert.equal((await decisions.json()).error.code, "region_fallback");
+
+		// Places off OpenAI's list that the fallback doesn't take are refused up
+		// front: registration (made when Onhand Free is chosen), chat and
+		// Decisions all answer region_unavailable without calling a model.
+		for (const country of ["CN", "ru", "IR"]) assert.equal(regionUnavailable(f.env, { cf: { country } }), true, country);
+		for (const country of ["HK", "US", "XK", ""]) assert.equal(regionUnavailable(f.env, { cf: { country } }), false, country || "(none)");
+		assert.equal(regionUnavailable({ ...f.env, REGION_UNAVAILABLE_COUNTRIES: "" }, { cf: { country: "CN" } }), false, "\"\" turns it off");
+		const upFront = fixture();
+		globalThis.fetch = async () => assert.fail("no model call from a refused region");
+		const registration = await worker.fetch(fromCountry(new Request("https://worker.test/v1/register", { method: "POST" }), "CN"), upFront.env, upFront.ctx);
+		assert.equal(registration.status, 403);
+		assert.deepEqual(await registration.json(), { error: { message: REGION_UNAVAILABLE_MESSAGE, code: "region_unavailable" } });
+		assert.equal([...upFront.data.keys()].filter((key) => key.startsWith("token:") && key !== `token:${token}`).length, 0, "no token issued");
+		const chat = await worker.fetch(fromCountry(chatRequest(), "CN"), upFront.env, upFront.ctx);
+		assert.equal(chat.status, 403);
+		assert.equal((await chat.json()).error.code, "region_unavailable");
+		const decisionsRefused = await worker.fetch(fromCountry(new Request("https://worker.test/v1/decisions", { method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ model: FREE_TIER_MODEL, input: "fixture", questions: [{ type: "predicate", name: "teaching", instructions: "Is it?" }] }) }), "RU"), upFront.env, upFront.ctx);
+		assert.equal(decisionsRefused.status, 403);
+		assert.equal((await decisionsRefused.json()).error.code, "region_unavailable");
+		await upFront.flush();
+		assert.equal(await upFront.cost(), 0, "nothing is charged");
+		for (const name of ["register_denied", "chat_request_rejected", "decisions_denied"]) {
+			assert.ok(upFront.events.some((event) => event.indexes[0] === name && event.blobs[14] === "region_unavailable"), name);
+		}
 	}
-	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure, decisions, region fallback)");
+	console.log("Free-tier worker regressions: PASS (routing, streaming/JSON/cancel/error accounting, concurrency, idempotency, reconciliation, midnight, bypass, binding failure, decisions, region fallback, region refusal)");
 } finally {
 	globalThis.fetch = originalFetch;
 	Date.now = originalDateNow;

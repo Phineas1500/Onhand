@@ -67,6 +67,10 @@ UNINSTALL_FEEDBACK_PER_IP_PER_DAY = "10"
 # src/region-fallback.mjs for why the list stays this short. "" turns it off.
 REGION_FALLBACK_COUNTRIES = "HK,MO"
 REGION_FALLBACK_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+# Places OpenAI doesn't serve that the fallback doesn't take: registration and
+# every free-tier request from them get the "not available in your region"
+# message without calling OpenAI. "" turns it off.
+REGION_UNAVAILABLE_COUNTRIES = "CN,RU,BY,VE,IR,KP,SY,CU"
 
 # Secrets (never in this file): npx wrangler secret put OPENAI_API_KEY, and
 # OPENROUTER_API_KEY for the region fallback and legacy generation lookups.

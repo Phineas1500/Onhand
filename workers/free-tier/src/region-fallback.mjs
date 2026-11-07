@@ -17,21 +17,39 @@ import { clampOutputTokens } from "./openai-upstream.mjs";
 
 export const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_REGION_FALLBACK_COUNTRIES = "HK,MO";
+// Places OpenAI's list leaves out that the fallback doesn't take either:
+// mainland China (see above), Russia, Belarus, Venezuela and the sanctioned
+// countries (OpenAI's list as of 2026-11-07). These are refused up front, at
+// registration and before any model call, so the user hears it when they pick
+// Onhand Free instead of after their first question (a mainland China user's
+// first question failed that way on 2026-11-07), and Onhand doesn't offer
+// OpenAI's service where OpenAI doesn't. Anywhere else OpenAI refuses still
+// gets REGION_UNAVAILABLE_MESSAGE through isOpenAIRegionRefusal.
+export const DEFAULT_REGION_UNAVAILABLE_COUNTRIES = "CN,RU,BY,VE,IR,KP,SY,CU";
 export const DEFAULT_REGION_FALLBACK_MODEL = "deepseek/deepseek-v4.1-flash-1017";
 export const REGION_FALLBACK_PROVIDERS = ["deepinfra", "parasail", "novita", "together", "fireworks", "wandb"];
 export const REGION_UNAVAILABLE_MESSAGE =
 	"Onhand Free isn't available in your region, because OpenAI, which runs it, doesn't serve it there. To use Onhand, choose another AI provider in Onhand's settings.";
 
-export function regionFallbackModel(env, request) {
-	if (!env?.OPENROUTER_API_KEY) return "";
+function requestCountryIn(request, list) {
 	const country = String(request?.cf?.country || "").toUpperCase();
-	if (!country) return "";
-	const countries = String(env.REGION_FALLBACK_COUNTRIES ?? DEFAULT_REGION_FALLBACK_COUNTRIES)
+	if (!country) return false;
+	return String(list)
 		.split(",")
 		.map((value) => value.trim().toUpperCase())
-		.filter(Boolean);
-	if (!countries.includes(country)) return "";
+		.filter(Boolean)
+		.includes(country);
+}
+
+export function regionFallbackModel(env, request) {
+	if (!env?.OPENROUTER_API_KEY) return "";
+	if (!requestCountryIn(request, env.REGION_FALLBACK_COUNTRIES ?? DEFAULT_REGION_FALLBACK_COUNTRIES)) return "";
 	return String(env.REGION_FALLBACK_MODEL || DEFAULT_REGION_FALLBACK_MODEL).trim();
+}
+
+export function regionUnavailable(env, request) {
+	if (regionFallbackModel(env, request)) return false;
+	return requestCountryIn(request, env?.REGION_UNAVAILABLE_COUNTRIES ?? DEFAULT_REGION_UNAVAILABLE_COUNTRIES);
 }
 
 export function prepareRegionFallbackRequestBody(body, model) {
