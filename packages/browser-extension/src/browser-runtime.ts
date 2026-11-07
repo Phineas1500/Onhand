@@ -529,9 +529,10 @@ const ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o45112487774
 const ONHAND_SENTRY_CHROME_DIST = "chrome";
 const ONHAND_SENTRY_FIREFOX_DIST = "firefox";
 const ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
-// Requests sent by the CLI and the eval/acceptance scripts; their failures go
-// to Sentry's "test" environment instead of production.
-const AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|prompt-eval(?:[:_-].*)?)$/i;
+// Requests sent by the CLI, the eval/acceptance scripts and the release-time
+// Sentry smoke; their events go to Sentry's "test" environment instead of
+// production, so they don't open production issues or send alerts.
+const AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|smoke|prompt-eval(?:[:_-].*)?)$/i;
 function sentryEnvironmentFor(requestSource: unknown, installType: string) {
 	if (AUTOMATED_REQUEST_SOURCE_PATTERN.test(String(requestSource || ""))) return "test";
 	return installType === "development" ? "development" : "production";
@@ -2520,21 +2521,26 @@ async function getFreeTierQuotaBypassSecret(): Promise<string> {
 
 // The free tier identifies devices with an anonymous token issued by the
 // proxy; no account or key is involved.
-async function getOrRegisterFreeTierToken(): Promise<string> {
+async function getOrRegisterFreeTierToken(options: { timeoutMs?: number } = {}): Promise<string> {
 	const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
 	const existing = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
 	if (existing) return existing;
 	const baseUrl = await getFreeTierBaseUrl();
 	let response: Response;
 	try {
-		response = await fetch(`${baseUrl}/register`, { method: "POST" });
+		response = await fetch(`${baseUrl}/register`, { method: "POST", ...(options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}) });
 	} catch {
 		throw new Error("Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.");
 	}
-	if (!response.ok) {
-		throw new Error(`Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
-	}
 	const data = await response.json().catch(() => null);
+	if (!response.ok) {
+		// The Worker's refusals (a region it doesn't serve, too many
+		// registrations from one network) carry copy written for the user.
+		const serverMessage = String((data as any)?.error?.message || "").trim();
+		const error: Error & { code?: string } = new Error(serverMessage || `Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
+		error.code = String((data as any)?.error?.code || "");
+		throw error;
+	}
 	const token = String((data as any)?.token || "");
 	if (!token) throw new Error("Onhand free tier registration returned no token.");
 	await chrome.storage.local.set({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: token });
@@ -5957,6 +5963,21 @@ function humanizeProviderErrorMessage(rawMessage: unknown) {
 	return describeGeminiQuotaError(message) || message;
 }
 
+// A provider rejecting the user's own key answers in its own words (a 401
+// whose message can be as terse as "User not found."), which don't say the
+// key is the problem. A Philippines user's first question
+// failed that way on 2026-11-07. Onhand Free and ChatGPT sign-in have their
+// own messages.
+function describeRejectedApiKey(rawMessage: unknown, settings: any) {
+	if (settings?.authMode !== "api-key") return "";
+	const provider = getSupportedApiProvider(String(settings?.aiProvider || ""));
+	if (!provider || provider.keyless) return "";
+	const raw = String(rawMessage || "").trim();
+	if (!/^401\b/.test(raw) && !/incorrect api key|invalid x-api-key|invalid api key|api key not valid/i.test(raw)) return "";
+	const name = provider.name.replace(/\s+API$/i, "");
+	return `${name} didn't accept your API key. Check that you copied the whole key and that it's still active in your ${name} account, then paste it again in Onhand's options.`;
+}
+
 // Gemini's quota errors run to a paragraph of metric names and links. Most
 // personal Gemini keys are on the free tier (no billing on the key's project):
 // 5 requests a minute and 20 a day per model for gemini-3.6-flash, and an
@@ -6124,7 +6145,7 @@ function buildFinalAssistantReply(assistantText: string, finalError: Error | nul
 		return text ? `${text}\n\nVoice ended before this answer was completed.` : "Voice ended before an answer was completed. Ask the complete question again to continue.";
 	}
 	if (!finalError) return ensurePdfAbsenceReviewScope(text, request) || "(No reply generated.)";
-	const errorReply = `Error: ${humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
+	const errorReply = `Error: ${describeRejectedApiKey(finalError.message, request?.settings) || humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
 	const automatedRetryFailedBeforeFreshText =
 		Boolean(request?.pdfAnchorRetry || request?.pageSourceMarkerRetry || request?.blankReplyRetry) && !String(request?.reply || "").trim();
 	if (automatedRetryFailedBeforeFreshText) return errorReply;
@@ -11753,6 +11774,7 @@ export const __browserRuntimeTest = {
 	collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
 	collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
 	humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
+	describeRejectedApiKeyForTest: describeRejectedApiKey,
 	ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
 	setLearnerStateModeForTest: setLearnerStateMode,
 	buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -13684,7 +13706,7 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		// Expected conditions: the daily Onhand Free limit and a provider that
 		// doesn't serve the user's region (the Worker's usage events count both),
 		// and the browser closing mid-operation.
-		if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|the browser is shutting down|extension context invalidated/.test(message)) return true;
+		if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|onhand free isn't available in your region|the browser is shutting down|extension context invalidated/.test(message)) return true;
 		// Setup steps the message already walks the user through: Voice without an
 		// OpenAI key, a local file or Web Store tab Chrome won't let Onhand read,
 		// a local PDF the viewer asks the reader to choose, and Restore pages in a
@@ -13966,6 +13988,9 @@ export function createOnhandBrowserRuntime(host: RuntimeHost) {
 		sentryDiagnosticsAllowed = diagnosticsAllowed;
 		if (!diagnosticsAllowed && !explicitUserReport) return false;
 		if (shouldSuppressSentryException(kind, error, data)) return false;
+		// A key its provider rejects is the user's to fix, and the reply now says
+		// so. A report the user sends about it still comes through.
+		if (!explicitUserReport && describeRejectedApiKey((error as any)?.message || error, settings)) return false;
 		if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
 		initializeSentryIfNeeded();
 		const message = redactErrorText((error as any)?.message || error || kind, 500);
@@ -17623,6 +17648,7 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 					message_type: request?.messageType,
 					error_kind: classifyTelemetryError(message),
 					auth_page: request?.authPage,
+					request_source: request?.requestSource,
 				}),
 			};
 		},
@@ -17755,6 +17781,17 @@ function findPairedHighlightAction(action: PageAction, actions: PageAction[] = [
 				aiProvider,
 				authMode,
 			);
+			// Choosing Onhand Free registers its anonymous token now, so a region
+			// the free tier doesn't serve is explained while the other choices are
+			// still on screen, not after the first question. Any other registration
+			// failure is left for the first question to retry.
+			if (nextPartial.aiProvider === ONHAND_FREE_PROVIDER && aiProvider === ONHAND_FREE_PROVIDER) {
+				try {
+					await getOrRegisterFreeTierToken({ timeoutMs: 8000 });
+				} catch (error: any) {
+					if (error?.code === "region_unavailable") throw error;
+				}
+			}
 			store.settings = {
 				...store.settings,
 				...nextPartial,

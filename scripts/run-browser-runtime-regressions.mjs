@@ -701,6 +701,62 @@ async function assertTurnsUseDecisionsWhenConfident() {
 // reply was the raw "Error: 401 : {...refresh_token_expired...}" JSON) fails the
 // turn with a plain sign-in-again message and drops the dead credentials, so the
 // sidebar offers the sign-in choices instead of failing every later turn.
+// A key its provider rejects gets a reply that names the key as the problem;
+// Onhand Free and the ChatGPT sign-in keep their own messages.
+// Choosing Onhand Free registers right away, so a region the free tier
+// doesn't serve is explained at setup; other registration failures wait for
+// the first question.
+async function assertRejectedKeysAndFreeTierRegionAreExplained() {
+	installChromeStorageStub();
+	const { createOnhandBrowserRuntime, __browserRuntimeTest: test } = await import("../packages/browser-extension/onhand-runtime.bundle.js");
+	const describe = test.describeRejectedApiKeyForTest;
+	assert.equal(
+		describe('401: {"message":"User not found.","code":401}', { authMode: "api-key", aiProvider: "openrouter" }),
+		"OpenRouter didn't accept your API key. Check that you copied the whole key and that it's still active in your OpenRouter account, then paste it again in Onhand's options.",
+	);
+	assert.match(describe("400 API key not valid. Please pass a valid API key.", { authMode: "api-key", aiProvider: "google" }), /^Google Gemini didn't accept your API key\./);
+	assert.match(describe("401 Incorrect API key provided: sk-...", { authMode: "api-key", aiProvider: "openai" }), /^OpenAI didn't accept/);
+	for (const [message, settings] of [
+		['401: {"error":{"message":"Unknown free-tier token."}}', { authMode: "api-key", aiProvider: "onhand-free" }],
+		['401: {"error":{"message":"Your session has expired."}}', { authMode: "oauth", aiProvider: "openai-codex" }],
+		['403: {"error":{"code":"unsupported_country_region_territory"}}', { authMode: "api-key", aiProvider: "openai" }],
+		['429: {"error":{"message":"Rate limit reached."}}', { authMode: "api-key", aiProvider: "openrouter" }],
+	]) assert.equal(describe(message, settings), "", message);
+
+	const regionMessage = "Onhand Free isn't available in your region, because OpenAI, which runs it, doesn't serve it there. To use Onhand, choose another AI provider in Onhand's settings.";
+	globalThis.chrome.storage.local.data.onhandFreeTierBaseUrl = "https://free.test/v1";
+	const originalFetch = globalThis.fetch;
+	let registerResponse = () => Response.json({ error: { message: regionMessage, code: "region_unavailable" } }, { status: 403 });
+	let registrations = 0;
+	globalThis.fetch = async (url) => {
+		if (String(url) === "https://free.test/v1/register") { registrations += 1; return registerResponse(); }
+		return new Response("", { status: 200 });
+	};
+	try {
+		const runtime = createOnhandBrowserRuntime(createReplayHost());
+		const before = (await runtime.getSettings()).aiProvider;
+		const choose = () => runtime.updateSettings({ aiProvider: "onhand-free", aiModel: "gpt-6-luna", authMode: "api-key" });
+		await assert.rejects(choose(), (error) => error.message === regionMessage && error.code === "region_unavailable");
+		assert.equal((await runtime.getSettings()).aiProvider, before, "a refused region leaves the earlier choice in place");
+
+		registerResponse = () => Response.json({ error: { message: "Onhand Free registration is temporarily unavailable." } }, { status: 503 });
+		assert.equal((await choose()).aiProvider, "onhand-free", "an outage doesn't block choosing Onhand Free");
+		assert.equal(globalThis.chrome.storage.local.data.onhandFreeTierToken, undefined);
+
+		registerResponse = () => Response.json({ token: "oft_fixture" });
+		await choose();
+		assert.equal(globalThis.chrome.storage.local.data.onhandFreeTierToken, "oft_fixture", "the token is registered at setup");
+		const registered = registrations;
+		await runtime.updateSettings({ aiProvider: "onhand-free", aiModel: "gpt-6-luna", authMode: "api-key", diagnosticsEnabled: true });
+		assert.equal(registrations, registered, "later saves reuse the token");
+	} finally {
+		globalThis.fetch = originalFetch;
+		delete globalThis.chrome.storage.local.data.onhandFreeTierBaseUrl;
+		delete globalThis.chrome.storage.local.data.onhandFreeTierToken;
+	}
+	console.log("Rejected API keys and an unserved Onhand Free region are explained passed");
+}
+
 async function assertExpiredChatGPTSignInAsksToSignInAgain() {
 	installChromeStorageStub();
 	globalThis.chrome.storage.local.data.onhandBrowserRuntime.settings = {
@@ -13323,6 +13379,9 @@ async function main() {
 	await assertDestinationNavigationDefaultsToNewTab();
 	await assertFreeTierVisualContextBudgeting();
 	await assertSentryDiagnosticsGateAndScrub();
+	// After the Sentry gate check: choosing Onhand Free turns diagnostics on,
+	// and Sentry keeps the fetch it first starts with.
+	await assertRejectedKeysAndFreeTierRegionAreExplained();
 	await assertOAuthSignInSharesOneTabAndRecordsTimeoutPage();
 	await assertSelectionFormatting();
 	await assertDocumentReviewMarkupLane();

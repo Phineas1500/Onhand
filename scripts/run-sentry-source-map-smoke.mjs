@@ -170,7 +170,9 @@ Sentry.init({
 	dsn: ONHAND_SENTRY_DSN,
 	release: options.release,
 	dist: options.dist,
-	environment: "production",
+	// Source maps resolve the same in any environment; "test" keeps release
+	// checks out of production issues and alerts.
+	environment: "test",
 	sendDefaultPii: false,
 	defaultIntegrations: false,
 	maxBreadcrumbs: 0,

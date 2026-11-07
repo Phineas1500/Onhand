@@ -9,6 +9,7 @@ const API_PROVIDERS = {
 		defaultModel: "gpt-4.1-mini",
 		keyLabel: "OpenAI API key",
 		keyPlaceholder: "sk-...",
+		keyPrefix: "sk-",
 		capabilities: { realtime: true, vision: true, tools: true, structuredOutput: true },
 	},
 	anthropic: {
@@ -16,6 +17,7 @@ const API_PROVIDERS = {
 		defaultModel: "claude-sonnet-4-5-20250929",
 		keyLabel: "Anthropic API key",
 		keyPlaceholder: "sk-ant-...",
+		keyPrefix: "sk-ant-",
 		capabilities: { realtime: false, vision: true, tools: true, structuredOutput: true },
 	},
 	google: {
@@ -23,6 +25,7 @@ const API_PROVIDERS = {
 		defaultModel: "gemini-3.8-flash",
 		keyLabel: "Gemini API key",
 		keyPlaceholder: "AIza...",
+		keyPrefix: "AIza",
 		capabilities: { realtime: false, vision: true, tools: true, structuredOutput: true },
 	},
 	openrouter: {
@@ -30,6 +33,7 @@ const API_PROVIDERS = {
 		defaultModel: "deepseek/deepseek-v4-flash",
 		keyLabel: "OpenRouter API key",
 		keyPlaceholder: "sk-or-...",
+		keyPrefix: "sk-or-",
 		capabilities: { realtime: false, vision: false, tools: true, structuredOutput: false },
 	},
 	"onhand-free": {
@@ -340,10 +344,29 @@ function syncApiKeyFields() {
 	apiKeyLabelEl.textContent = meta.keyLabel;
 	aiApiKeyInput.placeholder = meta.keyPlaceholder;
 	setInputValue(aiApiKeyInput, pendingApiKeys[providerId] || "");
-	const saved = hasSavedKey(providerId);
-	removeKeyButton.hidden = !saved;
-	apiKeyHelpEl.textContent = saved ? "Saved. Stored only in this browser." : "Stored only in this browser.";
+	removeKeyButton.hidden = !hasSavedKey(providerId);
+	syncApiKeyHelp();
 	syncRealtimeVoiceFields();
+}
+
+// A key for another provider, or part of a key, saves fine and then fails on
+// the first question, so the help line says so while the key is in view.
+function apiKeyMismatchNote(providerId, key) {
+	const meta = getProviderMeta(providerId);
+	if (!key || !meta.keyPrefix) return "";
+	const owner = Object.values(API_PROVIDERS)
+		.filter((candidate) => candidate.keyPrefix && key.startsWith(candidate.keyPrefix))
+		.sort((left, right) => right.keyPrefix.length - left.keyPrefix.length)[0];
+	if (owner === meta) return "";
+	if (owner) return `This looks like a key for ${owner.name}, not ${meta.name}. Pick ${owner.name} above, or paste your ${meta.name} key.`;
+	return `${meta.name} keys start with ${meta.keyPrefix}. Check that you copied the whole key.`;
+}
+
+function syncApiKeyHelp() {
+	const providerId = selectedApiKeyProvider();
+	const note = apiKeyMismatchNote(providerId, String(pendingApiKeys[providerId] || "").trim());
+	apiKeyHelpEl.classList.toggle("warn", Boolean(note));
+	apiKeyHelpEl.textContent = note || (hasSavedKey(providerId) ? "Saved. Stored only in this browser." : "Stored only in this browser.");
 }
 
 // One OpenAI API key field serves both voice and, with a ChatGPT plan, the
@@ -565,6 +588,7 @@ aiModelInput.addEventListener("input", () => {
 });
 aiApiKeyInput.addEventListener("input", () => {
 	pendingApiKeys[selectedApiKeyProvider()] = aiApiKeyInput.value.trim();
+	syncApiKeyHelp();
 	syncRealtimeVoiceFields();
 	scheduleSave(TYPING_SAVE_DELAY_MS);
 });

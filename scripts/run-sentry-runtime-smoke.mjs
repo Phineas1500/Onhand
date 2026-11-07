@@ -222,6 +222,9 @@ const sensitiveStack = [
 
 const result = await runtime.captureRuntimeException({
 	messageType: "sentry_runtime_smoke",
+	// Files the event under Sentry's "test" environment, so release checks
+	// don't open production issues or send production alerts.
+	requestSource: "smoke",
 	message: sensitiveMessage,
 	stack: sensitiveStack,
 });

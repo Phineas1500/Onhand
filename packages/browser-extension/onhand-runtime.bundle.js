@@ -87961,7 +87961,7 @@ var ONHAND_SENTRY_DSN = "https://f08b1742f4020abed600bca50fbb7458@o4511248777478
 var ONHAND_SENTRY_CHROME_DIST = "chrome";
 var ONHAND_SENTRY_FIREFOX_DIST = "firefox";
 var ONHAND_SENTRY_STACK_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
-var AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|prompt-eval(?:[:_-].*)?)$/i;
+var AUTOMATED_REQUEST_SOURCE_PATTERN = /^(?:cli|acceptance|agent-trajectory|smoke|prompt-eval(?:[:_-].*)?)$/i;
 function sentryEnvironmentFor(requestSource, installType) {
   if (AUTOMATED_REQUEST_SOURCE_PATTERN.test(String(requestSource || ""))) return "test";
   return installType === "development" ? "development" : "production";
@@ -89636,21 +89636,24 @@ async function getFreeTierQuotaBypassSecret() {
   if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) return "";
   return String(stored[ONHAND_FREE_QUOTA_BYPASS_STORAGE_KEY] || "").trim();
 }
-async function getOrRegisterFreeTierToken() {
+async function getOrRegisterFreeTierToken(options = {}) {
   const stored = await chrome.storage.local.get({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: "" });
   const existing = String(stored[ONHAND_FREE_TOKEN_STORAGE_KEY] || "");
   if (existing) return existing;
   const baseUrl = await getFreeTierBaseUrl();
   let response;
   try {
-    response = await fetch(`${baseUrl}/register`, { method: "POST" });
+    response = await fetch(`${baseUrl}/register`, { method: "POST", ...options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {} });
   } catch {
     throw new Error("Could not reach the Onhand free tier. Check your connection, or switch to your own API key in options.");
   }
-  if (!response.ok) {
-    throw new Error(`Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
-  }
   const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const serverMessage = String(data?.error?.message || "").trim();
+    const error2 = new Error(serverMessage || `Onhand free tier registration failed (${response.status}). Try again later, or use your own API key.`);
+    error2.code = String(data?.error?.code || "");
+    throw error2;
+  }
   const token = String(data?.token || "");
   if (!token) throw new Error("Onhand free tier registration returned no token.");
   await chrome.storage.local.set({ [ONHAND_FREE_TOKEN_STORAGE_KEY]: token });
@@ -91641,6 +91644,15 @@ function humanizeProviderErrorMessage(rawMessage) {
   }
   return describeGeminiQuotaError(message) || message;
 }
+function describeRejectedApiKey(rawMessage, settings2) {
+  if (settings2?.authMode !== "api-key") return "";
+  const provider2 = getSupportedApiProvider(String(settings2?.aiProvider || ""));
+  if (!provider2 || provider2.keyless) return "";
+  const raw = String(rawMessage || "").trim();
+  if (!/^401\b/.test(raw) && !/incorrect api key|invalid x-api-key|invalid api key|api key not valid/i.test(raw)) return "";
+  const name = provider2.name.replace(/\s+API$/i, "");
+  return `${name} didn't accept your API key. Check that you copied the whole key and that it's still active in your ${name} account, then paste it again in Onhand's options.`;
+}
 function describeGeminiQuotaError(message) {
   if (!/exceeded your current quota/i.test(message) || !/generativelanguage\.googleapis\.com/i.test(message)) return "";
   const limit3 = message.match(/\blimit: (\d+)/)?.[1];
@@ -91777,7 +91789,7 @@ function buildFinalAssistantReply(assistantText, finalError, request2 = null) {
 Voice ended before this answer was completed.` : "Voice ended before an answer was completed. Ask the complete question again to continue.";
   }
   if (!finalError) return ensurePdfAbsenceReviewScope(text, request2) || "(No reply generated.)";
-  const errorReply = `Error: ${humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
+  const errorReply = `Error: ${describeRejectedApiKey(finalError.message, request2?.settings) || humanizeProviderErrorMessage(finalError.message) || "Prompt failed."}`;
   const automatedRetryFailedBeforeFreshText = Boolean(request2?.pdfAnchorRetry || request2?.pageSourceMarkerRetry || request2?.blankReplyRetry) && !String(request2?.reply || "").trim();
   if (automatedRetryFailedBeforeFreshText) return errorReply;
   if (!text) return errorReply;
@@ -96105,6 +96117,7 @@ var __browserRuntimeTest = {
   collectResearchScaffoldingTabIdsForTest: collectResearchScaffoldingTabIds,
   collectUncitedTurnMarkRemovalsForTest: collectUncitedTurnMarkRemovals,
   humanizeProviderErrorMessageForTest: humanizeProviderErrorMessage,
+  describeRejectedApiKeyForTest: describeRejectedApiKey,
   ensurePdfAbsenceReviewScopeForTest: ensurePdfAbsenceReviewScope,
   setLearnerStateModeForTest: setLearnerStateMode,
   buildHighlightTimeoutTabGuardResultForTest: buildHighlightTimeoutTabGuardResult,
@@ -97860,7 +97873,7 @@ function createOnhandBrowserRuntime(host) {
     if (errorKind === "auth" && /sign in|oauth sign-in tab was closed|authorization completed|api key is missing|credential/.test(message)) {
       return true;
     }
-    if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|the browser is shutting down|extension context invalidated/.test(message)) return true;
+    if (/daily_request_cap|today's onhand free limit|region_unavailable|unsupported_country_region_territory|onhand free isn't available in your region|the browser is shutting down|extension context invalidated/.test(message)) return true;
     if (/voice needs an openai|runs on your own openai api key|this is a local file tab|asking the reader to choose|this tab is the chrome web store|no saved pages or highlights to restore/.test(message)) return true;
     if (kind !== "runtime_exception") return false;
     if (messageType === "sidebar:submit-prompt" && /already responding|already processing|wait for the current reply/.test(message)) return true;
@@ -98062,6 +98075,7 @@ function createOnhandBrowserRuntime(host) {
     sentryDiagnosticsAllowed = diagnosticsAllowed;
     if (!diagnosticsAllowed && !explicitUserReport) return false;
     if (shouldSuppressSentryException(kind, error2, data)) return false;
+    if (!explicitUserReport && describeRejectedApiKey(error2?.message || error2, settings2)) return false;
     if (!diagnosticsAllowed && explicitUserReport) sentryExplicitEventAllowance += 1;
     initializeSentryIfNeeded();
     const message = redactErrorText(error2?.message || error2 || kind, 500);
@@ -101347,7 +101361,8 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         captured: captureSentryException(error2, store2.settings, "runtime_exception", {
           message_type: request2?.messageType,
           error_kind: classifyTelemetryError(message),
-          auth_page: request2?.authPage
+          auth_page: request2?.authPage,
+          request_source: request2?.requestSource
         })
       };
     },
@@ -101465,6 +101480,13 @@ Available actions now: ${actions.join(", ")}, ask_onhand.`,
         aiProvider,
         authMode
       );
+      if (nextPartial.aiProvider === ONHAND_FREE_PROVIDER && aiProvider === ONHAND_FREE_PROVIDER) {
+        try {
+          await getOrRegisterFreeTierToken({ timeoutMs: 8e3 });
+        } catch (error2) {
+          if (error2?.code === "region_unavailable") throw error2;
+        }
+      }
       store2.settings = {
         ...store2.settings,
         ...nextPartial,
