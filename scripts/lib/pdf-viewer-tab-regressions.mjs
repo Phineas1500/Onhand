@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 // rendering replaced by deterministic fakes. No real browser is controlled.
 export async function runPdfViewerTabRegressions() {
 	const source = await readFile(new URL("../../packages/browser-extension/background.js", import.meta.url), "utf8");
-	const names = ["resolveTargetTab", "focusTab", "isFileUrl", "isHttpLikeUrl", "isHttpsUrl",
+	const names = ["wakeTabForPageCommand", "resolveTargetTab", "focusTab", "isFileUrl", "isHttpLikeUrl", "isHttpsUrl",
 		"isLikelyPdfResourceUrl", "normalizePdfUrlCandidate", "isOwnExtensionPdfViewerUrl", "isOnhandPdfViewerLikeUrl",
 		"extractPdfSourceUrlFromViewerLikeUrl", "resolvePdfSourceUrlForViewer", "stripUrlHash", "normalizePdfPageNumber",
 		"shouldDetachPdfViewerOpenFromSourceTab", "pdfTabMatchesSource", "findExistingPdfViewerTab", "openPdfInOnhandViewer"];

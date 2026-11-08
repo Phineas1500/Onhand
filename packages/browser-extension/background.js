@@ -476,9 +476,27 @@ async function focusTab(tabId) {
 	return await chrome.tabs.get(tabId);
 }
 
+// Memory Saver discards background tabs (status "unloaded"), and a tab opened
+// moments ago can still be loading with only a pendingUrl. Page commands on
+// either failed: a discarded tab timed out its evaluate after 9 s, and a
+// loading tab was refused as not being a web page. Reload a discarded tab in
+// place (it stays in the background) and wait for either to finish loading.
+const TAB_WAKE_TIMEOUT_MS = 10000;
+
+async function wakeTabForPageCommand(tab) {
+	const unloaded = Boolean(tab?.discarded) || tab?.status === "unloaded";
+	const stillOpening = tab?.status === "loading" && (Boolean(tab.pendingUrl) || !tab.url || tab.url === "about:blank");
+	if (!tab?.id || (!unloaded && !stillOpening) || (unloaded && !tab.url)) return tab;
+	if (unloaded) {
+		log("Reloading a discarded tab for a page command", tab.id);
+		await chrome.tabs.reload(tab.id);
+	}
+	return await waitForTabComplete(tab.id, TAB_WAKE_TIMEOUT_MS);
+}
+
 async function resolveTargetTab(args = {}) {
 	if (typeof args.tabId === "number") {
-		return await chrome.tabs.get(args.tabId);
+		return await wakeTabForPageCommand(await chrome.tabs.get(args.tabId));
 	}
 
 	const titleNeedle = String(args.titleContains || "").trim().toLowerCase();
@@ -4571,7 +4589,11 @@ const createPageToolkit = (options = {}) => {
 			return false;
 		}
 		const rect = element.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
+		if (rect.width > 0 && rect.height > 0) return true;
+		// A background tab Chrome reloaded after discarding it has no viewport
+		// (innerWidth 0) until it is shown, so every box is zero wide. Judge
+		// such a page by CSS; checkVisibility also sees a hidden ancestor.
+		return window.innerWidth === 0 && element.checkVisibility?.() === true;
 	};
 
 	const isClickable = (element) => {
@@ -10838,16 +10860,16 @@ async function executePageToolkitMethodViaGenericWebFrames(tabId, methodName, ar
 // "No inline Onhand PDF viewer frame found"); in a Learning run the agent then
 // gave up on the course PDFs and wandered to outside sites. Mount the viewer in
 // that tab (well under a second for a background tab) and run the method once more.
-async function runPdfViewerToolkitMethod(tab, methodName, payload) {
+async function runPdfViewerToolkitMethod(tab, methodName, ...args) {
 	try {
-		return await runPageToolkitMethod(tab.id, methodName, payload);
+		return await runPageToolkitMethod(tab.id, methodName, ...args);
 	} catch (error) {
 		const message = String(error?.message || "");
 		const missingViewer = message.includes(`${methodName} is not a function`) || /No (inline )?Onhand PDF viewer (runtime port|frame)/i.test(message);
 		if (!missingViewer || !isLikelyPdfResourceUrl(tab.url)) throw error;
 		log("Mounting the Onhand PDF viewer for a PDF tool", methodName, tab.id);
 		await openPdfInOnhandViewer({ tabId: tab.id, active: false, newTab: false, disableSelectionHandoff: true });
-		return await runPageToolkitMethod(tab.id, methodName, payload);
+		return await runPageToolkitMethod(tab.id, methodName, ...args);
 	}
 }
 
@@ -12777,7 +12799,10 @@ async function extractReadableContentInPage(options = {}) {
 	// hidden UI (closed dialogs, unselected tab panels) whose text can never be
 	// highlighted, so extracting it breaks the copy-then-highlight contract.
 	// The text fallback only applies in layout-less environments (tests).
+	// A background tab Chrome reloaded after discarding it has no viewport
+	// (innerWidth 0) until it is shown: its body is zero wide but tall.
 	const pageLayoutAvailable = (() => {
+		if (window.innerWidth === 0) return false;
 		const rect = (document.body || document.documentElement)?.getBoundingClientRect?.();
 		return Boolean(rect && (rect.width > 0 || rect.height > 0));
 	})();
@@ -12788,7 +12813,7 @@ async function extractReadableContentInPage(options = {}) {
 		if (element.hasAttribute("hidden") || String(element.getAttribute("aria-hidden") || "").toLowerCase() === "true") return false;
 		const rect = element.getBoundingClientRect();
 		if (rect.width > 0 && rect.height > 0) return true;
-		return !pageLayoutAvailable && normalize(element.textContent || "").length > 0;
+		return !pageLayoutAvailable && element.checkVisibility?.() !== false && normalize(element.textContent || "").length > 0;
 	};
 	const selectorFor = (element) => {
 		if (!(element instanceof Element)) return "";
@@ -13386,7 +13411,9 @@ async function searchTextbookReaderInPage(options = {}) {
 		const style = window.getComputedStyle(element);
 		if (!style || style.display === "none" || style.visibility === "hidden" || (style.opacity !== "" && Number(style.opacity) === 0)) return false;
 		const rect = element.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
+		if (rect.width > 0 && rect.height > 0) return true;
+		// No viewport: a background tab reloaded after a discard (see createPageToolkit).
+		return window.innerWidth === 0 && element.checkVisibility?.() === true;
 	};
 	const fieldValue = (element) => {
 		if (!element) return "";
@@ -14495,7 +14522,9 @@ async function handleCommandInner(name, args = {}) {
 				if (!args.pdfAnchor && isGoogleDocsDocumentUrl(tab.url)) {
 					return await highlightGoogleDocsViaPdfViewer(tab, args);
 				}
-				const annotation = await runPageToolkitMethod(tab.id, "highlightText", args.text, {
+				// A PDF still in the browser's own viewer (opened before Onhand
+				// touched it) gets Onhand's viewer, as PDF reads already do.
+				const annotation = await runPdfViewerToolkitMethod(tab, "highlightText", args.text, {
 					occurrence: args.occurrence,
 					clearExisting: args.clearExisting,
 					scrollIntoView: args.scrollIntoView,

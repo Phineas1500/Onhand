@@ -3,6 +3,7 @@ import { runSidebarPollRegressions } from "./lib/onhand-sidebar-poll-regressions
 import { runVoiceTranscriptRegressions } from "./lib/voice-transcript-regressions.mjs";
 import { runSessionPageActionRestoreRegressions } from "./lib/session-page-action-restore-regressions.mjs";
 import { runPdfViewerTabRegressions } from "./lib/pdf-viewer-tab-regressions.mjs";
+import { runTabWakeRegressions } from "./lib/tab-wake-regressions.mjs";
 import assert from "node:assert/strict";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { startFixtureServer } from "./serve-browser-runtime-fixture.mjs";
@@ -13447,6 +13448,7 @@ async function main() {
 	await assertManagedLiveRevisions();
 	await assertLiveTranscriptPersistence();
 	await runPdfViewerTabRegressions();
+	await runTabWakeRegressions();
 	await assertPreparationCanBeStoppedWithoutLateContinuation();
 	await assertColdSubmissionAndSessionTransitionsAreExclusive();
 	await assertStorageFailuresDoNotWedgeRequests();

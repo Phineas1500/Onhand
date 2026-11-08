@@ -2092,6 +2092,42 @@ async function assertSearchResultLinks() {
 	console.log("Search result links: Google, Bing and DuckDuckGo results carry their real URLs passed");
 }
 
+// Chrome reloads a discarded background tab with no viewport (innerWidth 0)
+// until it is shown, so every box is zero wide and every highlight used to
+// fail "No visible text matched". Such a page is judged by CSS visibility;
+// a normally laid-out page still treats zero-width text as hidden.
+async function assertZeroViewportTabStillHighlights() {
+	const html = `<!doctype html><html><body><main>
+		<p>Treat logs as event streams that the execution environment collects.</p>
+		<div class="gone"><p>Hidden duplicate: store config in the environment.</p></div>
+		<p>Store config in the environment so the same build runs everywhere.</p>
+	</main></body></html>`;
+	const zeroWide = (window, viewportWidth) => {
+		Object.defineProperty(window, "innerWidth", { configurable: true, value: viewportWidth });
+		const zeroWideRect = function () {
+			return { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 40, width: 0, height: 40, toJSON() { return this; } };
+		};
+		window.Element.prototype.getBoundingClientRect = zeroWideRect;
+		window.HTMLElement.prototype.getBoundingClientRect = zeroWideRect;
+		window.Element.prototype.checkVisibility = function () { return !this.closest(".gone"); };
+		window.Range.prototype.getClientRects = () => [];
+		window.Range.prototype.getBoundingClientRect = () => ({ x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 });
+	};
+	const discarded = await createToolkit(html);
+	zeroWide(discarded.dom.window, 0);
+	const annotation = await discarded.toolkit.highlightText("Treat logs as event streams that the execution environment collects.");
+	assert.ok(annotation?.annotationId, "text on a page with no viewport highlights");
+	const config = await discarded.toolkit.highlightText("store config in the environment", { exactOnly: true });
+	assert.match(String(config?.text || config?.matchedText || discarded.dom.window.document.querySelector(`[data-onhand-annotation-id="${config?.annotationId}"]`)?.textContent || ""), /Store config/i, "a hidden ancestor still hides its text");
+	discarded.dom.window.close();
+
+	const laidOut = await createToolkit(html);
+	zeroWide(laidOut.dom.window, 1200);
+	await assert.rejects(() => laidOut.toolkit.highlightText("Treat logs as event streams that the execution environment collects."), /No visible text matched/, "with a viewport, zero-width text stays hidden");
+	laidOut.dom.window.close();
+	console.log("A tab reloaded without a viewport still highlights passed");
+}
+
 async function createToolkit(html, toolkitOptions = {}) {
 	const dom = new JSDOM(html, {
 		url: "https://example.test/article",
@@ -4672,6 +4708,7 @@ async function main() {
 	await assertBlockedNavigationClassification();
 	await assertWebCitationLookup();
 	await assertSearchResultLinks();
+	await assertZeroViewportTabStillHighlights();
 
 	console.log("Page toolkit regressions: PASS");
 }
