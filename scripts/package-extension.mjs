@@ -69,6 +69,8 @@ function toFirefoxManifest(manifest) {
 	// file:// URLs from an extension, so the file:///* pattern adds nothing.
 	firefox.host_permissions = ["<all_urls>"];
 	delete firefox.side_panel;
+	// Firefox doesn't let websites message extensions; its welcome page keeps the manual steps.
+	delete firefox.externally_connectable;
 	delete firefox.minimum_chrome_version;
 	if (firefox.commands?._execute_action) {
 		firefox.commands = { _execute_sidebar_action: firefox.commands._execute_action };

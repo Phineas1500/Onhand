@@ -395,6 +395,9 @@ footer{border-top:1px solid var(--border-subtle);padding:48px 0 56px;background:
 /* Welcome page (opened once after a store install) */
 .welcome-hero h1{max-width:none}
 .welcome-grid{display:grid;gap:28px}
+.welcome-open{margin-top:22px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px}
+.welcome-open[hidden]{display:none}
+.welcome-open-note{font-size:15px;line-height:1.5;margin:0;max-width:42ch;color:var(--fg-muted)}
 .welcome-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .welcome-step{display:flex;gap:14px;align-items:flex-start;background:var(--bg-elev);border:1px solid var(--border-subtle);border-radius:5px;padding:20px}
 .welcome-num{flex:none;width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--rp-pine);color:var(--bg);font-family:var(--font-mono);font-size:14px;font-weight:700}

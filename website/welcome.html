@@ -55,6 +55,13 @@
         Three steps to your first answer. Onhand reads the page you're on and
         answers by highlighting the passages it used, with notes beside them.
       </p>
+      <div class="welcome-open" data-welcome-open hidden>
+        <button type="button" class="btn-primary" data-welcome-open-button>Open Onhand on this page</button>
+        <p class="welcome-open-note" data-welcome-open-status>
+          The panel opens beside this page. Pick how it runs, then ask about
+          the passage below.
+        </p>
+      </div>
     </div>
   </section>
 
@@ -190,6 +197,41 @@
         '<strong>Extensions</strong> button at the top right of Edge, then the eye ' +
         'icon next to <strong>Onhand</strong>.';
     }
+  })();
+</script>
+<script>
+  // Onhand answers messages from this site (externally_connectable in its
+  // manifest), so in Chrome and Edge a button can open the panel here instead
+  // of the reader finding it in the Extensions menu first. Firefox doesn't
+  // let sites message extensions, so it keeps the steps.
+  (function () {
+    var box = document.querySelector('[data-welcome-open]');
+    var button = document.querySelector('[data-welcome-open-button]');
+    var status = document.querySelector('[data-welcome-open-status]');
+    var runtime = window.chrome && window.chrome.runtime;
+    if (!box || !button || !runtime || typeof runtime.sendMessage !== 'function') return;
+    // Chrome Web Store (also Opera) and Edge Add-ons ids.
+    var ids = ['ogjmncmkpgdkkcibdiacmagaehjohljb', 'icbhigkjjhkcheejmdfkfhiljnkommoj'];
+    var extensionId = '';
+    ids.forEach(function (id) {
+      try {
+        runtime.sendMessage(id, { type: 'onhand:ping' }, function (reply) {
+          void runtime.lastError;
+          if (extensionId || !reply || !reply.ok) return;
+          extensionId = id;
+          box.hidden = false;
+        });
+      } catch (e) {}
+    });
+    button.addEventListener('click', function () {
+      if (!extensionId) return;
+      if (typeof trackConversion === 'function') trackConversion('welcome_open_panel', 'onboarding', 'welcome', {});
+      runtime.sendMessage(extensionId, { type: 'onhand:open-panel' }, function (reply) {
+        void runtime.lastError;
+        if (reply && reply.ok) return;
+        status.textContent = "The browser didn't open the panel. Use steps 1 and 2 below instead.";
+      });
+    });
   })();
 </script>
 <script src="./site.js?v=0.4.16-release"></script>

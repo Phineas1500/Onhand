@@ -16163,6 +16163,23 @@ chrome.action.onClicked.addListener((tab) => {
 	})().catch((error) => log("Could not toggle Onhand sidebar from toolbar action", error?.message || String(error)));
 });
 
+// The welcome page on useonhand.com has an "Open Onhand" button, so a new
+// user doesn't first have to find the extension in the puzzle-piece menu. The
+// click's user gesture carries through the message, which opening the side
+// panel needs. The manifest's externally_connectable admits only that site.
+chrome.runtime.onMessageExternal?.addListener((message, sender, sendResponse) => {
+	if (message?.type === "onhand:ping") {
+		sendResponse({ ok: true });
+		return false;
+	}
+	const windowId = sender?.tab?.windowId;
+	if (message?.type !== "onhand:open-panel" || typeof windowId !== "number") return false;
+	openSidebarForWindow(windowId)
+		.then(() => requestSidebarQuickOpen(windowId))
+		.then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+	return true;
+});
+
 chrome.windows.onRemoved.addListener(async (windowId) => {
 	await setSidebarWindowOpen(windowId, false);
 });
