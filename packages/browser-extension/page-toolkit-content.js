@@ -183,7 +183,11 @@ globalThis.__onhandPageToolkitFactory = (options = {}) => {
 			return false;
 		}
 		const rect = element.getBoundingClientRect();
-		return rect.width > 0 && rect.height > 0;
+		if (rect.width > 0 && rect.height > 0) return true;
+		// A background tab Chrome reloaded after discarding it has no viewport
+		// (innerWidth 0) until it is shown, so every box is zero wide. Judge
+		// such a page by CSS; checkVisibility also sees a hidden ancestor.
+		return window.innerWidth === 0 && element.checkVisibility?.() === true;
 	};
 
 	const isClickable = (element) => {

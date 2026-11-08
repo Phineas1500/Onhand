@@ -8,7 +8,7 @@ url: https://useonhand.com/privacy.html
 
 Onhand is a browser extension that helps you ask questions about the page you are reading. Sessions stay on your device, and content only goes to an AI provider when you ask Onhand to help.
 
-Last updated: November 3, 2026
+Last updated: November 8, 2026
 
 [Summary](https://useonhand.com/privacy.html#summary) [Analytics and diagnostics](https://useonhand.com/privacy.html#analytics) [Data Onhand handles](https://useonhand.com/privacy.html#data) [Local storage](https://useonhand.com/privacy.html#storage) [AI providers](https://useonhand.com/privacy.html#providers) [Retention and security](https://useonhand.com/privacy.html#retention) [Permissions](https://useonhand.com/privacy.html#permissions) [Your choices](https://useonhand.com/privacy.html#choices) [Contact](https://useonhand.com/privacy.html#contact)
 

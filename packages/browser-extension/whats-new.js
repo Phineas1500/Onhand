@@ -8,6 +8,14 @@
 // releases sees the newest few lines.
 globalThis.ONHAND_WHATS_NEW = Object.freeze([
 	{
+		version: "0.4.17",
+		items: [
+			"Highlights now land in tabs Chrome put to sleep and in PDFs the browser is still opening.",
+			"When a page action keeps failing, Onhand stops retrying and answers with what it has.",
+			"Setup explains a rejected API key, or a country Onhand Free doesn't serve, before your first question.",
+		],
+	},
+	{
 		version: "0.4.16",
 		items: [
 			"Open a PDF saved on your computer by picking the file when Onhand asks. No browser setting to change.",
